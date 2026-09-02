@@ -5,10 +5,20 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { browserBuildInvocation, buildProductionArtifact } from "./build-production-artifact.mjs";
-import { assertCompleteProductionArtifact, resolveProductionEntry, verifyWindowsReparseInspectorPair } from "./production-artifact.mjs";
+import { browserBuildInvocation, buildProductionArtifact, retainEntrypointClosure } from "./build-production-artifact.mjs";
+import { assertApprovedProductionBundledRuntimeAvailable, assertCompleteProductionArtifact, resolveProductionEntry, verifyWindowsReparseInspectorPair } from "./production-artifact.mjs";
 
 const hostRoot = fileURLToPath(new URL("..", import.meta.url));
+const approvedRuntimeAvailable = (() => {
+  try {
+    assertApprovedProductionBundledRuntimeAvailable();
+    return true;
+  } catch (error) {
+    if (error?.message === "verified_bundled_runtime_input_required") return false;
+    throw error;
+  }
+})();
+const browserCompositionSkip = !approvedRuntimeAvailable && "approved-runtime-acquisition-unavailable";
 
 async function files(root, prefix = "") {
   const entries = await readdir(join(root, prefix), { withFileTypes: true });
@@ -27,6 +37,29 @@ async function outputFixture() {
   return { root, dispose: async () => await rm(root, { recursive: true, force: true }) };
 }
 
+test("closure retains the fixed desktop bootstrap without adding it to product entryRoots", async () => {
+  const fixture = await outputFixture();
+  const emittedRoot = join(fixture.root, "emitted");
+  const closureRoot = join(fixture.root, "closure");
+  try {
+    await mkdir(emittedRoot);
+    await writeFile(join(emittedRoot, "main.js"), "export {};\n", "utf8");
+    await writeFile(join(emittedRoot, "desktop-runtime-bootstrap.internal.js"), "export {};\n", "utf8");
+
+    await retainEntrypointClosure({
+      emittedRoot,
+      closureRoot,
+      entryRoots: ["main.js", "desktop-runtime-bootstrap.internal.js"],
+    });
+
+    assert.equal(await readFile(join(closureRoot, "desktop-runtime-bootstrap.internal.js"), "utf8"), "export {};\n");
+    const { entryRoots } = JSON.parse(await readFile(join(hostRoot, "production-artifact.config.json"), "utf8"));
+    assert.equal(entryRoots.includes("desktop-runtime-bootstrap.internal.js"), false);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 test("Windows browser build command uses only the fixed system cmd.exe and repository vite.CMD", { skip: process.platform !== "win32" }, async () => {
   const stagingRoot = join(hostRoot, "..", "dialogue-web", ".build-staging", "a".repeat(32));
   const invocation = await browserBuildInvocation({ stagingRoot });
@@ -37,7 +70,28 @@ test("Windows browser build command uses only the fixed system cmd.exe and repos
   await assert.rejects(browserBuildInvocation({ stagingRoot: "E:\\build\\bad&leaf" }), /invalid_browser_staging_root/);
 });
 
-test("builder composes one verified private browser subtree into the published Host generation", { skip: process.platform === "win32" }, async () => {
+test("non-Windows builder fails closed before browser composition or publication while approved runtime acquisition is unavailable", { skip: process.platform === "win32" }, async () => {
+  const fixture = await outputFixture();
+  let browserBuildRequested = false;
+  let compositionVerified = false;
+  try {
+    await assert.rejects(
+      buildProductionArtifact({
+        outputRoot: fixture.root,
+        onBrowserBuildInvocation: () => { browserBuildRequested = true; },
+        onCompositionVerified: () => { compositionVerified = true; },
+      }),
+      /verified_bundled_runtime_input_required/,
+    );
+    assert.equal(browserBuildRequested, false);
+    assert.equal(compositionVerified, false);
+    await assert.rejects(lstat(join(fixture.root, "current.json")), { code: "ENOENT" });
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("builder composes one verified private browser subtree into the published Host generation", { skip: browserCompositionSkip }, async () => {
   const fixture = await outputFixture();
   let observed;
   let requestedBrowserStagingRoot;
@@ -69,10 +123,14 @@ test("builder composes one verified private browser subtree into the published H
     const browserEntries = complete.entries.filter((entry) => entry.path.startsWith("browser/"));
     assert.deepEqual(browserEntries.map((entry) => entry.path), observed.files.map((path) => `browser/tavern/v1/${path}`));
     assert.equal(published.generation, complete.generation);
-    for (const path of ["tavern/player-turn-acceptance.js", "tavern/player-turn-acceptance.internal.js"])
-      assert.ok(complete.entries.some((entry) => entry.path === path), `${path} must be retained as a verified mounted-turn composition module`);
+    for (const path of ["tavern/p4-durable-turn-acceptance.js", "tavern/p4-durable-turn-acceptance.internal.js"])
+      assert.ok(complete.entries.some((entry) => entry.path === path), `${path} must be retained as a verified P4 composition module`);
+    assert.ok(
+      complete.entries.some((entry) => entry.path === "desktop-runtime-bootstrap.internal.js"),
+      "the fixed desktop runtime bootstrap must remain in the normal artifact closure without becoming an entryRoot",
+    );
     await assert.rejects(
-      resolveProductionEntry({ hostRoot, outputRoot: fixture.root, entry: "tavern/player-turn-acceptance.js" }),
+      resolveProductionEntry({ hostRoot, outputRoot: fixture.root, entry: "tavern/p4-durable-turn-acceptance.js" }),
       /production_entry_not_configured/,
     );
     assert.ok(requestedBrowserStagingRoot);
@@ -94,7 +152,7 @@ async function assertRejectedBrowserComposition(mutate, expectedError) {
   }
 }
 
-test("browser composition rejects wrong manifest identity", { skip: process.platform === "win32" }, async () => {
+test("browser composition rejects wrong manifest identity", { skip: browserCompositionSkip }, async () => {
   await assertRejectedBrowserComposition(async (browserStagingRoot) => {
     const path = join(browserStagingRoot, "tavern-browser-artifact-manifest.json");
     const manifest = JSON.parse(await readFile(path, "utf8"));
@@ -103,20 +161,20 @@ test("browser composition rejects wrong manifest identity", { skip: process.plat
   }, /invalid identity|invalid_declared_browser_artifact/);
 });
 
-test("browser composition rejects stale manifest hashes", { skip: process.platform === "win32" }, async () => {
+test("browser composition rejects stale manifest hashes", { skip: browserCompositionSkip }, async () => {
   await assertRejectedBrowserComposition(async (browserStagingRoot) => {
     const manifest = JSON.parse(await readFile(join(browserStagingRoot, "tavern-browser-artifact-manifest.json"), "utf8"));
     await writeFile(join(browserStagingRoot, manifest.assets[0].path), "stale", "utf8");
   }, /does not match its manifest/);
 });
 
-test("browser composition rejects extra browser files", { skip: process.platform === "win32" }, async () => {
+test("browser composition rejects extra browser files", { skip: browserCompositionSkip }, async () => {
   await assertRejectedBrowserComposition(async (browserStagingRoot) =>
     await writeFile(join(browserStagingRoot, "assets", "extra-abcdef12.js.map"), "{}", "utf8"),
   /source maps|unexpected file|invalid_tavern_static_artifact/);
 });
 
-test("browser composition rejects reparse/link staging entries", { skip: process.platform === "win32" }, async (t) => {
+test("browser composition rejects reparse/link staging entries", { skip: browserCompositionSkip }, async (t) => {
   const probe = await mkdtemp(join(tmpdir(), "gamebuddy-link-probe-"));
   try {
     const target = join(probe, "target");
@@ -141,6 +199,27 @@ test("browser composition rejects reparse/link staging entries", { skip: process
   }, /symlink|reparse|non-regular/);
 });
 
+test("browser composition failure leaves the existing published generation untouched", { skip: browserCompositionSkip }, async () => {
+  const fixture = await outputFixture();
+  try {
+    await buildProductionArtifact({ outputRoot: fixture.root });
+    const before = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
+    await assert.rejects(
+      buildProductionArtifact({
+        outputRoot: fixture.root,
+        afterBrowserBuild: async (browserStagingRoot) =>
+          await writeFile(join(browserStagingRoot, "assets", "extra-abcdef12.js.map"), "{}", "utf8"),
+      }),
+      /source maps|unexpected file|invalid_tavern_static_artifact/,
+    );
+    const after = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
+    assert.equal(after.generation, before.generation);
+    assert.equal(relative(after.artifactRoot, before.artifactRoot), "");
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 test("Windows helper pair verifier fails closed for missing or invalid helper/manifest", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-missing-reparse-pair-"));
   const descriptor = {
@@ -162,54 +241,32 @@ test("Windows helper pair verifier fails closed for missing or invalid helper/ma
   }
 });
 
-test("Windows composition accepts missing or audited probe JSON but publishes only the verified helper pair", { skip: process.platform !== "win32" }, async () => {
+test("Windows composition fails closed before any publication while approved runtime acquisition is unavailable", { skip: process.platform !== "win32" }, async () => {
   const fixture = await outputFixture();
-  const inspectorRoot = join(hostRoot, "native", "windows-reparse-inspector", ".dist", "win-x64");
-  const probeEvidence = join(inspectorRoot, "windows-reparse-inspector.probe-evidence.json");
   try {
-    let observedMissingProbeEvidence = false;
-    await buildProductionArtifact({
-      outputRoot: fixture.root,
-      onBrowserBuildInvocation: async () => {
-        await assert.rejects(lstat(probeEvidence), { code: "ENOENT" });
-        observedMissingProbeEvidence = true;
-        await writeFile(probeEvidence, "{\"handwritten\":\"audit-only\"}\n", "utf8");
-      },
-      onCompositionVerified: async ({ browserRoot }) => {
-        assert.equal(observedMissingProbeEvidence, true);
-        await assert.rejects(
-          lstat(join(browserRoot, "..", "..", "..", "native", "windows-reparse-inspector", "win-x64", "windows-reparse-inspector.probe-evidence.json")),
-          { code: "ENOENT" },
-        );
-      },
-    });
-    const complete = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
-    const paths = complete.entries.map((entry) => entry.path);
-    assert.ok(paths.includes("native/windows-reparse-inspector/win-x64/GameBuddy.WindowsReparseInspector.exe"));
-    assert.ok(paths.includes("native/windows-reparse-inspector/win-x64/windows-reparse-inspector.manifest.json"));
-    assert.equal(paths.includes("native/windows-reparse-inspector/win-x64/windows-reparse-inspector.probe-evidence.json"), false);
+    await assert.rejects(
+      buildProductionArtifact({ outputRoot: fixture.root }),
+      /verified_bundled_runtime_input_required/,
+    );
+    await assert.rejects(lstat(join(fixture.root, "current.json")), { code: "ENOENT" });
   } finally {
-    await rm(probeEvidence, { force: true });
     await fixture.dispose();
   }
 });
 
-test("browser composition failure leaves the existing published generation untouched", { skip: process.platform === "win32" }, async () => {
+test("non-Windows browser composition failure cannot create a current pointer while runtime acquisition is unavailable", { skip: process.platform === "win32" }, async () => {
   const fixture = await outputFixture();
+  let browserHookCalled = false;
   try {
-    await buildProductionArtifact({ outputRoot: fixture.root });
-    const before = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
     await assert.rejects(
       buildProductionArtifact({
         outputRoot: fixture.root,
-        afterBrowserBuild: async (browserStagingRoot) =>
-          await writeFile(join(browserStagingRoot, "assets", "extra-abcdef12.js.map"), "{}", "utf8"),
+        afterBrowserBuild: () => { browserHookCalled = true; },
       }),
-      /source maps|unexpected file|invalid_tavern_static_artifact/,
+      /verified_bundled_runtime_input_required/,
     );
-    const after = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
-    assert.equal(after.generation, before.generation);
-    assert.equal(relative(after.artifactRoot, before.artifactRoot), "");
+    assert.equal(browserHookCalled, false);
+    await assert.rejects(lstat(join(fixture.root, "current.json")), { code: "ENOENT" });
   } finally {
     await fixture.dispose();
   }

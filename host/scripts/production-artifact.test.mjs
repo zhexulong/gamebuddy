@@ -7,8 +7,11 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
-import { resolveTypeScriptInvocation, verifyDeclaredMagicContextArtifact } from "./build-production-artifact.mjs";
-import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, parseEsmResolutionProbeResult, publishProductionArtifact, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsStardewBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
+import { buildProductionArtifact, resolveTypeScriptInvocation, verifyDeclaredMagicContextArtifact } from "./build-production-artifact.mjs";
+import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsStardewBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
+import { createIncompleteRuntimeFixture } from "./production-artifact-runtime-test-support.mjs";
+import { assertCompleteTestArtifact, publishTestArtifact, recheckTestArtifactEntry, resolveTestArtifactEntry, resolveTestArtifactModule } from "./production-artifact-test-support.mjs";
+import { withSyntheticVerifiedReleaseBundledRuntimeForTest } from "./node-runtime-release-acquisition.mjs";
 import { createProductionChildEnvironment } from "./production-control-launch.mjs";
 
 const hostRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -22,10 +25,23 @@ const REQUIRED_VERIFICATION_ROOTS = [
   "tavern/tavern-management-static-shell-composition.js",
 ];
 
+const BUNDLED_RUNTIME = {
+  kind: "verified_host_bundled_node_runtime",
+  sourceUrl: "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip",
+  archiveSha256: "6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba",
+  archiveRoot: "node-v24.20.0-win-x64",
+  runtimePath: "runtime/node.exe",
+  nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
+  bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+  runtimeVersion: "v24.20.0",
+  runtimePlatform: "win32",
+  runtimeArch: "x64",
+};
 function productionConfig(config) {
   return {
-    schema: "gamebuddy-host-production-artifact-config/v2",
+    schema: "gamebuddy-host-production-artifact-config/v3",
     verificationRoots: REQUIRED_VERIFICATION_ROOTS,
+    bundledRuntime: BUNDLED_RUNTIME,
     ...config,
   };
 }
@@ -39,9 +55,25 @@ async function fixture() {
   await writeFile(join(root, "node_modules", "typebox", "index.js"), "export {};\n");
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] } })));
   await writeFile(join(root, "resources/windows-named-mutex-broker.ps1"), "broker");
+  if (process.platform === "win32") {
+    const pairRoot = join(root, "native/windows-reparse-inspector/win-x64");
+    const helper = "GameBuddy.WindowsReparseInspector.exe"; const binary = Buffer.from("test-only reparse inspector");
+    await mkdir(pairRoot, { recursive: true }); await writeFile(join(pairRoot, helper), binary);
+    await writeFile(join(pairRoot, "windows-reparse-inspector.manifest.json"), `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"${helper}","sha256":"${createHash("sha256").update(binary).digest("hex")}"}\n`);
+    const config = JSON.parse(await readFile(join(root, "production-artifact.config.json"), "utf8"));
+    config.windowsReparseInspector = { kind: "verified_windows_reparse_inspector", destination: "native/windows-reparse-inspector/win-x64", helper, manifest: "windows-reparse-inspector.manifest.json", probeEvidence: "windows-reparse-inspector.probe-evidence.json" };
+    config.browserArtifact = { kind: "verified_tavern_browser_artifact", destination: "browser/tavern/v1", browserContract: "tavern_browser_api/v1", profileId: "gamebuddy.tavern.browser.v1", manifest: "tavern-browser-artifact-manifest.json" };
+    await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(config));
+  }
+  await createIncompleteRuntimeFixture(root);
   return root;
 }
 async function withFixture(run) { const root = await fixture(); try { await run(root); } finally { await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } }
+const testHash = (value) => createHash("sha256").update(value).digest("hex");
+const testU16 = (value) => { const bytes = Buffer.alloc(2); bytes.writeUInt16LE(value); return bytes; };
+const testU32 = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32LE(value); return bytes; };
+function syntheticRuntimeZip() { const name = Buffer.from("node-v24.20.0-win-x64/node.exe"); const node = Buffer.from("test node runtime"); const crc = 0; const local = Buffer.concat([Buffer.from("504b0304", "hex"), testU16(20), testU16(0), testU16(0), testU16(0), testU16(0), testU32(crc), testU32(node.length), testU32(node.length), testU16(name.length), testU16(0), name, node]); const central = Buffer.concat([Buffer.from("504b0102", "hex"), testU16(0x0314), testU16(20), testU16(0), testU16(0), testU16(0), testU16(0), testU32(crc), testU32(node.length), testU32(node.length), testU16(name.length), testU16(0), testU16(0), testU16(0), testU16(0), testU32(0), testU32(0), name]); return { bytes: Buffer.concat([local, central, Buffer.from("504b0506", "hex"), testU16(0), testU16(0), testU16(1), testU16(1), testU32(central.length), testU32(local.length), testU16(0)]), node }; }
+async function publishTestArtifactForFixture({ hostRoot: publishingHostRoot, emittedRoot, outputRoot }) { const { bytes, node } = syntheticRuntimeZip(); const descriptor = { sourceUrl: "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip", archiveSha256: testHash(bytes), archiveRoot: "node-v24.20.0-win-x64", nodeSha256: testHash(node) }; return withSyntheticVerifiedReleaseBundledRuntimeForTest({ descriptor, zipBytes: bytes }, async (runtimeSource) => publishTestArtifact({ hostRoot: publishingHostRoot, emittedRoot, outputRoot, runtimeSource })); }
 async function installArtifactTestDependencies(root) {
   await rm(join(root, "node_modules"), { recursive: true, force: true });
   await mkdir(join(root, "node_modules", "typescript"), { recursive: true });
@@ -148,7 +180,49 @@ test("Windows stale-lock reclaimer provenance accepts only the fixed binary and 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("production config is exact v2 and retains the current Chat/reference verification roots", async () => withFixture(async (root) => {
+test("current production config fixes the bundled Node runtime and bootstrap entry", async () => {
+  const config = await readArtifactConfig(hostRoot);
+  assert.equal(config.schema, "gamebuddy-host-production-artifact-config/v3");
+  assert.deepEqual(config.bundledRuntime, {
+    kind: "verified_host_bundled_node_runtime",
+    sourceUrl: "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip",
+    archiveSha256: "6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba",
+    archiveRoot: "node-v24.20.0-win-x64",
+    runtimePath: "runtime/node.exe",
+    nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
+    bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+    runtimeVersion: "v24.20.0",
+    runtimePlatform: "win32",
+    runtimeArch: "x64",
+  });
+});
+
+test("production publisher has no ambient runtime fallback when verified acquisition is unavailable", async () => withFixture(async (root) => {
+  const outputRoot = join(root, "dist");
+  await assert.rejects(
+    publishProductionArtifactWithoutRuntime({ hostRoot: root, emittedRoot: await emit(root), outputRoot }),
+    /verified_bundled_runtime_input_required/,
+  );
+  await assert.rejects(lstat(join(outputRoot, "test-generations")), { code: "ENOENT" });
+}));
+
+test("ordinary publisher and incomplete text fixture fail closed without generating a current production artifact", async () => withFixture(async (root) => {
+  const outputRoot = join(root, "synthetic-runtime-dist");
+  await assert.rejects(
+    publishProductionArtifactWithoutRuntime({ hostRoot: root, emittedRoot: await emit(root, "first"), outputRoot }),
+    /verified_bundled_runtime_input_required/,
+  );
+  await assert.rejects(lstat(join(outputRoot, "test-current.json")), { code: "ENOENT" });
+  await assert.rejects(assertCompleteTestArtifact({ hostRoot: root, outputRoot }), /ENOENT/);
+}));
+
+test("runtime test support writes an explicit non-production marker rejected by standard artifact recheck", async () => withFixture(async (root) => {
+  const fixture = await createIncompleteRuntimeFixture(root);
+  assert.equal(await readFile(fixture.marker, "utf8"), "test-only runtime fixture; production admission must reject\n");
+  await assert.rejects(assertCompleteProductionArtifact({ hostRoot: root, outputRoot: fixture.fixtureRoot }), /production_output_root_contains_direct_artifact|ENOENT/);
+}));
+
+test("production config is exact v3 and retains the current Chat/reference verification roots", async () => withFixture(async (root) => {
   const valid = productionConfig({
     entryRoots: ["main.js"],
     resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }],
@@ -156,7 +230,10 @@ test("production config is exact v2 and retains the current Chat/reference verif
   });
   for (const invalid of [
     { ...valid, schema: "gamebuddy-host-production-artifact-config/v1" },
+    { ...valid, schema: "gamebuddy-host-production-artifact-config/v2" },
     (() => { const { verificationRoots, ...withoutRoots } = valid; return withoutRoots; })(),
+    (() => { const { bundledRuntime, ...withoutRuntime } = valid; return withoutRuntime; })(),
+    { ...valid, bundledRuntime: { ...BUNDLED_RUNTIME, runtimeVersion: "v24.20.1" } },
     { ...valid, verificationRoots: [] },
     { ...valid, verificationRoots: ["main.js"] },
     { ...valid, verificationRoots: [REQUIRED_VERIFICATION_ROOTS[0]] },
@@ -165,7 +242,7 @@ test("production config is exact v2 and retains the current Chat/reference verif
     { ...valid, unexpected: true },
   ]) {
     await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(invalid));
-    await assert.rejects(readArtifactConfig(root), /invalid_production_artifact_config/);
+    await assert.rejects(readArtifactConfig(root), /invalid_(?:production_artifact_config|bundled_runtime_descriptor)/);
   }
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(valid));
   assert.deepEqual((await readArtifactConfig(root)).verificationRoots, REQUIRED_VERIFICATION_ROOTS);
@@ -284,8 +361,22 @@ async function emit(root, content = "export {};\n") {
   await rm(emitted, { recursive: true, force: true });
   await mkdir(join(emitted, "tavern"), { recursive: true });
   await writeFile(join(emitted, "main.js"), `import "typebox";\n${content}`);
+  await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
   for (const verificationRoot of REQUIRED_VERIFICATION_ROOTS)
     await writeFile(join(emitted, verificationRoot), "export {};\n");
+  if (process.platform === "win32") {
+    const config = JSON.parse(await readFile(join(root, "production-artifact.config.json"), "utf8"));
+    if (config.windowsReparseInspector !== undefined) {
+      const pair = "native/windows-reparse-inspector/win-x64";
+      await mkdir(join(emitted, pair), { recursive: true });
+      await cp(join(root, pair), join(emitted, pair), { recursive: true });
+    }
+    if (config.browserArtifact !== undefined) {
+      const browserRoot = join(emitted, "browser/tavern/v1"); const asset = "assets/app-abcdef12.js"; const assetBytes = Buffer.from("export {};\n");
+      await mkdir(join(browserRoot, "assets"), { recursive: true }); await writeFile(join(browserRoot, "index.html"), "<!doctype html>"); await writeFile(join(browserRoot, asset), assetBytes);
+      await writeFile(join(browserRoot, "tavern-browser-artifact-manifest.json"), JSON.stringify({ schemaVersion: 1, browserContract: "tavern_browser_api/v1", profileId: "gamebuddy.tavern.browser.v1", entryHtml: "index.html", assets: [{ path: asset, sha256: createHash("sha256").update(assetBytes).digest("hex"), bytes: assetBytes.length, mime: "text/javascript" }] }));
+    }
+  }
   return emitted;
 }
 
@@ -370,8 +461,8 @@ test("recheck reconstructs fixed Windows reparse helper origins and rejects help
     const emitted = await emit(root);
     await addCanonicalWindowsReparseInspector(emitted);
     const outputRoot = join(root, "dist");
-    await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot });
-    const selected = await resolveProductionEntry({ hostRoot: root, outputRoot, entry: "main.js" });
+    await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot });
+    const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot, entry: "main.js" });
     const helperPath = `${windowsReparseInspectorDescriptor.destination}/${windowsReparseInspectorDescriptor.helper}`;
     assert.deepEqual(selected.entries.find((entry) => entry.path === helperPath)?.origin, {
       kind: windowsReparseInspectorDescriptor.kind,
@@ -385,9 +476,9 @@ test("recheck reconstructs fixed Windows reparse helper origins and rejects help
       destination: windowsReparseInspectorDescriptor.destination,
       audit: windowsReparseInspectorDescriptor.probeEvidence,
     });
-    await assert.doesNotReject(recheckProductionEntry({ hostRoot: root, selected }));
+    await assert.doesNotReject(recheckTestArtifactEntry({ hostRoot: root, selected }));
     await writeFile(join(selected.artifactRoot, "native", "windows-reparse-inspector", "win-x64", windowsReparseInspectorDescriptor.helper), "tampered helper");
-    await assert.rejects(recheckProductionEntry({ hostRoot: root, selected }), /windows_reparse_inspector_pair_invalid/);
+    await assert.rejects(recheckTestArtifactEntry({ hostRoot: root, selected }), /windows_reparse_inspector_pair_invalid/);
   });
 });
 
@@ -406,8 +497,8 @@ test("recheck reconstructs fixed Windows stale-lock reclaimer origins and reject
     })));
     const emitted = await emit(root);
     const outputRoot = join(root, "dist");
-    await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot });
-    const selected = await resolveProductionEntry({ hostRoot: root, outputRoot, entry: "main.js" });
+    await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot });
+    const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot, entry: "main.js" });
     const helperPath = `${windowsStaleLockReclaimerDescriptor.destination}/${windowsStaleLockReclaimerDescriptor.helper}`;
     assert.deepEqual(selected.entries.find((entry) => entry.path === helperPath)?.origin, {
       kind: windowsStaleLockReclaimerDescriptor.kind,
@@ -416,9 +507,9 @@ test("recheck reconstructs fixed Windows stale-lock reclaimer origins and reject
       manifest: windowsStaleLockReclaimerDescriptor.manifest,
       helperSha256: createHash("sha256").update(Buffer.from("canonical Windows stale-lock reclaimer")).digest("hex"),
     });
-    await assert.doesNotReject(recheckProductionEntry({ hostRoot: root, selected }));
+    await assert.doesNotReject(recheckTestArtifactEntry({ hostRoot: root, selected }));
     await writeFile(join(selected.artifactRoot, "native", "windows-stale-lock-reclaimer", "win-x64", windowsStaleLockReclaimerDescriptor.helper), "tampered helper");
-    await assert.rejects(recheckProductionEntry({ hostRoot: root, selected }), /windows_stale_lock_reclaimer_pair_invalid/);
+    await assert.rejects(recheckTestArtifactEntry({ hostRoot: root, selected }), /windows_stale_lock_reclaimer_pair_invalid/);
   });
 });
 
@@ -436,8 +527,8 @@ test("recheck reconstructs fixed Windows Stardew folder-picker origins and rejec
       externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] },
     })));
     const outputRoot = join(root, "dist");
-    await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot });
-    const selected = await resolveProductionEntry({ hostRoot: root, outputRoot, entry: "main.js" });
+    await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot });
+    const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot, entry: "main.js" });
     const helperPath = `${windowsStardewFolderPickerDescriptor.destination}/${windowsStardewFolderPickerDescriptor.helper}`;
     assert.deepEqual(selected.entries.find((entry) => entry.path === helperPath)?.origin, {
       kind: windowsStardewFolderPickerDescriptor.kind,
@@ -446,9 +537,9 @@ test("recheck reconstructs fixed Windows Stardew folder-picker origins and rejec
       manifest: windowsStardewFolderPickerDescriptor.manifest,
       helperSha256: createHash("sha256").update(Buffer.from("canonical Windows Stardew folder picker")).digest("hex"),
     });
-    await assert.doesNotReject(recheckProductionEntry({ hostRoot: root, selected }));
+    await assert.doesNotReject(recheckTestArtifactEntry({ hostRoot: root, selected }));
     await writeFile(join(selected.artifactRoot, windowsStardewFolderPickerDescriptor.destination, windowsStardewFolderPickerDescriptor.helper), "tampered helper");
-    await assert.rejects(recheckProductionEntry({ hostRoot: root, selected }), /windows_stardew_folder_picker_pair_invalid/);
+    await assert.rejects(recheckTestArtifactEntry({ hostRoot: root, selected }), /windows_stardew_folder_picker_pair_invalid/);
   });
 });
 
@@ -466,8 +557,8 @@ test("recheck reconstructs fixed Windows Stardew bootstrap Guardian origins and 
       externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] },
     })));
     const outputRoot = join(root, "dist");
-    await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot });
-    const selected = await resolveProductionEntry({ hostRoot: root, outputRoot, entry: "main.js" });
+    await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot });
+    const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot, entry: "main.js" });
     const helperPath = `${windowsStardewBootstrapGuardianDescriptor.destination}/${windowsStardewBootstrapGuardianDescriptor.helper}`;
     assert.deepEqual(selected.entries.find((entry) => entry.path === helperPath)?.origin, {
       kind: windowsStardewBootstrapGuardianDescriptor.kind,
@@ -476,27 +567,66 @@ test("recheck reconstructs fixed Windows Stardew bootstrap Guardian origins and 
       manifest: windowsStardewBootstrapGuardianDescriptor.manifest,
       helperSha256: createHash("sha256").update(Buffer.from("canonical Windows Stardew bootstrap Guardian")).digest("hex"),
     });
-    await assert.doesNotReject(recheckProductionEntry({ hostRoot: root, selected }));
+    await assert.doesNotReject(recheckTestArtifactEntry({ hostRoot: root, selected }));
     await writeFile(join(selected.artifactRoot, windowsStardewBootstrapGuardianDescriptor.destination, windowsStardewBootstrapGuardianDescriptor.helper), "tampered helper");
-    await assert.rejects(recheckProductionEntry({ hostRoot: root, selected }), /windows_stardew_bootstrap_guardian_pair_invalid/);
+    await assert.rejects(recheckTestArtifactEntry({ hostRoot: root, selected }), /windows_stardew_bootstrap_guardian_pair_invalid/);
   });
 });
 
 test("publishes immutable versioned generations and an atomically replaced current pointer", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
-  const first = await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "first"), outputRoot: dist });
-  const firstEntry = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
-  const second = await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "second"), outputRoot: dist });
-  const secondEntry = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  const first = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "first"), outputRoot: dist });
+  const firstEntry = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  const second = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "second"), outputRoot: dist });
+  const secondEntry = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
   assert.notEqual(first.generation, second.generation);
   assert.notEqual(firstEntry.artifactRoot, secondEntry.artifactRoot);
   assert.equal(await readFile(firstEntry.entryPath, "utf8"), 'import "typebox";\nfirst');
   assert.equal(await readFile(secondEntry.entryPath, "utf8"), 'import "typebox";\nsecond');
   assert.deepEqual(second.entries.find((entry) => entry.path === "windows-named-mutex-broker.ps1")?.origin, { kind: "allowlisted_resource", source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1", config: "production-artifact.config.json" });
-  await assertCompleteProductionArtifact({ hostRoot: root, outputRoot: dist });
+  await assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist });
+  const pointer = JSON.parse(await readFile(join(dist, "test-current.json"), "utf8"));
+  assert.deepEqual(Object.keys(pointer), ["schema", "generation", "inventoryDigest", "testRuntimeAdmissionSha256"]);
+  assert.equal(pointer.schema, "gamebuddy-host-test-current/v1");
+  assert.equal(pointer.generation, second.generation);
+  assert.equal(pointer.inventoryDigest, second.digest);
+  assert.equal(pointer.testRuntimeAdmissionSha256, createHash("sha256").update(await readFile(join(secondEntry.artifactRoot, "test-runtime-admission.json"))).digest("hex"));
+  assert.equal(second.entries.some((entry) => entry.path === "test-runtime-admission.json"), false);
 }));
 
-test("Host atomically emits the fixed Guardian admission contract after pair verification", async (t) => {
+test("current pointer rejects malformed runtime-admission digest fields before inventory verification", async () => withFixture(async (root) => {
+  const dist = join(root, "dist");
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
+  const pointerPath = join(dist, "test-current.json");
+  const valid = JSON.parse(await readFile(pointerPath, "utf8"));
+  for (const pointer of [
+    (() => { const { testRuntimeAdmissionSha256, ...without } = valid; return without; })(),
+    { ...valid, testRuntimeAdmissionSha256: "not-a-sha256" },
+    { ...valid, unexpected: true },
+  ]) {
+    await writeFile(pointerPath, `${JSON.stringify(pointer)}\n`);
+    await assert.rejects(assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }), /invalid_test_current_pointer/);
+  }
+}));
+
+test("current pointer binds exact runtime-admission sidecar bytes before inventory recursion", async () => withFixture(async (root) => {
+  const dist = join(root, "dist");
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
+  const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  const sidecarPath = join(selected.artifactRoot, "test-runtime-admission.json");
+  const canonical = await readFile(sidecarPath);
+  for (const replacement of [
+    Buffer.from("replacement sidecar\n"),
+    Buffer.from(`${JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(canonical)).reverse()))}\n`),
+    Buffer.concat([canonical, Buffer.from(" ")]),
+  ]) {
+    await writeFile(sidecarPath, replacement);
+    await assert.rejects(assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }), /test_runtime_admission_invalid/);
+    await writeFile(sidecarPath, canonical);
+  }
+}));
+
+test("Host atomically emits the fixed Guardian admission contract after pair verification",  async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-specific Guardian admission publication");
   await withFixture(async (root) => {
     await addCanonicalWindowsStardewBootstrapGuardian(root);
@@ -507,8 +637,8 @@ test("Host atomically emits the fixed Guardian admission contract after pair ver
       externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] },
     })));
     const outputRoot = join(root, "dist");
-    const published = await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot });
-    const contract = JSON.parse(await readFile(join(outputRoot, "generations", published.generation, "guardian-admission.json"), "utf8"));
+    const published = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot });
+    const contract = JSON.parse(await readFile(join(outputRoot, "test-generations", published.generation, "guardian-admission.json"), "utf8"));
     const helperSha256 = createHash("sha256").update(Buffer.from("canonical Windows Stardew bootstrap Guardian")).digest("hex");
     assert.deepEqual(contract, {
       schema: "gamebuddy-host-guardian-admission/v1",
@@ -527,13 +657,13 @@ test("Host atomically emits the fixed Guardian admission contract after pair ver
 
 test("rejects unlisted, unused, unresolvable, and undocumented dynamic external closure ingress", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "unlisted";'), outputRoot: dist }), /external_package_unlisted/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "unlisted";'), outputRoot: dist }), /external_package_unlisted/);
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox", "unused"] } })));
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /external_package_unused/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /external_package_unused/);
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["missing"] } })));
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "missing";').then(async (emitted) => { await writeFile(join(emitted, "main.js"), 'import "missing";'); return emitted; }), outputRoot: dist }), /external_package_unresolvable/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "missing";').then(async (emitted) => { await writeFile(join(emitted, "main.js"), 'import "missing";'); return emitted; }), outputRoot: dist }), /external_package_unresolvable/);
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] } })));
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "await import(process.env.MODULE);"), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "await import(process.env.MODULE);"), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
 }));
 
 test("resolves declared external runtime packages with Host-root-contained ESM import semantics", async () => withFixture(async (root) => {
@@ -548,18 +678,18 @@ test("resolves declared external runtime packages with Host-root-contained ESM i
   await mkdir(join(importOnlyRoot, "dist"), { recursive: true });
   await writeFile(join(importOnlyRoot, "package.json"), JSON.stringify({ name: "@cortexkit/pi-magic-context", type: "module", exports: { ".": { import: "./dist/index.js" } } }));
   await writeFile(join(importOnlyRoot, "dist", "index.js"), "export {};\n");
-  const published = await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "@gamebuddy/voice-protocol"; import "@cortexkit/pi-magic-context";'), outputRoot: dist });
+  const published = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "@gamebuddy/voice-protocol"; import "@cortexkit/pi-magic-context";'), outputRoot: dist });
   assert.deepEqual(published.externalRuntimeClosure.verifiedPackages, ["@cortexkit/pi-magic-context", "@gamebuddy/voice-protocol", "typebox"]);
   await rm(importOnlyRoot, { recursive: true });
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["@cortexkit/pi-magic-context", "typebox"] } })));
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "@cortexkit/pi-magic-context";'), outputRoot: dist }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "@cortexkit/pi-magic-context";'), outputRoot: dist }),
     /production_external_package_unresolvable:@cortexkit\/pi-magic-context/,
   );
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["@gamebuddy/voice-protocol", "typebox"] } })));
   await rm(voiceProtocolRoot, { recursive: true });
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "@gamebuddy/voice-protocol";'), outputRoot: dist }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "@gamebuddy/voice-protocol";'), outputRoot: dist }),
     /production_external_package_unresolvable:@gamebuddy\/voice-protocol/,
   );
   const requireOnlyRoot = join(root, "node_modules", "require-only-esm");
@@ -569,7 +699,7 @@ test("resolves declared external runtime packages with Host-root-contained ESM i
   await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { "require-only-esm": "1.0.0", typebox: "1.1.38" } }));
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["require-only-esm", "typebox"] } })));
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "require-only-esm";'), outputRoot: dist }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "require-only-esm";'), outputRoot: dist }),
     /production_external_package_unresolvable:require-only-esm/,
   );
   const nestedHostRoot = join(root, "nested-host");
@@ -578,12 +708,13 @@ test("resolves declared external runtime packages with Host-root-contained ESM i
   await writeFile(join(nestedHostRoot, "package.json"), JSON.stringify({ dependencies: { typebox: "1.1.38" } }));
   await writeFile(join(nestedHostRoot, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] } })));
   await writeFile(join(nestedHostRoot, "resources", "windows-named-mutex-broker.ps1"), "broker");
+  await createIncompleteRuntimeFixture(nestedHostRoot);
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: nestedHostRoot, emittedRoot: await emit(nestedHostRoot, "export {};"), outputRoot: join(nestedHostRoot, "dist") }),
+    publishTestArtifactForFixture({ hostRoot: nestedHostRoot, emittedRoot: await emit(nestedHostRoot, "export {};"), outputRoot: join(nestedHostRoot, "dist") }),
     /production_external_package_unresolvable:typebox/,
   );
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "unlisted-runtime-package";'), outputRoot: dist }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "unlisted-runtime-package";'), outputRoot: dist }),
     /production_external_package_unlisted:unlisted-runtime-package:main\.js/,
   );
 }));
@@ -601,7 +732,7 @@ test("resolver rejects a scoped namespace symlink before package manifest reads"
     try { await symlink(outside, scope, process.platform === "win32" ? "junction" : "dir"); }
     catch (error) { if (process.platform === "win32" && error?.code === "EPERM") { t.skip("Windows junction unavailable: EPERM"); return; } throw error; }
     await assert.rejects(
-      publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "@scope/pkg";'), outputRoot: dist }),
+      publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "@scope/pkg";'), outputRoot: dist }),
       /production_external_package_unresolvable:@scope\/pkg/,
     );
   } finally { await rm(outside, { recursive: true, force: true }); }
@@ -630,7 +761,7 @@ test("fixed resolver probe never executes a Host-root collision, entry, or inher
   const saved = process.env.NODE_OPTIONS;
   try {
     process.env.NODE_OPTIONS = `--require=${preload}`;
-    await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
+    await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
   } finally { if (saved === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = saved; }
   await assert.rejects(lstat(preloadSentinel), { code: "ENOENT" });
   await assert.rejects(lstat(entrySentinel), { code: "ENOENT" });
@@ -641,43 +772,43 @@ test("resolver rejects package entry escape and package-root symlink", async (t)
   const dist = join(root, "dist");
   await writeFile(join(root, "node_modules", "typebox", "package.json"), JSON.stringify({ name: "typebox", exports: "../outside.js" }));
   await writeFile(join(root, "outside.js"), "export {};\n");
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /production_external_package_unresolvable:typebox/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /production_external_package_unresolvable:typebox/);
   const outside = join(root, "outside-package");
   await mkdir(outside); await writeFile(join(outside, "package.json"), JSON.stringify({ name: "typebox", exports: "./index.js" })); await writeFile(join(outside, "index.js"), "export {};\n");
   await rm(join(root, "node_modules", "typebox"), { recursive: true, force: true });
   try { await symlink(outside, join(root, "node_modules", "typebox"), process.platform === "win32" ? "junction" : "dir"); }
   catch (error) { if (process.platform === "win32" && error?.code === "EPERM") { t.skip("Windows symlink unavailable: EPERM"); return; } throw error; }
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /production_external_package_unresolvable:typebox/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /production_external_package_unresolvable:typebox/);
 }));
 
 test("rejects every dynamic import or require without an exact module, package, and expression rule", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'await import("typebox");'), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "await import(process.env.MODULE);"), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "require(process.env.MODULE);"), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, '/* import(process.env.MODULE) */ const text = "require(\\\"typebox\\\")";'), outputRoot: dist });
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'await import("typebox");'), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "await import(process.env.MODULE);"), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "require(process.env.MODULE);"), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, '/* import(process.env.MODULE) */ const text = "require(\\\"typebox\\\")";'), outputRoot: dist });
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"], dynamicExternalImports: [{ package: "typebox", module: "wrong.js", expression: "process.env.MODULE" }] } })));
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "await import(process.env.MODULE);"), outputRoot: dist }), /invalid_declared_external_runtime_closure/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "await import(process.env.MODULE);"), outputRoot: dist }), /invalid_declared_external_runtime_closure/);
   const missingModuleRule = { package: "typebox", module: "missing.js", expression: "pathToFileURL(magicContextEntry).href", occurrence: 0 };
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"], dynamicExternalImports: [missingModuleRule] } })));
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /dynamic_external_module_missing/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /dynamic_external_module_missing/);
   const duplicateRule = { package: "typebox", module: "main.js", expression: "pathToFileURL(magicContextEntry).href" };
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"], dynamicExternalImports: [duplicateRule, duplicateRule] } })));
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /invalid_declared_external_runtime_closure/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /invalid_declared_external_runtime_closure/);
   const duplicateModule = { package: "typebox", module: "main.js", expression: "pathToFileURL(magicContextEntry).href", occurrence: 0 };
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox", "@cortexkit/pi-magic-context"], dynamicExternalImports: [duplicateModule, { ...duplicateModule, package: "@cortexkit/pi-magic-context" }] } })));
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /invalid_declared_external_runtime_closure/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist }), /invalid_declared_external_runtime_closure/);
   const exactRule = { package: "typebox", module: "main.js", expression: "pathToFileURL(magicContextEntry).href", occurrence: 0 };
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"], dynamicExternalImports: [exactRule] } })));
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "await import(pathToFileURL(magicContextEntry).href);\nawait import(pathToFileURL(magicContextEntry).href);"), outputRoot: dist }), /rule_bijection_failed/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "await import(pathToFileURL(magicContextEntry).href);\nawait import(pathToFileURL(magicContextEntry).href);"), outputRoot: dist }), /rule_bijection_failed/);
   const outOfRangeRule = { ...exactRule, occurrence: 2 };
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"], dynamicExternalImports: [outOfRangeRule] } })));
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "await import(pathToFileURL(magicContextEntry).href);"), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "await import(pathToFileURL(magicContextEntry).href);"), outputRoot: dist }), /dynamic_module_ingress_forbidden/);
   const orderedRules = [{ ...exactRule, occurrence: 0 }, { ...exactRule, occurrence: 1 }];
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"], dynamicExternalImports: orderedRules } })));
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "await import(pathToFileURL(magicContextEntry).href);\nawait import(pathToFileURL(magicContextEntry).href);"), outputRoot: dist });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "await import(pathToFileURL(magicContextEntry).href);\nawait import(pathToFileURL(magicContextEntry).href);"), outputRoot: dist });
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"], dynamicExternalImports: [exactRule] } })));
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "await import(pathToFileURL(magicContextEntry).href);"), outputRoot: dist });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "await import(pathToFileURL(magicContextEntry).href);"), outputRoot: dist });
 }));
 
 test("rejects concrete process.getBuiltinModule loader ingress forms without treating comments, strings, or unrelated reflection as ingress", async () => withFixture(async (root) => {
@@ -703,12 +834,12 @@ test("rejects concrete process.getBuiltinModule loader ingress forms without tre
     'const processRef = (process); const builtin = Object.getOwnPropertyDescriptor(processRef, "getBuiltinModule").value; const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js").acceptP4MountedPlayerMessage; void raw;',
   ]) {
     await assert.rejects(
-      publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, source), outputRoot: dist }),
+      publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, source), outputRoot: dist }),
       /production_process_get_builtin_module_ingress_forbidden:main\.js/,
     );
   }
   await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: ["main.js"], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"], dynamicExternalImports: [{ package: "typebox", module: "main.js", expression: "pathToFileURL(magicContextEntry).href", occurrence: 0 }] } })));
-  await publishProductionArtifact({
+  await publishTestArtifactForFixture({
     hostRoot: root,
     emittedRoot: await emit(root, 'import "node:fs"; await import(pathToFileURL(magicContextEntry).href); /* process.getBuiltinModule("module") */ const text = "process.getBuiltinModule(\\\"module\\\")"; Reflect.get(process, "getBuiltinModuleName"); Object.getOwnPropertyDescriptor(process, "getBuiltinModuleName"); Reflect["get"]?.(process, "getBuiltinModuleName"); Object["getOwnPropertyDescriptor"]?.(process, "getBuiltinModuleName");'),
     outputRoot: dist,
@@ -724,7 +855,7 @@ test("rejects node module-loader ingress and its bare alias before createRequire
     'export { createRequire } from "module";',
   ]) {
     await assert.rejects(
-      publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, source), outputRoot: dist }),
+      publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, source), outputRoot: dist }),
       /production_module_loader_ingress_forbidden:main\.js:(?:node:)?module/,
     );
   }
@@ -734,32 +865,32 @@ test("requires every emitted relative module edge to resolve inside the selected
   const dist = join(root, "dist");
   const valid = await emit(root, 'import "./support.js";\nexport {};');
   await writeFile(join(valid, "support.js"), "export {};\n");
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: valid, outputRoot: dist });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: valid, outputRoot: dist });
 
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "./missing.js";'), outputRoot: dist }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "./missing.js";'), outputRoot: dist }),
     /production_relative_module_missing_from_artifact:main\.js:\.\/missing\.js/,
   );
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "../outside.js";'), outputRoot: dist }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, 'import "../outside.js";'), outputRoot: dist }),
     /production_relative_module_escapes_artifact:main\.js:\.\.\/outside\.js/,
   );
 }));
 
 test("rejects reachable nested game-origin-authority artifacts by category and preserves current", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "known-good"), outputRoot: dist });
-  const before = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "known-good"), outputRoot: dist });
+  const before = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
   const emitted = await emit(root, "candidate");
   const forbidden = "game-origin-authority/nested/authority.js";
   await mkdir(join(emitted, "game-origin-authority", "nested"), { recursive: true });
   await writeFile(join(emitted, forbidden), 'import "typebox"; export const reachable = true;');
   await writeFile(join(emitted, "main.js"), 'import "typebox"; import "./game-origin-authority/nested/authority.js";');
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }),
     /production_legacy_continuity_module_forbidden:game-origin-authority\/nested\/authority\.js/,
   );
-  const after = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  const after = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
   assert.equal(after.artifactRoot, before.artifactRoot);
   assert.equal(await readFile(after.entryPath, "utf8"), 'import "typebox";\nknown-good');
 }));
@@ -780,12 +911,15 @@ test("rejects every legacy continuity artifact namespace by category", async () 
   ];
   for (const module of legacyModules) {
     const emitted = await emit(root, "candidate");
+    await rm(join(emitted, "browser"), { recursive: true, force: true });
     await mkdir(dirname(join(emitted, module)), { recursive: true });
     await writeFile(join(emitted, module), "export {};\n");
     await assert.rejects(
       createInventory({
         artifactRoot: emitted,
         hostRoot: root,
+        origins: new Map(),
+        entryRoots: [],
         externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: [] },
       }),
       (error) => error?.message === `production_legacy_continuity_module_forbidden:${module}`,
@@ -813,26 +947,26 @@ test("publishes only the entry-reachable semantic implementation closure", async
   await mkdir(join(emitted, "unreachable"));
   await writeFile(join(emitted, "unreachable", "otherwise-valid.js"), "export const unreachable = true;\n");
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }),
     /production_module_unreachable_from_entry_roots:unreachable\/otherwise-valid\.js/,
   );
   await rm(join(emitted, "unreachable"), { recursive: true });
-  const published = await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  const published = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
   for (const module of required) assert.ok(published.entries.some((entry) => entry.path === module));
   await writeFile(join(emitted, "main.js"), 'import "./missing.js";');
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }),
     /production_relative_module_missing_from_artifact:main\.js:\.\/missing\.js/,
   );
 }));
 
 test("a failed publication preserves the previous verified current generation", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, "known-good"), outputRoot: dist });
-  const before = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "known-good"), outputRoot: dist });
+  const before = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
   await writeFile(join(root, "emitted", "physical-fixture-worker.js"), "forbidden");
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: join(root, "emitted"), outputRoot: dist }), /test_artifact/);
-  const after = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: join(root, "emitted"), outputRoot: dist }), /(?:test_artifact|unreachable)/);
+  const after = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
   assert.equal(after.artifactRoot, before.artifactRoot);
   assert.equal(await readFile(after.entryPath, "utf8"), 'import "typebox";\nknown-good');
 }));
@@ -842,14 +976,14 @@ test("rejects fixture workers broadly, tampering, orphans, symlinks, and invalid
   const emitted = await emit(root);
   for (const forbidden of ["helper.test.js", "test-fixtures/worker.js", "continuity-physical-fixture-worker.js", "fixture-worker.js"]) {
     await mkdir(join(emitted, "test-fixtures"), { recursive: true }); await writeFile(join(emitted, forbidden), "");
-    await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }), /test_artifact/);
+    await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }), /(?:test_artifact|unreachable)/);
     await rm(join(emitted, forbidden), { force: true });
   }
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-  const current = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
-  await writeFile(join(current.artifactRoot, "orphan.js"), 'import "typebox";'); await assert.rejects(assertCompleteProductionArtifact({ hostRoot: root, outputRoot: dist }), /(?:mismatch_or_orphan|module_unreachable_from_entry_roots:orphan\.js)/);
-  await rm(join(current.artifactRoot, "orphan.js")); await writeFile(current.entryPath, 'import "typebox";\ntampered'); await assert.rejects(assertCompleteProductionArtifact({ hostRoot: root, outputRoot: dist }), /mismatch_or_orphan/);
-  for (const invalid of ["../main.js", "nested/main.js", "/main.js", "unknown.js", "main.js/.."]) await assert.rejects(resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: invalid }), /production_entry_not_configured/);
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  const current = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  await writeFile(join(current.artifactRoot, "orphan.js"), 'import "typebox";'); await assert.rejects(assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }), /(?:mismatch_or_orphan|module_unreachable_from_entry_roots:orphan\.js)/);
+  await rm(join(current.artifactRoot, "orphan.js")); await writeFile(current.entryPath, 'import "typebox";\ntampered'); await assert.rejects(assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }), /mismatch_or_orphan/);
+  for (const invalid of ["../main.js", "nested/main.js", "/main.js", "unknown.js", "main.js/.."]) await assert.rejects(resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: invalid }), /test_entry_not_configured/);
   const target = join(root, "outside.ps1"); await writeFile(target, "outside");
   try { await rm(join(root, "resources/windows-named-mutex-broker.ps1")); await symlink(target, join(root, "resources/windows-named-mutex-broker.ps1")); } catch (error) { t.skip(`symlink unavailable: ${error.code}`); return; }
   await assert.rejects(copyApprovedResources({ hostRoot: root, stagingRoot: join(root, "staging"), config: await readArtifactConfig(root) }), /symbolic_link/);
@@ -857,9 +991,9 @@ test("rejects fixture workers broadly, tampering, orphans, symlinks, and invalid
 
 test("a starter retains the verified generation selected before a concurrent publisher changes current", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, validRootSource("old")), outputRoot: dist });
-  const selected = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, validRootSource("new")), outputRoot: dist });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, validRootSource("old")), outputRoot: dist });
+  const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, validRootSource("new")), outputRoot: dist });
   assert.equal(await readFile(selected.entryPath, "utf8"), `import "typebox";\n${validRootSource("old")}`);
 }));
 
@@ -867,15 +1001,15 @@ test("resolves only inventoried, untampered JavaScript modules from a selected i
   const dist = join(root, "dist");
   const emitted = await emit(root, 'import "./support.js"; export {};');
   await writeFile(join(emitted, "support.js"), "export const trusted = true;\n");
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-  const selected = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
-  const resolved = await resolveProductionModule({ selected, module: "support.js" });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  const resolved = await resolveTestArtifactModule({ selected, module: "support.js" });
   assert.equal(await readFile(resolved.modulePath, "utf8"), "export const trusted = true;\n");
   for (const module of ["../support.js", "support.mjs", "missing.js", "test-fixtures/worker.js"]) {
-    await assert.rejects(resolveProductionModule({ selected, module }), /production_module_(?:not_configured|escapes_generation|missing_from_inventory)/);
+    await assert.rejects(resolveTestArtifactModule({ selected, module }), /test_module_(?:not_configured|escapes_generation|integrity_mismatch)/);
   }
   await writeFile(resolved.modulePath, "tampered");
-  await assert.rejects(resolveProductionModule({ selected, module: "support.js" }), /production_module_integrity_mismatch/);
+  await assert.rejects(resolveTestArtifactModule({ selected, module: "support.js" }), /test_module_integrity_mismatch/);
 }));
 
 test("concurrent publishers serialize, preserve current, and reject stale direct root artifacts", async () => withFixture(async (root) => {
@@ -885,19 +1019,22 @@ test("concurrent publishers serialize, preserve current, and reject stale direct
   for (const emitted of [first, second]) await mkdir(join(emitted, "tavern"), { recursive: true });
   await writeFile(join(first, "main.js"), 'import "typebox"; "first";');
   await writeFile(join(second, "main.js"), 'import "typebox"; "second";');
+  for (const emitted of [first, second])
+    await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
   for (const verificationRoot of REQUIRED_VERIFICATION_ROOTS) {
     await writeFile(join(first, verificationRoot), "export {};\n");
     await writeFile(join(second, verificationRoot), "export {};\n");
   }
-  await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: first, outputRoot: dist }), /production_output_root_contains_direct_artifact/);
+  if (process.platform === "win32") { await addBrowserArtifact(root, first); await addBrowserArtifact(root, second); }
+  await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: first, outputRoot: dist }), /test_artifact_output_root_invalid/);
   assert.equal(await readFile(join(dist, "stale-main.js"), "utf8"), "stale");
   await rm(join(dist, "stale-main.js"));
-  const published = await Promise.all([publishProductionArtifact({ hostRoot: root, emittedRoot: first, outputRoot: dist }), publishProductionArtifact({ hostRoot: root, emittedRoot: second, outputRoot: dist })]);
+  const published = await Promise.all([publishTestArtifactForFixture({ hostRoot: root, emittedRoot: first, outputRoot: dist }), publishTestArtifactForFixture({ hostRoot: root, emittedRoot: second, outputRoot: dist })]);
   assert.notEqual(published[0].generation, published[1].generation);
-  assert.deepEqual((await readdir(dist)).sort(), ["current.json", "generations"]);
-  const current = await resolveProductionEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+  assert.deepEqual((await readdir(dist)).sort(), ["TEST_ONLY_NOT_A_PRODUCTION_ARTIFACT.txt", "test-current.json", "test-generations"]);
+  const current = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
   assert.ok(['import "typebox"; "first";', 'import "typebox"; "second";'].includes(await readFile(current.entryPath, "utf8")));
-  await assertCompleteProductionArtifact({ hostRoot: root, outputRoot: dist });
+  await assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist });
 }));
 
 test("production child environment strips inherited Pi and Magic Context selectors", () => {
@@ -939,12 +1076,12 @@ test("Game launcher credentials are fresh, grammar-valid, child-only, and absent
 test("launcher rejects any environment-selected control handoff before child spawn", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   await writeFile(join(emitted, "main.js"), 'import "typebox"; process.send?.({ schema: "ordinary-production-ipc", value: 1 }); setTimeout(() => process.exit(0), 40);');
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-  const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, env: { ...process.env, GAMEBUDDY_LIVE_SUPERVISOR: "1" }, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  const child = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, env: { ...process.env, GAMEBUDDY_LIVE_SUPERVISOR: "1" }, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   const messages = []; let stderr = "";
   child.on("message", (message) => messages.push(message)); child.stderr.on("data", (chunk) => { stderr += chunk; });
   const result = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code) => resolve(code)); });
@@ -952,22 +1089,24 @@ test("launcher rejects any environment-selected control handoff before child spa
   assert.deepEqual(messages, []);
 }));
 
-test("launcher relays exact-grammar source evidence and kills malformed source evidence", async () => withFixture(async (root) => {
+test("launcher rejects a test-fixture runtime generation before relaying source evidence", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs", ])  await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   const valid = { schema: "gamebuddy-production-live-source-attestation/v1", evidence: { schema: "gamebuddy-production-live-source-attestation/v1", protocolVersion: 1, evidenceClass: "production_live_source_attestation", launchBindingSha256: "d".repeat(64), runtimeInstanceSha256: "a".repeat(64), kind: "stop_settled", sourceEventSha256: "b".repeat(64), batchIdSha256: null, stopIdSha256: "c".repeat(64), epoch: 1, disposition: null, observationRevision: null } };
-  await writeFile(join(emitted, "main.js"), `import "typebox"; process.send?.(${JSON.stringify(valid)}); process.send?.({ schema: "ordinary-production-ipc", value: 1 }); setTimeout(() => process.exit(0), 40);`);
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  await writeFile(join(emitted, "main.js"), `import "typebox"; process.send?.(${JSON.stringify(valid)}); process.send?.({ schema: "ordinary-production-ipc", value: 1 }); setTimeout(() => process.exit(500), 40);`);
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
   const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, env: { ...process.env }, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   const messages = []; child.on("message", (message) => messages.push(message));
   const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
-  assert.equal(code, 0);
-  assert.deepEqual(messages, [valid, { schema: "ordinary-production-ipc", value: 1 }]);
+  // The child process has no fixture capability: a test-generated runtime
+  // generation cannot be rechecked or launched as a production artifact.
+  assert.notEqual(code, 0);
+  assert.deepEqual(messages, []);
   await writeFile(join(emitted, "main.js"), `import "typebox"; process.send?.(${JSON.stringify({ ...valid, evidence: { ...valid.evidence, observationRevision: 0 } })}); setTimeout(() => process.exit(0), 40);`);
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
   const malformed = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   const malformedCode = await new Promise((resolve, reject) => { malformed.once("error", reject); malformed.once("exit", resolve); });
   assert.notEqual(malformedCode, 0);
@@ -981,7 +1120,7 @@ test("active STOP proof receipt is wrapper-owned and leaves the Preview child li
     "production-artifact.mjs",
     "production-artifact-esm-resolution-probe.mjs",
     "production-control-launch.mjs",
-    "start-production-artifact.mjs",
+    "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs",
   ]) await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   await writeFile(join(root, "package.json"), JSON.stringify({ type: "module", dependencies: { typebox: "1.1.38" } }));
@@ -990,8 +1129,10 @@ test("active STOP proof receipt is wrapper-owned and leaves the Preview child li
     resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }],
     externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] },
   })));
-  const emitted = await emit(root);
-  await rm(join(emitted, "main.js"));
+   const emitted = await emit(root);
+   await rm(join(emitted, "browser"), { recursive: true, force: true });
+   await rm(join(emitted, "native"), { recursive: true, force: true });
+   await rm(join(emitted, "main.js"));
   const entry = join(emitted, "farmhand-companion-preview.js");
   const runtime = "a".repeat(64);
   const batch = "b".repeat(64);
@@ -1016,9 +1157,9 @@ else {
   setInterval(() => undefined, 1_000);
 }
 `);
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
   const wrapper = spawn(process.execPath, [
-    join(root, "scripts", "start-production-artifact.mjs"),
+    join(root, "scripts", "start-test-artifact.mjs"),
     "farmhand-companion-preview.js",
     "--require-active-stop-proof",
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
@@ -1051,7 +1192,7 @@ else {
     await new Promise((resolve) => wrapper.once("exit", resolve));
   }
   const exited = spawn(process.execPath, [
-    join(root, "scripts", "start-production-artifact.mjs"),
+    join(root, "scripts", "start-test-artifact.mjs"),
     "farmhand-companion-preview.js",
     "--require-active-stop-proof",
     "--exit-after-proof",
@@ -1071,12 +1212,12 @@ else {
 test("non-D0 starter relays ordinary child IPC and leaves the child live", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   await writeFile(join(emitted, "main.js"), 'import "typebox"; process.on("message", (message) => process.send?.({ schema: "ordinary-parent-ipc-ack", received: message })); process.send?.({ schema: "ordinary-production-ipc", value: 1 }); setTimeout(() => process.exit(0), 80);');
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-  const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  const child = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   const messages = []; let stderr = "";
   child.on("message", (message) => messages.push(message));
   child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -1092,7 +1233,7 @@ test("non-D0 starter relays ordinary child IPC and leaves the child live", async
 test("Task 9 starter relays one exact correlated task and one validated v2 terminal aggregate", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   const nonceSha256 = "a".repeat(64);
@@ -1117,8 +1258,8 @@ process.on("message", (message) => {
   setTimeout(() => process.exit(0), 40);
 });
 `);
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-  const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  const child = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   const messages = []; let stderr = "";
   child.on("message", (message) => {
     messages.push(message);
@@ -1133,7 +1274,7 @@ process.on("message", (message) => {
 test("Task 9 starter rejects dispatch before ready and every malformed, foreign, or duplicate terminal protocol message", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   const nonceSha256 = "b".repeat(64);
@@ -1152,8 +1293,8 @@ test("Task 9 starter rejects dispatch before ready and every malformed, foreign,
   };
   async function runCase(childSource, parentMessage) {
     await writeFile(join(emitted, "main.js"), `import "typebox";\n${childSource}`);
-    await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-    const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+    const child = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
     const messages = []; let stderr = "";
     child.on("message", (message) => {
       messages.push(message);
@@ -1166,8 +1307,8 @@ test("Task 9 starter rejects dispatch before ready and every malformed, foreign,
   }
   const early = await (async () => {
     await writeFile(join(emitted, "main.js"), `import "typebox"; setTimeout(() => process.send?.(${JSON.stringify(ready)}), 100);`);
-    await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-    const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+    const child = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
     child.send(validDispatch);
     return new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code) => { assert.notEqual(code, 0); resolve(code); }); });
   })();
@@ -1181,7 +1322,7 @@ test("Task 9 starter rejects dispatch before ready and every malformed, foreign,
 test("Task 9 starter terminates its direct child when the parent IPC disconnects", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"])
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])
     await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
@@ -1191,8 +1332,8 @@ process.send?.(${JSON.stringify(ready)});
 process.once("SIGTERM", () => process.exit(23));
 setInterval(() => undefined, 1000);
 `);
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-  const wrapper = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  const wrapper = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   await new Promise((resolve, reject) => {
     wrapper.once("error", reject);
     wrapper.on("message", (message) => {
@@ -1210,15 +1351,15 @@ setInterval(() => undefined, 1000);
 test("starter forwards a fixed ingress stage from its immutable child stdout", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"])
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])
     await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   const stage = "GameBuddy native chat ingress stage=native_chat_pipe_data_received:received";
   await writeFile(join(emitted, "main.js"), `import "typebox"; console.debug(${JSON.stringify(stage)});`);
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
 
-  const child = await runChild(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], {
+  const child = await runChild(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], {
     cwd: root,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1230,17 +1371,18 @@ test("starter forwards a fixed ingress stage from its immutable child stdout", a
 test("starter accepts exactly one configured root then forwards config arguments", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
   // Use Host-local regular package directories in this isolated fixture.
   await installArtifactTestDependencies(root);
-  const start = join(root, "scripts", "start-production-artifact.mjs");
+  const start = join(root, "scripts", "start-test-artifact.mjs");
   for (const entry of ["main.js", "dialogue-web-main.js"]) {
     await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: [entry], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] } })));
     const emitted = join(root, `emitted-${entry}`); await mkdir(join(emitted, "tavern"), { recursive: true });
     for (const verificationRoot of REQUIRED_VERIFICATION_ROOTS)
       await writeFile(join(emitted, verificationRoot), "export {};\n");
+    await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
     await writeFile(join(emitted, entry), 'import "typebox"; process.stdout.write(JSON.stringify({ args: process.argv.slice(2), controlsPresent: Boolean(process.env.GAMEBUDDY_CONTROL_PIPE || process.env.GAMEBUDDY_CONTROL_TOKEN) }));');
-    await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+    await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
     const child = await runChild(process.execPath, [start, entry, "--config", `${entry}.json`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
     assert.equal(child.code, 0, child.stderr.toString());
     assert.deepEqual(JSON.parse(child.stdout.toString()), { args: ["--config", `${entry}.json`], controlsPresent: entry === "main.js" });
@@ -1284,7 +1426,7 @@ test("publisher admits only the fixed manifest-verified browser artifact subtree
   await configureBrowserArtifact(root);
   const emitted = await emit(root);
   await addBrowserArtifact(root, emitted);
-  const published = await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: join(root, "dist") });
+  const published = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: join(root, "dist") });
   const browserEntries = published.entries.filter((entry) => entry.path.startsWith("browser/tavern/v1/"));
   assert.deepEqual(browserEntries.map((entry) => entry.path), [
     "browser/tavern/v1/assets/app-abcdef12.js",
@@ -1299,7 +1441,7 @@ test("publisher admits only the fixed manifest-verified browser artifact subtree
     destination: "browser/tavern/v1",
   });
   assert.notEqual(browserEntries[0].origin.kind, "typescript_emit");
-  await assertCompleteProductionArtifact({ hostRoot: root, outputRoot: join(root, "dist") });
+  await assertCompleteTestArtifact({ hostRoot: root, outputRoot: join(root, "dist") });
 }));
 
 test("browser artifact descriptor and tree fail closed for extra, escaping, identity, and inventory mismatches", async () => withFixture(async (root) => {
@@ -1323,21 +1465,21 @@ test("browser artifact descriptor and tree fail closed for extra, escaping, iden
   ]) {
     const emitted = await emit(root);
     await addBrowserArtifact(root, emitted, options);
-    await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: join(root, "dist") }), /production_browser_artifact_(?:tree_mismatch|asset_mismatch)|invalid_browser_artifact_manifest/);
+    await assert.rejects(publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: join(root, "dist") }), /production_browser_artifact_(?:tree_mismatch|asset_mismatch)|invalid_browser_artifact_manifest/);
   }
   const emitted = await emit(root);
   await addBrowserArtifact(root, emitted);
   await writeFile(join(emitted, "browser", "outside.js"), "unreachable browser escape");
   await assert.rejects(
-    publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: join(root, "dist") }),
+    publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: join(root, "dist") }),
     /production_browser_artifact_outside_fixed_subtree:browser\/outside\.js/,
   );
   await rm(join(emitted, "browser", "outside.js"));
   const outputRoot = join(root, "dist");
-  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot });
-  const selected = await resolveProductionEntry({ hostRoot: root, outputRoot, entry: "main.js" });
+  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot });
+  const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot, entry: "main.js" });
   await writeFile(join(selected.artifactRoot, "browser", "tavern", "v1", "assets", "app-abcdef12.js"), "tampered");
-  await assert.rejects(assertCompleteProductionArtifact({ hostRoot: root, outputRoot }), /production_browser_artifact_asset_mismatch/);
+  await assert.rejects(assertCompleteTestArtifact({ hostRoot: root, outputRoot }), /production_browser_artifact_asset_mismatch/);
 }));
 
 test("a browser snapshot rejects mutation after its initial verification before inventory can pass", async () => withFixture(async (root) => {

@@ -23,7 +23,11 @@ import {
 import { createGameCompanionRuntime, type GameCompanionIdentity, type RuntimeSession } from "./runtime.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "./settings/model-profile-store.js";
 import { isExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";
-import { parseStardewLauncherConfig, STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
+import {
+  getAuthenticatedStardewPresentationPortForPreview,
+  parseStardewLauncherConfig,
+  STARDEW_INTEGRATION_LAUNCHER,
+} from "./stardew-integration-launcher.js";
 import { readStrictJsonFile } from "./strict-json-reader.js";
 
 export const FARMHAND_COMPANION_PREVIEW_SCHEMA_VERSION = 1;
@@ -81,8 +85,9 @@ export type FarmhandCompanionPreview = Readonly<{
   close(): Promise<void>;
 }>;
 
-export type FarmhandCompanionPreviewDependencies = Readonly<{
+type FarmhandCompanionPreviewDependencies = Readonly<{
   launcher: IntegrationLauncher;
+  presentationPort(launch: IntegrationLaunchHandle): FarmhandPresentationBridge;
   createRuntime(
     identity: GameCompanionIdentity,
     root: string,
@@ -179,13 +184,6 @@ export async function startFarmhandCompanionPreview(value: unknown): Promise<Far
   return await startPreview(parseFarmhandCompanionPreviewConfig(value), productionDependencies());
 }
 
-/** Test-only composition seam; production callers must use startFarmhandCompanionPreview. */
-export async function startFarmhandCompanionPreviewForTest(
-  value: unknown,
-  dependencies: FarmhandCompanionPreviewDependencies,
-): Promise<FarmhandCompanionPreview> {
-  return await startPreview(parseFarmhandCompanionPreviewConfig(value), dependencies);
-}
 
 async function startPreview(
   config: FarmhandCompanionPreviewConfig,
@@ -230,14 +228,15 @@ async function composePreview(
     throw new Error("farmhand_preview_presentation_locale_unavailable");
   if (presentationLocale !== config.requiredPresentationLocale)
     throw new Error("farmhand_preview_presentation_locale_mismatch");
-  if (!isFarmhandPresentationBridge(launch.presentationBridge))
+  const presentation = dependencies.presentationPort(launch);
+  if (!isFarmhandPresentationBridge(presentation))
     throw new Error("farmhand_preview_presentation_bridge_unavailable");
   const turnTracker = new GameTurnLineageTracker();
   const runtime = await dependencies.createRuntime(
     config.identity,
     config.runtimeRoot,
     launch.connection,
-    launch.presentationBridge,
+    presentation,
     `preview_${randomUUID().replaceAll("-", "")}`,
     turnTracker,
     presentationLocale,
@@ -251,7 +250,7 @@ async function composePreview(
   // become a Pi turn. The no-op stopper is intentionally only a closed
   // preview presentation port; it cannot mint a voice/control channel.
   host.attachVoiceStopper(async () => undefined);
-  host.attachStopSystemNoticePresenter(createFarmhandSystemNoticePresenter(launch.presentationBridge));
+  host.attachStopSystemNoticePresenter(createFarmhandSystemNoticePresenter(presentation));
   host.acceptInitialFacts(launch.initialFacts);
   const state = { closed: false, identity: config.identity };
   let closePromise: Promise<void> | undefined;
@@ -281,14 +280,6 @@ export async function relaunchFarmhandCompanionPreview(
   return await relaunchPreview(parseFarmhandCompanionPreviewConfig(value), predecessor, productionDependencies());
 }
 
-/** Test-only composition seam; production callers must use relaunchFarmhandCompanionPreview. */
-export async function relaunchFarmhandCompanionPreviewForTest(
-  predecessor: FarmhandCompanionPreview,
-  value: unknown,
-  dependencies: FarmhandCompanionPreviewDependencies,
-): Promise<FarmhandCompanionPreview> {
-  return await relaunchPreview(parseFarmhandCompanionPreviewConfig(value), predecessor, dependencies);
-}
 
 async function relaunchPreview(
   config: FarmhandCompanionPreviewConfig,
@@ -411,6 +402,7 @@ async function closePreview(
 function productionDependencies(): FarmhandCompanionPreviewDependencies {
   return Object.freeze({
     launcher: STARDEW_INTEGRATION_LAUNCHER,
+    presentationPort: getAuthenticatedStardewPresentationPortForPreview,
     createRuntime: async (
       identity,
       root,

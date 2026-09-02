@@ -1,6 +1,18 @@
 {
-  "schema": "gamebuddy-host-production-artifact-config/v2",
+  "schema": "gamebuddy-host-production-artifact-config/v3",
   "entryRoots": ["main.js", "dialogue-web-main.js", "stardew-attachment.js", "farmhand-companion-preview.js"],
+  "bundledRuntime": {
+    "kind": "verified_host_bundled_node_runtime",
+    "sourceUrl": "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip",
+    "archiveSha256": "6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba",
+    "archiveRoot": "node-v24.20.0-win-x64",
+    "runtimePath": "runtime/node.exe",
+    "nodeSha256": "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
+    "bootstrapPath": "desktop-runtime-bootstrap.internal.js",
+    "runtimeVersion": "v24.20.0",
+    "runtimePlatform": "win32",
+    "runtimeArch": "x64"
+  },
   "verificationRoots": ["tavern/player-turn-acceptance.js", "tavern/provider-attempt-claim.js", "tavern/chat-provider-start.js", "tavern/reference-pipeline-static-shell-composition.js", "reference-pipeline-dialogue-web.js", "tavern-management-dialogue-web.js", "tavern/tavern-management-static-shell-composition.js"],
   "resources": [
     {

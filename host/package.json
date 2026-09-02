@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "node scripts/build-production-artifact.mjs",
+    "build:release": "node scripts/build-release-production-artifact.mjs",
     "build:test": "node scripts/build-test-artifact.mjs",
     "start": "node scripts/start-production-artifact.mjs main.js",
     "start:dialogue": "node scripts/start-production-artifact.mjs dialogue-web-main.js",
@@ -18,10 +19,11 @@
     "repair:test-artifact-lock": "node scripts/repair-test-artifact-lock.mjs"
   },
   "dependencies": {
-    "@gamebuddy/voice-protocol": "workspace:*",
     "@cortexkit/pi-magic-context": "file:../vendor/magic-context/packages/pi-plugin",
     "@earendil-works/pi-coding-agent": "0.84.4",
-    "typebox": "1.1.38"
+    "@gamebuddy/voice-protocol": "workspace:*",
+    "typebox": "1.1.38",
+    "yauzl": "3.4.0"
   },
   "devDependencies": {
     "@gamebuddy/game-action-devkit": "workspace:*",

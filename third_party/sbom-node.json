@@ -47,7 +47,7 @@
       },
       {
         "name": "gamebuddy:generator-input-lockfile-sha256",
-        "value": "e9e4ebb5f13e2b7aa60d90e5585a8a337d82d2ace720bab91bd62d162d391cd3"
+        "value": "99c039271a8d2665765c15a8301c1b42f1f733085fdaaec9fe4ba0e4da7128d8"
       }
     ]
   },
@@ -3104,6 +3104,24 @@
     },
     {
       "type": "library",
+      "name": "pend",
+      "version": "1.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/andrewrk/node-pend#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "picocolors",
       "version": "1.1.1",
       "licenses": [
@@ -3873,6 +3891,24 @@
         {
           "type": "website",
           "url": "https://eemeli.org/yaml/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "yauzl",
+      "version": "3.4.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/thejoshwolfe/yauzl"
         }
       ]
     },

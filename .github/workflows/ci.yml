@@ -32,10 +32,9 @@ jobs:
       - run: pnpm lint
       - run: pnpm check:host-production-import-boundary
       - run: pnpm typecheck
-      - run: pnpm build
-      # Requires the freshly assembled Host production generation: it launches
-      # the shipped browser artifact against the one-listener P3 composition.
-      - run: pnpm test:dialogue-web
+      # This builds only the browser's contributor-quality bundle; ordinary CI
+      # has no authority to assemble a Host production generation.
+      - run: pnpm --filter @gamebuddy/dialogue-web build
       - run: pnpm test
       - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit

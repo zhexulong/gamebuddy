@@ -20,6 +20,20 @@ const PUBLISHER_LOCK_WAIT_MS = 5_000;
 const PUBLISHER_LOCK_RETRY_MS = 50;
 const GUARDIAN_ADMISSION = "guardian-admission.json";
 const GUARDIAN_ADMISSION_SCHEMA = "gamebuddy-host-guardian-admission/v1";
+const RUNTIME_ADMISSION = "host-runtime-admission.json";
+const RUNTIME_ADMISSION_SCHEMA = "host-runtime-admission/v1";
+const BUNDLED_RUNTIME = Object.freeze({
+  kind: "verified_host_bundled_node_runtime",
+  sourceUrl: "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip",
+  archiveSha256: "6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba",
+  archiveRoot: "node-v24.20.0-win-x64",
+  runtimePath: "runtime/node.exe",
+  nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
+  bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+  runtimeVersion: "v24.20.0",
+  runtimePlatform: "win32",
+  runtimeArch: "x64",
+});
 const slash = (path) => path.replaceAll("\\", "/");
 const inside = (root, path) => { const value = relative(root, path); return value === "" || (!value.startsWith(`..${sep}`) && value !== ".." && !isAbsolute(value)); };
 const digest = (content) => createHash("sha256").update(content).digest("hex");
@@ -283,6 +297,12 @@ function validateBrowserArtifactDescriptor(value) {
     || value.manifest !== BROWSER_ARTIFACT.manifest) throw new Error("invalid_browser_artifact_descriptor");
   return Object.freeze({ ...BROWSER_ARTIFACT });
 }
+function validateBundledRuntime(value) {
+  if (!exactKeys(value, Object.keys(BUNDLED_RUNTIME))
+    || Object.keys(BUNDLED_RUNTIME).some((key) => value[key] !== BUNDLED_RUNTIME[key]))
+    throw new Error("invalid_bundled_runtime_descriptor");
+  return Object.freeze({ ...BUNDLED_RUNTIME });
+}
 function validateWindowsReparseInspector(value) {
   if (!exactKeys(value, ["kind", "destination", "helper", "manifest", "probeEvidence"])
     || Object.keys(WINDOWS_REPARSE_INSPECTOR).some((key) => value[key] !== WINDOWS_REPARSE_INSPECTOR[key]))
@@ -405,14 +425,20 @@ function validateExternalClosure(value) {
   dynamicExternalImports.sort((left, right) => dynamicExternalImportKey(left).localeCompare(dynamicExternalImportKey(right)));
   return { kind: "declared_external_runtime_closure", packages, dynamicExternalImports };
 }
-export async function readArtifactConfig(hostRoot) {
-  const config = JSON.parse(await readFile(resolve(hostRoot, "production-artifact.config.json"), "utf8"));
-  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "windowsStardewBootstrapGuardian", "externalRuntimeClosure"];
+export async function readArtifactConfigFromText(text) {
+  let config;
+  try { config = JSON.parse(text); }
+  catch { throw new Error("invalid_production_artifact_config"); }
+  return validateArtifactConfig(config);
+}
+
+function validateArtifactConfig(config) {
+  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "bundledRuntime", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "windowsStardewBootstrapGuardian", "externalRuntimeClosure"];
   if (config === null || typeof config !== "object" || Array.isArray(config)
-    || config.schema !== "gamebuddy-host-production-artifact-config/v2"
+    || config.schema !== "gamebuddy-host-production-artifact-config/v3"
     || Object.keys(config).some((key) => !allowedKeys.includes(key))
     || !Object.hasOwn(config, "entryRoots") || !Object.hasOwn(config, "verificationRoots")
-    || !Object.hasOwn(config, "resources") || !Object.hasOwn(config, "externalRuntimeClosure")
+    || !Object.hasOwn(config, "resources") || !Object.hasOwn(config, "bundledRuntime") || !Object.hasOwn(config, "externalRuntimeClosure")
     || !Array.isArray(config.entryRoots) || config.entryRoots.length === 0
     || !config.entryRoots.every((entry) => configuredEntry(config.entryRoots, entry))
     || new Set(config.entryRoots).size !== config.entryRoots.length
@@ -423,6 +449,7 @@ export async function readArtifactConfig(hostRoot) {
     || config.verificationRoots.some((root) => config.entryRoots.includes(root)))
     throw new Error("invalid_production_artifact_config");
   config.resources.forEach(validateResource);
+  config.bundledRuntime = validateBundledRuntime(config.bundledRuntime);
   if (config.browserArtifact !== undefined) config.browserArtifact = validateBrowserArtifactDescriptor(config.browserArtifact);
   if (config.windowsReparseInspector !== undefined) config.windowsReparseInspector = validateWindowsReparseInspector(config.windowsReparseInspector);
   if (config.windowsStaleLockReclaimer !== undefined) config.windowsStaleLockReclaimer = validateWindowsStaleLockReclaimer(config.windowsStaleLockReclaimer);
@@ -430,6 +457,10 @@ export async function readArtifactConfig(hostRoot) {
   if (config.windowsStardewBootstrapGuardian !== undefined) config.windowsStardewBootstrapGuardian = validateWindowsStardewBootstrapGuardian(config.windowsStardewBootstrapGuardian);
   config.externalRuntimeClosure = validateExternalClosure(config.externalRuntimeClosure);
   return config;
+}
+
+export async function readArtifactConfig(hostRoot) {
+  return readArtifactConfigFromText(await readFile(resolve(hostRoot, "production-artifact.config.json"), "utf8"));
 }
 async function files(root, prefix = "") {
   const entries = await readdir(resolve(root, prefix), { withFileTypes: true });
@@ -467,10 +498,10 @@ export async function reachableProductionModules({ artifactRoot, artifactFiles, 
   }
   return reachable;
 }
-async function verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots, origins }) {
+async function verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots, origins, runtimeBootstrapPath }) {
   const reachable = await reachableProductionModules({ artifactRoot, artifactFiles, entryRoots });
   for (const item of artifactFiles) {
-    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION) continue;
+    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION || item === RUNTIME_ADMISSION || item === runtimeBootstrapPath) continue;
     if (origins.has(slash(item))) continue;
     if (extname(item) === ".js") {
       if (!reachable.has(item)) throw new Error(`production_module_unreachable_from_entry_roots:${item}`);
@@ -661,6 +692,95 @@ async function verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot, des
   const origin = windowsStardewBootstrapGuardianOrigin(descriptor, verified.helperSha256);
   return new Map([...[descriptor.helper, descriptor.manifest].map((name) => [`${descriptor.destination}/${name}`, origin])]);
 }
+function runtimeOrigin(descriptor) {
+  return Object.freeze({ kind: descriptor.kind, sourceUrl: descriptor.sourceUrl, archiveSha256: descriptor.archiveSha256 });
+}
+
+/** An authorized supply lane mints this opaque input only after it verifies the
+  * committed archive SHA-256. Publication has no filesystem-path fallback. */
+function validRuntimeClosureFiles(value) {
+  return Array.isArray(value) && value.length > 0 && value.every((entry) => exactKeys(entry, ["sourcePath", "sha256"])
+    && typeof entry.sourcePath === "string" && /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(entry.sourcePath)
+    && typeof entry.sha256 === "string" && /^[a-f0-9]{64}$/.test(entry.sha256))
+    && value.every((entry, index) => index === 0 || value[index - 1].sourcePath.localeCompare(entry.sourcePath) < 0);
+}
+
+
+async function exactRuntimeTree(root, label) {
+  await directory(root, label);
+  const listed = await files(root);
+  const entries = [];
+  for (const sourcePath of listed) {
+    const path = resolve(root, sourcePath); await safeAncestors(root, path, label); await regular(path, label);
+    entries.push({ sourcePath: slash(sourcePath), sha256: digest(await readFile(path)) });
+  }
+  return entries;
+}
+
+async function copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor, source }) {
+  if (source === undefined || source === null || typeof source !== "object" || JSON.stringify(source.descriptor) !== JSON.stringify(descriptor)) throw new Error("verified_bundled_runtime_input_required");
+  const sourceRoot = resolve(source.extractedRoot, descriptor.archiveRoot);
+  if (!inside(source.extractedRoot, sourceRoot) || JSON.stringify(await readdir(source.extractedRoot)) !== JSON.stringify([descriptor.archiveRoot]))
+    throw new Error("verified_bundled_runtime_source_invalid");
+  const actual = await exactRuntimeTree(sourceRoot, "verified_bundled_runtime_source");
+  if (JSON.stringify(actual) !== JSON.stringify(source.files)) throw new Error("verified_bundled_runtime_closure_mismatch");
+  for (const entry of actual) {
+    const inputPath = resolve(sourceRoot, entry.sourcePath); const outputPath = resolve(stagingRoot, "runtime", entry.sourcePath);
+    await mkdir(dirname(outputPath), { recursive: true }); await copyFile(inputPath, outputPath);
+  }
+  const copied = await exactRuntimeTree(resolve(stagingRoot, "runtime"), "bundled_runtime");
+  if (JSON.stringify(copied) !== JSON.stringify(actual)) throw new Error("bundled_runtime_copy_mismatch");
+  if (actual.find((entry) => entry.sourcePath === "node.exe")?.sha256 !== descriptor.nodeSha256) throw new Error("bundled_runtime_node_digest_mismatch");
+  const origin = runtimeOrigin(descriptor);
+  return new Map(actual.map((entry) => [`runtime/${entry.sourcePath}`, origin]));
+}
+
+async function verifyBundledRuntimeInArtifact({ artifactRoot, descriptor }) {
+  const runtimePath = resolve(artifactRoot, descriptor.runtimePath.replaceAll("/", sep));
+  try {
+    await safeAncestors(artifactRoot, runtimePath, "bundled_runtime"); await regular(runtimePath, "bundled_runtime");
+    if (digest(await readFile(runtimePath)) !== descriptor.nodeSha256) throw new Error("digest");
+    return runtimeOrigin(descriptor);
+  } catch { throw new Error("bundled_runtime_invalid"); }
+}
+
+function runtimeOriginsFromInventory(entries, descriptor) {
+  if (!Array.isArray(entries)) throw new Error("runtime_inventory_invalid");
+  const origin = runtimeOrigin(descriptor);
+  return new Map(entries.filter((entry) => typeof entry?.path === "string" && entry.path.startsWith("runtime/"))
+    .map((entry) => [entry.path, origin]));
+}
+
+function runtimeClosure(entries, descriptor) {
+  return Object.freeze({ schema: "host-bundled-runtime-closure/v1", files: entries
+    .filter((entry) => entry.path.startsWith("runtime/") && entry.path !== descriptor.runtimePath)
+    .map((entry) => ({ path: entry.path, sha256: entry.sha256 })).sort((left, right) => left.path.localeCompare(right.path)) });
+}
+
+function canonicalRuntimeAdmission({ inventoryDigest, generation, descriptor, entries }) {
+  const runtime = entries.find((entry) => entry.path === descriptor.runtimePath); const bootstrap = entries.find((entry) => entry.path === descriptor.bootstrapPath);
+  if (runtime?.sha256 !== descriptor.nodeSha256 || bootstrap === undefined) throw new Error("runtime_admission_required_entry_missing");
+  return `${JSON.stringify({ schema: RUNTIME_ADMISSION_SCHEMA, inventoryDigest, generation, runtimePath: descriptor.runtimePath, runtimeSha256: runtime.sha256, bootstrapPath: descriptor.bootstrapPath, bootstrapSha256: bootstrap.sha256, runtimeVersion: descriptor.runtimeVersion, runtimePlatform: descriptor.runtimePlatform, runtimeArch: descriptor.runtimeArch, runtimeClosure: runtimeClosure(entries, descriptor) })}\n`;
+}
+
+async function emitRuntimeAdmission({ stagingRoot, inventory, generation, descriptor }) {
+  await verifyBundledRuntimeInArtifact({ artifactRoot: stagingRoot, descriptor });
+  const bootstrapPath = resolve(stagingRoot, descriptor.bootstrapPath);
+  await safeAncestors(stagingRoot, bootstrapPath, "desktop_runtime_bootstrap"); await regular(bootstrapPath, "desktop_runtime_bootstrap");
+  const expected = canonicalRuntimeAdmission({ inventoryDigest: inventory.digest, generation, descriptor, entries: inventory.entries }); const path = resolve(stagingRoot, RUNTIME_ADMISSION);
+  await writeFile(path, expected, { flag: "wx" });
+  if (await readFile(path, "utf8") !== expected) throw new Error("runtime_admission_write_mismatch");
+}
+
+function runtimeDescriptorForArtifact(_artifactRoot, config) { return config.bundledRuntime; }
+
+async function verifyRuntimeAdmission({ artifactRoot, inventory, generation, descriptor }) {
+  await verifyBundledRuntimeInArtifact({ artifactRoot, descriptor });
+  const path = resolve(artifactRoot, RUNTIME_ADMISSION); await safeAncestors(artifactRoot, path, "runtime_admission"); await regular(path, "runtime_admission");
+  const expected = canonicalRuntimeAdmission({ inventoryDigest: inventory.digest, generation, descriptor, entries: inventory.entries });
+  if (await readFile(path, "utf8") !== expected) throw new Error("runtime_admission_invalid");
+}
+
 function rejectUnverifiedBrowserArtifactFiles(artifactFiles, origins) {
   for (const item of artifactFiles) {
     const path = slash(item);
@@ -668,7 +788,7 @@ function rejectUnverifiedBrowserArtifactFiles(artifactFiles, origins) {
       throw new Error(`production_browser_artifact_outside_fixed_subtree:${path}`);
   }
 }
-export async function createInventory({ artifactRoot, origins = new Map(), externalRuntimeClosure, hostRoot, entryRoots, browserArtifactSnapshot, browserArtifactDescriptor }) {
+export async function createInventory({ artifactRoot, origins = new Map(), externalRuntimeClosure, hostRoot, entryRoots, browserArtifactSnapshot, browserArtifactDescriptor, runtimeBootstrapPath }) {
   const artifactFiles = await files(artifactRoot);
   if (browserArtifactDescriptor !== undefined) {
     rejectBrowserArtifactOutsideFixedSubtree(artifactFiles, browserArtifactDescriptor);
@@ -680,10 +800,10 @@ export async function createInventory({ artifactRoot, origins = new Map(), exter
     if (forbiddenLegacyContinuityModule(emittedModule))
       throw new Error(`production_legacy_continuity_module_forbidden:${emittedModule}`);
   }
-  if (entryRoots !== undefined) await verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots, origins });
+  if (entryRoots !== undefined) await verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots, origins, runtimeBootstrapPath });
   const entries = [];
   for (const item of artifactFiles) {
-    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION) continue;
+    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION || item === RUNTIME_ADMISSION) continue;
     // `files` has rejected traversal and symbolic links; normalize only its
     // canonical relative path before exact membership checking. Windows
     // arbitrary-reparse enforcement remains blocked by design/42.
@@ -698,7 +818,7 @@ export async function createInventory({ artifactRoot, origins = new Map(), exter
   const canonical = JSON.stringify({ entries, externalRuntimeClosure: closure });
   return { schema: "gamebuddy-host-production-inventory/v4", entries, externalRuntimeClosure: closure, digest: digest(canonical) };
 }
-export async function verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory, origins = new Map(), browserArtifactSnapshot }) {
+export async function verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory, origins = new Map(), browserArtifactSnapshot, runtimeDescriptor = config.bundledRuntime }) {
   const verifiedOrigins = new Map(origins);
   if (config.browserArtifact !== undefined)
     rejectBrowserArtifactOutsideFixedSubtree(await files(artifactRoot), config.browserArtifact);
@@ -712,7 +832,7 @@ export async function verifyArtifact({ artifactRoot, hostRoot, config, expectedI
       verifiedOrigins.set(path, origin);
     }
   }
-  const inventory = await createInventory({ artifactRoot, hostRoot, origins: verifiedOrigins, entryRoots: allVerificationRoots(config), externalRuntimeClosure: config.externalRuntimeClosure, browserArtifactSnapshot: verifiedBrowserArtifactSnapshot, browserArtifactDescriptor: config.browserArtifact });
+  const inventory = await createInventory({ artifactRoot, hostRoot, origins: verifiedOrigins, entryRoots: allVerificationRoots(config), externalRuntimeClosure: config.externalRuntimeClosure, browserArtifactSnapshot: verifiedBrowserArtifactSnapshot, browserArtifactDescriptor: config.browserArtifact, runtimeBootstrapPath: runtimeDescriptor.bootstrapPath });
   for (const entry of config.entryRoots) if (!inventory.entries.some((item) => item.path === entry)) throw new Error(`production_entry_missing:${entry}`);
   if (JSON.stringify(inventory) !== JSON.stringify(expectedInventory ?? inventory)) throw new Error("production_inventory_mismatch_or_orphan");
   return inventory;
@@ -939,8 +1059,19 @@ async function acquirePublisherLock(outputRoot) {
 async function currentGeneration(outputRoot) {
   const pointerPath = resolve(outputRoot, POINTER); await safeAncestors(outputRoot, pointerPath, "production_pointer"); await regular(pointerPath, "production_pointer");
   const pointer = JSON.parse(await readFile(pointerPath, "utf8"));
-  if (typeof pointer.generation !== "string" || !/^[a-z0-9-]+$/i.test(pointer.generation)) throw new Error("invalid_production_current_pointer");
+  if (!exactKeys(pointer, ["schema", "generation", "inventoryDigest", "runtimeAdmissionSha256"])
+    || pointer.schema !== "gamebuddy-host-production-current/v2"
+    || typeof pointer.generation !== "string" || !/^[a-z0-9-]+$/i.test(pointer.generation)
+    || typeof pointer.inventoryDigest !== "string" || !/^[a-f0-9]{64}$/.test(pointer.inventoryDigest)
+    || typeof pointer.runtimeAdmissionSha256 !== "string" || !/^[a-f0-9]{64}$/.test(pointer.runtimeAdmissionSha256))
+    throw new Error("invalid_production_current_pointer");
   return pointer;
+}
+async function verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer }) {
+  const path = resolve(artifactRoot, RUNTIME_ADMISSION);
+  await safeAncestors(artifactRoot, path, "runtime_admission"); await regular(path, "runtime_admission");
+  if (digest(await readFile(path)) !== pointer.runtimeAdmissionSha256)
+    throw new Error("production_current_pointer_runtime_admission_mismatch");
 }
 async function generationRoot(outputRoot, generation) {
   const root = resolve(outputRoot, GENERATIONS, generation); await safeAncestors(outputRoot, root, "production_generation");
@@ -950,8 +1081,11 @@ async function assertOutputRootLayout(outputRoot) {
   const entries = await readdir(outputRoot);
   if (entries.some((entry) => entry !== GENERATIONS && entry !== POINTER && entry !== PUBLISHER_LOCK)) throw new Error("production_output_root_contains_direct_artifact");
 }
-export async function publishProductionArtifact({ hostRoot, emittedRoot, outputRoot }) {
-  const config = await readArtifactConfig(hostRoot); const generation = `g-${Date.now().toString(36)}-${process.pid}-${randomUUID().replaceAll("-", "")}`;
+async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoot, outputRoot }, copyRuntime, runtimeDescriptorOverride, cleanupRuntimeSource = undefined) {
+  if (typeof copyRuntime !== "function") throw new Error("verified_bundled_runtime_input_required");
+  const config = await readArtifactConfig(hostRoot);
+  const runtimeDescriptor = runtimeDescriptorOverride ?? config.bundledRuntime;
+  const generation = `g-${Date.now().toString(36)}-${process.pid}-${randomUUID().replaceAll("-", "")}`;
   await ensureOutputRoot(outputRoot);
   const releaseLock = await acquirePublisherLock(outputRoot);
   const stagingRoot = resolve(outputRoot, GENERATIONS, `.staging-${generation}`); const finalRoot = resolve(outputRoot, GENERATIONS, generation); const pointerStaging = resolve(outputRoot, `.current-${generation}.json`);
@@ -963,6 +1097,7 @@ export async function publishProductionArtifact({ hostRoot, emittedRoot, outputR
       const source = resolve(emittedRoot, item); const destination = resolve(stagingRoot, item); await regular(source, "emitted_source"); await mkdir(dirname(destination), { recursive: true }); await copyFile(source, destination);
     }
     const origins = await copyApprovedResources({ hostRoot, stagingRoot, config });
+    for (const [path, origin] of await copyRuntime(stagingRoot, runtimeDescriptor)) origins.set(path, origin);
     if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
       for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
     }
@@ -985,23 +1120,58 @@ export async function publishProductionArtifact({ hostRoot, emittedRoot, outputR
     // pre-publish mutation window as far as this pathname-based architecture permits.
     const browserArtifactSnapshot = config.browserArtifact === undefined ? undefined
       : (await createBrowserArtifactSnapshot({ artifactRoot: stagingRoot, descriptor: config.browserArtifact })).snapshot;
-    const inventory = await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, origins, browserArtifactSnapshot });
+    const inventory = await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, origins, browserArtifactSnapshot, runtimeDescriptor });
     await writeFile(resolve(stagingRoot, "production-inventory.json"), `${JSON.stringify(inventory, null, 2)}\n`);
-    await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, expectedInventory: inventory, origins, browserArtifactSnapshot });
+    await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, expectedInventory: inventory, origins, browserArtifactSnapshot, runtimeDescriptor });
     if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined)
       await emitGuardianAdmission({ stagingRoot, inventory, descriptor: config.windowsStardewBootstrapGuardian });
+    await emitRuntimeAdmission({ stagingRoot, inventory, generation, descriptor: runtimeDescriptor });
+    await verifyRuntimeAdmission({ artifactRoot: stagingRoot, inventory, generation, descriptor: runtimeDescriptor });
+    const runtimeAdmissionSha256 = digest(await readFile(resolve(stagingRoot, RUNTIME_ADMISSION)));
     await rename(stagingRoot, finalRoot); // immutable generation becomes visible before current changes
-    await writeFile(pointerStaging, `${JSON.stringify({ schema: "gamebuddy-host-production-current/v1", generation, inventoryDigest: inventory.digest })}\n`);
+    // Runtime source cleanup is part of release admission, not best-effort
+    // post-publication hygiene. Its successful copy and all rechecks above make
+    // it safe to dispose before selecting the candidate generation.
+    await cleanupRuntimeSource?.();
+    await writeFile(pointerStaging, `${JSON.stringify({ schema: "gamebuddy-host-production-current/v2", generation, inventoryDigest: inventory.digest, runtimeAdmissionSha256 })}\n`);
     await rename(pointerStaging, resolve(outputRoot, POINTER));
     return { ...inventory, generation };
   } catch (error) { await rm(stagingRoot, { recursive: true, force: true }); await rm(pointerStaging, { force: true }); throw error; }
   finally { await releaseLock(); }
 }
+export function assertApprovedProductionBundledRuntimeAvailable() { throw new Error("verified_bundled_runtime_input_required"); }
+export async function publishProductionArtifact({ hostRoot, emittedRoot, outputRoot }) {
+  throw new Error("verified_bundled_runtime_input_required");
+}
+/**
+ * Fixed release-build handoff. The Host root and output root are module-relative;
+ * callers cannot supply a publisher destination or a runtime path.
+ */
+export async function publishFixedReleaseArtifactFromVerifiedRuntime() {
+  const fixedHostRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+  const fixedOutputRoot = resolve(fixedHostRoot, "dist");
+  const [{ takeComposedFixedReleaseRuntimeForPublisher }, { takeComposedFixedReleaseEmittedRootForPublisher }] = await Promise.all([
+    import("./node-runtime-release-acquisition.mjs"),
+    import("./build-production-artifact.mjs"),
+  ]);
+  const source = takeComposedFixedReleaseRuntimeForPublisher();
+  const emittedRoot = takeComposedFixedReleaseEmittedRootForPublisher();
+  return await publishProductionArtifactWithRuntimeCopier(
+    { hostRoot: fixedHostRoot, emittedRoot, outputRoot: fixedOutputRoot },
+    async (stagingRoot, descriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor, source }),
+    source.descriptor,
+    source.dispose,
+  );
+}
 export async function assertCompleteProductionArtifact({ hostRoot, outputRoot }) {
   await assertOutputRootLayout(outputRoot);
   const config = await readArtifactConfig(hostRoot); const pointer = await currentGeneration(outputRoot); const artifactRoot = await generationRoot(outputRoot, pointer.generation);
+  await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer });
+  const runtimeDescriptor = runtimeDescriptorForArtifact(artifactRoot, config);
   const manifest = JSON.parse(await readFile(resolve(artifactRoot, "production-inventory.json"), "utf8"));
   const origins = new Map(config.resources.map((resource) => [slash(resource.destination), { kind: "allowlisted_resource", source: slash(resource.source), destination: slash(resource.destination), config: "production-artifact.config.json" }]));
+  await verifyBundledRuntimeInArtifact({ artifactRoot, descriptor: runtimeDescriptor });
+  for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
   if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
     for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
   }
@@ -1014,7 +1184,8 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined) {
     for (const [path, origin] of await verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsStardewBootstrapGuardian })) origins.set(path, origin);
   }
-  const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins });
+  const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
+  await verifyRuntimeAdmission({ artifactRoot, inventory, generation: pointer.generation, descriptor: runtimeDescriptor });
   if (pointer.inventoryDigest !== inventory.digest) throw new Error("production_current_pointer_inventory_mismatch");
   return { ...inventory, generation: pointer.generation, artifactRoot };
 }
@@ -1048,7 +1219,11 @@ export async function resolveProductionModule({ selected, module }) {
 }
 export async function recheckProductionEntry({ hostRoot, selected }) {
   const config = await readArtifactConfig(hostRoot);
+  const runtimeDescriptor = runtimeDescriptorForArtifact(selected.artifactRoot, config);
+  const manifest = JSON.parse(await readFile(resolve(selected.artifactRoot, "production-inventory.json"), "utf8"));
   const origins = new Map(config.resources.map((resource) => [slash(resource.destination), { kind: "allowlisted_resource", source: slash(resource.source), destination: slash(resource.destination), config: "production-artifact.config.json" }]));
+  await verifyBundledRuntimeInArtifact({ artifactRoot: selected.artifactRoot, descriptor: runtimeDescriptor });
+  for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
   if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
     for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
   }
@@ -1061,8 +1236,8 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined) {
     for (const [path, origin] of await verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsStardewBootstrapGuardian })) origins.set(path, origin);
   }
-  const manifest = JSON.parse(await readFile(resolve(selected.artifactRoot, "production-inventory.json"), "utf8"));
-  const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins });
+  const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
+  await verifyRuntimeAdmission({ artifactRoot: selected.artifactRoot, inventory, generation: selected.generation, descriptor: runtimeDescriptor });
   if (inventory.digest !== selected.digest) throw new Error("production_selected_generation_integrity_mismatch");
   await safeAncestors(selected.artifactRoot, selected.entryPath, "production_entry"); await regular(selected.entryPath, "production_entry");
   return selected;
