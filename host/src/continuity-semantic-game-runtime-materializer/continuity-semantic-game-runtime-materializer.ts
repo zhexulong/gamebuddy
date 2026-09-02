@@ -297,13 +297,13 @@ export function createHostGameRuntimeMaterializer(
             await closeFixedTools();
            await recoveryJournal.close();
            throw error;
-         }
-         const runtime = constructed.runtime;
-        await runtime.recoverStardewExecutionReceipts?.(Object.freeze({
-          scope: recovery.identity,
-          bindingIdentity: recovery.identity,
-          queryExecutionReceipt: recovery.queryExecutionReceipt,
-        }));
+          }
+          const runtime = constructed.runtime;
+          await runtime.recoverStardewExecutionReceipts?.(Object.freeze({
+            scope: recovery.identity,
+            bindingIdentity: recovery.identity,
+            queryExecutionReceipt: recovery.queryExecutionReceipt,
+          }));
         const liveSourceAttester = options.liveSourceAttester;
         const loop = new CompanionLoop(
           runtime.session,
