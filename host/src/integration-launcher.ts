@@ -54,12 +54,6 @@ export type IntegrationEventSource = Readonly<{
 export type IntegrationLaunchHandle = Readonly<{
   connection: GameConnection;
   /**
-   * Adapter-owned optional presentation capability. Generic Host code treats
-   * this as opaque; an integration-specific composition must validate it
-   * before mounting a presentation port.
-   */
-  presentationBridge?: unknown;
-  /**
    * Adapter-owned optional narrow read-only recovery capability bound to this
    * exact authenticated launch. It is deliberately NOT exposed on
    * GameConnection; an integration-specific composition must validate

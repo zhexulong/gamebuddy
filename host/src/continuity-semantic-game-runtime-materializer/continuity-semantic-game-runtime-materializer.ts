@@ -1,4 +1,13 @@
 import { join } from "node:path";
+import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import {
+  createStableGameRuntimeBindingIdentity,
+  createStardewRecoveryBindingContext,
+  readStardewRecoveryBindingContext,
+} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
+import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
 import type { CompanionInterruption } from "../companion-interruption.js";
 import { CompanionLoop } from "../companion-loop.js";
@@ -20,7 +29,17 @@ import type {
   IntegrationStateView,
 } from "../game-integration-adapter.js";
 import type { GameConnection } from "../game-connection.js";
-import { createGameCompanionRuntime, type RuntimeSession } from "../runtime.js";
+import type { RuntimeSession } from "../runtime.js";
+import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
+import {
+  validateBodyProgramCandidateRequest,
+  validateBodyProgramCommandResult,
+  validateBodyProgramEventsResult,
+  validateBodyProgramStatusResult,
+  type BodyProgramCandidateRequest,
+  type BodyProgramEventsRequest,
+  type BodyProgramStatusRequest,
+} from "../protocol.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import {
   consumeGameVoicePresentationAttachment,
@@ -37,11 +56,134 @@ export type {
   MaterializedGameRuntime,
 } from "./continuity-semantic-game-runtime-materializer.internal.js";
 
+type BodyProgramPort = ReturnType<typeof materializeAuthenticatedStardewLaunchPorts>["bodyProgram"];
+type BodyProgramConsumer = object;
+type BodyProgramConsumerRecord = { port: BodyProgramPort; available: boolean; active: number; drained?: () => void };
+const bodyProgramConsumers = new WeakMap<BodyProgramConsumer, BodyProgramConsumerRecord>();
+
 /**
  * Creates the fixed production S4c materializer. This is construction-zone-only:
  * the eventual composer invokes it inside the live S4b one-shot callback after
  * durable prepare. No facade/model/Mod-wire configuration reaches this factory.
  */
+function createBodyProgramTools(
+  consumer: BodyProgramConsumer,
+  connection: GameConnection,
+  mountedPolicy: IntegrationActionPolicy,
+): readonly ToolDefinition[] {
+  const definition = <TRequest extends BodyProgramCandidateRequest | BodyProgramStatusRequest | BodyProgramEventsRequest, TResult>(
+    name: "stardew_verify_action_program" | "stardew_submit_action_program" | "stardew_action_program_status" | "stardew_action_program_events",
+    validateRequest: (value: Record<string, unknown>) => string | null,
+    validateResult: (value: Record<string, unknown>) => string | null,
+    invoke: (port: BodyProgramPort, request: TRequest) => Promise<TResult>,
+  ): ToolDefinition => Object.freeze(defineTool({
+    name,
+    label: name,
+    description: name,
+    parameters: bodyProgramToolParameters(name),
+    execute: async (_toolCallId, params) => {
+      if (!isRecord(params) || validateRequest(params) !== null)
+        throw new Error("invalid_body_program_tool_arguments");
+       if (name === "stardew_verify_action_program" || name === "stardew_submit_action_program")
+         assertFreshBodyProgramPreflight(connection, mountedPolicy, params);
+      const record = bodyProgramConsumers.get(consumer);
+      if (record === undefined || !record.available)
+        throw new Error("action_program_runtime_unavailable");
+      record.active += 1;
+      try {
+        const result = await invoke(record.port, params as TRequest);
+        if (!isRecord(result) || validateResult(result) !== null)
+          throw new Error("body_program_protocol_invalid");
+        const details = Object.freeze(result);
+        return Object.freeze({
+          content: [{ type: "text" as const, text: JSON.stringify(details) }],
+          details,
+        });
+      } finally {
+        record.active -= 1;
+        if (!record.available && record.active === 0) record.drained?.();
+      }
+    },
+  }));
+  return Object.freeze([
+    definition("stardew_verify_action_program", validateBodyProgramCandidateRequest, validateBodyProgramCommandResult, (port, request) => port.verify(request as BodyProgramCandidateRequest)),
+    definition("stardew_submit_action_program", validateBodyProgramCandidateRequest, validateBodyProgramCommandResult, (port, request) => port.submit(request as BodyProgramCandidateRequest)),
+    definition("stardew_action_program_status", validateStatusRequest, validateBodyProgramStatusResult, (port, request) => port.status(request as BodyProgramStatusRequest)),
+    definition("stardew_action_program_events", validateEventsRequest, validateBodyProgramEventsResult, (port, request) => port.events(request as BodyProgramEventsRequest)),
+  ]);
+}
+
+function bodyProgramToolParameters(name: string) {
+  const opaque = Type.String({ pattern: "^[A-Za-z0-9_-]{1,128}$" });
+  const runtimeValue = Type.Object({
+    type: Type.String({ minLength: 1, maxLength: 64 }),
+    canonicalValue: Type.String({ maxLength: 512 }),
+  }, { additionalProperties: false });
+  const factReference = Type.Object({ nodeId: opaque, factName: opaque }, { additionalProperties: false });
+  const node = Type.Object({
+    nodeId: opaque,
+    actionId: opaque,
+    arguments: Type.Record(opaque, runtimeValue, { maxProperties: 32 }),
+    dependsOn: Type.Array(opaque, { maxItems: 8 }),
+    bindings: Type.Record(opaque, factReference, { maxProperties: 32 }),
+    deadlineMs: Type.Integer({ minimum: 1 }),
+  }, { additionalProperties: false });
+  if (name === "stardew_verify_action_program" || name === "stardew_submit_action_program")
+    return Type.Object({ programId: opaque, nodes: Type.Array(node, { minItems: 1, maxItems: 16 }) }, { additionalProperties: false });
+  if (name === "stardew_action_program_status")
+    return Type.Object({ programId: opaque }, { additionalProperties: false });
+  return Type.Object({
+    programId: opaque,
+    cursor: Type.Integer({ minimum: 0 }),
+    pageSize: Type.Integer({ minimum: 1, maximum: 32 }),
+  }, { additionalProperties: false });
+}
+
+function createBodyProgramToolCloser(consumer: BodyProgramConsumer): () => Promise<void> {
+  return async () => {
+    const record = bodyProgramConsumers.get(consumer);
+    if (record === undefined) return;
+    record.available = false;
+    if (record.active > 0)
+      await new Promise<void>((resolve) => { record.drained = resolve; });
+    bodyProgramConsumers.delete(consumer);
+  };
+}
+
+function assertFreshBodyProgramPreflight(
+  connection: GameConnection,
+  mountedPolicy: IntegrationActionPolicy,
+  request: Record<string, unknown>,
+): void {
+  if (connection.executionGate?.executable !== true) throw new Error("integration_not_ready");
+  const state = connection.module.readState(connection);
+  if (!state.connected || state.registrations === undefined) throw new Error("integration_not_ready");
+   const visible = connection.module.actionCatalog.visibleActions(
+     state.registrations,
+     state.enabledActionIds ?? [],
+     mountedPolicy,
+   );
+  const allowed = new Set(visible.map((registration) => registration.actionId));
+  if (Array.isArray(request.nodes) && request.nodes.some((node) =>
+    !isRecord(node) || typeof node.actionId !== "string" || !allowed.has(node.actionId)
+  )) throw new Error("body_program_preflight_rejected");
+}
+
+function validateStatusRequest(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["programId"]) && isOpaque(value.programId)
+    ? null : "invalid_body_program_request";
+}
+function validateEventsRequest(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["programId", "cursor", "pageSize"]) &&
+    isOpaque(value.programId) && Number.isSafeInteger(value.cursor) &&
+    (value.cursor as number) >= 0 && Number.isSafeInteger(value.pageSize) &&
+    (value.pageSize as number) >= 1 && (value.pageSize as number) <= 32
+    ? null : "invalid_body_program_request";
+}
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
 export type HostGameRuntimeMaterializerOptions = Readonly<{
   gameOperationalGateNonceSha256?: string;
   /**
@@ -62,18 +204,70 @@ export function createHostGameRuntimeMaterializer(
       reservation,
       permit,
     ): Promise<MaterializedGameRuntime> {
-      return materializeExactEnter(reservation, permit, async (execution) => {
-        const constructed = await createMaterializedGameRuntime(
+      return await materializeExactEnter(reservation, permit, async (execution, admission) => {
+        const ports = materializeAuthenticatedStardewLaunchPorts(execution, admission);
+        const recoveryIdentity = createStableGameRuntimeBindingIdentity(execution);
+        const recoveryJournal = await StardewLogicalActionRecoveryJournal.open(
+          Object.freeze({
+            directory: join(
+              execution.runtimeRoot,
+              "stardew-recovery",
+              recoveryIdentity.continuityId,
+              recoveryIdentity.saveId,
+              recoveryIdentity.worldId,
+            ),
+            scope: recoveryIdentity,
+          }),
+        );
+         const recoveryContext = createStardewRecoveryBindingContext(execution, recoveryJournal);
+         const bodyProgramConsumer = Object.freeze(Object.create(null)) as BodyProgramConsumer;
+         bodyProgramConsumers.set(bodyProgramConsumer, { port: ports.bodyProgram, available: true, active: 0 });
+          const closeFixedTools = createBodyProgramToolCloser(bodyProgramConsumer);
+          // Resolve exactly once for this construction; closures and adapter tools
+          // share this same object while live state remains freshly read per call.
+          const mountedPolicy = execution.connection.module.parsePolicy(
+            execution.connection.module.defaultPolicy,
+          );
+          const fixedTools = createBodyProgramTools(
+            bodyProgramConsumer,
+            execution.connection,
+            mountedPolicy,
+          );
+        const recovery = readStardewRecoveryBindingContext(recoveryContext);
+        let constructed: Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>;
+        try {
+          constructed = await createMaterializedGameRuntime(
           execution.principal,
           execution.world,
           execution.runtimeRoot,
           execution.connection,
-          execution.launch.presentationBridge,
+          ports.presentation,
           permit.gameSessionId,
           options.gameOperationalGateNonceSha256,
-          options.gameVoicePresentation,
+           options.gameVoicePresentation,
+           fixedTools,
+            Object.freeze({
+              resolvedPolicy: mountedPolicy,
+              recoveryJournal,
+            recoveryBinding: Object.freeze({ scope: recovery.identity, bindingIdentity: recovery.identity }),
+            recoveryPort: Object.freeze({
+              scope: recovery.identity,
+              bindingIdentity: recovery.identity,
+              queryExecutionReceipt: recovery.queryExecutionReceipt,
+            }),
+          }),
         );
-        const runtime = constructed.runtime;
+         } catch (error) {
+            await closeFixedTools();
+           await recoveryJournal.close();
+           throw error;
+         }
+         const runtime = constructed.runtime;
+        await runtime.recoverStardewExecutionReceipts?.(Object.freeze({
+          scope: recovery.identity,
+          bindingIdentity: recovery.identity,
+          queryExecutionReceipt: recovery.queryExecutionReceipt,
+        }));
         const liveSourceAttester = options.liveSourceAttester;
         const loop = new CompanionLoop(
           runtime.session,
@@ -162,9 +356,9 @@ export function createHostGameRuntimeMaterializer(
           // cannot speak before both durable admission and STOP authority.
           host.acceptInitialFacts(execution.launch.initialFacts);
         };
-        return Object.freeze({
-          session: runtime.session,
-          piSessionId: runtime.piSessionId,
+          return Object.freeze({
+            session: runtime.session,
+           piSessionId: runtime.piSessionId,
           ...(runtime.gameplaySubagent === undefined
             ? {}
             : { gameplaySubagent: runtime.gameplaySubagent }),
@@ -177,6 +371,8 @@ export function createHostGameRuntimeMaterializer(
           ...(operationalGateEvidence === undefined
             ? {}
             : { operationalGateEvidence }),
+           closeRecoveryJournal: () => recoveryJournal.close(),
+           closeFixedTools,
           connected: Object.freeze({
             host,
             lifecycleSnapshot: () => lifecycle.snapshot(),
@@ -324,10 +520,12 @@ async function createMaterializedGameRuntime(
   world: MaterializedGameRuntimeInput["world"],
   runtimeRoot: string,
   connection: GameConnection,
-  presentationBridge: unknown,
+  presentation: FarmhandPresentationBridge,
   gameSessionId: string,
-  gameOperationalGateNonceSha256?: string,
-  gameVoicePresentation?: GameVoicePresentationAttachment,
+  gameOperationalGateNonceSha256: string | undefined,
+  gameVoicePresentation: GameVoicePresentationAttachment | undefined,
+  fixedTools: readonly ToolDefinition[],
+    recoveryAttachment?: Pick<import("../runtime.js").GameCompanionRuntimeAttachment, "recoveryJournal" | "recoveryBinding" | "recoveryPort"> & Readonly<{ resolvedPolicy: IntegrationActionPolicy }>,
 ): Promise<
   Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>
 > {
@@ -341,14 +539,14 @@ async function createMaterializedGameRuntime(
   const turnTracker = new GameTurnLineageTracker();
   const presentationLocale = "zh-CN";
   const hostBindingFactory = (handle: Readonly<{ interruption: CompanionInterruption }>) => {
-    if (!isFarmhandPresentationBridge(presentationBridge))
+    if (!isFarmhandPresentationBridge(presentation))
       throw new Error("game_presentation_bridge_unavailable");
     return Object.freeze({
       surface: "game" as const,
       profile: Object.freeze({ locale: presentationLocale, text: true, speech: null }),
       sessionId: gameSessionId,
       textPort: createFarmhandCompanionPresentationPort(
-        presentationBridge,
+        presentation,
         createFarmhandPresentationEpochAdmission(handle.interruption),
       ),
       admissionProvider: createGamePresentationAdmissionProvider(
@@ -374,7 +572,7 @@ async function createMaterializedGameRuntime(
         });
       })()
     : undefined;
-  const runtime = await createGameCompanionRuntime(
+  const runtime = await createMaterializedGameCompanionRuntime(
     identity,
     runtimeRoot,
     connection,
@@ -382,8 +580,20 @@ async function createMaterializedGameRuntime(
     gameOperationalGateNonceSha256 === undefined
       ? undefined
       : Object.freeze({ nonceSha256: gameOperationalGateNonceSha256 }),
-    workerAttachment === undefined ? hostBindingFactory : undefined,
-    workerAttachment,
+    workerAttachment === undefined && recoveryAttachment === undefined ? hostBindingFactory : undefined,
+    recoveryAttachment === undefined
+      ? workerAttachment
+      : workerAttachment === undefined
+        ? Object.freeze({
+            modelConfig: undefined,
+            gameplaySubagentEnabled: false,
+            hostBindingFactory,
+            recoveryJournal: recoveryAttachment.recoveryJournal,
+            recoveryBinding: recoveryAttachment.recoveryBinding,
+            recoveryPort: recoveryAttachment.recoveryPort,
+          })
+        : Object.freeze({ ...workerAttachment, ...recoveryAttachment }),
+    Object.freeze({ fixedTools, resolvedPolicy: recoveryAttachment?.resolvedPolicy ?? connection.module.parsePolicy(connection.module.defaultPolicy) }),
   );
   return Object.freeze({ runtime, turnTracker });
 }
