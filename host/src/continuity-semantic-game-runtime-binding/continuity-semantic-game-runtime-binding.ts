@@ -51,6 +51,8 @@ export type StardewRecoveryBindingContext = Readonly<{
 export type StardewRecoveryBindingContextRecord = Readonly<{
   journal: StardewLogicalActionRecoveryJournal;
   identity: StableGameRuntimeBindingIdentity;
+  scope: StableGameRuntimeBindingIdentity;
+  bindingIdentity: StableGameRuntimeBindingIdentity;
   queryExecutionReceipt(query: ExecutionReceiptQuery): Promise<ExecutionReceipt>;
 }>;
 const recoveryContextBrand = new WeakSet<object>();
@@ -289,6 +291,8 @@ export function createStardewRecoveryBindingContext(
   recoveryContextRecords.set(context, Object.freeze({
     journal,
     identity,
+    scope: identity,
+    bindingIdentity: identity,
     queryExecutionReceipt: execution.launch.receiptRecovery as (
       query: ExecutionReceiptQuery,
     ) => Promise<ExecutionReceipt>,
