@@ -6,7 +6,6 @@ test("lists only explicit package test modules", async () => {
   const tests = await listPackageTests();
   assert.ok(tests.length > 0);
   assert.ok(tests.every((entry) => /^tests\/[a-z0-9][a-z0-9-]*\.test\.mjs$/.test(entry)));
-  assert.ok(!tests.includes("tests/root-ci-disposition-audit.test.mjs"));
 });
 
 test("launches Node tests with explicit files and no shell", async () => {

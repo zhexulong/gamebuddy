@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 const PACKAGE_DIRECTORY = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TEST_DIRECTORY = path.join(PACKAGE_DIRECTORY, "tests");
 const SAFE_TEST_FILE = /^[a-z0-9][a-z0-9-]*\.test\.mjs$/;
-const EXCLUDED_STANDALONE_TESTS = new Set(["root-ci-disposition-audit.test.mjs"]);
 
 function fail(code) {
   throw new Error(`stardew_action_test_launcher_${code}`);
@@ -16,7 +15,7 @@ export async function listPackageTests() {
   let entries;
   try { entries = await readdir(TEST_DIRECTORY, { withFileTypes: true }); } catch { fail("tests_unreadable"); }
   const tests = entries
-    .filter((entry) => entry.isFile() && SAFE_TEST_FILE.test(entry.name) && !EXCLUDED_STANDALONE_TESTS.has(entry.name))
+    .filter((entry) => entry.isFile() && SAFE_TEST_FILE.test(entry.name))
     .map((entry) => entry.name)
     .sort();
   if (tests.length === 0) fail("tests_missing");
