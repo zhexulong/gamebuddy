@@ -54,6 +54,8 @@ export type IntegrationStateView = Readonly<{
   connected: boolean;
   sessionId: string | null;
   capabilities: readonly string[];
+  /** Authenticated live execution availability; absent fails closed. */
+  enabledActionIds?: readonly string[];
   /** Monotone integration-owned availability publication, distinct from world snapshot revision. */
   capabilityRevision: number | null;
   /** Authenticated adapter-owned registration facts for the current connection generation. Absence is an empty catalog. */

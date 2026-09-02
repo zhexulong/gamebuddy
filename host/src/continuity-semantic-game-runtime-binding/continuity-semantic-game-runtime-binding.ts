@@ -9,6 +9,11 @@ import {
 import { assertReceiptBackedLaunch, type IntegrationLaunchHandle } from "../integration-launcher.js";
 import type { IntegrationWorldScope } from "../game-integration-adapter.js";
 import type { CompanionIdentity } from "../runtime.js";
+import type {
+  ExecutionReceipt,
+  ExecutionReceiptQuery,
+} from "../protocol.js";
+import type { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import {
   assertRuntimeOwnerIdentity,
   drainBindingMaterializations,
@@ -37,6 +42,20 @@ export type StableGameRuntimeBindingIdentity = Readonly<{
 
 // Kept in this module so no internal importer can mint receipt-backed provenance.
 const receiptBackedExecutionBrand = new WeakSet<object>();
+
+/** Opaque fresh-binding recovery context; its query capability never reaches GameConnection. */
+export type StardewRecoveryBindingContext = Readonly<{
+  readonly __stardewRecoveryBindingContext: unique symbol;
+}>;
+
+export type StardewRecoveryBindingContextRecord = Readonly<{
+  journal: StardewLogicalActionRecoveryJournal;
+  identity: StableGameRuntimeBindingIdentity;
+  queryExecutionReceipt(query: ExecutionReceiptQuery): Promise<ExecutionReceipt>;
+}>;
+const recoveryContextBrand = new WeakSet<object>();
+const recoveryContextRecords = new WeakMap<object, StardewRecoveryBindingContextRecord>();
+
 
 export type {
   OpaqueGameRuntimeBindingToken,
@@ -253,6 +272,39 @@ export function createStableGameRuntimeBindingIdentity(
     worldId: execution.world.worldId,
   });
 }
+
+/** Binds one Host-owned journal to this exact fresh receipt-backed binding. */
+export function createStardewRecoveryBindingContext(
+  execution: GameRuntimeBindingExecution,
+  journal: StardewLogicalActionRecoveryJournal,
+): StardewRecoveryBindingContext {
+  if (
+    !receiptBackedExecutionBrand.has(execution) ||
+    !isRecord(execution.launch) ||
+    !isCallable(execution.launch.receiptRecovery)
+  ) throw new Error("invalid_stardew_recovery_binding_context");
+  const identity = createStableGameRuntimeBindingIdentity(execution);
+  const context = Object.freeze(Object.create(null)) as StardewRecoveryBindingContext;
+  recoveryContextBrand.add(context);
+  recoveryContextRecords.set(context, Object.freeze({
+    journal,
+    identity,
+    queryExecutionReceipt: execution.launch.receiptRecovery as (
+      query: ExecutionReceiptQuery,
+    ) => Promise<ExecutionReceipt>,
+  }));
+  return context;
+}
+
+/** Internal consumer; structural lookalikes fail closed. */
+export function readStardewRecoveryBindingContext(value: unknown): StardewRecoveryBindingContextRecord {
+  if (!isRecord(value) || !recoveryContextBrand.has(value) || !Object.isFrozen(value))
+    throw new Error("invalid_stardew_recovery_binding_context");
+  const record = recoveryContextRecords.get(value);
+  if (record === undefined) throw new Error("invalid_stardew_recovery_binding_context");
+  return record;
+}
+
 
 /** Validates the exact durable identity shape without admitting runtime facts. */
 export function assertStableGameRuntimeBindingIdentity(
