@@ -568,6 +568,28 @@ export type ActionCatalog = Readonly<{
   entries: readonly ActionRegistration[];
 }>;
 
+export type BodyProgramRuntimeValue = Readonly<{ type: string; canonicalValue: string }>;
+export type BodyProgramFactReference = Readonly<{ nodeId: string; factName: string }>;
+export type BodyProgramNode = Readonly<{
+  nodeId: string;
+  actionId: string;
+  arguments: Readonly<Record<string, BodyProgramRuntimeValue>>;
+  dependsOn: readonly string[];
+  bindings: Readonly<Record<string, BodyProgramFactReference>>;
+  deadlineMs: number;
+}>;
+export type BodyProgramCandidateRequest = Readonly<{ programId: string; nodes: readonly BodyProgramNode[] }>;
+export type BodyProgramStatusRequest = Readonly<{ programId: string }>;
+export type BodyProgramEventsRequest = Readonly<{ programId: string; cursor: number; pageSize: number }>;
+export type BodyProgramCommandResult = Readonly<{ programId: string; status: string; diagnostics: readonly string[] }>;
+export type BodyProgramStatusResult = Readonly<{ programId: string; status: string; catalogRevision: number }>;
+export type BodyProgramEvent = Readonly<{ cursor: number; kind: string; catalogRevision: number }>;
+export type BodyProgramEventsResult = Readonly<{
+  programId: string;
+  nextCursor: number;
+  events: readonly BodyProgramEvent[];
+}>;
+
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
   | Envelope<
@@ -594,36 +616,27 @@ export type BridgeMessage =
   | Envelope<"companion_presentation_request", CompanionPresentationRequest>
   | Envelope<"system_notice_request", SystemNoticeRequest>
   | Envelope<"system_notice_receipt", SystemNoticeReceipt>
-  | Envelope<
-      "companion_presentation_receipt",
-      Readonly<{ expressionId: string; revision: number; presentationEpoch: number }>
-    >
+  | Envelope<"companion_presentation_receipt", Readonly<{ expressionId: string; revision: number; presentationEpoch: number }>>
   | Envelope<"player_control_receipt", PlayerControlReceipt>
   | Envelope<"execution_receipt", ExecutionReceipt>
+  | Envelope<"program_verify", BodyProgramCandidateRequest>
+  | Envelope<"program_verify_result", BodyProgramCommandResult>
+  | Envelope<"program_submit", BodyProgramCandidateRequest>
+  | Envelope<"program_submit_result", BodyProgramCommandResult>
+  | Envelope<"program_status", BodyProgramStatusRequest>
+  | Envelope<"program_status_result", BodyProgramStatusResult>
+  | Envelope<"program_events", BodyProgramEventsRequest>
+  | Envelope<"program_events_result", BodyProgramEventsResult>
   | Envelope<"error", Readonly<{ reasonCode: string }>>
   | Envelope<"semantic_event", SemanticEvent>
   | Envelope<"lifecycle", Readonly<{ state: "connected" | "disconnected" | "world_unavailable"; reasonCode: string }>>;
 
 export const BRIDGE_MESSAGE_TYPES = [
-  "hello",
-  "hello_ack",
-  "observe_request",
-  "navigation_read_request",
-  "navigation_read_result",
-  "snapshot",
-  "catalog_update",
-  "execution_request",
-  "execution_receipt_query",
-  "cancel_request",
-  "companion_presentation_request",
-  "system_notice_request",
-  "system_notice_receipt",
-  "companion_presentation_receipt",
-  "player_control_receipt",
-  "execution_receipt",
-  "error",
-  "semantic_event",
-  "lifecycle",
+  "hello", "hello_ack", "observe_request", "navigation_read_request", "navigation_read_result", "snapshot", "catalog_update",
+  "execution_request", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
+  "system_notice_receipt", "companion_presentation_receipt", "player_control_receipt", "execution_receipt",
+  "program_verify", "program_verify_result", "program_submit", "program_submit_result", "program_status", "program_status_result",
+  "program_events", "program_events_result", "error", "semantic_event", "lifecycle",
 ] as const;
 
 const SNAPSHOT_KEYS = [
@@ -911,6 +924,22 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         : "invalid_player_control_receipt";
     case "execution_receipt":
       return validateReceipt(payload);
+    case "program_verify":
+    case "program_submit":
+      return validateBodyProgramCandidateRequest(payload);
+    case "program_verify_result":
+    case "program_submit_result":
+      return validateBodyProgramCommandResult(payload);
+    case "program_status":
+      return hasExactKeys(payload, ["programId"]) && isOpaqueId(payload.programId) ? null : "invalid_body_program_request";
+    case "program_status_result":
+      return validateBodyProgramStatusResult(payload);
+    case "program_events":
+      return hasExactKeys(payload, ["programId", "cursor", "pageSize"]) && isOpaqueId(payload.programId) &&
+        isNonNegativeSafeInteger(payload.cursor) && Number.isSafeInteger(payload.pageSize) &&
+        (payload.pageSize as number) >= 1 && (payload.pageSize as number) <= 32 ? null : "invalid_body_program_request";
+    case "program_events_result":
+      return validateBodyProgramEventsResult(payload);
     case "error":
       return hasExactKeys(payload, ["reasonCode"]) && isReasonCode(payload.reasonCode) ? null : "invalid_error";
     case "semantic_event":
@@ -1701,6 +1730,50 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     (value.evidence === null || isRecord(value.evidence))
     ? null
     : "invalid_receipt";
+}
+
+export function validateBodyProgramCandidateRequest(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["programId", "nodes"]) || !isOpaqueId(value.programId) || !Array.isArray(value.nodes) || value.nodes.length < 1 || value.nodes.length > 16)
+    return "invalid_body_program_request";
+  return value.nodes.every(isBodyProgramNode) ? null : "invalid_body_program_request";
+}
+
+function isBodyProgramNode(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, ["nodeId", "actionId", "arguments", "dependsOn", "bindings", "deadlineMs"]) ||
+    !isOpaqueId(value.nodeId) || !isOpaqueId(value.actionId) || !isRecord(value.arguments) || !hasUniqueKeys(value.arguments) ||
+    !Array.isArray(value.dependsOn) || value.dependsOn.length > 8 || !value.dependsOn.every(isOpaqueId) ||
+    !isRecord(value.bindings) || !hasUniqueKeys(value.bindings) || !Number.isSafeInteger(value.deadlineMs) || (value.deadlineMs as number) <= 0)
+    return false;
+  return Object.entries(value.arguments).every(([name, argument]) => isOpaqueId(name) && isBodyProgramRuntimeValue(argument)) &&
+    Object.entries(value.bindings).every(([name, binding]) => isOpaqueId(name) && isBodyProgramFactReference(binding));
+}
+function isBodyProgramRuntimeValue(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["type", "canonicalValue"]) && typeof value.type === "string" && value.type.length >= 1 && value.type.length <= 64 &&
+    typeof value.canonicalValue === "string" && value.canonicalValue.length <= 512;
+}
+function isBodyProgramFactReference(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["nodeId", "factName"]) && isOpaqueId(value.nodeId) && isOpaqueId(value.factName);
+}
+export function validateBodyProgramCommandResult(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["programId", "status", "diagnostics"]) && isOpaqueId(value.programId) && isReasonCode(value.status) &&
+    Array.isArray(value.diagnostics) && value.diagnostics.length <= 64 && value.diagnostics.every(isReasonCode)
+    ? null : "invalid_body_program_result";
+}
+export function validateBodyProgramStatusResult(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["programId", "status", "catalogRevision"]) && isOpaqueId(value.programId) && isReasonCode(value.status) && isNonNegativeSafeInteger(value.catalogRevision)
+    ? null : "invalid_body_program_result";
+}
+export function validateBodyProgramEventsResult(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["programId", "nextCursor", "events"]) && isOpaqueId(value.programId) && isNonNegativeSafeInteger(value.nextCursor) &&
+    Array.isArray(value.events) && value.events.length <= 32 && value.events.every(isBodyProgramEvent)
+    ? null : "invalid_body_program_result";
+}
+function isBodyProgramEvent(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["cursor", "kind", "catalogRevision"]) && isNonNegativeSafeInteger(value.cursor) &&
+    isReasonCode(value.kind) && isNonNegativeSafeInteger(value.catalogRevision);
+}
+function hasUniqueKeys(value: Record<string, unknown>): boolean {
+  return Object.keys(value).length <= 32;
 }
 
 function validateSemanticEvent(value: Record<string, unknown>): string | null {

@@ -690,9 +690,9 @@ test("production materializer source rejects legacy lifecycle, facade, store com
     "S4c must keep its named Game construction helper private to the materializer",
   );
   assert.equal(
-    sources.some((source) => /import\s*\{[^}]*createGameCompanionRuntime/.test(source)),
+    sources.some((source) => /import\s*\{[^}]*createMaterializedGameCompanionRuntime/.test(source)),
     true,
-    "S4c uses the explicit Game-only runtime constructor when the operational marker is armed",
+    "S4c uses the explicit fixed-tool Game runtime constructor",
   );
   assert.equal(
     sources.some((source) => source.includes("GameRuntimeBindingExecution")),
