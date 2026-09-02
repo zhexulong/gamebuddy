@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fc } from "./test-support/fast-check.js";
+import fc from "fast-check";
 import { visibleActionsFromModCatalog, type ActionPolicy } from "./action-registry.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 

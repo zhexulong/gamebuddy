@@ -4,7 +4,7 @@ import { deflateSync } from "node:zlib";
 import { buildCompanionSystemPrompt, validateIdentityProfile } from "./identity-profile.js";
 import { candidateToIdentityProfile, decodeStCard, previewStCard } from "./st-card-import.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
-import fc from "./test-support/fast-check.js";
+import fc from "fast-check";
 
 function pngWithChara(json: string, keyword = "chara"): Uint8Array {
   const signature = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -304,7 +304,22 @@ test("PBT Property 1: Fuzzing arbitrary JSON strings never crashes decodeStCard"
 });
 
 test("PBT Property 2: Multiline formatting and newline preservation under fuzzing", () => {
-  const multilineArb = fc.multilineString({ minLength: 1, maxLength: 80 });
+  const multilineAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \t\n\r.,!?-_";
+  const multilineArb = fc.string({
+    unit: fc.constantFrom(...multilineAlphabet),
+    minLength: 1,
+    maxLength: 80,
+  });
+
+  assert.ok(multilineAlphabet.includes("\t"));
+  assert.ok(multilineAlphabet.includes("\n"));
+  assert.ok(multilineAlphabet.includes("\r"));
+  fc.assert(
+    fc.property(multilineArb, (text) => {
+      assert.ok([...text].every((character) => multilineAlphabet.includes(character)));
+    }),
+    { numRuns: 100 },
+  );
 
   fc.assert(
     fc.property(multilineArb, multilineArb, (desc, greeting) => {
@@ -346,12 +361,32 @@ test("PBT Property 3: Arbitrary byte payload never crashes PNG decoder", () => {
 });
 
 test("PBT Property 4: Generated Card Preview maps to valid IdentityProfile with Prefix Caching", () => {
+  const multilineAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \t\n\r.,!?-_";
   const cardArb = fc.record({
-    name: fc.asciiString({ minLength: 1, maxLength: 30 }),
-    description: fc.multilineString({ minLength: 1, maxLength: 100 }),
-    personality: fc.multilineString({ minLength: 1, maxLength: 100 }),
-    scenario: fc.multilineString({ minLength: 1, maxLength: 100 }),
+    name: fc.string({ unit: "grapheme-ascii", minLength: 1, maxLength: 30 }),
+    description: fc.string({
+      unit: fc.constantFrom(...multilineAlphabet),
+      minLength: 1,
+      maxLength: 100,
+    }),
+    personality: fc.string({
+      unit: fc.constantFrom(...multilineAlphabet),
+      minLength: 1,
+      maxLength: 100,
+    }),
+    scenario: fc.string({
+      unit: fc.constantFrom(...multilineAlphabet),
+      minLength: 1,
+      maxLength: 100,
+    }),
   });
+
+  fc.assert(
+    fc.property(fc.string({ unit: "grapheme-ascii", minLength: 1, maxLength: 30 }), (name) => {
+      assert.match(name, /^[\x20-\x7e]+$/);
+    }),
+    { numRuns: 100 },
+  );
 
   fc.assert(
     fc.property(cardArb, (cardData) => {

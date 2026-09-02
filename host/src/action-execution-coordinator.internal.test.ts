@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import fc from "./test-support/fast-check.js";
 import {
   createActionExecutionCoordinator,
   executionWakeSourceFor,

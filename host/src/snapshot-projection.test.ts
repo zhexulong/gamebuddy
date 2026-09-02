@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fc } from "./test-support/fast-check.js";
+import fc from "fast-check";
 import {
   projectMovementContext,
   projectFarmingContext,
