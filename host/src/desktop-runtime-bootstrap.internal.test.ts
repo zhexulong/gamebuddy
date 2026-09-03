@@ -74,10 +74,10 @@ test("compiled entry rejects malformed bootstrap wire without acknowledgement", 
 });
 
 test("disposable bootstrap admission accepts only the exact runtime closure and writes the exact acknowledgement bytes", async (t) => {
-  if (process.platform !== "win32") return t.skip("Windows-only bootstrap root and reparse admission");
+  if (process.platform !== "win32") return t.skip("Windows-only bootstrap root, reparse, and current-user ownership admission");
   const fixtureRoot = await mkdtemp(join(tmpdir(), "gamebuddy-desktop-bootstrap-"));
   try {
-    const moduleDirectory = join(fixtureRoot, "generation");
+    const moduleDirectory = join(fixtureRoot, "Programs", "GameBuddy", "generation");
     const runtime = Buffer.from("fixture runtime");
     const bootstrap = Buffer.from(await readFile(compiledEntry));
     const closure = [
@@ -204,7 +204,7 @@ test("Desktop bootstrap source retains only fixed private ingress and no public 
   assert.match(source, /new WeakSet<object>/);
   assert.match(source, /new WeakMap<object, undefined>/);
 
-  const securityCheck = source.indexOf("inspectWindowsPathSecurity(inspector, root)");
+  const securityCheck = source.indexOf("Promise.all(roots.map((root) => inspectWindowsPathSecurity(inspector, root)))");
   const mint = source.indexOf("mintDesktopRootLayoutCapability(rootLayout)");
   const acknowledgement = source.indexOf("writeAcknowledgement(frame, admission)");
   assert.ok(securityCheck >= 0 && securityCheck < mint && securityCheck < acknowledgement, "root security check must precede mint and acknowledgement");
