@@ -519,8 +519,12 @@ test("production builder rejects a replaced manifest and never overwrites existi
 test("production builder uses the globally locked SDK, reuses a verified pair, and repeated publish is hash reproducible", { skip: process.platform !== "win32" }, async (t) => {
   // The production API intentionally accepts neither a dotnet path nor spawn injection.
   // An SDK drift is a blocked reproducibility result, not permission to publish with a different SDK.
-  const aside = resolve(outputRoot, "..", ".build-test-repro-aside");
+  const initialAside = resolve(outputRoot, "..", ".build-test-repro-initial-aside");
+  const firstAside = resolve(outputRoot, "..", ".build-test-repro-first-aside");
   try {
+    // Do not compare a verified pair inherited from an earlier test with a
+    // current publish: verify determinism across two fresh publishes instead.
+    await movePairAside(initialAside);
     const first = await buildWindowsStaleLockReclaimer();
     const firstHash = createHash("sha256").update(await readFile(first.helperPath)).digest("hex");
     assert.equal(first.sha256, firstHash);
@@ -535,7 +539,7 @@ test("production builder uses the globally locked SDK, reuses a verified pair, a
     // Force a second real publish by moving the verified pair aside so the
     // output root is absent again; determinism must hold across two actual
     // dotnet publish invocations.
-    await movePairAside(aside);
+    await movePairAside(firstAside);
     const second = await buildWindowsStaleLockReclaimer();
     const secondHash = createHash("sha256").update(await readFile(second.helperPath)).digest("hex");
     assert.equal(second.sha256, secondHash);
@@ -548,6 +552,7 @@ test("production builder uses the globally locked SDK, reuses a verified pair, a
     }
     throw error;
   } finally {
-    await rm(aside, { recursive: true, force: true }).catch(() => undefined);
+    await rm(firstAside, { recursive: true, force: true }).catch(() => undefined);
+    await rm(initialAside, { recursive: true, force: true }).catch(() => undefined);
   }
 });
