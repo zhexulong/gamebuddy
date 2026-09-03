@@ -128,7 +128,9 @@ test("disposable bootstrap admission accepts only the exact runtime closure and 
       rootLayoutSchema: "gamebuddy-windows-root-layout/v1",
     })}\n`);
     const accepted = await runEntry(frame, join(moduleDirectory, "desktop-runtime-bootstrap.internal.js"), true, fixtureRoot);
-    assert.equal(accepted.code, null, accepted.stderr.toString("utf8"));
+    // On Windows, Node maps child.kill("SIGTERM") to forced process termination;
+    // the test has already observed the exact acknowledgement before issuing it.
+    assert.ok(accepted.code === null || accepted.code === 1, accepted.stderr.toString("utf8"));
     assert.deepEqual(accepted.stdout, expectedAcknowledgement);
 
     const reject = async (mutate: () => Promise<void>, candidateFrame = frame): Promise<void> => {

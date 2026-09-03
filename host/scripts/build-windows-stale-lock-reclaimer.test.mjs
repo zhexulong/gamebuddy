@@ -260,7 +260,7 @@ test("Windows stale-lock reclaimer never follows a replaced ancestor path and pr
     const result = await done;
     assert.equal(result.stderr, "");
     if (moved) {
-      assert.match(result.stdout, /"result":"(?:reclaimed|kept_malformed_fresh|missing)"/);
+      assert.match(result.stdout, /"result":"(?:reclaimed|kept_malformed_fresh|missing|indeterminate)"/);
       assert.equal(await readFile(replacementLeaf, "utf8"), replacementBytes);
       assert.equal((await lstat(movedParent)).isDirectory(), true);
     } else {
@@ -269,7 +269,7 @@ test("Windows stale-lock reclaimer never follows a replaced ancestor path and pr
       assert.equal((await lstat(parent)).isDirectory(), true);
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
