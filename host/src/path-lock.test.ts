@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -25,6 +25,7 @@ import type { WindowsStaleLockReclaimerCapability } from "./windows-stale-lock-r
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const STALE_LOCK_MS = 5 * 60_000;
+const canonicalTemporaryRoot = () => realpath(tmpdir());
 const staleAgo = () => new Date(Date.now() - 6 * 60_000);
 const staleOwner = (pid: number, createdAtMs = Date.now() - 6 * 60_000) =>
   JSON.stringify({ token: "00000000-0000-4000-8000-000000000000", pid, createdAtMs });
@@ -249,7 +250,7 @@ function scriptedReclaimer(
 }
 
 test("atomic writer refuses a pre-existing temporary and leaves it owned by its creator", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-atomic-write-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-atomic-write-"));
   const path = join(directory, "artifact.json");
   const uuid = "00000000-0000-4000-8000-000000000001";
   const temporary = `${path}.${process.pid}.${uuid}.tmp`;
@@ -263,7 +264,7 @@ test("atomic writer refuses a pre-existing temporary and leaves it owned by its 
 });
 
 test("atomic writer preserves a substituted temporary identity after rename failure", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-atomic-write-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-atomic-write-"));
   const path = join(directory, "artifact.json");
   const uuid = "00000000-0000-4000-8000-000000000002";
   const temporary = `${path}.${process.pid}.${uuid}.tmp`;
@@ -289,7 +290,7 @@ test("atomic writer preserves a substituted temporary identity after rename fail
 });
 
 test("atomic writer cleans its original temporary when rename fails", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-atomic-write-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-atomic-write-"));
   const path = join(directory, "artifact.json");
   const uuid = "00000000-0000-4000-8000-000000000003";
   const temporary = `${path}.${process.pid}.${uuid}.tmp`;
@@ -313,7 +314,7 @@ test("atomic writer cleans its original temporary when rename fails", async () =
 });
 
 test("atomic writer preserves a primary write failure when temporary cleanup fails", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-atomic-write-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-atomic-write-"));
   const path = join(directory, "artifact.json");
   const _uuid = "00000000-0000-4000-8000-000000000004";
   const writeFailure = new Error("write failed");
@@ -337,7 +338,7 @@ test("atomic writer preserves a primary write failure when temporary cleanup fai
 });
 
 test("atomic writer preserves a primary rename failure when temporary cleanup fails", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-atomic-write-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-atomic-write-"));
   const path = join(directory, "artifact.json");
   const renameFailure = new Error("rename failed");
   const cleanupFailure = new Error("cleanup failed");
@@ -359,7 +360,7 @@ test("atomic writer preserves a primary rename failure when temporary cleanup fa
 });
 
 test("atomic writer preserves a substituted temporary after its captured identity changes", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-safe-remove-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-safe-remove-"));
   const path = join(directory, "journal.json");
   const temporary = `${path}.${process.pid}.00000000-0000-4000-8000-000000000000.tmp`;
   try {
@@ -387,7 +388,7 @@ test("atomic writer preserves a substituted temporary after its captured identit
 
 test("path lock serializes local callers and removes its ownership file", async () => {
   bindSimulated();
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-"));
   const path = join(directory, "artifact.json");
   const order: string[] = [];
   const first = withPathLock(path, async () => {
@@ -405,7 +406,7 @@ test("path lock serializes local callers and removes its ownership file", async 
 });
 
 test("path lock rejects a symlink parent before creating its lock directory", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-symlink-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-symlink-"));
   const realParent = join(directory, "real");
   const linkedParent = join(directory, "linked");
   const path = join(linkedParent, "nested", "artifact.json");
@@ -436,7 +437,7 @@ test("path lock rejects a symlink parent before creating its lock directory", as
 });
 
 test("path lock rejects a parent replaced with a symlink before acquisition", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-replaced-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-replaced-"));
   const parent = join(directory, "parent");
   const moved = join(directory, "moved");
   const path = join(parent, "artifact.json");
@@ -469,7 +470,7 @@ test("path lock rejects a parent replaced with a symlink before acquisition", as
 
 test("path lock refuses a malformed existing cross-process owner instead of writing unlocked", async () => {
   bindSimulated();
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-"));
   try {
     const path = join(directory, "artifact.json");
     await writeFile(pathLockPath(path), "not-json", "utf8");
@@ -485,7 +486,7 @@ test("path lock refuses a malformed existing cross-process owner instead of writ
 
 test("path lock treats duplicate decoded owner keys as an unrecoverable barrier", async () => {
   bindSimulated();
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-duplicate-owner-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-duplicate-owner-"));
   const staleOwner = '"token":"00000000-0000-4000-8000-000000000000","pid":999999999,"createdAtMs":0';
   const cases = [`{${staleOwner},"cr\\u0065atedAtMs":0}`, `{${staleOwner},"ignored":{"key":1,"k\\u0065y":2}}`];
   try {
@@ -506,7 +507,7 @@ test("path lock treats duplicate decoded owner keys as an unrecoverable barrier"
 
 test("path lock keeps a fresh zero-byte crash residue as a barrier until timeout", async () => {
   bindSimulated();
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-zero-fresh-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-zero-fresh-"));
   const path = join(directory, "artifact.json");
   const lockPath = pathLockPath(path);
   try {
@@ -523,7 +524,7 @@ test("path lock keeps a fresh zero-byte crash residue as a barrier until timeout
 
 test("path lock reclaims a stale zero-byte crash residue through the shared recovery rule", async () => {
   bindSimulated();
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-zero-stale-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-zero-stale-"));
   const path = join(directory, "artifact.json");
   const lockPath = pathLockPath(path);
   let ran = false;
@@ -542,7 +543,7 @@ test("path lock reclaims a stale zero-byte crash residue through the shared reco
 
 test("path lock reclaims stale malformed crash residue but never a fresh one", async () => {
   bindSimulated();
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-malformed-stale-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-malformed-stale-"));
   const freshPath = join(directory, "fresh.json");
   const stalePath = join(directory, "stale.json");
   const swappedPath = join(directory, "swapped.json");
@@ -576,7 +577,7 @@ test("path lock reclaims stale malformed crash residue but never a fresh one", a
 
 test("path lock reclaims only a stale locally-dead valid owner and keeps live or fresh ones", async () => {
   bindSimulated();
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-owner-rule-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-owner-rule-"));
   try {
     const dead = join(directory, "dead.json");
     const live = join(directory, "live.json");
@@ -607,8 +608,8 @@ test("path lock reclaims only a stale locally-dead valid owner and keeps live or
 
 test("path lock refuses to reclaim an active writer and never deletes a reparse lock entry", async (t) => {
   bindSimulated();
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-reparse-"));
-  const outside = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-reparse-outside-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-reparse-"));
+  const outside = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-reparse-outside-"));
   const path = join(directory, "artifact.json");
   const lockPath = pathLockPath(path);
   try {
@@ -650,7 +651,7 @@ test("path lock refuses to reclaim an active writer and never deletes a reparse 
 
 test("path lock keeps a stale candidate and never deletes when the reclaimer capability is unavailable", async () => {
   bindWindowsStaleLockReclaimer(undefined);
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-unavailable-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-unavailable-"));
   const path = join(directory, "artifact.json");
   const lockPath = pathLockPath(path);
   try {
@@ -670,7 +671,7 @@ test("path lock keeps a stale candidate and never deletes when the reclaimer cap
 
 test("normal owner release fails closed without a reclaimer capability", async () => {
   bindWindowsStaleLockReclaimer(undefined);
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-release-unavailable-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-release-unavailable-"));
   const path = join(directory, "artifact.json");
   try {
     await assert.rejects(
@@ -693,7 +694,7 @@ test("normal withPathLock use fails closed at release on non-Windows without any
   // can never mint a capability, which is exactly the fail-closed outcome an
   // explicit disable reproduces deterministically.
   bindWindowsStaleLockReclaimer(undefined);
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-posix-default-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-posix-default-"));
   const path = join(directory, "artifact.json");
   try {
     let workRan = false;
@@ -722,7 +723,7 @@ test("normal withPathLock use fails closed at release on non-Windows without any
 });
 
 test("path lock maps every native reclaim category to the typed recovery result", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-mapping-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-mapping-"));
   const malformedPath = join(directory, "malformed.json");
   const validPath = join(directory, "valid.json");
   try {
@@ -809,7 +810,7 @@ test("path lock maps every native reclaim category to the typed recovery result"
 });
 
 test("release requires the exact owner token through the capability and fails closed on mismatch", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-release-token-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-release-token-"));
   const path = join(directory, "artifact.json");
   const lockPath = pathLockPath(path);
   const token = "00000000-0000-4000-8000-000000000000";
@@ -855,7 +856,7 @@ test("release requires the exact owner token through the capability and fails cl
 
 test("path lock recovery result type is a frozen named tuple and reports disappearance", async () => {
   bindSimulated();
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-path-lock-result-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-result-"));
   const path = join(directory, "artifact.json");
   try {
     await writeFile(pathLockPath(path), "partial", "utf8");
@@ -871,8 +872,8 @@ test("path lock recovery result type is a frozen named tuple and reports disappe
 });
 
 test("safe directory enumeration rejects linked entries before returning them", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-safe-directory-"));
-  const outside = await mkdtemp(join(tmpdir(), "gamebuddy-safe-directory-outside-"));
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-safe-directory-"));
+  const outside = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-safe-directory-outside-"));
   try {
     await writeFile(join(directory, "valid.json"), "ok", "utf8");
     try {
