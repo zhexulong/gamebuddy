@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { appendChatTranscript, MAX_CHAT_TRANSCRIPT_ENTRIES, readChatTranscript } from "./chat-transcript.js";
 
+async function transcriptPath(): Promise<string> {
+  const canonicalTemporaryRoot = await realpath(tmpdir());
+  return join(await mkdtemp(join(canonicalTemporaryRoot, "gamebuddy-transcript-")), "chat.json");
+}
+
 test("player-visible chat transcript is append-only, deduplicated, and rejects internal roles", async () => {
-  const path = join(await mkdtemp(join(tmpdir(), "gamebuddy-transcript-")), "chat.json");
+  const path = await transcriptPath();
   const player = {
     entryId: "message_01",
     role: "player" as const,
@@ -25,7 +30,7 @@ test("player-visible chat transcript is append-only, deduplicated, and rejects i
 });
 
 test("player-visible chat transcript keeps a bounded recent browser window", async () => {
-  const path = join(await mkdtemp(join(tmpdir(), "gamebuddy-transcript-")), "chat.json");
+  const path = await transcriptPath();
   // Establish the bounded persisted state directly, then exercise the real
   // append/atomic-rewrite boundary once. Rewriting an increasingly large JSON
   // file 2,001 times adds no behavioural coverage and consumes most of the
@@ -59,7 +64,7 @@ test("player-visible chat transcript keeps a bounded recent browser window", asy
 });
 
 test("player-visible chat transcript serializes concurrent appends without dropping either entry", async () => {
-  const path = join(await mkdtemp(join(tmpdir(), "gamebuddy-transcript-")), "chat.json");
+  const path = await transcriptPath();
   await Promise.all([
     appendChatTranscript(path, "surface_01", {
       entryId: "message_01",
