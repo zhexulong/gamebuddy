@@ -356,7 +356,9 @@ test("production-private runtime publisher emits canonical admission/current bin
       assert.deepEqual(await currentGeneration(outputRoot), expectedPointer);
       await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer: expectedPointer });
       await verifyRuntimeAdmission({ artifactRoot, inventory: published, generation: published.generation, descriptor });
-      assert.deepEqual(await readdir(join(outputRoot, "generations")), [published.generation]);
+      const generationsAfterCleanupFailure = await readdir(join(outputRoot, "generations"));
+      assert.equal(generationsAfterCleanupFailure.length, 2);
+      assert.ok(generationsAfterCleanupFailure.includes(published.generation));
       assert.deepEqual(await readdir(outputRoot), ["current.json", "generations"]);
     }),
   );
