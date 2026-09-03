@@ -8,12 +8,19 @@ internal static class Program
 {
     private const int LegacySchemaVersion = 1;
     private const int StrictIdentitySchemaVersion = 2;
+    private const int StrictSecuritySchemaVersion = 3;
     private const string InspectOperation = "inspect";
     private const string InspectIdentityOperation = "inspect_identity_v2";
     private const string InspectPathChainOperation = "inspect_path_chain_v2";
+    private const string InspectPathSecurityOperation = "inspect_path_security_v3";
     private const uint FileAttributeDevice = 0x00000040;
     private const uint FileAttributeReparsePoint = 0x00000400;
     private const uint FileReadAttributes = 0x00000080;
+    private const uint ReadControl = 0x00020000;
+    private const uint TokenQuery = 0x0008;
+    private const uint OwnerSecurityInformation = 0x00000001;
+    private const int SeFileObject = 1;
+    private const int TokenInformationClassUser = 1;
     private const uint FileShareRead = 0x00000001;
     private const uint FileShareWrite = 0x00000002;
     private const uint FileShareDelete = 0x00000004;
@@ -48,6 +55,9 @@ internal static class Program
                 case InspectPathChainOperation:
                     WriteChainResponse(InspectPathChain(request.Path));
                     break;
+                case InspectPathSecurityOperation:
+                    WriteSecurityResponse(InspectPathSecurity(request.Path));
+                    break;
                 default:
                     throw new InvalidDataException();
             }
@@ -56,12 +66,13 @@ internal static class Program
         catch
         {
             // Protocol and native failures never expose the input path or native details.
-            var strictOperation = request?.SchemaVersion == StrictIdentitySchemaVersion
+            var strictOperation = request is not null && (request.SchemaVersion == StrictIdentitySchemaVersion || request.SchemaVersion == StrictSecuritySchemaVersion)
                 ? request.Operation
-                : attemptedSchemaVersion == StrictIdentitySchemaVersion
+                : attemptedSchemaVersion is StrictIdentitySchemaVersion or StrictSecuritySchemaVersion
                     ? attemptedOperation
                     : null;
-            if (strictOperation == InspectPathChainOperation) WriteChainResponse(ChainInspection.Failure("indeterminate"));
+            if (strictOperation == InspectPathSecurityOperation) WriteSecurityResponse(SecurityInspection.Failure("indeterminate"));
+            else if (strictOperation == InspectPathChainOperation) WriteChainResponse(ChainInspection.Failure("indeterminate"));
             else if (strictOperation == InspectIdentityOperation) WriteIdentityResponse(IdentityInspection.Failure("indeterminate"));
             else
             {
@@ -114,7 +125,8 @@ internal static class Program
         var pathValue = path.GetString();
         if (string.IsNullOrEmpty(operationValue) || string.IsNullOrEmpty(pathValue) || pathValue.Length > MaximumPathCharacters || pathValue.IndexOf('\0') >= 0 || HasFindFirstWildcard(pathValue) || !Path.IsPathFullyQualified(pathValue)) throw new InvalidDataException();
         if (version == LegacySchemaVersion && operationValue == InspectOperation) return new Request(version, operationValue, pathValue);
-        if (version == StrictIdentitySchemaVersion && (operationValue == InspectIdentityOperation || operationValue == InspectPathChainOperation))
+        if ((version == StrictIdentitySchemaVersion && (operationValue == InspectIdentityOperation || operationValue == InspectPathChainOperation)) ||
+            (version == StrictSecuritySchemaVersion && operationValue == InspectPathSecurityOperation))
         {
             ValidateStrictDrivePath(pathValue);
             return new Request(version, operationValue, pathValue);
@@ -199,6 +211,67 @@ internal static class Program
         if (handle != NativeMethods.InvalidHandleValue) return (handle, "indeterminate");
         var error = Marshal.GetLastWin32Error();
         return (NativeMethods.InvalidHandleValue, IsMissingError(error) ? "missing" : "indeterminate");
+    }
+
+    private static SecurityInspection InspectPathSecurity(string path)
+    {
+        if (!OperatingSystem.IsWindows()) return SecurityInspection.Failure("indeterminate");
+        var handle = OpenSecurityHandle(path);
+        if (handle == NativeMethods.InvalidHandleValue) return SecurityInspection.Failure("indeterminate");
+        try
+        {
+            var identity = QueryIdentity(handle);
+            if (identity.Status != "ok") return SecurityInspection.Failure("indeterminate");
+            var currentUserOwner = IsCurrentUserOwner(handle);
+            return currentUserOwner is null
+                ? SecurityInspection.Failure("indeterminate")
+                : SecurityInspection.Success(identity, currentUserOwner.Value);
+        }
+        finally
+        {
+            NativeMethods.CloseHandle(handle);
+        }
+    }
+
+    private static nint OpenSecurityHandle(string path)
+    {
+        var handle = NativeMethods.CreateFileW(
+            ToExtendedLengthPath(path),
+            FileReadAttributes | ReadControl,
+            FileShareRead | FileShareWrite | FileShareDelete,
+            IntPtr.Zero,
+            OpenExisting,
+            FileFlagOpenReparsePoint | FileFlagBackupSemantics,
+            IntPtr.Zero);
+        return handle;
+    }
+
+    private static bool? IsCurrentUserOwner(nint fileHandle)
+    {
+        nint securityDescriptor = IntPtr.Zero;
+        nint token = IntPtr.Zero;
+        nint tokenInformation = IntPtr.Zero;
+        try
+        {
+            if (NativeMethods.GetSecurityInfo(fileHandle, SeFileObject, OwnerSecurityInformation, out var ownerSid, out _, out _, out _, out securityDescriptor) != 0 || ownerSid == IntPtr.Zero) return null;
+            if (!NativeMethods.OpenProcessToken(NativeMethods.GetCurrentProcess(), TokenQuery, out token)) return null;
+            NativeMethods.GetTokenInformation(token, TokenInformationClassUser, IntPtr.Zero, 0, out var requiredLength);
+            if (requiredLength == 0) return null;
+            tokenInformation = Marshal.AllocHGlobal(checked((int)requiredLength));
+            if (!NativeMethods.GetTokenInformation(token, TokenInformationClassUser, tokenInformation, requiredLength, out var actualLength) || actualLength != requiredLength) return null;
+            var tokenUser = Marshal.PtrToStructure<TokenUser>(tokenInformation);
+            return tokenUser.UserSid != IntPtr.Zero && NativeMethods.EqualSid(ownerSid, tokenUser.UserSid);
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (tokenInformation != IntPtr.Zero) Marshal.FreeHGlobal(tokenInformation);
+            if (token != IntPtr.Zero) NativeMethods.CloseHandle(token);
+            if (securityDescriptor != IntPtr.Zero) NativeMethods.LocalFree(securityDescriptor);
+        }
     }
 
     private static IdentityInspection QueryIdentity(nint handle)
@@ -291,6 +364,28 @@ internal static class Program
         Console.Out.Write("\"}\n");
     }
 
+    private static void WriteSecurityResponse(SecurityInspection inspection)
+    {
+        if (inspection.Status != "ok")
+        {
+            Console.Out.Write("{\"schemaVersion\":3,\"operation\":\"inspect_path_security_v3\",\"status\":\"");
+            Console.Out.Write(inspection.Status);
+            Console.Out.Write("\"}\n");
+            return;
+        }
+        Console.Out.Write("{\"schemaVersion\":3,\"operation\":\"inspect_path_security_v3\",\"status\":\"ok\",\"objectKind\":\"");
+        Console.Out.Write(inspection.Identity!.ObjectKind);
+        Console.Out.Write("\",\"isReparsePoint\":");
+        Console.Out.Write(inspection.Identity.IsReparsePoint ? "true" : "false");
+        Console.Out.Write(",\"currentUserOwner\":");
+        Console.Out.Write(inspection.CurrentUserOwner ? "true" : "false");
+        Console.Out.Write(",\"volumeIdentity\":\"");
+        Console.Out.Write(inspection.Identity.VolumeIdentity);
+        Console.Out.Write("\",\"fileId\":\"");
+        Console.Out.Write(inspection.Identity.FileId);
+        Console.Out.Write("\"}\n");
+    }
+
     private static void WriteChainResponse(ChainInspection inspection)
     {
         if (inspection.Status != "ok")
@@ -324,6 +419,12 @@ internal static class Program
     {
         internal static IdentityInspection Failure(string status) => new(status, null, false, null, null);
         internal static IdentityInspection Success(string objectKind, bool isReparsePoint, string volumeIdentity, string fileId) => new("ok", objectKind, isReparsePoint, volumeIdentity, fileId);
+    }
+
+    private sealed record SecurityInspection(string Status, IdentityInspection? Identity, bool CurrentUserOwner)
+    {
+        internal static SecurityInspection Failure(string status) => new(status, null, false);
+        internal static SecurityInspection Success(IdentityInspection identity, bool currentUserOwner) => new("ok", identity, currentUserOwner);
     }
 
     private sealed record ChainInspection(string Status, IReadOnlyList<IdentityInspection>? Components)
@@ -367,6 +468,13 @@ internal static class Program
         public byte[] FileId;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TokenUser
+    {
+        public IntPtr UserSid;
+        public uint Attributes;
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct Win32FindData
     {
@@ -399,6 +507,27 @@ internal static class Program
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool CloseHandle(nint hObject);
+
+        [DllImport("kernel32.dll")]
+        internal static extern nint GetCurrentProcess();
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool OpenProcessToken(nint processHandle, uint desiredAccess, out nint tokenHandle);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool GetTokenInformation(nint tokenHandle, int tokenInformationClass, nint tokenInformation, uint tokenInformationLength, out uint returnLength);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        internal static extern uint GetSecurityInfo(nint handle, int objectType, uint securityInformation, out nint ownerSid, out nint groupSid, out nint dacl, out nint sacl, out nint securityDescriptor);
+
+        [DllImport("advapi32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool EqualSid(nint sid1, nint sid2);
+
+        [DllImport("kernel32.dll")]
+        internal static extern nint LocalFree(nint memory);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
