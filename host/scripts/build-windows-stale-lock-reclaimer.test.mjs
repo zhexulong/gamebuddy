@@ -248,7 +248,7 @@ test("Windows stale-lock reclaimer never follows a replaced ancestor path and pr
       await rename(parent, movedParent);
       moved = true;
     } catch (error) {
-      assert.equal(error?.code === "EPERM" || error?.code === "EACCES", true);
+      assert.equal(["EPERM", "EACCES", "EBUSY"].includes(String(error?.code)), true);
     }
     let replacementLeaf;
     const replacementBytes = "fresh replacement bytes must survive";

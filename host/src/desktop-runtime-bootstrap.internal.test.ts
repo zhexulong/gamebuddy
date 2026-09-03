@@ -133,7 +133,7 @@ test("disposable bootstrap admission accepts only the exact runtime closure and 
     // On Windows, Node maps child.kill("SIGTERM") to forced process termination;
     // the test has already observed the exact acknowledgement before issuing it.
     assert.ok(accepted.code === null || accepted.code === 1, accepted.stderr.toString("utf8"));
-    assert.deepEqual(accepted.stdout, expectedAcknowledgement);
+    if (!accepted.stdout.equals(expectedAcknowledgement)) assert.deepEqual(accepted.stdout, expectedAcknowledgement, await redactedRootAdmissionDiagnostic(moduleDirectory, rootLayout));
 
     const reject = async (mutate: () => Promise<void>, candidateFrame = frame): Promise<void> => {
       await restoreFixture(moduleDirectory, bootstrap, runtime, closure, sidecarBytes);
@@ -214,6 +214,51 @@ test("Desktop bootstrap source retains only fixed private ingress and no public 
   const acknowledgement = source.indexOf("writeAcknowledgement(frame, admission)");
   assert.ok(rootValidation >= 0 && securityCheck >= 0 && rootValidation < mint && rootValidation < acknowledgement, "root security validation must precede mint and acknowledgement");
 });
+
+async function redactedRootAdmissionDiagnostic(moduleDirectory: string, rootLayout: Readonly<{ programRoot: string; dataRoot: string; operationalRoot: string; presentationRoot: string }>): Promise<string> {
+  const helper = join(moduleDirectory, "native", "windows-reparse-inspector", "win-x64", "GameBuddy.WindowsReparseInspector.exe");
+  const outcomes = await Promise.all(Object.entries(rootLayout).map(async ([name, path]) => {
+    const [chain, security] = await Promise.all([
+      runInspector(helper, { schemaVersion: 2, operation: "inspect_path_chain_v2", path }),
+      runInspector(helper, { schemaVersion: 3, operation: "inspect_path_security_v3", path }),
+    ]);
+    return name + ":chain=" + redactInspection(chain) + ";security=" + redactInspection(security);
+  }));
+  return "bootstrap_fixture_admission=" + outcomes.join("|");
+}
+
+function redactInspection(result: Readonly<{ code: number | null; stdout: Buffer }>): string {
+  let value: unknown;
+  try { value = JSON.parse(result.stdout.toString("utf8")); }
+  catch { return "protocol(code=" + String(result.code) + ")"; }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return "protocol(code=" + String(result.code) + ")";
+  const record = value as Record<string, unknown>;
+  const status = typeof record.status === "string" ? record.status : "protocol";
+  if (status !== "ok") return status + "(code=" + String(result.code) + ")";
+  if (Array.isArray(record.components)) return "ok(count=" + record.components.length + ";leaf=" + redactObject(record.components.at(-1)) + ")";
+  return "ok(" + redactObject(record) + ")";
+}
+
+function redactObject(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return "protocol";
+  const record = value as Record<string, unknown>;
+  const kind = typeof record.objectKind === "string" ? record.objectKind : "protocol";
+  const reparse = typeof record.isReparsePoint === "boolean" ? String(record.isReparsePoint) : "protocol";
+  const owner = typeof record.currentUserOwner === "boolean" ? ";owner=" + String(record.currentUserOwner) : "";
+  return "kind=" + kind + ";reparse=" + reparse + owner;
+}
+
+async function runInspector(helper: string, request: object): Promise<Readonly<{ code: number | null; stdout: Buffer }>> {
+  const child = spawn(helper, [], { stdio: ["pipe", "pipe", "ignore"] });
+  const stdout: Buffer[] = [];
+  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stdin.end(Buffer.from(JSON.stringify(request), "utf8"));
+  const code = await new Promise<number | null>((resolveClose, rejectClose) => {
+    child.once("error", rejectClose);
+    child.once("close", resolveClose);
+  });
+  return Object.freeze({ code, stdout: Buffer.concat(stdout) });
+}
 
 function sha256(value: Buffer): string {
   return createHash("sha256").update(value).digest("hex");
