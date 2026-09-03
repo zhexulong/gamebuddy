@@ -33,7 +33,8 @@ jobs:
         with:
           node-version: 24.13.0
           cache: pnpm
-      - uses: oven-sh/setup-bun@v2
+      - id: bun
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
@@ -48,6 +49,8 @@ jobs:
       - run: pnpm --filter @gamebuddy/voice-protocol build
       - run: pnpm typecheck
       - run: pnpm --dir host test
+        env:
+          GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}
       # This is the sole network-acquisition entry. It fails closed unless the
       # protected workflow identity, tag grammar, Windows x64 runner and release
       # environment marker all match. Installer assembly, certificate work, and

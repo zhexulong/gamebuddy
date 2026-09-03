@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -33,10 +33,29 @@ function windowsCommandProcessor(comSpec) {
   return comSpec;
 }
 
-/** Return fixed, safely cmd-mediated dependency build invocations on Windows. */
-export function testDependencyInvocations({ platform = process.platform, comSpec = process.env.ComSpec } = {}) {
+function configuredBunExecutable(bunExecutable) {
+  if (typeof bunExecutable !== "string" || !/^[A-Za-z]:\\.+\.exe$/i.test(bunExecutable) || bunExecutable.includes("\0") || cmdMetacharacter.test(bunExecutable))
+    throw new Error("test_dependency_bun_executable_invalid");
+  if (!existsSync(bunExecutable) || !statSync(bunExecutable).isFile())
+    throw new Error("test_dependency_bun_executable_missing");
+  return bunExecutable;
+}
+
+/** Return fixed dependency build invocations. Windows requires a CI-provided Bun executable. */
+export function testDependencyInvocations({
+  platform = process.platform,
+  comSpec = process.env.ComSpec,
+  bunExecutable = process.env.GAMEBUDDY_BUN_EXECUTABLE,
+} = {}) {
   return Object.freeze(testDependencyCommands.map((entry) => {
     if (platform !== "win32") return entry;
+    if (entry.command === "bun") {
+      return Object.freeze({
+        command: configuredBunExecutable(bunExecutable),
+        args: entry.args,
+        cwd: entry.cwd,
+      });
+    }
     // cmd parses a quoted token after `call` as a literal executable name.
     // The manifest is strictly validated to fixed, whitespace-free tokens, so
     // unquoted concatenation preserves its argv semantics without shell input.
