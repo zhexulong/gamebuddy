@@ -75,7 +75,9 @@ test("compiled entry rejects malformed bootstrap wire without acknowledgement", 
 
 test("disposable bootstrap admission accepts only the exact runtime closure and writes the exact acknowledgement bytes", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only bootstrap root, reparse, and current-user ownership admission");
-  const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-desktop-bootstrap-"));
+  const localAppData = process.env.LOCALAPPDATA;
+  if (typeof localAppData !== "string" || localAppData.length === 0) return t.skip("Windows LOCALAPPDATA is unavailable for bootstrap fixture");
+  const fixtureRoot = await mkdtemp(join(await realpath(localAppData), "gamebuddy-desktop-bootstrap-"));
   try {
     const moduleDirectory = join(fixtureRoot, "Programs", "GameBuddy", "generation");
     const runtime = Buffer.from("fixture runtime");
