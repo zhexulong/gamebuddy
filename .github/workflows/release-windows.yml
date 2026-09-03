@@ -48,9 +48,10 @@ jobs:
       - run: pnpm --filter @gamebuddy/voice-protocol typecheck
       - run: pnpm --filter @gamebuddy/voice-protocol build
       - run: pnpm typecheck
-      # Host tests that exercise durable path locks mint only this repository-built,
-      # fixed helper pair; they never use an unverified production generation.
+      # Host tests mint only repository-built, fixed Windows helper pairs; they
+      # never use an unverified production generation.
       - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
+      - run: node host/scripts/build-windows-reparse-inspector.mjs
       - run: pnpm --dir host test
         env:
           GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}

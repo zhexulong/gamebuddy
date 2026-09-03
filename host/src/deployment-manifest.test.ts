@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,7 +17,7 @@ const valid = (runtimeRoot: string) => ({
 async function fixture(
   value: string | Record<string, unknown>,
 ): Promise<{ root: string; path: string; runtimeRoot: string; dispose(): Promise<void> }> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-deployment-manifest-"));
+  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-deployment-manifest-"));
   const runtimeRoot = join(root, "runtime");
   const path = join(root, "manifest.json");
   await mkdir(runtimeRoot);

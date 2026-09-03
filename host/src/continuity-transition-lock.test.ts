@@ -1,12 +1,26 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { withContinuitySurfaceTransitionLock } from "./continuity-transition-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function createRuntimeRoot(prefix: string): Promise<string> {
+  return await mkdtemp(join(await realpath(tmpdir()), prefix));
+}
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 const lockTarget = (runtimeRoot: string, continuityId: string) =>
   join(
     runtimeRoot,
@@ -15,7 +29,7 @@ const lockTarget = (runtimeRoot: string, continuityId: string) =>
   );
 
 test("continuity surface transition lock serializes competing callers without placing the opaque id in its path", async () => {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-continuity-transition-"));
+  const runtimeRoot = await createRuntimeRoot("gamebuddy-continuity-transition-");
   const continuityId = "opaque_continuity_42";
   const order: string[] = [];
   const first = withContinuitySurfaceTransitionLock(runtimeRoot, continuityId, async () => {
@@ -58,7 +72,7 @@ test("continuity surface transition lock rejects malformed root and continuity p
 });
 
 test("continuity surface transition lock fails closed when its durable lock acquisition times out", async () => {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-continuity-transition-"));
+  const runtimeRoot = await createRuntimeRoot("gamebuddy-continuity-transition-");
   const continuityId = "opaque_timeout_partition";
   const target = lockTarget(runtimeRoot, continuityId);
   await mkdir(dirname(target), { recursive: true });
