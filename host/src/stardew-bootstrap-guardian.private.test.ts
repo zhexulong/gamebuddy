@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -186,7 +186,10 @@ async function writeOwner(root: string, record: Record<string, unknown>): Promis
 }
 
 async function createRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-guardian-private-"));
+  const parent = process.platform === "win32" && typeof process.env.LOCALAPPDATA === "string" && process.env.LOCALAPPDATA.length > 0
+    ? await realpath(process.env.LOCALAPPDATA)
+    : await realpath(tmpdir());
+  const root = await mkdtemp(join(parent, "gamebuddy-guardian-private-"));
   roots.push(root);
   return root;
 }
