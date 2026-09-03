@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -128,27 +127,14 @@ test("disposable bootstrap admission accepts only the exact runtime closure and 
       runtimeAdmissionSha256: sha256(sidecarBytes),
       rootLayoutSchema: "gamebuddy-windows-root-layout/v1",
     })}\n`);
-    const guardian = await startGuardianFixture({
-      bootstrapId: frameValue.bootstrapId,
-      generation: frameValue.generation,
-      inventoryDigest: frameValue.inventoryDigest,
-      runtimeAdmissionSha256: sha256(sidecarBytes),
-    });
-    try {
-      const accepted = startEntry(frame, join(moduleDirectory, "desktop-runtime-bootstrap.internal.js"), fixtureRoot);
-      await guardian.assertHello();
-      accepted.child.kill("SIGTERM");
-      const result = await accepted.result;
-      assert.equal(result.code, null, result.stderr.toString("utf8"));
-      assert.deepEqual(result.stdout, expectedAcknowledgement);
-    } finally {
-      await guardian.close();
-    }
+    const accepted = await runEntry(frame, join(moduleDirectory, "desktop-runtime-bootstrap.internal.js"), true, fixtureRoot);
+    assert.equal(accepted.code, null, accepted.stderr.toString("utf8"));
+    assert.deepEqual(accepted.stdout, expectedAcknowledgement);
 
     const reject = async (mutate: () => Promise<void>, candidateFrame = frame): Promise<void> => {
       await restoreFixture(moduleDirectory, bootstrap, runtime, closure, sidecarBytes);
       await mutate();
-      const rejected = await runEntry(candidateFrame, join(moduleDirectory, "desktop-runtime-bootstrap.internal.js"), fixtureRoot);
+      const rejected = await runEntry(candidateFrame, join(moduleDirectory, "desktop-runtime-bootstrap.internal.js"), false, fixtureRoot);
       assert.notEqual(rejected.code, 0);
       assert.deepEqual(rejected.stdout, Buffer.alloc(0));
     };
@@ -201,6 +187,8 @@ test("Desktop bootstrap source retains only fixed private ingress and no public 
     "process.argv",
     "node:child_process",
     "spawn(",
+    "Guardian",
+    "broker",
     "console.",
     "current.json",
   ]) assert.equal(source.includes(forbidden), false, `forbidden bootstrap ingress: ${forbidden}`);
@@ -215,11 +203,6 @@ test("Desktop bootstrap source retains only fixed private ingress and no public 
   assert.match(source, /strictlyContains\(moduleDirectory, mutableRoot\)/);
   assert.match(source, /new WeakSet<object>/);
   assert.match(source, /new WeakMap<object, undefined>/);
-  assert.match(source, /createConnection\(/);
-  assert.match(source, /GameBuddy\.HostGuardian\.\$\{frame\.bootstrapId\}/);
-  assert.match(source, /operation: "hello"/);
-  assert.match(source, /gamebuddy-desktop-guardian-session\/v1/);
-  assert.doesNotMatch(source, /sessionToken/);
 
   const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory)");
   const securityCheck = source.indexOf("Promise.all(roots.map((root) => inspectWindowsPathSecurity(inspector, root)))");
@@ -232,81 +215,6 @@ function sha256(value: Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-async function startGuardianFixture(expected: Readonly<{ bootstrapId: string; generation: string; inventoryDigest: string; runtimeAdmissionSha256: string }>): Promise<Readonly<{ assertHello(): Promise<void>; close(): Promise<void> }>> {
-  const pipe = `\\\\.\\pipe\\GameBuddy.HostGuardian.${expected.bootstrapId}`;
-  const expectedHello = Buffer.from(`${JSON.stringify({
-    schema: "gamebuddy-desktop-guardian-session/v1",
-    protocolVersion: 1,
-    operation: "hello",
-    bootstrapId: expected.bootstrapId,
-    generation: expected.generation,
-    inventoryDigest: expected.inventoryDigest,
-    runtimeAdmissionSha256: expected.runtimeAdmissionSha256,
-  })}\n`);
-  const acknowledgement = Buffer.from(`${JSON.stringify({
-    schema: "gamebuddy-desktop-guardian-session/v1",
-    protocolVersion: 1,
-    operation: "hello",
-    status: "accepted",
-    bootstrapId: expected.bootstrapId,
-    generation: expected.generation,
-    inventoryDigest: expected.inventoryDigest,
-    runtimeAdmissionSha256: expected.runtimeAdmissionSha256,
-  })}\n`);
-  let received: Buffer | undefined;
-  let resolveHello!: () => void;
-  let rejectHello!: (error: Error) => void;
-  let helloSettled = false;
-  let receivedExpectedHello = false;
-  const hello = new Promise<void>((resolve, reject) => {
-    resolveHello = () => { helloSettled = true; resolve(); };
-    rejectHello = (error) => { if (!helloSettled) reject(error); };
-  });
-  const server: Server = createServer((socket: Socket) => {
-    const chunks: Buffer[] = [];
-    socket.on("error", (error: NodeJS.ErrnoException) => {
-      if (receivedExpectedHello && error.code === "EPIPE") resolveHello();
-      else rejectHello(error);
-    });
-    socket.on("data", (chunk: Buffer) => {
-      chunks.push(Buffer.from(chunk));
-      const bytes = Buffer.concat(chunks);
-      if (bytes.at(-1) !== 10 || bytes.indexOf(10) !== bytes.length - 1) return;
-      received = bytes;
-      if (!bytes.equals(expectedHello)) {
-        rejectHello(new Error("guardian_fixture_hello_mismatch"));
-        socket.destroy();
-        return;
-      }
-      receivedExpectedHello = true;
-      socket.write(acknowledgement, (error) => {
-        if (error == null || isEpipe(error)) resolveHello();
-        else rejectHello(error);
-      });
-    });
-  });
-  await new Promise<void>((resolveListen, rejectListen) => {
-    server.once("error", rejectListen);
-    server.listen(pipe, () => {
-      server.off("error", rejectListen);
-      resolveListen();
-    });
-  });
-  return Object.freeze({
-    async assertHello(): Promise<void> {
-      await hello;
-      assert.deepEqual(received, expectedHello);
-    },
-    async close(): Promise<void> {
-      await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error === undefined ? resolveClose() : rejectClose(error)));
-    },
-  });
-}
-
-function isEpipe(error: Error): boolean {
-  return (error as NodeJS.ErrnoException).code === "EPIPE";
-}
-
 async function restoreFixture(moduleDirectory: string, bootstrap: Buffer, runtime: Buffer, closure: readonly Readonly<{ path: string; bytes: Buffer }>[], sidecarBytes: Buffer): Promise<void> {
   await rm(join(moduleDirectory, "runtime"), { recursive: true, force: true });
   await mkdir(join(moduleDirectory, "runtime", "nested"), { recursive: true });
@@ -316,21 +224,19 @@ async function restoreFixture(moduleDirectory: string, bootstrap: Buffer, runtim
   await writeFile(join(moduleDirectory, "host-runtime-admission.json"), sidecarBytes);
 }
 
-function startEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Users\\Player\\AppData\\Local"): Readonly<{ child: ReturnType<typeof spawn>; result: Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> }> {
+async function runEntry(frame: Buffer, entry = compiledEntry, closeAfterAcknowledgement = false, localAppData = "C:\\Users\\Player\\AppData\\Local"): Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> {
   const child = spawn(process.execPath, [entry], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, LOCALAPPDATA: localAppData } });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
-  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout.push(chunk);
+    if (closeAfterAcknowledgement) child.kill("SIGTERM");
+  });
   child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
   child.stdin.end(frame);
-  const result = new Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>>((resolveClose, rejectClose) => {
+  const code = await new Promise<number | null>((resolveClose, rejectClose) => {
     child.once("error", rejectClose);
-    child.once("close", (code) => resolveClose(Object.freeze({ code, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) })));
+    child.once("close", resolveClose);
   });
-  return Object.freeze({ child, result });
-}
-
-async function runEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Users\\Player\\AppData\\Local"): Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> {
-  const started = startEntry(frame, entry, localAppData);
-  return await started.result;
+  return Object.freeze({ code, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
 }

@@ -19,6 +19,11 @@ test("protected release gate remains fixed upstream of the no-argument entry", a
   assert.match(source, /export async function publishFixedReleaseProductionArtifact\(\) \{/);
   assert.match(source, /assertProtectedWindowsReleaseCiEnvironment\(\);/);
   assert.match(source, /return acquireReleaseRuntimePublisher\(\{ descriptor, fetchRelease: fetch \}, async \(\) => buildFixedReleaseProductionArtifact\(\)\);/);
+  const workflow = await readFile(workflowPath, "utf8");
+  assert.match(
+    workflow,
+    /node host\/scripts\/build-windows-reparse-inspector\.mjs\n\s+- run: dotnet restore integrations\/stardew\/tests\/GameBuddy\.Stardew\.Integration\.Tests\/GameBuddy\.Stardew\.Integration\.Tests\.csproj\n\s+- run: pnpm --dir host test/,
+  );
 });
 
 test("release workflow delegates always cleanup to the no-input owned-root cleanup entry", async () => {

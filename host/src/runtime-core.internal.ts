@@ -1059,11 +1059,17 @@ export async function createRuntimeWithFixedToolsCore(
             // The session is constructed with an explicit allowlist. Retain
             // only its non-adapter wrappers so refresh cannot reintroduce a
             // Pi builtin, an extension, or an old action closure.
-            retainedTools: session.agent.state.tools.filter(
-               (tool) =>
-                 fixedToolNames.includes(tool.name) ||
-                 !tool.name.startsWith(integrationModule.descriptor.toolNamePrefix),
-            ),
+            retainedTools: [
+              ...session.agent.state.tools.filter(
+                (tool) =>
+                  !fixedToolNames.includes(tool.name) &&
+                  !tool.name.startsWith(integrationModule.descriptor.toolNamePrefix),
+              ),
+              // Pi wraps initial custom tools with the session's extension
+              // context. A refresh cannot retain those wrappers: their context
+              // may already be stale. Re-project fixed Host-owned definitions.
+              ...fixedTools.map(toRuntimeTool),
+            ],
           });
     if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
       throw new Error(

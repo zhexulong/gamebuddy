@@ -49,6 +49,8 @@
         "enabledActionIds": [
           "move_to_tile"
         ],
+        "runtimeRole": "farmhand_client",
+        "launchGeneration": "generation_01",
         "presentationLocale": "en-US",
         "registrations": [
           {
@@ -152,6 +154,7 @@
       "payload": {
         "executionId": "execution_01",
         "requestId": "request_01",
+        "actionId": "move_to_tile",
         "state": "accepted",
         "reasonCode": "accepted",
         "revision": 8,
@@ -176,6 +179,7 @@
       "payload": {
         "executionId": "execution_01",
         "requestId": "request_01",
+        "actionId": "move_to_tile",
         "state": "running",
         "reasonCode": "controller_started",
         "revision": 9,
@@ -200,6 +204,7 @@
       "payload": {
         "executionId": "execution_01",
         "requestId": "request_01",
+        "actionId": "move_to_tile",
         "state": "meaningful_progress",
         "reasonCode": "tile_advanced",
         "revision": 10,
@@ -224,6 +229,7 @@
       "payload": {
         "executionId": "execution_01",
         "requestId": "request_01",
+        "actionId": "move_to_tile",
         "state": "succeeded",
         "reasonCode": "target_reached",
         "revision": 11,

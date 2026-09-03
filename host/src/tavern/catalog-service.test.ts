@@ -182,11 +182,14 @@ test("stable materialization uses exact Persona, Scenario, complete DialogueExam
   });
   assert.deepEqual(
     snapshot.sources.map((source) => source.kind),
-    ["persona", "scenario", "dialogue_examples", "worldbook"],
+    ["dialogue_examples", "persona", "scenario", "worldbook"],
   );
-  assert.equal(snapshot.sources[2]!.content, canonicalJson({ blocks: ["A: hello", "B: welcome"] }));
   assert.equal(
-    snapshot.sources[3]!.provenance,
+    snapshot.sources.find((source) => source.kind === "dialogue_examples")!.content,
+    canonicalJson({ blocks: ["A: hello", "B: welcome"] }),
+  );
+  assert.equal(
+    snapshot.sources.find((source) => source.kind === "worldbook")!.provenance,
     `worldbook/book/revision/3/canonical/${"b".repeat(64)}/provenance/reviewed-import`,
   );
   assert.equal(snapshot.sources.reduce((total, source) => total + source.budgetTokens, 0) <= 2_048, true);
