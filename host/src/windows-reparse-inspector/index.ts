@@ -18,6 +18,7 @@ const helperFileName = "GameBuddy.WindowsReparseInspector.exe";
 const manifestFileName = "windows-reparse-inspector.manifest.json";
 const legacyProtocolVersion = 1;
 const strictIdentityProtocolVersion = 2;
+const strictSecurityProtocolVersion = 3;
 const rid = "win-x64";
 const timeoutMs = 3_000;
 const cleanupDrainTimeoutMs = 1_000;
@@ -34,6 +35,10 @@ export type WindowsPathObjectIdentity = Readonly<{
   isReparsePoint: boolean;
   volumeIdentity: string;
   fileId: string;
+}>;
+
+export type WindowsPathSecurity = Readonly<WindowsPathObjectIdentity & {
+  currentUserOwner: boolean;
 }>;
 
 /** Mints the build-only capability from the sole repository-relative helper pair. */
@@ -88,6 +93,33 @@ export async function inspectWindowsPathIdentity(
     path: absolutePath,
   });
   return parseIdentityResponse(response, "inspect_identity_v2");
+}
+
+/** Returns the exact no-follow object identity plus its current-process-user ownership verdict. */
+export async function inspectWindowsPathSecurity(
+  capability: WindowsReparseInspectorCapability | undefined,
+  absolutePath: string,
+): Promise<WindowsPathSecurity> {
+  assertStrictWindowsDrivePath(absolutePath);
+  const state = usableState(capability);
+  const response = await invokeHelper(state, {
+    schemaVersion: strictSecurityProtocolVersion,
+    operation: "inspect_path_security_v3",
+    path: absolutePath,
+  });
+  const parsed = parseStrictJson(response);
+  if (!isRecord(parsed) || parsed.schemaVersion !== strictSecurityProtocolVersion || parsed.operation !== "inspect_path_security_v3" || parsed.status !== "ok") throw unavailable();
+  if (!exactKeys(parsed, ["schemaVersion", "operation", "status", "objectKind", "isReparsePoint", "currentUserOwner", "volumeIdentity", "fileId"])) throw unavailable();
+  if (typeof parsed.currentUserOwner !== "boolean") throw unavailable();
+  return Object.freeze({
+    ...parseIdentityObject({
+      objectKind: parsed.objectKind,
+      isReparsePoint: parsed.isReparsePoint,
+      volumeIdentity: parsed.volumeIdentity,
+      fileId: parsed.fileId,
+    }),
+    currentUserOwner: parsed.currentUserOwner,
+  });
 }
 
 /** Returns root-to-leaf identities so a later authority can require every object non-reparse. */

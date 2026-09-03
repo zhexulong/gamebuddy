@@ -12,8 +12,10 @@ import {
   createPublishedWindowsReparseInspector,
   inspectWindowsPathIdentity,
   inspectWindowsPathIdentityChain,
+  inspectWindowsPathSecurity,
   inspectWindowsReparse,
   type WindowsPathObjectIdentity,
+  type WindowsPathSecurity,
 } from "./index.js";
 import { createTestWindowsReparseInspector } from "./index.test-support.js";
 
@@ -29,6 +31,7 @@ const directoryIdentity = Object.freeze({
   volumeIdentity: "0123456789abcdef",
   fileId: "fedcba9876543210fedcba9876543210",
 });
+const ownedDirectorySecurity = Object.freeze({ ...directoryIdentity, currentUserOwner: true });
 
 type Outcome = "regular" | "reparse" | "malformed" | "unavailable" | "timeout" | "nonzero" | "stderr" | "overflow";
 
@@ -215,6 +218,35 @@ test("strict identity reports a reparse object without following it", { skip: pr
   assert.equal(actual.isReparsePoint, true);
 });
 
+test("strict path security parses its exact owned-directory result and operation", { skip: process.platform !== "win32" }, async () => {
+  const observed: unknown[] = [];
+  const capability = createTestWindowsReparseInspector(() => strictChild(securityResponse(ownedDirectorySecurity), observed));
+  const actual = await inspectWindowsPathSecurity(capability, "C:\\trusted\\object");
+  assert.deepEqual(actual, ownedDirectorySecurity);
+  assert.equal(Object.isFrozen(actual), true);
+  assert.deepEqual(observed, [{ schemaVersion: 3, operation: "inspect_path_security_v3", path: "C:\\trusted\\object" }]);
+});
+
+test("strict path security preserves an explicit foreign-owner verdict for its Host consumer", { skip: process.platform !== "win32" }, async () => {
+  const capability = createTestWindowsReparseInspector(() => strictChild(securityResponse({ ...ownedDirectorySecurity, currentUserOwner: false }), []));
+  const actual = await inspectWindowsPathSecurity(capability, "C:\\trusted\\object");
+  assert.equal(actual.currentUserOwner, false);
+});
+
+test("strict path security rejects malformed or mismatched owner responses", { skip: process.platform !== "win32" }, async () => {
+  const invalid = [
+    '{"schemaVersion":3,"operation":"inspect_path_security_v3","status":"ok","objectKind":"directory","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
+    '{"schemaVersion":3,"operation":"inspect_path_security_v3","status":"ok","objectKind":"directory","isReparsePoint":false,"currentUserOwner":"true","volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
+    '{"schemaVersion":2,"operation":"inspect_path_security_v3","status":"ok","objectKind":"directory","isReparsePoint":false,"currentUserOwner":true,"volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
+    '{"schemaVersion":3,"operation":"inspect_identity_v2","status":"ok","objectKind":"directory","isReparsePoint":false,"currentUserOwner":true,"volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
+    '{"schemaVersion":3,"operation":"inspect_path_security_v3","status":"indeterminate"}\n',
+  ];
+  for (const response of invalid) {
+    const capability = createTestWindowsReparseInspector(() => strictChild(response, []));
+    await assert.rejects(inspectWindowsPathSecurity(capability, "C:\\trusted\\object"), /windows_reparse_inspection_unavailable/);
+  }
+});
+
 test("strict path-chain returns exact root-to-leaf frozen identities", { skip: process.platform !== "win32" }, async () => {
   const observed: unknown[] = [];
   const components = [directoryIdentity, { ...directoryIdentity, fileId: "11111111111111111111111111111111" }, fileIdentity];
@@ -274,6 +306,18 @@ test("strict chain rejects count mismatches, non-directory ancestors, and extra 
   }
 });
 
+test("strict path security rejects invalid Windows paths before helper invocation", { skip: process.platform !== "win32" }, async () => {
+  let invoked = false;
+  const capability = createTestWindowsReparseInspector(() => {
+    invoked = true;
+    return strictChild(securityResponse(ownedDirectorySecurity), []);
+  });
+  for (const path of ["\\\\server\\share\\directory", "\\\\?\\C:\\directory", "relative\\directory", "C:\\trusted\\..\\directory", "C:\\trusted\\\\directory"]) {
+    await assert.rejects(inspectWindowsPathSecurity(capability, path), /windows_reparse_inspection_unavailable/);
+  }
+  assert.equal(invoked, false);
+});
+
 test("strict identity rejects UNC, device, relative, dot-segment, and empty-component paths before helper invocation", { skip: process.platform !== "win32" }, async () => {
   let invoked = false;
   const capability = createTestWindowsReparseInspector(() => {
@@ -300,6 +344,7 @@ test("strict identity is explicitly unavailable on non-Windows", { skip: process
     return strictChild(identityResponse(fileIdentity), []);
   });
   await assert.rejects(inspectWindowsPathIdentity(capability, "/absolute/path"), /windows_reparse_inspection_unavailable/);
+  await assert.rejects(inspectWindowsPathSecurity(capability, "/absolute/path"), /windows_reparse_inspection_unavailable/);
   await assert.rejects(inspectWindowsPathIdentityChain(capability, "/absolute/path"), /windows_reparse_inspection_unavailable/);
   assert.equal(invoked, false);
 });
@@ -314,6 +359,21 @@ test("published constructor remains fixed and rejects unavailable roots without 
   }
 });
 
+test("native security operation remains a strict handle-derived current-user owner check", async () => {
+  const source = await readFile(
+    resolve(fileURLToPath(new URL("../..", import.meta.url)), "native", "windows-reparse-inspector", "Program.cs"),
+    "utf8",
+  );
+  assert.match(source, /StrictSecuritySchemaVersion = 3/);
+  assert.match(source, /InspectPathSecurityOperation = "inspect_path_security_v3"/);
+  assert.match(source, /FileReadAttributes \| ReadControl/);
+  assert.match(source, /GetSecurityInfo\(fileHandle, SeFileObject, OwnerSecurityInformation/);
+  assert.match(source, /OpenProcessToken\(NativeMethods\.GetCurrentProcess\(\), TokenQuery/);
+  assert.match(source, /EqualSid\(ownerSid, tokenUser\.UserSid\)/);
+  assert.match(source, /LocalFree\(securityDescriptor\)/);
+  assert.doesNotMatch(source, /PowerShell|powershell/);
+});
+
 test("public policy entry does not expose test-only capability minting or filesystem fallback", async () => {
   const source = await readFile(
     resolve(fileURLToPath(new URL("../..", import.meta.url)), "src", "windows-reparse-inspector", "index.ts"),
@@ -324,6 +384,10 @@ test("public policy entry does not expose test-only capability minting or filesy
 
 function identityResponse(identity: WindowsPathObjectIdentity): string {
   return `${JSON.stringify({ schemaVersion: 2, operation: "inspect_identity_v2", status: "ok", ...identity })}\n`;
+}
+
+function securityResponse(security: WindowsPathSecurity): string {
+  return `${JSON.stringify({ schemaVersion: 3, operation: "inspect_path_security_v3", status: "ok", ...security })}\n`;
 }
 
 function chainResponse(components: readonly WindowsPathObjectIdentity[]): string {
