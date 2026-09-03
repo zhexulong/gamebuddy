@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 
+import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import type {
   StardewAiClientLaunchReservation,
   StardewAiClientProcessProbe,
   StardewAiClientProcessSpawn,
 } from "./stardew-ai-client-process-owner.js";
-import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createStardewPrivateBootstrapComposerTestSupport } from "./stardew-private-bootstrap-composer.test-support.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 
@@ -280,7 +280,10 @@ async function reserve(
   claim: Parameters<typeof composition.reserveExternalPlayerHostPhaseA>[1],
   reservation: Parameters<typeof composition.reserveExternalPlayerHostPhaseA>[2],
 ) {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-owner-test-"));
+  const parent = process.platform === "win32" && typeof process.env.LOCALAPPDATA === "string" && process.env.LOCALAPPDATA.length > 0
+    ? await realpath(process.env.LOCALAPPDATA)
+    : await realpath(tmpdir());
+  const root = await mkdtemp(join(parent, "gamebuddy-owner-test-"));
   temporaryRoots.push(root);
   return composition.reserveExternalPlayerHostPhaseA(root, claim, reservation);
 }
