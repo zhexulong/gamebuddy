@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { chunkTestFiles, discoverTestFiles, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
+import { chunkTestFiles, discoverTestFiles, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
 
 async function withFixture(run) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-test-runner-"));
@@ -77,6 +77,12 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
     { batch: ["e.test.js"], timeoutMs: 998 },
   ]);
   assert.deepEqual(chunkTestFiles(paths, 3), [["a.test.js", "b.test.js", "c.test.js"], ["d.test.js", "e.test.js"]]);
+});
+
+test("uses only a positive decimal compiled batch size override", async () => {
+  await assert.rejects(runCompiledTests({ batchSize: 0 }), /invalid_test_batch_size/);
+  await assert.rejects(runCompiledTests({ batchSize: 1.5 }), /invalid_test_batch_size/);
+  await assert.rejects(runCompiledTests({ batchSize: Number.MAX_SAFE_INTEGER + 1 }), /invalid_test_batch_size/);
 });
 
 test("fails closed before starting a batch after the shared suite deadline", async () => {

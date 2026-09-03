@@ -10,6 +10,18 @@ const defaultScriptTestRoot = resolve(hostRoot, "scripts");
 const DEFAULT_TEST_BATCH_SIZE = 10;
 const DEFAULT_TEST_SUITE_TIMEOUT_MS = 15 * 60_000;
 
+function configuredBatchSize(value, defaultValue = DEFAULT_TEST_BATCH_SIZE) {
+  if (value === undefined) return defaultValue;
+  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) throw runnerError("invalid_test_batch_size", String(value));
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw runnerError("invalid_test_batch_size", value);
+  return parsed;
+}
+
+function batchFilesForLog(paths) {
+  return paths.map((path) => relative(hostRoot, path).replaceAll("\\", "/")).join(",");
+}
+
 function runnerError(code, path) {
   return new Error(`${code}:${path}`);
 }
@@ -115,14 +127,15 @@ export async function runTestBatches(paths, {
     const remainingMs = deadlineMs - now();
     if (remainingMs < 100) throw runnerError("test_suite_timeout", suite);
     const batchLabel = `${suite}:batch=${index + 1}/${batches.length}`;
-    console.error(`host_test_suite_batch_start:suite=${batchLabel}:files=${batch.length}:remaining_ms=${remainingMs}`);
+    console.error(`host_test_suite_batch_start:suite=${batchLabel}:files=${batch.length}:paths=${batchFilesForLog(batch)}:remaining_ms=${remainingMs}`);
     await run(batch, { timeoutMs: remainingMs, onHeartbeat: reportHeartbeat(batchLabel) });
   }
 }
 
-export async function runCompiledTests() {
+export async function runCompiledTests({ batchSize = configuredBatchSize(process.env.GAMEBUDDY_HOST_TEST_COMPILED_BATCH_SIZE) } = {}) {
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw runnerError("invalid_test_batch_size", String(batchSize));
   await assertHostVerificationArtifactManifest({ root: hostRoot, outputRoot: defaultTestRoot });
-  return await runTestBatches(await discoverTestFiles(defaultTestRoot, ".test.js"), { suite: "compiled" });
+  return await runTestBatches(await discoverTestFiles(defaultTestRoot, ".test.js"), { suite: "compiled", batchSize });
 }
 
 export async function runScriptTests() {

@@ -54,6 +54,7 @@ jobs:
       - run: pnpm --dir host test
         env:
           GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}
+          GAMEBUDDY_HOST_TEST_COMPILED_BATCH_SIZE: "5"
       # This is the sole network-acquisition entry. It fails closed unless the
       # protected workflow identity, tag grammar, Windows x64 runner and release
       # environment marker all match. Installer assembly, certificate work, and
