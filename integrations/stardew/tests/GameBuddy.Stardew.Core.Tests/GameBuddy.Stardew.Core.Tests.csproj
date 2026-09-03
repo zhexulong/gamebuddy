@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
     <RootNamespace>GameBuddy.Stardew.Core.Tests</RootNamespace>
     <AssemblyName>GameBuddy.Stardew.Core.Tests</AssemblyName>
   </PropertyGroup>

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { chunkTestFiles, discoverTestFiles, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
 
@@ -25,7 +26,7 @@ test("recursively discovers sorted nested regular test files and passes every pa
   assert.deepEqual(tests, [resolve(root, "a", "first.test.js"), resolve(root, "z", "nested", "second.test.js")]);
   const calls = [];
   await runDiscoveredTests(tests, { node: "node-under-test", runChild: async (options) => { calls.push(options); } });
-  assert.deepEqual(calls, [{ command: "node-under-test", args: ["--test", "--test-concurrency=1", ...tests], cwd: resolve(import.meta.dirname, "..") }]);
+  assert.deepEqual(calls, [{ command: "node-under-test", args: ["--import", pathToFileURL(resolve(import.meta.dirname, "compiled-test-bootstrap.mjs")).href, "--test", "--test-concurrency=1", ...tests], cwd: resolve(import.meta.dirname, "..") }]);
 }));
 
 test("discovers script-level ESM tests when explicitly requested", async () => withFixture(async (root) => {
@@ -72,9 +73,11 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
     },
   });
   assert.deepEqual(calls, [
-    { batch: ["a.test.js", "b.test.js"], timeoutMs: 1_000 },
-    { batch: ["c.test.js", "d.test.js"], timeoutMs: 999 },
-    { batch: ["e.test.js"], timeoutMs: 998 },
+    { batch: ["a.test.js"], timeoutMs: 1_000 },
+    { batch: ["b.test.js"], timeoutMs: 999 },
+    { batch: ["c.test.js"], timeoutMs: 998 },
+    { batch: ["d.test.js"], timeoutMs: 997 },
+    { batch: ["e.test.js"], timeoutMs: 996 },
   ]);
   assert.deepEqual(chunkTestFiles(paths, 3), [["a.test.js", "b.test.js", "c.test.js"], ["d.test.js", "e.test.js"]]);
 });

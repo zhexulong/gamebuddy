@@ -76,11 +76,11 @@ export function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       const scope = (connection as StardewBridgeConnection).scope;
       if (!sameScope(scope, connection.scope))
         throw new Error("integration_scope_mismatch");
-      return {
+      return Object.freeze({
         integrationId: scope.integrationId,
         saveId: scope.saveId,
         worldId: scope.worldId,
-      };
+      });
     },
     createToolSet: ({
       connection,

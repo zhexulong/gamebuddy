@@ -3275,7 +3275,7 @@ test("manifest handoff binds literal confirmation and rejects replay or concurre
     signature: "",
   }, fixture.token);
   await writeFile(join(fixture.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(response));
-  await assert.rejects(first, /stardew_manifest_handoff_failed/);
+  await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/);
   await assert.rejects(
     () => fixture.coordinator.confirmAndAdmit(selection, { confirmed: true }),
     /invalid_stardew_manifest_handoff_selection/,
@@ -3436,7 +3436,7 @@ test("manifest handoff uses production response and manifest verification for mi
     manifestPath: "stardew-farmhand-manifest.json",
     signature: "",
   }, mismatch.token)));
-  await assert.rejects(mismatchPending, /stardew_manifest_handoff_failed/);
+  await assert.rejects(mismatchPending, /stardew_manifest_handoff_publication_uncertain/);
   assert.equal(mismatchRequestId.length > 0, true);
 
   const tampered = await prepareManifestHandoffFixture();
@@ -3461,7 +3461,7 @@ test("manifest handoff uses production response and manifest verification for mi
     nonce: "nonce-attachment-factory",
     signatureOverride: "tampered-manifest-signature",
   })));
-  await assert.rejects(tamperedPending, /stardew_manifest_handoff_failed/);
+  await assert.rejects(tamperedPending, /stardew_manifest_handoff_publication_uncertain/);
 });
 
 
@@ -3518,7 +3518,7 @@ test("manifest handoff concurrent replay and cross-composition failures preserve
       signature: "",
     }, left.token)),
   );
-  await assert.rejects(first, /stardew_manifest_handoff_failed/);
+  await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/);
   await assert.rejects(
     () => left.coordinator.confirmAndAdmit(selection, { confirmed: true }),
     /invalid_stardew_manifest_handoff_selection/,

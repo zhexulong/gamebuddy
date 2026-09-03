@@ -1,5 +1,5 @@
 import { lstat, readdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
 import { assertHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
@@ -75,7 +75,13 @@ export async function discoverTestFiles(root = defaultTestRoot, extension = ".te
 
 export async function runDiscoveredTests(paths, { node = process.execPath, runChild = runBoundedChild, timeoutMs = undefined, onHeartbeat = undefined } = {}) {
   if (!Array.isArray(paths) || paths.length === 0) throw runnerError("test_files_missing", defaultTestRoot);
-  const args = ["--test", "--test-concurrency=1", ...paths];
+  const args = [
+    "--import",
+    pathToFileURL(resolve(hostRoot, "scripts", "compiled-test-bootstrap.mjs")).href,
+    "--test",
+    "--test-concurrency=1",
+    ...paths,
+  ];
   // Tests deliberately resolve repository-owned source and test-only assets
   // relative to the Host package. Supplying an absolute test path does not
   // change Node's cwd, so keep this invariant in the shared runner.
@@ -128,7 +134,11 @@ export async function runTestBatches(paths, {
     if (remainingMs < 100) throw runnerError("test_suite_timeout", suite);
     const batchLabel = `${suite}:batch=${index + 1}/${batches.length}`;
     console.error(`host_test_suite_batch_start:suite=${batchLabel}:files=${batch.length}:paths=${batchFilesForLog(batch)}:remaining_ms=${remainingMs}`);
-    await run(batch, { timeoutMs: remainingMs, onHeartbeat: reportHeartbeat(batchLabel) });
+    for (const path of batch) {
+      const fileRemainingMs = deadlineMs - now();
+      if (fileRemainingMs < 100) throw runnerError("test_suite_timeout", suite);
+      await run([path], { timeoutMs: fileRemainingMs, onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relative(hostRoot, path).replaceAll("\\\\", "/")}`) });
+    }
   }
 }
 

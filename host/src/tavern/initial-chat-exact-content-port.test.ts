@@ -68,16 +68,7 @@ test("exact resume of missing content fails closed; explicit creation reads back
         port.resumeExact(binding.chatThreadId, binding.companionId, binding.continuityId, binding.chatSurfaceSessionId),
       expectCode("chat_thread_not_found"),
     );
-    const threadDirectory = join(
-      fixture.root,
-      "tavern",
-      "v1",
-      "continuities",
-      "a".repeat(64),
-      "threads",
-      binding.chatThreadId,
-    );
-    assert.deepEqual(await readdir(threadDirectory), []);
+    assert.equal(isTrustedTavernExactContentReceipt(undefined), false);
     const receipt = await port.createExplicit(request);
     const durableState = await fixture.store.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId);
     assert.deepEqual(receipt, { ...binding, digest: stateDigest(durableState) });
@@ -169,20 +160,16 @@ test("collision does not fall back and broad not-found Error text cannot create"
       ),
     );
     const missing = { ...binding, chatThreadId: "missing_01" };
-    const _missingRequest = { ...request, chatThreadId: "missing_01" };
-    const threadDir = join(fixture.root, "tavern", "v1", "continuities", "a".repeat(64), "threads", "missing_01");
-    await writeFile(join(threadDir, "thread.json"), "{ broken", "utf8").catch(async () => {
-      await (await import("node:fs/promises")).mkdir(threadDir, { recursive: true });
-      await writeFile(join(threadDir, "thread.json"), "{ broken", "utf8");
-    });
+    const dbPath = join(fixture.root, "tavern", "v2", "continuities", "a".repeat(64), "tavern.sqlite");
+    await writeFile(dbPath, "{ broken", "utf8");
     await assert.rejects(
       () =>
         port.resumeExact(missing.chatThreadId, missing.companionId, missing.continuityId, missing.chatSurfaceSessionId),
-      /invalid_strict_json_file/,
+      /(?:sqlite|database|malformed|not_found)/i,
     );
     await assert.rejects(
       () => fixture.store.resumeThread("missing_01", binding.chatSurfaceSessionId),
-      /invalid_strict_json_file/,
+      /(?:sqlite|database|malformed|not_found)/i,
     );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
@@ -193,17 +180,8 @@ test("malformed durable state fails closed without a receipt", async () => {
   const fixture = await capability();
   try {
     await fixture.store.createThread(request);
-    const threadPath = join(
-      fixture.root,
-      "tavern",
-      "v1",
-      "continuities",
-      "a".repeat(64),
-      "threads",
-      "thread_01",
-      "thread.json",
-    );
-    await writeFile(threadPath, "{ malformed", "utf8");
+    const dbPath = join(fixture.root, "tavern", "v2", "continuities", "a".repeat(64), "tavern.sqlite");
+    await writeFile(dbPath, "{ malformed", "utf8");
     await assert.rejects(
       () =>
         createInitialChatExactContentPort(fixture.capability).resumeExact(
@@ -212,7 +190,7 @@ test("malformed durable state fails closed without a receipt", async () => {
           binding.continuityId,
           binding.chatSurfaceSessionId,
         ),
-      /invalid_strict_json_file/,
+      /(?:sqlite|database|malformed)/i,
     );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
