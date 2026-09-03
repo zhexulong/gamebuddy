@@ -3,7 +3,17 @@ import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 import { appendChatTranscript, MAX_CHAT_TRANSCRIPT_ENTRIES, readChatTranscript } from "./chat-transcript.js";
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 
 async function transcriptPath(): Promise<string> {
   const canonicalTemporaryRoot = await realpath(tmpdir());
