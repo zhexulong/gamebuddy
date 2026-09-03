@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -29,9 +29,23 @@ import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../
 import type { GameConnection } from "../game-connection.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import { StardewExecutionRecoverySupervisor } from "../stardew-execution-recovery-supervisor.js";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer.test-support.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
+
+async function canonicalTemporaryRoot(prefix: string): Promise<string> {
+  return mkdtemp(join(await realpath(tmpdir()), prefix));
+}
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 
 function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegrationLauncher {
   const module: GameIntegrationAdapter = {
@@ -134,7 +148,7 @@ function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegra
 }
 
 async function binding(): Promise<GameRuntimeBinding> {
-  const root = await mkdtemp(join(tmpdir(), "game-runtime-materializer-"));
+  const root = await canonicalTemporaryRoot("game-runtime-materializer-");
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
   const manifestPath = join(root, "manifest.json");
@@ -461,7 +475,7 @@ test("close drains materialization admitted before callback completion", async (
 });
 
 test("retains a durable uncertain action journal across materializer close without resending a missing execute response", async () => {
-  const journalRoot = await mkdtemp(join(tmpdir(), "game-runtime-materializer-recovery-"));
+  const journalRoot = await canonicalTemporaryRoot("game-runtime-materializer-recovery-");
   const journalDirectory = join(journalRoot, "journal");
   await mkdir(journalDirectory);
   const recoveryIdentity = Object.freeze({
