@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -75,7 +75,7 @@ test("compiled entry rejects malformed bootstrap wire without acknowledgement", 
 
 test("disposable bootstrap admission accepts only the exact runtime closure and writes the exact acknowledgement bytes", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only bootstrap root, reparse, and current-user ownership admission");
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "gamebuddy-desktop-bootstrap-"));
+  const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-desktop-bootstrap-"));
   try {
     const moduleDirectory = join(fixtureRoot, "Programs", "GameBuddy", "generation");
     const runtime = Buffer.from("fixture runtime");
@@ -204,10 +204,11 @@ test("Desktop bootstrap source retains only fixed private ingress and no public 
   assert.match(source, /new WeakSet<object>/);
   assert.match(source, /new WeakMap<object, undefined>/);
 
+  const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory)");
   const securityCheck = source.indexOf("Promise.all(roots.map((root) => inspectWindowsPathSecurity(inspector, root)))");
   const mint = source.indexOf("mintDesktopRootLayoutCapability(rootLayout)");
   const acknowledgement = source.indexOf("writeAcknowledgement(frame, admission)");
-  assert.ok(securityCheck >= 0 && securityCheck < mint && securityCheck < acknowledgement, "root security check must precede mint and acknowledgement");
+  assert.ok(rootValidation >= 0 && securityCheck >= 0 && rootValidation < mint && rootValidation < acknowledgement, "root security validation must precede mint and acknowledgement");
 });
 
 function sha256(value: Buffer): string {
