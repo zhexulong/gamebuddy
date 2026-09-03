@@ -1,12 +1,26 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { createContinuitySurfaceCoordinator } from "./continuity-surface-coordinator.js";
 
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
+
+async function runtimeRoot(prefix: string): Promise<string> {
+  return await mkdtemp(join(await realpath(tmpdir()), prefix));
+}
+
 test("coordinator runs callbacks only while held, rejects same-partition reentry, and permits another partition", async () => {
-  const coordinator = createContinuitySurfaceCoordinator(await mkdtemp(join(tmpdir(), "coordinator-")));
+  const coordinator = createContinuitySurfaceCoordinator(await runtimeRoot("coordinator-"));
   let called = false;
   await coordinator.withTransition("continuity_01", async () => {
     called = true;
@@ -20,9 +34,9 @@ test("coordinator runs callbacks only while held, rejects same-partition reentry
 });
 
 test("separate durable coordinator instances serialize one continuity partition", async () => {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "coordinator-shared-"));
-  const first = createContinuitySurfaceCoordinator(runtimeRoot);
-  const second = createContinuitySurfaceCoordinator(runtimeRoot);
+  const root = await runtimeRoot("coordinator-shared-");
+  const first = createContinuitySurfaceCoordinator(root);
+  const second = createContinuitySurfaceCoordinator(root);
   let entered = 0;
   let releaseFirst!: () => void;
   const firstReleased = new Promise<void>((resolve) => {
@@ -45,9 +59,9 @@ test("separate durable coordinator instances serialize one continuity partition"
 });
 
 test("coordinator permits independent durable continuity partitions concurrently", async () => {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "coordinator-independent-"));
-  const first = createContinuitySurfaceCoordinator(runtimeRoot);
-  const second = createContinuitySurfaceCoordinator(runtimeRoot);
+  const root = await runtimeRoot("coordinator-independent-");
+  const first = createContinuitySurfaceCoordinator(root);
+  const second = createContinuitySurfaceCoordinator(root);
   let entered = 0;
   const barrier = new Promise<void>((resolve) => {
     const timer = setInterval(() => {
