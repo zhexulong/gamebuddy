@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -9,6 +10,29 @@ import {
 
 const sourceRoot = path.resolve(ACTION_SOURCE_PROJECTION_PRODUCER_DIRECTORY, "../inputs/action-projection-source");
 const sources = await loadSources(sourceRoot);
+const packageDirectory = path.resolve(ACTION_SOURCE_PROJECTION_PRODUCER_DIRECTORY, "..");
+
+function spawnStandaloneProducer() {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["src/action-source-projection-producer.mjs"], {
+      cwd: packageDirectory,
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({
+      code,
+      signal,
+      stdout: Buffer.concat(stdout),
+      stderr: Buffer.concat(stderr),
+    }));
+  });
+}
 
 function expectRejection(overrides, code) {
   assert.throws(
@@ -16,6 +40,20 @@ function expectRejection(overrides, code) {
     (error) => error instanceof Error && error.message === `stardew_action_source_projection_${code}`,
   );
 }
+
+test("standalone CLI resolves its package-owned source root and emits canonical projection JSON", async () => {
+  const result = await spawnStandaloneProducer();
+  assert.equal(result.code, 0);
+  assert.equal(result.signal, null);
+  assert.equal(result.stderr.length, 0);
+  const projection = JSON.parse(result.stdout.toString("utf8"));
+  assert.equal(projection.schema, "gamebuddy-stardew-action-source-projection/v1");
+  assert.equal(projection.developmentOnly, true);
+  assert.equal(projection.gameId, "stardew");
+  assert.ok(projection.sources.some(({ path: sourcePath }) => sourcePath ===
+    "integrations/stardew/action-development/contracts/generated/action-surface.v1.json"));
+  assert.ok(projection.mod.executableActionIds.length > 0);
+});
 
 test("standalone runner and fixture sources derive the exact published parity projection", () => {
   const projection = deriveActionSourceProjection(sources);
