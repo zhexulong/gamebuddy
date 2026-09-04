@@ -52,6 +52,9 @@ jobs:
       # never use an unverified production generation.
       - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
       - run: node host/scripts/build-windows-reparse-inspector.mjs
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
       - run: dotnet restore integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/GameBuddy.Stardew.Core.Tests.csproj
       - run: dotnet restore integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj
       - run: pnpm --dir host test
