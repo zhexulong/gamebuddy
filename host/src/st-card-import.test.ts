@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
-import { buildCompanionSystemPrompt, validateIdentityProfile } from "./identity-profile.js";
+import {
+  buildCompanionSystemPrompt,
+  buildGameCompanionSystemPrompt,
+  validateIdentityProfile,
+} from "./identity-profile.js";
 import { candidateToIdentityProfile, decodeStCard, previewStCard } from "./st-card-import.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import fc from "fast-check";
@@ -64,6 +68,7 @@ test("ST card parsing creates reviewable Profile and WorldBook candidates withou
   });
   assert.equal(preview.format, "st-v3");
   assert.equal(preview.profileCandidate.identity.name, "Rin");
+  assert.equal(preview.scenario, "shared journey");
   assert.equal(preview.profileCandidate.examples.length, 1);
   assert.deepEqual(preview.unsupportedFields, ["extensions", "system_prompt"]);
   assert.equal(preview.profileCandidate.profileId, "gamebuddy.companion.rin");
@@ -78,7 +83,8 @@ test("candidateToIdentityProfile creates valid IdentityProfile for 100% prefix c
       description: "Loves amethyst and gaming.",
       personality: "Adventurous and spirited.",
       scenario: "Living in Pelican Town.",
-      mes_example: "{{user}}: Want to play Journey of the Prairie King?\n{{char}}: Always! Let's beat level 1 together.",
+      mes_example:
+        "{{user}}: Want to play Journey of the Prairie King?\n{{char}}: Always! Let's beat level 1 together.",
     },
   });
 
@@ -87,6 +93,10 @@ test("candidateToIdentityProfile creates valid IdentityProfile for 100% prefix c
   assert.equal(profile.identity.name, "Abigail");
   assert.equal(profile.persona?.core, "Loves amethyst and gaming.");
   assert.equal(profile.persona?.interactionStyle, "Adventurous and spirited.");
+  assert.equal(
+    profile.identity.continuity,
+    "Maintain one continuous shared experience with the player across chat and game surfaces.",
+  );
   assert.equal(profile.examples?.length, 1);
 
   // Verifies that the IdentityProfile conforms to runtime contracts
@@ -98,6 +108,9 @@ test("candidateToIdentityProfile creates valid IdentityProfile for 100% prefix c
   assert.ok(prompt.includes("gamebuddy_companion_identity"));
   assert.ok(prompt.includes("Abigail"));
   assert.ok(prompt.includes("Loves amethyst and gaming."));
+  assert.doesNotMatch(prompt, /Living in Pelican Town/);
+  assert.doesNotMatch(buildGameCompanionSystemPrompt(profile), /Living in Pelican Town/);
+  assert.doesNotMatch(JSON.stringify(profile), /Living in Pelican Town/);
 });
 
 test("safe decoder classifies accepted, opaque, and executable card fields without interpreting them", () => {
@@ -218,7 +231,11 @@ test("safe decoder preserves multiline formatting in description, personality, s
     "Line 1: A gamer.\r\nLine 2: Loves amethyst.\nLine 3: Adventurous.",
   );
   assert.equal(preview.profileCandidate.persona?.interactionStyle, "Paragraph 1: Bold.\n\nParagraph 2: Mysterious.");
-  assert.equal(preview.profileCandidate.identity.continuity, "Setting:\n- Pelican Town\n- Pierre's General Store");
+  assert.equal(
+    preview.profileCandidate.identity.continuity,
+    "Maintain one continuous shared experience with the player across chat and game surfaces.",
+  );
+  assert.equal(preview.scenario, "Setting:\n- Pelican Town\n- Pierre's General Store");
   assert.equal(preview.profileCandidate.firstGreeting, "Hey there!\nWhat are you up to today?");
   assert.equal(preview.worldBookCandidates[0]?.content, "First line of lore.\r\nSecond line of lore with\ttabs.");
 });
@@ -346,9 +363,9 @@ test("PBT Property 2: Multiline formatting and newline preservation under fuzzin
 });
 
 test("PBT Property 3: Arbitrary byte payload never crashes PNG decoder", () => {
-  const bytesArb = fc.array(fc.integer({ min: 0, max: 255 }), { minLength: 0, maxLength: 200 }).map(
-    (arr) => new Uint8Array(arr),
-  );
+  const bytesArb = fc
+    .array(fc.integer({ min: 0, max: 255 }), { minLength: 0, maxLength: 200 })
+    .map((arr) => new Uint8Array(arr));
 
   fc.assert(
     fc.property(bytesArb, (bytes) => {
@@ -402,10 +419,16 @@ test("PBT Property 4: Generated Card Preview maps to valid IdentityProfile with 
       assert.equal(profile.revision, 1);
       assert.ok(profile.profileId.startsWith("gamebuddy.companion."));
       assert.equal(profile.identity.name, preview.profileCandidate.identity.name);
+      assert.equal(
+        profile.identity.continuity,
+        "Maintain one continuous shared experience with the player across chat and game surfaces.",
+      );
+      assert.equal("scenario" in profile, false);
 
       // Invariant: Prompt rendering succeeds for m[0] prefix caching
       const prompt = buildCompanionSystemPrompt(profile);
       assert.ok(prompt.includes(profile.identity.name));
+      assert.doesNotMatch(prompt, /Scenario:/);
     }),
     { numRuns: 100 },
   );
