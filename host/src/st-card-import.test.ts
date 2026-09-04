@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
 import {
-  buildCompanionSystemPrompt,
+  buildChatCompanionSystemPrompt,
   buildGameCompanionSystemPrompt,
   validateIdentityProfile,
 } from "./identity-profile.js";
@@ -104,8 +104,8 @@ test("candidateToIdentityProfile creates valid IdentityProfile for 100% prefix c
   assert.equal(validated.profileId, "gamebuddy.companion.abigail");
 
   // Verifies system prompt rendering for prefix caching (m[0])
-  const prompt = buildCompanionSystemPrompt(profile);
-  assert.ok(prompt.includes("gamebuddy_companion_identity"));
+  const prompt = buildChatCompanionSystemPrompt(profile);
+  assert.ok(prompt.includes("[Character: Abigail]"));
   assert.ok(prompt.includes("Abigail"));
   assert.ok(prompt.includes("Loves amethyst and gaming."));
   assert.doesNotMatch(prompt, /Living in Pelican Town/);
@@ -426,7 +426,7 @@ test("PBT Property 4: Generated Card Preview maps to valid IdentityProfile with 
       assert.equal("scenario" in profile, false);
 
       // Invariant: Prompt rendering succeeds for m[0] prefix caching
-      const prompt = buildCompanionSystemPrompt(profile);
+      const prompt = buildChatCompanionSystemPrompt(profile);
       assert.ok(prompt.includes(profile.identity.name));
       assert.doesNotMatch(prompt, /Scenario:/);
     }),
