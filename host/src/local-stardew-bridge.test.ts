@@ -133,6 +133,10 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
   const pipeName = `gamebuddy_catalog_refresh_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
   let observeRequests = 0;
+  let firstObserveRequest!: () => void;
+  const firstObserveRequestSeen = new Promise<void>((resolvePromise) => {
+    firstObserveRequest = resolvePromise;
+  });
   const observeResponses: Array<() => void> = [];
   const server = createServer((socket: Socket) => {
     peer = socket;
@@ -174,6 +178,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
         }
         if (request.type === "observe_request") {
           observeRequests++;
+          if (observeRequests === 1) firstObserveRequest();
           const catalogRevision = observeRequests === 1 ? 2 : 3;
           const snapshotRevision = observeRequests === 1 ? 20 : 21;
           observeResponses.push(() =>
@@ -227,6 +232,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
       await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
     assert.equal(client.state.snapshot, null);
     assert.equal(catalogRevision(), 2);
+    await firstObserveRequestSeen;
     assert.equal(observeRequests, 1);
     const refresh1 = client.refreshAfterCatalogUpdate();
     const refresh2 = client.refreshAfterCatalogUpdate();

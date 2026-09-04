@@ -251,7 +251,12 @@ async function createAdmissionBroker() {
   return {
     handler,
     issue,
-    async close() { await handler.close(); await closeServer(server); },
+    async close() {
+      const handlerDrain = handler.close();
+      server.closeAllConnections();
+      await closeServer(server);
+      await handlerDrain;
+    },
   };
 }
 

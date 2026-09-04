@@ -8,17 +8,20 @@ import { fileURLToPath } from "node:url";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  brandRuntimeOwnerIdentity,
+  drainBindingMaterializations,
+  mintBindingToken,
+  mintGameRuntimeBindingFacts,
+  revokeBindingToken,
+  stopAcceptingBindingMaterialization,
   type GameRuntimeBindingExecution,
+  type OpaqueGameRuntimeBindingToken,
   type ReservedGameRuntimeMaterialization,
   reserveGameRuntimeMaterialization,
   withConsumedBindingExecution,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
-import {
-  createGameRuntimeBinding,
-  type GameRuntimeBinding,
-} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import type { GameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import type { ProductionGamePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
-import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
 import {
@@ -47,7 +50,10 @@ test.after(() => {
   bindWindowsStaleLockReclaimer(undefined);
 });
 
-function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegrationLauncher {
+function fixture(
+  onClose: () => void,
+  onRevoke: () => void,
+): { launcher: ConfigurableIntegrationLauncher; handle: IntegrationLaunchHandle } {
   const module: GameIntegrationAdapter = {
     descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
     actionCatalog: createIntegrationActionCatalog([
@@ -135,7 +141,7 @@ function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegra
     revoke: onRevoke,
     close: onClose,
   };
-  return {
+  const launcher: ConfigurableIntegrationLauncher = {
     integrationId: "test-arcade",
     module,
     prepare: async () =>
@@ -145,32 +151,50 @@ function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegra
       }),
     launch: async () => handle,
   };
+  return Object.freeze({ launcher, handle });
 }
 
 async function binding(): Promise<GameRuntimeBinding> {
   const root = await canonicalTemporaryRoot("game-runtime-materializer-");
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
-  const manifestPath = join(root, "manifest.json");
-  await writeFile(
-    manifestPath,
-    JSON.stringify({
-      schemaVersion: 2,
-      topology: "independent_chat_and_game_surfaces",
-      runtimeRoot,
-      principal,
-      bootstrapOperationId: "bootstrap_01",
-      authorityGeneration: 1,
-    }),
+  const current = fixture(
+    () => undefined,
+    () => undefined,
   );
-  return createGameRuntimeBinding({
-    manifest: await loadHostDeploymentManifest(manifestPath),
-    launcher: fixture(
-      () => undefined,
-      () => undefined,
-    ),
-    launcherConfig: null,
-    configDirectory: process.cwd(),
+  const world = Object.freeze({ integrationId: "test-arcade", saveId: "save_01", worldId: "world_01" });
+  const ownerIdentity = brandRuntimeOwnerIdentity({ processId: process.pid, creationTime100ns: "1" });
+  const execution = Object.freeze({
+    principal,
+    runtimeRoot,
+    connection: current.handle.connection,
+    world,
+    launch: current.handle,
+    ownerIdentity,
+    bindingFacts: mintGameRuntimeBindingFacts({ principal, world, ownerIdentity }),
+  });
+  const token = mintBindingToken(execution);
+  let closed = false;
+  return Object.freeze({
+    async executeWithBinding<T>(
+      callback: (token: OpaqueGameRuntimeBindingToken) => Promise<T> | T,
+    ): Promise<T> {
+      if (closed) throw new Error("game_runtime_binding_unavailable");
+      try {
+        return await callback(token);
+      } finally {
+        stopAcceptingBindingMaterialization(token);
+      }
+    },
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      stopAcceptingBindingMaterialization(token);
+      await drainBindingMaterializations(token);
+      revokeBindingToken(token);
+      current.handle.revoke("game_runtime_binding_closed");
+      current.handle.close();
+    },
   });
 }
 
