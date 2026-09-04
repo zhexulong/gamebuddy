@@ -30,6 +30,16 @@ test("standalone runner and fixture sources derive the exact published parity pr
   assert.equal(projection.runnerFixtureParity.obsoleteRunnerFilenamesAbsent.length, 25);
 });
 
+test("standalone gate metadata does not suppress Host-supported executable actions", () => {
+  const withoutEquipGate = sources.gate_descriptors.replace(
+    '  gate("equip_tool", 1, "run-stardew-native-local-player-equip-tool-smoke.mjs", "tool_selected"),\n',
+    "",
+  );
+  assert.notEqual(withoutEquipGate, sources.gate_descriptors, "equip_tool gate anchor must match");
+  const projection = deriveActionSourceProjection({ ...sources, gate_descriptors: withoutEquipGate });
+  assert.ok(projection.mod.executableActionIds.includes("equip_tool"));
+});
+
 test("standalone runner source mutations fail closed and fixture drift remains observable", () => {
   const runnerSources = JSON.parse(sources.runner_sources);
   const missing = structuredClone(runnerSources);

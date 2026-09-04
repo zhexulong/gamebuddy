@@ -1281,7 +1281,8 @@
       "break_rock_source",
       "clear_hoedirt",
       "dig_artifact_spot",
-      "refill_watering_can"
+      "refill_watering_can",
+      "navigate_to_destination"
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
