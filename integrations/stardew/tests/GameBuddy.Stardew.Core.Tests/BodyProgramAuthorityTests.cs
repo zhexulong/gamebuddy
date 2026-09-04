@@ -23,6 +23,26 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
+    public void CandidateCodecAcceptsDestinationSelectorObjectAndRejectsScalarizedSelector()
+    {
+        const string json = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"Town\"}}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        ActionProgramCandidateCodec.TryDecode(json, out ActionProgramCandidate? candidate, out _).Should().BeTrue();
+        candidate!.Nodes.Single().Arguments["destination"].CanonicalValue.Should().BeNull();
+        candidate.Nodes.Single().Arguments["destination"].Destination!.Label.Should().Be("Town");
+        ActionProgramCandidateCodec.TryDecode(json.Replace("{\"kind\":\"label\",\"label\":\"Town\"}", "\"Town\"", StringComparison.Ordinal), out _, out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void CandidateCodecAcceptsDestinationSelectorRefAndRejectsExtraSelectorKeys()
+    {
+        const string reference = "dr1_AAAAAAAAAAAAAAAAAAAAAA";
+        string json = $"{{\"programId\":\"program\",\"nodes\":[{{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{{\"destination\":{{\"type\":\"destination_selector\",\"destination\":{{\"kind\":\"ref\",\"ref\":\"{reference}\"}}}}}},\"dependsOn\":[],\"bindings\":{{}},\"deadlineMs\":1000}}]}}";
+        ActionProgramCandidateCodec.TryDecode(json, out ActionProgramCandidate? candidate, out _).Should().BeTrue();
+        candidate!.Nodes.Single().Arguments["destination"].Destination!.Ref.Should().Be(reference);
+        ActionProgramCandidateCodec.TryDecode(json.Replace("\"ref\":\"" + reference, "\"ref\":\"" + reference + "\",\"extra\":null", StringComparison.Ordinal), out _, out _).Should().BeFalse();
+    }
+
+    [Fact]
     public void VerifyIsPureWhileSubmitDurablyAcceptsAndIsIdempotent()
     {
         var store = new MemoryStore(); var authority = Open(store); ActionProgramCandidate candidate = Program("program", 1000);

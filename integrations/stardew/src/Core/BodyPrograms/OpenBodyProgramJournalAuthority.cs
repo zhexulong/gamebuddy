@@ -255,7 +255,36 @@ public static class ActionProgramCandidateCodec
         }
         catch (JsonException) { return false; }
     }
-    private static bool ReadRuntimeMap(JsonElement value, out IReadOnlyDictionary<string, BodyProgramRuntimeValue>? map) { map = null; if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false; Dictionary<string, BodyProgramRuntimeValue> result = new(StringComparer.Ordinal); foreach (JsonProperty property in value.EnumerateObject()) { if (!BodyProgramValidation.IsIdentifier(property.Name) || !Exact(property.Value, "type", "canonicalValue") || property.Value.GetProperty("type").ValueKind != JsonValueKind.String || property.Value.GetProperty("canonicalValue").ValueKind != JsonValueKind.String || !result.TryAdd(property.Name, new(property.Value.GetProperty("type").GetString()!, property.Value.GetProperty("canonicalValue").GetString()!))) return false; } map = new ReadOnlyDictionary<string, BodyProgramRuntimeValue>(result); return true; }
+    private static bool ReadRuntimeMap(JsonElement value, out IReadOnlyDictionary<string, BodyProgramRuntimeValue>? map)
+    {
+        map = null; if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false;
+        Dictionary<string, BodyProgramRuntimeValue> result = new(StringComparer.Ordinal);
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            if (!BodyProgramValidation.IsIdentifier(property.Name) || property.Value.ValueKind != JsonValueKind.Object || !property.Value.TryGetProperty("type", out JsonElement type) || type.ValueKind != JsonValueKind.String) return false;
+            string token = type.GetString()!;
+            BodyProgramRuntimeValue item;
+            if (token == "destination_selector")
+            {
+                if (!Exact(property.Value, "type", "destination") || !ReadSelector(property.Value.GetProperty("destination"), out BodyProgramDestinationSelector? selector)) return false;
+                item = new(token, null, selector);
+            }
+            else
+            {
+                if (!Exact(property.Value, "type", "canonicalValue") || property.Value.GetProperty("canonicalValue").ValueKind != JsonValueKind.String) return false;
+                item = new(token, property.Value.GetProperty("canonicalValue").GetString());
+            }
+            if (!result.TryAdd(property.Name, item)) return false;
+        }
+        map = new ReadOnlyDictionary<string, BodyProgramRuntimeValue>(result); return true;
+    }
+    private static bool ReadSelector(JsonElement value, out BodyProgramDestinationSelector? selector)
+    {
+        selector = null; if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("kind", out JsonElement kind) || kind.ValueKind != JsonValueKind.String) return false;
+        if (kind.GetString() == "label" && Exact(value, "kind", "label") && value.GetProperty("label").ValueKind == JsonValueKind.String) selector = new("label", value.GetProperty("label").GetString(), null);
+        else if (kind.GetString() == "ref" && Exact(value, "kind", "ref") && value.GetProperty("ref").ValueKind == JsonValueKind.String) selector = new("ref", null, value.GetProperty("ref").GetString());
+        return selector is not null && BodyProgramValidation.IsValidSelector(selector);
+    }
     private static bool ReadStringList(JsonElement value, out IReadOnlyList<string>? values) { values = null; if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > 8) return false; List<string> result = new(); foreach (JsonElement item in value.EnumerateArray()) if (item.ValueKind != JsonValueKind.String || !BodyProgramValidation.IsIdentifier(item.GetString())) return false; else result.Add(item.GetString()!); values = Array.AsReadOnly(result.ToArray()); return true; }
     private static bool ReadBindings(JsonElement value, out IReadOnlyDictionary<string, ActionProgramBinding>? bindings) { bindings = null; if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false; Dictionary<string, ActionProgramBinding> result = new(StringComparer.Ordinal); foreach (JsonProperty property in value.EnumerateObject()) { if (!BodyProgramValidation.IsIdentifier(property.Name) || !Exact(property.Value, "nodeId", "factName") || property.Value.GetProperty("nodeId").ValueKind != JsonValueKind.String || property.Value.GetProperty("factName").ValueKind != JsonValueKind.String || !result.TryAdd(property.Name, new(property.Value.GetProperty("nodeId").GetString()!, property.Value.GetProperty("factName").GetString()!))) return false; } bindings = new ReadOnlyDictionary<string, ActionProgramBinding>(result); return true; }
     private static bool NoDuplicateKeys(JsonElement value, int depth) { if (depth > 16) return false; if (value.ValueKind == JsonValueKind.Array) return value.EnumerateArray().All(item => NoDuplicateKeys(item, depth + 1)); if (value.ValueKind != JsonValueKind.Object) return true; JsonProperty[] properties = value.EnumerateObject().ToArray(); return properties.Select(property => property.Name).Distinct(StringComparer.Ordinal).Count() == properties.Length && properties.All(property => NoDuplicateKeys(property.Value, depth + 1)); }

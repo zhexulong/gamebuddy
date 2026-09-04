@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using GameBuddy.Stardew.Core.Models;
 
@@ -12,7 +13,7 @@ public sealed record BodyProgramPolicyIdentity(string EmbodimentId, long Generat
 }
 
 #pragma warning disable CA1720 // Wire-level scalar-kind tokens intentionally name JSON scalar types.
-public enum BodyProgramArgumentKind { Integer = 1, String = 2, Boolean = 3 }
+public enum BodyProgramArgumentKind { Integer = 1, String = 2, Boolean = 3, DestinationSelector = 4, DestinationArrival = 5 }
 #pragma warning restore CA1720
 public sealed record BodyProgramArgumentDescriptor(string Name, BodyProgramArgumentKind Kind);
 public sealed record BodyProgramFactDescriptor(string Name, BodyProgramArgumentKind Kind);
@@ -40,10 +41,27 @@ public sealed class BodyProgramActionCatalog
     public bool TryGetAction(string actionId, out BodyProgramActionDescriptor? action) => this.actions.TryGetValue(actionId, out action);
 }
 
-/// <summary>Exact Host wire value. Its type token and canonical string are decoded by the Mod, never treated as JSON.</summary>
-public sealed record BodyProgramRuntimeValue(string Type, string CanonicalValue);
-/// <summary>Mod-owned canonical scalar, produced only after descriptor-aware decoding.</summary>
-public sealed record BodyProgramCanonicalValue(BodyProgramArgumentKind Kind, string CanonicalValue);
+public sealed record BodyProgramDestinationSelector(
+    string Kind,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Ref);
+public sealed record BodyProgramArrivalDestination(
+    string Label,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ContextLabel);
+public sealed record BodyProgramDestinationArrival(string Reason, BodyProgramArrivalDestination Destination);
+
+/// <summary>Exact Host value. Scalar values retain canonicalValue; typed values retain their object payload.</summary>
+public sealed record BodyProgramRuntimeValue(
+    string Type,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CanonicalValue = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BodyProgramDestinationSelector? Destination = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BodyProgramDestinationArrival? Arrival = null);
+/// <summary>Mod-owned canonical value, produced only after descriptor-aware decoding.</summary>
+public sealed record BodyProgramCanonicalValue(
+    BodyProgramArgumentKind Kind,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CanonicalValue = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BodyProgramDestinationSelector? Destination = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BodyProgramDestinationArrival? Arrival = null);
 
 /// <summary>Strict Host transport candidate. Program-level deadline and resources are deliberately absent from the frozen wire contract.</summary>
 public sealed record ActionProgramCandidate(string ProgramId, IReadOnlyList<ActionProgramCandidateNode> Nodes);
@@ -98,8 +116,8 @@ internal static class BodyProgramValidation
     internal static bool IsIdentifier(string? value) => value is { Length: >= 1 and <= 128 } && value.All(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c is '_' or '-');
     internal static bool IsValidActionDescriptor(BodyProgramActionDescriptor? action) => action is not null && IsIdentifier(action.ActionId) && action.IdentityVersion > 0
         && action.Arguments is { Count: <= 32 } && action.OutputFacts is { Count: <= 32 } && action.ResourceTemplate is { Count: <= 16 }
-        && action.Arguments.All(argument => argument is not null && IsIdentifier(argument.Name) && Enum.IsDefined(argument.Kind))
-        && action.OutputFacts.All(fact => fact is not null && IsIdentifier(fact.Name) && Enum.IsDefined(fact.Kind))
+        && action.Arguments.All(argument => argument is not null && IsIdentifier(argument.Name) && Enum.IsDefined(argument.Kind) && argument.Kind != BodyProgramArgumentKind.DestinationArrival)
+        && action.OutputFacts.All(fact => fact is not null && IsIdentifier(fact.Name) && Enum.IsDefined(fact.Kind) && fact.Kind != BodyProgramArgumentKind.DestinationSelector)
         && action.ResourceTemplate.All(claim => claim is not null && IsIdentifier(claim.Key) && Enum.IsDefined(claim.Value))
         && action.Arguments.Select(argument => argument.Name).Distinct(StringComparer.Ordinal).Count() == action.Arguments.Count
         && action.OutputFacts.Select(fact => fact.Name).Distinct(StringComparer.Ordinal).Count() == action.OutputFacts.Count
@@ -110,23 +128,47 @@ internal static class BodyProgramValidation
     internal static bool TryDecodeRuntimeValue(BodyProgramRuntimeValue? value, BodyProgramArgumentKind kind, out BodyProgramCanonicalValue? canonical)
     {
         canonical = null;
-        if (value is null || value.Type is not { Length: >= 1 and <= 64 } || value.CanonicalValue is null || value.CanonicalValue.Length > 512) return false;
+        if (value is null || value.Type is not { Length: >= 1 and <= 64 }) return false;
+        if (kind is BodyProgramArgumentKind.DestinationSelector)
+        {
+            if (value.Type != "destination_selector" || value.CanonicalValue is not null || value.Arrival is not null || !IsValidSelector(value.Destination)) return false;
+            canonical = new(kind, null, value.Destination); return true;
+        }
+        if (kind is BodyProgramArgumentKind.DestinationArrival) return false;
         string expected = kind switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.Boolean => "boolean", _ => "" };
-        if (value.Type != expected) return false;
+        if (value.Type != expected || value.CanonicalValue is null || value.CanonicalValue.Length > 512 || value.Destination is not null || value.Arrival is not null) return false;
         switch (kind)
         {
             case BodyProgramArgumentKind.Integer:
-                if (!long.TryParse(value.CanonicalValue, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long integer)
-                    || integer.ToString(System.Globalization.CultureInfo.InvariantCulture) != value.CanonicalValue) return false;
+                if (!long.TryParse(value.CanonicalValue, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long integer) || integer.ToString(System.Globalization.CultureInfo.InvariantCulture) != value.CanonicalValue) return false;
                 break;
-            case BodyProgramArgumentKind.Boolean:
-                if (value.CanonicalValue is not ("true" or "false")) return false;
-                break;
+            case BodyProgramArgumentKind.Boolean: if (value.CanonicalValue is not ("true" or "false")) return false; break;
+            case BodyProgramArgumentKind.String: break;
+            default: return false;
         }
-        canonical = new BodyProgramCanonicalValue(kind, value.CanonicalValue);
-        return true;
+        canonical = new BodyProgramCanonicalValue(kind, value.CanonicalValue); return true;
     }
-    internal static bool IsValidCanonicalValue(BodyProgramCanonicalValue? value, BodyProgramArgumentKind expected) => value is not null && value.Kind == expected
-        && TryDecodeRuntimeValue(new BodyProgramRuntimeValue(expected switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.Boolean => "boolean", _ => "" }, value.CanonicalValue), expected, out _);
-    internal static BodyProgramRuntimeValue ToRuntimeValue(BodyProgramCanonicalValue value) => new(value.Kind switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.Boolean => "boolean", _ => throw new ArgumentOutOfRangeException(nameof(value)) }, value.CanonicalValue);
+    internal static bool IsValidCanonicalValue(BodyProgramCanonicalValue? value, BodyProgramArgumentKind expected)
+    {
+        if (value is null || value.Kind != expected) return false;
+        if (expected == BodyProgramArgumentKind.DestinationSelector) return value.CanonicalValue is null && value.Arrival is null && IsValidSelector(value.Destination);
+        if (expected == BodyProgramArgumentKind.DestinationArrival) return value.CanonicalValue is null && value.Destination is null && IsValidArrival(value.Arrival);
+        return TryDecodeRuntimeValue(new BodyProgramRuntimeValue(expected switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.Boolean => "boolean", _ => "" }, value.CanonicalValue), expected, out _);
+    }
+    internal static BodyProgramRuntimeValue ToRuntimeValue(BodyProgramCanonicalValue value) => value.Kind switch
+    {
+        BodyProgramArgumentKind.DestinationSelector => new("destination_selector", null, value.Destination),
+        BodyProgramArgumentKind.DestinationArrival => throw new ArgumentException("Arrival values are output-only.", nameof(value)),
+        _ => new(value.Kind switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.Boolean => "boolean", _ => throw new ArgumentOutOfRangeException(nameof(value)) }, value.CanonicalValue)
+    };
+    internal static bool IsValidSelector(BodyProgramDestinationSelector? selector) => selector is not null && ((selector.Kind == "label" && IsPlayerText(selector.Label) && selector.Ref is null) || (selector.Kind == "ref" && selector.Label is null && IsNavigationRef(selector.Ref)));
+    internal static bool IsValidArrival(BodyProgramDestinationArrival? arrival) => arrival is not null && arrival.Reason is "destination_arrived" or "already_at_destination" && arrival.Destination is not null && IsPlayerText(arrival.Destination.Label) && (arrival.Destination.ContextLabel is null || IsPlayerText(arrival.Destination.ContextLabel));
+    private static bool IsPlayerText(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.Trim().Length > 0 && value.Normalize(System.Text.NormalizationForm.FormC) == value;
+    private static bool IsNavigationRef(string? value)
+    {
+        if (value is null || !value.StartsWith("dr1_", StringComparison.Ordinal) || value.Length != 26) return false;
+        string encoded = value[4..];
+        if (encoded.Any(c => !char.IsLetterOrDigit(c) && c is not '-' and not '_') || encoded[^1] is not ('A' or 'Q' or 'g' or 'w')) return false;
+        Span<byte> bytes = stackalloc byte[16]; return Convert.TryFromBase64String(encoded.Replace('-', '+').Replace('_', '/') + "==", bytes, out int written) && written == 16;
+    }
 }
