@@ -13,15 +13,16 @@ public sealed class OpenBodyProgramJournalAuthority
     private readonly Func<BodyProgramPolicyIdentity> currentPolicy;
     private readonly Func<long> nowMs;
     private readonly HashSet<BodyProgramPolicyIdentity> observedPolicies = new();
-    private long highestObservedPolicyGeneration;
+    private BodyProgramPolicyIdentity? lastObservedPolicy;
+    private bool policyIdentityReused;
     private BodyProgramJournalState state;
 
     private OpenBodyProgramJournalAuthority(IBodyProgramJournalStore store, BodyProgramActionCatalog catalog, BridgeScope scope, Func<BodyProgramPolicyIdentity> currentPolicy,
         Func<long> nowMs, BodyProgramJournalState state, BodyProgramJournalOpenStatus status)
     {
         this.store = store; this.catalog = catalog; this.scope = scope; this.currentPolicy = currentPolicy; this.nowMs = nowMs; this.state = state; this.OpenStatus = status;
-        this.highestObservedPolicyGeneration = state.PolicyIdentity.Generation;
         this.observedPolicies.Add(state.PolicyIdentity);
+        this.lastObservedPolicy = state.PolicyIdentity;
     }
 
     public BodyProgramJournalOpenStatus OpenStatus { get; private set; }
@@ -57,7 +58,7 @@ public sealed class OpenBodyProgramJournalAuthority
         if (existing is not null) return new(BodyProgramCanonical.CandidateEquals(verification.CanonicalProgram, ToCandidate(existing.Program)) ? BodyProgramSubmitCode.Idempotent : BodyProgramSubmitCode.Conflict, verification, SnapshotFor(existing));
         BodyProgramPolicyIdentity policy = ObservePolicy();
         if (!policy.IsValid) return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_invalid", null, "/"), null);
-        if (policy.Generation < this.highestObservedPolicyGeneration) return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_stale", null, "/"), null);
+        if (this.policyIdentityReused) return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_stale", null, "/"), null);
         VerifiedBodyProgram verified = BodyProgramVerifier.Accept(verification.CanonicalProgram, this.catalog, this.scope);
         var program = new BodyProgramJournalProgram(verified, BodyProgramState.Active, 0,
             Array.AsReadOnly(verified.Nodes.Select(node => new BodyProgramJournalNode(node.NodeId, BodyProgramNodeState.Pending, 0, 0, null)).ToArray()), Array.Empty<RuntimeFact>());
@@ -160,8 +161,18 @@ public sealed class OpenBodyProgramJournalAuthority
     private bool DescriptorMatchesLive(VerifiedBodyProgramNode node) => this.catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action)
         && BodyProgramVerifier.ArgumentsMatch(node.CanonicalArguments, action!) && BodyProgramVerifier.ResourceClaimsMatch(node.DerivedResourceClaims, action!, this.scope);
     private bool IsMutable => this.OpenStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened;
-    private BodyProgramPolicyIdentity ObservePolicy() { BodyProgramPolicyIdentity identity = this.currentPolicy(); if (identity.IsValid) { this.observedPolicies.Add(identity); this.highestObservedPolicyGeneration = Math.Max(this.highestObservedPolicyGeneration, identity.Generation); } return identity; }
-    private bool PolicyMatches(BodyProgramPolicyIdentity current, BodyProgramPolicyIdentity expected) => current.IsValid && current.Equals(expected) && current.Generation >= this.highestObservedPolicyGeneration;
+    private BodyProgramPolicyIdentity ObservePolicy()
+    {
+        BodyProgramPolicyIdentity identity = this.currentPolicy();
+        if (identity.IsValid)
+        {
+            if (this.lastObservedPolicy is not null && !identity.Equals(this.lastObservedPolicy) && !this.observedPolicies.Add(identity)) this.policyIdentityReused = true;
+            else this.observedPolicies.Add(identity);
+            this.lastObservedPolicy = identity;
+        }
+        return identity;
+    }
+    private bool PolicyMatches(BodyProgramPolicyIdentity current, BodyProgramPolicyIdentity expected) => current.IsValid && current.Equals(expected) && !this.policyIdentityReused;
     private bool TryProgram(string id, out BodyProgramJournalProgram? program) { program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == id); return program is not null && program.State == BodyProgramState.Active; }
     private bool TryPersist(BodyProgramJournalState next) { if (!BodyProgramJournalPersistence.TryValidate(next, out _)) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } try { if (!this.store.TryWrite(BodyProgramJournalPersistence.Encode(next))) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } this.state = BodyProgramJournalPersistence.FreezeState(next); return true; } catch { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } }
     private static BodyProgramJournalState Empty(BridgeScope scope, BodyProgramPolicyIdentity policy) => new(BodyProgramJournalPersistence.SchemaVersion, scope, policy, 0, Array.Empty<BodyProgramJournalProgram>(), Array.Empty<BodyProgramJournalEvent>());

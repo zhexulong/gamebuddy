@@ -62,6 +62,14 @@ public sealed class BodyProgramAuthorityTests
         OpenBodyProgramJournalAuthority reopened = Open(store, catalog: catalog);
 
         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        using (JsonDocument persisted = JsonDocument.Parse(store.Value!))
+        {
+            persisted.RootElement.GetProperty("policyIdentity").EnumerateObject().Select(property => property.Name)
+                .Should().BeEquivalentTo(new[] { "value", "capabilityRevision" }, options => options.WithStrictOrdering());
+            persisted.RootElement.GetProperty("policyIdentity").GetProperty("value").GetString().Should().Be("policy-a");
+            persisted.RootElement.GetProperty("policyIdentity").GetProperty("capabilityRevision").GetInt64().Should().Be(1);
+        }
+        reopened.Snapshot.PolicyIdentity.Should().Be(Policy());
         reopened.Snapshot.Programs.Single().Facts.Single().Values["arrival"].Arrival.Should()
             .Be(new BodyProgramDestinationArrival("destination_arrived", new BodyProgramArrivalDestination("Town", null)));
     }
@@ -137,22 +145,56 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
-    public void SubmitRejectsPolicyGenerationDowngradeWithoutChangingDurableState()
+    public void SubmitRejectsChangedPolicyIdentityWithoutChangingDurableState()
     {
-        BodyProgramPolicyIdentity policy = Policy(2);
+        BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store, policy: () => policy);
         authority.Submit(Program("accepted", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
-        string persistedAtGeneration2 = store.Value!;
+        string persistedPolicy = store.Value!;
 
-        policy = Policy(1);
+        policy = Policy("policy-b", 2);
         BodyProgramSubmitResult stale = authority.Submit(Program("stale", 1000));
 
         stale.Code.Should().Be(BodyProgramSubmitCode.Rejected);
         stale.Verification.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "policy_identity_stale");
-        store.Value.Should().Be(persistedAtGeneration2);
-        authority.Snapshot.PolicyIdentity.Generation.Should().Be(2);
+        store.Value.Should().Be(persistedPolicy);
+        authority.Snapshot.PolicyIdentity.Should().Be(Policy("policy-a", 2));
         authority.Status("stale").Code.Should().Be(BodyProgramQueryCode.NotFound);
+    }
+
+    [Fact]
+    public void PolicyIdentityRequiresExactValueAndRevisionAndRejectsAbaReuse()
+    {
+        BodyProgramPolicyIdentity policy = Policy("policy-a", 1);
+        var authority = Open(policy: () => policy);
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = Grant(challenge);
+        policy = Policy("policy-b", 1);
+        authority.TryConsumeHostGrant(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
+
+        policy = Policy("policy-a", 2);
+        authority.TryConsumeHostGrant(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
+
+        policy = Policy("policy-b", 2);
+        authority.TryConsumeHostGrant(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
+        policy = Policy("policy-a", 1);
+        authority.TryConsumeHostGrant(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
+    }
+
+    [Fact]
+    public void PolicyIdentityPersistenceRejectsLegacyAndMalformedShapes()
+    {
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store);
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        string persisted = store.Value!;
+        store.Set(persisted.Replace("\"value\":\"policy-a\",\"capabilityRevision\":1", "\"embodimentId\":\"policy-a\",\"generation\":1", StringComparison.Ordinal));
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+
+        Action malformed = () => Open(policy: () => new BodyProgramPolicyIdentity("", 1));
+        malformed.Should().Throw<ArgumentException>();
     }
 
     [Fact]
@@ -194,8 +236,8 @@ public sealed class BodyProgramAuthorityTests
         authority.TryBeginNativeDispatch(grant with { DeadlineMs = 999 }).Code.Should().Be(BodyProgramControllerResultCode.GrantMismatch);
         authority.TryBeginNativeDispatch(grant with { CanonicalArguments = CanonicalMap("tile", 8) }).Code.Should().Be(BodyProgramControllerResultCode.GrantMismatch);
         authority.TryBeginNativeDispatch(grant with { DerivedResourceClaims = Claims("actor", "other") }).Code.Should().Be(BodyProgramControllerResultCode.GrantMismatch);
-        policy = Policy(2); authority.TryBeginNativeDispatch(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
-        policy = Policy(1); authority.TryBeginNativeDispatch(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
+        policy = Policy("policy-b", 1); authority.TryBeginNativeDispatch(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
+        policy = Policy("policy-a", 2); authority.TryBeginNativeDispatch(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
         now = 1001; authority.TryBeginNativeDispatch(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
     }
 
@@ -253,7 +295,7 @@ public sealed class BodyProgramAuthorityTests
         authority.TryConsumeHostGrant(grant).IsSuccess.Should().BeTrue(); authority.TryBeginNativeDispatch(grant).IsSuccess.Should().BeTrue();
         authority.TryComplete(grant, Fact(grant), outcome).IsSuccess.Should().BeTrue();
 
-        OpenBodyProgramJournalAuthority reopened = Open(store, policy: () => Policy(2));
+        OpenBodyProgramJournalAuthority reopened = Open(store, policy: () => Policy("policy-b", 2));
         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
         BodyProgramJournalProgram program = reopened.Snapshot.Programs.Single();
         program.State.Should().Be(BodyProgramState.RecoveryRequired);
@@ -378,7 +420,7 @@ public sealed class BodyProgramAuthorityTests
     }
     private static HostAdmissionGrant Grant(NodeAdmissionChallenge challenge) => new(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision, challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalArguments, challenge.DerivedResourceClaims, challenge.DeadlineMs, "grant");
     private static RuntimeFact Fact(HostAdmissionGrant grant) => new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "arrival", CanonicalMap("arrival", 7));
-    private static BodyProgramPolicyIdentity Policy(long generation = 1) => new("embodiment", generation);
+    private static BodyProgramPolicyIdentity Policy(string value = "policy-a", long revision = 1) => new(value, revision);
     private static BridgeScope Scope() => new("stardew", "save", "world", "player", "companion");
     private static IReadOnlyDictionary<string, ActionProgramBinding> Bindings(params object[] values) => values.Chunk(2).ToDictionary(pair => (string)pair[0], pair => (ActionProgramBinding)pair[1], StringComparer.Ordinal);
     private static IReadOnlyDictionary<string, BodyProgramRuntimeValue> RuntimeMap(string key, long value) => new Dictionary<string, BodyProgramRuntimeValue>(StringComparer.Ordinal) { [key] = new("integer", value.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
