@@ -131,6 +131,16 @@ test("protocol/schema drift restricts the executable intersection", () => {
   expectRejection(() => deriveWith({ protocol_schema: JSON.stringify(withoutSemanticKind) }), "schema_semantic_event_union_mismatch");
 });
 
+test("gate metadata does not suppress Host-supported executable actions", () => {
+  const withoutEquipGate = sources.gate_descriptors.replace(
+    '  gate("equip_tool", 1, "run-stardew-native-local-player-equip-tool-smoke.mjs", "tool_selected"),\n',
+    "",
+  );
+  assert.notEqual(withoutEquipGate, sources.gate_descriptors, "equip_tool gate anchor must match");
+  const projection = deriveWith({ gate_descriptors: withoutEquipGate });
+  assert.ok(projection.mod.executableActionIds.includes("equip_tool"));
+});
+
 test("runner and fixture parity drift is rejected from mutated actual sources", () => {
   const descriptor = sources.gate_descriptors;
   const runnerSources = JSON.parse(sources.runner_sources);

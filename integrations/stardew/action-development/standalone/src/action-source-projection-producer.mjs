@@ -514,11 +514,11 @@ export function deriveActionSourceProjection(sources) {
     "schema_execution_actions",
   );
   const gates = parseGateDescriptors(sources.gate_descriptors);
-  const gateActionIds = gates.map((gate) => gate.actionId);
 
-  // The executable projection is the intersection of published embodied
-  // execution metadata and every existing Host/protocol/gate support surface.
-  // Experimental and unsupported canonical IDs remain source metadata only.
+  // The executable projection is the restrictive intersection of canonical
+  // published embodied execution metadata and every existing Host/protocol
+  // support surface. Gate descriptors are integrity evidence only; they do not
+  // grant or suppress executable membership.
   const publishedHostActionIds = publishedEmbodiedExecutionActionIds.filter((actionId) =>
     adapterActionIds.includes(actionId)
     && toolActionIds.includes(actionId)
@@ -526,8 +526,7 @@ export function deriveActionSourceProjection(sources) {
     && requestValidatorActionIds.includes(actionId)
     && envelopeValidatorActionIds.includes(actionId)
     && executionRequestUnionActionIds.includes(actionId)
-    && schemaExecutionActionIds.includes(actionId)
-    && gateActionIds.includes(actionId),
+     && schemaExecutionActionIds.includes(actionId),
   );
   const executableUnion = assertUnique([...publishedHostActionIds], "executable_union_duplicates");
   if (executableUnion.some((actionId) => !adapterActionIds.includes(actionId))) fail("host_adapter_union_mismatch");
