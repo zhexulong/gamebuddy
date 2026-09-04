@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   readdir,
   rename,
   rm,
@@ -459,7 +460,9 @@ function defaultStagingDependencies(): StardewPrivateModProfileStagingTestSuppor
 }
 
 async function createRoot(prefix = "gamebuddy-private-bootstrap-"): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
+  const parent = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof parent !== "string" || parent.length === 0) throw new Error("test_local_app_data_unavailable");
+  const root = await mkdtemp(join(await realpath(parent), prefix));
   temporaryRoots.push(root);
   return root;
 }
