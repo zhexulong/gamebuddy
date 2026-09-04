@@ -77,6 +77,9 @@ describe("GameBuddyStableContextSource", () => {
             expect(readPublishedGameBuddyStableContext(firstBinding.sessionId)).toBe(first);
             expect(readPublishedGameBuddyStableContext(secondBinding.sessionId)).toBe(second);
             expect(readPublishedGameBuddyStableContext(firstBinding.sessionId)?.binding).toEqual(firstBinding);
+            // Same continuity is intentionally shareable, but the native stable
+            // source remains invisible to a foreign exact-session binding.
+            expect(readPublishedGameBuddyStableContext("publication-session-foreign")).toBeUndefined();
 
             const tombstone = publishGameBuddyStableContextSnapshot(
                 firstBinding,
