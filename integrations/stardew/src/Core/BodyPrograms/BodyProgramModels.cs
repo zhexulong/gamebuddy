@@ -93,7 +93,7 @@ public sealed record BodyProgramJournalState(int SchemaVersion, BridgeScope Scop
 public sealed record BodyProgramStatusSnapshot(string ProgramId, BodyProgramState State, long CatalogRevision, long StopEpoch, long EventHighWater, IReadOnlyList<BodyProgramJournalNode> Nodes);
 public enum BodyProgramQueryCode { Found, NotFound, InvalidInput }
 public sealed record BodyProgramStatusResult(BodyProgramQueryCode Code, BodyProgramStatusSnapshot? Snapshot);
-public sealed record BodyProgramEventsResult(BodyProgramQueryCode Code, IReadOnlyList<BodyProgramJournalEvent> Events, long NextCursor, long HighWater);
+public sealed record BodyProgramEventsResult(string ProgramId, BodyProgramQueryCode Code, IReadOnlyList<BodyProgramJournalEvent> Events, long NextCursor, long HighWater);
 
 public sealed record NodeAdmissionChallenge(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt, long StopEpoch, long CatalogRevision,
     BodyProgramPolicyIdentity PolicyIdentity, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,

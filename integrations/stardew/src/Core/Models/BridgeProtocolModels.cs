@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using GameBuddy.Stardew.Core.BodyPrograms;
 
 namespace GameBuddy.Stardew.Core.Models;
 
@@ -330,6 +331,82 @@ public sealed record BridgeWorldMapEntry(
 /// One correlated read-only result. It is intentionally distinct from an
 /// execution receipt and contains neither execution identity nor evidence.
 /// </summary>
+/// <summary>Body Program bridge candidate. Binding uses the external wire key <c>nodeId</c>; the adapter maps it to Core ProducerNodeId.</summary>
+public sealed record BridgeBodyProgramCandidate(
+    string ProgramId,
+    IReadOnlyList<BridgeBodyProgramCandidateNode> Nodes
+);
+
+public sealed record BridgeBodyProgramCandidateNode(
+    string NodeId,
+    string ActionId,
+    IReadOnlyDictionary<string, BodyProgramRuntimeValue> Arguments,
+    IReadOnlyList<string> DependsOn,
+    IReadOnlyDictionary<string, BridgeBodyProgramBinding> Bindings,
+    long DeadlineMs
+);
+
+public sealed record BridgeBodyProgramBinding(string NodeId, string FactName);
+
+public sealed record BridgeBodyProgramDiagnostic(
+    string Severity,
+    string Code,
+    string? NodeId,
+    string Path,
+    string Message
+);
+
+public sealed record BridgeBodyProgramVerification(
+    bool Accepted,
+    long CatalogRevision,
+    IReadOnlyList<BridgeBodyProgramDiagnostic> Diagnostics
+);
+
+public sealed record BridgeBodyProgramNodeStatus(
+    string NodeId,
+    string State,
+    int NodeAttempt,
+    int AdmissionAttempt
+);
+
+public sealed record BridgeBodyProgramStatusSnapshot(
+    string ProgramId,
+    string State,
+    long CatalogRevision,
+    long StopEpoch,
+    long EventHighWater,
+    IReadOnlyList<BridgeBodyProgramNodeStatus> Nodes
+);
+
+public sealed record BridgeBodyProgramSubmitResult(
+    string Code,
+    BridgeBodyProgramVerification Verification,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeBodyProgramStatusSnapshot? Snapshot
+);
+
+public sealed record BridgeBodyProgramStatusResult(
+    string Code,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeBodyProgramStatusSnapshot? Snapshot
+);
+
+/// <summary>One addressed event. Page continuation belongs to the surrounding result, not an event.</summary>
+public sealed record BridgeBodyProgramEvent(
+    long Cursor,
+    string ProgramId,
+    string Kind,
+    long CatalogRevision,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NodeId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? NodeAttempt
+);
+
+public sealed record BridgeBodyProgramEventsResult(
+    string ProgramId,
+    string Code,
+    IReadOnlyList<BridgeBodyProgramEvent> Events,
+    long NextCursor,
+    long HighWater
+);
+
 public sealed record BridgeNavigationReadResult(
     string Status,
     string Reason,
