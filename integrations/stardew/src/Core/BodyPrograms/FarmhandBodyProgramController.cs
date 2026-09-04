@@ -15,12 +15,6 @@ public sealed class FarmhandBodyProgramController
     public BodyProgramControllerResult<BodyProgramStatusSnapshot> TryStop(string programId, long stopEpoch) => this.authority.TryStop(programId, stopEpoch);
     public BodyProgramControllerResult<NodeAdmissionChallenge> TryCreateAdmissionChallenge(string programId) => this.authority.TryCreateAdmissionChallenge(programId);
     public BodyProgramControllerResult<HostAdmissionGrant> TryConsumeHostGrant(HostAdmissionGrant grant) => this.authority.TryConsumeHostGrant(grant);
-    public BodyProgramControllerResult<HostAdmissionGrant> TryBeginNativeDispatch(HostAdmissionGrant grant) => this.authority.TryBeginNativeDispatch(grant);
-    public BodyProgramControllerResult<RuntimeFact> TryComplete(HostAdmissionGrant grant, RuntimeFact fact, BodyProgramNodeOutcome outcome)
-    {
-        if (!Enum.IsDefined(typeof(BodyProgramNodeOutcome), outcome))
-            return BodyProgramControllerResult.Failure<RuntimeFact>(BodyProgramControllerResultCode.InvalidInput);
-
-        return this.authority.TryComplete(grant, fact, outcome);
-    }
+    public BodyProgramControllerResult<NodeExecutionBinding> TryBeginNativeDispatch(HostAdmissionGrant grant, NodeExecutionBinding execution) => this.authority.TryBeginNativeDispatch(grant, execution);
+    public BodyProgramControllerResult<BodyProgramTerminalResult> TryComplete(HostAdmissionGrant grant, BodyProgramTerminalResult result) => this.authority.TryComplete(grant, result);
 }
