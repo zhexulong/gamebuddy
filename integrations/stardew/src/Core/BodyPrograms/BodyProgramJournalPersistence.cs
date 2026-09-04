@@ -192,12 +192,12 @@ public static class BodyProgramJournalPersistence
     }
     private static bool ReadArrival(JsonElement value, out BodyProgramDestinationArrival? arrival)
     {
-        arrival = null; if (!Exact(value, "reason", "destination") || value.GetProperty("reason").ValueKind != JsonValueKind.String || !ReadArrivalDestination(value.GetProperty("destination"), out BodyProgramArrivalDestination? destination)) return false;
+        arrival = null; if (!Exact(value, "reason", "destination") || value.GetProperty("reason").ValueKind != JsonValueKind.String || value.GetProperty("destination").ValueKind != JsonValueKind.Object || !ReadArrivalDestination(value.GetProperty("destination"), out BodyProgramArrivalDestination? destination)) return false;
         arrival = new(value.GetProperty("reason").GetString()!, destination!); return BodyProgramValidation.IsValidArrival(arrival);
     }
     private static bool ReadArrivalDestination(JsonElement value, out BodyProgramArrivalDestination? destination)
     {
-        destination = null; if (!value.TryGetProperty("label", out JsonElement label) || label.ValueKind != JsonValueKind.String || value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Any(property => property.Name is not ("label" or "contextLabel"))) return false;
+        destination = null; if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("label", out JsonElement label) || label.ValueKind != JsonValueKind.String || value.EnumerateObject().Any(property => property.Name is not ("label" or "contextLabel"))) return false;
         string? context = null;
         if (value.TryGetProperty("contextLabel", out JsonElement contextElement))
         {
