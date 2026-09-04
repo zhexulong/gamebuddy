@@ -61,7 +61,27 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
     {
         try
         {
-            return File.Exists(this.targetPath) ? File.ReadAllText(this.targetPath, Encoding.UTF8) : null;
+            string? directory = Path.GetDirectoryName(this.targetPath);
+            if (directory is null || !IsNonReparseDirectoryTree(this.canonicalRoot, directory) || !IsSafeTarget(this.targetPath))
+                return null;
+
+            using FileStream stream = new(
+                this.targetPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 4096,
+                options: FileOptions.SequentialScan);
+            using StreamReader reader = new(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            return reader.ReadToEnd();
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return null;
         }
         catch
         {
@@ -95,6 +115,9 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
                 stream.Flush(flushToDisk: true);
             }
 
+            if (!IsSafeTarget(this.targetPath))
+                return false;
+
             if (File.Exists(this.targetPath))
                 File.Replace(temporaryPath, this.targetPath, destinationBackupFileName: null);
             else
@@ -114,6 +137,26 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
                 try { File.Delete(temporaryPath); }
                 catch { /* A stale temp is never an authority. */ }
             }
+        }
+    }
+
+    private static bool IsSafeTarget(string path)
+    {
+        try
+        {
+            FileInfo file = new(path);
+            if (file.LinkTarget is not null)
+                return false;
+            if (!file.Exists)
+                return !new DirectoryInfo(path).Exists;
+
+            FileAttributes attributes = File.GetAttributes(path);
+            return (attributes & FileAttributes.ReparsePoint) == 0
+                && (attributes & FileAttributes.Directory) == 0;
+        }
+        catch
+        {
+            return false;
         }
     }
 
