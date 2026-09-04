@@ -50,13 +50,13 @@ public sealed class OpenBodyProgramJournalAuthority
         if (!IsMutable) return new(BodyProgramSubmitCode.Quarantined, Rejected("authority_unavailable", null, "/"), null);
         BodyProgramVerificationReport verification = Verify(candidate, restrictiveActionIds);
         if (!verification.Accepted || verification.CanonicalProgram is null) return new(BodyProgramSubmitCode.Rejected, verification, null);
-        BodyProgramJournalProgram? existing = this.state.Programs.SingleOrDefault(program => program.Program.ProgramId == candidate.ProgramId);
-        if (existing is not null) return new(BodyProgramCanonical.CandidateEquals(verification.CanonicalProgram, ToCandidate(existing.Program)) ? BodyProgramSubmitCode.Idempotent : BodyProgramSubmitCode.Conflict, verification, SnapshotFor(existing));
         BodyProgramPolicyIdentity policy = ObservePolicy();
         if (!policy.IsValid) return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_invalid", null, "/"), null);
         bool emptyJournal = this.state.Programs.Count == 0 && this.state.Events.Count == 0;
         if (!emptyJournal && !PolicyMatches(policy, this.state.PolicyIdentity))
             return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_stale", null, "/"), null);
+        BodyProgramJournalProgram? existing = this.state.Programs.SingleOrDefault(program => program.Program.ProgramId == candidate.ProgramId);
+        if (existing is not null) return new(BodyProgramCanonical.CandidateEquals(verification.CanonicalProgram, ToCandidate(existing.Program)) ? BodyProgramSubmitCode.Idempotent : BodyProgramSubmitCode.Conflict, verification, SnapshotFor(existing));
         VerifiedBodyProgram verified = BodyProgramVerifier.Accept(verification.CanonicalProgram, this.catalog, this.scope);
         var program = new BodyProgramJournalProgram(verified, BodyProgramState.Active, 0,
             Array.AsReadOnly(verified.Nodes.Select(node => new BodyProgramJournalNode(node.NodeId, BodyProgramNodeState.Pending, 0, 0, null)).ToArray()), Array.Empty<RuntimeFact>());
