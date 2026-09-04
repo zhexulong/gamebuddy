@@ -1,0 +1,31 @@
+{
+  "workspaces": {
+    ".": {
+      "entry": ["tools/*.mjs"],
+      "project": ["tools/**/*.mjs"]
+    },
+    "packages/*": {
+      "entry": ["src/index.{js,mjs,ts,tsx}", "bin/**/*.{js,mjs,ts}"],
+      "project": ["src/**/*.{js,mjs,js,jsx,ts,tsx}", "tests/**/*.{js,mjs,ts,tsx}", "bin/**/*.{js,mjs,ts}"]
+    },
+    "host": {
+      "entry": ["src/**/*.{ts,tsx}", "scripts/*.mjs"],
+      "project": ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs"]
+    },
+    "voice-gateway": {
+      "entry": ["src/**/*.{ts,tsx}"],
+      "project": ["src/**/*.{ts,tsx}"]
+    },
+    "dialogue-web": {
+      "entry": ["src/**/*.{ts,tsx}"],
+      "project": ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs"]
+    },
+    "integrations/stardew/action-development": {
+      "entry": ["src/**/*.mjs", "tests/**/*.mjs", "scripts/**/*.mjs", "scenarios/**/*.mjs"],
+      "project": ["src/**/*.mjs", "tests/**/*.mjs", "scripts/**/*.mjs", "scenarios/**/*.mjs"]
+    }
+  },
+  "ignore": [
+    ".worktrees/**", "vendor/magic-context/**", "**/dist/**", "**/dist-test/**", "**/node_modules/**", "**/.tmp/**", "**/artifacts/**", "**/coverage/**", "**/playwright-report/**"
+  ]
+}
