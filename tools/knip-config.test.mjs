@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { pnpmCommand, pnpmSpawnOptions, runReports } from "./run-knip-reports.mjs";
+import { pnpmCommand, pnpmSpawnOptions, runReports, validReport } from "./run-knip-reports.mjs";
 
 const exec = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -128,8 +128,55 @@ test("pins scripts, exposes the clean scope, and validates the actual CLI contra
   for (const args of [["--config", "knip.json", "--reporter", "json"], ["--config", "knip.json", "--production", "--reporter", "json"]]) {
     const result = await cli(args);
     assert.ok([0, 1].includes(result.code), `${args.join(" ")} exited ${result.code}: ${result.stderr}`);
-    assert.ok(JSON.parse(result.stdout).issues);
+    assert.ok(validReport(JSON.parse(result.stdout)));
   }
+});
+
+test("proves pinned CLI finding and fatal-error contracts in an isolated config", async () => {
+  if (process.platform === "win32") return;
+  const fixture = await mkdtemp(resolve(tmpdir(), "gamebuddy-knip-cli-test-"));
+  try {
+    await writeFile(resolve(fixture, "knip.json"), JSON.stringify({ workspaces: { ".": { entry: ["entry.mjs"], project: ["*.mjs"] } } }));
+    await writeFile(resolve(fixture, "entry.mjs"), "export const entry = true;\n");
+    await writeFile(resolve(fixture, "orphan.mjs"), "export const orphan = true;\n");
+    const finding = await cli(["--config", "knip.json", "--reporter", "json"], fixture);
+    assert.equal(finding.code, 1);
+    assert.ok(validReport(JSON.parse(finding.stdout)));
+    await writeFile(resolve(fixture, "knip-invalid.json"), "{\"workspaces\": {");
+    const invalidConfig = await cli(["--config", "knip-invalid.json", "--reporter", "json"], fixture);
+    assert.equal(invalidConfig.code, 2);
+    const unknownOption = await cli(["--config", "knip.json", "--reporter", "json", "--definitely-unknown"], fixture);
+    assert.equal(unknownOption.code, 2);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("accepts the complete Knip JSON reporter shape and rejects malformed nested rows", () => {
+  const item = { name: "unused", namespace: "ns", kind: "variable", specifier: "./dep.mjs", line: 3, col: 5, pos: 42 };
+  const report = {
+    issues: [{
+      file: "src/example.mjs",
+      owners: [{ name: "owner" }],
+      binaries: [{ name: "tool" }],
+      catalog: [item], catalogReferences: [item], dependencies: [item], devDependencies: [item],
+      enumMembers: [item], exports: [item], files: [item], namespaceMembers: [item], nsExports: [item], nsTypes: [item],
+      optionalPeerDependencies: [item], types: [item], unresolved: [item], unlisted: [{ name: "unlisted" }],
+      cycles: [[item, { name: "cycle-end", namespace: "ns", kind: "module" }]],
+      duplicates: [[item]],
+    }],
+  };
+  assert.equal(validReport(report), true);
+  for (const malformed of [
+    {}, { issues: [{}] }, { issues: [{ file: "x.mjs", unknown: [] }] },
+    { issues: [{ file: "x.mjs", files: [{ name: "" }] }] },
+    { issues: [{ file: "x.mjs", files: [{ name: "x.mjs", line: "1" }] }] },
+    { issues: [{ file: "x.mjs", files: "truncated" }] },
+    { issues: [{ file: "x.mjs", cycles: [{ name: "not-a-cycle" }] }] },
+    { issues: [{ file: "x.mjs", duplicates: [[{ name: "x", col: -1 }]] }] },
+    { issues: [{ file: "x.mjs", nsExports: [{ name: "x", extra: true }] }] },
+  ]) assert.equal(validReport(malformed), false, JSON.stringify(malformed));
+  assert.equal(validReport({ issues: [] }), true);
 });
 
 test("uses the platform-local pnpm command without shell interpretation", async () => {
@@ -152,6 +199,21 @@ test("uses the platform-local pnpm command without shell interpretation", async 
   await rm(result.output, { recursive: true, force: true });
 });
 
+test("promotes valid finding reports and returns exit code 1", async () => {
+  const output = await mkdtemp(resolve(tmpdir(), "gamebuddy-knip-test-"));
+  await rm(output, { recursive: true, force: true });
+  const result = await runReports(output, {
+    run: async () => ({ code: 1, stdout: JSON.stringify({ issues: [{ file: "src/example.mjs", files: [{ name: "src/example.mjs" }] }] }), stderr: "findings" }),
+  });
+   assert.equal(result.exitCode, 1);
+   assert.equal(result.results.filter(({ finding }) => finding).length, 2);
+   for (const name of ["workspace.json", "production.json"]) {
+     const promoted = JSON.parse(await readFile(resolve(result.output, name), "utf8"));
+     assert.deepEqual(promoted, { issues: [{ file: "src/example.mjs", files: [{ name: "src/example.mjs" }] }] });
+   }
+   await rm(result.output, { recursive: true, force: true });
+});
+
 test("classifies errors and preserves independent valid reports", async () => {
   const output = await mkdtemp(resolve(tmpdir(), "gamebuddy-knip-test-"));
   await rm(output, { recursive: true, force: true });
@@ -167,6 +229,29 @@ test("classifies errors and preserves independent valid reports", async () => {
   assert.deepEqual(JSON.parse(await readFile(resolve(result.output, "workspace.json"))), { issues: [] });
   await assert.rejects(() => runReports(result.output, { run: async () => ({ code: 0, stdout: '{"issues":[]}', stderr: "" }) }));
   await rm(result.output, { recursive: true, force: true });
+});
+
+test("rejects pre-existing output and repository-contained parents", async () => {
+  const existing = await mkdtemp(resolve(tmpdir(), "gamebuddy-knip-existing-"));
+  await assert.rejects(() => runReports(existing), /must not already exist/);
+  await rm(existing, { recursive: true, force: true });
+  const parent = await mkdtemp(resolve(root, "knip-parent-test-"));
+  try {
+    await assert.rejects(() => runReports(resolve(parent, "output")), /outside the repository/);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("rejects symlinked repository parents", async () => {
+  const outside = await mkdtemp(resolve(tmpdir(), "gamebuddy-knip-symlink-"));
+  const link = resolve(outside, "repository-link");
+  try {
+    await symlink(root, link, "junction");
+    await assert.rejects(() => runReports(resolve(link, "reports")), /outside the repository/);
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 test("rejects invalid JSON and spawn failures without promotion", async () => {
