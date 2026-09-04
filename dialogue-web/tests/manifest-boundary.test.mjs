@@ -58,7 +58,7 @@ test("Dialogue Web runtime boundary keeps the Vite toolchain build-only", async 
   assert.deepEqual(runtimeDependencies, ["lucide-react", "react", "react-dom"]);
   assert.deepEqual(
     developmentDependencies,
-    ["@playwright/test", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "typescript", "vite"].sort(),
+    ["@playwright/test", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "tsx", "typescript", "vite"].sort(),
   );
 
   // Vite and its PostCSS/nanoid transitive closure are used only by these

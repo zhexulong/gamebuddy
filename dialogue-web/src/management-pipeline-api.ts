@@ -209,7 +209,6 @@ const HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
 const ROUTE_ID_PATTERN = /^[a-z][a-z0-9._-]*$/;
 const MAX_TEXT_UTF8_BYTES = 16_384;
 const MAX_MEMORY_TEXT_UTF8_BYTES = 4096;
-const MAX_TRANSCRIPT_MESSAGES = 500;
 const MAX_ARRAY_ITEMS = 100;
 
 const MESSAGE_ROLES = ["player", "companion"] as const;
@@ -485,7 +484,6 @@ function isChat(value: unknown): boolean {
   if (value.title !== null && !isLengthBoundedString(value.title, 0, 256)) return false;
   if (
     !Array.isArray(value.transcript) ||
-    value.transcript.length > MAX_TRANSCRIPT_MESSAGES ||
     !value.transcript.every(isBrowserMessage)
   )
     return false;
