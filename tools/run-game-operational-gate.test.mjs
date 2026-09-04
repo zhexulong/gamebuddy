@@ -196,15 +196,21 @@ test("Task 0 current owner keeps the transitional direct route blocked on both p
   const owner = await readFile(new URL("../design/domains/stardew/integration.md", import.meta.url), "utf8");
 
   assert.match(owner, /直接 `pipeName`\/`bridgeToken` attach 是待移除的过渡 operator 路径/);
-  assert.match(owner, /当前产品路径仍缺少可跨进程重启安全消费的 installation registration 和 bootstrap containment/);
-  assert.match(owner, /headless operational gate 与完整玩家启动路径继续 blocked/);
-  assert.match(owner, /当前实现仍使用进程内 Node owner/);
-  assert.match(owner, /installation registration、guardian containment[\s\S]*均未闭合/);
+  assert.match(owner, /安装 registration 与 bootstrap containment 闭合前，它只能作为 blocked-state characterization 保留/);
+  assert.match(owner, /闭合后必须从正式 semantic Game composition 删除，且不得保留 fallback、兼容路径或 alternate production mode/);
+  assert.match(owner, /installation registration 尚未实现\/未闭合：durable Host-private installation registration record\/selector 尚不存在/);
+  assert.match(owner, /owner 与 registration `activeAttempt` 的 exact joint prepare-bind\/settlement-release 尚未闭合/);
+  assert.match(owner, /bootstrap containment 尚未闭合：exact Desktop Host bootstrap、Host first-write root validation、authenticated Desktop↔Host Guardian broker 尚未闭合/);
+  assert.match(owner, /这两项都是 predecessor blockers；Task 0 test、fixture、旧 profile 或 fallback 均不能解除它们/);
+  assert.match(owner, /`StardewProductionLifecycleCoordinator` 仍是唯一产品 owner，native-local direct route 仍只作待移除的 characterization/);
+  assert.match(owner, /action platform 与部分 M1–M10 action 已有局部 closure；这不等于完整 Game release/);
+  assert.match(owner, /Navigation、guardian containment、onboarding 和 target-version live open-gameplay gate 均未闭合/);
 });
 
 test("runner source uses the production launcher-owned manifest and fresh STOP composition", async () => {
   const source = await readFile(new URL("./run-game-operational-gate.mjs", import.meta.url), "utf8");
   const launcher = await readFile(new URL("../host/scripts/start-production-artifact.mjs", import.meta.url), "utf8");
+  const internalLauncher = await readFile(new URL("../host/scripts/start-artifact.internal.mjs", import.meta.url), "utf8");
   const controlLaunch = await readFile(new URL("../host/scripts/production-control-launch.mjs", import.meta.url), "utf8");
   const operatorSelection = await readFile(
     new URL(
@@ -224,7 +230,13 @@ test("runner source uses the production launcher-owned manifest and fresh STOP c
   assert.doesNotMatch(source, /verifyGameOperationalGateMarkerReport/);
   assert.doesNotMatch(source, /game_operational_runtime_or_bridge_receipt_ipc_unavailable/);
   assert.match(source, /\[PRODUCTION_LAUNCHER, "main\.js", config\.gameOperatorConfigPath\]/);
-  assert.match(launcher, /createProductionChildEnvironment\(entry, process\.env/);
+  assert.match(launcher, /import \{ recheckProductionEntry, resolveProductionEntry \} from "\.\/production-artifact\.mjs"/);
+  assert.match(launcher, /import \{ startArtifact \} from "\.\/start-artifact\.internal\.mjs"/);
+  assert.match(launcher, /await startArtifact\(\{ resolveEntry: resolveProductionEntry, recheckEntry: recheckProductionEntry \}\)/);
+  assert.match(internalLauncher, /const selected = await resolveEntry\(\{ hostRoot, outputRoot: resolve\(hostRoot, "dist"\), entry \}\)/);
+  assert.match(internalLauncher, /await recheckEntry\(\{ hostRoot, selected \}\)/);
+  assert.match(internalLauncher, /await recheckEntry\(\{ hostRoot, selected \}\);[\s\S]*?const child = spawn/);
+  assert.match(internalLauncher, /createProductionChildEnvironment\(entry, process\.env, undefined, undefined, activeStopProofBinding\)/);
   assert.match(controlLaunch, /GAMEBUDDY_CONTROL_PIPE/);
   assert.match(controlLaunch, /GAMEBUDDY_CONTROL_TOKEN/);
   assert.match(controlLaunch, /material \?\? mintProductionControlLaunch\(\)/);
