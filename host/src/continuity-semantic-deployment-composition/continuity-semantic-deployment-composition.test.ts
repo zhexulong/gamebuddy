@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createGameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import {
+  brandRuntimeOwnerIdentity,
+  drainBindingMaterializations,
+  mintBindingToken,
+  mintGameRuntimeBindingFacts,
+  revokeBindingToken,
+  stopAcceptingBindingMaterialization,
+  type OpaqueGameRuntimeBindingToken,
+} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
+import type { GameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import { createTestGameRuntimeMaterializer } from "../continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.js";
 import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
@@ -22,7 +31,9 @@ import { constructTestKnownUnmountedGameSemanticFacade } from "./continuity-sema
 
 const principal = { continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" };
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "s4-compose-")),
+  const parent = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof parent !== "string" || parent.length === 0) throw new Error("test_local_app_data_unavailable");
+  const root = await mkdtemp(join(await realpath(parent), "s4-compose-")),
     runtimeRoot = join(root, "runtime"),
     manifestPath = join(root, "manifest.json");
   await mkdir(runtimeRoot);
@@ -39,7 +50,9 @@ async function fixture() {
   );
   return { root, manifestPath };
 }
-function launcher(): ConfigurableIntegrationLauncher {
+type TestLauncher = ConfigurableIntegrationLauncher & Readonly<{ testHandle: IntegrationLaunchHandle }>;
+
+function launcher(): TestLauncher {
   const module: GameIntegrationAdapter = {
     descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
     actionCatalog: createIntegrationActionCatalog([
@@ -124,6 +137,7 @@ function launcher(): ConfigurableIntegrationLauncher {
   return {
     integrationId: "test-arcade",
     module,
+    testHandle: handle,
     prepare: async () =>
       Object.freeze({
         launchConfig: Object.freeze({}),
@@ -132,6 +146,51 @@ function launcher(): ConfigurableIntegrationLauncher {
     launch: async () => handle,
   };
 }
+
+function createTestBinding(
+  manifest: Awaited<ReturnType<typeof loadHostDeploymentManifest>>,
+  selected: TestLauncher,
+): GameRuntimeBinding {
+  const world = selected.module.worldScope(selected.testHandle.connection);
+  if (world === null) throw new Error("test_world_scope_unavailable");
+  const boundPrincipal = Object.freeze({
+    continuityId: manifest.principal.continuityId,
+    companionId: manifest.principal.companionId,
+    playerId: manifest.principal.playerId,
+  });
+  const ownerIdentity = brandRuntimeOwnerIdentity({ processId: process.pid, creationTime100ns: "1" });
+  const execution = Object.freeze({
+    principal: boundPrincipal,
+    runtimeRoot: manifest.runtimeRoot,
+    connection: selected.testHandle.connection,
+    world,
+    launch: selected.testHandle,
+    ownerIdentity,
+    bindingFacts: mintGameRuntimeBindingFacts({ principal: boundPrincipal, world, ownerIdentity }),
+  });
+  const token = mintBindingToken(execution);
+  let closed = false;
+  return Object.freeze({
+    async executeWithBinding<T>(callback: (token: OpaqueGameRuntimeBindingToken) => Promise<T> | T): Promise<T> {
+      if (closed) throw new Error("game_runtime_binding_unavailable");
+      try {
+        return await callback(token);
+      } finally {
+        stopAcceptingBindingMaterialization(token);
+      }
+    },
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      stopAcceptingBindingMaterialization(token);
+      await drainBindingMaterializations(token);
+      revokeBindingToken(token);
+      selected.testHandle.revoke("game_runtime_binding_closed");
+      selected.testHandle.close();
+    },
+  });
+}
+
 test("unmounted Dialogue exposes no holder/raw identity while Game has no public construction route", async () => {
   const f = await fixture();
   try {
@@ -189,7 +248,7 @@ test(
   { skip: process.platform !== "win32" ? "requires concrete Windows binding" : false },
   async () => {
     const f = await fixture();
-    let binding: Awaited<ReturnType<typeof createGameRuntimeBinding>> | undefined;
+    let binding: GameRuntimeBinding | undefined;
     let game: Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>> | undefined;
     let facade: ReturnType<typeof constructTestKnownUnmountedGameSemanticFacade> | undefined;
     try {
@@ -198,14 +257,7 @@ test(
       await d.close();
       const selected = launcher();
       const manifest = await loadHostDeploymentManifest(f.manifestPath);
-      binding = await createGameRuntimeBinding(
-        Object.freeze({
-          manifest,
-          launcher: selected,
-          launcherConfig: null,
-          configDirectory: process.cwd(),
-        }),
-      );
+      binding = createTestBinding(manifest, selected);
       game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
       let disposed = 0;
       const g = (facade = constructTestKnownUnmountedGameSemanticFacade(
@@ -251,7 +303,7 @@ test(
   { skip: process.platform !== "win32" ? "requires concrete Windows binding" : false },
   async () => {
     const f = await fixture();
-    let binding: Awaited<ReturnType<typeof createGameRuntimeBinding>> | undefined;
+    let binding: GameRuntimeBinding | undefined;
     let game: Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>> | undefined;
     try {
       const d = await createUnmountedDialogueSemanticFacade(Object.freeze({ manifestPath: f.manifestPath }));
@@ -259,14 +311,7 @@ test(
       await d.close();
       const selected = launcher();
       const manifest = await loadHostDeploymentManifest(f.manifestPath);
-      binding = await createGameRuntimeBinding(
-        Object.freeze({
-          manifest,
-          launcher: selected,
-          launcherConfig: null,
-          configDirectory: process.cwd(),
-        }),
-      );
+      binding = createTestBinding(manifest, selected);
       game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
       let disposeCalls = 0;
       const g = constructTestKnownUnmountedGameSemanticFacade(
@@ -303,21 +348,14 @@ test(
   { skip: process.platform !== "win32" ? "requires concrete Windows binding" : false },
   async () => {
     const f = await fixture();
-    let binding: Awaited<ReturnType<typeof createGameRuntimeBinding>> | undefined;
+    let binding: GameRuntimeBinding | undefined;
     let game: Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>> | undefined;
     try {
       const d = await createUnmountedDialogueSemanticFacade(Object.freeze({ manifestPath: f.manifestPath }));
       await d.initializeInitialChat();
       await d.close();
       const manifest = await loadHostDeploymentManifest(f.manifestPath);
-      binding = await createGameRuntimeBinding(
-        Object.freeze({
-          manifest,
-          launcher: launcher(),
-          launcherConfig: null,
-          configDirectory: process.cwd(),
-        }),
-      );
+      binding = createTestBinding(manifest, launcher());
       game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
       let bindingClosed = 0,
         gameClosed = 0;
@@ -363,21 +401,14 @@ test(
   { skip: process.platform !== "win32" ? "requires concrete Windows binding" : false },
   async () => {
     const f = await fixture();
-    let binding: Awaited<ReturnType<typeof createGameRuntimeBinding>> | undefined;
+    let binding: GameRuntimeBinding | undefined;
     let game: Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>> | undefined;
     try {
       const d = await createUnmountedDialogueSemanticFacade(Object.freeze({ manifestPath: f.manifestPath }));
       await d.initializeInitialChat();
       await d.close();
       const manifest = await loadHostDeploymentManifest(f.manifestPath);
-      binding = await createGameRuntimeBinding(
-        Object.freeze({
-          manifest,
-          launcher: launcher(),
-          launcherConfig: null,
-          configDirectory: process.cwd(),
-        }),
-      );
+      binding = createTestBinding(manifest, launcher());
       game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
       const events: string[] = [];
       const orderedGame = Object.freeze({
