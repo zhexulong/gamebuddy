@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Protocol;
 using Xunit;
 
 namespace GameBuddy.Stardew.Core.Tests;
@@ -163,6 +164,23 @@ public sealed class BodyProgramAuthorityTests
         BodyProgramEventsResult events = authority.Events("program", 0, 1);
         events.Events.Should().ContainSingle().Which.CatalogRevision.Should().Be(7);
         events.NextCursor.Should().Be(events.Events.Single().Cursor);
+    }
+
+    [Fact]
+    public void EventsPastHighWaterProjectAndSerializeAsAnEmptyContinuationPage()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        long highWater = authority.Status("program").Snapshot!.EventHighWater;
+
+        BodyProgramEventsResult page = authority.Events("program", highWater + 1, 1);
+        BridgeBodyProgramEventsResult projected = BridgeProtocol.ProjectBodyProgramEventsResult(page);
+
+        page.Code.Should().Be(BodyProgramQueryCode.Found);
+        page.Events.Should().BeEmpty();
+        page.NextCursor.Should().Be(highWater + 1);
+        BridgeProtocol.TrySerialize(projected, out _, out string reason).Should().BeTrue();
+        reason.Should().Be("accepted");
     }
 
     [Fact]

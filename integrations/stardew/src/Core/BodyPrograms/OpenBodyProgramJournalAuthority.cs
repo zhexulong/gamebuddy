@@ -75,10 +75,10 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramEventsResult Events(string programId, long cursor, int pageSize)
     {
-        if (!BodyProgramValidation.IsIdentifier(programId) || cursor < 0 || pageSize is < 1 or > 32) return new(BodyProgramQueryCode.InvalidInput, Array.Empty<BodyProgramJournalEvent>(), cursor, this.state.EventHighWater);
-        if (!this.state.Programs.Any(program => program.Program.ProgramId == programId)) return new(BodyProgramQueryCode.NotFound, Array.Empty<BodyProgramJournalEvent>(), cursor, this.state.EventHighWater);
+        if (!BodyProgramValidation.IsIdentifier(programId) || cursor < 0 || pageSize is < 1 or > 32) return new(programId, BodyProgramQueryCode.InvalidInput, Array.Empty<BodyProgramJournalEvent>(), cursor, this.state.EventHighWater);
+        if (!this.state.Programs.Any(program => program.Program.ProgramId == programId)) return new(programId, BodyProgramQueryCode.NotFound, Array.Empty<BodyProgramJournalEvent>(), cursor, this.state.EventHighWater);
         BodyProgramJournalEvent[] events = this.state.Events.Where(@event => @event.ProgramId == programId && @event.Cursor > cursor).Take(pageSize).ToArray();
-        return new(BodyProgramQueryCode.Found, Array.AsReadOnly(events), events.LastOrDefault()?.Cursor ?? cursor, this.state.EventHighWater);
+        return new(programId, BodyProgramQueryCode.Found, Array.AsReadOnly(events), events.LastOrDefault()?.Cursor ?? cursor, this.state.EventHighWater);
     }
 
     public BodyProgramControllerResult<BodyProgramStatusSnapshot> TryStop(string programId, long stopEpoch)
