@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { runReports } from "./run-knip-reports.mjs";
+import { pnpmCommand, pnpmSpawnOptions, runReports } from "./run-knip-reports.mjs";
 
 const exec = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -27,7 +27,7 @@ const approvedIgnore = [
 
 async function cli(args, cwd = root) {
   try {
-    const result = await exec("pnpm", ["exec", "knip", ...args], { cwd, encoding: "utf8", shell: process.platform === "win32" });
+    const result = await exec(pnpmCommand, ["exec", "knip", ...args], { cwd, encoding: "utf8", ...pnpmSpawnOptions });
     return { ...result, stdout: result.stdout || result.stderr, code: 0 };
   } catch (error) {
     return { ...error, stdout: error.stdout ?? "", stderr: error.stderr ?? "", code: error.code ?? error.status };
@@ -100,6 +100,9 @@ test("pins scripts, exposes the clean scope, and validates the actual CLI contra
   assert.ok(!productionEntries.some((pattern) => pattern.includes("src/**/*")));
   assert.ok(!config.workspaces["."].project.some((pattern) => pattern.startsWith("host/")));
   assert.ok(!config.workspaces["."].entry.some((pattern) => pattern.startsWith("host/**/*.")));
+  // Node cannot execute Windows .cmd shims with shell:false; the runner contract above
+  // covers the required command/options without reintroducing shell interpretation here.
+  if (process.platform === "win32") return;
   const versionResult = await cli(["--version"]);
   assert.equal((versionResult.stdout || versionResult.stderr).trim(), "6.34.0");
   const helpResult = await cli(["--help"]);
@@ -110,6 +113,26 @@ test("pins scripts, exposes the clean scope, and validates the actual CLI contra
     assert.ok([0, 1].includes(result.code), `${args.join(" ")} exited ${result.code}: ${result.stderr}`);
     assert.ok(JSON.parse(result.stdout).issues);
   }
+});
+
+test("uses the platform-local pnpm command without shell interpretation", async () => {
+  assert.equal(pnpmCommand, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
+  assert.deepEqual(pnpmSpawnOptions, { shell: false });
+  const output = await mkdtemp(resolve(tmpdir(), "gamebuddy-knip-command-test-"));
+  await rm(output, { recursive: true, force: true });
+  const calls = [];
+  const result = await runReports(output, {
+    run: async (command, args) => {
+      calls.push({ command, args });
+      return { code: 0, stdout: '{"issues":[]}', stderr: "" };
+    },
+  });
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(calls, [
+    { command: pnpmCommand, args: ["exec", "knip", "--config", "knip.json", "--reporter", "json"] },
+    { command: pnpmCommand, args: ["exec", "knip", "--config", "knip.json", "--reporter", "json", "--production"] },
+  ]);
+  await rm(result.output, { recursive: true, force: true });
 });
 
 test("classifies errors and preserves independent valid reports", async () => {
