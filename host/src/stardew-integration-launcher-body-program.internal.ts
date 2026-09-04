@@ -1,4 +1,5 @@
 import type { WorldFact } from "./event-pump.js";
+import { projectGameSnapshotContext } from "./snapshot-projection.js";
 import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
 import {
   type ExecutionWake,
@@ -271,10 +272,19 @@ export function getAuthenticatedStardewPresentationPortForPreview(
   return record.presentation;
 }
 
-function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
+export function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
   switch (message.type) {
     case "snapshot":
-      return { source: "stardew_mod", kind: "snapshot", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: message.payload.revision, payload: message.payload };
+      return {
+        source: "stardew_mod",
+        kind: "snapshot",
+        eventId: message.messageId,
+        occurredAtMs: message.timestampMs,
+        correlationId: message.correlationId,
+        revision: message.payload.revision,
+        payload: message.payload,
+        contextProjection: projectGameSnapshotContext(message.payload, message.timestampMs, Date.now()),
+      };
     case "execution_receipt":
       return { source: "stardew_mod", kind: "execution_receipt", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.payload.executionId, revision: message.payload.revision, executionId: message.payload.executionId, requestId: message.payload.requestId, payload: message.payload };
     case "semantic_event":
