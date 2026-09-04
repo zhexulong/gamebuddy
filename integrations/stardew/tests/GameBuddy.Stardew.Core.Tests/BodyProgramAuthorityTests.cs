@@ -145,6 +145,50 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
+    public void ExistingSameCandidateRejectsChangedPolicyIdentity()
+    {
+        BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, policy: () => policy);
+        ActionProgramCandidate candidate = Program("program", 1000);
+        authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        policy = Policy("policy-b", 2);
+        BodyProgramSubmitResult stale = authority.Submit(candidate);
+
+        stale.Code.Should().Be(BodyProgramSubmitCode.Rejected);
+        stale.Verification.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "policy_identity_stale");
+        authority.Status("program").Code.Should().Be(BodyProgramQueryCode.Found);
+    }
+
+    [Fact]
+    public void ExistingConflictRejectsChangedPolicyIdentity()
+    {
+        BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, policy: () => policy);
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        policy = Policy("policy-a", 3);
+        BodyProgramSubmitResult stale = authority.Submit(Program("program", 2000));
+
+        stale.Code.Should().Be(BodyProgramSubmitCode.Rejected);
+        stale.Verification.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "policy_identity_stale");
+        authority.Status("program").Code.Should().Be(BodyProgramQueryCode.Found);
+    }
+
+    [Fact]
+    public void ExistingSameCandidateReturnsIdempotentForExactPolicyIdentity()
+    {
+        BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
+        var authority = Open(policy: () => policy);
+        ActionProgramCandidate candidate = Program("program", 1000);
+        authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Idempotent);
+    }
+
+    [Fact]
     public void SubmitRejectsChangedPolicyIdentityWithoutChangingDurableState()
     {
         BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
