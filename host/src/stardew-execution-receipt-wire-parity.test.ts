@@ -25,23 +25,35 @@ test("source-built Stardew execution receipt passes the Host strict validator", 
   const root = mkdtempSync(join(tmpdir(), "gamebuddy-execution-receipt-wire-"));
   const outputPath = join(root, "execution-receipt.json");
   try {
-    execFileSync(
-      "dotnet",
-      [
-        "test",
-        projectPath,
-        "--no-restore",
-        "--filter",
-        "FullyQualifiedName=GameBuddy.Stardew.Integration.Tests.FarmhandTypedReceiptContractTests.RegisteredMachineInspect_ProducesExactWorldNotReadyReceipt",
-        "--verbosity",
-        "quiet",
-      ],
-      {
-        cwd: resolve(hostRoot, ".."),
-        env: { ...process.env, GAMEBUDDY_EXECUTION_RECEIPT_WIRE_OUTPUT: outputPath },
-        stdio: "pipe",
-      },
-    );
+    try {
+      execFileSync(
+        "dotnet",
+        [
+          "test",
+          projectPath,
+          "--no-restore",
+          "--filter",
+          "FullyQualifiedName=GameBuddy.Stardew.Integration.Tests.FarmhandTypedReceiptContractTests.RegisteredMachineInspect_ProducesExactWorldNotReadyReceipt",
+          "--verbosity",
+          "minimal",
+        ],
+        {
+          cwd: resolve(hostRoot, ".."),
+          env: { ...process.env, GAMEBUDDY_EXECUTION_RECEIPT_WIRE_OUTPUT: outputPath },
+          stdio: "pipe",
+        },
+      );
+    } catch (error) {
+      const commandError = error as { stdout?: Buffer | string; stderr?: Buffer | string; status?: number | null };
+      const redact = (value: Buffer | string | undefined) =>
+        String(value ?? "")
+          .replace(/[A-Za-z]:[\\/][^\\r\\n]*/g, "<path>")
+          .slice(-4_096);
+      throw new Error(
+        `stardew_receipt_parity_dotnet_failed:${commandError.status ?? "unknown"}:stdout=${redact(commandError.stdout)}:stderr=${redact(commandError.stderr)}`,
+        { cause: error },
+      );
+    }
 
     const raw = readFileSync(outputPath, "utf8");
     assert.ok(Buffer.byteLength(raw, "utf8") <= 16_384);
