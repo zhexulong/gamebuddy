@@ -681,7 +681,7 @@ export function serializeActionSourceProjection(snapshot) {
 export const ACTION_SOURCE_PROJECTION_PRODUCER_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const repositoryRoot = path.resolve(ACTION_SOURCE_PROJECTION_PRODUCER_DIRECTORY, "../../../..");
+  const repositoryRoot = path.resolve(ACTION_SOURCE_PROJECTION_PRODUCER_DIRECTORY, "../inputs/action-projection-source");
   loadSources(repositoryRoot)
     .then((sources) => {
       const snapshot = deriveActionSourceProjection(sources);
