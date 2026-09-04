@@ -9,7 +9,7 @@
       "project": ["src/**/*.{js,mjs,jsx,ts,tsx}", "tests/**/*.{js,mjs,ts,tsx}", "bin/**/*.{js,mjs,ts}"]
     },
     "host": {
-      "entry": ["src/main.ts!", "src/dialogue-web-main.ts!", "src/stardew-attachment.ts!", "src/farmhand-companion-preview.ts!", "scripts/*.mjs"],
+      "entry": ["src/main.ts!", "src/dialogue-web-main.ts!", "src/stardew-attachment.ts!", "src/farmhand-companion-preview.ts!", "src/tavern/player-turn-acceptance.ts!", "src/tavern/provider-attempt-claim.ts!", "src/tavern/chat-provider-start.ts!", "src/tavern/reference-pipeline-static-shell-composition.ts!", "src/tavern-management-dialogue-web.ts!", "src/tavern/tavern-management-static-shell-composition.ts!", "scripts/*.mjs"],
       "project": ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs"]
     },
     "voice-gateway": {

@@ -13,6 +13,20 @@ const config = JSON.parse(await readFile(resolve(root, "knip.json"), "utf8"));
 const productionArtifactConfig = JSON.parse(await readFile(resolve(root, "host/production-artifact.config.json"), "utf8"));
 const productionTsconfig = JSON.parse(await readFile(resolve(root, "host/tsconfig.production.json"), "utf8"));
 const expected = [".", "packages/*", "host", "voice-gateway", "dialogue-web", "integrations/stardew/action-development"];
+const productionSourceForArtifactRoot = (artifactRoot) => `src/${artifactRoot.replace(/\.js$/, ".ts")}`;
+// Artifact closure roots are not all independent Knip entries: only verification roots
+// explicitly compiled by the production tsconfig are projected; transitive roots stay
+// covered by their importing production entry.
+const explicitVerificationRoots = productionArtifactConfig.verificationRoots.filter((artifactRoot) =>
+  productionTsconfig.files.includes(productionSourceForArtifactRoot(artifactRoot))
+);
+const transitiveVerificationRoots = productionArtifactConfig.verificationRoots.filter((artifactRoot) =>
+  !productionTsconfig.files.includes(productionSourceForArtifactRoot(artifactRoot))
+);
+const expectedHostProductionEntries = [
+  ...productionArtifactConfig.entryRoots,
+  ...explicitVerificationRoots,
+].map((artifactRoot) => `${productionSourceForArtifactRoot(artifactRoot)}!`);
 const approvedIgnore = [
   ".worktrees/**",
   "vendor/magic-context/**",
@@ -62,13 +76,19 @@ test("declares the pnpm workspace projection and safe exclusions", async () => {
 
 test("maps Host production entries to artifact roots and production TypeScript files", async () => {
   const hostEntries = config.workspaces.host.entry.filter((pattern) => pattern.endsWith("!"));
-  const expectedHostEntries = productionArtifactConfig.entryRoots.map((rootName) => `src/${rootName.replace(/\.js$/, ".ts")}!`);
-  assert.deepEqual(hostEntries, expectedHostEntries);
+  assert.deepEqual(hostEntries, expectedHostProductionEntries);
 
   for (const entryRoot of productionArtifactConfig.entryRoots) {
-    const sourceFile = `src/${entryRoot.replace(/\.js$/, ".ts")}`;
+    const sourceFile = productionSourceForArtifactRoot(entryRoot);
     assert.ok(productionTsconfig.files.includes(sourceFile), `production tsconfig must include host/${sourceFile}`);
     await access(resolve(root, "host", sourceFile));
+  }
+  for (const entryRoot of explicitVerificationRoots) {
+    const sourceFile = productionSourceForArtifactRoot(entryRoot);
+    await access(resolve(root, "host", sourceFile));
+  }
+  for (const entryRoot of transitiveVerificationRoots) {
+    assert.ok(!hostEntries.includes(`${productionSourceForArtifactRoot(entryRoot)}!`), `transitive verification root must not become a Knip entry: ${entryRoot}`);
   }
 
   const dialogueWebEntry = config.workspaces["dialogue-web"].entry;
@@ -90,10 +110,7 @@ test("pins scripts, exposes the clean scope, and validates the actual CLI contra
     "src/model.mjs!",
     "src/descriptors.mjs!",
     "bin/game-action.mjs!",
-    "src/main.ts!",
-    "src/dialogue-web-main.ts!",
-    "src/stardew-attachment.ts!",
-    "src/farmhand-companion-preview.ts!",
+    ...expectedHostProductionEntries,
     "src/main.ts!",
     "src/main.tsx!",
   ]);
