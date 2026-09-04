@@ -5,19 +5,19 @@
       "project": ["tools/**/*.mjs"]
     },
     "packages/*": {
-      "entry": ["src/index.{js,mjs,ts,tsx}", "bin/**/*.{js,mjs,ts}"],
-      "project": ["src/**/*.{js,mjs,js,jsx,ts,tsx}", "tests/**/*.{js,mjs,ts,tsx}", "bin/**/*.{js,mjs,ts}"]
+      "entry": ["src/index.{js,mjs,ts,tsx}!", "src/process-supervisor.mjs!", "src/verifier.mjs!", "src/model.mjs!", "src/descriptors.mjs!", "bin/game-action.mjs!"],
+      "project": ["src/**/*.{js,mjs,jsx,ts,tsx}", "tests/**/*.{js,mjs,ts,tsx}", "bin/**/*.{js,mjs,ts}"]
     },
     "host": {
-      "entry": ["src/**/*.{ts,tsx}", "scripts/*.mjs"],
+      "entry": ["src/main.ts!", "src/dialogue-web-main.ts!", "src/stardew-attachment.ts!", "src/farmhand-companion-preview.ts!", "scripts/*.mjs"],
       "project": ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs"]
     },
     "voice-gateway": {
-      "entry": ["src/**/*.{ts,tsx}"],
+      "entry": ["src/main.ts!"],
       "project": ["src/**/*.{ts,tsx}"]
     },
     "dialogue-web": {
-      "entry": ["src/**/*.{ts,tsx}"],
+      "entry": ["src/main.tsx!"],
       "project": ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs"]
     },
     "integrations/stardew/action-development": {
