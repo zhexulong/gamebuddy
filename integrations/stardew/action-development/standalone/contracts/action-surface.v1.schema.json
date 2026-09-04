@@ -1,30 +1,31 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gamebuddy-stardew-action-surface/v1",
-  "title": "GameBuddy Stardew static action surface v1",
-  "description": "A bounded, non-authoritative consumer artifact containing only producer-published registration identity.",
+  "$id": "gamebuddy-action-descriptors/v1",
+  "title": "GameBuddy action descriptors v1",
+  "description": "A bounded, non-authoritative consumer artifact containing producer-published action descriptors.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema",
-    "gameId",
-    "registrations"
+    "catalogRevision",
+    "actions"
   ],
   "properties": {
     "schema": {
-      "const": "gamebuddy-stardew-action-surface/v1"
+      "const": "gamebuddy-action-descriptors/v1"
     },
-    "gameId": {
-      "const": "stardew"
+    "catalogRevision": {
+      "type": "integer",
+      "minimum": 0
     },
-    "registrations": {
+    "actions": {
       "type": "array",
       "minItems": 1,
       "maxItems": 128,
       "description": "Registration actionId values are unique within this surface; keyed uniqueness is enforced by the gamebuddy v1 validator.",
       "x-gamebuddy-uniqueBy": "actionId",
       "items": {
-        "$ref": "#/$defs/registration"
+        "$ref": "#/$defs/action"
       }
     }
   },
@@ -35,21 +36,22 @@
       "minLength": 2,
       "maxLength": 128
     },
-    "registration": {
+    "action": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "actionId",
-        "familyId",
         "identityVersion",
         "lifecycle",
-        "kind"
+        "kind",
+        "argumentSchema",
+        "outputFacts",
+        "resourceTemplate",
+        "effect",
+        "postcondition"
       ],
       "properties": {
         "actionId": {
-          "$ref": "#/$defs/identifier"
-        },
-        "familyId": {
           "$ref": "#/$defs/identifier"
         },
         "identityVersion": {
@@ -68,6 +70,34 @@
             "execution",
             "read_only"
           ]
+        },
+        "argumentSchema": { "type": "object" },
+        "outputFacts": { "type": "object" },
+        "resourceTemplate": {
+          "type": "object",
+          "required": ["claims"],
+          "additionalProperties": false,
+          "properties": {
+            "claims": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["key", "value"],
+                "additionalProperties": false,
+                "properties": {
+                  "key": { "$ref": "#/$defs/identifier" },
+                  "value": { "type": "string", "const": "ScopePlayer" }
+                }
+              }
+            }
+          }
+        },
+        "effect": { "enum": ["read", "write"] },
+        "postcondition": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": { "name": { "type": "string" } }
         }
       }
     }

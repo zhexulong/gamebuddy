@@ -18,8 +18,9 @@ test("materializes and executes the locked standalone package without former-roo
     entries: [
       "equip-tool-contract-check",
       "scaffold-contract",
-      "action-surface-check",
-      "action-source-projection-check",
+       "action-surface-check",
+       "action-surface-export-check",
+       "action-source-projection-check",
       "static-production-admission",
       "package-deterministic-tests",
     ],
