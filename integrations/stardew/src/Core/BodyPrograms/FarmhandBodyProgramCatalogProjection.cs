@@ -38,9 +38,23 @@ public static class FarmhandBodyProgramCatalogProjection
     public static FarmhandBodyProgramCatalogProjectionResult Create() =>
         Create(FarmhandActionSurfaceExport.CreateArtifact());
 
-    public static FarmhandBodyProgramCatalogProjectionResult Create(FarmhandActionDescriptorArtifact artifact)
+    internal static FarmhandBodyProgramCatalogProjectionResult Create(FarmhandActionDescriptorArtifact artifact)
     {
         ArgumentNullException.ThrowIfNull(artifact);
+        if (artifact.Schema != FarmhandActionSurfaceExport.Schema)
+        {
+            return new(
+                FarmhandBodyProgramCatalogProjectionStatus.Blocked,
+                null,
+                Freeze(new[]
+                {
+                    new FarmhandBodyProgramCatalogProjectionRejection(
+                        "<catalog>",
+                        "catalog_schema_blocked",
+                        "The descriptor artifact schema is not the canonical Mod schema.")
+                }));
+        }
+
         List<FarmhandBodyProgramCatalogProjectionRejection> rejections = new();
         List<BodyProgramActionDescriptor> accepted = new();
 
@@ -101,6 +115,13 @@ public static class FarmhandBodyProgramCatalogProjection
         code = null;
         message = null;
 
+        if (source.ResourceTemplate.Keys.Count > 0)
+        {
+            code = "resource_mapping_blocked";
+            message = "Resource template keys have no unambiguous Body Program resource template mapping.";
+            return false;
+        }
+
         List<BodyProgramArgumentDescriptor> arguments = new();
         foreach ((string name, FarmhandActionArgumentSchema schema) in source.ArgumentSchema)
         {
@@ -126,13 +147,6 @@ public static class FarmhandBodyProgramCatalogProjection
         }
 
         List<BodyProgramResourceTemplateClaim> resources = new();
-        if (source.ResourceTemplate.Keys.Count > 0)
-        {
-            code = "resource_mapping_blocked";
-            message = "Resource template keys have no unambiguous Body Program resource template mapping.";
-            return false;
-        }
-
         descriptor = new BodyProgramActionDescriptor(
             source.ActionId,
             source.IdentityVersion,
