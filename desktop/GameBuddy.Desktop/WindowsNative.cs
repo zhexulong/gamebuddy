@@ -19,6 +19,11 @@ internal static class WindowsNative
     internal const int ProcThreadAttributeHandleList = 0x00020002;
     internal const uint WaitObject0 = 0;
     internal const uint WaitTimeout = 258;
+    internal const uint StillActive = 259;
+    internal const uint TokenQuery = 0x0008;
+    internal const uint ProcessQueryLimitedInformation = 0x1000;
+    internal const int TokenUser = 1;
+    internal const uint DuplicateSameAccess = 0x00000002;
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern SafeFileHandle CreateFile(
@@ -54,6 +59,61 @@ internal static class WindowsNative
 
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DuplicateHandle(IntPtr sourceProcessHandle, IntPtr sourceHandle, IntPtr targetProcessHandle, out SafeThreadHandle targetHandle, uint desiredAccess, bool inheritHandle, uint options);
+
+    [DllImport("kernel32.dll")]
+    internal static extern IntPtr GetCurrentThread();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CancelSynchronousIo(SafeThreadHandle thread);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern uint GetProcessId(SafeProcessHandle process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetNamedPipeClientProcessId(SafeHandle pipe, out uint clientProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
+
+    [DllImport("kernel32.dll")]
+    internal static extern uint GetCurrentProcessId();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool TerminateProcess(SafeProcessHandle process, uint exitCode);
+
+    [DllImport("kernel32.dll")]
+    internal static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool OpenProcess(uint desiredAccess, bool inheritHandle, uint processId, out SafeProcessHandle process);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out SafeAccessTokenHandle token);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool OpenProcessToken(SafeProcessHandle processHandle, uint desiredAccess, out SafeAccessTokenHandle token);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetTokenInformation(SafeAccessTokenHandle tokenHandle, int tokenInformationClass, IntPtr tokenInformation, uint tokenInformationLength, out uint returnLength);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EqualSid(IntPtr firstSid, IntPtr secondSid);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    internal static extern uint GetLengthSid(IntPtr sid);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern bool GetExitCodeProcess(SafeProcessHandle process, out uint exitCode);
@@ -115,10 +175,29 @@ internal static class WindowsNative
         internal uint ThreadId;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct SidAndAttributes
+    {
+        internal IntPtr Sid;
+        internal uint Attributes;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct TokenUserInformation
+    {
+        internal SidAndAttributes User;
+    }
+
     internal sealed class SafeProcessHandle : SafeHandleZeroOrMinusOneIsInvalid
     {
         internal SafeProcessHandle() : base(true) { }
         internal SafeProcessHandle(IntPtr nativeHandle) : base(true) => SetHandle(nativeHandle);
+        protected override bool ReleaseHandle() => CloseHandle(handle);
+    }
+
+    internal sealed class SafeThreadHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        internal SafeThreadHandle() : base(true) { }
         protected override bool ReleaseHandle() => CloseHandle(handle);
     }
 
