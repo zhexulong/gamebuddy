@@ -335,6 +335,7 @@ export type ExecutionRequest = Readonly<{
   idempotencyKey: string;
   action:
     | "move_to_tile"
+    | "navigate_to_destination"
     | "equip_tool"
     | "travel"
     | "enter_exit"
@@ -373,9 +374,75 @@ export type ExecutionReceiptQuery = Readonly<{
   idempotencyKey: string;
 }>;
 
+export type NavigationSelector = Readonly<{
+  kind: "label" | "ref";
+  label: string | null;
+  ref: string | null;
+}>;
+
+export type NavigationReadRequest =
+  | Readonly<{ operation: "inspect_world_map"; args: Readonly<Record<string, never>> }>
+  | Readonly<{ operation: "inspect_world_map"; args: Readonly<{ nodeRef: string }> }>
+  | Readonly<{ operation: "inspect_world_map"; args: Readonly<{ cursor: string }> }>
+  | Readonly<{ operation: "find_destination"; args: Readonly<{ query: string }> }>;
+
+export type NavigationWorldMapEntry = Readonly<{
+  label: string;
+  contextLabel: string | null;
+  nodeRef: string | null;
+  destination: NavigationSelector | null;
+}>;
+
+export type NavigationSearchCandidate = Readonly<{
+  label: string;
+  contextLabel: string | null;
+  destination: NavigationSelector;
+  unlockState: "unknown";
+}>;
+
+export type NavigationReadResult =
+  | Readonly<{
+      status: "succeeded";
+      reason: "world_map_observed";
+      entries: readonly NavigationWorldMapEntry[];
+      nextCursor: string | null;
+      candidates: null;
+      destination: null;
+      unlockState: null;
+    }>
+  | Readonly<{
+      status: "resolved";
+      reason: "exact_current_locale" | "exact_fallback_locale" | "exact_alias";
+      entries: null;
+      nextCursor: null;
+      candidates: null;
+      destination: NavigationSelector;
+      unlockState: "unknown";
+    }>
+  | Readonly<{
+      status: "candidates";
+      reason: "ambiguous_exact" | "fuzzy_match";
+      entries: null;
+      nextCursor: null;
+      candidates: readonly NavigationSearchCandidate[];
+      destination: null;
+      unlockState: null;
+    }>
+  | Readonly<{
+      status: "not_found" | "invalid" | "blocked";
+      reason: string;
+      entries: null;
+      nextCursor: null;
+      candidates: null;
+      destination: null;
+      unlockState: null;
+    }>;
+
 export type ExecutionReceipt = Readonly<{
   executionId: string;
   requestId: string;
+  /** Exact Mod-authored action lineage; Host must never infer it from tool context. */
+  actionId: string;
   state: ExecutionState;
   reasonCode: string;
   revision: number;
@@ -501,6 +568,28 @@ export type ActionCatalog = Readonly<{
   entries: readonly ActionRegistration[];
 }>;
 
+export type BodyProgramRuntimeValue = Readonly<{ type: string; canonicalValue: string }>;
+export type BodyProgramFactReference = Readonly<{ nodeId: string; factName: string }>;
+export type BodyProgramNode = Readonly<{
+  nodeId: string;
+  actionId: string;
+  arguments: Readonly<Record<string, BodyProgramRuntimeValue>>;
+  dependsOn: readonly string[];
+  bindings: Readonly<Record<string, BodyProgramFactReference>>;
+  deadlineMs: number;
+}>;
+export type BodyProgramCandidateRequest = Readonly<{ programId: string; nodes: readonly BodyProgramNode[] }>;
+export type BodyProgramStatusRequest = Readonly<{ programId: string }>;
+export type BodyProgramEventsRequest = Readonly<{ programId: string; cursor: number; pageSize: number }>;
+export type BodyProgramCommandResult = Readonly<{ programId: string; status: string; diagnostics: readonly string[] }>;
+export type BodyProgramStatusResult = Readonly<{ programId: string; status: string; catalogRevision: number }>;
+export type BodyProgramEvent = Readonly<{ cursor: number; kind: string; catalogRevision: number }>;
+export type BodyProgramEventsResult = Readonly<{
+  programId: string;
+  nextCursor: number;
+  events: readonly BodyProgramEvent[];
+}>;
+
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
   | Envelope<
@@ -517,6 +606,8 @@ export type BridgeMessage =
       }>
     >
   | Envelope<"observe_request", Readonly<Record<string, never>>>
+  | Envelope<"navigation_read_request", NavigationReadRequest>
+  | Envelope<"navigation_read_result", NavigationReadResult>
   | Envelope<"snapshot", Snapshot>
   | Envelope<"catalog_update", Readonly<{ catalogRevision: number; enabledActionIds: readonly string[] }>>
   | Envelope<"execution_request", ExecutionRequest>
@@ -525,34 +616,27 @@ export type BridgeMessage =
   | Envelope<"companion_presentation_request", CompanionPresentationRequest>
   | Envelope<"system_notice_request", SystemNoticeRequest>
   | Envelope<"system_notice_receipt", SystemNoticeReceipt>
-  | Envelope<
-      "companion_presentation_receipt",
-      Readonly<{ expressionId: string; revision: number; presentationEpoch: number }>
-    >
+  | Envelope<"companion_presentation_receipt", Readonly<{ expressionId: string; revision: number; presentationEpoch: number }>>
   | Envelope<"player_control_receipt", PlayerControlReceipt>
   | Envelope<"execution_receipt", ExecutionReceipt>
+  | Envelope<"program_verify", BodyProgramCandidateRequest>
+  | Envelope<"program_verify_result", BodyProgramCommandResult>
+  | Envelope<"program_submit", BodyProgramCandidateRequest>
+  | Envelope<"program_submit_result", BodyProgramCommandResult>
+  | Envelope<"program_status", BodyProgramStatusRequest>
+  | Envelope<"program_status_result", BodyProgramStatusResult>
+  | Envelope<"program_events", BodyProgramEventsRequest>
+  | Envelope<"program_events_result", BodyProgramEventsResult>
   | Envelope<"error", Readonly<{ reasonCode: string }>>
   | Envelope<"semantic_event", SemanticEvent>
   | Envelope<"lifecycle", Readonly<{ state: "connected" | "disconnected" | "world_unavailable"; reasonCode: string }>>;
 
 export const BRIDGE_MESSAGE_TYPES = [
-  "hello",
-  "hello_ack",
-  "observe_request",
-  "snapshot",
-  "catalog_update",
-  "execution_request",
-  "execution_receipt_query",
-  "cancel_request",
-  "companion_presentation_request",
-  "system_notice_request",
-  "system_notice_receipt",
-  "companion_presentation_receipt",
-  "player_control_receipt",
-  "execution_receipt",
-  "error",
-  "semantic_event",
-  "lifecycle",
+  "hello", "hello_ack", "observe_request", "navigation_read_request", "navigation_read_result", "snapshot", "catalog_update",
+  "execution_request", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
+  "system_notice_receipt", "companion_presentation_receipt", "player_control_receipt", "execution_receipt",
+  "program_verify", "program_verify_result", "program_submit", "program_submit_result", "program_status", "program_status_result",
+  "program_events", "program_events_result", "error", "semantic_event", "lifecycle",
 ] as const;
 
 const SNAPSHOT_KEYS = [
@@ -606,6 +690,7 @@ const SNAPSHOT_KEYS = [
 
 const EXECUTION_ACTION_ARGUMENT_KEYS: Readonly<Record<ExecutionRequest["action"], readonly string[]>> = {
   move_to_tile: ["x", "y"],
+  navigate_to_destination: ["destination"],
   equip_tool: ["slot"],
   travel: ["x", "y"],
   enter_exit: ["x", "y"],
@@ -740,6 +825,10 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         : "invalid_hello_ack";
     case "observe_request":
       return hasExactKeys(payload, []) ? null : "invalid_observe_request";
+    case "navigation_read_request":
+      return validateNavigationReadRequest(payload);
+    case "navigation_read_result":
+      return validateNavigationReadResult(payload);
     case "snapshot":
       return validateSnapshot(payload);
     case "catalog_update":
@@ -835,6 +924,22 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         : "invalid_player_control_receipt";
     case "execution_receipt":
       return validateReceipt(payload);
+    case "program_verify":
+    case "program_submit":
+      return validateBodyProgramCandidateRequest(payload);
+    case "program_verify_result":
+    case "program_submit_result":
+      return validateBodyProgramCommandResult(payload);
+    case "program_status":
+      return hasExactKeys(payload, ["programId"]) && isOpaqueId(payload.programId) ? null : "invalid_body_program_request";
+    case "program_status_result":
+      return validateBodyProgramStatusResult(payload);
+    case "program_events":
+      return hasExactKeys(payload, ["programId", "cursor", "pageSize"]) && isOpaqueId(payload.programId) &&
+        isNonNegativeSafeInteger(payload.cursor) && Number.isSafeInteger(payload.pageSize) &&
+        (payload.pageSize as number) >= 1 && (payload.pageSize as number) <= 32 ? null : "invalid_body_program_request";
+    case "program_events_result":
+      return validateBodyProgramEventsResult(payload);
     case "error":
       return hasExactKeys(payload, ["reasonCode"]) && isReasonCode(payload.reasonCode) ? null : "invalid_error";
     case "semantic_event":
@@ -848,6 +953,87 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
   }
 }
 
+function validateNavigationReadRequest(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["operation", "args"]) || !isRecord(value.args)) return "invalid_navigation_read_request";
+  if (value.operation === "inspect_world_map") {
+    if (hasExactKeys(value.args, [])) return null;
+    if (hasExactKeys(value.args, ["nodeRef"]) && isOpaqueId(value.args.nodeRef)) return null;
+    if (hasExactKeys(value.args, ["cursor"]) && isOpaqueId(value.args.cursor)) return null;
+  } else if (
+    value.operation === "find_destination" &&
+    hasExactKeys(value.args, ["query"]) &&
+    isBoundedNonEmptyString(value.args.query, 128)
+  ) {
+    return null;
+  }
+  return "invalid_navigation_read_request";
+}
+
+function validateNavigationReadResult(value: Record<string, unknown>): string | null {
+  const keys = ["status", "reason", "entries", "nextCursor", "candidates", "destination", "unlockState"];
+  if (!hasExactKeys(value, keys) || !isReasonCode(value.reason)) return "invalid_navigation_read_result";
+  if (value.status === "succeeded") {
+    return value.reason === "world_map_observed" &&
+      Array.isArray(value.entries) && value.entries.length <= 20 && value.entries.every(isNavigationWorldMapEntry) &&
+      (value.nextCursor === null || isOpaqueId(value.nextCursor)) &&
+      value.candidates === null && value.destination === null && value.unlockState === null
+      ? null : "invalid_navigation_read_result";
+  }
+  if (value.status === "resolved") {
+    return (value.reason === "exact_current_locale" || value.reason === "exact_fallback_locale" || value.reason === "exact_alias") &&
+      value.entries === null && value.nextCursor === null && value.candidates === null &&
+      isNavigationSelector(value.destination) && value.unlockState === "unknown"
+      ? null : "invalid_navigation_read_result";
+  }
+  if (value.status === "candidates") {
+    return (value.reason === "ambiguous_exact" || value.reason === "fuzzy_match") &&
+      value.entries === null && value.nextCursor === null && Array.isArray(value.candidates) &&
+      value.candidates.length >= 1 && value.candidates.length <= 3 && value.candidates.every(isNavigationSearchCandidate) &&
+      value.destination === null && value.unlockState === null
+      ? null : "invalid_navigation_read_result";
+  }
+  const validTerminal =
+    (value.status === "not_found" && value.reason === "destination_not_found") ||
+    (value.status === "invalid" && value.reason === "destination_search_invalid") ||
+    (value.status === "blocked" && isReasonCode(value.reason));
+  return validTerminal && value.entries === null && value.nextCursor === null && value.candidates === null &&
+    value.destination === null && value.unlockState === null
+    ? null : "invalid_navigation_read_result";
+}
+
+function isExecutionNavigationDestinationSelector(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  return value.kind === "label"
+    ? hasExactKeys(value, ["kind", "label"]) && isBoundedNonEmptyString(value.label, 128)
+    : value.kind === "ref" && hasExactKeys(value, ["kind", "ref"]) && typeof value.ref === "string" && /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref);
+}
+
+function isNavigationSelector(value: unknown): value is NavigationSelector {
+  if (!isRecord(value) || !hasExactKeys(value, ["kind", "label", "ref"])) return false;
+  return value.kind === "label"
+    ? isBoundedNonEmptyString(value.label, 128) && value.ref === null
+    : value.kind === "ref" && value.label === null && (value.ref === null || isOpaqueId(value.ref));
+}
+
+function isNavigationWorldMapEntry(value: unknown): value is NavigationWorldMapEntry {
+  return isRecord(value) && hasExactKeys(value, ["label", "contextLabel", "nodeRef", "destination"]) &&
+    isBoundedNonEmptyString(value.label, 128) &&
+    (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
+    (value.nodeRef === null || isOpaqueId(value.nodeRef)) &&
+    (value.destination === null || isNavigationSelector(value.destination));
+}
+
+function isNavigationSearchCandidate(value: unknown): value is NavigationSearchCandidate {
+  return isRecord(value) && hasExactKeys(value, ["label", "contextLabel", "destination", "unlockState"]) &&
+    isBoundedNonEmptyString(value.label, 128) &&
+    (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
+    isNavigationSelector(value.destination) && value.unlockState === "unknown";
+}
+
+function isBoundedNonEmptyString(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= maxLength;
+}
+
 export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
   if (
     !isRecord(value) ||
@@ -857,6 +1043,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   if (!isOpaqueId(value.requestId) || !isOpaqueId(value.idempotencyKey)) return "invalid_request_id";
   if (
     value.action !== "move_to_tile" &&
+    value.action !== "navigate_to_destination" &&
     value.action !== "equip_tool" &&
     value.action !== "travel" &&
     value.action !== "enter_exit" &&
@@ -902,6 +1089,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
   if (value.action === "move_to_tile") {
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_target_tile";
+  } else if (value.action === "navigate_to_destination") {
+    if (!isExecutionNavigationDestinationSelector(value.args.destination)) return "invalid_navigation_destination";
   } else if (value.action === "equip_tool") {
     if (!isToolSlot(value.args.slot)) return "invalid_tool_slot";
   } else if (value.action === "travel") {
@@ -1491,6 +1680,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     isOpaqueId(value.requestId) &&
     isOpaqueId(value.idempotencyKey) &&
     (value.action === "move_to_tile" ||
+      value.action === "navigate_to_destination" ||
       value.action === "equip_tool" ||
       value.action === "travel" ||
       value.action === "enter_exit" ||
@@ -1528,9 +1718,11 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
-  return hasExactKeys(value, ["executionId", "requestId", "state", "reasonCode", "revision", "evidence"]) &&
+  return hasExactKeys(value, ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"]) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
+    typeof value.actionId === "string" &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(value.actionId) &&
     typeof value.state === "string" &&
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&
@@ -1538,6 +1730,50 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     (value.evidence === null || isRecord(value.evidence))
     ? null
     : "invalid_receipt";
+}
+
+export function validateBodyProgramCandidateRequest(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["programId", "nodes"]) || !isOpaqueId(value.programId) || !Array.isArray(value.nodes) || value.nodes.length < 1 || value.nodes.length > 16)
+    return "invalid_body_program_request";
+  return value.nodes.every(isBodyProgramNode) ? null : "invalid_body_program_request";
+}
+
+function isBodyProgramNode(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, ["nodeId", "actionId", "arguments", "dependsOn", "bindings", "deadlineMs"]) ||
+    !isOpaqueId(value.nodeId) || !isOpaqueId(value.actionId) || !isRecord(value.arguments) || !hasUniqueKeys(value.arguments) ||
+    !Array.isArray(value.dependsOn) || value.dependsOn.length > 8 || !value.dependsOn.every(isOpaqueId) ||
+    !isRecord(value.bindings) || !hasUniqueKeys(value.bindings) || !Number.isSafeInteger(value.deadlineMs) || (value.deadlineMs as number) <= 0)
+    return false;
+  return Object.entries(value.arguments).every(([name, argument]) => isOpaqueId(name) && isBodyProgramRuntimeValue(argument)) &&
+    Object.entries(value.bindings).every(([name, binding]) => isOpaqueId(name) && isBodyProgramFactReference(binding));
+}
+function isBodyProgramRuntimeValue(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["type", "canonicalValue"]) && typeof value.type === "string" && value.type.length >= 1 && value.type.length <= 64 &&
+    typeof value.canonicalValue === "string" && value.canonicalValue.length <= 512;
+}
+function isBodyProgramFactReference(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["nodeId", "factName"]) && isOpaqueId(value.nodeId) && isOpaqueId(value.factName);
+}
+export function validateBodyProgramCommandResult(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["programId", "status", "diagnostics"]) && isOpaqueId(value.programId) && isReasonCode(value.status) &&
+    Array.isArray(value.diagnostics) && value.diagnostics.length <= 64 && value.diagnostics.every(isReasonCode)
+    ? null : "invalid_body_program_result";
+}
+export function validateBodyProgramStatusResult(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["programId", "status", "catalogRevision"]) && isOpaqueId(value.programId) && isReasonCode(value.status) && isNonNegativeSafeInteger(value.catalogRevision)
+    ? null : "invalid_body_program_result";
+}
+export function validateBodyProgramEventsResult(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["programId", "nextCursor", "events"]) && isOpaqueId(value.programId) && isNonNegativeSafeInteger(value.nextCursor) &&
+    Array.isArray(value.events) && value.events.length <= 32 && value.events.every(isBodyProgramEvent)
+    ? null : "invalid_body_program_result";
+}
+function isBodyProgramEvent(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["cursor", "kind", "catalogRevision"]) && isNonNegativeSafeInteger(value.cursor) &&
+    isReasonCode(value.kind) && isNonNegativeSafeInteger(value.catalogRevision);
+}
+function hasUniqueKeys(value: Record<string, unknown>): boolean {
+  return Object.keys(value).length <= 32;
 }
 
 function validateSemanticEvent(value: Record<string, unknown>): string | null {
