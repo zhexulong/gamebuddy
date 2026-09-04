@@ -236,6 +236,88 @@ public sealed class BridgeProtocolSerializationTests
         new(label, null, selector ?? new("ref", null, null), "unknown");
 
     [Fact]
+    public void TrySerialize_SnapshotWireParityFixture_WritesHostWireParityFixtureWhenRequested()
+    {
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        var snapshot = new BridgeSnapshot(
+            Revision: 1,
+            Location: "unknown",
+            Tile: new BridgeTile(0f, 0f),
+            Stamina: 0f,
+            Health: 0,
+            CurrentTool: null,
+            InventorySlots: 0,
+            Actionable: false,
+            Capabilities: new[] { "inspect_world_map" },
+            CatalogRevision: 1,
+            EnabledActionIds: Array.Empty<string>(),
+            ActiveExecution: null,
+            Warps: Array.Empty<BridgeWarp>(),
+            DoorTargets: null,
+            SoilTiles: null,
+            ToolSlots: Array.Empty<BridgeToolSlot>(),
+            WateringCanFacts: null,
+            RefillWateringCanTargets: null,
+            ForageTargets: null,
+            ItemTargets: null,
+            CropTargets: null,
+            HarvestTargets: null,
+            SeedTargets: null,
+            FertilizerTargets: null,
+            WoodFenceTargets: null,
+            WoodFenceResultTargets: null,
+            CrabPotTargets: null,
+            CrabPotResultTargets: null,
+            BaitCrabPotTargets: null,
+            BaitCrabPotResultTargets: null,
+            DebrisTargets: null,
+            RockSourceTargets: null,
+            ClearHoeDirtTargets: null,
+            ArtifactSpotTargets: null,
+            ArtifactSpotResultTargets: null,
+            ArtifactSpotFarmSourceCount: null,
+            MachineTargets: null,
+            TreeChopSourceTargets: null,
+            TreeChopResultTargets: null,
+            NpcRelationshipTargets: null,
+            PetTargets: null,
+            AnimalProductTargets: null,
+            FeedTroughTargets: null,
+            InventoryItemFacts: null,
+            FoodTargets: null,
+            PresentationLocale: "en-US");
+        var envelope = new BridgeEnvelope<BridgeSnapshot>(
+            BridgeProtocol.Version,
+            "snapshot_wire_parity_message",
+            "snapshot_wire_parity_correlation",
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            scope,
+            "snapshot",
+            snapshot);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string reason).Should().BeTrue(reason);
+        using (JsonDocument document = JsonDocument.Parse(json))
+        {
+            document.RootElement.GetProperty("type").GetString().Should().Be("snapshot");
+            document.RootElement.GetProperty("payload").GetProperty("location").GetString().Should().Be("unknown");
+        }
+
+        string? outputPath = Environment.GetEnvironmentVariable("GAMEBUDDY_SNAPSHOT_WIRE_OUTPUT");
+        if (outputPath is null)
+            return;
+
+        Path.IsPathFullyQualified(outputPath).Should().BeTrue("the Host parity test must own an absolute private output path");
+        WriteSnapshotWireParityFixture(outputPath, json);
+    }
+
+    private static void WriteSnapshotWireParityFixture(string outputPath, string json)
+    {
+        using var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+        writer.Write(json);
+    }
+
+    [Fact]
     public void TryDeserializeNavigationReadRequest_ValidFindDestinationPayload_DeserializesCorrectly()
     {
         const string json = "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"navigation_read_request\",\"payload\":{\"operation\":\"find_destination\",\"args\":{\"query\":\"mine\"}}}";
