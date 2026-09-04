@@ -25,10 +25,10 @@ async function readGeneratedActionSurface() {
 function boundedReport(projection) {
   const report = Object.freeze({
     schema: ACTION_SURFACE_CHECK_SCHEMA,
-    gameId: projection.gameId,
+     catalogRevision: projection.catalogRevision,
     status: "valid",
     artifact: ACTION_SURFACE_ARTIFACT_RELATIVE_PATH,
-    registrations: projection.registrations.length,
+     actions: projection.actions.length,
     executable: projection.executable.length,
     readOnly: projection.readOnly.length,
   });

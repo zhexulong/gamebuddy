@@ -20,10 +20,10 @@ test("checks the exact package-relative generated action-surface artifact", asyn
   const artifact = await readFile(artifactPath);
   const report = await runActionSurfaceCheck();
   assert.equal(report.schema, "gamebuddy-stardew-action-surface-check/v1");
-  assert.equal(report.gameId, "stardew");
+  assert.equal(report.catalogRevision, 1);
   assert.equal(report.status, "valid");
   assert.equal(report.artifact, ACTION_SURFACE_ARTIFACT_RELATIVE_PATH);
-  assert.ok(report.registrations > 0);
+  assert.ok(report.actions > 0);
   assert.equal(Buffer.byteLength(JSON.stringify(report), "utf8") <= ACTION_SURFACE_CHECK_MAX_REPORT_BYTES, true);
   assert.equal(artifact.byteLength <= 64 * 1024, true);
 });

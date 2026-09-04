@@ -51,21 +51,21 @@ test("registrations preserve exact identity/lifecycle/kind tuples of the generat
     path.join(packageDirectory, "contracts", "generated", "action-surface.v1.json"),
     "utf8",
   ));
-  assert.deepEqual(produced.surface.registrations, artifact.registrations);
+  assert.deepEqual(produced.surface.actions, artifact.actions);
   assert.deepEqual(
     produced.lifecycle.executableActionIds,
-    artifact.registrations
-      .filter((registration) => registration.lifecycle === "published" && registration.kind === "execution")
-      .map((registration) => registration.actionId),
+    artifact.actions
+      .filter((action) => action.lifecycle === "published" && action.kind === "execution")
+      .map((action) => action.actionId),
   );
   assert.deepEqual(
     produced.lifecycle.experimentalActionIds,
-    artifact.registrations
-      .filter((registration) => registration.lifecycle === "experimental")
-      .map((registration) => registration.actionId),
+    artifact.actions
+      .filter((action) => action.lifecycle === "experimental")
+      .map((action) => action.actionId),
   );
   assert.equal(
-    produced.surface.registrations.some((registration) => registration.lifecycle === "withdrawn"),
+    produced.surface.actions.some((action) => action.lifecycle === "withdrawn"),
     false,
   );
 });
@@ -73,7 +73,7 @@ test("registrations preserve exact identity/lifecycle/kind tuples of the generat
 test("protocol/schema union facts are produced from package-owned documents", async () => {
   const produced = await produceProjectionParitySnapshot();
   assert.deepEqual(produced.protocol.schemas, [...produced.protocol.schemas].sort());
-  assert.ok(produced.protocol.schemas.includes("gamebuddy-stardew-action-surface/v1"));
+  assert.ok(produced.protocol.schemas.includes("gamebuddy-action-descriptors/v1"));
   assert.ok(produced.protocol.schemas.includes("gamebuddy-stardew-static-action-projection/v1"));
   assert.ok(produced.protocol.schemas.includes("gamebuddy-stardew-tool-inventory/v1"));
   assert.deepEqual(produced.protocol.fixedControls, PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS);
@@ -111,7 +111,7 @@ test("producer drift is observable for every fact category", async () => {
 
   // registration identity tuple drift
   assert.notDeepEqual(
-    mutate((changed) => { changed.surface.registrations[1].familyId = "wrong_family"; }),
+    mutate((changed) => { changed.surface.actions[1].outputFacts = { changed: true }; }),
     snapshot,
   );
   // lifecycle partition drift
@@ -155,7 +155,7 @@ test("producer reads package-owned documents only, with no root Host/Mod/tool bo
 test("checked-in snapshot survives a strict parse round-trip", async () => {
   const { text, snapshot } = await loadCheckedInSnapshot();
   const validated = validateActionProjectionParity(snapshot);
-  assert.equal(validated.surface.registrations.length, snapshot.surface.registrations.length);
+  assert.equal(validated.surface.actions.length, snapshot.surface.actions.length);
   assert.equal(validated.schema, snapshot.schema);
   assert.equal(Buffer.byteLength(text, "utf8") <= 32 * 1024, true);
 });
