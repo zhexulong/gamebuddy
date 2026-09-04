@@ -164,6 +164,31 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
+    public void SubmitRejectsChangedPolicyRevisionAndAbaWithoutChangingDurableState()
+    {
+        BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, policy: () => policy);
+        authority.Submit(Program("accepted", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        string persistedPolicy = store.Value!;
+
+        policy = Policy("policy-a", 3);
+        authority.Submit(Program("revision-stale", 1000)).Code.Should().Be(BodyProgramSubmitCode.Rejected);
+        policy = Policy("policy-b", 2);
+        authority.Submit(Program("value-stale", 1000)).Code.Should().Be(BodyProgramSubmitCode.Rejected);
+        policy = Policy("policy-a", 2);
+        BodyProgramSubmitResult aba = authority.Submit(Program("aba-stale", 1000));
+
+        aba.Code.Should().Be(BodyProgramSubmitCode.Rejected);
+        aba.Verification.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "policy_identity_stale");
+        store.Value.Should().Be(persistedPolicy);
+        authority.Snapshot.PolicyIdentity.Should().Be(Policy("policy-a", 2));
+        authority.Status("revision-stale").Code.Should().Be(BodyProgramQueryCode.NotFound);
+        authority.Status("value-stale").Code.Should().Be(BodyProgramQueryCode.NotFound);
+        authority.Status("aba-stale").Code.Should().Be(BodyProgramQueryCode.NotFound);
+    }
+
+    [Fact]
     public void PolicyIdentityRequiresExactValueAndRevisionAndRejectsAbaReuse()
     {
         BodyProgramPolicyIdentity policy = Policy("policy-a", 1);

@@ -12,17 +12,13 @@ public sealed class OpenBodyProgramJournalAuthority
     private readonly BridgeScope scope;
     private readonly Func<BodyProgramPolicyIdentity> currentPolicy;
     private readonly Func<long> nowMs;
-    private readonly HashSet<BodyProgramPolicyIdentity> observedPolicies = new();
-    private BodyProgramPolicyIdentity? lastObservedPolicy;
-    private bool policyIdentityReused;
+    private bool policyIdentityChanged;
     private BodyProgramJournalState state;
 
     private OpenBodyProgramJournalAuthority(IBodyProgramJournalStore store, BodyProgramActionCatalog catalog, BridgeScope scope, Func<BodyProgramPolicyIdentity> currentPolicy,
         Func<long> nowMs, BodyProgramJournalState state, BodyProgramJournalOpenStatus status)
     {
         this.store = store; this.catalog = catalog; this.scope = scope; this.currentPolicy = currentPolicy; this.nowMs = nowMs; this.state = state; this.OpenStatus = status;
-        this.observedPolicies.Add(state.PolicyIdentity);
-        this.lastObservedPolicy = state.PolicyIdentity;
     }
 
     public BodyProgramJournalOpenStatus OpenStatus { get; private set; }
@@ -39,7 +35,7 @@ public sealed class OpenBodyProgramJournalAuthority
             if (encoded is null) return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.Empty);
             if (!BodyProgramJournalPersistence.TryDecode(encoded, catalog, scope, out BodyProgramJournalState? decoded) || decoded is null)
                 return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.Corrupt);
-            BodyProgramJournalState fenced = RestartFence(decoded, policy, out bool changed);
+            BodyProgramJournalState fenced = RestartFence(decoded, out bool changed);
             var authority = new OpenBodyProgramJournalAuthority(store, catalog, scope, currentPolicy, nowMs, fenced, changed ? BodyProgramJournalOpenStatus.RecoveryRequired : BodyProgramJournalOpenStatus.Opened);
             if (changed && !authority.TryPersist(fenced)) authority.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed;
             return authority;
@@ -58,7 +54,9 @@ public sealed class OpenBodyProgramJournalAuthority
         if (existing is not null) return new(BodyProgramCanonical.CandidateEquals(verification.CanonicalProgram, ToCandidate(existing.Program)) ? BodyProgramSubmitCode.Idempotent : BodyProgramSubmitCode.Conflict, verification, SnapshotFor(existing));
         BodyProgramPolicyIdentity policy = ObservePolicy();
         if (!policy.IsValid) return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_invalid", null, "/"), null);
-        if (this.policyIdentityReused) return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_stale", null, "/"), null);
+        bool emptyJournal = this.state.Programs.Count == 0 && this.state.Events.Count == 0;
+        if (!emptyJournal && !PolicyMatches(policy, this.state.PolicyIdentity))
+            return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_stale", null, "/"), null);
         VerifiedBodyProgram verified = BodyProgramVerifier.Accept(verification.CanonicalProgram, this.catalog, this.scope);
         var program = new BodyProgramJournalProgram(verified, BodyProgramState.Active, 0,
             Array.AsReadOnly(verified.Nodes.Select(node => new BodyProgramJournalNode(node.NodeId, BodyProgramNodeState.Pending, 0, 0, null)).ToArray()), Array.Empty<RuntimeFact>());
@@ -85,6 +83,7 @@ public sealed class OpenBodyProgramJournalAuthority
     public BodyProgramControllerResult<BodyProgramStatusSnapshot> TryStop(string programId, long stopEpoch)
     {
         if (!IsMutable) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
+        if (!PolicyMatches(ObservePolicy(), this.state.PolicyIdentity)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PolicyIdentityStale);
         if (!TryProgram(programId, out BodyProgramJournalProgram? program)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
         if (stopEpoch <= program!.StopEpoch) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramJournalProgram stopped = program with { State = BodyProgramState.Cancelled, StopEpoch = stopEpoch,
@@ -164,15 +163,10 @@ public sealed class OpenBodyProgramJournalAuthority
     private BodyProgramPolicyIdentity ObservePolicy()
     {
         BodyProgramPolicyIdentity identity = this.currentPolicy();
-        if (identity.IsValid)
-        {
-            if (this.lastObservedPolicy is not null && !identity.Equals(this.lastObservedPolicy) && !this.observedPolicies.Add(identity)) this.policyIdentityReused = true;
-            else this.observedPolicies.Add(identity);
-            this.lastObservedPolicy = identity;
-        }
+        if (identity.IsValid && !identity.Equals(this.state.PolicyIdentity)) this.policyIdentityChanged = true;
         return identity;
     }
-    private bool PolicyMatches(BodyProgramPolicyIdentity current, BodyProgramPolicyIdentity expected) => current.IsValid && current.Equals(expected) && !this.policyIdentityReused;
+    private bool PolicyMatches(BodyProgramPolicyIdentity current, BodyProgramPolicyIdentity expected) => current.IsValid && expected.IsValid && current.Equals(expected) && !this.policyIdentityChanged;
     private bool TryProgram(string id, out BodyProgramJournalProgram? program) { program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == id); return program is not null && program.State == BodyProgramState.Active; }
     private bool TryPersist(BodyProgramJournalState next) { if (!BodyProgramJournalPersistence.TryValidate(next, out _)) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } try { if (!this.store.TryWrite(BodyProgramJournalPersistence.Encode(next))) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } this.state = BodyProgramJournalPersistence.FreezeState(next); return true; } catch { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } }
     private static BodyProgramJournalState Empty(BridgeScope scope, BodyProgramPolicyIdentity policy) => new(BodyProgramJournalPersistence.SchemaVersion, scope, policy, 0, Array.Empty<BodyProgramJournalProgram>(), Array.Empty<BodyProgramJournalEvent>());
@@ -186,12 +180,12 @@ public sealed class OpenBodyProgramJournalAuthority
     private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected;
     private static BodyProgramVerificationReport Rejected(string code, string? node, string path) => new(false, 0, null, new[] { new BodyProgramDiagnostic(BodyProgramDiagnosticSeverity.Error, code, node, path, code) });
     private static ActionProgramCandidate ToCandidate(VerifiedBodyProgram program) => new(program.ProgramId, program.Nodes.Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, node.CanonicalArguments.ToDictionary(pair => pair.Key, pair => BodyProgramValidation.ToRuntimeValue(pair.Value), StringComparer.Ordinal), node.DependsOn, node.Bindings, node.DeadlineMs)).ToArray());
-    private static BodyProgramJournalState RestartFence(BodyProgramJournalState persisted, BodyProgramPolicyIdentity policy, out bool changed)
+    private static BodyProgramJournalState RestartFence(BodyProgramJournalState persisted, out bool changed)
     {
         changed = persisted.Programs.Any(program => !program.Nodes.All(node => IsTerminal(node.State)));
         if (!changed) return persisted;
         BodyProgramJournalProgram[] programs = persisted.Programs.Select(program => program.Nodes.All(node => IsTerminal(node.State)) ? program : program with { State = BodyProgramState.RecoveryRequired, Nodes = Array.AsReadOnly(program.Nodes.Select(node => IsTerminal(node.State) ? node : node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null }).ToArray()) }).ToArray();
-        return new BodyProgramJournalState(persisted.SchemaVersion, persisted.Scope, policy, persisted.EventHighWater, Array.AsReadOnly(programs), persisted.Events);
+        return new BodyProgramJournalState(persisted.SchemaVersion, persisted.Scope, persisted.PolicyIdentity, persisted.EventHighWater, Array.AsReadOnly(programs), persisted.Events);
     }
 }
 
