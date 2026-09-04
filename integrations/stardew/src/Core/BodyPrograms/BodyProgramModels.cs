@@ -110,7 +110,7 @@ public sealed record NodeAdmissionChallenge(string ProgramId, string NodeId, int
     IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs);
 public sealed record HostAdmissionGrant(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt, long StopEpoch, long CatalogRevision,
     BodyProgramPolicyIdentity PolicyIdentity, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
-    IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs, string GrantId);
+    IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs, string GrantId, NodeExecutionBinding? ExecutionBinding = null);
 
 public interface IBodyProgramJournalStore { string? Read(); bool TryWrite(string encodedState); }
 public enum BodyProgramJournalOpenStatus { Empty, Opened, RecoveryRequired, Corrupt, PersistenceReadFailed, PersistenceWriteFailed }
