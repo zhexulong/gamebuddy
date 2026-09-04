@@ -44,6 +44,35 @@ public sealed class NavigationReadOnlySessionTests
     }
 
     [Fact]
+    public void InspectWorldMap_DuplicateReferencesRemainExactAndCreateNoReceipt()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "inspect_world_map" });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
+        var session = new BridgeSession(
+            executions,
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            () => Set(Leaf("Cabin", "cabin_west"), Leaf("Cabin", "cabin_east")),
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+        Authenticate(session, scope);
+
+        session.TryNavigationRead(1, Request(scope), out BridgeEnvelope<BridgeNavigationReadResult>? response, out string reason)
+            .Should().BeTrue(reason);
+
+        response!.Payload.Status.Should().Be("succeeded");
+        response.Payload.Entries.Should().NotBeNull().And.HaveCount(2);
+        response.Payload.Entries!.Should().OnlyContain(entry =>
+            entry.Destination!.Kind == "ref"
+            && entry.Destination.Label == null
+            && entry.Destination.Ref != null);
+        executions.TryGetReceipt("navigation_read_request_01", out _).Should().BeFalse();
+    }
+
+    [Fact]
     public void FindDestination_MapsExactCandidatesAndNotFound_FromFreshSetWithoutExecutionReceipt()
     {
         FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "find_destination" });
@@ -76,7 +105,10 @@ public sealed class NavigationReadOnlySessionTests
         candidates.Payload.Reason.Should().Be("fuzzy_match");
         candidates.Payload.Destination.Should().BeNull();
         candidates.Payload.Candidates.Should().NotBeNull().And.HaveCountGreaterThan(1);
-        candidates.Payload.Candidates!.Should().OnlyContain(candidate => candidate.Destination.Kind == "ref" && candidate.Destination.Ref == null);
+        candidates.Payload.Candidates!.Should().OnlyContain(candidate =>
+            candidate.Destination.Kind == "ref"
+            && candidate.Destination.Label == null
+            && NavigationReferenceStore.IsWellFormedHandle(candidate.Destination.Ref, "dr1_"));
 
         currentSet = Set(Leaf("Farm", "Farm"));
         session.TryNavigationRead(1, FindRequest(scope, "mine", "find_not_found_request_01"), out BridgeEnvelope<BridgeNavigationReadResult>? notFound, out reason)
