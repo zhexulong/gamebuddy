@@ -62,7 +62,7 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
         try
         {
             string? directory = Path.GetDirectoryName(this.targetPath);
-            if (directory is null || !IsNonReparseDirectoryTree(this.canonicalRoot, directory) || !IsSafeTarget(this.targetPath))
+            if (directory is null || !IsNonReparseDirectoryTree(this.canonicalRoot, directory) || !TryGetSafeTarget(this.targetPath, out _))
                 return null;
 
             using FileStream stream = new(
@@ -96,8 +96,7 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
         try
         {
             string directory = Path.GetDirectoryName(this.targetPath)!;
-            Directory.CreateDirectory(directory);
-            if (!IsNonReparseDirectoryTree(this.canonicalRoot, directory))
+            if (!EnsureNonReparseDirectoryTree(this.canonicalRoot, directory))
                 return false;
             temporaryPath = Path.Combine(directory, $".journal.{Guid.NewGuid():N}.tmp");
 
@@ -115,10 +114,14 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
                 stream.Flush(flushToDisk: true);
             }
 
-            if (!IsSafeTarget(this.targetPath))
+            // This check is deliberately immediately before the path-based commit. Windows does
+            // not expose an atomic "non-reparse path + replace" operation through this API; the
+            // remaining rename/reparse race is therefore an explicit evidence gap, not hidden by
+            // claiming that the preflight is a binding.
+            if (!TryGetSafeTarget(this.targetPath, out bool targetExists))
                 return false;
 
-            if (File.Exists(this.targetPath))
+            if (targetExists)
                 File.Replace(temporaryPath, this.targetPath, destinationBackupFileName: null);
             else
                 File.Move(temporaryPath, this.targetPath);
@@ -140,8 +143,9 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
         }
     }
 
-    private static bool IsSafeTarget(string path)
+    private static bool TryGetSafeTarget(string path, out bool exists)
     {
+        exists = false;
         try
         {
             FileInfo file = new(path);
@@ -151,8 +155,43 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
                 return !new DirectoryInfo(path).Exists;
 
             FileAttributes attributes = File.GetAttributes(path);
-            return (attributes & FileAttributes.ReparsePoint) == 0
-                && (attributes & FileAttributes.Directory) == 0;
+            if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+                return false;
+            exists = true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool EnsureNonReparseDirectoryTree(string fullRoot, string directory)
+    {
+        try
+        {
+            string root = Path.GetFullPath(fullRoot);
+            string current = root;
+            string fullDirectory = Path.GetFullPath(directory);
+            if (!IsPathWithinRoot(root, fullDirectory))
+                return false;
+
+            string relative = fullDirectory[root.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            foreach (string segment in relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                current = Path.Combine(current, segment);
+                if (!Directory.Exists(current))
+                {
+                    // Create one level only. Directory.CreateDirectory(directory) could create
+                    // several unchecked ancestors before the tree validation runs.
+                    Directory.CreateDirectory(current);
+                }
+
+                if (!Directory.Exists(current) || (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    return false;
+            }
+
+            return true;
         }
         catch
         {
@@ -162,19 +201,32 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
 
     private static bool IsNonReparseDirectoryTree(string fullRoot, string directory)
     {
-        string current = Path.GetFullPath(directory);
-        string root = Path.GetFullPath(fullRoot);
-        while (current.Length >= root.Length)
+        try
         {
-            if (!Directory.Exists(current) || (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+            string root = Path.GetFullPath(fullRoot);
+            string current = Path.GetFullPath(directory);
+            if (!IsPathWithinRoot(root, current))
                 return false;
-            if (string.Equals(current.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
-                return true;
-            string? parent = Path.GetDirectoryName(current);
-            if (parent is null || parent == current)
-                return false;
-            current = parent;
+            while (true)
+            {
+                if (!Directory.Exists(current) || (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    return false;
+                if (string.Equals(current.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+                    return true;
+                current = Path.GetDirectoryName(current)!;
+            }
         }
-        return false;
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsPathWithinRoot(string root, string candidate)
+    {
+        string normalizedRoot = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        string normalizedCandidate = candidate.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return normalizedCandidate.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(candidate.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
     }
 }

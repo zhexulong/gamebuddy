@@ -33,6 +33,27 @@ public sealed class WindowsBodyProgramJournalStoreTests : IDisposable
     }
 
     [Fact(Skip = "Requires Windows reparse-point creation privilege; current environment cannot safely create one.")]
+    public void RejectsPreExistingReparseDirectoryWithoutWritingOutsideRoot()
+    {
+        BridgeScope scope = Scope("save");
+        WindowsBodyProgramJournalStore store = new(this.root, scope);
+        string schemaDirectory = Path.Combine(this.root, WindowsBodyProgramJournalStore.SchemaNamespace);
+        string outside = Path.Combine(Path.GetTempPath(), "gamebuddy-journal-outside-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        try
+        {
+            Directory.CreateSymbolicLink(schemaDirectory, outside);
+            store.TryWrite("blocked").Should().BeFalse();
+            File.Exists(Path.Combine(outside, "stardew", "save", "world", "player", "companion", "journal.json")).Should().BeFalse();
+        }
+        finally
+        {
+            try { Directory.Delete(outside, recursive: true); }
+            catch { }
+        }
+    }
+
+    [Fact(Skip = "Requires Windows reparse-point creation privilege; current environment cannot safely create one.")]
     public void RejectsReparsePointTargetForReadAndWrite()
     {
         BridgeScope scope = Scope("save");
