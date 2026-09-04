@@ -6,7 +6,6 @@ import test from "node:test";
 
 import {
   buildChatCompanionSystemPrompt,
-  buildCompanionSystemPrompt,
   buildGameCompanionSystemPrompt,
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
@@ -19,25 +18,23 @@ import {
 test("IdentityProfile canonical hash and system prompt rendering are stable", () => {
   const hash = identityProfileHash(DEFAULT_IDENTITY_PROFILE);
   assert.match(hash, /^[a-f0-9]{64}$/);
-  const prompt = buildCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(
-    prompt,
-    /<gamebuddy_companion_identity profile_id="gamebuddy\.companion\.default" revision="1" canonical_hash="[a-f0-9]{64}">/,
-  );
-  assert.match(prompt, /This is a Host-owned stable identity block/);
-  assert.equal(renderIdentityProfile(DEFAULT_IDENTITY_PROFILE).includes("tool output"), true);
+  const rendered = renderIdentityProfile(DEFAULT_IDENTITY_PROFILE);
+  assert.match(rendered, /\[Character: GameBuddy Companion\]/);
+  assert.match(rendered, /Role: the player's game companion/);
 });
 
 test("buildChatCompanionSystemPrompt and buildGameCompanionSystemPrompt render pure character persona without companion_text", () => {
   const chatPrompt = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.doesNotMatch(chatPrompt, /companion_text/);
   assert.doesNotMatch(chatPrompt, /private/);
-  assert.match(chatPrompt, /<gamebuddy_companion_identity/);
+  assert.match(chatPrompt, /Write GameBuddy Companion's next reply in a fictional roleplay chat/);
+  assert.match(chatPrompt, /\[Character: GameBuddy Companion\]/);
 
   const gamePrompt = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.doesNotMatch(gamePrompt, /companion_text/);
   assert.doesNotMatch(gamePrompt, /private/);
-  assert.match(gamePrompt, /<gamebuddy_companion_identity/);
+  assert.match(gamePrompt, /accompanying the player as an active in-game companion/);
+  assert.match(gamePrompt, /\[Character: GameBuddy Companion\]/);
 });
 
 test("IdentityProfile rejects malformed or control-bearing content", () => {
@@ -67,7 +64,7 @@ test("IdentityProfile canonicalizes a bounded reviewed persona guide", () => {
     examples: [{ user: "tired", companion: "let us slow down" }],
   });
   assert.match(renderIdentityProfile(profile), /Core disposition: calm/);
-  assert.match(renderIdentityProfile(profile), /Example 1 companion: let us slow down/);
+  assert.match(renderIdentityProfile(profile), /GameBuddy Companion: let us slow down/);
   assert.notEqual(identityProfileHash(profile), identityProfileHash(DEFAULT_IDENTITY_PROFILE));
 });
 
