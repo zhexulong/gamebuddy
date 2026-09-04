@@ -12,8 +12,9 @@ test("proves the root CI cutover to one package-owned deterministic Stardew comm
   assert.deepEqual(report.packageEntries, [
     "equip-tool-contract-check",
     "scaffold-contract",
-    "action-surface-check",
-    "action-source-projection-check",
+     "action-surface-check",
+     "action-surface-export-check",
+     "action-source-projection-check",
     "static-production-admission",
     "package-deterministic-tests",
   ]);

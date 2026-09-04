@@ -29,6 +29,7 @@ export const ACTION_SURFACE_MAX_ARRAY_ITEMS = 128;
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
 const LIFECYCLES = new Set(["published", "experimental"]);
 const KINDS = new Set(["execution", "read_only"]);
+const ACTION_VALUE_TYPES = new Set(["integer", "string", "boolean", "object"]);
 const DYNAMIC_PUBLICATION_FIELDS = new Set([
   "advertised",
   "available",
@@ -275,6 +276,33 @@ function validateIdentifier(value, code) {
   return value;
 }
 
+function validateTypedMap(value, location, entriesAreObjects) {
+  if (!isObject(value) || isArray(value) || prototypeOf(value) !== Object.prototype) fail("invalid_action");
+  for (const key of ownKeys(value, "invalid_action")) {
+    const entry = dataDescriptor(value, key, "invalid_action").value;
+    if (entriesAreObjects) {
+      if (!isObject(entry) || isArray(entry) || prototypeOf(entry) !== Object.prototype) fail("invalid_action");
+      exactKeys(entry, ["type"], `${location}_entry`);
+      if (!ACTION_VALUE_TYPES.has(dataDescriptor(entry, "type").value)) fail("invalid_action");
+    } else if (!ACTION_VALUE_TYPES.has(entry)) {
+      fail("invalid_action");
+    }
+  }
+}
+
+function validateResourceTemplate(value) {
+  if (!isObject(value) || isArray(value) || prototypeOf(value) !== Object.prototype) fail("invalid_action");
+  exactKeys(value, ["claims"], "resource_template");
+  const claims = dataDescriptor(value, "claims").value;
+  if (!isArray(claims) || claims.length > ACTION_SURFACE_MAX_ARRAY_ITEMS) fail("invalid_action");
+  for (const claim of claims) {
+    if (!isObject(claim) || isArray(claim) || prototypeOf(claim) !== Object.prototype) fail("invalid_action");
+    exactKeys(claim, ["key", "value"], "resource_claim");
+    validateIdentifier(dataDescriptor(claim, "key").value, "invalid_resource_claim_key");
+    if (dataDescriptor(claim, "value").value !== "ScopePlayer") fail("invalid_resource_claim_value");
+  }
+}
+
 function validateAction(value, seenActionIds) {
   if (!isObject(value) || isArray(value) || prototypeOf(value) !== Object.prototype) {
     fail("invalid_action");
@@ -294,13 +322,13 @@ function validateAction(value, seenActionIds) {
   const resourceTemplate = dataDescriptor(value, "resourceTemplate").value;
   const effect = dataDescriptor(value, "effect").value;
   const postcondition = dataDescriptor(value, "postcondition").value;
-  if (!isObject(argumentSchema) || isArray(argumentSchema) || !isObject(outputFacts) || isArray(outputFacts)
-    || !isObject(resourceTemplate) || isArray(resourceTemplate) || !isObject(postcondition) || isArray(postcondition)
-    || !Array.isArray(resourceTemplate.claims) || resourceTemplate.claims.length > ACTION_SURFACE_MAX_ARRAY_ITEMS
-    || resourceTemplate.claims.some((claim) => !isObject(claim) || isArray(claim)
-      || ownKeys(claim).length !== 2 || !ownKeys(claim).includes("key") || !ownKeys(claim).includes("value")
-      || typeof dataDescriptor(claim, "key").value !== "string" || typeof dataDescriptor(claim, "value").value !== "string")
-    || (effect !== "read" && effect !== "write") || typeof postcondition.name !== "string") {
+  if (!isObject(postcondition) || isArray(postcondition) || prototypeOf(postcondition) !== Object.prototype)
+    fail("invalid_action");
+  validateTypedMap(argumentSchema, "argument_schema", true);
+  validateTypedMap(outputFacts, "output_facts", false);
+  validateResourceTemplate(resourceTemplate);
+  exactKeys(postcondition, ["name"], "postcondition");
+  if ((effect !== "read" && effect !== "write") || typeof dataDescriptor(postcondition, "name").value !== "string") {
     fail("invalid_action");
   }
   if (

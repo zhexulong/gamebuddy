@@ -1,5 +1,4 @@
 import {
-  ACTION_SURFACE_GAME_ID,
   ACTION_SURFACE_SCHEMA,
   ACTION_SURFACE_MAX_ARRAY_ITEMS,
   ACTION_SURFACE_MAX_IDENTIFIER_LENGTH,
@@ -117,24 +116,24 @@ function freezeArray(values) {
 
 /**
  * Project a static surface restrictively. The surface is the only source of
- * registrations; descriptor metadata may select existing IDs but can never
+ * actions; descriptor metadata may select existing IDs but can never
  * create, replace, or enrich a registration.
  */
 export function projectActionSurface(input, options) {
   const surface = sourceRegistrations(input);
   const ids = descriptorActionIds(normalizeDescriptors(options));
-  const registrations = ids === null
-    ? surface.registrations
-    : surface.registrations.filter((registration) => ids.has(registration.actionId));
-  const executable = registrations.filter(isExecutable);
-  const readOnly = registrations.filter((registration) => registration.kind === "read_only");
+  const actions = ids === null
+    ? surface.actions
+    : surface.actions.filter((action) => ids.has(action.actionId));
+  const executable = actions.filter(isExecutable);
+  const readOnly = actions.filter((action) => action.kind === "read_only");
 
   // Keep all three arrays source-shaped. No descriptor-owned field crosses the
   // projection boundary, and executable is strictly a subset of registrations.
   return Object.freeze({
     schema: ACTION_SURFACE_SCHEMA,
-    gameId: ACTION_SURFACE_GAME_ID,
-    registrations: freezeArray(registrations),
+    catalogRevision: surface.catalogRevision,
+    actions: freezeArray(actions),
     executable: freezeArray(executable),
     readOnly: freezeArray(readOnly),
   });
@@ -155,18 +154,18 @@ export function projectReadOnlyRegistrations(input, options) {
  */
 export function validateActionProjection(input, options) {
   const projection = projectActionSurface(input, options);
-  const sourceIds = new Set(projection.registrations.map((registration) => registration.actionId));
-  for (const registration of projection.executable) {
-    if (!sourceIds.has(registration.actionId) || registration.lifecycle !== "published" || registration.kind !== "execution") {
+  const sourceIds = new Set(projection.actions.map((action) => action.actionId));
+  for (const action of projection.executable) {
+    if (!sourceIds.has(action.actionId) || action.lifecycle !== "published" || action.kind !== "execution") {
       fail("executable_projection_widened");
     }
   }
-  for (const registration of projection.readOnly) {
-    if (!sourceIds.has(registration.actionId) || registration.kind !== "read_only") {
+  for (const action of projection.readOnly) {
+    if (!sourceIds.has(action.actionId) || action.kind !== "read_only") {
       fail("readonly_projection_invalid");
     }
   }
-  if (projection.executable.some((registration) => registration.kind === "read_only")) {
+  if (projection.executable.some((action) => action.kind === "read_only")) {
     fail("readonly_executable");
   }
   return projection;

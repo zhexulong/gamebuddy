@@ -151,6 +151,36 @@ test("rejects wrong schema, game, missing or unknown fields, duplicates, and inv
   }
 });
 
+test("enforces canonical typed argument/output maps and ScopePlayer resource claims", () => {
+  for (const [field, value, code] of [
+    ["argumentSchema", [], "invalid_action"],
+    ["argumentSchema", { x: "integer" }, "invalid_action"],
+    ["argumentSchema", { x: { type: "number" } }, "invalid_action"],
+    ["argumentSchema", { x: { type: "integer", extra: true } }, "invalid_argument_schema_entry_shape"],
+    ["outputFacts", [], "invalid_action"],
+    ["outputFacts", { result: "number" }, "invalid_action"],
+    ["outputFacts", { result: 1 }, "invalid_action"],
+  ]) {
+    const changed = cloneFixture();
+    changed.actions[0][field] = value;
+    fails(code, () => validateActionSurface(changed));
+  }
+
+  const invalidClaimKey = cloneFixture();
+  invalidClaimKey.actions[0].resourceTemplate.claims[0].key = "not-valid-key";
+  fails("invalid_resource_claim_key", () => validateActionSurface(invalidClaimKey));
+
+  for (const value of ["ActionId", "ScopeFarm", 1, { type: "ScopePlayer" }]) {
+    const changed = cloneFixture();
+    changed.actions[0].resourceTemplate.claims[0].value = value;
+    fails("invalid_resource_claim_value", () => validateActionSurface(changed));
+  }
+
+  const extraTemplateField = cloneFixture();
+  extraTemplateField.actions[0].resourceTemplate.extra = true;
+  fails("invalid_resource_template_shape", () => validateActionSurface(extraTemplateField));
+});
+
 test("enforces bounded JSON text, arrays, identifiers, numbers, and plain data", () => {
   fails("bounds", () => parseActionSurface(" ".repeat(ACTION_SURFACE_MAX_JSON_BYTES + 1)));
   fails("bounds", () => validateActionSurface({

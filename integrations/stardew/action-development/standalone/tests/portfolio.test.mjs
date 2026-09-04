@@ -12,6 +12,7 @@ const EXPECTED_ENTRIES = [
   "equip-tool-contract-check",
   "scaffold-contract",
   "action-surface-check",
+  "action-surface-export-check",
   "action-source-projection-check",
   "static-production-admission",
   "package-deterministic-tests",
@@ -42,6 +43,7 @@ test("runs all package-owned deterministic entries serially without shell comman
   assert.deepEqual(commands, [
     [process.execPath, ["src/scaffold-contract.mjs", path.join(projectDirectory, "inputs", "stardew-scaffold")]],
     [process.execPath, ["src/action-surface-check.mjs"]],
+    [process.execPath, ["src/action-surface-export-check.mjs"]],
     [process.execPath, ["src/action-source-projection-check.mjs"]],
     [process.execPath, ["static-verifier/verify-production-admission.mjs"]],
     [process.execPath, ["src/run-tests.mjs"]],
