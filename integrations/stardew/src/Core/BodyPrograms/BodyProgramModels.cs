@@ -21,8 +21,11 @@ public enum BodyProgramResourceTemplateValue { ScopePlayer = 1, ActionId = 2 }
 public sealed record BodyProgramResourceTemplateClaim(string Key, BodyProgramResourceTemplateValue Value);
 
 /// <summary>Mod registration projection used to verify candidates; it is the only action membership source for this Core slice.</summary>
+/// <summary>Canonical descriptor metadata retained opaquely by the Body Program catalog.</summary>
+public sealed record BodyProgramActionMetadata(string Lifecycle, string OperationKind, string Effect, string Postcondition);
 public sealed record BodyProgramActionDescriptor(string ActionId, int IdentityVersion, IReadOnlyList<BodyProgramArgumentDescriptor> Arguments,
-    IReadOnlyList<BodyProgramFactDescriptor> OutputFacts, IReadOnlyList<BodyProgramResourceTemplateClaim> ResourceTemplate);
+    IReadOnlyList<BodyProgramFactDescriptor> OutputFacts, IReadOnlyList<BodyProgramResourceTemplateClaim> ResourceTemplate,
+    BodyProgramActionMetadata? Metadata = null);
 
 public sealed class BodyProgramActionCatalog
 {
@@ -77,13 +80,20 @@ public sealed record BodyProgramSubmitResult(BodyProgramSubmitCode Code, BodyPro
 
 public enum BodyProgramState { Active = 1, Succeeded = 2, Failed = 3, Cancelled = 4, RecoveryRequired = 5, Quarantined = 6 }
 public enum BodyProgramNodeState { Pending = 1, AwaitingHostAdmission = 2, HostAdmitted = 3, Running = 4, Succeeded = 5, Failed = 6, Cancelled = 7, RecoveryRequired = 8, Rejected = 9 }
-public enum BodyProgramNodeOutcome { Succeeded = 1, Failed = 2, Cancelled = 3 }
+public enum BodyProgramNodeOutcome { Succeeded = 1, Failed = 2, Cancelled = 3, Uncertain = 4 }
+
+/// <summary>Immutable action dispatch lineage, bound to one exact accepted node attempt.</summary>
+public sealed record NodeExecutionBinding(string ProgramId, string NodeId, int NodeAttempt, string RequestId, string IdempotencyKey, string ExecutionId);
+/// <summary>Action-owned terminal input. Successful results require receipt, evidence, and postcondition verification projections.</summary>
+public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, BodyProgramNodeOutcome Outcome, RuntimeFact? Fact,
+    string? ReceiptId, string? Evidence, string? PostconditionVerification);
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
     IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs);
 public sealed record VerifiedBodyProgram(string ProgramId, long CatalogRevision, IReadOnlyList<VerifiedBodyProgramNode> Nodes);
 
-public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState State, int NodeAttempt, int AdmissionAttempt, string? GrantId);
+public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState State, int NodeAttempt, int AdmissionAttempt, string? GrantId,
+    NodeExecutionBinding? ExecutionBinding);
 public sealed record RuntimeFact(string ProgramId, string NodeId, int NodeAttempt, string FactName, IReadOnlyDictionary<string, BodyProgramCanonicalValue> Values);
 public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, BodyProgramState State, long StopEpoch, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<RuntimeFact> Facts);
 /// <summary>Addressed event projection. CatalogRevision is persisted at the event, never guessed by an adapter.</summary>
@@ -104,7 +114,7 @@ public sealed record HostAdmissionGrant(string ProgramId, string NodeId, int Nod
 
 public interface IBodyProgramJournalStore { string? Read(); bool TryWrite(string encodedState); }
 public enum BodyProgramJournalOpenStatus { Empty, Opened, RecoveryRequired, Corrupt, PersistenceReadFailed, PersistenceWriteFailed }
-public enum BodyProgramControllerResultCode { Succeeded, NotFound, InvalidInput, ProgramNotActive, NodeNotEligible, PolicyIdentityStale, GrantMismatch, FactProvenanceMismatch, InvalidFact, RecoveryRequired, PersistenceWriteFailed, DeadlineExpired }
+public enum BodyProgramControllerResultCode { Succeeded, NotFound, InvalidInput, ProgramNotActive, NodeNotEligible, PolicyIdentityStale, GrantMismatch, ExecutionBindingMismatch, FactProvenanceMismatch, InvalidFact, TerminalProofMissing, RecoveryRequired, PersistenceWriteFailed, DeadlineExpired }
 public readonly record struct BodyProgramControllerResult<T>(BodyProgramControllerResultCode Code, T? Value) where T : class { public bool IsSuccess => this.Code == BodyProgramControllerResultCode.Succeeded && this.Value is not null; }
 public static class BodyProgramControllerResult { public static BodyProgramControllerResult<T> Success<T>(T value) where T : class => new(BodyProgramControllerResultCode.Succeeded, value); public static BodyProgramControllerResult<T> Failure<T>(BodyProgramControllerResultCode code) where T : class => new(code, null); }
 
@@ -114,8 +124,13 @@ internal static class BodyProgramValidation
     internal const long MaximumJavaScriptSafeInteger = 9007199254740991L;
     internal static bool IsValidDeadlineMs(long value) => value is > 0 and <= MaximumJavaScriptSafeInteger;
     internal static bool IsIdentifier(string? value) => value is { Length: >= 1 and <= 128 } && value.All(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c is '_' or '-');
+    internal static bool IsValidExecutionBinding(NodeExecutionBinding? value) => value is not null
+        && IsIdentifier(value.ProgramId) && IsIdentifier(value.NodeId) && value.NodeAttempt > 0
+        && IsIdentifier(value.RequestId) && IsIdentifier(value.IdempotencyKey) && IsIdentifier(value.ExecutionId);
+    internal static bool IsOpaqueTerminalProof(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
     internal static bool IsOpaquePolicyValue(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
     internal static bool IsValidActionDescriptor(BodyProgramActionDescriptor? action) => action is not null && IsIdentifier(action.ActionId) && action.IdentityVersion > 0
+        && (action.Metadata is null || IsOpaqueDescriptorMetadata(action.Metadata))
         && action.Arguments is { Count: <= 32 } && action.OutputFacts is { Count: <= 32 } && action.ResourceTemplate is { Count: <= 16 }
         && action.Arguments.All(argument => argument is not null && IsIdentifier(argument.Name) && Enum.IsDefined(argument.Kind) && argument.Kind != BodyProgramArgumentKind.DestinationArrival)
         && action.OutputFacts.All(fact => fact is not null && IsIdentifier(fact.Name) && Enum.IsDefined(fact.Kind) && fact.Kind != BodyProgramArgumentKind.DestinationSelector)
@@ -123,8 +138,12 @@ internal static class BodyProgramValidation
         && action.Arguments.Select(argument => argument.Name).Distinct(StringComparer.Ordinal).Count() == action.Arguments.Count
         && action.OutputFacts.Select(fact => fact.Name).Distinct(StringComparer.Ordinal).Count() == action.OutputFacts.Count
         && action.ResourceTemplate.Select(claim => claim.Key).Distinct(StringComparer.Ordinal).Count() == action.ResourceTemplate.Count;
+    internal static bool IsOpaqueDescriptorMetadata(BodyProgramActionMetadata? metadata) => metadata is not null
+        && IsOpaqueMetadataValue(metadata.Lifecycle) && IsOpaqueMetadataValue(metadata.OperationKind)
+        && IsOpaqueMetadataValue(metadata.Effect) && IsOpaqueMetadataValue(metadata.Postcondition);
+    private static bool IsOpaqueMetadataValue(string? value) => value is { Length: >= 1 and <= 128 } && !value.Any(char.IsControl);
     internal static BodyProgramActionDescriptor FreezeActionDescriptor(BodyProgramActionDescriptor action) => new(action.ActionId, action.IdentityVersion,
-        Array.AsReadOnly(action.Arguments.ToArray()), Array.AsReadOnly(action.OutputFacts.ToArray()), Array.AsReadOnly(action.ResourceTemplate.ToArray()));
+        Array.AsReadOnly(action.Arguments.ToArray()), Array.AsReadOnly(action.OutputFacts.ToArray()), Array.AsReadOnly(action.ResourceTemplate.ToArray()), action.Metadata!);
     internal static IReadOnlyDictionary<T, U> FreezeMap<T, U>(IReadOnlyDictionary<T, U> values) where T : notnull => new ReadOnlyDictionary<T, U>(new Dictionary<T, U>(values));
     internal static bool TryDecodeRuntimeValue(BodyProgramRuntimeValue? value, BodyProgramArgumentKind kind, out BodyProgramCanonicalValue? canonical)
     {
