@@ -5,15 +5,19 @@ import {
   consumeOwnedPlayerHostPhaseAOwner as consumeOwnedPlayerHostPhaseAOwnerCore,
   createStardewBootstrapGuardianOwnerBinding,
   createStardewPrivateBootstrapProductionCore,
+  settleOwnedPlayerHostRegistrationAttempt as settleOwnedPlayerHostRegistrationAttemptCore,
   stageOwnedPlayerHostPhaseB as stageOwnedPlayerHostPhaseBCore,
   terminalizeOwnedPlayerHostPhaseAOwner as terminalizeOwnedPlayerHostPhaseAOwnerCore,
+  type StardewBootstrapGuardianSettlementProof,
   type StardewPrivateBootstrapInternalComposition,
 } from "./stardew-private-bootstrap-composer.core.js";
 import {
+  createStardewBootstrapGuardianNativePortsFromDesktopSession,
   createStardewBootstrapGuardianOwner,
   type StardewBootstrapGuardianNativePorts,
   type StardewBootstrapGuardianOwner,
 } from "./stardew-bootstrap-guardian.private.js";
+import type { DesktopGuardianSession } from "./desktop-guardian-session.internal.js";
 
 /** Constructs the complete trusted production bootstrap composition. */
 export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapInternalComposition & Readonly<{
@@ -21,14 +25,25 @@ export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapI
     owner: StardewOwnedPlayerHostPhaseAOwner,
     native: StardewBootstrapGuardianNativePorts,
   ): StardewBootstrapGuardianOwner;
+
 }>;
 
-export function createStardewPrivateBootstrapComposition(): StardewPrivateBootstrapTrustedComposition {
+export function createStardewPrivateBootstrapComposition(): StardewPrivateBootstrapTrustedComposition & Readonly<{
+  createStardewBootstrapGuardianOwnerFromDesktopSession(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    session: DesktopGuardianSession,
+    deadlineUnixMs: number,
+  ): StardewBootstrapGuardianOwner;
+}> {
   const core = createStardewPrivateBootstrapProductionCore();
   return Object.freeze({
     ...core,
     createStardewBootstrapGuardianOwner: (owner, native) =>
       createStardewBootstrapGuardianOwner(createStardewBootstrapGuardianOwnerBinding(owner), native),
+    createStardewBootstrapGuardianOwnerFromDesktopSession: (owner, session, deadlineUnixMs) => {
+      const binding = createStardewBootstrapGuardianOwnerBinding(owner);
+      return createStardewBootstrapGuardianOwner(binding, createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, deadlineUnixMs));
+    },
   });
 }
 
@@ -45,6 +60,14 @@ export function terminalizeOwnedPlayerHostPhaseAOwner(
   owner: StardewOwnedPlayerHostPhaseAOwner,
 ): void {
   terminalizeOwnedPlayerHostPhaseAOwnerCore(owner);
+}
+
+/** Releases a matching pointer only through a Guardian-private proof. */
+export async function settleOwnedPlayerHostRegistrationAttempt(
+  owner: StardewOwnedPlayerHostPhaseAOwner,
+  proof: StardewBootstrapGuardianSettlementProof,
+): Promise<void> {
+  await settleOwnedPlayerHostRegistrationAttemptCore(owner, proof);
 }
 
 /** Runs the closed production Phase-B profile staging operation. */

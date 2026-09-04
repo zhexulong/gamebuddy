@@ -2,11 +2,15 @@ import { join, resolve } from "node:path";
 import { withPathLock } from "./path-lock.js";
 import {
   consumeStardewBootstrapGuardianOwnerBinding,
+  mintStardewBootstrapGuardianSettlementProof,
   readStardewGuardianArmBinding,
   type StardewBootstrapGuardianOwnerBinding,
+  type StardewBootstrapGuardianSettlementProof,
   type StardewBootstrapGuardianRecoveryGateBinding,
 } from "./stardew-private-bootstrap-composer.core.js";
 import type { StardewGuardianBinding } from "./stardew-private-bootstrap-owner-records.private.js";
+import type { DesktopGuardianSession, GuardianAck } from "./desktop-guardian-session.internal.js";
+import { readStardewBootstrapGuardianNativeArmFrame } from "./stardew-private-bootstrap-composer.core.js";
 
 const OWNER_FILE = "owner.json";
 const OPAQUE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -16,6 +20,10 @@ export type StardewBootstrapGuardianOutcome = "contained" | "unavailable" | "qua
 
 /** Native contracts only: Batch C supplies the Win32 implementations. */
 export type StardewBootstrapGuardianControlledClosePort = Readonly<{
+  /** Desktop-backed public arm acknowledgement, before the durable CAS. */
+  arm?: (binding: StardewBootstrapGuardianOwnerBinding) => Promise<void>;
+  /** Desktop-backed public role acknowledgement, before the durable CAS. */
+  launchRole?: (binding: StardewBootstrapGuardianOwnerBinding, role: GuardianRole) => Promise<void>;
   drainRole(binding: StardewBootstrapGuardianOwnerBinding, role: GuardianRole): Promise<void>;
   releaseAndExit(binding: StardewBootstrapGuardianOwnerBinding): Promise<void>;
 }>;
@@ -57,12 +65,59 @@ export type StardewBootstrapGuardianOwner = Readonly<{
   containAiClient(): Promise<void>;
   recoverOrQuarantine(recoveryInstanceId: string): Promise<StardewBootstrapGuardianOutcome>;
   close(): Promise<StardewBootstrapGuardianOutcome>;
+  /** Mints one exact containment proof only after controlled close succeeds. */
+  settle(): Promise<StardewBootstrapGuardianSettlementProof>;
 }>;
 
 /**
  * Private orchestration owner over one composition-minted, one-shot binding.
  * It never receives a path, fence, revision, record, or persistence callback.
  */
+/**
+ * Adapts the authenticated Desktop session without exposing its transport. The
+ * owner binding is the sole source for every correlation/native arm fact.
+ * Launch is intentionally unavailable until an exact native launch plan exists.
+ */
+export function createStardewBootstrapGuardianNativePortsFromDesktopSession(
+  binding: StardewBootstrapGuardianOwnerBinding,
+  session: DesktopGuardianSession,
+  deadlineUnixMs: number,
+): StardewBootstrapGuardianNativePorts {
+  if (!Number.isSafeInteger(deadlineUnixMs) || deadlineUnixMs <= Date.now()) throw new Error("stardew_bootstrap_guardian_session_unavailable");
+  const arm = readStardewBootstrapGuardianNativeArmFrame(binding);
+  const correlation = Object.freeze({ guardianInstanceId: arm.guardianInstanceId, guardianEpoch: arm.guardianEpoch, attemptId: arm.attemptId });
+  const role = (value: GuardianRole): "player_host" | "ai_client" => value === "playerHost" ? "player_host" : "ai_client";
+  const expect = (ack: GuardianAck, operation: string, expectedRole?: "player_host" | "ai_client") => {
+    if (ack.operation !== operation || ack.bootstrapId !== arm.bootstrapId || ack.guardianInstanceId !== arm.guardianInstanceId ||
+        ack.guardianEpoch !== arm.guardianEpoch || ack.attemptId !== arm.attemptId || (expectedRole !== undefined && ack.role !== expectedRole))
+      throw new Error("stardew_bootstrap_guardian_session_ack_mismatch");
+  };
+  return Object.freeze({
+      controlledClose: Object.freeze({
+      async arm() {
+        const body = Buffer.from(JSON.stringify({ guardianInstanceId: arm.guardianInstanceId, guardianEpoch: arm.guardianEpoch, attemptId: arm.attemptId, revision: arm.revision, leaseName: arm.leaseName, playerJobName: arm.playerJobName, aiJobName: arm.aiJobName }), "utf8");
+        const ack = await session.arm({ ...correlation, deadlineUnixMs, privateFrame: body });
+        expect(ack, "arm_attempt");
+      },
+      async launchRole(_ownerBinding: StardewBootstrapGuardianOwnerBinding, target: GuardianRole) {
+        throw new Error("stardew_bootstrap_guardian_native_launch_plan_unavailable");
+      },
+      async drainRole(_ownerBinding: StardewBootstrapGuardianOwnerBinding, target: GuardianRole) {
+        const ack = await session.contain({ ...correlation, deadlineUnixMs, attemptId: arm.attemptId, role: role(target) });
+        expect(ack, "contain_role", role(target));
+      },
+      async releaseAndExit() { await session.close(); },
+    }),
+    recoveryGate: Object.freeze({
+      async acquire() { return { kind: "held" as const }; },
+      async release() { await session.close(); },
+    }),
+    recoveryClassification: Object.freeze({
+      async classify() { return "unavailable" as const; },
+    }),
+  });
+}
+
 export function createStardewBootstrapGuardianOwner(
   binding: StardewBootstrapGuardianOwnerBinding,
   native: StardewBootstrapGuardianNativePorts,
@@ -71,6 +126,10 @@ export function createStardewBootstrapGuardianOwner(
   const consumedBinding = consumeStardewBootstrapGuardianOwnerBinding(binding);
   const transitions = consumedBinding.transitions;
   const recoveryGateBinding = consumedBinding.recoveryGateBinding;
+  const settlementBinding = consumedBinding.settlementBinding;
+  let settlementProof: StardewBootstrapGuardianSettlementProof | undefined;
+  // Reserve settlement synchronously so concurrent callers cannot both enter close/mint.
+  let settlementInFlight = false;
   let armState: "new" | "armed" = "new";
   let playerLaunched = false;
   let aiLaunched = false;
@@ -87,6 +146,7 @@ export function createStardewBootstrapGuardianOwner(
     if (armState !== "armed" || controlledState !== "open" || recovery !== undefined || (role === "playerHost" ? playerLaunched : aiLaunched)) {
       throw new Error("stardew_bootstrap_guardian_owner_transition_unavailable");
     }
+    if (native.controlledClose.launchRole !== undefined) await native.controlledClose.launchRole(binding, role);
     await transitions.roleActive(role);
     if (role === "playerHost") playerLaunched = true;
     else aiLaunched = true;
@@ -200,8 +260,9 @@ export function createStardewBootstrapGuardianOwner(
   };
   return Object.freeze({
     async arm() {
-      if (armState !== "new" || controlledState !== "open" || recovery !== undefined) throw new Error("stardew_bootstrap_guardian_owner_transition_unavailable");
-      await transitions.armAcknowledged();
+       if (armState !== "new" || controlledState !== "open" || recovery !== undefined) throw new Error("stardew_bootstrap_guardian_owner_transition_unavailable");
+       if (native.controlledClose.arm !== undefined) await native.controlledClose.arm(binding);
+       await transitions.armAcknowledged();
       armState = "armed";
     },
     launchPlayerHost: () => activate("playerHost"),
@@ -210,6 +271,20 @@ export function createStardewBootstrapGuardianOwner(
     containAiClient: () => containRole("aiClient"),
     recoverOrQuarantine: recover,
     close: finishControlledClose,
+    async settle() {
+      if (settlementProof !== undefined || settlementInFlight) throw new Error("stardew_bootstrap_guardian_settlement_proof_unavailable");
+      settlementInFlight = true;
+      try {
+        if (await finishControlledClose() !== "contained" || controlledState !== "closed") {
+          throw new Error("stardew_bootstrap_guardian_settlement_proof_unavailable");
+        }
+        settlementProof = mintStardewBootstrapGuardianSettlementProof(binding, settlementBinding);
+        return settlementProof;
+      } catch (error) {
+        settlementInFlight = false;
+        throw error;
+      }
+    },
   });
 }
 
