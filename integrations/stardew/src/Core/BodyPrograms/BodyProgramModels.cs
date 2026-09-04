@@ -162,7 +162,13 @@ internal static class BodyProgramValidation
         _ => new(value.Kind switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.Boolean => "boolean", _ => throw new ArgumentOutOfRangeException(nameof(value)) }, value.CanonicalValue)
     };
     internal static bool IsValidSelector(BodyProgramDestinationSelector? selector) => selector is not null && ((selector.Kind == "label" && IsPlayerText(selector.Label) && selector.Ref is null) || (selector.Kind == "ref" && selector.Label is null && IsNavigationRef(selector.Ref)));
-    internal static bool IsValidArrival(BodyProgramDestinationArrival? arrival) => arrival is not null && arrival.Reason is "destination_arrived" or "already_at_destination" && arrival.Destination is not null && IsPlayerText(arrival.Destination.Label) && (arrival.Destination.ContextLabel is null || IsPlayerText(arrival.Destination.ContextLabel));
+    internal static bool IsValidArrival(BodyProgramDestinationArrival? arrival)
+    {
+        if (arrival is null || (arrival.Reason is not ("destination_arrived" or "already_at_destination")) || arrival.Destination is null)
+            return false;
+        return IsPlayerText(arrival.Destination.Label)
+            && (arrival.Destination.ContextLabel is null || IsPlayerText(arrival.Destination.ContextLabel));
+    }
     private static bool IsPlayerText(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.Trim().Length > 0 && value.Normalize(System.Text.NormalizationForm.FormC) == value;
     private static bool IsNavigationRef(string? value)
     {

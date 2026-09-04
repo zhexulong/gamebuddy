@@ -23,6 +23,19 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
+    public void CandidateCodecRoundTripsNonEmptyBindingUsingCanonicalCamelCaseKeys()
+    {
+        ActionProgramCandidate source = Program("program", 1000, twoNodes: true);
+        string json = JsonSerializer.Serialize(source, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        json.Should().Contain("producerNodeId").And.NotContain("\"nodeId\":\"first\",\"factName\"");
+        ActionProgramCandidateCodec.TryDecode(json, out ActionProgramCandidate? decoded, out _).Should().BeTrue();
+        decoded!.Nodes.Single(node => node.NodeId == "second").Bindings["tile"]
+            .Should().Be(new ActionProgramBinding("first", "arrival"));
+        ActionProgramCandidateCodec.TryDecode(json.Replace("producerNodeId", "nodeId", StringComparison.Ordinal), out _, out _).Should().BeFalse();
+    }
+
+    [Fact]
     public void CandidateCodecAcceptsDestinationSelectorObjectAndRejectsScalarizedSelector()
     {
         const string json = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"Town\"}}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
@@ -30,6 +43,76 @@ public sealed class BodyProgramAuthorityTests
         candidate!.Nodes.Single().Arguments["destination"].CanonicalValue.Should().BeNull();
         candidate.Nodes.Single().Arguments["destination"].Destination!.Label.Should().Be("Town");
         ActionProgramCandidateCodec.TryDecode(json.Replace("{\"kind\":\"label\",\"label\":\"Town\"}", "\"Town\"", StringComparison.Ordinal), out _, out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void JournalPersistenceRoundTripsValidArrivalWithNullContextLabel()
+    {
+        BodyProgramActionCatalog catalog = ArrivalCatalog();
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, catalog: catalog);
+        authority.Submit(ArrivalProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = Grant(challenge);
+        authority.TryConsumeHostGrant(grant).IsSuccess.Should().BeTrue();
+        authority.TryBeginNativeDispatch(grant).IsSuccess.Should().BeTrue();
+        authority.TryComplete(grant, ArrivalFact(grant), BodyProgramNodeOutcome.Succeeded).IsSuccess.Should().BeTrue();
+
+        OpenBodyProgramJournalAuthority reopened = Open(store, catalog: catalog);
+
+        reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        reopened.Snapshot.Programs.Single().Facts.Single().Values["arrival"].Arrival.Should()
+            .Be(new BodyProgramDestinationArrival("destination_arrived", new BodyProgramArrivalDestination("Town", null)));
+    }
+
+    [Fact]
+    public void JournalPersistenceRejectsNullDestinationAndForbiddenArrivalFields()
+    {
+        BodyProgramActionCatalog catalog = ArrivalCatalog();
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, catalog: catalog);
+        authority.Submit(ArrivalProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = Grant(challenge);
+        authority.TryConsumeHostGrant(grant).IsSuccess.Should().BeTrue();
+        authority.TryBeginNativeDispatch(grant).IsSuccess.Should().BeTrue();
+        authority.TryComplete(grant, ArrivalFact(grant), BodyProgramNodeOutcome.Succeeded).IsSuccess.Should().BeTrue();
+        string valid = store.Value!;
+
+        string[] invalidForms =
+        {
+            valid.Replace("\"destination\":{\"label\":\"Town\"}", "\"destination\":null", StringComparison.Ordinal),
+            valid.Replace("\"arrival\":{\"reason\":\"destination_arrived\",\"destination\":{\"label\":\"Town\"}}", "\"arrival\":null", StringComparison.Ordinal),
+            valid.Replace("\"destination\":{\"label\":\"Town\"}", "\"destination\":{\"label\":\"Town\",\"extra\":null}", StringComparison.Ordinal),
+            valid.Replace("\"destination\":{\"label\":\"Town\"}", "\"destination\":{\"label\":\"Town\",\"ref\":\"forbidden\"}", StringComparison.Ordinal),
+            valid.Replace("\"factName\":\"arrival\",\"values\"", "\"factName\":\"arrival\",\"route\":[],\"values\"", StringComparison.Ordinal),
+            valid.Replace("\"factName\":\"arrival\",\"values\"", "\"factName\":\"arrival\",\"evidence\":\"forbidden\",\"values\"", StringComparison.Ordinal),
+        };
+
+        foreach (string invalid in invalidForms)
+        {
+            store.Set(invalid);
+            Open(store, catalog: catalog).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+        }
+    }
+
+    [Fact]
+    public void ActionDescriptorRejectsSelectorAsFactAndArrivalAsArgument()
+    {
+        Action selectorAsFact = () => _ = new BodyProgramActionCatalog(7, new[]
+        {
+            new BodyProgramActionDescriptor("produces_selector", 1, Array.Empty<BodyProgramArgumentDescriptor>(),
+                new[] { new BodyProgramFactDescriptor("destination", BodyProgramArgumentKind.DestinationSelector) }, Array.Empty<BodyProgramResourceTemplateClaim>()),
+        });
+        Action arrivalAsArgument = () => _ = new BodyProgramActionCatalog(7, new[]
+        {
+            new BodyProgramActionDescriptor("accepts_arrival", 1,
+                new[] { new BodyProgramArgumentDescriptor("arrival", BodyProgramArgumentKind.DestinationArrival) },
+                Array.Empty<BodyProgramFactDescriptor>(), Array.Empty<BodyProgramResourceTemplateClaim>()),
+        });
+
+        selectorAsFact.Should().Throw<ArgumentException>();
+        arrivalAsArgument.Should().Throw<ArgumentException>();
     }
 
     [Fact]
@@ -246,7 +329,18 @@ public sealed class BodyProgramAuthorityTests
         store.Set(corrupt);
         Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
     }
-
+    private static BodyProgramActionCatalog ArrivalCatalog() => new(7, new[]
+    {
+        new BodyProgramActionDescriptor("move_to_tile", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramFactDescriptor("arrival", BodyProgramArgumentKind.DestinationArrival) }, new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
+    });
+    private static ActionProgramCandidate ArrivalProgram() => new("program", new[]
+    {
+        new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), 1000),
+    });
+    private static RuntimeFact ArrivalFact(HostAdmissionGrant grant) => new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "arrival", new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal)
+    {
+        ["arrival"] = new(BodyProgramArgumentKind.DestinationArrival, null, null, new BodyProgramDestinationArrival("destination_arrived", new BodyProgramArrivalDestination("Town", null))),
+    });
     private static OpenBodyProgramJournalAuthority Open(MemoryStore? store = null, BodyProgramActionCatalog? catalog = null, Func<BodyProgramPolicyIdentity>? policy = null, Func<long>? now = null) =>
         OpenBodyProgramJournalAuthority.Open(store ?? new MemoryStore(), catalog ?? Catalog(), Scope(), policy ?? (() => Policy()), now ?? (() => 10));
     private static BodyProgramActionCatalog Catalog() => new(7, new[]
