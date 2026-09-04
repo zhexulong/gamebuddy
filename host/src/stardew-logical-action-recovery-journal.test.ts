@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -41,7 +41,11 @@ const nodeAdmissionRecord = (
     policyIdentity: challenge.policyIdentity, catalogRevision: challenge.catalogRevision,
   },
 });
-async function root() { return mkdtemp(join(tmpdir(), "gamebuddy-recovery-")); }
+async function root() {
+  const parent = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof parent !== "string" || parent.length === 0) throw new Error("test_local_app_data_unavailable");
+  return mkdtemp(join(await realpath(parent), "gamebuddy-recovery-"));
+}
 
 test("prepare is durable before return and reopens exact pending material", async () => {
   const dir = await root();
