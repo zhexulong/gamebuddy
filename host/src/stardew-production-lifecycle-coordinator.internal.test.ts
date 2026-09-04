@@ -183,6 +183,7 @@ async function withWindowsPlatform<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 async function closeServer(server: Server): Promise<void> {
+  server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 

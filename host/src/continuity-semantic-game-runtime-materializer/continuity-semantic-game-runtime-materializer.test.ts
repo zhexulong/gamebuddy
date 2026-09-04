@@ -594,8 +594,9 @@ test("retains a durable uncertain action journal across materializer close witho
 
 test("rejects expired and deadline-overrun materialization without retaining a runtime", async () => {
   let disposed = 0;
+  let overrunDeadlineAtMs = 0;
   const materializer = createTestGameRuntimeMaterializer(async () => {
-    await delay(5);
+    await delay(Math.max(0, overrunDeadlineAtMs - Date.now() + 10));
     return Object.freeze({
       session: Object.freeze({
         dispose: () => {
@@ -617,9 +618,10 @@ test("rejects expired and deadline-overrun materialization without retaining a r
   }
   const overrunBinding = await binding();
   try {
+    overrunDeadlineAtMs = Date.now() + 25;
     await assert.rejects(
       inActiveBinding(overrunBinding, (execution, reservation) =>
-        materializer.materializeEnter(reservation, permit(execution, { deadlineAtMs: Date.now() + 1 })),
+        materializer.materializeEnter(reservation, permit(execution, { deadlineAtMs: overrunDeadlineAtMs })),
       ),
       /game_runtime_materialization_permit_rejected/,
     );
