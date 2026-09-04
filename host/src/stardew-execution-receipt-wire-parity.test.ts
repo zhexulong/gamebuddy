@@ -18,8 +18,9 @@ const scope: Scope = {
 };
 const projectPath = resolve(
   hostRoot,
-  "../integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj",
+  "../integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/GameBuddy.Stardew.Core.Tests.csproj",
 );
+const testFilter = "FullyQualifiedName=GameBuddy.Stardew.Core.Tests.BridgeReceiptWireParityTests.MachineInspectWorldNotReadyReceipt_SerializesForHostWireParity";
 
 test("source-built Stardew execution receipt passes the Host strict validator", { timeout: 150_000 }, () => {
   const root = mkdtempSync(join(tmpdir(), "gamebuddy-execution-receipt-wire-"));
@@ -33,7 +34,7 @@ test("source-built Stardew execution receipt passes the Host strict validator", 
           projectPath,
           "--no-restore",
           "--filter",
-          "FullyQualifiedName=GameBuddy.Stardew.Integration.Tests.FarmhandTypedReceiptContractTests.RegisteredMachineInspect_ProducesExactWorldNotReadyReceipt",
+          testFilter,
           "--verbosity",
           "minimal",
         ],
