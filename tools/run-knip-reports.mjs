@@ -18,8 +18,41 @@ function failure(message, cause) {
   error.code = "KNIP_RUNNER";
   return error;
 }
-function validReport(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value) && Array.isArray(value.issues);
+const itemFields = new Set(["name", "namespace", "kind", "specifier", "line", "col", "pos"]);
+const namedItemFields = new Set(["name"]);
+const issueFields = new Map([
+  ["owners", namedItemFields],
+  ["binaries", namedItemFields],
+  ["unlisted", namedItemFields],
+  ["cycles", itemFields],
+  ["duplicates", itemFields],
+  ...["catalog", "catalogReferences", "dependencies", "devDependencies", "enumMembers", "exports", "files", "namespaceMembers", "nsExports", "nsTypes", "optionalPeerDependencies", "types", "unresolved"]
+    .map((name) => [name, itemFields]),
+]);
+function plainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function validItem(value, fields) {
+  return plainObject(value) && typeof value.name === "string" && value.name.length > 0 &&
+    Object.entries(value).every(([key, entry]) => fields.has(key) &&
+      (key === "name" || ["namespace", "kind", "specifier"].includes(key) && typeof entry === "string" ||
+        ["line", "col", "pos"].includes(key) && Number.isInteger(entry) && entry >= 0));
+}
+function validIssueEntries(entries, fields) {
+  return Array.isArray(entries) && entries.every((entry) => validItem(entry, fields));
+}
+export function validReport(value) {
+  if (!plainObject(value) || !Array.isArray(value.issues) ||
+    !Object.keys(value).every((key) => key === "issues")) return false;
+  return value.issues.every((issue) => plainObject(issue) && typeof issue.file === "string" && issue.file.length > 0 &&
+    Object.entries(issue).every(([key, entries]) => {
+      if (key === "file") return true;
+      const fields = issueFields.get(key);
+      if (!fields) return false;
+      if (key === "cycles" || key === "duplicates")
+        return Array.isArray(entries) && entries.every((group) => validIssueEntries(group, fields));
+      return validIssueEntries(entries, fields);
+    }));
 }
 
 export function execute(command, args, cwd) {
@@ -50,19 +83,23 @@ export function execute(command, args, cwd) {
 async function freshOutputDirectory(output) {
   const destination = resolve(output);
   const repository = await realpath(root);
-  const outsidePath = relative(repository, destination);
   let parent;
   try {
     parent = await realpath(resolve(destination, ".."));
   } catch (error) {
     throw failure("Knip output parent must exist", error);
   }
-  if (destination === repository || (!outsidePath.startsWith("..") && !isAbsolute(outsidePath)))
+  const outsidePath = relative(repository, parent);
+  if (parent === repository || (!outsidePath.startsWith("..") && !isAbsolute(outsidePath)))
     throw failure("Knip output must be outside the repository");
   try {
     const stat = await lstat(destination);
     if (stat.isSymbolicLink() || stat.isDirectory() || stat.isFile())
       throw failure("Knip output root must not already exist");
+    const canonicalDestination = await realpath(destination);
+    const destinationRelative = relative(repository, canonicalDestination);
+    if (!destinationRelative.startsWith("..") && !isAbsolute(destinationRelative))
+      throw failure("Knip output must be outside the repository");
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
