@@ -5,11 +5,11 @@ using GameBuddy.Stardew.Core.Models;
 
 namespace GameBuddy.Stardew.Core.BodyPrograms;
 
-/// <summary>Opaque live-capability generation minted by the Mod. It is never supplied by a candidate.</summary>
-public sealed record BodyProgramPolicyIdentity(string EmbodimentId, long Generation)
+/// <summary>Opaque projection of the Mod publication identity and its independent capability revision.</summary>
+public sealed record BodyProgramPolicyIdentity(string Value, long CapabilityRevision)
 {
     [JsonIgnore]
-    public bool IsValid => BodyProgramValidation.IsIdentifier(this.EmbodimentId) && this.Generation >= 0;
+    public bool IsValid => BodyProgramValidation.IsOpaquePolicyValue(this.Value) && this.CapabilityRevision >= 0;
 }
 
 #pragma warning disable CA1720 // Wire-level scalar-kind tokens intentionally name JSON scalar types.
@@ -114,6 +114,7 @@ internal static class BodyProgramValidation
     internal const long MaximumJavaScriptSafeInteger = 9007199254740991L;
     internal static bool IsValidDeadlineMs(long value) => value is > 0 and <= MaximumJavaScriptSafeInteger;
     internal static bool IsIdentifier(string? value) => value is { Length: >= 1 and <= 128 } && value.All(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c is '_' or '-');
+    internal static bool IsOpaquePolicyValue(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
     internal static bool IsValidActionDescriptor(BodyProgramActionDescriptor? action) => action is not null && IsIdentifier(action.ActionId) && action.IdentityVersion > 0
         && action.Arguments is { Count: <= 32 } && action.OutputFacts is { Count: <= 32 } && action.ResourceTemplate is { Count: <= 16 }
         && action.Arguments.All(argument => argument is not null && IsIdentifier(argument.Name) && Enum.IsDefined(argument.Kind) && argument.Kind != BodyProgramArgumentKind.DestinationArrival)
