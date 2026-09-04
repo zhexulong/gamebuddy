@@ -50,6 +50,11 @@ import {
   readPublishedStardewModPackageContract,
   verifyPublishedStardewModPackage,
 } from "./stardew-mod-package-contract.js";
+import {
+  withStardewInstallationRegistrationOwnerTransaction,
+  type StardewInstallationRegistrationOwnerTransactionMarker,
+} from "./stardew-installation-registration.internal.js";
+import { readStrictJsonFile } from "./strict-json-reader.js";
 import type { Scope } from "./protocol.js";
 import { createStardewRoleLifecycleFacade } from "./stardew-role-lifecycle-facade.js";
 import {
@@ -73,6 +78,7 @@ import type {
 } from "./stardew-private-bootstrap-owner-records.private.js";
 
 const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v4";
+const MAX_OWNER_RECORD_BYTES = 64 * 1024;
 const OWNER_FILE = "owner.json";
 const OWNER_LOCK_LEAF = pathLockPath(OWNER_FILE);
 const LAUNCH_GENERATION_ENVIRONMENT_VARIABLE = "GAMEBUDDY_STARDEW_LAUNCH_GENERATION";
@@ -488,6 +494,10 @@ function createClosedComposition(
   const claims = new WeakMap<StardewPlayerHostBootstrapClaim, ClaimRegistration>();
   const playerHostLaunches = new WeakMap<StardewPlayerHostLaunchReservation, PlayerHostLaunchRegistration>();
   const aiLaunches = new WeakMap<StardewAiClientLaunchReservation, AiLaunchRegistration>();
+  // Only the activation path marks a claim for the registration-bound owner
+  // transaction. The older raw reservation path remains test-only plumbing and
+  // cannot manufacture a registration pointer.
+  const registrationBoundClaims = new WeakSet<StardewPlayerHostBootstrapClaim>();
   const manifestHandoff = createManifestHandoffCoordinatorCore(
     compositionIdentity,
     dependencies.nowMs,
@@ -581,8 +591,8 @@ function createClosedComposition(
            guardian: createGuardianBinding(dependencies),
            playerHost: { kind: "external_unattested" as const },
           aiClientLaunchGeneration: aiLaunchRegistration.registration.launchGeneration,
-          readClock: dependencies.nowMs,
-        });
+            readClock: dependencies.nowMs,
+          });
       } catch (error) {
         try { aiLaunchRegistration.registration.revoke(); } catch { /* fail closed */ }
         throw error;
@@ -639,17 +649,22 @@ function createClosedComposition(
 
       let durableOwner: DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>;
       try {
-        durableOwner = await persistPrivateBootstrapOwner({
+         const guardian = createGuardianBinding(dependencies);
+         const persist = (reuseExistingOwner = false) => persistPrivateBootstrapOwner({
           runtimeRoot,
-           bootstrapFacts: claimRegistration.facts,
-           guardian: createGuardianBinding(dependencies),
+          bootstrapFacts: claimRegistration.facts,
+           guardian,
            playerHost: {
             kind: "launch_reserved" as const,
             launchGeneration: playerHostLaunchRegistration.registration.launchGeneration,
           },
           aiClientLaunchGeneration: aiLaunchRegistration.registration.launchGeneration,
           readClock: dependencies.nowMs,
+           reuseExistingOwner,
         });
+        durableOwner = registrationBoundClaims.delete(claim)
+          ? await prepareAndBindOwnedRegistrationAttempt(runtimeRoot, claimRegistration.facts, guardian, persist)
+          : await persist();
       } catch (error) {
         try { playerHostLaunchRegistration.registration.revoke(); } catch { /* fail closed */ }
         try { aiLaunchRegistration.registration.revoke(); } catch { /* fail closed */ }
@@ -729,6 +744,7 @@ function createClosedComposition(
         try {
           playerReservation = playerHostProcessOwner.reservePlayerHostLaunch();
           aiReservation = aiClientProcessOwner.reserveAiClientLaunch();
+          registrationBoundClaims.add(claim);
           return await composition.reserveOwnedPlayerHostPhaseA(
             runtimeRoot,
             claim,
@@ -749,6 +765,7 @@ function createClosedComposition(
             const registration = aiLaunches.get(aiReservation);
             if (registration !== undefined) registration.state = "consumed";
           }
+          registrationBoundClaims.delete(claim);
           claimRegistration.state = "consumed";
           throw error;
         }
@@ -772,11 +789,11 @@ function createClosedComposition(
         requireOwnedPhaseAFacts(owner, compositionIdentity);
         terminalizeOwnedPlayerHostPhaseAOwner(owner);
       },
-     quarantineOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
-       const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
-       return facts.quarantineOwner();
-     },
-   });
+      quarantineOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
+        const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+        return facts.quarantineOwner();
+      },
+    });
 }
 
 type DurableOwner = Readonly<{
@@ -793,11 +810,218 @@ type DurableOwner = Readonly<{
      guardian: StardewGuardianBinding;
      playerHost: TPlayerHost;
     aiClientLaunchGeneration: string;
-    readClock: () => number;
-  }>;
+     readClock: () => number;
+     reuseExistingOwner?: boolean;
+   }>;
 
 type DurableOwnerFor<TRecord extends StardewPrivateBootstrapOwnerRecord> =
   Omit<DurableOwner, "record"> & Readonly<{ record: TRecord }>;
+
+/**
+ * The owner is written only after a bounded marker is durable and before the
+ * registration pointer. On a restart, the marker can only repair the exact
+ * prepared pair or retain unavailability; it never becomes attempt authority.
+ */
+async function reconcilePreparedRegistrationMarker(
+  runtimeRoot: string,
+  bootstrapFacts: StardewPrivateBootstrapFacts,
+   registration: Parameters<Parameters<typeof withStardewInstallationRegistrationOwnerTransaction>[1]>[0],
+   marker: StardewInstallationRegistrationOwnerTransactionMarker,
+   expectedGuardian: StardewGuardianBinding,
+   persist: (reuseExistingOwner?: boolean) => Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>>,
+   ): Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord> | null> {
+  if (marker.operation !== "prepare_bind" || marker.bootstrapCorrelation !== bootstrapFacts.bootstrapId ||
+      marker.ownerRecordRevision !== 1) throw new Error("stardew_bootstrap_registration_unavailable");
+  const ownerPath = join(runtimeRoot, "stardew-private-bootstrap", bootstrapFacts.bootstrapId, OWNER_FILE);
+  let owner: StardewPrivateBootstrapOwnerRecord | null = null;
+  try {
+    owner = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, runtimeRoot), { containmentRoot: runtimeRoot });
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) throw error;
+  }
+  const current = await registration.readRegistration();
+   if (owner === null) {
+     // A marker without its owner is a torn transaction. Registration is not a
+     // recovery authority; retain the marker and fail closed.
+     throw new Error("stardew_bootstrap_registration_unavailable");
+   }
+  if (owner.bootstrapId !== bootstrapFacts.bootstrapId || owner.playerId !== bootstrapFacts.playerId ||
+       owner.companionId !== bootstrapFacts.companionId || owner.expiresAtMs !== bootstrapFacts.expiresAtMs ||
+       JSON.stringify(owner.guardian) !== JSON.stringify(expectedGuardian) ||
+       owner.ownerRecordRevision !== 1 || owner.state !== "reserved" ||
+      owner.guardianState !== "reserved" || owner.playerHostState !== "reserved" || owner.aiClientState !== "reserved") {
+    throw new Error("stardew_bootstrap_registration_unavailable");
+  }
+  if (current === null || current.state !== "ready") throw new Error("stardew_bootstrap_registration_unavailable");
+   if (current.revision === marker.registrationRevision &&
+       current.activeAttempt?.bootstrapCorrelation === marker.bootstrapCorrelation) {
+     // The owner and pointer already form the prepared pair. Re-read the
+     // exact owner through the owner-private reuse path before clearing the
+     // coordination marker; clearing first would lose recovery.
+     const recovered = await persist(true);
+     await registration.clearMarker(marker);
+     return recovered;
+   }
+  if (current.revision !== marker.registrationRevision - 1 || current.activeAttempt !== null) {
+    throw new Error("stardew_bootstrap_registration_unavailable");
+  }
+   await registration.bindPreparedPointer(current.revision, marker);
+   // Keep the marker until the strict owner reread succeeds. An interrupted
+   // reread or marker removal remains recoverable by the same owner only.
+   const recovered = await persist(true);
+   await registration.clearMarker(marker);
+   return recovered;
+}
+
+async function reconcileSettledRegistrationMarker(
+  runtimeRoot: string,
+  terminal: StardewPrivateBootstrapOwnerRecord,
+  immutableFence: StardewOwnerImmutableFence,
+  registration: Parameters<Parameters<typeof withStardewInstallationRegistrationOwnerTransaction>[1]>[0],
+  marker: StardewInstallationRegistrationOwnerTransactionMarker,
+): Promise<void> {
+  if (marker.operation !== "settlement_release" || marker.bootstrapCorrelation !== terminal.bootstrapId ||
+      marker.ownerRecordRevision !== terminal.ownerRecordRevision) throw new Error("stardew_bootstrap_registration_unavailable");
+  const ownerPath = join(runtimeRoot, "stardew-private-bootstrap", terminal.bootstrapId, OWNER_FILE);
+  const persisted = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, runtimeRoot), { containmentRoot: runtimeRoot });
+  if (!sameImmutableFence(persisted, immutableFence) || persisted.ownerRecordRevision !== marker.ownerRecordRevision ||
+      persisted.bootstrapId !== marker.bootstrapCorrelation || (persisted.state !== "contained" && persisted.state !== "quarantined")) {
+    throw new Error("stardew_bootstrap_registration_unavailable");
+  }
+  const current = await registration.readRegistration();
+  if (current === null || current.state !== "ready") throw new Error("stardew_bootstrap_registration_unavailable");
+  if (current.revision === marker.registrationRevision && current.activeAttempt === null) {
+    await registration.clearMarker(marker);
+    return;
+  }
+  if (current.revision !== marker.registrationRevision - 1 ||
+      current.activeAttempt?.bootstrapCorrelation !== marker.bootstrapCorrelation) {
+    throw new Error("stardew_bootstrap_registration_unavailable");
+  }
+  await registration.releaseSettledPointer(current.revision, marker);
+  await registration.clearMarker(marker);
+}
+
+ async function prepareAndBindOwnedRegistrationAttempt(
+   runtimeRoot: string,
+   bootstrapFacts: StardewPrivateBootstrapFacts,
+   expectedGuardian: StardewGuardianBinding,
+   persist: (reuseExistingOwner?: boolean) => Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>>,
+): Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>> {
+  const root = resolve(runtimeRoot);
+  try {
+     const recoverOwner = async () => persist(true);
+    return await withStardewInstallationRegistrationOwnerTransaction(root, async (registration) => {
+      const existingMarker = await registration.readMarker();
+      if (existingMarker !== null) {
+        const recovered = await reconcilePreparedRegistrationMarker(root, bootstrapFacts, registration, existingMarker, expectedGuardian, recoverOwner);
+        if (recovered !== null) return recovered;
+      }
+
+      const current = await registration.readRegistration();
+      if (current === null || current.state !== "ready" || current.activeAttempt !== null) {
+        throw new Error("stardew_bootstrap_registration_unavailable");
+      }
+      const marker: StardewInstallationRegistrationOwnerTransactionMarker = Object.freeze({
+        schema: "gamebuddy-stardew-installation-owner-transaction/v1",
+        operation: "prepare_bind",
+        bootstrapCorrelation: bootstrapFacts.bootstrapId,
+        registrationRevision: current.revision + 1,
+        ownerRecordRevision: 1,
+      });
+      await registration.writeMarker(marker);
+      const durableOwner = await persist();
+      if (
+        durableOwner.record.bootstrapId !== marker.bootstrapCorrelation ||
+        durableOwner.record.ownerRecordRevision !== marker.ownerRecordRevision ||
+        durableOwner.record.state !== "reserved"
+      ) {
+        throw new Error("stardew_bootstrap_registration_unavailable");
+      }
+      const paired = await registration.bindPreparedPointer(current.revision, marker);
+      if (
+        paired.activeAttempt?.bootstrapCorrelation !== marker.bootstrapCorrelation ||
+        paired.revision !== marker.registrationRevision
+      ) {
+        throw new Error("stardew_bootstrap_registration_unavailable");
+      }
+      await registration.clearMarker(marker);
+      return durableOwner;
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "stardew_installation_registration_unavailable") {
+      throw new Error("stardew_bootstrap_registration_unavailable");
+    }
+    throw error;
+  }
+}
+
+/**
+ * Private owner/Guardian completion seam. It is intentionally not part of the
+ * production composition or public registration API; the Guardian's exact
+ * containment proof remains the only authority that can release the pointer.
+ */
+export async function settleOwnedPlayerHostRegistrationAttempt(
+  owner: StardewOwnedPlayerHostPhaseAOwner,
+  proof: StardewBootstrapGuardianSettlementProof,
+): Promise<void> {
+  const facts = requireOwnedPhaseAFacts(owner);
+  const proofReservation = reserveStardewBootstrapGuardianSettlementProof(owner, proof);
+  try {
+    const runtimeRoot = dirname(dirname(facts.durableOwner.transactionDirectory));
+    const bootstrapCorrelation = facts.durableOwner.record.bootstrapId;
+    await withStardewInstallationRegistrationOwnerTransaction(runtimeRoot, async (registration) => {
+      const ownerPath = join(runtimeRoot, "stardew-private-bootstrap", bootstrapCorrelation, OWNER_FILE);
+      const terminal = await withPathLock(
+        ownerPath,
+        () => readAndValidateOwner(ownerPath, runtimeRoot),
+        { containmentRoot: runtimeRoot },
+      );
+       if (
+         !sameImmutableFence(terminal, facts.immutableFence) ||
+         terminal.ownerRecordRevision !== proofReservation.expectedTerminalOwnerRecordRevision ||
+         terminal.bootstrapId !== bootstrapCorrelation ||
+         (terminal.state !== "contained" && terminal.state !== "quarantined")
+       ) {
+        throw new Error("stardew_bootstrap_registration_unavailable");
+      }
+      const current = await registration.readRegistration();
+      if (
+        current === null ||
+        current.state !== "ready" ||
+        current.activeAttempt?.bootstrapCorrelation !== bootstrapCorrelation
+      ) {
+        throw new Error("stardew_bootstrap_registration_unavailable");
+      }
+      const existingMarker = await registration.readMarker();
+      if (existingMarker !== null) {
+        await reconcileSettledRegistrationMarker(runtimeRoot, terminal, facts.immutableFence, registration, existingMarker);
+        return;
+      }
+       const marker: StardewInstallationRegistrationOwnerTransactionMarker = Object.freeze({
+        schema: "gamebuddy-stardew-installation-owner-transaction/v1",
+        operation: "settlement_release",
+        bootstrapCorrelation,
+        registrationRevision: current.revision + 1,
+        ownerRecordRevision: terminal.ownerRecordRevision,
+      });
+      await registration.writeMarker(marker);
+      const released = await registration.releaseSettledPointer(current.revision, marker);
+      if (released.activeAttempt !== null || released.revision !== marker.registrationRevision) {
+        throw new Error("stardew_bootstrap_registration_unavailable");
+      }
+      await registration.clearMarker(marker);
+    });
+    proofReservation.commit();
+  } catch (error) {
+    proofReservation.restore();
+    if (error instanceof Error && error.message === "stardew_installation_registration_unavailable") {
+      throw new Error("stardew_bootstrap_registration_unavailable");
+    }
+    throw error;
+  }
+}
+
 
 function persistPrivateBootstrapOwner(
   input: PersistPrivateBootstrapOwnerInput<Readonly<{ kind: "external_unattested" }>>,
@@ -827,10 +1051,31 @@ async function persistPrivateBootstrapOwner(
   await withPathLock(
     ownerPath,
     async () => {
-      const blocking = (await readDirectoryIfPresent(directory, root)).filter(
-        (entry) => entry !== OWNER_LOCK_LEAF,
-      );
-      if (blocking.length !== 0) throw new Error("stardew_bootstrap_owner_occupied");
+       const blocking = (await readDirectoryIfPresent(directory, root)).filter(
+         (entry) => entry !== OWNER_LOCK_LEAF,
+       );
+       if (blocking.length !== 0) {
+         if (!input.reuseExistingOwner || blocking.length !== 1 || blocking[0] !== OWNER_FILE) {
+           throw new Error("stardew_bootstrap_owner_occupied");
+         }
+         const existing = await readAndValidateOwner(ownerPath, root);
+          if (existing.bootstrapId !== input.bootstrapFacts.bootstrapId ||
+              existing.playerId !== input.bootstrapFacts.playerId ||
+              existing.companionId !== input.bootstrapFacts.companionId ||
+              existing.expiresAtMs !== input.bootstrapFacts.expiresAtMs ||
+              JSON.stringify(existing.guardian) !== JSON.stringify(input.guardian) ||
+              existing.ownerRecordRevision !== 1 || existing.state !== "reserved" ||
+              existing.guardianState !== "reserved" || existing.playerHostState !== "reserved" ||
+              existing.aiClientState !== "reserved" || existing.recoveryInstanceId !== null ||
+              existing.cleanupDisposition !== "pending" ||
+              JSON.stringify(existing.managedPaths) !== JSON.stringify([OWNER_FILE]) ||
+              existing.aiClient.launchGeneration !== input.aiClientLaunchGeneration ||
+              (input.playerHost.kind === "launch_reserved" &&
+               (existing.playerHost.kind !== "launch_reserved" ||
+                existing.playerHost.launchGeneration !== input.playerHost.launchGeneration))) {
+           throw new Error("stardew_bootstrap_owner_occupied");
+         }
+       } else {
       if (input.bootstrapFacts.expiresAtMs <= input.readClock())
         throw new Error("stardew_bootstrap_claim_expired");
       const baseRecord = {
@@ -856,8 +1101,9 @@ async function persistPrivateBootstrapOwner(
       const record: StardewPrivateBootstrapOwnerRecord = input.playerHost.kind === "external_unattested"
         ? freezeRecord({ ...baseRecord, playerHost: input.playerHost })
         : freezeRecord({ ...baseRecord, playerHost: input.playerHost });
-      await atomicWriteFile(ownerPath, `${JSON.stringify(record)}\n`, root);
-    },
+       if (blocking.length === 0) await atomicWriteFile(ownerPath, `${JSON.stringify(record)}\n`, root);
+       }
+     },
     { containmentRoot: root },
   );
 
@@ -967,6 +1213,7 @@ type StardewPrivateBridgeMaterial = Readonly<{
 
 type OwnedPhaseAFacts = {
   readonly compositionIdentity: object;
+  readonly immutableFence: StardewOwnerImmutableFence;
   readonly durableOwner: DurableOwner;
   readonly playerHostRegistration: StardewPlayerHostLaunchRegistration;
   readonly aiClientRegistration: StardewAiClientLaunchRegistration;
@@ -2048,6 +2295,7 @@ function composeOwnedPlayerHostOwner(
   const aiClientProfileState: OwnedPhaseAFacts["aiClientProfileState"] = { value: "not_materialized" };
   const facts: OwnedPhaseAFacts = {
     compositionIdentity,
+    immutableFence: immutableFenceFor(durableOwner.record),
     durableOwner,
     playerHostRegistration,
     aiClientRegistration,
@@ -2871,18 +3119,64 @@ export type StardewBootstrapGuardianRecoveryGateBinding = Readonly<{
   leaseName: string;
 }>;
 
+declare const stardewGuardianSettlementProofBrand: unique symbol;
+export type StardewBootstrapGuardianSettlementProof = Readonly<{
+  readonly [stardewGuardianSettlementProofBrand]: never;
+}>;
+
 type GuardianOwnerBindingFacts = {
   readonly port: StardewBootstrapGuardianOwnerTransitionPort;
   readonly recoveryGateBinding: StardewBootstrapGuardianRecoveryGateBinding;
+  readonly settlementBinding: object;
+  readonly immutableFence: StardewOwnerImmutableFence;
+  currentOwnerRecordRevision: number;
   consumed: boolean;
 };
+type GuardianSettlementProofFacts = {
+  readonly settlementBinding: object;
+  readonly immutableFence: StardewOwnerImmutableFence;
+  readonly expectedTerminalOwnerRecordRevision: number;
+  state: "available" | "reserved" | "consumed";
+};
 const guardianOwnerBindings = new WeakMap<object, GuardianOwnerBindingFacts>();
+const guardianSettlementProofs = new WeakMap<object, GuardianSettlementProofFacts>();
 
 /**
  * Creates one exact Guardian owner binding for a composer-minted owned Phase-A
  * owner. No path, fence, record, revision, or persistence callback crosses
  * this boundary; every named transition advances the closure-held CAS cursor.
  */
+export type StardewBootstrapGuardianNativeArmFrame = Readonly<{
+  bootstrapId: string;
+  guardianInstanceId: string;
+  guardianEpoch: number;
+  attemptId: string;
+  revision: string;
+  leaseName: string;
+  playerJobName: string;
+  aiJobName: string;
+}>;
+
+/** Returns the tokenless native arm facts for the exact consumed owner binding. */
+export function readStardewBootstrapGuardianNativeArmFrame(
+  binding: StardewBootstrapGuardianOwnerBinding,
+): StardewBootstrapGuardianNativeArmFrame {
+  if (typeof binding !== "object" || binding === null) throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
+  const facts = guardianOwnerBindings.get(binding);
+  if (facts === undefined || facts.consumed) throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
+  const owner = facts.immutableFence;
+  return Object.freeze({
+    bootstrapId: owner.bootstrapId,
+    guardianInstanceId: owner.guardian.guardianInstanceId,
+    guardianEpoch: owner.guardian.guardianEpoch,
+    attemptId: owner.bootstrapId,
+    revision: owner.guardian.bindingRevision,
+    leaseName: owner.guardian.leaseName,
+    playerJobName: owner.guardian.playerJobName,
+    aiJobName: owner.guardian.aiJobName,
+  });
+}
+
 export function createStardewBootstrapGuardianOwnerBinding(
   owner: StardewOwnedPlayerHostPhaseAOwner,
   compositionIdentity?: object,
@@ -2901,6 +3195,8 @@ export function createStardewBootstrapGuardianOwnerBinding(
     const next = await operation(revision);
     revision = next.ownerRecordRevision;
     facts.durableOwner.replaceRecord(next);
+    const guardianFacts = guardianOwnerBindings.get(owner);
+    if (guardianFacts !== undefined) guardianFacts.currentOwnerRecordRevision = revision;
   };
   const port: StardewBootstrapGuardianOwnerTransitionPort = Object.freeze({
     armAcknowledged: () => advance((current) => transitions.arm(current)),
@@ -2917,6 +3213,9 @@ export function createStardewBootstrapGuardianOwnerBinding(
   guardianOwnerBindings.set(owner, {
     port,
     recoveryGateBinding: Object.freeze({ bindingRevision: initial.guardian.bindingRevision, leaseName: initial.guardian.leaseName }),
+    settlementBinding: Object.freeze(Object.create(null)),
+    immutableFence: immutableFenceFor(initial),
+    currentOwnerRecordRevision: initial.ownerRecordRevision,
     consumed: false,
   });
   return owner as unknown as StardewBootstrapGuardianOwnerBinding;
@@ -2925,14 +3224,80 @@ export function createStardewBootstrapGuardianOwnerBinding(
 /** Consumes only a registered composition-bound Guardian owner binding. */
 export function consumeStardewBootstrapGuardianOwnerBinding(
   binding: StardewBootstrapGuardianOwnerBinding,
-): Readonly<{ transitions: StardewBootstrapGuardianOwnerTransitionPort; recoveryGateBinding: StardewBootstrapGuardianRecoveryGateBinding }> {
+): Readonly<{
+  transitions: StardewBootstrapGuardianOwnerTransitionPort;
+  recoveryGateBinding: StardewBootstrapGuardianRecoveryGateBinding;
+  settlementBinding: object;
+}> {
   if (typeof binding !== "object" || binding === null) {
     throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
   }
   const facts = guardianOwnerBindings.get(binding);
   if (facts === undefined || facts.consumed) throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
   facts.consumed = true;
-  return Object.freeze({ transitions: facts.port, recoveryGateBinding: facts.recoveryGateBinding });
+  return Object.freeze({
+    transitions: facts.port,
+    recoveryGateBinding: facts.recoveryGateBinding,
+    settlementBinding: facts.settlementBinding,
+  });
+}
+
+export function mintStardewBootstrapGuardianSettlementProof(
+  binding: StardewBootstrapGuardianOwnerBinding,
+  settlementBinding: object,
+): StardewBootstrapGuardianSettlementProof {
+  const facts = guardianOwnerBindings.get(binding);
+  if (facts === undefined || !facts.consumed || facts.settlementBinding !== settlementBinding) {
+    throw new Error("stardew_bootstrap_guardian_settlement_proof_unavailable");
+  }
+  const proof = Object.freeze(Object.create(null)) as StardewBootstrapGuardianSettlementProof;
+  guardianSettlementProofs.set(proof, {
+    settlementBinding,
+    immutableFence: facts.immutableFence,
+    expectedTerminalOwnerRecordRevision: facts.currentOwnerRecordRevision,
+    state: "available",
+  });
+  return proof;
+}
+
+type ReservedStardewBootstrapGuardianSettlementProof = Readonly<{
+  readonly immutableFence: StardewOwnerImmutableFence;
+  readonly expectedTerminalOwnerRecordRevision: number;
+  commit(): void;
+  restore(): void;
+}>;
+
+function reserveStardewBootstrapGuardianSettlementProof(
+  owner: StardewOwnedPlayerHostPhaseAOwner,
+  proof: StardewBootstrapGuardianSettlementProof,
+): ReservedStardewBootstrapGuardianSettlementProof {
+  const proofFacts = typeof proof === "object" && proof !== null
+    ? guardianSettlementProofs.get(proof)
+    : undefined;
+  const ownerFacts = guardianOwnerBindings.get(owner);
+  if (
+    proofFacts === undefined ||
+    ownerFacts === undefined ||
+    proofFacts.settlementBinding !== ownerFacts.settlementBinding ||
+    JSON.stringify(ownerFacts.immutableFence) !== JSON.stringify(proofFacts.immutableFence) ||
+    proofFacts.state !== "available"
+  ) {
+    throw new Error("stardew_bootstrap_guardian_settlement_proof_unavailable");
+  }
+  proofFacts.state = "reserved";
+  return Object.freeze({
+    immutableFence: proofFacts.immutableFence,
+    expectedTerminalOwnerRecordRevision: proofFacts.expectedTerminalOwnerRecordRevision,
+    commit: () => {
+      if (proofFacts.state !== "reserved") {
+        throw new Error("stardew_bootstrap_guardian_settlement_proof_unavailable");
+      }
+      proofFacts.state = "consumed";
+    },
+    restore: () => {
+      if (proofFacts.state === "reserved") proofFacts.state = "available";
+    },
+  });
 }
 
 function sameImmutableFence(owner: StardewPrivateBootstrapOwnerRecord, fence: StardewOwnerImmutableFence): boolean {
@@ -2978,9 +3343,7 @@ async function readAndValidateOwner(
   root: string,
 ): Promise<StardewPrivateBootstrapOwnerRecord> {
   await verifySafePathBoundary(path, root);
-  const stat = await lstat(path);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("invalid_stardew_bootstrap_owner");
-  return validateOwnerRecord(JSON.parse(await readFile(path, "utf8")));
+  return validateOwnerRecord(await readStrictJsonFile(path, MAX_OWNER_RECORD_BYTES));
 }
 
 /** One exact strict v4 validator for persisted bytes and in-memory successors. */

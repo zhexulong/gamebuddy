@@ -78,7 +78,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedAiClientStageD" | "consumeOwnedFarmhandBridgeConnection" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedAiClientStageD" | "consumeOwnedFarmhandBridgeConnection" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner" | "createStardewBootstrapGuardianOwnerFromDesktopSession"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -773,8 +773,9 @@ test("production internal exports no testing constructor, raw owner view, or bin
   assert.deepEqual(Object.keys(internalComposer).sort(), [
     "consumeOwnedPlayerHostPhaseAOwner",
     "createStardewPrivateBootstrapComposition",
+    "settleOwnedPlayerHostRegistrationAttempt",
     "stageOwnedPlayerHostPhaseB",
-     "terminalizeOwnedPlayerHostPhaseAOwner",
+    "terminalizeOwnedPlayerHostPhaseAOwner",
   ]);
   for (const forbidden of ["Testing", "testing", "Test", "test", "View", "view", "Bind", "bind", "Raw", "raw"]) {
     assert.equal(Object.keys(internalComposer).some((key) => key.includes(forbidden)), false);
@@ -1119,8 +1120,8 @@ test("internal owned quarantine is exact-composition, retryable after persistenc
   const first = left.quarantineOwnedPlayerHostOwner(owner);
   const concurrent = left.quarantineOwnedPlayerHostOwner(owner);
   assert.equal(first, concurrent);
-  await assert.rejects(first, /Unexpected token|JSON/);
-  await assert.rejects(concurrent, /Unexpected token|JSON/);
+  await assert.rejects(first, /invalid_strict_json_file|Unexpected token|JSON/);
+  await assert.rejects(concurrent, /invalid_strict_json_file|Unexpected token|JSON/);
 
   const ownerView = left.bindOwnedPlayerHostPhaseAOwner(owner);
   assert.equal(ownerView.hasPrivateMaterial(), false);
@@ -1253,7 +1254,7 @@ test("owned Phase A returns only after durable reread and rejects malformed pers
   await waitFor(() => rereadObserved);
   assert.equal(settled, false);
   releaseRead();
-  await assert.rejects(pending, /Unexpected token|JSON/);
+  await assert.rejects(pending, /invalid_strict_json_file|Unexpected token|JSON/);
   assert.deepEqual(harness.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
@@ -1638,8 +1639,8 @@ test("owned quarantine persistence failure keeps the error primary and revokes b
   const first = ownerTestView(owner).quarantine();
   const second = ownerTestView(owner).quarantine();
   assert.equal(first, second);
-  await assert.rejects(first, /Unexpected token|JSON/);
-  await assert.rejects(second, /Unexpected token|JSON/);
+  await assert.rejects(first, /invalid_strict_json_file|Unexpected token|JSON/);
+  await assert.rejects(second, /invalid_strict_json_file|Unexpected token|JSON/);
   assert.throws(
     () => ownerTestView(owner).consumePlayerHostLaunch((launch) => launch({ executable: EXE, args: ["after-failure-player"] })),
     /stardew_player_host_launch_not_available/,
@@ -1823,7 +1824,7 @@ test("owner is returned only after durable owner.json reread and malformed persi
   await waitFor(() => rereadObserved);
   assert.equal(settled, false, "join must not resolve before the durable reread");
   releaseRead();
-  await assert.rejects(pending, /Unexpected token|JSON/);
+  await assert.rejects(pending, /invalid_strict_json_file|Unexpected token|JSON/);
 });
 
 test("durable write failure permanently consumes the pair and revokes manager reservation", async () => {
@@ -2032,8 +2033,8 @@ test("quarantine persistence failure preserves primary error and permanently clo
   const first = owner.quarantine();
   const second = owner.quarantine();
   assert.equal(first, second);
-  await assert.rejects(first, /Unexpected token|JSON/);
-  await assert.rejects(second, /Unexpected token|JSON/);
+  await assert.rejects(first, /invalid_strict_json_file|Unexpected token|JSON/);
+  await assert.rejects(second, /invalid_strict_json_file|Unexpected token|JSON/);
   assert.throws(
     () => owner.consumeAiClientLaunch((launch) => launch({ executable: EXE, args: ["after-failure"] })),
     /stardew_ai_client_launch_not_available/,
@@ -3275,7 +3276,7 @@ test("manifest handoff binds literal confirmation and rejects replay or concurre
     signature: "",
   }, fixture.token);
   await writeFile(join(fixture.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(response));
-  await assert.rejects(first, /stardew_manifest_handoff_failed/);
+  await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/);
   await assert.rejects(
     () => fixture.coordinator.confirmAndAdmit(selection, { confirmed: true }),
     /invalid_stardew_manifest_handoff_selection/,
@@ -3436,7 +3437,7 @@ test("manifest handoff uses production response and manifest verification for mi
     manifestPath: "stardew-farmhand-manifest.json",
     signature: "",
   }, mismatch.token)));
-  await assert.rejects(mismatchPending, /stardew_manifest_handoff_failed/);
+  await assert.rejects(mismatchPending, /stardew_manifest_handoff_publication_uncertain/);
   assert.equal(mismatchRequestId.length > 0, true);
 
   const tampered = await prepareManifestHandoffFixture();
@@ -3461,7 +3462,7 @@ test("manifest handoff uses production response and manifest verification for mi
     nonce: "nonce-attachment-factory",
     signatureOverride: "tampered-manifest-signature",
   })));
-  await assert.rejects(tamperedPending, /stardew_manifest_handoff_failed/);
+  await assert.rejects(tamperedPending, /stardew_manifest_handoff_publication_uncertain/);
 });
 
 
@@ -3518,7 +3519,7 @@ test("manifest handoff concurrent replay and cross-composition failures preserve
       signature: "",
     }, left.token)),
   );
-  await assert.rejects(first, /stardew_manifest_handoff_failed/);
+  await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/)
   await assert.rejects(
     () => left.coordinator.confirmAndAdmit(selection, { confirmed: true }),
     /invalid_stardew_manifest_handoff_selection/,
