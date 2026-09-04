@@ -1,12 +1,10 @@
 const ERROR_PREFIX = "stardew_projection_parity";
 
 export const PROJECTION_PARITY_SCHEMA = "gamebuddy-stardew-action-projection-parity/v1";
-export const PROJECTION_PARITY_GAME_ID = "stardew";
-export const PROJECTION_PARITY_SURFACE_SCHEMA = "gamebuddy-stardew-action-surface/v1";
+export const PROJECTION_PARITY_SURFACE_SCHEMA = "gamebuddy-action-descriptors/v1";
 export const PROJECTION_PARITY_ENVELOPE_KEYS = Object.freeze([
   "schema",
   "developmentOnly",
-  "gameId",
   "surface",
   "lifecycle",
   "protocol",
@@ -15,13 +13,17 @@ export const PROJECTION_PARITY_ENVELOPE_KEYS = Object.freeze([
   "guardOrder",
   "absentRoutes",
 ]);
-export const PROJECTION_PARITY_SURFACE_KEYS = Object.freeze(["schema", "registrations"]);
-export const PROJECTION_PARITY_REGISTRATION_KEYS = Object.freeze([
+export const PROJECTION_PARITY_SURFACE_KEYS = Object.freeze(["schema", "catalogRevision", "actions"]);
+export const PROJECTION_PARITY_ACTION_KEYS = Object.freeze([
   "actionId",
-  "familyId",
   "identityVersion",
   "lifecycle",
   "kind",
+  "argumentSchema",
+  "outputFacts",
+  "resourceTemplate",
+  "effect",
+  "postcondition",
 ]);
 export const PROJECTION_PARITY_LIFECYCLE_KEYS = Object.freeze([
   "admittedLifecycles",
@@ -45,9 +47,8 @@ export const PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS = Object.freeze([
 export const PROJECTION_PARITY_GUARD_ORDER = Object.freeze([
   "schema",
   "development_scope",
-  "game_id",
   "envelope_shape",
-  "surface_registrations",
+  "surface_actions",
   "lifecycle_partition",
   "surface_subsets",
   "protocol_union",
@@ -309,31 +310,27 @@ export function validateActionProjectionParity(input) {
     fail("invalid_scope");
   }
 
-  // guard: game_id
-  if (dataDescriptor(parsed, "gameId", "invalid_envelope_shape").value !== PROJECTION_PARITY_GAME_ID) {
-    fail("invalid_game_id");
-  }
-
-  // guard: surface_registrations — registration identity/lifecycle/kind facts
+  // guard: surface_actions — canonical action descriptors and identity facts
   const surface = dataDescriptor(parsed, "surface", "invalid_envelope_shape").value;
   assertPlainJsonObject(surface, "invalid_surface");
   exactKeys(surface, PROJECTION_PARITY_SURFACE_KEYS, "invalid_surface_shape");
   if (dataDescriptor(surface, "schema", "invalid_surface_shape").value !== PROJECTION_PARITY_SURFACE_SCHEMA) {
     fail("invalid_surface_schema");
   }
-  const registrations = dataDescriptor(surface, "registrations", "invalid_surface_shape").value;
-  if (!isArray(registrations, "invalid_registrations") || registrations.length === 0 || registrations.length > PROJECTION_PARITY_MAX_REGISTRATIONS) {
+  const catalogRevision = dataDescriptor(surface, "catalogRevision", "invalid_surface_shape").value;
+  if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 0) fail("invalid_catalog_revision");
+  const actions = dataDescriptor(surface, "actions", "invalid_surface_shape").value;
+  if (!isArray(actions, "invalid_actions") || actions.length === 0 || actions.length > PROJECTION_PARITY_MAX_REGISTRATIONS) {
     fail("bounds");
   }
   const seenActionIds = new Set();
-  const normalizedRegistrations = registrations.map((registration) => {
-    assertPlainJsonObject(registration, "invalid_registration");
-    exactKeys(registration, PROJECTION_PARITY_REGISTRATION_KEYS, "invalid_registration_shape");
-    const actionId = identifierOf(dataDescriptor(registration, "actionId", "invalid_registration_shape").value, "invalid_action_id");
-    const familyId = identifierOf(dataDescriptor(registration, "familyId", "invalid_registration_shape").value, "invalid_family_id");
-    const identityVersion = dataDescriptor(registration, "identityVersion", "invalid_registration_shape").value;
-    const lifecycle = dataDescriptor(registration, "lifecycle", "invalid_registration_shape").value;
-    const kind = dataDescriptor(registration, "kind", "invalid_registration_shape").value;
+  const normalizedActions = actions.map((action) => {
+    assertPlainJsonObject(action, "invalid_action");
+    exactKeys(action, PROJECTION_PARITY_ACTION_KEYS, "invalid_action_shape");
+    const actionId = identifierOf(dataDescriptor(action, "actionId", "invalid_action_shape").value, "invalid_action_id");
+    const identityVersion = dataDescriptor(action, "identityVersion", "invalid_action_shape").value;
+    const lifecycle = dataDescriptor(action, "lifecycle", "invalid_action_shape").value;
+    const kind = dataDescriptor(action, "kind", "invalid_action_shape").value;
     if (seenActionIds.has(actionId)) fail("duplicate_action_id");
     seenActionIds.add(actionId);
     if (!Number.isSafeInteger(identityVersion) || identityVersion < 1 || identityVersion > PROJECTION_PARITY_MAX_IDENTITY_VERSION) {
@@ -341,9 +338,9 @@ export function validateActionProjectionParity(input) {
     }
     if (typeof lifecycle !== "string" || !ADMITTED_LIFECYCLES.has(lifecycle)) fail("invalid_lifecycle");
     if (typeof kind !== "string" || !KINDS.has(kind)) fail("invalid_kind");
-    return Object.freeze({ actionId, familyId, identityVersion, lifecycle, kind });
+    return Object.freeze({ ...action });
   });
-  const registrationById = new Map(normalizedRegistrations.map((registration) => [registration.actionId, registration]));
+  const actionById = new Map(normalizedActions.map((action) => [action.actionId, action]));
 
   // guard: lifecycle_partition — published-vs-withdrawn as an exact partition
   const lifecycle = dataDescriptor(parsed, "lifecycle", "invalid_envelope_shape").value;
@@ -360,26 +357,26 @@ export function validateActionProjectionParity(input) {
   if (lifecycleIds.size !== executableIds.length + readOnlyIds.length + experimentalIds.length) {
     fail("lifecycle_overlap");
   }
-  if (lifecycleIds.size !== registrationById.size) fail("lifecycle_partition_mismatch");
-  for (const actionId of registrationById.keys()) {
+  if (lifecycleIds.size !== actionById.size) fail("lifecycle_partition_mismatch");
+  for (const actionId of actionById.keys()) {
     if (!lifecycleIds.has(actionId)) fail("lifecycle_partition_mismatch");
   }
 
-  // guard: surface_subsets — each subset matches registration identity facts
+  // guard: surface_subsets — each subset matches action identity facts
   for (const actionId of executableIds) {
-    const registration = registrationById.get(actionId);
-    if (registration.lifecycle !== "published" || registration.kind !== "execution") {
+    const action = actionById.get(actionId);
+    if (action.lifecycle !== "published" || action.kind !== "execution") {
       fail("executable_subset_invalid");
     }
   }
   for (const actionId of readOnlyIds) {
-    const registration = registrationById.get(actionId);
-    if (registration.lifecycle !== "published" || registration.kind !== "read_only") {
+    const action = actionById.get(actionId);
+    if (action.lifecycle !== "published" || action.kind !== "read_only") {
       fail("readonly_subset_invalid");
     }
   }
   for (const actionId of experimentalIds) {
-    if (registrationById.get(actionId).lifecycle !== "experimental") fail("experimental_subset_invalid");
+    if (actionById.get(actionId).lifecycle !== "experimental") fail("experimental_subset_invalid");
   }
 
   // guard: protocol_union — sorted unique schema-id union, format-bounded
@@ -391,13 +388,13 @@ export function validateActionProjectionParity(input) {
     if (schemas[index - 1] >= schemas[index]) fail("protocol_union_unsorted");
   }
 
-  // guard: protocol_controls — fixed control IDs are pinned and never registrations
+  // guard: protocol_controls — fixed control IDs are pinned and never actions
   const fixedControls = dataDescriptor(protocol, "fixedControls", "invalid_protocol_shape").value;
   if (!isArray(fixedControls, "invalid_protocol_shape") || fixedControls.length !== PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS.length || PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS.some((value, index) => fixedControls[index] !== value)) {
     fail("invalid_fixed_controls");
   }
   for (const controlId of PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS) {
-    if (registrationById.has(controlId)) fail("control_in_surface");
+    if (actionById.has(controlId)) fail("control_in_surface");
   }
 
   // guard: ownership_partition — native-local runner and fixture ownership
@@ -442,10 +439,10 @@ export function validateActionProjectionParity(input) {
   return Object.freeze({
     schema: PROJECTION_PARITY_SCHEMA,
     developmentOnly: true,
-    gameId: PROJECTION_PARITY_GAME_ID,
     surface: Object.freeze({
       schema: PROJECTION_PARITY_SURFACE_SCHEMA,
-      registrations: Object.freeze(normalizedRegistrations),
+      catalogRevision,
+      actions: Object.freeze(normalizedActions),
     }),
     lifecycle: Object.freeze({
       admittedLifecycles: Object.freeze([...PROJECTION_PARITY_ADMITTED_LIFECYCLES]),

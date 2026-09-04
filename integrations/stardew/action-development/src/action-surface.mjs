@@ -1,16 +1,19 @@
 const ERROR_PREFIX = "stardew_action_surface";
 
-export const ACTION_SURFACE_SCHEMA = "gamebuddy-stardew-action-surface/v1";
-export const ACTION_SURFACE_GAME_ID = "stardew";
+export const ACTION_SURFACE_SCHEMA = "gamebuddy-action-descriptors/v1";
 export const ACTION_SURFACE_ENVELOPE_KEYS = Object.freeze([
   "schema",
-  "gameId",
-  "registrations",
+  "catalogRevision",
+  "actions",
 ]);
-export const ACTION_SURFACE_REGISTRATION_KEYS = Object.freeze([
+export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
   "actionId",
-  "familyId",
   "identityVersion",
+  "argumentSchema",
+  "outputFacts",
+  "resourceTemplate",
+  "effect",
+  "postcondition",
   "lifecycle",
   "kind",
 ]);
@@ -272,20 +275,34 @@ function validateIdentifier(value, code) {
   return value;
 }
 
-function validateRegistration(value, seenActionIds) {
+function validateAction(value, seenActionIds) {
   if (!isObject(value) || isArray(value) || prototypeOf(value) !== Object.prototype) {
-    fail("invalid_registration");
+    fail("invalid_action");
   }
-  exactKeys(value, ACTION_SURFACE_REGISTRATION_KEYS, "registration");
+  exactKeys(value, ACTION_SURFACE_ACTION_KEYS, "action");
 
   const actionId = validateIdentifier(dataDescriptor(value, "actionId").value, "invalid_action_id");
-  const familyId = validateIdentifier(dataDescriptor(value, "familyId").value, "invalid_family_id");
   const identityVersion = dataDescriptor(value, "identityVersion").value;
   const lifecycle = dataDescriptor(value, "lifecycle").value;
   const kind = dataDescriptor(value, "kind").value;
 
   if (seenActionIds.has(actionId)) fail("duplicate_action_id");
   seenActionIds.add(actionId);
+
+  const argumentSchema = dataDescriptor(value, "argumentSchema").value;
+  const outputFacts = dataDescriptor(value, "outputFacts").value;
+  const resourceTemplate = dataDescriptor(value, "resourceTemplate").value;
+  const effect = dataDescriptor(value, "effect").value;
+  const postcondition = dataDescriptor(value, "postcondition").value;
+  if (!isObject(argumentSchema) || isArray(argumentSchema) || !isObject(outputFacts) || isArray(outputFacts)
+    || !isObject(resourceTemplate) || isArray(resourceTemplate) || !isObject(postcondition) || isArray(postcondition)
+    || !Array.isArray(resourceTemplate.claims) || resourceTemplate.claims.length > ACTION_SURFACE_MAX_ARRAY_ITEMS
+    || resourceTemplate.claims.some((claim) => !isObject(claim) || isArray(claim)
+      || ownKeys(claim).length !== 2 || !ownKeys(claim).includes("key") || !ownKeys(claim).includes("value")
+      || typeof dataDescriptor(claim, "key").value !== "string" || typeof dataDescriptor(claim, "value").value !== "string")
+    || (effect !== "read" && effect !== "write") || typeof postcondition.name !== "string") {
+    fail("invalid_action");
+  }
   if (
     !Number.isSafeInteger(identityVersion)
     || identityVersion < 1
@@ -296,7 +313,7 @@ function validateRegistration(value, seenActionIds) {
   if (typeof lifecycle !== "string" || !LIFECYCLES.has(lifecycle)) fail("invalid_lifecycle");
   if (typeof kind !== "string" || !KINDS.has(kind)) fail("invalid_kind");
 
-  return Object.freeze({ actionId, familyId, identityVersion, lifecycle, kind });
+  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition });
 }
 
 /**
@@ -311,24 +328,22 @@ export function validateActionSurface(input) {
   exactKeys(input, ACTION_SURFACE_ENVELOPE_KEYS, "envelope");
 
   const schema = dataDescriptor(input, "schema").value;
-  const gameId = dataDescriptor(input, "gameId").value;
-  const registrations = dataDescriptor(input, "registrations").value;
+  const catalogRevision = dataDescriptor(input, "catalogRevision").value;
+  const actions = dataDescriptor(input, "actions").value;
   if (schema !== ACTION_SURFACE_SCHEMA) fail("invalid_schema");
-  if (gameId !== ACTION_SURFACE_GAME_ID) fail("invalid_game_id");
-  if (!isArray(registrations)) fail("invalid_registrations");
-  if (registrations.length === 0 || registrations.length > ACTION_SURFACE_MAX_REGISTRATIONS) {
+  if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 0) fail("invalid_catalog_revision");
+  if (!isArray(actions)) fail("invalid_actions");
+  if (actions.length === 0 || actions.length > ACTION_SURFACE_MAX_REGISTRATIONS) {
     fail("bounds");
   }
 
   const seenActionIds = new Set();
-  const validatedRegistrations = registrations.map((registration) =>
-    validateRegistration(registration, seenActionIds),
-  );
+  const validatedActions = actions.map((action) => validateAction(action, seenActionIds));
 
   return Object.freeze({
     schema: ACTION_SURFACE_SCHEMA,
-    gameId: ACTION_SURFACE_GAME_ID,
-    registrations: Object.freeze(validatedRegistrations),
+    catalogRevision,
+    actions: Object.freeze(validatedActions),
   });
 }
 
