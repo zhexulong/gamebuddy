@@ -4,66 +4,81 @@ using System.Text.Json;
 namespace GameBuddy.Stardew.Core.Policy;
 
 /// <summary>
-/// The bounded identity-only projection used by the action-development export.
-/// It is derived from the Mod-owned <see cref="FarmhandActionCatalog.Registrations"/>
-/// in catalog order and deliberately omits handler, policy, capability, live,
-/// and Host metadata. This projection is a development artifact producer; it
-/// does not grant membership or authority to any runtime consumer.
+/// The canonical descriptor shape consumed by game-action-program. It is a
+/// static Mod projection, not a live capability publication or grant.
 /// </summary>
-public sealed record FarmhandActionSurfaceRegistration(
+public sealed record FarmhandActionDescriptorProjection(
     string ActionId,
-    string FamilyId,
     int IdentityVersion,
     string Lifecycle,
-    string Kind
+    string Kind,
+    IReadOnlyDictionary<string, FarmhandActionArgumentSchema> ArgumentSchema,
+    IReadOnlyDictionary<string, string> OutputFacts,
+    FarmhandActionResourceTemplate ResourceTemplate,
+    string Effect,
+    FarmhandActionPostcondition Postcondition
 );
 
-/// <summary>Exact versioned envelope emitted for the Stardew action surface.</summary>
-public sealed record FarmhandActionSurfaceArtifact(
+public sealed record FarmhandActionArgumentSchema(string Type);
+public sealed record FarmhandActionResourceTemplate(IReadOnlyList<FarmhandActionResourceTemplateValueProjection> Claims);
+public sealed record FarmhandActionResourceTemplateValueProjection(string Key, string Value);
+public sealed record FarmhandActionPostcondition(string Name);
+
+/// <summary>Exact descriptor envelope exported by the Mod.</summary>
+public sealed record FarmhandActionDescriptorArtifact(
     string Schema,
-    string GameId,
-    IReadOnlyList<FarmhandActionSurfaceRegistration> Registrations
+    long CatalogRevision,
+    IReadOnlyList<FarmhandActionDescriptorProjection> Actions
 );
 
 /// <summary>
-/// Static, restrictive publication projection for the complete fixed catalog.
-/// All catalog registrations are retained, including experimental and read-only
-/// entries, because this artifact identifies the catalog rather than publishing
-/// the currently enabled runtime capability set.
+/// Static, restrictive projection of the fixed Mod catalog. It publishes no
+/// handler, family, policy, capability, or live-game metadata.
 /// </summary>
 public static class FarmhandActionSurfacePublication
 {
-    public const int MaximumRegistrations = 128;
+    public const int MaximumActions = 128;
     public const int MaximumIdentityLength = 128;
+    public const long CatalogRevision = 1;
 
-    public static IReadOnlyList<FarmhandActionSurfaceRegistration> Registrations { get; } = CreateRegistrations();
+    public static IReadOnlyList<FarmhandActionDescriptorProjection> Actions { get; } = CreateActions();
 
-    private static ReadOnlyCollection<FarmhandActionSurfaceRegistration> CreateRegistrations()
+    private static ReadOnlyCollection<FarmhandActionDescriptorProjection> CreateActions()
     {
-        if (FarmhandActionCatalog.Registrations.Count > MaximumRegistrations)
-            throw new InvalidOperationException("Farmhand action surface registration count exceeds the bounded export limit.");
+        if (FarmhandActionCatalog.Registrations.Count > MaximumActions)
+            throw new InvalidOperationException("Farmhand action descriptor count exceeds the bounded export limit.");
 
-        FarmhandActionSurfaceRegistration[] projected = FarmhandActionCatalog.Registrations
-            .Select(ProjectRegistration)
-            .ToArray();
-
-        return Array.AsReadOnly(projected);
+        return Array.AsReadOnly(FarmhandActionCatalog.Registrations.Select(ProjectAction).ToArray());
     }
 
-    private static FarmhandActionSurfaceRegistration ProjectRegistration(FarmhandActionRegistration registration)
+    private static FarmhandActionDescriptorProjection ProjectAction(FarmhandActionRegistration registration)
     {
         ArgumentNullException.ThrowIfNull(registration);
         ValidateIdentity(registration.ActionId, nameof(registration.ActionId));
-        ValidateIdentity(registration.FamilyId, nameof(registration.FamilyId));
         if (registration.IdentityVersion < 1)
             throw new InvalidOperationException("Farmhand action identity version must be positive.");
 
-        return new FarmhandActionSurfaceRegistration(
+        FarmhandActionDescriptor descriptor = registration.Descriptor
+            ?? throw new InvalidOperationException("Farmhand action registration requires a descriptor.");
+        Dictionary<string, FarmhandActionArgumentSchema> argumentSchema = descriptor.Arguments.ToDictionary(
+            argument => argument.Name,
+            argument => new FarmhandActionArgumentSchema(argument.Type),
+            StringComparer.Ordinal);
+        if (argumentSchema.Count != descriptor.Arguments.Count)
+            throw new InvalidOperationException("Farmhand action descriptor argument names must be unique.");
+
+        IReadOnlyList<FarmhandActionResourceTemplateValueProjection> resourceClaims = Array.AsReadOnly(descriptor.ResourceTemplate.Select(claim =>
+            new FarmhandActionResourceTemplateValueProjection(claim.Key, claim.Value.ToString())).ToArray());
+        return new FarmhandActionDescriptorProjection(
             registration.ActionId,
-            registration.FamilyId,
             registration.IdentityVersion,
             registration.Lifecycle.ToWireValue(),
-            registration.Kind.ToWireValue());
+            registration.Kind.ToWireValue(),
+            new ReadOnlyDictionary<string, FarmhandActionArgumentSchema>(argumentSchema),
+            new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(descriptor.OutputFacts, StringComparer.Ordinal)),
+            new FarmhandActionResourceTemplate(resourceClaims),
+            descriptor.Effect,
+            new FarmhandActionPostcondition(descriptor.Postcondition));
     }
 
     private static void ValidateIdentity(string value, string name)
@@ -90,15 +105,10 @@ public static class FarmhandActionSurfacePublication
     }
 }
 
-/// <summary>
-/// Core-owned, deterministic serializer for the action-development artifact.
-/// The no-input API binds output to the immutable publication projection and
-/// emits no package artifact, runtime state, or live game data.
-/// </summary>
+/// <summary>Deterministic serializer for the canonical Mod descriptor projection.</summary>
 public static class FarmhandActionSurfaceExport
 {
-    public const string Schema = "gamebuddy-stardew-action-surface/v1";
-    public const string GameId = "stardew";
+    public const string Schema = "gamebuddy-action-descriptors/v1";
 
     private static readonly JsonSerializerOptions ExportOptions = new()
     {
@@ -106,10 +116,10 @@ public static class FarmhandActionSurfaceExport
         WriteIndented = false,
     };
 
-    public static FarmhandActionSurfaceArtifact CreateArtifact() => new(
+    public static FarmhandActionDescriptorArtifact CreateArtifact() => new(
         Schema,
-        GameId,
-        FarmhandActionSurfacePublication.Registrations);
+        FarmhandActionSurfacePublication.CatalogRevision,
+        FarmhandActionSurfacePublication.Actions);
 
     public static string SerializeToJson() => JsonSerializer.Serialize(CreateArtifact(), ExportOptions);
 }
