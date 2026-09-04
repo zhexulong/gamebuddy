@@ -170,13 +170,27 @@ test("dispatches run-live once and projects bounded success and blocked facts", 
   assert.deepEqual(blocked, expected({ ...action, runId: "ar1_blocked" }, "live", { outcome: "blocked", reasonCode: "preflight_not_ready" }));
 });
 
-test("rejects missing profile and mismatched live identity", async () => {
+test("keeps the production route blocked without a registered Host runner and never falls back", async () => {
+  for (const profileFile of [undefined, "C:\\profile.json"]) {
+    const invocation = { command: "run-live", ...action, runId: `ar1_unregistered_${profileFile === undefined ? "no_profile" : "profile"}`, ...(profileFile === undefined ? {} : { profileFile }) };
+    const report = await runProductionActionProject({ manifest, invocation });
+    assert.deepEqual(report, expected(invocation, "live", { outcome: "blocked", reasonCode: "host_runner_not_registered" }));
+  }
+});
+
+test("allows profile-free candidate runs while preserving identity boundaries", async () => {
   let calls = 0;
-  await assert.rejects(
-    runActionProject({ manifest, invocation: { command: "run-live", ...action }, dependencies: { __testOnlyActionRegistrations: [syntheticRegistration({ actionId: "equip_tool", runLive: async () => { calls += 1; } })] } }),
-    /profile_missing/,
-  );
-  assert.equal(calls, 0);
+  const registration = syntheticRegistration({ actionId: "equip_tool", runLive: async ({ invocation }) => {
+    calls += 1;
+    return { gameId: "stardew", actionId: "equip_tool", status: "live", state: "BLOCKED", runId: invocation.runId, reasons: ["host_runner_not_registered"] };
+  } });
+  const blocked = await runActionProject({
+    manifest,
+    invocation: { command: "run-live", ...action, runId: "ar1_profile_free" },
+    dependencies: { __testOnlyActionRegistrations: [registration] },
+  });
+  assert.deepEqual(blocked, expected({ ...action, runId: "ar1_profile_free" }, "live", { outcome: "blocked", reasonCode: "host_runner_not_registered" }));
+  assert.equal(calls, 1);
   for (const result of [
     { gameId: "other", actionId: "equip_tool", runId: "ar1_expected", state: "PASSED" },
     { gameId: "stardew", actionId: "other", runId: "ar1_expected", state: "PASSED" },

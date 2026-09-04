@@ -4,6 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 export const DEFAULT_SUITE_TIMEOUT_MS = 15 * 60_000;
 export const CLEANUP_TIMEOUT_MS = 5_000;
 const MAX_CAPTURE_BYTES = 64 * 1024;
+const MAX_CONTROL_CHILD_LINE_BYTES = 32 * 1024;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const VALID_TERMINATION_POLICIES = new Set(["immediate", "term-then-kill"]);
 
@@ -222,7 +223,7 @@ function assertBoundedJsonLine(value, errorCode) {
   try { serialized = JSON.stringify(value); } catch { throw validationError(errorCode); }
   if (typeof serialized !== "string") throw validationError(errorCode);
   const line = `${serialized}\n`;
-  if (Buffer.byteLength(line, "utf8") > MAX_CAPTURE_BYTES) {
+  if (Buffer.byteLength(line, "utf8") > MAX_CONTROL_CHILD_LINE_BYTES) {
     throw validationError(errorCode);
   }
   return line;
@@ -233,7 +234,7 @@ function parseOneBoundedJsonResult(stdout) {
     throw validationError("control_child_invalid_result");
   }
   const line = stdout.slice(0, -1);
-  if (line.length === 0 || Buffer.byteLength(stdout, "utf8") > MAX_CAPTURE_BYTES) {
+  if (line.length === 0 || Buffer.byteLength(stdout, "utf8") > MAX_CONTROL_CHILD_LINE_BYTES) {
     throw validationError("control_child_invalid_result");
   }
   try { return JSON.parse(line); } catch { throw validationError("control_child_invalid_result"); }
