@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -59,6 +59,12 @@ function signed<T extends { signature: string }>(value: T): T {
   };
 }
 
+async function canonicalTemporaryRoot(prefix: string): Promise<string> {
+  const parent = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof parent !== "string" || parent.length === 0) throw new Error("test_local_app_data_unavailable");
+  return await mkdtemp(join(await realpath(parent), prefix));
+}
+
 async function withFixture(
   run: (fixture: {
     directory: string;
@@ -69,8 +75,8 @@ async function withFixture(
     kills: number[];
   }) => Promise<void>,
 ): Promise<void> {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-lifecycle-"));
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-lifecycle-owner-"));
+  const directory = await canonicalTemporaryRoot("gamebuddy-lifecycle-");
+  const runtimeRoot = await canonicalTemporaryRoot("gamebuddy-lifecycle-owner-");
   const probes = new Map<number, { pid: number; creationDate: string } | null>();
   const kills: number[] = [];
   bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(simulatedLockHelper));
@@ -128,8 +134,8 @@ async function withFixture(
     });
   } finally {
     bindWindowsStaleLockReclaimer(undefined);
-    await rm(directory, { recursive: true, force: true });
-    await rm(runtimeRoot, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await rm(runtimeRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
