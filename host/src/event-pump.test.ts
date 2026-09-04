@@ -51,6 +51,37 @@ test("event pump steers player input and attaches the latest snapshot", async ()
   assert.equal(pump.pendingCount, 0);
 });
 
+test("event pump serializes a bounded context projection without replacing authoritative fact payload", async () => {
+  const pump = new CompanionEventPump();
+  const authoritativePayload = { revision: 7, activeExecution: { requestId: "request_secret" } };
+  const contextProjection = Object.freeze({ schema: "gamebuddy-game-snapshot-projection/v1", available: true, snapshotRevision: 7, text: "bounded" });
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "snapshot",
+    correlationId: "snapshot",
+    revision: 7,
+    payload: authoritativePayload,
+    contextProjection,
+  });
+  pump.enqueuePlayerInput({ source: "player_text", inputId: "input", text: "继续", locale: "zh-CN", timestampMs: 1 });
+
+  const delivered: string[] = [];
+  await pump.flush({
+    async deliver(text) {
+      delivered.push(text);
+    },
+  });
+
+  const batch = JSON.parse(delivered[0] ?? "{}") as {
+    worldFacts: Array<{ payload: Record<string, unknown> }>;
+    events: Array<{ payload: Record<string, unknown> }>;
+  };
+  assert.deepEqual(batch.worldFacts[0]?.payload, contextProjection);
+  assert.deepEqual(batch.events.find((event) => event.payload.schema !== undefined)?.payload, contextProjection);
+  assert.equal(JSON.stringify(batch).includes("request_secret"), false);
+  assert.equal("contextProjection" in (batch.worldFacts[0] ?? {}), false);
+});
+
 test("event pump holds snapshot and meaningful progress until an ordinary trigger arrives", async () => {
   const pump = new CompanionEventPump();
   const delivered: Array<{ text: string; disposition: string }> = [];

@@ -13,6 +13,8 @@ export type WorldFact = Readonly<{
   requestId?: string;
   sourceEventId?: string;
   payload: Readonly<Record<string, unknown>>;
+  /** Bounded model-facing context; the authoritative payload stays Host-owned. */
+  contextProjection?: Readonly<Record<string, unknown>>;
 }>;
 export type PlayerInput = Readonly<{
   source: "player_text" | "voice_final";
@@ -188,13 +190,21 @@ export class CompanionEventPump {
     const events = [...normalizedInputs, ...normalizedFacts].sort(compareEvents);
     // Serialize before delivery, rather than rebuilding on retry: callers own
     // arbitrary nested payload objects and may mutate them while a sink awaits.
+    // The complete authoritative payload remains available to Host consumers;
+    // only the model-facing worldFacts projection is narrowed here.
+    const deliveredFacts = batchFacts.map((fact) => {
+      const projection = fact.contextProjection;
+      if (projection === undefined) return fact;
+      const { contextProjection: _contextProjection, ...factWithoutProjection } = fact;
+      return Object.freeze({ ...factWithoutProjection, payload: projection });
+    });
     const serialized = JSON.stringify({
       kind: "gamebuddy_fact_batch",
       batchId,
       disposition,
       triggerEventIds,
       playerInputs: batchInputs,
-      worldFacts: batchFacts,
+      worldFacts: deliveredFacts,
       events,
     });
     return Object.freeze({
@@ -271,7 +281,7 @@ function normalizeFact(fact: WorldFact): NormalizedEvent {
     ...(fact.executionId === undefined ? {} : { executionId: fact.executionId }),
     ...(fact.requestId === undefined ? {} : { requestId: fact.requestId }),
     ...(fact.sourceEventId === undefined ? {} : { sourceEventId: fact.sourceEventId }),
-    payload: fact.payload,
+    payload: fact.contextProjection ?? fact.payload,
   };
 }
 
