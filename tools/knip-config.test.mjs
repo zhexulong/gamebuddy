@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -10,7 +10,20 @@ import { runReports } from "./run-knip-reports.mjs";
 const exec = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
 const config = JSON.parse(await readFile(resolve(root, "knip.json"), "utf8"));
+const productionArtifactConfig = JSON.parse(await readFile(resolve(root, "host/production-artifact.config.json"), "utf8"));
+const productionTsconfig = JSON.parse(await readFile(resolve(root, "host/tsconfig.production.json"), "utf8"));
 const expected = [".", "packages/*", "host", "voice-gateway", "dialogue-web", "integrations/stardew/action-development"];
+const approvedIgnore = [
+  ".worktrees/**",
+  "vendor/magic-context/**",
+  "**/dist/**",
+  "**/dist-test/**",
+  "**/node_modules/**",
+  "**/.tmp/**",
+  "**/artifacts/**",
+  "**/coverage/**",
+  "**/playwright-report/**",
+];
 
 async function cli(args, cwd = root) {
   try {
@@ -27,7 +40,10 @@ test("declares the pnpm workspace projection and safe exclusions", async () => {
     entry: ["tools/*.mjs"],
     project: ["tools/**/*.mjs"],
   });
-  assert.ok(config.ignore.includes(".worktrees/**"));
+  assert.deepEqual(config.ignore, approvedIgnore);
+  for (const broadProductionIgnore of ["**/src/**", "**/src/**/*", "host/src/**", "dialogue-web/src/**"]) {
+    assert.ok(!config.ignore.includes(broadProductionIgnore), `production source must not be ignored: ${broadProductionIgnore}`);
+  }
   const workspace = await readFile(resolve(root, "pnpm-workspace.yaml"), "utf8");
   for (const path of expected.slice(1)) assert.match(workspace, new RegExp(`^  - ${path.replace("*", "\\*")}\\s*$`, "m"));
   assert.match(workspace, /!vendor\/magic-context\/\*\*/);
@@ -44,12 +60,44 @@ test("declares the pnpm workspace projection and safe exclusions", async () => {
   ]) assert.ok(config.ignore.includes(pattern));
 });
 
+test("maps Host production entries to artifact roots and production TypeScript files", async () => {
+  const hostEntries = config.workspaces.host.entry.filter((pattern) => pattern.endsWith("!"));
+  const expectedHostEntries = productionArtifactConfig.entryRoots.map((rootName) => `src/${rootName.replace(/\.js$/, ".ts")}!`);
+  assert.deepEqual(hostEntries, expectedHostEntries);
+
+  for (const entryRoot of productionArtifactConfig.entryRoots) {
+    const sourceFile = `src/${entryRoot.replace(/\.js$/, ".ts")}`;
+    assert.ok(productionTsconfig.files.includes(sourceFile), `production tsconfig must include host/${sourceFile}`);
+    await access(resolve(root, "host", sourceFile));
+  }
+
+  const dialogueWebEntry = config.workspaces["dialogue-web"].entry;
+  assert.deepEqual(dialogueWebEntry, ["src/main.tsx!"]);
+  await access(resolve(root, "dialogue-web/src/main.tsx"));
+});
+
 test("pins scripts, exposes the clean scope, and validates the actual CLI contract", async () => {
   const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
   assert.equal(packageJson.devDependencies.knip, "6.34.0");
   assert.equal(packageJson.scripts["report:knip"], "knip --config knip.json --reporter json");
   assert.equal(packageJson.scripts["report:knip:production"], "knip --config knip.json --production --reporter json");
   assert.deepEqual(config.workspaces.host.project, ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs"]);
+  const productionEntries = Object.values(config.workspaces).flatMap(({ entry }) => entry.filter((pattern) => pattern.endsWith("!")));
+  assert.deepEqual(productionEntries, [
+    "src/index.{js,mjs,ts,tsx}!",
+    "src/process-supervisor.mjs!",
+    "src/verifier.mjs!",
+    "src/model.mjs!",
+    "src/descriptors.mjs!",
+    "bin/game-action.mjs!",
+    "src/main.ts!",
+    "src/dialogue-web-main.ts!",
+    "src/stardew-attachment.ts!",
+    "src/farmhand-companion-preview.ts!",
+    "src/main.ts!",
+    "src/main.tsx!",
+  ]);
+  assert.ok(!productionEntries.some((pattern) => pattern.includes("src/**/*")));
   assert.ok(!config.workspaces["."].project.some((pattern) => pattern.startsWith("host/")));
   assert.ok(!config.workspaces["."].entry.some((pattern) => pattern.startsWith("host/**/*.")));
   const versionResult = await cli(["--version"]);
