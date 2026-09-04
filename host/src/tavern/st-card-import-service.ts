@@ -123,6 +123,7 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     field("name", profile.identity.name, "candidate_only"),
     field("identity_role", profile.identity.role, "candidate_only"),
     field("continuity", profile.identity.continuity, "candidate_only"),
+    ...(value.scenario === undefined ? [] : [field("scenario", value.scenario, "candidate_only")]),
     ...(profile.persona === undefined
       ? []
       : [
