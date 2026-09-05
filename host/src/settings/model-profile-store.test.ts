@@ -12,7 +12,8 @@ import {
 } from "./model-profile-store.js";
 
 async function canonicalTemporaryRoot(): Promise<string> {
-  const root = process.platform === "win32" ? process.env.LOCALAPPDATA ?? tmpdir() : tmpdir();
+  const root = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof root !== "string" || root.length === 0) throw new Error("test_local_app_data_unavailable");
   return realpath(root);
 }
 

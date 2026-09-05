@@ -40,6 +40,8 @@ jobs:
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
       - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check:host-windows-test-preflight
+      - run: pnpm test:host-windows-test-preflight
       # Repository-wide formatting/linting belongs to ordinary contributor CI.
       # This protected lane validates the fixed Host release composition only.
       - run: pnpm check:host-production-import-boundary
