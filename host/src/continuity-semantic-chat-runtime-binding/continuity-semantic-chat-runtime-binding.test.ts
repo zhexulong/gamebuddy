@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 
 import {
   readReservedChatRuntimeMaterializationFacts,
@@ -16,7 +16,7 @@ import { createTestChatRuntimeBinding } from "./continuity-semantic-chat-runtime
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
 async function binding() {
-  const root = await mkdtemp(join(tmpdir(), "chat-runtime-binding-"));
+  const root = await canonicalTestRoot("chat-runtime-binding-");
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
   return {

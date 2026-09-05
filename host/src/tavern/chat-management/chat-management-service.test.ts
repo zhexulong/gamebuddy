@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
 import { composeTavernProfile } from "../browser-contract/index.js";
@@ -52,7 +51,7 @@ function forgedLease(): MountedChatRuntimeLease {
 }
 
 test("management service rejects forged structural leases, non-composed profiles and profiles without chat.rename", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-management-forged-"));
+  const root = await canonicalTestRoot("gamebuddy-management-forged-");
   try {
     const forged = forgedLease();
     assert.throws(
@@ -162,7 +161,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
 }
 
 async function mounted(body: string): Promise<Record<string, unknown>> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-management-service-"));
+  const root = await canonicalTestRoot("gamebuddy-management-service-");
   try {
     return await runMountedChild(body, root);
   } finally {

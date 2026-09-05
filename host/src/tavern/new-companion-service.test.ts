@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { access, lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, lstat, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { identityKey } from "../runtime.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import {
@@ -69,7 +69,7 @@ test("New Companion requires explicit eligible-field review and creates only sup
 });
 
 test("direct New Companion provisions a fresh opaque identity, continuity, and Host-owned profile without a candidate", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-direct-new-companion-"));
+  const root = await canonicalTestRoot("tavern-direct-new-companion-");
   try {
     const created = await provisionDirectNewCompanion(root, "player", "Direct Buddy");
     assert.match(created.identity.companionId, /^companion-/);
@@ -88,8 +88,8 @@ test("direct New Companion provisions a fresh opaque identity, continuity, and H
 });
 
 test("New Companion fails closed when runtime namespace is replaced by a symlink", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-new-companion-boundary-"));
-  const outside = await mkdtemp(join(tmpdir(), "tavern-new-companion-outside-"));
+  const root = await canonicalTestRoot("tavern-new-companion-boundary-");
+  const outside = await canonicalTestRoot("tavern-new-companion-outside-");
   const contextsPath = join(root, "contexts");
   const outsideSentinel = join(outside, "sentinel.txt");
   try {
@@ -118,7 +118,7 @@ test("New Companion fails closed when runtime namespace is replaced by a symlink
 });
 
 test("New Companion provisions a fresh opaque identity and Host-owned profile binding", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-new-companion-"));
+  const root = await canonicalTestRoot("tavern-new-companion-");
   try {
     const pending = { ...candidate, reviewState: "pending" as const };
     const review = createNewCompanionService({

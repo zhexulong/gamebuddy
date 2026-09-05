@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { canonicalJson, TavernArtifactStore } from "./artifact-store.js";
 import {
   createTavernCatalogService,
@@ -122,7 +121,7 @@ test("catalog selection is scoped, revisioned, and contains only inert reference
 });
 
 test("stable materialization uses exact Persona, Scenario, complete DialogueExamples, and always-on WorldBook bindings", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-tavern-stable-"));
+  const root = await canonicalTestRoot("gamebuddy-tavern-stable-");
   const paths = resolveTavernPaths({ root } as never, {
     playerId: "player",
     companionId: "companion",
@@ -229,7 +228,7 @@ test("stable materialization uses exact Persona, Scenario, complete DialogueExam
 });
 
 test("stable materialization accepts only exact resolved managed World Info content", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-tavern-managed-world-info-"));
+  const root = await canonicalTestRoot("gamebuddy-tavern-managed-world-info-");
   const paths = resolveTavernPaths({ root } as never, {
     playerId: "player",
     companionId: "companion",

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+
 import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
@@ -16,7 +15,7 @@ test.after(() => {
 });
 
 async function runtimeRoot(prefix: string): Promise<string> {
-  return await mkdtemp(join(await realpath(tmpdir()), prefix));
+  return await canonicalTestRoot(prefix);
 }
 
 test("coordinator runs callbacks only while held, rejects same-partition reentry, and permits another partition", async () => {

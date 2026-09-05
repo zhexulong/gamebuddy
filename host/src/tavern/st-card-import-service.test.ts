@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { StCardImportService } from "./st-card-import-service.js";
 import { resolveTavernPaths, tavernImportPath } from "./tavern-paths.js";
@@ -10,7 +9,7 @@ import { resolveTavernPaths, tavernImportPath } from "./tavern-paths.js";
 const identity = { playerId: "player-import", companionId: "companion-import", continuityId: "continuity-import" };
 
 test("ST card application import persists hash-verified inert candidate/report and exports readback", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-st-import-"));
+  const root = await canonicalTestRoot("tavern-st-import-");
   try {
     const paths = resolveTavernPaths({ root } as never, identity);
     const service = new StCardImportService(new TavernArtifactStore(root), paths);
@@ -69,7 +68,7 @@ test("ST card application import persists hash-verified inert candidate/report a
 });
 
 test("ST card application import rejects invalid input without creating artifacts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-st-import-"));
+  const root = await canonicalTestRoot("tavern-st-import-");
   try {
     const service = new StCardImportService(
       new TavernArtifactStore(root),
@@ -82,7 +81,7 @@ test("ST card application import rejects invalid input without creating artifact
 });
 
 test("public ST import confirmation denies runtime-identity inputs without a persisted candidate and review", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-st-import-"));
+  const root = await canonicalTestRoot("tavern-st-import-");
   try {
     const service = new StCardImportService(
       new TavernArtifactStore(root),
