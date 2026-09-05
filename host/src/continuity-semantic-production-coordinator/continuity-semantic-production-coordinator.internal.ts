@@ -1,13 +1,13 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { type CompanionInterruption, createCompanionInterruption } from "../companion-interruption.js";
 import {
-  createChatRuntimeBinding,
   type OpaqueChatRuntimeBindingToken,
   readReservedChatRuntimeMaterializationFacts,
   releaseReservedChatRuntimeMaterialization,
   reserveChatRuntimeMaterialization,
   withConsumedChatRuntimeBinding,
 } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
+import { createChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.js";
 import type { MaterializedChatRuntime } from "../continuity-semantic-chat-runtime-materializer/continuity-semantic-chat-runtime-materializer.internal.js";
 import { createHostChatRuntimeMaterializer } from "../continuity-semantic-chat-runtime-materializer/continuity-semantic-chat-runtime-materializer.js";
 import {

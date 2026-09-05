@@ -10,10 +10,13 @@ public sealed class DestinationSearchTests
     private static readonly BridgeScope Scope = new("stardew", "save_01", "world_01", "player_01", "companion_01");
     private static readonly NavigationBindingContext Context = new("runtime_01", Scope, "generation_01", 1, DateTimeOffset.UtcNow);
 
+    private static DestinationSearchResult Find(DerivedDestinationSet set, string? query) =>
+        new DestinationSearch().Find(set, query, new NavigationReferenceStore(), Context);
+
     [Fact]
     public void Find_ResolvesOneExactCurrentLocaleLabel()
     {
-        DestinationSearchResult result = new DestinationSearch().Find(Set(Leaf("Mine", "Mine")), " mine ");
+        DestinationSearchResult result = Find(Set(Leaf("Mine", "Mine")), " mine ");
 
         result.Status.Should().Be("resolved");
         result.Reason.Should().Be("exact_current_locale");
@@ -24,7 +27,7 @@ public sealed class DestinationSearchTests
     [Fact]
     public void Find_ReturnsAtMostThreeFuzzyCandidatesWithoutScores()
     {
-        DestinationSearchResult result = new DestinationSearch().Find(Set(
+        DestinationSearchResult result = Find(Set(
             Leaf("Mine", "Mine"), Leaf("Mines", "Mines"), Leaf("Minecart", "Minecart"), Leaf("Mining Guild", "Guild")),
             "min");
 
@@ -38,7 +41,7 @@ public sealed class DestinationSearchTests
     [Fact]
     public void Find_ResolvesFallbackLabelOnlyWhenUnique()
     {
-        DestinationSearchResult result = new DestinationSearch().Find(Set(
+        DestinationSearchResult result = Find(Set(
             new NavigationSourceNode("mine", "Mine", new NavigationDestination(
                 "stardew", "Mine", "The Mines", null, "Mine"), null, Array.Empty<NavigationSourceNode>())),
             "mine");
@@ -51,20 +54,43 @@ public sealed class DestinationSearchTests
     [Fact]
     public void Find_UsesOpaqueCandidateMarkerForAmbiguousExactLabel()
     {
-        DestinationSearchResult result = new DestinationSearch().Find(Set(
+        DestinationSearchResult result = Find(Set(
             Leaf("Mine", "Mine_A"), Leaf("Mine", "Mine_B")), "mine");
 
         result.Status.Should().Be("candidates");
         result.Reason.Should().Be("ambiguous_exact");
         result.Candidates.Should().HaveCount(2);
         result.Candidates!.Select(candidate => candidate.Selector.Kind).Should().OnlyContain(kind => kind == "ref");
-        result.Candidates!.Select(candidate => candidate.Selector.Ref).Should().OnlyContain(reference => reference == null);
+        result.Candidates!.Select(candidate => candidate.Selector.Ref).Should().OnlyContain(reference =>
+            NavigationReferenceStore.IsWellFormedHandle(reference, "dr1_"));
+    }
+
+    [Fact]
+    public void Find_OpaqueCandidatesResolveOnlyWithinTheirIssuingRuntimeScopeAndGeneration()
+    {
+        var store = new NavigationReferenceStore();
+        DerivedDestinationSet set = Set(Leaf("Mine", "mine_west"), Leaf("Mine", "mine_east"));
+        DestinationSearchResult result = new DestinationSearch().Find(set, "mine", store, Context);
+
+        result.Candidates.Should().NotBeNull().And.HaveCount(2);
+        foreach (DestinationSearchCandidate candidate in result.Candidates!)
+        {
+            store.TryResolveDestination(candidate.Selector, Context, out NavigationDestinationBinding? binding, out string reason)
+                .Should().BeTrue(reason);
+            binding!.CanonicalDestinationIdentity.Should().BeOneOf("mine_west", "mine_east");
+            store.TryResolveDestination(candidate.Selector, Context with { Scope = new BridgeScope("stardew", "save_02", "world_01", "player_01", "companion_01") }, out _, out reason)
+                .Should().BeFalse();
+            reason.Should().Be("destination_ref_stale");
+            store.TryResolveDestination(candidate.Selector, Context with { SourceGeneration = "generation_02" }, out _, out reason)
+                .Should().BeFalse();
+            reason.Should().Be("destination_ref_stale");
+        }
     }
 
     [Fact]
     public void Find_FourExactMatches_ReturnsFirstThreeDeterministicCandidates()
     {
-        DestinationSearchResult result = new DestinationSearch().Find(Set(
+        DestinationSearchResult result = Find(Set(
             Leaf("Zulu", "Zulu", "mine"),
             Leaf("Bravo", "Bravo", "mine"),
             Leaf("Alpha", "Alpha", "mine"),
@@ -76,7 +102,8 @@ public sealed class DestinationSearchTests
         result.Candidates.Should().NotBeNull();
         result.Candidates!.Select(candidate => candidate.Label).Should().Equal("Alpha", "Bravo", "Charlie");
         result.Candidates.Should().OnlyContain(candidate =>
-            candidate.Selector.Kind == "ref" && candidate.Selector.Label == null && candidate.Selector.Ref == null);
+            candidate.Selector.Kind == "ref" && candidate.Selector.Label == null
+                && NavigationReferenceStore.IsWellFormedHandle(candidate.Selector.Ref, "dr1_"));
     }
 
     private static readonly string[] NavigationActions =
@@ -147,7 +174,7 @@ public sealed class DestinationSearchTests
     [InlineData("path/to/mine")]
     public void Find_RejectsMalformedAgentQueries(string query)
     {
-        DestinationSearchResult result = new DestinationSearch().Find(Set(Leaf("Mine", "Mine")), query);
+        DestinationSearchResult result = Find(Set(Leaf("Mine", "Mine")), query);
 
         result.Status.Should().Be("invalid");
         result.Reason.Should().Be("destination_search_invalid");

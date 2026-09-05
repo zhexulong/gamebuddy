@@ -25,7 +25,7 @@ export async function createPublishedWindowsStardewFolderPicker(artifactRoot: st
   return createFixed(resolve(artifactRoot, pairDestination), artifactRoot, resolve(artifactRoot, "production-inventory.json"));
 }
 /** Explicit build/test mint; never used by the production mint. */
-export async function createBuildWindowsStardewFolderPicker(): Promise<WindowsStardewFolderPickerCapability> {
+async function createBuildWindowsStardewFolderPicker(): Promise<WindowsStardewFolderPickerCapability> {
   if (process.platform !== "win32" || process.arch !== "x64") throw unavailable();
   const root = resolve(repositoryRoot, "native", "windows-stardew-folder-picker", ".dist", "win-x64");
   return createFixed(root, root, undefined);

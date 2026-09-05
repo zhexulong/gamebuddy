@@ -30,6 +30,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["inventory_slot"],
   ),
   actionAdapter(
+    "navigate_to_destination",
+    "Navigate to a Stardew destination",
+    "Navigate through the live native multi-hop route to a discovered destination.",
+    ["destination"],
+  ),
+  actionAdapter(
     "travel",
     "Travel through a discovered warp",
     "Use a live native warp from the current Stardew location.",
@@ -182,6 +188,7 @@ export type VisibleStardewAction = StardewActionAdapter & ActionRegistration;
 export const STARDEW_ACTION_TOOL_NAMES = {
   move_to_tile: "stardew_move_to_tile",
   equip_tool: "stardew_equip_tool",
+  navigate_to_destination: "stardew_navigate_to_destination",
   travel: "stardew_travel",
   enter_exit: "stardew_enter_exit",
   till_soil: "stardew_till_soil",
@@ -347,6 +354,7 @@ export function visibleActionsFromModCatalog(
     if (
       adapter === undefined ||
       registration.lifecycle !== "published" ||
+      registration.kind !== "execution" ||
       !live.has(adapter.requiredCapability) ||
       deniedActions.has(registration.actionId) ||
       deniedFamilies.has(registration.familyId)

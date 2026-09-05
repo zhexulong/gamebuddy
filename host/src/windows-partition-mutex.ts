@@ -5,7 +5,7 @@ import {
   windowsNamedMutexName,
 } from "./windows-named-mutex-broker.js";
 
-export type PartitionMutexDisposition = WindowsNamedMutexLeaseAcquisitionDisposition;
+type PartitionMutexDisposition = WindowsNamedMutexLeaseAcquisitionDisposition;
 export type WindowsPartitionMutexLease = Readonly<{
   disposition: WindowsNamedMutexLeaseAcquisitionDisposition;
   release(): Promise<void>;
@@ -23,7 +23,7 @@ export type WindowsAuthorityRootMutex = Readonly<{
   close(): Promise<void>;
 }>;
 
-export class WindowsPartitionMutexError extends Error {
+class WindowsPartitionMutexError extends Error {
   public constructor(
     public readonly code:
       | "async_partition_mutex_section_rejected"

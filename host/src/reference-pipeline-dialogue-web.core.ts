@@ -7,7 +7,7 @@ import {
   TavernBrowserValidatorsV1,
   type TavernProblemV1,
 } from "./tavern/browser-contract/index.js";
-import type { ChatEventStream } from "./tavern/chat-event-stream.js";
+import type { ChatEventStream, ResyncReason } from "./tavern/chat-event-stream.js";
 import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
 
 /**
@@ -16,7 +16,7 @@ import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-s
  * service, or capability state and cannot mint an authenticated request.
  */
 
-export const LOOPBACK_HOST = "127.0.0.1";
+const LOOPBACK_HOST = "127.0.0.1";
 export const MAX_BOOTSTRAP_BODY_BYTES = 4 * 1024;
 const REFERENCE_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline";
 const REFERENCE_RELEASE_TIER = "chat_core";
@@ -218,7 +218,7 @@ export function writeSseEvent(
 export function sendSseResync(
   response: ServerResponse,
   stream: ChatEventStream,
-  reason: import("./tavern/chat-event-stream.js").ResyncReason,
+  reason: ResyncReason,
   generation = 1,
 ): void {
   if (!response.headersSent) {
@@ -297,11 +297,11 @@ export function isExactLoopbackHost(request: IncomingMessage, port: number): boo
   return request.headers.host === `${LOOPBACK_HOST}:${port}`;
 }
 
-export function randomToken(): string {
+function randomToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-export function tokensEqual(left: string, right: string): boolean {
+function tokensEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b);

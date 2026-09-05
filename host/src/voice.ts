@@ -28,7 +28,7 @@ export interface PlayerTextInputSink {
   receive(input: FinalVoiceInput): Promise<void> | void;
 }
 
-export type VoiceSpeechCapabilities = Readonly<{
+type VoiceSpeechCapabilities = Readonly<{
   providerId: string;
   modelRevision: string;
   perUtteranceDirection: boolean;

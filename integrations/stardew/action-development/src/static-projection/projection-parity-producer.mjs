@@ -11,7 +11,6 @@ import {
   PROJECTION_PARITY_ABSENT_ROUTE_TOKENS,
   PROJECTION_PARITY_ADMITTED_LIFECYCLES,
   PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS,
-  PROJECTION_PARITY_GAME_ID,
   PROJECTION_PARITY_GUARD_ORDER,
   PROJECTION_PARITY_SCHEMA,
   validateActionProjectionParity,
@@ -69,16 +68,16 @@ export async function produceProjectionParitySnapshot() {
     maxBytes: ACTION_SURFACE_MAX_JSON_BYTES,
     errorPrefix: ERROR_PREFIX,
   }));
-  const registrations = artifact.registrations;
-  const executableActionIds = registrations
-    .filter((registration) => registration.lifecycle === "published" && registration.kind === "execution")
-    .map((registration) => registration.actionId);
-  const readOnlyActionIds = registrations
-    .filter((registration) => registration.kind === "read_only")
-    .map((registration) => registration.actionId);
-  const experimentalActionIds = registrations
-    .filter((registration) => registration.lifecycle === "experimental")
-    .map((registration) => registration.actionId);
+  const actions = artifact.actions;
+  const executableActionIds = actions
+    .filter((action) => action.lifecycle === "published" && action.kind === "execution")
+    .map((action) => action.actionId);
+  const readOnlyActionIds = actions
+    .filter((action) => action.kind === "read_only")
+    .map((action) => action.actionId);
+  const experimentalActionIds = actions
+    .filter((action) => action.lifecycle === "experimental")
+    .map((action) => action.actionId);
 
   const descriptorSchemas = new Set();
   const descriptorActionIds = [];
@@ -141,17 +140,11 @@ export async function produceProjectionParitySnapshot() {
   const snapshot = {
     schema: PROJECTION_PARITY_SCHEMA,
     developmentOnly: true,
-    gameId: PROJECTION_PARITY_GAME_ID,
-    surface: {
-      schema: artifact.schema,
-      registrations: registrations.map((registration) => ({
-        actionId: registration.actionId,
-        familyId: registration.familyId,
-        identityVersion: registration.identityVersion,
-        lifecycle: registration.lifecycle,
-        kind: registration.kind,
-      })),
-    },
+     surface: {
+       schema: artifact.schema,
+       catalogRevision: artifact.catalogRevision,
+       actions,
+     },
     lifecycle: {
       admittedLifecycles: [...PROJECTION_PARITY_ADMITTED_LIFECYCLES],
       executableActionIds,

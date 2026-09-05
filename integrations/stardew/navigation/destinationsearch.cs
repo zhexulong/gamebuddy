@@ -41,7 +41,11 @@ internal sealed class DestinationSearch
     private const int AmbiguousFuzzyScoreMargin = 5;
     private const int MaximumResultUtf8Bytes = 2048;
 
-    internal DestinationSearchResult Find(DerivedDestinationSet set, string? query)
+    internal DestinationSearchResult Find(
+        DerivedDestinationSet set,
+        string? query,
+        NavigationReferenceStore references,
+        NavigationBindingContext context)
     {
         if (!TryNormalizeQuery(query, out string normalized))
             return DestinationSearchResult.Invalid();
@@ -66,23 +70,23 @@ internal sealed class DestinationSearch
         {
             DestinationSearchResult exactResult = DestinationSearchResult.WithCandidates("ambiguous_exact",
                 exact.Take(MaximumCandidates)
-                    .Select(destination => ToCandidate(destination, destinations, forceOpaqueSelector: true))
+                    .Select(destination => ToCandidate(destination, destinations, set, references, context, forceOpaqueSelector: true))
                     .ToArray());
             return IsWithinResultByteLimit(exactResult) ? exactResult : DestinationSearchResult.Unavailable();
         }
         if (exactCurrent.Length == 1)
         {
-            DestinationSearchResult exactResult = DestinationSearchResult.Resolved("exact_current_locale", ToCandidate(exactCurrent[0], destinations));
+            DestinationSearchResult exactResult = DestinationSearchResult.Resolved("exact_current_locale", ToCandidate(exactCurrent[0], destinations, set, references, context));
             return IsWithinResultByteLimit(exactResult) ? exactResult : DestinationSearchResult.Unavailable();
         }
         if (exactFallback.Length == 1)
         {
-            DestinationSearchResult exactResult = DestinationSearchResult.Resolved("exact_fallback_locale", ToCandidate(exactFallback[0], destinations));
+            DestinationSearchResult exactResult = DestinationSearchResult.Resolved("exact_fallback_locale", ToCandidate(exactFallback[0], destinations, set, references, context));
             return IsWithinResultByteLimit(exactResult) ? exactResult : DestinationSearchResult.Unavailable();
         }
         if (exactAlias.Length == 1)
         {
-            DestinationSearchResult exactResult = DestinationSearchResult.Resolved("exact_alias", ToCandidate(exactAlias[0], destinations, forceOpaqueSelector: true));
+            DestinationSearchResult exactResult = DestinationSearchResult.Resolved("exact_alias", ToCandidate(exactAlias[0], destinations, set, references, context, forceOpaqueSelector: true));
             return IsWithinResultByteLimit(exactResult) ? exactResult : DestinationSearchResult.Unavailable();
         }
 
@@ -102,7 +106,7 @@ internal sealed class DestinationSearch
             .Select(match => match.Destination)
             .ToArray();
         DestinationSearchResult result = DestinationSearchResult.WithCandidates("fuzzy_match",
-            candidates.Select(destination => ToCandidate(destination, destinations, forceOpaqueSelector: true)).ToArray());
+            candidates.Select(destination => ToCandidate(destination, destinations, set, references, context, forceOpaqueSelector: true)).ToArray());
         return IsWithinResultByteLimit(result) ? result : DestinationSearchResult.Unavailable();
     }
 
@@ -129,16 +133,22 @@ internal sealed class DestinationSearch
     private static DestinationSearchCandidate ToCandidate(
         NavigationDestination destination,
         IReadOnlyList<NavigationDestination> all,
+        DerivedDestinationSet set,
+        NavigationReferenceStore references,
+        NavigationBindingContext context,
         bool forceOpaqueSelector = false)
     {
         bool ambiguous = all.Count(other =>
             StringComparer.Ordinal.Equals(other.CanonicalLabel, destination.CanonicalLabel)) > 1;
-        NavigationDestinationSelector selector = ambiguous || forceOpaqueSelector
-            ? new("ref", null, null)
-            : new("label", destination.CanonicalLabel, null);
-        // Search only ranks candidates. It never mints a reference or chooses a
-        // fuzzy match as an executable destination.
-        return new DestinationSearchCandidate(destination.CanonicalLabel, destination.ContextLabel, selector, "unknown");
+        if (ambiguous || forceOpaqueSelector)
+        {
+            string reference = references.IssueDestination(context, new NavigationDestinationBinding(
+                destination.ContentOwner, destination.CanonicalIdentity, set.Generation, context.ObservationSequence));
+            return new DestinationSearchCandidate(destination.CanonicalLabel, destination.ContextLabel,
+                new NavigationDestinationSelector("ref", null, reference), "unknown");
+        }
+        return new DestinationSearchCandidate(destination.CanonicalLabel, destination.ContextLabel,
+            new NavigationDestinationSelector("label", destination.CanonicalLabel, null), "unknown");
     }
 
     private static NavigationDestination[] MatchExact(

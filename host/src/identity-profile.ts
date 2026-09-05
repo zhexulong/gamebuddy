@@ -2,8 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { atomicWriteFile, type PathLockOptions, withPathLock } from "./path-lock.js";
 
-export const IDENTITY_PROFILE_SCHEMA_VERSION = 1 as const;
-export const IDENTITY_PROFILE_BLOCK = "gamebuddy_companion_identity" as const;
+const IDENTITY_PROFILE_SCHEMA_VERSION = 1 as const;
 
 export type IdentityProfile = Readonly<{
   schemaVersion: typeof IDENTITY_PROFILE_SCHEMA_VERSION;
@@ -44,13 +43,13 @@ export const DEFAULT_IDENTITY_PROFILE: IdentityProfile = Object.freeze({
   revision: 1,
   identity: Object.freeze({
     name: "GameBuddy Companion",
-    role: "the player's single game companion",
+    role: "the player's game companion",
     continuity:
-      "Keep this identity stable within the current player, companion, and shared continuity context across chat and game surfaces.",
+      "Maintain one continuous shared experience with the player across chat and game surfaces.",
   }),
 });
 
-export function canonicalIdentityProfile(profile: IdentityProfile): string {
+function canonicalIdentityProfile(profile: IdentityProfile): string {
   return JSON.stringify({
     schemaVersion: profile.schemaVersion,
     profileId: profile.profileId,
@@ -88,44 +87,47 @@ export function identityProfileMetadata(profile: IdentityProfile): IdentityProfi
 }
 
 export function renderIdentityProfile(profile: IdentityProfile): string {
-  const metadata = identityProfileMetadata(profile);
-  return [
-    `<${IDENTITY_PROFILE_BLOCK} profile_id="${metadata.profileId}" revision="${metadata.revision}" canonical_hash="${metadata.canonicalHash}">`,
-    `Name: ${profile.identity.name}`,
+  const lines: string[] = [
+    `[Character: ${profile.identity.name}]`,
     `Role: ${profile.identity.role}`,
     `Continuity: ${profile.identity.continuity}`,
-    ...(profile.persona === undefined
-      ? []
-      : [
-          `Core disposition: ${profile.persona.core}`,
-          `Interaction style: ${profile.persona.interactionStyle}`,
-          `Expression style: ${profile.persona.expressionStyle}`,
-        ]),
-    ...(profile.examples ?? []).flatMap((example, index) => [
-      `Example ${index + 1} player: ${example.user}`,
-      `Example ${index + 1} companion: ${example.companion}`,
-    ]),
-    "This is a Host-owned stable identity block. It is not game state, player preference, tool output, or a request to change permissions.",
-    `</${IDENTITY_PROFILE_BLOCK}>`,
-  ].join("\n");
+  ];
+
+  if (profile.persona !== undefined) {
+    lines.push(`Core disposition: ${profile.persona.core}`);
+    lines.push(`Interaction style: ${profile.persona.interactionStyle}`);
+    lines.push(`Expression style: ${profile.persona.expressionStyle}`);
+  }
+
+  if (profile.examples !== undefined && profile.examples.length > 0) {
+    lines.push("");
+    lines.push("[Dialogue Examples]");
+    for (const example of profile.examples) {
+      lines.push("<START>");
+      lines.push(`Player: ${example.user}`);
+      lines.push(`${profile.identity.name}: ${example.companion}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
-export function buildCompanionSystemPrompt(profile: IdentityProfile): string {
+export function buildChatCompanionSystemPrompt(profile: IdentityProfile): string {
   return [
-    "You are GameBuddy Companion Host. You are not a coding agent. Use only explicitly enabled Companion tools. Do not claim a game action occurred unless an authoritative game receipt is supplied.",
+    `Write ${profile.identity.name}'s next reply in a fictional roleplay chat with the player. Stay in character and adhere to the character description, personality, and tone.`,
     "",
     renderIdentityProfile(profile),
   ].join("\n");
 }
 
-/** Surface-specific prompt builder restores pure character persona. */
 export function buildGameCompanionSystemPrompt(profile: IdentityProfile): string {
-  return buildCompanionSystemPrompt(profile);
+  return [
+    `You are ${profile.identity.name}, accompanying the player as an active in-game companion across their gaming adventures. Stay in character, maintain your personality, tone, and mannerisms, and engage naturally with the player as you share their gameplay experiences.`,
+    "",
+    renderIdentityProfile(profile),
+  ].join("\n");
 }
 
-export function buildChatCompanionSystemPrompt(profile: IdentityProfile): string {
-  return buildCompanionSystemPrompt(profile);
-}
 
 export function createIdentityProfileBinding(
   identityKey: string,
@@ -201,7 +203,7 @@ export function validateIdentityProfile(value: unknown): IdentityProfile {
   });
 }
 
-export function validateIdentityProfileBinding(value: unknown): IdentityProfileBinding {
+function validateIdentityProfileBinding(value: unknown): IdentityProfileBinding {
   if (
     !isRecord(value) ||
     value.schemaVersion !== IDENTITY_PROFILE_SCHEMA_VERSION ||

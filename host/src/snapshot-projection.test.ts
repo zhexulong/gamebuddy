@@ -5,6 +5,8 @@ import {
   projectMovementContext,
   projectFarmingContext,
   projectInventoryContext,
+  projectGameSnapshotContext,
+  MAX_GAME_SNAPSHOT_PROJECTION_BYTES,
   type MovementContextProjection,
   type FarmingContextProjection,
   type InventoryContextProjection,
@@ -127,6 +129,80 @@ test("projectFarmingContext and projectInventoryContext extract structured facts
   assert.deepEqual(inventory.toolLabels, ["Axe", "Hoe"]);
   assert.ok(Object.isFrozen(inventory));
   assert.ok(Object.isFrozen(inventory.toolLabels));
+});
+
+test("Game snapshot projection is bounded, deterministic, frozen, and excludes authority-shaped fields", () => {
+  const snapshot = {
+    revision: 42,
+    location: "Farm",
+    tile: { x: 5, y: 10 },
+    stamina: 270,
+    health: 100,
+    actionable: true,
+    capabilities: ["move_to_tile", "inspect_self"],
+    catalogRevision: 99,
+    enabledActionIds: ["move_to_tile"],
+    presentationLocale: "en-US",
+    currentTool: "Axe",
+    inventorySlots: 24,
+    activeExecution: {
+      executionId: "execution_secret",
+      requestId: "request_secret",
+      action: "move_to_tile",
+      state: "running",
+      reasonCode: "secret",
+      evidence: { bearer: "secret" },
+    },
+    toolSlots: Array.from({ length: 200 }, (_, slot) => ({ slot, label: `Tool ${slot}` })),
+    warps: Array.from({ length: 200 }, () => ({ sourceX: 1, sourceY: 1, targetLocation: "Town", targetX: 2, targetY: 2 })),
+  } as unknown as Snapshot;
+  const first = projectGameSnapshotContext(snapshot, 10_000, 10_120);
+  const second = projectGameSnapshotContext(snapshot, 10_000, 10_120);
+  assert.deepEqual(first, second);
+  assert.equal(first.available, true);
+  if (!first.available) return;
+  assert.equal(first.snapshotRevision, 42);
+  assert.equal(first.sampledAgeMs, 120);
+  assert.equal(first.movement.warpsCount, 200);
+  assert.equal(first.inventory.toolLabels.length, 12);
+  assert.equal(first.inventory.toolLabels[0], "Tool 0");
+  assert.equal(first.text.includes("execution_secret"), false);
+  assert.equal(first.text.includes("move_to_tile"), false);
+  assert.equal(first.text.includes("request_secret"), false);
+  assert.ok(Buffer.byteLength(JSON.stringify(first), "utf8") <= MAX_GAME_SNAPSHOT_PROJECTION_BYTES);
+  assert.ok(Object.isFrozen(first));
+  assert.ok(Object.isFrozen(first.movement));
+  assert.ok(Object.isFrozen(first.inventory.toolLabels));
+});
+
+test("Game snapshot projection reports unavailable and bounds snapshot age", () => {
+  assert.deepEqual(projectGameSnapshotContext(undefined, 1, 2), {
+    schema: "gamebuddy-game-snapshot-projection/v1",
+    available: false,
+    reasonCode: "unavailable",
+    text: "[Game Snapshot Unavailable]",
+  });
+  assert.deepEqual(projectGameSnapshotContext(null, 1, 2), {
+    schema: "gamebuddy-game-snapshot-projection/v1",
+    available: false,
+    reasonCode: "unavailable",
+    text: "[Game Snapshot Unavailable]",
+  });
+  const minimalSnapshot: Snapshot = {
+    revision: 1,
+    location: "Town",
+    tile: { x: 0, y: 0 },
+    stamina: 100,
+    health: 50,
+    actionable: false,
+    capabilities: [],
+    catalogRevision: 1,
+    enabledActionIds: [],
+    presentationLocale: "en-US",
+  };
+  const projection = projectGameSnapshotContext(minimalSnapshot, 0, Number.MAX_SAFE_INTEGER);
+  assert.equal(projection.available, true);
+  if (projection.available) assert.equal(projection.sampledAgeMs, 86_400_000);
 });
 
 test("Projections handle completely empty or missing optional fields cleanly", () => {

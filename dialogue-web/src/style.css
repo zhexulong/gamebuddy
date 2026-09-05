@@ -450,6 +450,85 @@ body {
   border-top-right-radius: var(--radius-xs);
 }
 
+.message-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.swipe-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
+.swipe-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--motion-duration-fast), background-color var(--motion-duration-fast);
+}
+
+.swipe-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background-color: var(--surface-panel);
+}
+
+.swipe-btn:disabled {
+  color: var(--text-disabled);
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.swipe-indicator {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+  padding: 0 2px;
+}
+
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.regenerate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-disabled);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: all var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.regenerate-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-raised);
+  border-color: var(--border-subtle);
+}
+
 /* ==========================================================================
    Draft Section (P3 Read-Only Named Region)
    ========================================================================== */

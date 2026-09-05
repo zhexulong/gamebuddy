@@ -29,11 +29,19 @@
  * created in this module.
  */
 
-export const TAVERN_BROWSER_API_VERSION = 1 as const;
-export const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
+const TAVERN_BROWSER_API_VERSION = 1 as const;
+const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
 export const REFERENCE_PIPELINE_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline" as const;
 
 // --- Frozen v1 DTO shapes (structural mirrors of host/src/tavern/browser-contract). ---
+
+type BrowserSwipeInfoV1 = Readonly<{
+  currentIndex: number;
+  totalSwipes: number;
+  label: string;
+  hasPrevious: boolean;
+  hasNext: boolean;
+}>;
 
 export type BrowserMessageV1 = Readonly<{
   handle: string;
@@ -42,6 +50,7 @@ export type BrowserMessageV1 = Readonly<{
   locale: "en" | "zh-CN" | "und";
   order: number;
   revision: number;
+  swipeInfo?: BrowserSwipeInfoV1;
 }>;
 
 export type BrowserTurnV1 = Readonly<{
@@ -114,7 +123,7 @@ export type BrowserEventV1 =
       payload: Readonly<{ reason: "gap" | "epoch_changed" | "restart" | "ambiguous_cursor" }>;
     }>;
 
-export type TavernBrowserOperationV1 = Readonly<{
+type TavernBrowserOperationV1 = Readonly<{
   operationId: "chat.submit" | "chat.cancel" | "draft.save" | "draft.discard";
   labelKey:
     | "tavern.nav.chat"
@@ -150,7 +159,7 @@ export type TavernStateSnapshotV1 = Readonly<{
   eventStream: Readonly<{ epoch: string; cursor: string }> | null;
 }>;
 
-export type SubmitMessageCommandV1 = Readonly<{
+type SubmitMessageCommandV1 = Readonly<{
   apiVersion: 1;
   selectionGeneration: number;
   text: string;
@@ -165,14 +174,14 @@ export type SubmitResultV1 = Readonly<{
   turn: BrowserTurnV1;
 }>;
 
-export type CancelTurnCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number }>;
-export type CancelTurnResultV1 = Readonly<{
+type CancelTurnCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number }>;
+type CancelTurnResultV1 = Readonly<{
   apiVersion: 1;
   disposition: "cancelled" | "completion_won" | "already_terminal";
   turn: BrowserTurnV1;
 }>;
 
-export type MessageSubmissionStatusQueryV1 = Readonly<{
+type MessageSubmissionStatusQueryV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
   selectionGeneration: number;
@@ -235,7 +244,6 @@ const HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const ROUTE_ID_PATTERN = /^[a-z][a-z0-9._-]*$/;
 const MAX_TEXT_UTF8_BYTES = 16_384;
-const MAX_TRANSCRIPT_MESSAGES = 500;
 const MAX_ARRAY_ITEMS = 100;
 
 const MESSAGE_ROLES = ["player", "companion"] as const;
@@ -404,12 +412,35 @@ function isNfcUtf8Text(value: unknown): value is string {
   return new TextEncoder().encode(value).byteLength <= MAX_TEXT_UTF8_BYTES;
 }
 
+const SWIPE_INFO_KEYS = ["currentIndex", "totalSwipes", "label", "hasPrevious", "hasNext"] as const;
+
+function isBrowserSwipeInfo(value: unknown): value is BrowserSwipeInfoV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, SWIPE_INFO_KEYS) &&
+    isNonNegativeSafeInteger(value.currentIndex) &&
+    isPositiveSafeInteger(value.totalSwipes) &&
+    typeof value.label === "string" &&
+    value.label.length >= 1 &&
+    value.label.length <= 32 &&
+    typeof value.hasPrevious === "boolean" &&
+    typeof value.hasNext === "boolean"
+  );
+}
+
 // --- DTO validators (strict closed shapes; every invalid value throws TavernProtocolError). ---
 
 function isBrowserMessage(value: unknown): value is BrowserMessageV1 {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  const hasBaseKeys = MESSAGE_KEYS.every((k) => keys.includes(k));
+  if (!hasBaseKeys) return false;
+  if (keys.length === MESSAGE_KEYS.length + 1) {
+    if (!("swipeInfo" in value) || !isBrowserSwipeInfo(value.swipeInfo)) return false;
+  } else if (keys.length !== MESSAGE_KEYS.length) {
+    return false;
+  }
   return (
-    isRecord(value) &&
-    hasExactKeys(value, MESSAGE_KEYS) &&
     isOpaqueHandle(value.handle) &&
     isOneOf(value.role, MESSAGE_ROLES) &&
     isNfcUtf8Text(value.text) &&
@@ -501,7 +532,6 @@ function isChat(value: unknown): boolean {
   if (value.title !== null && !isLengthBoundedString(value.title, 0, 256)) return false;
   if (
     !Array.isArray(value.transcript) ||
-    value.transcript.length > MAX_TRANSCRIPT_MESSAGES ||
     !value.transcript.every(isBrowserMessage)
   )
     return false;
@@ -737,7 +767,8 @@ export function validateSubmissionStatus(value: unknown): MessageSubmissionStatu
   return value;
 }
 
-export function validateCancelTurnResult(value: unknown): CancelTurnResultV1 {
+
+function validateCancelTurnResult(value: unknown): CancelTurnResultV1 {
   if (!isCancelTurnResult(value)) throw new TavernProtocolError();
   return value;
 }
@@ -790,7 +821,7 @@ async function exchange<T>(
   return decode(bodyValue);
 }
 
-export type ReferencePipelineEventSource = Readonly<{ close(): void }>;
+type ReferencePipelineEventSource = Readonly<{ close(): void }>;
 
 export type ReferencePipelineApi = Readonly<{
   /** POST /api/tavern/v1/bootstrap (one-time bootstrap token). */
@@ -802,6 +833,26 @@ export type ReferencePipelineApi = Readonly<{
   /** POST /api/tavern/v1/messages with Content-Type, x-csrf-token, idempotency-key. */
   submit(
     command: SubmitMessageCommandV1,
+    options: Readonly<{ csrfToken: string; idempotencyKey: string }>,
+  ): Promise<SubmitResultV1>;
+  /** POST /api/tavern/v1/messages/swipe with CSRF */
+  selectSwipe(
+    command: Readonly<{
+      apiVersion: 1;
+      selectionGeneration: number;
+      messageHandle: string;
+      direction?: "prev" | "next";
+      targetIndex?: number;
+    }>,
+    options: Readonly<{ csrfToken: string }>,
+  ): Promise<Readonly<{ apiVersion: 1; message: BrowserMessageV1 }>>;
+  /** POST /api/tavern/v1/messages/regenerate with CSRF, idempotency-key */
+  regenerate(
+    command: Readonly<{
+      apiVersion: 1;
+      selectionGeneration: number;
+      messageHandle: string;
+    }>,
     options: Readonly<{ csrfToken: string; idempotencyKey: string }>,
   ): Promise<SubmitResultV1>;
   /** POST /api/tavern/v1/turns/:turnHandle/cancel with CSRF. */
@@ -859,6 +910,39 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
         fetchLike,
         "POST",
         "/api/tavern/v1/messages",
+        202,
+        validateSubmitResult,
+        {
+          "Content-Type": "application/json",
+          "x-csrf-token": options.csrfToken,
+          "idempotency-key": options.idempotencyKey,
+        },
+        command,
+      );
+    },
+    async selectSwipe(command, options) {
+      if (!isRecord(command) || !isOpaqueHandle(options.csrfToken)) throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/messages/swipe",
+        200,
+        (body) => {
+          if (!isRecord(body) || body.apiVersion !== 1 || !isBrowserMessage(body.message))
+            throw new TavernProtocolError();
+          return Object.freeze({ apiVersion: 1 as const, message: body.message });
+        },
+        { "Content-Type": "application/json", "x-csrf-token": options.csrfToken },
+        command,
+      );
+    },
+    async regenerate(command, options) {
+      if (!isRecord(command) || !isOpaqueHandle(options.csrfToken) || !isIdempotencyKey(options.idempotencyKey))
+        throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/messages/regenerate",
         202,
         validateSubmitResult,
         {

@@ -1,212 +1,953 @@
 {
   "schema": "gamebuddy-stardew-action-projection-parity/v1",
   "developmentOnly": true,
-  "gameId": "stardew",
   "surface": {
-    "schema": "gamebuddy-stardew-action-surface/v1",
-    "registrations": [
+    "schema": "gamebuddy-action-descriptors/v1",
+    "catalogRevision": 1,
+    "actions": [
       {
         "actionId": "move_to_tile",
-        "familyId": "movement_navigation",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "equip_tool",
-        "familyId": "body_tools",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "slot": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "travel",
-        "familyId": "transport_warps",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "enter_exit",
-        "familyId": "movement_navigation",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "till_soil",
-        "familyId": "farming_crops",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "pickup_forage",
-        "familyId": "resource_gathering",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "pickup_item",
-        "familyId": "inventory_items",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "water_crop",
-        "familyId": "farming_crops",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "plant_seed",
-        "familyId": "farming_crops",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "fertilize_tile",
-        "familyId": "farming_crops",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "machine_inspect",
-        "familyId": "machines_processing",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "machine_load",
-        "familyId": "machines_processing",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "machine_collect_output",
-        "familyId": "machines_processing",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "collect_animal_product",
-        "familyId": "animals_pets",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "feed_animal",
-        "familyId": "animals_pets",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "use_item",
-        "familyId": "inventory_items",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "slot": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "harvest_crop",
-        "familyId": "farming_crops",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "place_wood_fence",
-        "familyId": "buildings_farm_management",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "place_crab_pot",
-        "familyId": "buildings_farm_management",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "bait_crab_pot",
-        "familyId": "buildings_farm_management",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "chop_tree_source",
-        "familyId": "resource_gathering",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "break_rock_source",
-        "familyId": "resource_gathering",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "clear_hoedirt",
-        "familyId": "farming_crops",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "dig_artifact_spot",
-        "familyId": "resource_gathering",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "refill_watering_can",
-        "familyId": "farming_crops",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "inspect_world_map",
-        "familyId": "world_navigation",
         "identityVersion": 1,
         "lifecycle": "published",
-        "kind": "read_only"
+        "kind": "read_only",
+        "argumentSchema": {},
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": []
+        },
+        "effect": "read",
+        "postcondition": {
+          "name": "observation_complete"
+        }
+      },
+      {
+        "actionId": "find_destination",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "read_only",
+        "argumentSchema": {},
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": []
+        },
+        "effect": "read",
+        "postcondition": {
+          "name": "observation_complete"
+        }
+      },
+      {
+        "actionId": "navigate_to_destination",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "argumentSchema": {
+          "destination": {
+            "type": "object"
+          }
+        },
+        "outputFacts": {
+          "arrival": "object"
+        },
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "arrived_at_destination"
+        }
       },
       {
         "actionId": "clear_debris",
-        "familyId": "resource_gathering",
         "identityVersion": 1,
         "lifecycle": "experimental",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "npc_relationship",
-        "familyId": "npc_social",
         "identityVersion": 1,
         "lifecycle": "experimental",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       },
       {
         "actionId": "pet_animal",
-        "familyId": "animals_pets",
         "identityVersion": 1,
         "lifecycle": "experimental",
-        "kind": "execution"
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       }
     ]
   },
@@ -240,10 +981,12 @@
       "break_rock_source",
       "clear_hoedirt",
       "dig_artifact_spot",
-      "refill_watering_can"
+      "refill_watering_can",
+      "navigate_to_destination"
     ],
     "readOnlyActionIds": [
-      "inspect_world_map"
+      "inspect_world_map",
+      "find_destination"
     ],
     "experimentalActionIds": [
       "clear_debris",
@@ -253,9 +996,9 @@
   },
   "protocol": {
     "schemas": [
+      "gamebuddy-action-descriptors/v1",
       "gamebuddy-action-work-brief/v1",
       "gamebuddy-stardew-action-preflight-brief/v1",
-      "gamebuddy-stardew-action-surface/v1",
       "gamebuddy-stardew-static-action-descriptor/v1",
       "gamebuddy-stardew-static-action-projection/v1",
       "gamebuddy-stardew-tool-inventory/v1"
@@ -293,7 +1036,8 @@
       "break_rock_source",
       "clear_hoedirt",
       "dig_artifact_spot",
-      "refill_watering_can"
+      "refill_watering_can",
+      "navigate_to_destination"
     ]
   },
   "fixtureOwnedFiles": [
@@ -302,9 +1046,8 @@
   "guardOrder": [
     "schema",
     "development_scope",
-    "game_id",
     "envelope_shape",
-    "surface_registrations",
+    "surface_actions",
     "lifecycle_partition",
     "surface_subsets",
     "protocol_union",

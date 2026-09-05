@@ -1460,6 +1460,10 @@ test("readState keeps Mod catalog capabilityRevision independent from snapshot r
     adapterPreservationConnection(),
   );
   assert.equal(view.capabilityRevision, 42);
+  assert.deepEqual(
+    view.enabledActionIds,
+    TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId),
+  );
   assert.equal(view.snapshotRevision, 9);
   assert.notEqual(view.capabilityRevision, view.snapshotRevision);
   // The two revisions come from distinct Mod facts: the catalog publication
@@ -1481,7 +1485,16 @@ test("readState keeps Mod catalog capabilityRevision independent from snapshot r
     adapterPreservationConnection({ catalogRevision: undefined }),
   );
   assert.equal(noCatalog.capabilityRevision, null);
+  assert.deepEqual(
+    noCatalog.enabledActionIds,
+    TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId),
+  );
   assert.equal(noCatalog.snapshotRevision, 9);
+
+  const noEnabledActions = STARDEW_GAME_INTEGRATION_ADAPTER.readState(
+    adapterPreservationConnection({ enabledActionIds: undefined }),
+  );
+  assert.equal("enabledActionIds" in noEnabledActions, false);
 });
 
 test("readState completion predicate is decided only by catalog source semantics, never snapshot or bare succeeded state", () => {

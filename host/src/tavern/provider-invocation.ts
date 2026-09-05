@@ -14,7 +14,7 @@ export type ProviderInvocationResult =
   | Readonly<{ outcome: "failed"; ledger: FailedTurn }>
   | Readonly<{ outcome: "armed"; ledger: AttemptStartingTurn }>
   | Readonly<{ outcome: "not_started"; ledger: AttemptStartingTurn }>;
-export type ProviderInvocationLedger = AttemptStartingTurn | CompletedTurn | CancelledTurn | FailedTurn;
+type ProviderInvocationLedger = AttemptStartingTurn | CompletedTurn | CancelledTurn | FailedTurn;
 
 /** Ephemeral delta projection; it has no message ID or durable authority. */
 export type NativeChatPreview = Readonly<{
@@ -27,7 +27,7 @@ export type NativeChatPreviewPublisher = Readonly<{
   clear(): void | Promise<void>;
 }>;
 
-export async function runMountedProviderInvocationLedger(
+async function runMountedProviderInvocationLedger(
   scope: ProviderInvocationScope,
   previewPublisher?: NativeChatPreviewPublisher,
 ): Promise<ProviderInvocationLedger> {

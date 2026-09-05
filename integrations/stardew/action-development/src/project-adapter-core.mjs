@@ -52,7 +52,7 @@ function statusReport(invocation, result) {
 }
 
 async function liveReport(invocation, result, registration, dependencies, verifiedLiveReports) {
-  if (result?.gameId !== "stardew" || result?.actionId !== invocation.actionId || result?.runId !== invocation.runId) fail("live_identity_mismatch");
+  if (result?.gameId !== "stardew" || result?.actionId !== invocation.actionId || result?.runId !== invocation.runId || result?.status !== "live") fail("live_identity_mismatch");
   if (result?.state !== "PASSED" && result?.state !== "BLOCKED" && result?.state !== "INCOMPLETE") fail("live_result_invalid");
   const outcome = result?.state === "PASSED" ? "passed" : result?.state === "BLOCKED" ? "blocked" : "incomplete";
   if (outcome === "passed") {
@@ -147,7 +147,6 @@ async function runActionProjectWithRegistry({ manifest, invocation, dependencies
     return preflightReport(invocation, result);
   }
   if (invocation.command === "run-live") {
-    if (typeof invocation.profileFile !== "string") fail("profile_missing");
     if (typeof invocation.runId !== "string" || invocation.runId.length === 0) fail("run_id_missing");
     const registration = resolveActionRegistration(invocation.actionId, registry);
     const result = registration.runLive === undefined

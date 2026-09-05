@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { withPathLock } from "./path-lock.js";
 import type { RuntimePaths } from "./runtime.js";
 
-export const CHAT_TRANSCRIPT_SCHEMA_VERSION = 1 as const;
+const CHAT_TRANSCRIPT_SCHEMA_VERSION = 1 as const;
 /** Bound durable player-visible history; older original content stays in Pi/Magic Context, never in this browser artifact. */
 export const MAX_CHAT_TRANSCRIPT_ENTRIES = 2_000;
 export type ChatTranscriptEntry = Readonly<{
@@ -21,7 +21,7 @@ export type ChatTranscript = Readonly<{
   entries: readonly ChatTranscriptEntry[];
 }>;
 
-export function chatTranscriptPath(paths: RuntimePaths): string {
+function chatTranscriptPath(paths: RuntimePaths): string {
   if (paths.surfaceSessionId === undefined) throw new Error("chat_surface_session_required");
   return join(paths.runtimeCwd, "surface-sessions", paths.surfaceSessionId, "player-visible-chat.json");
 }

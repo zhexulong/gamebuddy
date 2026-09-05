@@ -1,9 +1,9 @@
-export type WindowsStardewBootstrapGuardianOperation =
+type WindowsStardewBootstrapGuardianOperation =
   | "arm_attempt"
   | "launch_role"
   | "contain_role"
   | "recover_attempt";
-export type WindowsStardewBootstrapGuardianRole = "player_host" | "ai_client";
+type WindowsStardewBootstrapGuardianRole = "player_host" | "ai_client";
 export type WindowsStardewBootstrapGuardianCategory =
   | "armed"
   | "role_active"

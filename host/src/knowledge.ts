@@ -5,7 +5,7 @@ import { type ActionPolicy, visibleActionsFromModCatalog } from "./action-regist
 import type { StardewBridgeConnection } from "./game-connection.js";
 import type { ActionRegistration, ExecutionReceipt, Snapshot } from "./protocol.js";
 
-export type KnowledgeRule = Readonly<{
+type KnowledgeRule = Readonly<{
   id: string;
   integrationId: string;
   gameVersion: string;
@@ -256,7 +256,7 @@ function scoreKnowledgeRule(rule: KnowledgeRule, query: KnowledgeQuery, snapshot
   return score;
 }
 
-export function knowledgeCatalog(
+function knowledgeCatalog(
   bundle: KnowledgeBundle | undefined,
   gameVersion: string | undefined,
   snapshot: Snapshot | null,

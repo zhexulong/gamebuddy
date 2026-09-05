@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Protocol;
 using Xunit;
 
@@ -365,4 +366,378 @@ public sealed class BridgeProtocolSerializationTests
         reasonCode.Should().Be("invalid_navigation_read_request");
         envelope.Should().BeNull();
     }
+}
+
+
+public sealed class BridgeBodyProgramProtocolTests
+{
+    private static readonly BridgeScope SampleScope = new("stardew", "save_1", "world_1", "player_1", "companion_1");
+    private const string Prefix = "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"program_submit\",\"payload\":";
+
+    [Fact]
+    public void CandidateAdapterMapsSelectorVariantsAndWireBindingNodeIdToProducerNodeId()
+    {
+        const string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"label\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"Town\"}},\"ref\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"ref\",\"ref\":\"dr1_AAAAAAAAAAAAAAAAAAAAAA\"}}},\"dependsOn\":[],\"bindings\":{\"destination\":{\"nodeId\":\"producer\",\"factName\":\"arrival\"}},\"deadlineMs\":1000}]}";
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out BridgeEnvelope<ActionProgramCandidate>? envelope, out string reason).Should().BeTrue();
+        reason.Should().Be("accepted");
+        envelope!.Payload.Nodes.Single().Bindings["destination"].ProducerNodeId.Should().Be("producer");
+        envelope.Payload.Nodes.Single().Arguments["label"].Destination!.Label.Should().Be("Town");
+        envelope.Payload.Nodes.Single().Arguments["ref"].Destination!.Ref.Should().Be("dr1_AAAAAAAAAAAAAAAAAAAAAA");
+    }
+
+    [Theory]
+    [InlineData("{\"type\":\"destination_selector\",\"canonicalValue\":\"Town\"}")]
+    [InlineData("{\"type\":\"destination_selector\",\"destinationRef\":\"dr1_AAAAAAAAAAAAAAAAAAAAAA\"}")]
+    [InlineData("{\"type\":\"string\",\"canonicalValue\":\"Town\",\"extra\":null}")]
+    [InlineData("{\"type\":\"string\",\"canonicalValue\":null}")]
+    public void CandidateAdapterRejectsScalarizedSelectorDestinationRefExtraAndNull(string argument)
+    {
+        string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":" + argument + "},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_request");
+    }
+
+    [Theory]
+    [InlineData("Town ")]
+    [InlineData(" Town")]
+    public void CandidateAdapterRejectsSelectorBoundaryWhitespace(string label)
+    {
+        string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"" + label + "\"}}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_request");
+    }
+
+    [Fact]
+    public void CandidateAdapterRejectsArrivalAsArgument()
+    {
+        const string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"arrival\":{\"type\":\"destination_arrival\",\"canonicalValue\":\"arrived\"}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_request");
+    }
+
+    [Theory]
+    [InlineData("07")]
+    [InlineData("9223372036854775808")]
+    [InlineData("-9223372036854775809")]
+    public void CandidateAdapterRejectsNonCanonicalOrOutOfRangeIntegerAtIngress(string canonicalValue)
+    {
+        string payload = IntegerCandidatePayload(canonicalValue);
+
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_request");
+    }
+
+    [Fact]
+    public void CandidateAdapterRejectsIntegerCanonicalValueOverMaximumLengthAtIngress()
+    {
+        string payload = IntegerCandidatePayload(new string('9', 513));
+
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_request");
+    }
+
+    [Theory]
+    [InlineData("-9223372036854775808")]
+    [InlineData("9223372036854775807")]
+    public void CandidateAdapterAcceptsSignedInt64BoundaryIntegerAtIngress(string canonicalValue)
+    {
+        string payload = IntegerCandidatePayload(canonicalValue);
+
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out BridgeEnvelope<ActionProgramCandidate>? envelope, out string reason).Should().BeTrue();
+        reason.Should().Be("accepted");
+        envelope!.Payload.Nodes.Single().Arguments["tile"].CanonicalValue.Should().Be(canonicalValue);
+    }
+
+    private static string IntegerCandidatePayload(string canonicalValue) =>
+        "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"" + canonicalValue + "\"}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+
+    [Fact]
+    public void ResultProjectionIncludesStatusHighWaterAndEventContinuationFields()
+    {
+        var snapshot = new BodyProgramStatusSnapshot("program_1", BodyProgramState.Active, 7, 2, 11,
+            new[] { new BodyProgramJournalNode("first", BodyProgramNodeState.Running, 3, 4, null, null) });
+        var result = BridgeProtocol.ProjectBodyProgramEventsResult(new BodyProgramEventsResult("program_1", BodyProgramQueryCode.Found,
+            new[] { new BodyProgramJournalEvent(9, "program_1", "native_dispatch", 7, "first", 3) }, 9, 11));
+        BridgeProtocol.TrySerialize(result, out string json, out _).Should().BeTrue();
+        using JsonDocument document = JsonDocument.Parse(json);
+        document.RootElement.EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("programId", "code", "events", "nextCursor", "highWater");
+        document.RootElement.GetProperty("events")[0].EnumerateObject().Select(property => property.Name)
+            .Should().BeEquivalentTo("cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt");
+        BridgeBodyProgramStatusResult status = BridgeProtocol.ProjectBodyProgramStatusResult(new BodyProgramStatusResult(BodyProgramQueryCode.Found, snapshot));
+        BridgeProtocol.TrySerialize(status, out string statusJson, out _).Should().BeTrue();
+        using JsonDocument statusDocument = JsonDocument.Parse(statusJson);
+        statusDocument.RootElement.GetProperty("snapshot").EnumerateObject().Select(property => property.Name)
+            .Should().Contain("programId", "state", "catalogRevision", "stopEpoch", "eventHighWater", "nodes");
+    }
+
+    [Fact]
+    public void VerifyResultHasIndependentExactShapeAndRoundTrips()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramVerificationResult(ResultEnvelope("program_verify_result", "{\"accepted\":true,\"catalogRevision\":7,\"diagnostics\":[]}"), out var envelope, out string reason).Should().BeTrue();
+        reason.Should().Be("accepted");
+        envelope!.Payload.Accepted.Should().BeTrue();
+        BridgeProtocol.TrySerialize(envelope, out string serialized, out string serializeReason).Should().BeTrue();
+        serializeReason.Should().Be("accepted");
+        using JsonDocument document = JsonDocument.Parse(serialized);
+        document.RootElement.GetProperty("payload").EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("accepted", "catalogRevision", "diagnostics");
+    }
+
+    [Fact]
+    public void BodyProgramNodeAttemptsRejectValuesBeyondCoreInt32()
+    {
+        const string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"active\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"first\",\"state\":\"running\",\"nodeAttempt\":2147483648,\"admissionAttempt\":4}]}}";
+        BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", snapshot), out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_result");
+        const string events = "{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[{\"cursor\":9,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":2147483648}],\"nextCursor\":9,\"highWater\":11}";
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result", events), out _, out reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TrySerialize_BodyProgramCandidateRejectsMalformedRuntimeArguments()
+    {
+        var bogus = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue> { ["destination"] = new("bogus", "x") }, Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>(), 1000) });
+        BridgeProtocol.TrySerialize(bogus, out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_result");
+        var malformedSelector = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue> { ["destination"] = new("destination_selector", null, new BodyProgramDestinationSelector("label", "Town", "dr1_bad")) }, Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>(), 1000) });
+        BridgeProtocol.TrySerialize(malformedSelector, out _, out reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_result");
+        foreach (string label in new[] { " Town", "Town " })
+        {
+            var boundaryWhitespace = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue> { ["destination"] = new("destination_selector", null, new BodyProgramDestinationSelector("label", label, null)) }, Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>(), 1000) });
+            BridgeProtocol.TrySerialize(boundaryWhitespace, out _, out reason).Should().BeFalse();
+            reason.Should().Be("invalid_body_program_result");
+        }
+    }
+
+    [Fact]
+    public void TrySerialize_BodyProgramCandidateRejectsUnsafeDeadline()
+    {
+        var candidate = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue>(), Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>(), 9007199254740992) });
+        BridgeProtocol.TrySerialize(candidate, out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void BodyProgramResultsRejectJavaScriptUnsafeNumbers()
+    {
+        string verification = "{\"accepted\":true,\"catalogRevision\":9007199254740992,\"diagnostics\":[]}";
+        BridgeProtocol.TryDeserializeBodyProgramVerificationResult(ResultEnvelope("program_verify_result", verification), out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_result");
+        string events = "{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[],\"nextCursor\":9007199254740992,\"highWater\":9007199254740992}";
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result", events), out _, out reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_result");
+        var unsafeEvent = new BridgeBodyProgramEventsResult("program_1", "found", new[] { new BridgeBodyProgramEvent(9, "program_1", "native_dispatch", 9007199254740992, "first", 3) }, 9, 11);
+        BridgeProtocol.TrySerialize(unsafeEvent, out _, out string eventReason).Should().BeFalse();
+        eventReason.Should().Be("invalid_body_program_result");
+        var unsafeCursorEvent = new BridgeBodyProgramEventsResult("program_1", "found", new[] { new BridgeBodyProgramEvent(9007199254740992, "program_1", "native_dispatch", 7, "first", 3) }, 9, 11);
+        BridgeProtocol.TrySerialize(unsafeCursorEvent, out _, out eventReason).Should().BeFalse();
+        eventReason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramSubmitResult_RejectsUnknownSubmitCode()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramSubmitResult(ResultEnvelope("program_submit_result",
+            "{\"code\":\"unknown\",\"verification\":{\"accepted\":true,\"catalogRevision\":7,\"diagnostics\":[]},\"snapshot\":null}"), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramStatusResult_RejectsUnknownQueryCode()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", "{\"code\":\"unknown\",\"snapshot\":null}"), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Theory]
+    [InlineData("{\"code\":\"found\",\"snapshot\":null}")]
+    [InlineData("{\"code\":\"not_found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"active\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[]}}")]
+    [InlineData("{\"code\":\"invalid_input\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"active\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[]}}")]
+    public void TryDeserializeBodyProgramStatusResult_RejectsCodeSnapshotMismatch(string payload)
+    {
+        BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", payload), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramStatusResult_RejectsUnknownProgramState()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result",
+            "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"unknown\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[]}}"), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramStatusResult_RejectsUnknownNodeState()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result",
+            "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"active\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"first\",\"state\":\"unknown\",\"nodeAttempt\":3,\"admissionAttempt\":4}]}}"), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramEventsResult_RejectsUnknownQueryCode()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result", "{\"programId\":\"program_1\",\"code\":\"unknown\",\"events\":[],\"nextCursor\":0,\"highWater\":0}"), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Theory]
+    [InlineData("{\"programId\":\"program_1\",\"code\":\"not_found\",\"events\":[{\"cursor\":9,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3}],\"nextCursor\":9,\"highWater\":11}")]
+    [InlineData("{\"programId\":\"program_1\",\"code\":\"invalid_input\",\"events\":[{\"cursor\":9,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3}],\"nextCursor\":9,\"highWater\":11}")]
+    [InlineData("{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[{\"cursor\":12,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3}],\"nextCursor\":12,\"highWater\":11}")]
+    [InlineData("{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[{\"cursor\":9,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3}],\"nextCursor\":8,\"highWater\":11}")]
+    public void TryDeserializeBodyProgramEventsResult_RejectsInvalidCodeOrPageValues(string payload)
+    {
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result", payload), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Theory]
+    [InlineData("{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[{\"cursor\":9,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3},{\"cursor\":8,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3}],\"nextCursor\":8,\"highWater\":11}")]
+    [InlineData("{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[{\"cursor\":9,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3},{\"cursor\":9,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3}],\"nextCursor\":9,\"highWater\":11}")]
+    public void TryDeserializeBodyProgramEventsResult_RejectsNonIncreasingEventCursors(string payload)
+    {
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result", payload), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramEventsResult_AcceptsEmptyPageCursorPastHighWater()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result",
+            "{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[],\"nextCursor\":12,\"highWater\":11}"), out BridgeEnvelope<BridgeBodyProgramEventsResult>? envelope, out string reason).Should().BeTrue();
+
+        reason.Should().Be("accepted");
+        envelope!.Payload.NextCursor.Should().Be(12);
+        envelope.Payload.HighWater.Should().Be(11);
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramEventsResult_RejectsMissingPageProgramId()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result", "{\"code\":\"found\",\"events\":[],\"nextCursor\":0,\"highWater\":0}"), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramEventsResult_RejectsEventForAnotherProgram()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result",
+            "{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[{\"cursor\":9,\"programId\":\"program_2\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3}],\"nextCursor\":9,\"highWater\":11}"), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramEventsResult_RejectsPageFieldsInsideEvent()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result",
+            "{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[{\"cursor\":9,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":3,\"nextCursor\":9,\"highWater\":11}],\"nextCursor\":9,\"highWater\":11}"), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidOutboundResults))]
+    public void TrySerialize_InvalidBodyProgramResult_IsRejected(object result)
+    {
+        BridgeProtocol.TrySerialize(result, out string json, out string reason).Should().BeFalse();
+
+        json.Should().BeEmpty();
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    public static IEnumerable<object[]> InvalidOutboundResults()
+    {
+        BridgeBodyProgramStatusSnapshot snapshot = new("program_1", "active", 7, 2, 11, Array.Empty<BridgeBodyProgramNodeStatus>());
+        yield return new object[] { new BridgeBodyProgramSubmitResult("unknown", new BridgeBodyProgramVerification(true, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), snapshot) };
+        yield return new object[] { new BridgeBodyProgramSubmitResult("accepted", new BridgeBodyProgramVerification(false, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), snapshot) };
+        yield return new object[] { new BridgeBodyProgramSubmitResult("rejected", new BridgeBodyProgramVerification(true, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), null) };
+        yield return new object[] { new BridgeBodyProgramSubmitResult("persistence_failure", new BridgeBodyProgramVerification(false, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), null) };
+        yield return new object[] { new BridgeBodyProgramStatusResult("unknown", null) };
+        yield return new object[] { new BridgeBodyProgramStatusResult("found", null) };
+        yield return new object[] { new BridgeBodyProgramStatusResult("not_found", snapshot) };
+        yield return new object[] { new BridgeBodyProgramStatusResult("found", snapshot with { State = "unknown" }) };
+        yield return new object[] { new BridgeBodyProgramEventsResult("program_1", "unknown", Array.Empty<BridgeBodyProgramEvent>(), 0, 0) };
+        yield return new object[] { new BridgeBodyProgramEventsResult("program_1", "not_found", new[] { new BridgeBodyProgramEvent(1, "program_1", "native_dispatch", 7, null, null) }, 1, 1) };
+        yield return new object[] { new BridgeBodyProgramEventsResult("program_1", "found", new[] { new BridgeBodyProgramEvent(2, "program_1", "native_dispatch", 7, null, null) }, 2, 1) };
+        yield return new object[] { new BridgeBodyProgramEventsResult("program_1", "found", new[] { new BridgeBodyProgramEvent(9, "program_1", "native_dispatch", 7, null, null) }, 8, 11) };
+        yield return new object[] { new BridgeBodyProgramEventsResult("program_1", "found", new[] { new BridgeBodyProgramEvent(9, "program_1", "native_dispatch", 7, null, null), new BridgeBodyProgramEvent(9, "program_1", "native_dispatch", 7, null, null) }, 9, 11) };
+        yield return new object[] { new BridgeEnvelope<BridgeBodyProgramStatusResult>(1, "msg_1", "corr_1", 1000, SampleScope, "wrong_type", new BridgeBodyProgramStatusResult("found", snapshot)) };
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidBodyProgramOutboundEnvelopes))]
+    public void TrySerialize_InvalidBodyProgramResultEnvelope_IsRejected(BridgeEnvelope<BridgeBodyProgramStatusResult> envelope)
+    {
+        BridgeProtocol.TrySerialize(envelope, out string json, out string reason).Should().BeFalse();
+
+        json.Should().BeEmpty();
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    public static IEnumerable<object[]> InvalidBodyProgramOutboundEnvelopes()
+    {
+        BridgeBodyProgramStatusResult result = new("found", new BridgeBodyProgramStatusSnapshot("program_1", "active", 7, 2, 11, Array.Empty<BridgeBodyProgramNodeStatus>()));
+        yield return new object[] { new BridgeEnvelope<BridgeBodyProgramStatusResult>(2, "msg_1", "corr_1", 1000, SampleScope, "program_status_result", result) };
+        yield return new object[] { new BridgeEnvelope<BridgeBodyProgramStatusResult>(BridgeProtocol.Version, "", "corr_1", 1000, SampleScope, "program_status_result", result) };
+        yield return new object[] { new BridgeEnvelope<BridgeBodyProgramStatusResult>(BridgeProtocol.Version, "msg_1", "", 1000, SampleScope, "program_status_result", result) };
+        yield return new object[] { new BridgeEnvelope<BridgeBodyProgramStatusResult>(BridgeProtocol.Version, "msg_1", "corr_1", 1000, new BridgeScope("", "save_1", "world_1", "player_1", "companion_1"), "program_status_result", result) };
+    }
+
+    [Fact]
+    public void ProjectBodyProgramResults_SerializesValidCoreResults()
+    {
+        var snapshot = new BodyProgramStatusSnapshot("program_1", BodyProgramState.Active, 7, 2, 11,
+            new[] { new BodyProgramJournalNode("first", BodyProgramNodeState.Running, 3, 4, null, null) });
+        BodyProgramVerificationReport verification = new(true, 7, null, Array.Empty<BodyProgramDiagnostic>());
+        BridgeBodyProgramSubmitResult submit = BridgeProtocol.ProjectBodyProgramSubmitResult(new BodyProgramSubmitResult(BodyProgramSubmitCode.Accepted, verification, snapshot));
+        BridgeBodyProgramStatusResult status = BridgeProtocol.ProjectBodyProgramStatusResult(new BodyProgramStatusResult(BodyProgramQueryCode.Found, snapshot));
+        BridgeBodyProgramEventsResult events = BridgeProtocol.ProjectBodyProgramEventsResult(new BodyProgramEventsResult("program_1", BodyProgramQueryCode.Found,
+            new[] { new BodyProgramJournalEvent(9, "program_1", "native_dispatch", 7, "first", 3) }, 9, 11));
+
+        BridgeProtocol.TrySerialize(submit, out _, out string submitReason).Should().BeTrue();
+        BridgeProtocol.TrySerialize(status, out _, out string statusReason).Should().BeTrue();
+        BridgeProtocol.TrySerialize(events, out _, out string eventsReason).Should().BeTrue();
+        BridgeProtocol.TrySerialize(BridgeProtocol.ProjectBodyProgramEventsResult(new BodyProgramEventsResult("program_1", BodyProgramQueryCode.Found,
+            Array.Empty<BodyProgramJournalEvent>(), 12, 11)), out _, out string emptyEventsReason).Should().BeTrue();
+
+        submitReason.Should().Be("accepted");
+        statusReason.Should().Be("accepted");
+        eventsReason.Should().Be("accepted");
+        emptyEventsReason.Should().Be("accepted");
+    }
+
+    [Fact]
+    public void BodyProgramEventsResultProjection_RoundTripsExactPageShape()
+    {
+        var projected = BridgeProtocol.ProjectBodyProgramEventsResult(new BodyProgramEventsResult("program_1", BodyProgramQueryCode.Found,
+            new[] { new BodyProgramJournalEvent(9, "program_1", "native_dispatch", 7, "first", 3) }, 9, 11));
+        var envelope = new BridgeEnvelope<BridgeBodyProgramEventsResult>(1, "msg_1", "corr_1", 1000, SampleScope, "program_events_result", projected);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue();
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(json, out BridgeEnvelope<BridgeBodyProgramEventsResult>? roundTrip, out string deserializeReason).Should().BeTrue();
+
+        serializeReason.Should().Be("accepted");
+        deserializeReason.Should().Be("accepted");
+        roundTrip!.Payload.ProgramId.Should().Be("program_1");
+        roundTrip.Payload.Code.Should().Be("found");
+        roundTrip.Payload.Events.Should().ContainSingle().Which.Should().Be(new BridgeBodyProgramEvent(9, "program_1", "native_dispatch", 7, "first", 3));
+        roundTrip.Payload.NextCursor.Should().Be(9);
+        roundTrip.Payload.HighWater.Should().Be(11);
+    }
+
+    private static string ResultEnvelope(string type, string payload) =>
+        "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"" + type + "\",\"payload\":" + payload + "}";
 }

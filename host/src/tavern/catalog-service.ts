@@ -23,13 +23,13 @@ import {
  * returns references and metadata, never a prompt, runtime binding, or Game
  * capability. Persistence is supplied by the caller through this narrow port.
  */
-export type TavernCatalog = Readonly<{
+type TavernCatalog = Readonly<{
   personas: readonly UserPersona[];
   scenarios: readonly Scenario[];
   greetings: readonly GreetingSet[];
   worldBooks: readonly WorldBookBinding[];
 }>;
-export type TavernBindingScope =
+type TavernBindingScope =
   | Readonly<{ kind: "companion"; companionId: string }>
   | Readonly<{ kind: "chat"; companionId: string; continuityId: string; chatThreadId: string }>;
 export type TavernCatalogSelection = Readonly<{
@@ -59,16 +59,16 @@ export type TavernStableContextSnapshot = Readonly<{
     provenance: string;
   }>[];
 }>;
-export type TavernAlwaysOnWorldBookSource = Readonly<{
+type TavernAlwaysOnWorldBookSource = Readonly<{
   binding: TavernStableWorldBookBinding;
   alwaysOnPremise: string;
 }>;
 /** Managed World Info is source-aware and uses exact repository revision content. */
-export type TavernManagedWorldInfoSource = Readonly<{ binding: TavernStableManagedWorldInfoBinding; content: string }>;
+type TavernManagedWorldInfoSource = Readonly<{ binding: TavernStableManagedWorldInfoBinding; content: string }>;
 export type TavernWorldInfoSource = TavernAlwaysOnWorldBookSource | TavernManagedWorldInfoSource;
 
 /** Conservative ceiling for Host-owned immutable stable source material. */
-export const TAVERN_STABLE_CONTEXT_MAX_TOKENS = 2_048;
+const TAVERN_STABLE_CONTEXT_MAX_TOKENS = 2_048;
 
 /**
  * Derives the only Host-publishable Tavern stable snapshot from exact selected

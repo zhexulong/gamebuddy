@@ -1,7 +1,4 @@
-import { createHash } from "node:crypto";
-import { lstat, readFile, readdir } from "node:fs/promises";
-import { dirname, win32 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { win32 } from "node:path";
 
 import { parseStrictJson } from "./strict-json-reader.js";
 import {
@@ -15,15 +12,8 @@ import {
 const MAX_WIRE_BYTES = 32_768;
 const bootstrapSchema = "gamebuddy-desktop-host-bootstrap/v1";
 const rootLayoutSchema = "gamebuddy-windows-root-layout/v1";
-const runtimeAdmissionFileName = "host-runtime-admission.json";
 const sha256 = /^[a-f0-9]{64}$/;
 const generation = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
-const fixedRuntimePath = "runtime/node.exe";
-const fixedBootstrapPath = "desktop-runtime-bootstrap.internal.js";
-const fixedRuntimeVersion = "v24.20.0";
-const fixedRuntimePlatform = "win32";
-const fixedRuntimeArch = "x64";
-const windowsReservedDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
 type DesktopRootLayout = Readonly<{
   programRoot: string;
@@ -40,35 +30,24 @@ type DesktopHostBootstrapFrame = Readonly<{
   rootLayout: DesktopRootLayout;
 }>;
 
-type RuntimeAdmission = Readonly<{
-  generation: string;
-  inventoryDigest: string;
-}>;
-
 declare const desktopRootLayoutCapabilityBrand: unique symbol;
 type DesktopRootLayoutCapability = object & { readonly [desktopRootLayoutCapabilityBrand]: true };
 
 const desktopRootLayoutCapabilities = new WeakSet<object>();
 const desktopRootLayoutCapabilityStates = new WeakMap<object, undefined>();
 
-/** Fixed artifact-relative Desktop bootstrap entry descriptor. */
-export const DESKTOP_RUNTIME_BOOTSTRAP_ENTRY = Object.freeze({
-  schema: "gamebuddy-desktop-runtime-bootstrap-entry/v1",
-  entry: "desktop-runtime-bootstrap.internal.js",
-});
-
-async function bootstrap(): Promise<void> {
+/** One-shot private bootstrap sequence invoked only by the fixed host entry. */
+export async function runDesktopHostBootstrap(moduleDirectory: string): Promise<void> {
   if (process.platform !== "win32") throw unavailable();
 
   const frame = parseBootstrapFrame(await readBootstrapFrame());
-  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  const admission = await readAndValidateRuntimeAdmission(moduleDirectory, frame);
   const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory);
   mintDesktopRootLayoutCapability(rootLayout);
 
-  const supervisorClose = waitForSupervisorClose();
-  await writeAcknowledgement(frame, admission);
-  await supervisorClose;
+  const termination = waitForTermination();
+  await writeAcknowledgement(frame);
+  process.stdin.destroy();
+  await termination;
 }
 
 async function readBootstrapFrame(): Promise<Buffer> {
@@ -131,140 +110,6 @@ function parseRootLayout(value: unknown): DesktopRootLayout {
     operationalRoot: value.operationalRoot,
     presentationRoot: value.presentationRoot,
   });
-}
-
-async function readAndValidateRuntimeAdmission(moduleDirectory: string, frame: DesktopHostBootstrapFrame): Promise<RuntimeAdmission> {
-  const sidecarPath = win32.join(moduleDirectory, runtimeAdmissionFileName);
-  const state = await lstat(sidecarPath);
-  if (!state.isFile() || state.isSymbolicLink() || state.size === 0 || state.size > MAX_WIRE_BYTES) throw unavailable();
-  const raw = await readFile(sidecarPath);
-  if (raw.length !== state.size || createHash("sha256").update(raw).digest("hex") !== frame.runtimeAdmissionSha256) throw unavailable();
-  const sidecar = parseOneWireDocument(raw);
-  if (!isRecord(sidecar) || !exactKeys(sidecar, ["schema", "inventoryDigest", "generation", "runtimePath", "runtimeSha256", "bootstrapPath", "bootstrapSha256", "runtimeVersion", "runtimePlatform", "runtimeArch", "runtimeClosure"])) throw unavailable();
-  if (!raw.equals(Buffer.from(`${JSON.stringify(sidecar)}\n`, "utf8"))) throw unavailable();
-  if (
-    sidecar.schema !== "host-runtime-admission/v1" ||
-    sidecar.generation !== frame.generation ||
-    sidecar.inventoryDigest !== frame.inventoryDigest ||
-    sidecar.runtimePath !== fixedRuntimePath ||
-    !validHex(sidecar.runtimeSha256) ||
-    sidecar.bootstrapPath !== fixedBootstrapPath ||
-    !validHex(sidecar.bootstrapSha256) ||
-    sidecar.runtimeVersion !== fixedRuntimeVersion ||
-    sidecar.runtimePlatform !== fixedRuntimePlatform ||
-    sidecar.runtimeArch !== fixedRuntimeArch ||
-    !validRuntimeClosure(sidecar.runtimeClosure)
-  ) throw unavailable();
-
-  const [runtime, bootstrap, runtimeTree] = await Promise.all([
-    readVerifiedArtifactFile(moduleDirectory, fixedRuntimePath),
-    readVerifiedArtifactFile(moduleDirectory, fixedBootstrapPath),
-    enumerateRuntimeTree(moduleDirectory),
-  ]);
-  if (
-    digest(runtime) !== sidecar.runtimeSha256 ||
-    digest(bootstrap) !== sidecar.bootstrapSha256 ||
-    !sameRuntimeTree(runtimeTree, sidecar.runtimeSha256, sidecar.runtimeClosure.files)
-  ) throw unavailable();
-  return Object.freeze({ generation: sidecar.generation, inventoryDigest: sidecar.inventoryDigest });
-}
-
-function validRuntimeClosure(value: unknown): value is Readonly<{ readonly schema: "host-bundled-runtime-closure/v1"; readonly files: readonly Readonly<{ readonly path: string; readonly sha256: string }>[] }> {
-  if (!isRecord(value) || !exactKeys(value, ["schema", "files"]) || value.schema !== "host-bundled-runtime-closure/v1" || !Array.isArray(value.files)) return false;
-  let previousPath: string | undefined;
-  return value.files.every((file) => {
-    if (!isRecord(file) || !exactKeys(file, ["path", "sha256"]) || typeof file.path !== "string" || !validRuntimeClosurePath(file.path) || !validHex(file.sha256) || file.path === fixedRuntimePath || (previousPath !== undefined && previousPath.localeCompare(file.path) >= 0)) return false;
-    previousPath = file.path;
-    return true;
-  });
-}
-
-function validRuntimeClosurePath(path: string): boolean {
-  if (!/^runtime\/[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/.test(path)) return false;
-  const components = path.split("/");
-  return components[0] === "runtime" && components.length > 1 && components.slice(1).every((component) => (
-    component.length > 0 &&
-    component !== "." &&
-    component !== ".." &&
-    !/[\\/:*?<>"|\u0000-\u001f]/.test(component) &&
-    !component.endsWith(".") &&
-    !component.endsWith(" ") &&
-    !windowsReservedDeviceName.test(component)
-  ));
-}
-
-type RuntimeTreeEntry = Readonly<{ path: string; sha256: string }>;
-
-async function enumerateRuntimeTree(moduleDirectory: string): Promise<readonly RuntimeTreeEntry[]> {
-  const runtimeRoot = artifactPath(moduleDirectory, "runtime");
-  await safeArtifactAncestors(moduleDirectory, runtimeRoot);
-  const rootState = await lstat(runtimeRoot);
-  if (rootState.isSymbolicLink() || !rootState.isDirectory()) throw unavailable();
-
-  const entries: RuntimeTreeEntry[] = [];
-  const visit = async (directory: string, relativeDirectory: string): Promise<void> => {
-    const children = await readdir(directory, { withFileTypes: true });
-    children.sort((left, right) => left.name.localeCompare(right.name));
-    for (const child of children) {
-      const relativePath = relativeDirectory.length === 0 ? child.name : `${relativeDirectory}/${child.name}`;
-      const path = artifactPath(moduleDirectory, `runtime/${relativePath}`);
-      await safeArtifactAncestors(moduleDirectory, path);
-      const state = await lstat(path);
-      if (state.isSymbolicLink()) throw unavailable();
-      if (state.isDirectory()) {
-        await visit(path, relativePath);
-      } else if (state.isFile()) {
-        entries.push(Object.freeze({ path: `runtime/${relativePath}`, sha256: digest(await readFile(path)) }));
-      } else {
-        throw unavailable();
-      }
-    }
-  };
-  await visit(runtimeRoot, "");
-  entries.sort((left, right) => left.path.localeCompare(right.path));
-  return entries;
-}
-
-function sameRuntimeTree(actual: readonly RuntimeTreeEntry[], runtimeSha256: string, closure: readonly Readonly<{ readonly path: string; readonly sha256: string }>[]): boolean {
-  if (actual.length !== closure.length + 1) return false;
-  const expected = new Map<string, string>([
-    [fixedRuntimePath, runtimeSha256],
-    ...closure.map((entry): readonly [string, string] => [entry.path, entry.sha256]),
-  ]);
-  return expected.size === actual.length && actual.every((entry) => expected.get(entry.path) === entry.sha256);
-}
-
-async function readVerifiedArtifactFile(moduleDirectory: string, relativePath: string): Promise<Buffer> {
-  const path = artifactPath(moduleDirectory, relativePath);
-  await safeArtifactAncestors(moduleDirectory, path);
-  const state = await lstat(path);
-  if (state.isSymbolicLink() || !state.isFile()) throw unavailable();
-  const bytes = await readFile(path);
-  if (bytes.length !== state.size) throw unavailable();
-  return bytes;
-}
-
-function artifactPath(moduleDirectory: string, relativePath: string): string {
-  const path = win32.resolve(moduleDirectory, relativePath.replaceAll("/", "\\"));
-  if (win32.relative(moduleDirectory, path).startsWith("..")) throw unavailable();
-  return path;
-}
-
-async function safeArtifactAncestors(moduleDirectory: string, path: string): Promise<void> {
-  const root = await lstat(moduleDirectory);
-  if (root.isSymbolicLink() || !root.isDirectory()) throw unavailable();
-  const relativePath = win32.relative(moduleDirectory, path);
-  if (relativePath === "" || relativePath === ".." || relativePath.startsWith("..\\")) throw unavailable();
-  let cursor = moduleDirectory;
-  for (const component of relativePath.split("\\")) {
-    cursor = win32.join(cursor, component);
-    const state = await lstat(cursor);
-    if (state.isSymbolicLink() || (cursor !== path && !state.isDirectory())) throw unavailable();
-  }
-}
-
-function digest(bytes: Buffer): string {
-  return createHash("sha256").update(bytes).digest("hex");
 }
 
 async function validateRootLayout(layout: DesktopRootLayout, moduleDirectory: string): Promise<DesktopRootLayout> {
@@ -338,14 +183,14 @@ function mintDesktopRootLayoutCapability(_layout: DesktopRootLayout): DesktopRoo
   return capability;
 }
 
-async function writeAcknowledgement(frame: DesktopHostBootstrapFrame, admission: RuntimeAdmission): Promise<void> {
+async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<void> {
   const acknowledgement = Buffer.from(`${JSON.stringify({
     schema: bootstrapSchema,
     protocolVersion: 1,
     status: "accepted",
     bootstrapId: frame.bootstrapId,
-    generation: admission.generation,
-    inventoryDigest: admission.inventoryDigest,
+    generation: frame.generation,
+    inventoryDigest: frame.inventoryDigest,
     runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
     rootLayoutSchema,
   })}\n`, "utf8");
@@ -359,15 +204,17 @@ async function writeAcknowledgement(frame: DesktopHostBootstrapFrame, admission:
   });
 }
 
-function waitForSupervisorClose(): Promise<void> {
-  return new Promise((resolveClose) => {
-    const close = () => {
-      process.off("SIGTERM", close);
-      process.off("SIGINT", close);
-      resolveClose();
+function waitForTermination(): Promise<void> {
+  return new Promise((resolveTermination) => {
+    const livenessHandle = setInterval(() => {}, 2_147_483_647);
+    const terminate = () => {
+      clearInterval(livenessHandle);
+      process.off("SIGTERM", terminate);
+      process.off("SIGINT", terminate);
+      resolveTermination();
     };
-    process.once("SIGTERM", close);
-    process.once("SIGINT", close);
+    process.once("SIGTERM", terminate);
+    process.once("SIGINT", terminate);
   });
 }
 
@@ -396,10 +243,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function unavailable(): Error {
   return new Error("desktop_runtime_bootstrap_unavailable");
-}
-
-if (import.meta.main) {
-  void bootstrap().catch(() => {
-    process.exitCode = 1;
-  });
 }

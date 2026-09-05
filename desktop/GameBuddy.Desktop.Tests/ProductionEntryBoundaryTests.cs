@@ -7,8 +7,9 @@ public sealed class ProductionEntryBoundaryTests
     {
         var source = File.ReadAllText(DesktopProgramSource());
 
-        Assert.Contains("InstalledGenerationAdmission.FromCurrentUserRegistration()", source, StringComparison.Ordinal);
         var productionPath = source[source.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)..];
+        Assert.Contains("CurrentUserRootLayout.DeriveForCurrentUser()", productionPath, StringComparison.Ordinal);
+        Assert.Contains("InstalledGenerationSelection.Acquire(layout.ProgramRoot)", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("DeriveForTesting", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("Fixtures", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("ICurrentUserRegistrationStore", productionPath, StringComparison.Ordinal);

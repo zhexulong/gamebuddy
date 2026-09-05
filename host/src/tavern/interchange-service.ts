@@ -7,7 +7,7 @@ import type { CharacterCandidate, StCardImportRecord } from "./types.js";
  * decoder and leave only as canonical inert candidate/report artifacts; this
  * module never emits a runnable card or invokes imported content.
  */
-export type TavernSafeInterchange = Readonly<{
+type TavernSafeInterchange = Readonly<{
   candidate: ArtifactEnvelope<CharacterCandidate>;
   report: ArtifactEnvelope<StCardImportRecord>;
 }>;

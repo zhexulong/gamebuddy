@@ -23,6 +23,7 @@ public sealed class FarmhandCapabilityPublicationTests
 
         same.Should().BeSameAs(initial);
         same.CapabilityRevision.Should().Be(1);
+        same.PolicyIdentity.Should().Be(initial.PolicyIdentity);
         same.EnabledActionIds.Should().Equal("move_to_tile", "till_soil");
     }
 
@@ -49,6 +50,8 @@ public sealed class FarmhandCapabilityPublicationTests
         withdrawn.CapabilityRevision.Should().Be(2);
         withdrawn.EnabledActionIds.Should().Equal("move_to_tile");
         reenabled.CapabilityRevision.Should().Be(3);
+        withdrawn.PolicyIdentity.Should().NotBe(initial.PolicyIdentity);
+        reenabled.PolicyIdentity.Should().NotBe(withdrawn.PolicyIdentity).And.NotBe(initial.PolicyIdentity);
         reenabled.EnabledActionIds.Should().Equal("move_to_tile", "till_soil");
     }
 }

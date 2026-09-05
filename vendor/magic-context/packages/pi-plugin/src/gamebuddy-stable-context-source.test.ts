@@ -5,6 +5,9 @@ import {
     GameBuddyStableContextSource,
     GameBuddyStableContextSourceError,
     materializeGameBuddyStableContextSnapshot,
+    publishGameBuddyStableContextSnapshot,
+    readPublishedGameBuddyStableContext,
+    clearPublishedGameBuddyStableContext,
     validateGameBuddyStableContextSnapshot,
 } from "./gamebuddy-stable-context-source";
 import { renderM0Pi } from "./inject-compartments-pi";
@@ -41,8 +44,19 @@ function snapshot(overrides: Record<string, unknown> = {}) {
             provenance: "tavern/scenario/1",
         },
     ];
-    const body = { version: GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION, ...binding, sources };
-    return { ...body, canonicalHash: hash(canonicalJson(body)), ...overrides };
+    const body = {
+        version: GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION,
+        ...binding,
+        sources,
+        ...overrides,
+    };
+    return {
+        ...body,
+        canonicalHash:
+            typeof overrides.canonicalHash === "string"
+                ? overrides.canonicalHash
+                : hash(canonicalJson(body)),
+    };
 }
 
 describe("GameBuddyStableContextSource", () => {
@@ -52,6 +66,36 @@ describe("GameBuddyStableContextSource", () => {
         expect(Object.isFrozen(value.sources)).toBe(true);
         expect(Object.isFrozen(value.sources[0])).toBe(true);
         expect(() => ((value.sources[0] as { content: string }).content = "mutated")).toThrow();
+    });
+
+    it("publishes, reads, replaces, and clears exact session-scoped snapshots", () => {
+        const firstBinding = { ...binding, sessionId: "publication-session-a" };
+        const secondBinding = { ...binding, sessionId: "publication-session-b" };
+        try {
+            const first = publishGameBuddyStableContextSnapshot(firstBinding, snapshot(firstBinding));
+            const second = publishGameBuddyStableContextSnapshot(secondBinding, snapshot(secondBinding));
+            expect(readPublishedGameBuddyStableContext(firstBinding.sessionId)).toBe(first);
+            expect(readPublishedGameBuddyStableContext(secondBinding.sessionId)).toBe(second);
+            expect(readPublishedGameBuddyStableContext(firstBinding.sessionId)?.binding).toEqual(firstBinding);
+            // Same continuity is intentionally shareable, but the native stable
+            // source remains invisible to a foreign exact-session binding.
+            expect(readPublishedGameBuddyStableContext("publication-session-foreign")).toBeUndefined();
+
+            const tombstone = publishGameBuddyStableContextSnapshot(
+                firstBinding,
+                snapshot({ ...firstBinding, sources: [] }),
+            );
+            expect(tombstone.sources).toEqual([]);
+            expect(readPublishedGameBuddyStableContext(firstBinding.sessionId)).toBe(tombstone);
+            expect(readPublishedGameBuddyStableContext(secondBinding.sessionId)).toBe(second);
+
+            clearPublishedGameBuddyStableContext(firstBinding.sessionId);
+            expect(readPublishedGameBuddyStableContext(firstBinding.sessionId)).toBeUndefined();
+            expect(readPublishedGameBuddyStableContext(secondBinding.sessionId)).toBe(second);
+        } finally {
+            clearPublishedGameBuddyStableContext(firstBinding.sessionId);
+            clearPublishedGameBuddyStableContext(secondBinding.sessionId);
+        }
     });
 
     it("fails closed for missing adapters, binding mismatch, hash mismatch, and unknown kinds", () => {
@@ -65,6 +109,12 @@ describe("GameBuddyStableContextSource", () => {
         ).toThrow("active binding surface is unsupported");
         expect(() =>
             validateGameBuddyStableContextSnapshot(snapshot({ sessionId: "other" }), binding),
+        ).toThrow("does not match active binding");
+        expect(() =>
+            validateGameBuddyStableContextSnapshot(snapshot({ continuityId: "other" }), binding),
+        ).toThrow("does not match active binding");
+        expect(() =>
+            materializeGameBuddyStableContextSnapshot(snapshot({ continuityId: "other" }), binding),
         ).toThrow("does not match active binding");
         expect(() =>
             validateGameBuddyStableContextSnapshot(

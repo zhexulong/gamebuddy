@@ -1253,6 +1253,7 @@ test("latest nonterminal receipt before delayed tool resolution remains ledger-p
   resolveDispatch({
     requestId: "request_pending",
     executionId: "execution_pending",
+    actionId: "equip_tool",
     state: "accepted",
     reasonCode: "accepted",
     revision: 7,

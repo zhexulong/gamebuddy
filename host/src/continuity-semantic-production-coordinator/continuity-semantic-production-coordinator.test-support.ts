@@ -25,7 +25,7 @@ import type {
 import type { RuntimeSession } from "../runtime.js";
 import { SemanticProductionCoordinatorError } from "./continuity-semantic-production-coordinator.internal.js";
 
-export type TestMountedChatRuntimeLease = Readonly<{
+type TestMountedChatRuntimeLease = Readonly<{
   /** Mirrors production's safe lease projection; Pi session identity stays private. */
   runtimeSession: Pick<RuntimeSession, "profile">;
   chatThreadId: string;

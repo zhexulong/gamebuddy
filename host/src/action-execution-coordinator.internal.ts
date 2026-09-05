@@ -46,7 +46,7 @@ export type ActionExecutionAdmission = IntegrationDispatchAdmission &
  * dispatch. This private Host seam has no graph, fact, resource, or STOP
  * mutator; its validator can only veto or grant the supplied exact challenge.
  */
-export type HostNodeAdmissionDecision =
+type HostNodeAdmissionDecision =
   | Readonly<{ result: "granted"; attachmentGeneration: string; policyRevision: string; catalogRevision: string }>
   | Readonly<{ result: "rejected"; code: string }>
   | Readonly<{ result: "unavailable" }>;

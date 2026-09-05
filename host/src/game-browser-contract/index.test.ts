@@ -694,28 +694,27 @@ test("GameBrowserFixtureV1 produces a connected state", () => {
 
 // ─── Contract exports ───────────────────────────────────────────────────────
 
-test("GameBrowserContractV1 exports all expected schemas", () => {
-  const expectedSchemaNames = [
-    "GameBrowserStateV1Schema",
-    "GamePrerequisiteStateV1Schema",
-    "GameInstanceV1Schema",
-    "GameCompatibilityV1Schema",
+test("GameBrowserContractV1 preserves the exact versioned aggregate schema boundary", () => {
+  assert.deepEqual(Object.keys(GameBrowserContractV1.schemas).sort(), [
+    "GameAttachCommandV1Schema",
     "GameAttachmentStateV1Schema",
+    "GameBrowserStateV1Schema",
     "GameCapabilitySummaryV1Schema",
+    "GameCompatibilityV1Schema",
+    "GameDiagnosticsReadCommandV1Schema",
+    "GameDisconnectCommandV1Schema",
+    "GameInstanceV1Schema",
+    "GameInstancesReadCommandV1Schema",
+    "GameLaunchCommandV1Schema",
+    "GamePrerequisiteStateV1Schema",
     "GamePrerequisitesReadCommandV1Schema",
     "GamePrerequisitesSetupCommandV1Schema",
-    "GameInstancesReadCommandV1Schema",
-    "GameStateReadCommandV1Schema",
-    "GameLaunchCommandV1Schema",
-    "GameAttachCommandV1Schema",
-    "GameStopCommandV1Schema",
-    "GameReconnectCommandV1Schema",
-    "GameDisconnectCommandV1Schema",
-    "GameDiagnosticsReadCommandV1Schema",
     "GameProblemV1Schema",
-  ];
-  const actual = Object.keys(GameBrowserContractV1.schemas).sort();
-  for (const name of expectedSchemaNames) {
-    assert.ok(actual.includes(name), `missing schema: ${name}`);
-  }
+    "GameReconnectCommandV1Schema",
+    "GameStateReadCommandV1Schema",
+    "GameStopCommandV1Schema",
+    "StardewCabinChoicesV1Schema",
+    "StardewCabinConfirmCommandV1Schema",
+    "StardewCabinConfirmResultV1Schema",
+  ]);
 });

@@ -12,4 +12,4 @@ export function createTestWindowsReparseInspector(spawnHelper: SpawnHelper): Win
 }
 
 /** Test-compilation-only child factory type used by focused protocol tests. */
-export type TestWindowsReparseHelper = (...args: Parameters<SpawnHelper>) => ChildProcess;
+type TestWindowsReparseHelper = (...args: Parameters<SpawnHelper>) => ChildProcess;

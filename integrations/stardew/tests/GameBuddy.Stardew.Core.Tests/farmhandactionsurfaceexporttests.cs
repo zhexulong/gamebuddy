@@ -8,26 +8,44 @@ namespace GameBuddy.Stardew.Core.Tests;
 public sealed class FarmhandActionSurfaceExportTests
 {
     [Fact]
-    public void Publication_BindsExactlyToCatalogOrderAndIdentityProjection()
+    public void Publication_BindsExactlyToCatalogDescriptorProjection()
     {
-        FarmhandActionSurfaceArtifact artifact = FarmhandActionSurfaceExport.CreateArtifact();
+        FarmhandActionDescriptorArtifact artifact = FarmhandActionSurfaceExport.CreateArtifact();
 
-        artifact.Schema.Should().Be("gamebuddy-stardew-action-surface/v1");
-        artifact.GameId.Should().Be("stardew");
-        artifact.Registrations.Should().HaveSameCount(FarmhandActionCatalog.Registrations);
-        artifact.Registrations.Select(registration => registration.ActionId)
+        artifact.Schema.Should().Be("gamebuddy-action-descriptors/v1");
+        artifact.CatalogRevision.Should().Be(FarmhandActionSurfacePublication.CatalogRevision);
+        artifact.Actions.Should().HaveSameCount(FarmhandActionCatalog.Registrations);
+        artifact.Actions.Select(action => action.ActionId)
             .Should().Equal(FarmhandActionCatalog.Registrations.Select(registration => registration.ActionId));
 
-        for (int index = 0; index < artifact.Registrations.Count; index++)
+        for (int index = 0; index < artifact.Actions.Count; index++)
         {
             FarmhandActionRegistration source = FarmhandActionCatalog.Registrations[index];
-            FarmhandActionSurfaceRegistration projection = artifact.Registrations[index];
+            FarmhandActionDescriptorProjection projection = artifact.Actions[index];
+            FarmhandActionDescriptor descriptor = source.Descriptor
+                ?? throw new InvalidOperationException("Catalog registration needs a descriptor.");
+
             projection.ActionId.Should().Be(source.ActionId);
-            projection.FamilyId.Should().Be(source.FamilyId);
             projection.IdentityVersion.Should().Be(source.IdentityVersion);
             projection.Lifecycle.Should().Be(source.Lifecycle.ToWireValue());
             projection.Kind.Should().Be(source.Kind.ToWireValue());
+            projection.ArgumentSchema.Should().Equal(descriptor.Arguments.ToDictionary(
+                argument => argument.Name,
+                argument => new FarmhandActionArgumentSchema(argument.Type)));
+            projection.OutputFacts.Should().Equal(descriptor.OutputFacts);
+            projection.ResourceTemplate.Claims.Should().Equal(descriptor.ResourceTemplate.Select(claim =>
+                new FarmhandActionResourceTemplateValueProjection(claim.Key, claim.Value.ToString())));
+            projection.Effect.Should().Be(descriptor.Effect);
+            projection.Postcondition.Name.Should().Be(descriptor.Postcondition);
         }
+    }
+
+    [Fact]
+    public void PublicationDeclaresEmbodiedActorScopePlayerInModOwnedRegistration()
+    {
+        FarmhandActionRegistration move = FarmhandActionCatalog.Registrations.Single(registration => registration.ActionId == "move_to_tile");
+
+        move.Descriptor!.ResourceTemplate.Should().ContainSingle().Which.Should().Be(new FarmhandActionResourceTemplateClaim("embodied_actor", FarmhandResourceTemplateValue.ScopePlayer));
     }
 
     [Fact]
@@ -41,7 +59,8 @@ public sealed class FarmhandActionSurfaceExportTests
         first.Should().NotContain("\r");
         first.Should().NotContain(" ");
         first.Should().NotContain("\t");
-        first.Should().Contain("{\"schema\":\"gamebuddy-stardew-action-surface/v1\"");
+        first.Should().Contain("{\"schema\":\"gamebuddy-action-descriptors/v1\"");
+        first.Should().Contain("\"catalogRevision\":1");
         first.Should().Contain("\"actionId\":\"move_to_tile\"");
         first.Should().Contain("\"actionId\":\"pet_animal\"");
         first.Should().Contain("\"lifecycle\":\"experimental\"");
@@ -49,23 +68,27 @@ public sealed class FarmhandActionSurfaceExportTests
     }
 
     [Fact]
-    public void SerializeToJson_ContainsExactBoundedKeysAndNoAuthorityFields()
+    public void SerializeToJson_ContainsExactDescriptorValidatorShape()
     {
         using JsonDocument document = JsonDocument.Parse(FarmhandActionSurfaceExport.SerializeToJson());
         JsonElement root = document.RootElement;
 
         root.EnumerateObject().Select(property => property.Name)
-            .Should().Equal("schema", "gameId", "registrations");
-        root.GetProperty("registrations").GetArrayLength().Should().Be(FarmhandActionCatalog.Registrations.Count);
+            .Should().Equal("schema", "catalogRevision", "actions");
+        root.GetProperty("actions").GetArrayLength().Should().Be(FarmhandActionCatalog.Registrations.Count);
 
-        foreach (JsonElement registration in root.GetProperty("registrations").EnumerateArray())
+        foreach (JsonElement action in root.GetProperty("actions").EnumerateArray())
         {
-            registration.EnumerateObject().Select(property => property.Name)
-                .Should().Equal("actionId", "familyId", "identityVersion", "lifecycle", "kind");
-            registration.TryGetProperty("handlerGroup", out _).Should().BeFalse();
-            registration.TryGetProperty("enabledActionIds", out _).Should().BeFalse();
-            registration.TryGetProperty("catalogRevision", out _).Should().BeFalse();
-            registration.TryGetProperty("capabilities", out _).Should().BeFalse();
+            action.EnumerateObject().Select(property => property.Name)
+                .Should().Equal("actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition");
+            action.GetProperty("resourceTemplate").EnumerateObject().Select(property => property.Name)
+                .Should().Equal("claims");
+            action.GetProperty("postcondition").EnumerateObject().Select(property => property.Name)
+                .Should().Equal("name");
+            action.TryGetProperty("familyId", out _).Should().BeFalse();
+            action.TryGetProperty("handlerGroup", out _).Should().BeFalse();
+            action.TryGetProperty("enabledActionIds", out _).Should().BeFalse();
+            action.TryGetProperty("capabilities", out _).Should().BeFalse();
         }
     }
 
@@ -76,44 +99,42 @@ public sealed class FarmhandActionSurfaceExportTests
             MatchesFrozenIdentifier(registration.ActionId)
             && MatchesFrozenIdentifier(registration.FamilyId));
 
-        FarmhandActionSurfacePublication.Registrations.Should().OnlyContain(registration =>
-            MatchesFrozenIdentifier(registration.ActionId)
-            && MatchesFrozenIdentifier(registration.FamilyId));
+        FarmhandActionSurfacePublication.Actions.Should().OnlyContain(action =>
+            MatchesFrozenIdentifier(action.ActionId));
     }
 
     private static bool MatchesFrozenIdentifier(string value) =>
         value.Length is >= 2 and <= FarmhandActionSurfacePublication.MaximumIdentityLength
         && value[0] is >= 'a' and <= 'z'
         && value.Skip(1).All(character =>
-            character is >= 'a' and <= 'z'
-            or >= '0' and <= '9'
-            or '_');
+        character is >= 'a' and <= 'z'
+        or >= '0' and <= '9'
+        or '_');
 
     [Fact]
     public void Publication_DoesNotExposeMutableProducerInput()
     {
-        FarmhandActionSurfaceArtifact artifact = FarmhandActionSurfaceExport.CreateArtifact();
-        ((object)artifact.Registrations).Should().NotBeSameAs(FarmhandActionCatalog.Registrations);
-        artifact.Registrations.Should().BeAssignableTo<IReadOnlyList<FarmhandActionSurfaceRegistration>>();
-        FarmhandActionSurfacePublication.Registrations.Should().BeAssignableTo<IReadOnlyList<FarmhandActionSurfaceRegistration>>();
+        FarmhandActionDescriptorArtifact artifact = FarmhandActionSurfaceExport.CreateArtifact();
+        ((object)artifact.Actions).Should().NotBeSameAs(FarmhandActionCatalog.Registrations);
+        artifact.Actions.Should().BeAssignableTo<IReadOnlyList<FarmhandActionDescriptorProjection>>();
+        FarmhandActionSurfacePublication.Actions.Should().BeAssignableTo<IReadOnlyList<FarmhandActionDescriptorProjection>>();
 
-        Action mutate = () => ((IList<FarmhandActionSurfaceRegistration>)FarmhandActionSurfacePublication.Registrations)
-            .Add(new FarmhandActionSurfaceRegistration("unexpected", "unexpected", 1, "published", "execution"));
+        Action mutate = () => ((IList<FarmhandActionDescriptorProjection>)FarmhandActionSurfacePublication.Actions)
+            .Add(new FarmhandActionDescriptorProjection("unexpected", 1, "published", "read_only", new Dictionary<string, FarmhandActionArgumentSchema>(), new Dictionary<string, string>(), new FarmhandActionResourceTemplate(Array.Empty<FarmhandActionResourceTemplateValueProjection>()), "read", new FarmhandActionPostcondition("none")));
         mutate.Should().Throw<NotSupportedException>();
 
-        artifact.Registrations[0].ActionId.Should().Be(FarmhandActionCatalog.Registrations[0].ActionId);
-        FarmhandActionSurfaceExport.CreateArtifact().Registrations[0].ActionId
+        artifact.Actions[0].ActionId.Should().Be(FarmhandActionCatalog.Registrations[0].ActionId);
+        FarmhandActionSurfaceExport.CreateArtifact().Actions[0].ActionId
             .Should().Be(FarmhandActionCatalog.Registrations[0].ActionId);
     }
 
     [Fact]
     public void Publication_RetainsExperimentalAndReadOnlyCatalogEntries()
     {
-        IReadOnlyList<FarmhandActionSurfaceRegistration> registrations = FarmhandActionSurfacePublication.Registrations;
+        IReadOnlyList<FarmhandActionDescriptorProjection> actions = FarmhandActionSurfacePublication.Actions;
 
-        registrations.Should().Contain(registration => registration.Lifecycle == "experimental");
-        registrations.Should().Contain(registration => registration.Kind == "read_only");
-        registrations.Should().Contain(registration => registration.ActionId == "inspect_world_map");
-        registrations.Should().Contain(registration => registration.ActionId == "clear_debris");
+        actions.Should().Contain(action => action.Kind == "read_only");
+        actions.Should().Contain(action => action.ActionId == "inspect_world_map");
+        actions.Should().Contain(action => action.ActionId == "clear_debris");
     }
 }

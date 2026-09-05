@@ -8,6 +8,8 @@ export function Timeline({
   chatTitle,
   labels,
   preview = null,
+  onSwipe,
+  onRegenerate,
 }: {
   transcript: readonly BrowserMessageV1[];
   preview?: Readonly<{ turnHandle: string; text: string }> | null;
@@ -19,6 +21,8 @@ export function Timeline({
     untitledChat: string;
     you: string;
   };
+  onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
+  onRegenerate?: (messageHandle: string) => void;
 }) {
   const displayTitle = chatTitle ?? labels.untitledChat;
   const sectionRef = useRef<HTMLElement>(null);
@@ -46,6 +50,8 @@ export function Timeline({
               message={message}
               companionName={companionName}
               playerLabel={labels.you}
+              onSwipe={onSwipe}
+              onRegenerate={onRegenerate}
             />
           ))}
           {preview !== null && (
