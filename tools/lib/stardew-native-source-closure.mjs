@@ -34,7 +34,7 @@ function canonical(value) {
       .join(",")}}`;
   return JSON.stringify(value);
 }
-export function sourceClosureDigest(value) {
+function sourceClosureDigest(value) {
   return createHash("sha256").update(canonical(value)).digest("hex");
 }
 function assertAttestation(attestation) {

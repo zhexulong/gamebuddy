@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
-export const TARGET_VERSION = "1.6.15.24356";
+const TARGET_VERSION = "1.6.15.24356";
 export const TARGET_LENGTH = 6268416;
 export const TARGET_SHA256 = "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee";
 export const TOOL_VERSION = "ilspycmd: 9.1.0.7988";
@@ -16,7 +16,7 @@ export const TOOL_SHA256 = "5da34ef8b7a3d7e2057d27a0a84ec8e1ccdddb35d6d519058fce
 export const TOOL_PAYLOAD_ROOT =
   "C:/Users/27251/.dotnet/tools/.store/ilspycmd/9.1.0.7988/ilspycmd/9.1.0.7988/tools/net8.0/any";
 export const OPTIONS = Object.freeze(["--disable-updatecheck", "-p", "--nested-directories"]);
-export const CONTRACT_PATH = "tools/stardew-portfolio-m9-special-order-action-contract.json";
+const CONTRACT_PATH = "tools/stardew-portfolio-m9-special-order-action-contract.json";
 export const BLOCKER_CODE = "m9_accept_non_ui_native_ingress_not_established";
 export const ILSPY_EXECUTION_ENVIRONMENT_POLICY = Object.freeze({
   mode: "explicit_windows_runtime_allowlist",
@@ -150,7 +150,7 @@ export async function assertNoReparsePoint(
   if (!info.isFile() && !info.isDirectory()) fail(reparseCode, `Path is not a normal file or directory: ${file}`);
   return resolved;
 }
-export async function assertNoReparseAncestors(file, options = {}) {
+async function assertNoReparseAncestors(file, options = {}) {
   let current = path.resolve(file);
   const stop = path.parse(current).root;
   for (;;) {
@@ -303,7 +303,7 @@ export async function targetAssembly(gamePath) {
 export async function disposeTarget(target) {
   if (target?.snapshotRoot) await rm(target.snapshotRoot, { recursive: true, force: true });
 }
-export async function toolPayloadState() {
+async function toolPayloadState() {
   const paths = await listFiles(TOOL_PAYLOAD_ROOT);
   const files = [];
   for (const sourcePath of paths.sort()) {
@@ -660,4 +660,4 @@ export function validate(model, authorityHash, state, payload = undefined) {
     anchorCount: model.anchors.length,
   };
 }
-export { sha, payloadDigest, methodSlice, validateSnapshot };
+export { methodSlice, validateSnapshot };

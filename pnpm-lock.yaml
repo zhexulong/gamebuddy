@@ -97,7 +97,7 @@ importers:
         version: 3.4.0
 
   integrations/stardew/action-development:
-    dependencies:
+    devDependencies:
       '@gamebuddy/game-action-devkit':
         specifier: workspace:*
         version: link:../../../packages/game-action-devkit

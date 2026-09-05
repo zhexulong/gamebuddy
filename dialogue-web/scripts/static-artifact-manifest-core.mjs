@@ -108,11 +108,12 @@ async function createWindowsReparsePolicy(sourceModuleUrl, platform = process.pl
   if (platform !== "win32") return Object.freeze({ inspect: async () => {} });
   try {
     const adapter = await loader();
-    if (typeof adapter?.createBuildWindowsReparseInspector !== "function" || typeof adapter?.assertNoWindowsReparse !== "function") throw unavailable();
+    const boundary = adapter?.BUILD_ARTIFACT_REPARSE_INSPECTION;
+    if (typeof boundary?.create !== "function" || typeof boundary?.assertNoReparse !== "function") throw unavailable();
     // The adapter mints one opaque capability for this complete operation. It
     // is never reconstructed from a path, environment, or CLI value.
-    const capability = await adapter.createBuildWindowsReparseInspector();
-    return Object.freeze({ inspect: async (path) => await adapter.assertNoWindowsReparse(capability, path) });
+    const capability = await boundary.create();
+    return Object.freeze({ inspect: async (path) => await boundary.assertNoReparse(capability, path) });
   } catch {
     throw unavailable();
   }

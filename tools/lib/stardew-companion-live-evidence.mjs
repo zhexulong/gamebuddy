@@ -1,4 +1,4 @@
-export const COMPANION_LIVE_EVIDENCE_SCHEMA = "gamebuddy-stardew-companion-live-evidence/v1";
+const COMPANION_LIVE_EVIDENCE_SCHEMA = "gamebuddy-stardew-companion-live-evidence/v1";
 
 import { createHash } from "node:crypto";
 
@@ -16,7 +16,7 @@ const KINDS = new Set([
   "body_settled",
 ]);
 
-export class CompanionLiveEvidenceError extends Error {
+class CompanionLiveEvidenceError extends Error {
   constructor(code) {
     super(code);
     this.code = code;
