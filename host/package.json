@@ -13,7 +13,7 @@
     "start": "node scripts/start-production-artifact.mjs main.js",
     "start:dialogue": "node scripts/start-production-artifact.mjs dialogue-web-main.js",
     "start:farmhand-preview": "node scripts/start-production-artifact.mjs farmhand-companion-preview.js",
-    "test": "node scripts/run-test-suite.mjs",
+    "test": "pnpm --dir .. check:host-windows-test-preflight && node scripts/run-test-suite.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit && tsc --project tsconfig.test.json --noEmit",
     "check:production-artifact": "node scripts/check-production-artifact.mjs",
     "repair:test-artifact-lock": "node scripts/repair-test-artifact-lock.mjs"

@@ -29,8 +29,14 @@ const manifest: CompanionRunManifest = {
   },
 };
 
+async function canonicalTemporaryRoot(): Promise<string> {
+  const root = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof root !== "string" || root.length === 0) throw new Error("test_local_app_data_unavailable");
+  return realpath(root);
+}
+
 async function paths(): Promise<RuntimePaths> {
-  const root = await mkdtemp(join(await realpath(process.platform === "win32" ? process.env.LOCALAPPDATA ?? tmpdir() : tmpdir()), "gamebuddy-run-manifest-"));
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-run-manifest-"));
   return {
     root,
     runtimeCwd: root,

@@ -25,7 +25,11 @@ import type { WindowsStaleLockReclaimerCapability } from "./windows-stale-lock-r
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const STALE_LOCK_MS = 5 * 60_000;
-const canonicalTemporaryRoot = () => realpath(process.platform === "win32" ? process.env.LOCALAPPDATA ?? tmpdir() : tmpdir());
+const canonicalTemporaryRoot = () => {
+  const root = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof root !== "string" || root.length === 0) throw new Error("test_local_app_data_unavailable");
+  return realpath(root);
+};
 const staleAgo = () => new Date(Date.now() - 6 * 60_000);
 const staleOwner = (pid: number, createdAtMs = Date.now() - 6 * 60_000) =>
   JSON.stringify({ token: "00000000-0000-4000-8000-000000000000", pid, createdAtMs });
