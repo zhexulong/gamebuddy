@@ -321,7 +321,7 @@ public sealed class BodyProgramAuthorityTests
         controller.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
         string journalBeforeCompletion = store.Value!;
 
-        BodyProgramControllerResult<BodyProgramTerminalResult> result = controller.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), (BodyProgramNodeOutcome)999, null, null, null, null));
+        BodyProgramControllerResult<BodyProgramTerminalResult> result = controller.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), (BodyProgramNodeOutcome)999, Array.Empty<RuntimeFact>(), null, null, null));
 
         result.Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
         authority.Status("program").Snapshot!.State.Should().Be(BodyProgramState.Active);
@@ -341,7 +341,7 @@ public sealed class BodyProgramAuthorityTests
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
         string journalBeforeCompletion = store.Value!;
 
-        BodyProgramControllerResult<BodyProgramTerminalResult> result = authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), (BodyProgramNodeOutcome)999, null, null, null, null));
+        BodyProgramControllerResult<BodyProgramTerminalResult> result = authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), (BodyProgramNodeOutcome)999, Array.Empty<RuntimeFact>(), null, null, null));
 
         result.Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
         authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Empty);
@@ -503,7 +503,7 @@ public sealed class BodyProgramAuthorityTests
         grant = authority.TryConsumeHostGrant(grant).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
         NodeExecutionBinding different = new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "other-request", "other-idem", "other-exec");
-        authority.TryComplete(grant, new BodyProgramTerminalResult(different, BodyProgramNodeOutcome.Succeeded, Fact(grant), "receipt", "evidence", "postcondition")).Code.Should().Be(BodyProgramControllerResultCode.ExecutionBindingMismatch);
+        authority.TryComplete(grant, new BodyProgramTerminalResult(different, BodyProgramNodeOutcome.Succeeded, new[] { Fact(grant) }, "receipt", "evidence", "postcondition")).Code.Should().Be(BodyProgramControllerResultCode.ExecutionBindingMismatch);
     }
 
     [Fact]
@@ -519,7 +519,7 @@ public sealed class BodyProgramAuthorityTests
 
         HostAdmissionGrant forgedGrant = grant with { ExecutionBinding = null };
         BodyProgramControllerResult<BodyProgramTerminalResult> result = authority.TryComplete(
-            forgedGrant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, Fact(grant), "receipt", "evidence", "postcondition"));
+            forgedGrant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, new[] { Fact(grant) }, "receipt", "evidence", "postcondition"));
 
         result.Code.Should().Be(BodyProgramControllerResultCode.ExecutionBindingMismatch);
         authority.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Running);
@@ -540,7 +540,7 @@ public sealed class BodyProgramAuthorityTests
         NodeExecutionBinding altered = new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "altered-request", "altered-idempotency", "altered-execution");
         HostAdmissionGrant forgedGrant = grant with { ExecutionBinding = altered };
         BodyProgramControllerResult<BodyProgramTerminalResult> result = authority.TryComplete(
-            forgedGrant, new BodyProgramTerminalResult(altered, BodyProgramNodeOutcome.Succeeded, Fact(grant), "receipt", "evidence", "postcondition"));
+            forgedGrant, new BodyProgramTerminalResult(altered, BodyProgramNodeOutcome.Succeeded, new[] { Fact(grant) }, "receipt", "evidence", "postcondition"));
 
         result.Code.Should().Be(BodyProgramControllerResultCode.ExecutionBindingMismatch);
         authority.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Running);
@@ -557,9 +557,9 @@ public sealed class BodyProgramAuthorityTests
         grant = authority.TryConsumeHostGrant(grant).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
         RuntimeFact fact = Fact(grant);
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, fact, null, "evidence", "postcondition")).Code.Should().Be(BodyProgramControllerResultCode.TerminalProofMissing);
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, fact, "receipt", null, "postcondition")).Code.Should().Be(BodyProgramControllerResultCode.TerminalProofMissing);
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, fact, "receipt", "evidence", null)).Code.Should().Be(BodyProgramControllerResultCode.TerminalProofMissing);
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, new[] { fact }, null, "evidence", "postcondition")).Code.Should().Be(BodyProgramControllerResultCode.TerminalProofMissing);
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, new[] { fact }, "receipt", null, "postcondition")).Code.Should().Be(BodyProgramControllerResultCode.TerminalProofMissing);
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, new[] { fact }, "receipt", "evidence", null)).Code.Should().Be(BodyProgramControllerResultCode.TerminalProofMissing);
     }
 
     [Fact]
@@ -571,7 +571,35 @@ public sealed class BodyProgramAuthorityTests
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, null, "receipt", "evidence", "postcondition")).Code.Should().Be(BodyProgramControllerResultCode.FactProvenanceMismatch);
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, Array.Empty<RuntimeFact>(), "receipt", "evidence", "postcondition")).Code.Should().Be(BodyProgramControllerResultCode.FactProvenanceMismatch);
+    }
+
+    [Fact]
+    public void SuccessRequiresAnExactDescriptorFactSetAndPersistsEveryFact()
+    {
+        BodyProgramActionCatalog catalog = MultiFactCatalog();
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, catalog: catalog);
+        authority.Submit(MultiFactProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+
+        RuntimeFact first = new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "count", CanonicalMap("count", 7));
+        RuntimeFact second = new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "ready", CanonicalBooleanMap("ready", true));
+        RuntimeFact extra = new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "extra", CanonicalMap("extra", 7));
+        RuntimeFact wrongKind = second with { Values = CanonicalMap("ready", 7) };
+        RuntimeFact wrongAttempt = second with { NodeAttempt = grant.NodeAttempt + 1 };
+
+        foreach (IReadOnlyList<RuntimeFact> invalid in new IReadOnlyList<RuntimeFact>[] { Array.Empty<RuntimeFact>(), new[] { first }, new[] { first, first }, new[] { first, second, extra }, new[] { first, wrongKind }, new[] { first, wrongAttempt } })
+            authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, invalid, "receipt", "evidence", "postcondition"))
+                .Code.Should().Be(BodyProgramControllerResultCode.FactProvenanceMismatch);
+
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, new[] { first, second }, "receipt", "evidence", "postcondition"))
+            .IsSuccess.Should().BeTrue();
+        authority.Snapshot.Programs.Single().State.Should().Be(BodyProgramState.Succeeded);
+        authority.Snapshot.Programs.Single().Facts.Should().BeEquivalentTo(new[] { first, second }, options => options.WithStrictOrdering());
+        Open(store, catalog: catalog).Snapshot.Programs.Single().Facts.Should().BeEquivalentTo(new[] { first, second }, options => options.WithStrictOrdering());
     }
 
     [Fact]
@@ -583,9 +611,9 @@ public sealed class BodyProgramAuthorityTests
         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
 
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, null, null, "evidence", "postcondition"))
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, Array.Empty<RuntimeFact>(), null, "evidence", "postcondition"))
             .Code.Should().Be(BodyProgramControllerResultCode.TerminalProofMissing);
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, null, "receipt", "evidence", "postcondition"))
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, Array.Empty<RuntimeFact>(), "receipt", "evidence", "postcondition"))
             .IsSuccess.Should().BeTrue();
 
         BodyProgramJournalProgram program = authority.Snapshot.Programs.Single();
@@ -603,7 +631,7 @@ public sealed class BodyProgramAuthorityTests
         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
 
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, Fact(grant), "receipt", "evidence", "postcondition"))
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, new[] { Fact(grant) }, "receipt", "evidence", "postcondition"))
             .Code.Should().Be(BodyProgramControllerResultCode.FactProvenanceMismatch);
     }
 
@@ -617,9 +645,9 @@ public sealed class BodyProgramAuthorityTests
         grant = authority.TryConsumeHostGrant(grant).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
         RuntimeFact fact = Fact(grant);
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed, fact, null, null, null)).Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed, null, "receipt", null, null)).Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Cancelled, null, null, "evidence", null)).Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed, new[] { fact }, null, null, null)).Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), "receipt", null, null)).Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, "evidence", null)).Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
     }
 
     [Fact]
@@ -698,9 +726,17 @@ public sealed class BodyProgramAuthorityTests
     private static OpenBodyProgramJournalAuthority Open(MemoryStore? store = null, BodyProgramActionCatalog? catalog = null, Func<BodyProgramPolicyIdentity>? policy = null, Func<long>? now = null) =>
         OpenBodyProgramJournalAuthority.Open(store ?? new MemoryStore(), catalog ?? Catalog(), Scope(), policy ?? (() => Policy()), now ?? (() => 10));
     private static NodeExecutionBinding Execution(HostAdmissionGrant grant) => grant.ExecutionBinding!;
-    private static BodyProgramTerminalResult TerminalSuccess(HostAdmissionGrant grant, RuntimeFact fact) => new(Execution(grant), BodyProgramNodeOutcome.Succeeded, fact, "receipt-1", "evidence-1", "postcondition-1");
-    private static BodyProgramTerminalResult TerminalOutcome(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome) => new(Execution(grant), outcome, null, null, null, null);
-    private static BodyProgramTerminalResult TerminalWithFact(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome, RuntimeFact fact) => new(Execution(grant), outcome, fact, null, null, null);
+    private static BodyProgramTerminalResult TerminalSuccess(HostAdmissionGrant grant, RuntimeFact fact) => new(Execution(grant), BodyProgramNodeOutcome.Succeeded, new[] { fact }, "receipt-1", "evidence-1", "postcondition-1");
+    private static BodyProgramTerminalResult TerminalOutcome(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome) => new(Execution(grant), outcome, Array.Empty<RuntimeFact>(), null, null, null);
+    private static BodyProgramTerminalResult TerminalWithFact(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome, RuntimeFact fact) => new(Execution(grant), outcome, new[] { fact }, null, null, null);
+    private static BodyProgramActionCatalog MultiFactCatalog() => new(7, new[]
+    {
+        new BodyProgramActionDescriptor("measure", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramFactDescriptor("count", BodyProgramArgumentKind.Integer), new BodyProgramFactDescriptor("ready", BodyProgramArgumentKind.Boolean) }, new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
+    });
+    private static ActionProgramCandidate MultiFactProgram() => new("program", new[]
+    {
+        new ActionProgramCandidateNode("first", "measure", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), 1000),
+    });
     private static BodyProgramActionCatalog Catalog() => new(7, new[]
     {
         new BodyProgramActionDescriptor("move_to_tile", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramFactDescriptor("arrival", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
@@ -727,6 +763,7 @@ public sealed class BodyProgramAuthorityTests
     private static IReadOnlyDictionary<string, ActionProgramBinding> Bindings(params object[] values) => values.Chunk(2).ToDictionary(pair => (string)pair[0], pair => (ActionProgramBinding)pair[1], StringComparer.Ordinal);
     private static IReadOnlyDictionary<string, BodyProgramRuntimeValue> RuntimeMap(string key, long value) => new Dictionary<string, BodyProgramRuntimeValue>(StringComparer.Ordinal) { [key] = new("integer", value.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
     private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalMap(string key, long value) => new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal) { [key] = new(BodyProgramArgumentKind.Integer, value.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
+    private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalBooleanMap(string key, bool value) => new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal) { [key] = new(BodyProgramArgumentKind.Boolean, value ? "true" : "false") };
     private static IReadOnlyDictionary<string, string> Claims(string key, string value) => new Dictionary<string, string>(StringComparer.Ordinal) { [key] = value };
     private sealed class MemoryStore : IBodyProgramJournalStore { internal string? Value { get; private set; } public string? Read() => this.Value; public bool TryWrite(string encodedState) { this.Value = encodedState; return true; } internal void Set(string value) => this.Value = value; }
 }
