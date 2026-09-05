@@ -97,6 +97,7 @@ public static class BodyProgramJournalPersistence
             && node.Bindings.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is not null && BodyProgramValidation.IsIdentifier(pair.Value.ProducerNodeId) && BodyProgramValidation.IsIdentifier(pair.Value.FactName))
             && node.DerivedResourceClaims.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is { Length: <= 4096 }))
         && program.Nodes.Select(node => node.NodeId).Distinct(StringComparer.Ordinal).Count() == program.Nodes.Count;
+    internal static bool MatchesCatalogProgram(BodyProgramJournalState state, BodyProgramActionCatalog catalog, BridgeScope scope) => state.Programs.All(program => MatchesCatalog(program, catalog, scope));
     private static bool MatchesCatalog(BodyProgramJournalProgram journal, BodyProgramActionCatalog catalog, BridgeScope scope)
     {
         VerifiedBodyProgram program = journal.Program;
@@ -112,15 +113,28 @@ public static class BodyProgramJournalPersistence
                 if (!node.DependsOn.Contains(binding.ProducerNodeId, StringComparer.Ordinal) || !nodes.TryGetValue(binding.ProducerNodeId, out VerifiedBodyProgramNode? producer) || !catalog.TryGetAction(producer.ActionId, out BodyProgramActionDescriptor? producerAction) || consumer is null || !producerAction!.OutputFacts.Any(fact => fact.Name == binding.FactName && fact.Kind == consumer.Kind)) return false;
             }
         }
-        foreach (RuntimeFact fact in journal.Facts)
+        foreach (VerifiedBodyProgramNode node in program.Nodes)
         {
-            VerifiedBodyProgramNode producer = nodes[fact.NodeId];
-            if (!catalog.TryGetAction(producer.ActionId, out BodyProgramActionDescriptor? producerAction)
-                || producerAction!.OutputFacts.SingleOrDefault(output => output.Name == fact.FactName) is not BodyProgramFactDescriptor output
-                || !fact.Values.TryGetValue(fact.FactName, out BodyProgramCanonicalValue? value)
-                || !BodyProgramValidation.IsValidCanonicalValue(value, output.Kind)) return false;
+            if (!catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action)
+                || !FactSetMatchesDescriptor(journal, node, action!)) return false;
         }
         return !HasCycle(nodes) && !HasUnorderedResourceConflict(program.Nodes);
+    }
+    private static bool FactSetMatchesDescriptor(BodyProgramJournalProgram journal, VerifiedBodyProgramNode node, BodyProgramActionDescriptor action)
+    {
+        BodyProgramJournalNode state = journal.Nodes.Single(item => item.NodeId == node.NodeId);
+        RuntimeFact[] facts = journal.Facts.Where(fact => fact.NodeId == node.NodeId && fact.NodeAttempt == state.NodeAttempt).ToArray();
+        if (state.State != BodyProgramNodeState.Succeeded) return facts.Length == 0;
+        if (facts.Length != action.OutputFacts.Count) return false;
+        HashSet<string> names = new(StringComparer.Ordinal);
+        foreach (RuntimeFact fact in facts)
+        {
+            if (fact.ProgramId != journal.Program.ProgramId || !names.Add(fact.FactName)
+                || action.OutputFacts.SingleOrDefault(output => output.Name == fact.FactName) is not BodyProgramFactDescriptor output
+                || fact.Values.Count != 1 || !fact.Values.TryGetValue(fact.FactName, out BodyProgramCanonicalValue? value)
+                || !BodyProgramValidation.IsValidCanonicalValue(value, output.Kind)) return false;
+        }
+        return action.OutputFacts.All(output => names.Contains(output.Name));
     }
     private static bool HasCycle(IReadOnlyDictionary<string, VerifiedBodyProgramNode> nodes) { HashSet<string> done = new(StringComparer.Ordinal), active = new(StringComparer.Ordinal); bool Visit(string id) { if (!done.Add(id)) return active.Contains(id); active.Add(id); bool cycle = nodes[id].DependsOn.Any(Visit); active.Remove(id); return cycle; } return nodes.Keys.Any(Visit); }
     private static bool HasUnorderedResourceConflict(IReadOnlyList<VerifiedBodyProgramNode> programNodes)

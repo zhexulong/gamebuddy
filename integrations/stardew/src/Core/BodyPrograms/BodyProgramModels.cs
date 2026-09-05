@@ -85,7 +85,7 @@ public enum BodyProgramNodeOutcome { Succeeded = 1, Failed = 2, Cancelled = 3, U
 /// <summary>Immutable action dispatch lineage, bound to one exact accepted node attempt.</summary>
 public sealed record NodeExecutionBinding(string ProgramId, string NodeId, int NodeAttempt, string RequestId, string IdempotencyKey, string ExecutionId);
 /// <summary>Action-owned terminal input. Successful results require receipt, evidence, and postcondition verification projections.</summary>
-public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, BodyProgramNodeOutcome Outcome, RuntimeFact? Fact,
+public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, BodyProgramNodeOutcome Outcome, IReadOnlyList<RuntimeFact>? Facts,
     string? ReceiptId, string? Evidence, string? PostconditionVerification);
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
