@@ -6,14 +6,13 @@ import {
   type VoiceSpeechJob,
 } from "@gamebuddy/voice-protocol";
 
-export type { PcmFormat, VoiceGatewayCapabilities, VoiceGatewayEvent, VoiceSpeechJob } from "@gamebuddy/voice-protocol";
 export { REQUIRED_PCM_FORMAT } from "@gamebuddy/voice-protocol";
-export const MAX_CAPTURE_BYTES = 960_000;
-export const MAX_SPEECH_QUEUE = 3;
-export const MAX_SPEECH_AUDIO_BYTES = 1_920_000;
-export const MAX_EVENT_HISTORY = 2_048;
+const MAX_CAPTURE_BYTES = 960_000;
+const MAX_SPEECH_QUEUE = 3;
+const MAX_SPEECH_AUDIO_BYTES = 1_920_000;
+const MAX_EVENT_HISTORY = 2_048;
 
-export type GatewayEvent = VoiceGatewayEvent;
+type GatewayEvent = VoiceGatewayEvent;
 export type SpeechJob = VoiceSpeechJob;
 export interface AsrProvider {
   readonly providerId: string;

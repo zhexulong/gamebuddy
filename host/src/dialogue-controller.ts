@@ -1,9 +1,7 @@
-import { randomUUID } from "node:crypto";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
-export const DIALOGUE_INPUT_KIND = "gamebuddy_dialogue_input_v1" as const;
-export const MAX_DIALOGUE_TEXT_BYTES = 4_000;
-export const MAX_DIALOGUE_QUEUE = 32;
+const MAX_DIALOGUE_TEXT_BYTES = 4_000;
+const MAX_DIALOGUE_QUEUE = 32;
 
 export type DialogueInput = Readonly<{
   clientMessageId: string;
@@ -26,9 +24,8 @@ type PendingInput = Readonly<{
 type DialogueSession = Pick<AgentSession, "prompt" | "abort" | "clearQueue" | "isIdle">;
 
 /**
- * The only browser-to-Pi writer. It accepts plain player data, renders it as
- * a canonical envelope, serializes turns, and keeps Pi command/template
- * syntax out of the player-controlled top-level prompt.
+ * The only browser-to-Pi writer. It accepts validated player data, serializes
+ * turns, and passes only the player's text to the Pi session.
  */
 export class DialogueController {
   readonly #seenIds = new Set<string>();
@@ -119,7 +116,7 @@ export class DialogueController {
           // The Host admission provider is invoked at the exact provider
           // boundary rather than merely during HTTP submission.
           releasePromptAdmission = await this.beforePrompt?.(pending.input);
-          await this.session.prompt(canonicalPrompt(pending), { expandPromptTemplates: false, source: "rpc" });
+          await this.session.prompt(pending.input.text, { expandPromptTemplates: false, source: "rpc" });
           if (!this.hasVisiblePresentation()) {
             // Ordinary assistant text is intentionally private. Do not report
             // success for a turn that produced no explicit player expression.
@@ -171,24 +168,10 @@ export function validateDialogueInput(value: unknown): DialogueInput {
   });
 }
 
-function canonicalPrompt(pending: PendingInput): string {
-  return JSON.stringify({
-    kind: DIALOGUE_INPUT_KIND,
-    clientMessageId: pending.input.clientMessageId,
-    text: pending.input.text,
-    locale: pending.input.locale,
-    receivedAtMs: pending.receivedAtMs,
-  });
-}
-
 function isOpaqueId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function createDialogueClientMessageId(): string {
-  return randomUUID();
 }

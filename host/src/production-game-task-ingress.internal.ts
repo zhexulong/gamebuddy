@@ -28,7 +28,7 @@ export type ProductionGameTaskDispatchV1 = Readonly<{
   task: string;
 }>;
 
-export type ProductionGameTaskIngressTransport = Readonly<{
+type ProductionGameTaskIngressTransport = Readonly<{
   sendReady(
     message: ProductionGameTaskReadyV1,
     callback: (error: Error | null) => void,
@@ -51,7 +51,7 @@ export type ProductionGameTaskIngressController = Readonly<{
   state(): ProductionGameTaskIngressState;
 }>;
 
-export type ProductionGameTaskIngressState = "sealed" | "ready" | "consumed" | "closing";
+type ProductionGameTaskIngressState = "sealed" | "ready" | "consumed" | "closing";
 
 type ControllerOptions = Readonly<{
   nonceSha256: string;

@@ -273,7 +273,8 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
       [...this.#byRequestId.values()]
         .filter(
           (correlation): correlation is Correlation & { idempotencyKey: string } =>
-            correlation.uncertain && validText(correlation.idempotencyKey ?? ""),
+            validText(correlation.idempotencyKey ?? "") &&
+            (correlation.uncertain || this.#isJournalRecoverable(correlation)),
         )
         .map((correlation) => {
           const material = correlation.recoveryMaterial;
@@ -329,6 +330,13 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
     }
   }
 
+  #isJournalRecoverable(correlation: Correlation): boolean {
+    const material = correlation.recoveryMaterial;
+    if (this.#recoveryJournal === undefined || material === undefined) return false;
+    const state = this.#recoveryJournal.record(material.logicalActionId)?.state;
+    return state === "prepared" || state === "sent_unknown" || state === "recovery_pending";
+  }
+
   /** Fence one uncertain lineage after recovery could not prove a receipt. */
   markRecoveryRequired(dispatch: RecoverableExecutionDispatch): Promise<void> {
     const correlation = this.#byRequestId.get(dispatch.requestId);
@@ -342,11 +350,12 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
     }
     const material = correlation.recoveryMaterial;
     if (this.#recoveryJournal === undefined || material === undefined) return Promise.resolve();
-    correlation.uncertain = false;
     return this.#recoveryJournal.markRecoveryRequired(material.logicalActionId).then(
-      () => undefined,
-      (error) => {
+      () => {
         correlation.uncertain = false;
+      },
+      (error) => {
+        correlation.uncertain = true;
         throw error;
       },
     );

@@ -21,13 +21,13 @@
  * mock anywhere in this module.
  */
 
-export const TAVERN_BROWSER_API_VERSION = 1 as const;
-export const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
-export const MANAGEMENT_PROFILE_ID = "gamebuddy.tavern-management.chat-list-title" as const;
+const TAVERN_BROWSER_API_VERSION = 1 as const;
+const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
+const MANAGEMENT_PROFILE_ID = "gamebuddy.tavern-management.chat-list-title" as const;
 
 // --- Frozen v1 DTO shapes (structural mirrors of host/src/tavern/browser-contract). ---
 
-export type BrowserMessageV1 = Readonly<{
+type BrowserMessageV1 = Readonly<{
   handle: string;
   role: "player" | "companion";
   text: string;
@@ -36,7 +36,7 @@ export type BrowserMessageV1 = Readonly<{
   revision: number;
 }>;
 
-export type BrowserTurnV1 = Readonly<{
+type BrowserTurnV1 = Readonly<{
   handle: string;
   state: "queued" | "running" | "response_visible" | "stopping" | "completed" | "cancelled" | "failed";
   projectionRevision: number;
@@ -44,7 +44,7 @@ export type BrowserTurnV1 = Readonly<{
   problemCode?: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
 }>;
 
-export type TavernBrowserOperationV1 = Readonly<{
+type TavernBrowserOperationV1 = Readonly<{
   operationId: "chat.submit" | "chat.cancel" | "draft.save" | "draft.discard" | "chat.rename" | "memory.mutate" | "world-info.bind";
   labelKey:
     | "tavern.nav.chat"
@@ -60,7 +60,7 @@ export type TavernBrowserOperationV1 = Readonly<{
   routeId: string;
 }>;
 
-export type WorldInfoItemV1 = Readonly<{
+type WorldInfoItemV1 = Readonly<{
   handle: string;
   title: string;
   summary: string | null;
@@ -105,17 +105,17 @@ export type TavernStateSnapshotV1 = Readonly<{
 }>;
 
 export type BrowserDraftV1 = Readonly<{ apiVersion: 1; revision: number; text: string | null }>;
-export type SaveDraftCommandV1 = Readonly<{
+type SaveDraftCommandV1 = Readonly<{
   apiVersion: 1;
   selectionGeneration: number;
   expectedRevision: number;
   text: string;
 }>;
-export type DiscardDraftCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number; expectedRevision: number }>;
-export type ChatListQueryV1 = Readonly<{ apiVersion: 1; state?: "active" }>;
+type DiscardDraftCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number; expectedRevision: number }>;
+type ChatListQueryV1 = Readonly<{ apiVersion: 1; state?: "active" }>;
 
 /** Metadata-only Chat list entry: no durable identifier ever appears. */
-export type ChatListEntryV1 = Readonly<{
+type ChatListEntryV1 = Readonly<{
   handle: string;
   title: string | null;
   status: "active";
@@ -123,12 +123,12 @@ export type ChatListEntryV1 = Readonly<{
   isSelected: boolean;
 }>;
 
-export type ChatListV1 = Readonly<{
+type ChatListV1 = Readonly<{
   apiVersion: 1;
   chats: readonly ChatListEntryV1[];
 }>;
 
-export type RenameChatTitleCommandV1 = Readonly<{
+type RenameChatTitleCommandV1 = Readonly<{
   apiVersion: 1;
   selectionGeneration: number;
   chatHandle: string;
@@ -209,7 +209,6 @@ const HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
 const ROUTE_ID_PATTERN = /^[a-z][a-z0-9._-]*$/;
 const MAX_TEXT_UTF8_BYTES = 16_384;
 const MAX_MEMORY_TEXT_UTF8_BYTES = 4096;
-const MAX_TRANSCRIPT_MESSAGES = 500;
 const MAX_ARRAY_ITEMS = 100;
 
 const MESSAGE_ROLES = ["player", "companion"] as const;
@@ -485,7 +484,6 @@ function isChat(value: unknown): boolean {
   if (value.title !== null && !isLengthBoundedString(value.title, 0, 256)) return false;
   if (
     !Array.isArray(value.transcript) ||
-    value.transcript.length > MAX_TRANSCRIPT_MESSAGES ||
     !value.transcript.every(isBrowserMessage)
   )
     return false;
@@ -693,18 +691,6 @@ export function validateSnapshot(value: unknown): TavernStateSnapshotV1 {
   if (!isSnapshot(value)) throw new TavernProtocolError();
   return value;
 }
-export function validateChatList(value: unknown): ChatListV1 {
-  if (!isChatList(value)) throw new TavernProtocolError();
-  return value;
-}
-export function validateChatTitle(value: unknown): ChatTitleV1 {
-  if (!isChatTitle(value)) throw new TavernProtocolError();
-  return value;
-}
-export function validateProblem(value: unknown): TavernProblemV1 {
-  if (!isProblem(value)) throw new TavernProtocolError();
-  return value;
-}
 export function validateMemoryRead(value: unknown): MemoryReadV1 {
   if (!isMemoryRead(value)) throw new TavernProtocolError();
   return value;
@@ -719,6 +705,16 @@ export function validateWorldInfoState(value: unknown): WorldInfoStateV1 {
 }
 export function validateSetWorldInfoBindingCommand(value: unknown): SetWorldInfoBindingCommandV1 {
   if (!isSetWorldInfoBindingCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
+function validateChatList(value: unknown): ChatListV1 {
+  if (!isChatList(value)) throw new TavernProtocolError();
+  return value;
+}
+
+function validateChatTitle(value: unknown): ChatTitleV1 {
+  if (!isChatTitle(value)) throw new TavernProtocolError();
   return value;
 }
 

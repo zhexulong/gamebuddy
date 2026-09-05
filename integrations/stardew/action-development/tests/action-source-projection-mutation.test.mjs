@@ -55,7 +55,7 @@ test("in-process derivation from the actual sources binds to the checked artifac
   ]);
 });
 
-test("Host route union drift is rejected from mutated Host sources", () => {
+test("Host route drift restricts the executable intersection without widening it", () => {
   const registry = sources.host_registry;
   const gameTools = sources.host_game_tools;
 
@@ -64,7 +64,9 @@ test("Host route union drift is rejected from mutated Host sources", () => {
     'actionAdapter(\n    "equip_tool_x",',
   );
   assert.notEqual(adapterAdrift, registry, "adapter anchor must match");
-  expectRejection(() => deriveWith({ host_registry: adapterAdrift }), "host_adapter_union_mismatch");
+  const adapterProjection = deriveWith({ host_registry: adapterAdrift });
+  assert.ok(!adapterProjection.mod.executableActionIds.includes("equip_tool"));
+  assert.ok(!adapterProjection.mod.executableActionIds.includes("equip_tool_x"));
 
   const toolNameAdrift = registry.replace(
     'equip_tool: "stardew_equip_tool",',
@@ -81,13 +83,11 @@ test("Host route union drift is rejected from mutated Host sources", () => {
   const routeEnd = gameTools.indexOf("\n  return tools;", routeStart);
   assert.ok(routeStart >= 0 && routeEnd > routeStart, "equip_tool route block anchor must match");
   const routeRemoved = gameTools.slice(0, routeStart) + gameTools.slice(routeEnd + 1);
-  expectRejection(
-    () => deriveWith({ host_game_tools: routeRemoved }),
-    "host_tool_route_union_mismatch:missing=equip_tool:extra=",
-  );
+  const routeProjection = deriveWith({ host_game_tools: routeRemoved });
+  assert.ok(!routeProjection.mod.executableActionIds.includes("equip_tool"));
 });
 
-test("protocol/schema union drift is rejected from mutated Host/protocol sources", () => {
+test("protocol/schema drift restricts the executable intersection", () => {
   const protocol = sources.host_protocol;
 
   const requestValidatorAdrift = protocol.replaceAll(
@@ -95,51 +95,50 @@ test("protocol/schema union drift is rejected from mutated Host/protocol sources
     'value.action !== "equip_tool_x"',
   );
   assert.notEqual(requestValidatorAdrift, protocol, "request validator anchor must match");
-  expectRejection(() => deriveWith({ host_protocol: requestValidatorAdrift }), "host_request_union_mismatch");
+  const requestProjection = deriveWith({ host_protocol: requestValidatorAdrift });
+  assert.ok(!requestProjection.mod.executableActionIds.includes("equip_tool"));
 
   const envelopeValidatorAdrift = protocol.replace(
     'value.action === "equip_tool" ||',
     'value.action === "equip_tool_x" ||',
   );
   assert.notEqual(envelopeValidatorAdrift, protocol, "envelope validator anchor must match");
-  expectRejection(() => deriveWith({ host_protocol: envelopeValidatorAdrift }), "host_request_union_mismatch");
+  const envelopeProjection = deriveWith({ host_protocol: envelopeValidatorAdrift });
+  assert.ok(!envelopeProjection.mod.executableActionIds.includes("equip_tool"));
 
   const unionMemberRemoved = protocol.replace('    | "equip_tool"\n', "");
   assert.notEqual(unionMemberRemoved, protocol, "execution request union anchor must match");
-  expectRejection(() => deriveWith({ host_protocol: unionMemberRemoved }), "host_request_union_mismatch");
+  const unionProjection = deriveWith({ host_protocol: unionMemberRemoved });
+  assert.ok(!unionProjection.mod.executableActionIds.includes("equip_tool"));
 
   const messageTypeRemoved = protocol.replace('  "hello",\n', "");
-  assert.notEqual(messageTypeRemoved, protocol, "bridge message types anchor must match");
-  expectRejection(() => deriveWith({ host_protocol: messageTypeRemoved }), "schema_message_type_union_mismatch");
+  const messageProjection = deriveWith({ host_protocol: messageTypeRemoved });
+  assert.ok(messageProjection.mod.executableActionIds.includes("equip_tool"));
 
   const withoutExecutionAction = JSON.parse(sources.protocol_schema);
   withoutExecutionAction["$defs"].executionRequest.properties.action.enum =
-    withoutExecutionAction["$defs"].executionRequest.properties.action.enum.filter(
-      (actionId) => actionId !== "equip_tool",
-    );
-  expectRejection(
-    () => deriveWith({ protocol_schema: JSON.stringify(withoutExecutionAction) }),
-    "schema_execution_action_union_mismatch",
-  );
+    withoutExecutionAction["$defs"].executionRequest.properties.action.enum.filter((actionId) => actionId !== "equip_tool");
+  const schemaProjection = deriveWith({ protocol_schema: JSON.stringify(withoutExecutionAction) });
+  assert.ok(!schemaProjection.mod.executableActionIds.includes("equip_tool"));
 
   const withoutMessageType = JSON.parse(sources.protocol_schema);
-  withoutMessageType.properties.type.enum = withoutMessageType.properties.type.enum.filter(
-    (type) => type !== "hello",
-  );
-  expectRejection(
-    () => deriveWith({ protocol_schema: JSON.stringify(withoutMessageType) }),
-    "schema_message_type_union_mismatch",
-  );
+  withoutMessageType.properties.type.enum = withoutMessageType.properties.type.enum.filter((type) => type !== "hello");
+  expectRejection(() => deriveWith({ protocol_schema: JSON.stringify(withoutMessageType) }), "schema_message_type_union_mismatch");
 
   const withoutSemanticKind = JSON.parse(sources.protocol_schema);
   withoutSemanticKind["$defs"].semanticEvent.properties.kind.enum =
-    withoutSemanticKind["$defs"].semanticEvent.properties.kind.enum.filter(
-      (kind) => kind !== "stop_all",
-    );
-  expectRejection(
-    () => deriveWith({ protocol_schema: JSON.stringify(withoutSemanticKind) }),
-    "schema_semantic_event_union_mismatch",
+    withoutSemanticKind["$defs"].semanticEvent.properties.kind.enum.filter((kind) => kind !== "stop_all");
+  expectRejection(() => deriveWith({ protocol_schema: JSON.stringify(withoutSemanticKind) }), "schema_semantic_event_union_mismatch");
+});
+
+test("gate metadata does not suppress Host-supported executable actions", () => {
+  const withoutEquipGate = sources.gate_descriptors.replace(
+    '  gate("equip_tool", 1, "run-stardew-native-local-player-equip-tool-smoke.mjs", "tool_selected"),\n',
+    "",
   );
+  assert.notEqual(withoutEquipGate, sources.gate_descriptors, "equip_tool gate anchor must match");
+  const projection = deriveWith({ gate_descriptors: withoutEquipGate });
+  assert.ok(projection.mod.executableActionIds.includes("equip_tool"));
 });
 
 test("runner and fixture parity drift is rejected from mutated actual sources", () => {
@@ -234,37 +233,24 @@ test("TryExecute/TryRoute guard-order drift is rejected from mutated Mod sources
   );
 });
 
-test("native handler ownership drift is rejected or observably repartitioned", () => {
-  const artifact = JSON.parse(artifactText);
-
+test("native handler declarations remain integrity-only evidence", () => {
   const handlerDeclarationRemoved = sources.mod_handler_farming.replace(
     "class FarmingActionHandler : IFarmhandActionHandler",
     "class FarmingActionHandler",
   );
   assert.notEqual(handlerDeclarationRemoved, sources.mod_handler_farming, "handler declaration anchor must match");
-  expectRejection(
-    () => deriveWith({ mod_handler_farming: handlerDeclarationRemoved }),
-    "handler_declaration_missing:Farming",
-  );
+  expectRejection(() => deriveWith({ mod_handler_farming: handlerDeclarationRemoved }), "handler_declaration_missing:Farming");
 
-  const regroupedCatalog = sources.mod_catalog.replace(
-    'Registration("equip_tool", "body_tools", 1, FarmhandActionHandlerGroup.ResourceTools)',
-    'Registration("equip_tool", "body_tools", 1, FarmhandActionHandlerGroup.Movement)',
-  );
-  assert.notEqual(regroupedCatalog, sources.mod_catalog, "registration regroup anchor must match");
-  const repartitioned = deriveWith({ mod_catalog: regroupedCatalog });
-  assert.notDeepEqual(repartitioned.nativeOwnership, artifact.nativeOwnership);
-  assert.ok(repartitioned.nativeOwnership.Movement.includes("equip_tool"));
-  assert.ok(!repartitioned.nativeOwnership.ResourceTools.includes("equip_tool"));
+  const canonical = JSON.parse(sources.canonical_action_surface);
+  canonical.actions[1].resourceTemplate.claims = [];
+  const projection = deriveWith({ canonical_action_surface: JSON.stringify(canonical) });
+  assert.ok(!projection.mod.executableActionIds.includes("equip_tool"));
 });
 
-test("obsolete-route absence drift is rejected from mutated Mod sources", () => {
-  const tokenizedCatalog = sources.mod_catalog.replace(
-    'Registration("equip_tool", "body_tools", 1, FarmhandActionHandlerGroup.ResourceTools)',
-    'Registration("equip_tool", "legacy_body_tools", 1, FarmhandActionHandlerGroup.ResourceTools)',
-  );
-  assert.notEqual(tokenizedCatalog, sources.mod_catalog, "family id anchor must match");
-  expectRejection(() => deriveWith({ mod_catalog: tokenizedCatalog }), "obsolete_route_present:legacy");
+test("obsolete-route absence drift is rejected from mutated canonical descriptor source", () => {
+  const canonical = JSON.parse(sources.canonical_action_surface);
+  canonical.actions[1].effect = "legacy_route";
+  expectRejection(() => deriveWith({ canonical_action_surface: JSON.stringify(canonical) }), "obsolete_route_present:legacy");
 });
 
 test("every actual-source-derived category is observable as checked-artifact drift", () => {

@@ -25,7 +25,7 @@ export type TavernConversation = Readonly<{
   retryResponse(input: TavernResponseRetryIntent): Promise<TavernResponseRetryReceipt>;
 }>;
 
-export type TavernResponseRetryIntent = Readonly<{
+type TavernResponseRetryIntent = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
   messageId: string;
@@ -34,7 +34,7 @@ export type TavernResponseRetryIntent = Readonly<{
   effect: TavernResponseMutation["effect"];
 }>;
 
-export type TavernResponseRetryReceipt = Readonly<{
+type TavernResponseRetryReceipt = Readonly<{
   kind: "safe_no_effect_retry";
   chatThreadId: string;
   chatSurfaceSessionId: string;
@@ -66,7 +66,7 @@ export type SemanticChatContentRecord = Readonly<{
  * canonical digest. It intentionally excludes storage paths and transcript
  * text, so it can be carried by a later saga without becoming content access.
  */
-export type TavernExactContentReceipt = Readonly<{
+type TavernExactContentReceipt = Readonly<{
   chatThreadId: string;
   companionId: string;
   continuityId: string;
@@ -75,7 +75,7 @@ export type TavernExactContentReceipt = Readonly<{
 }>;
 
 /** The conversation is exposed only alongside an already verified receipt. */
-export type TavernExactContentOpen = Readonly<{
+type TavernExactContentOpen = Readonly<{
   receipt: TavernExactContentReceipt;
   conversation: TavernConversation;
 }>;

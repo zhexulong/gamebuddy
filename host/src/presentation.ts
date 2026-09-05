@@ -9,7 +9,7 @@ export type PresentationProfile = Readonly<{
   speech: Readonly<{ voiceProfile: string }> | null;
 }>;
 
-export type ChatCompanionTextExpression = Readonly<{
+type ChatCompanionTextExpression = Readonly<{
   surface: "chat";
   expressionId: string;
   sessionId: string;
@@ -30,20 +30,20 @@ export type GameCompanionTextExpression = Readonly<{
 export type CompanionTextExpression = ChatCompanionTextExpression | GameCompanionTextExpression;
 
 /** Opaque, immutable binding to the Host companion-interruption admission epoch. */
-export type HostPresentationBinding = object;
+type HostPresentationBinding = object;
 
 export type PresentationCommitAdmission = Readonly<{
   hostBinding: HostPresentationBinding;
   assertHostCurrent(binding: HostPresentationBinding): void;
 }>;
 
-export type ChatPresentationAdmissionCapture = Readonly<{
+type ChatPresentationAdmissionCapture = Readonly<{
   surface: "chat";
   sourceEventId?: never;
   admission: PresentationCommitAdmission;
 }>;
 
-export type GamePresentationAdmissionCapture = Readonly<{
+type GamePresentationAdmissionCapture = Readonly<{
   surface: "game";
   sourceEventId: string;
   admission: PresentationCommitAdmission;

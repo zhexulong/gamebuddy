@@ -8,7 +8,7 @@ const MANIFEST_KEYS = new Set(["schema", "gameId", "projectVersion", "adapter", 
 const REPORT_KEYS = new Set(["schema", "gameId", "actionId", "scenarioId", "status", "outcome", "reasonCode", "claimScope", "runId", "evidenceRoot", "briefFile"]);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const REPORT_FIELD_MAX_LENGTHS = Object.freeze({ gameId: 128, actionId: 128, scenarioId: 128, status: 128, runId: 128, outcome: 512, reasonCode: 512, claimScope: 512, evidenceRoot: 512, briefFile: 512 });
-export const MAX_ADAPTER_REPORT_BYTES = 64 * 1024 - 1;
+const MAX_ADAPTER_REPORT_BYTES = 64 * 1024 - 1;
 
 function fail(code) {
   throw new Error(`game_action_project_${code}`);

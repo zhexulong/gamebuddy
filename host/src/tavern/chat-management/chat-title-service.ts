@@ -1,8 +1,8 @@
 import type { ChatThread, ChatThreadStore } from "../chat-thread-store.js";
 
 /** Player-facing title lifecycle seam. Its DTOs deliberately exclude thread, surface, companion, continuity, message, and runtime identifiers. */
-export type ChatTitleMetadata = Readonly<{ title: string | null; revision: number }>;
-export type RenameChatTitleRequest = Readonly<{ title: string; expectedRevision: number }>;
+type ChatTitleMetadata = Readonly<{ title: string | null; revision: number }>;
+type RenameChatTitleRequest = Readonly<{ title: string; expectedRevision: number }>;
 export type ChatTitleService = Readonly<{
   read(): Promise<ChatTitleMetadata>;
   rename(request: RenameChatTitleRequest): Promise<ChatTitleMetadata>;

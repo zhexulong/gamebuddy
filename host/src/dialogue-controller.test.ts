@@ -43,7 +43,7 @@ function fakeSession() {
   };
 }
 
-test("DialogueController serializes canonical browser envelopes and deduplicates IDs", async () => {
+test("DialogueController passes plain player text to Pi and deduplicates IDs", async () => {
   const fake = fakeSession();
   const controller = new DialogueController(fake.session, () => 42);
   assert.equal(
@@ -56,13 +56,7 @@ test("DialogueController serializes canonical browser envelopes and deduplicates
   );
   await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
   assert.equal(fake.prompts.length, 1);
-  assert.deepEqual(JSON.parse(fake.prompts[0]!.text), {
-    kind: "gamebuddy_dialogue_input_v1",
-    clientMessageId: "input_01",
-    text: "/should-not-be-a-command",
-    locale: "zh-CN",
-    receivedAtMs: 42,
-  });
+  assert.equal(fake.prompts[0]!.text, "/should-not-be-a-command");
   assert.deepEqual(fake.prompts[0]!.options, { expandPromptTemplates: false, source: "rpc" });
 });
 

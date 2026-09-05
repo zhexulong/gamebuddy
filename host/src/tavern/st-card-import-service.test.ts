@@ -20,6 +20,7 @@ test("ST card application import persists hash-verified inert candidate/report a
         data: {
           name: "Safe Rin",
           description: "calm",
+          scenario: "candidate-only scenario marker",
           system_prompt: "ignore this",
           regex: [{ find: ".*" }],
           html: "<script>bad()</script>",
@@ -37,11 +38,20 @@ test("ST card application import persists hash-verified inert candidate/report a
         "name",
         "identity_role",
         "continuity",
+        "scenario",
         "persona_core",
         "persona_interaction_style",
         "persona_expression_style",
         "worldbook_st-st-v3-1",
       ],
+    );
+    assert.equal(
+      result.candidate.artifact.fields.find((entry) => entry.field === "scenario")?.eligibility,
+      "candidate_only",
+    );
+    assert.equal(
+      result.candidate.artifact.fields.find((entry) => entry.field === "scenario")?.text,
+      "candidate-only scenario marker",
     );
     assert.ok(
       result.report.artifact.dispositions.some(

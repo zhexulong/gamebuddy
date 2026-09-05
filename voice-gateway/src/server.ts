@@ -19,7 +19,7 @@ import {
 } from "./gateway.js";
 
 /** Hardware PTT capture stays wholly inside Gateway; Host never receives raw PCM. */
-export interface PttCaptureDevice {
+interface PttCaptureDevice {
   start(): Promise<void>;
   stop(): Promise<Uint8Array>;
   cancel(): Promise<void>;
@@ -35,7 +35,7 @@ export type VoiceGatewayServerOptions = Readonly<{
   /** Test-only local capture injection seam; production capture never accepts Host PCM. */
   capture?: PttCaptureDevice;
 }>;
-export class VoiceGatewayCleanupError extends Error {
+class VoiceGatewayCleanupError extends Error {
   public readonly unresolved: readonly string[];
   public constructor(unresolved: readonly string[]) {
     super("voice_gateway_cleanup_timeout");

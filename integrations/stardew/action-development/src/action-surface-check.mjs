@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ACTION_SURFACE_MAX_JSON_BYTES } from "./action-surface.mjs";
-import { checkActionProjection } from "./action-projection-check.mjs";
+import { validateActionProjection } from "./action-projection-check.mjs";
 import { readFixedPackageUtf8File } from "./package-safe-reader.mjs";
 
 const PACKAGE_DIRECTORY = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -25,10 +25,10 @@ async function readGeneratedActionSurface() {
 function boundedReport(projection) {
   const report = Object.freeze({
     schema: ACTION_SURFACE_CHECK_SCHEMA,
-    gameId: projection.gameId,
+     catalogRevision: projection.catalogRevision,
     status: "valid",
     artifact: ACTION_SURFACE_ARTIFACT_RELATIVE_PATH,
-    registrations: projection.registrations.length,
+     actions: projection.actions.length,
     executable: projection.executable.length,
     readOnly: projection.readOnly.length,
   });
@@ -44,7 +44,7 @@ function boundedReport(projection) {
  */
 export async function runActionSurfaceCheck() {
   const text = await readGeneratedActionSurface();
-  const projection = checkActionProjection(text);
+  const projection = validateActionProjection(text);
   return boundedReport(projection);
 }
 

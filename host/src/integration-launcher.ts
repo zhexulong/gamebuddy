@@ -19,7 +19,7 @@ export const RECEIPT_BACKED_INTEGRATION_AUTHORITY: ReceiptBackedIntegrationAutho
   execution: "receipt_backed",
 });
 
-export type IntegrationLifecycleState = "ready" | "disconnected" | "stopped";
+type IntegrationLifecycleState = "ready" | "disconnected" | "stopped";
 
 /** A local transport transition; unlike adapter facts it never claims a game-world transition. */
 export type IntegrationLifecycleEvent = Readonly<{

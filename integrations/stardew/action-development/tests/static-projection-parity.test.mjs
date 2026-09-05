@@ -8,7 +8,6 @@ import {
   PROJECTION_PARITY_ADMITTED_LIFECYCLES,
   PROJECTION_PARITY_ENVELOPE_KEYS,
   PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS,
-  PROJECTION_PARITY_GAME_ID,
   PROJECTION_PARITY_GUARD_ORDER,
   PROJECTION_PARITY_KINDS,
   PROJECTION_PARITY_SCHEMA,
@@ -40,12 +39,11 @@ test("accepts the checked-in versioned parity snapshot and returns an immutable 
   const validated = validateActionProjectionParity(snapshot);
   assert.equal(validated.schema, PROJECTION_PARITY_SCHEMA);
   assert.equal(validated.developmentOnly, true);
-  assert.equal(validated.gameId, PROJECTION_PARITY_GAME_ID);
   assert.equal(validated.surface.schema, PROJECTION_PARITY_SURFACE_SCHEMA);
   assert.equal(Object.isFrozen(validated), true);
   assert.equal(Object.isFrozen(validated.surface), true);
-  assert.equal(Object.isFrozen(validated.surface.registrations), true);
-  assert.equal(Object.isFrozen(validated.surface.registrations[0]), true);
+  assert.equal(Object.isFrozen(validated.surface.actions), true);
+  assert.equal(Object.isFrozen(validated.surface.actions[0]), true);
 
   const parsed = parseActionProjectionParity(text);
   assert.equal(parsed.schema, PROJECTION_PARITY_SCHEMA);
@@ -55,9 +53,9 @@ test("accepts the checked-in versioned parity snapshot and returns an immutable 
 test("preserves registration identity/lifecycle/kind and the published-vs-withdrawn partition", async () => {
   const { snapshot } = await loadSnapshot();
   const validated = validateActionProjectionParity(snapshot);
-  const byId = new Map(validated.surface.registrations.map((registration) => [registration.actionId, registration]));
+  const byId = new Map(validated.surface.actions.map((registration) => [registration.actionId, registration]));
 
-  for (const registration of validated.surface.registrations) {
+  for (const registration of validated.surface.actions) {
     assert.equal(typeof registration.actionId, "string");
     assert.ok(Number.isSafeInteger(registration.identityVersion) && registration.identityVersion >= 1);
     assert.ok(PROJECTION_PARITY_ADMITTED_LIFECYCLES.includes(registration.lifecycle));
@@ -83,8 +81,8 @@ test("preserves registration identity/lifecycle/kind and the published-vs-withdr
     ...validated.lifecycle.readOnlyActionIds,
     ...validated.lifecycle.experimentalActionIds,
   ]);
-  assert.equal(partition.size, validated.surface.registrations.length);
-  for (const registration of validated.surface.registrations) {
+  assert.equal(partition.size, validated.surface.actions.length);
+  for (const registration of validated.surface.actions) {
     assert.ok(partition.has(registration.actionId));
   }
 
@@ -103,7 +101,7 @@ test("protocol union, fixed controls, guard order, and absent routes are pinned 
   assert.deepEqual(validated.protocol.schemas, [...validated.protocol.schemas].sort());
   assert.deepEqual(validated.protocol.fixedControls, PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS);
   for (const controlId of PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS) {
-    assert.equal(validated.surface.registrations.some((registration) => registration.actionId === controlId), false);
+    assert.equal(validated.surface.actions.some((registration) => registration.actionId === controlId), false);
   }
 
   assert.deepEqual(validated.guardOrder, PROJECTION_PARITY_GUARD_ORDER);
@@ -111,7 +109,7 @@ test("protocol union, fixed controls, guard order, and absent routes are pinned 
   assert.deepEqual(validated.absentRoutes, PROJECTION_PARITY_ABSENT_ROUTE_TOKENS);
 
   for (const token of PROJECTION_PARITY_ABSENT_ROUTE_TOKENS) {
-    assert.equal(snapshot.surface.registrations.some((registration) => registration.lifecycle === token), false);
+    assert.equal(snapshot.surface.actions.some((registration) => registration.lifecycle === token), false);
   }
 });
 
@@ -126,32 +124,28 @@ test("rejects envelope, registration, and lifecycle drift with exact codes", asy
   notDevOnly.developmentOnly = false;
   fails("invalid_scope", () => validateActionProjectionParity(notDevOnly));
 
-  const wrongGameId = clone(snapshot);
-  wrongGameId.gameId = "other";
-  fails("invalid_game_id", () => validateActionProjectionParity(wrongGameId));
-
   const extraKey = clone(snapshot);
   extraKey.extra = true;
   fails("invalid_envelope_shape", () => validateActionProjectionParity(extraKey));
 
   const badRegistrationKey = clone(snapshot);
-  badRegistrationKey.surface.registrations[0].extra = "x";
-  fails("invalid_registration_shape", () => validateActionProjectionParity(badRegistrationKey));
+  badRegistrationKey.surface.actions[0].extra = "x";
+  fails("invalid_action_shape", () => validateActionProjectionParity(badRegistrationKey));
 
   const duplicateId = clone(snapshot);
-  duplicateId.surface.registrations[1].actionId = duplicateId.surface.registrations[0].actionId;
+  duplicateId.surface.actions[1].actionId = duplicateId.surface.actions[0].actionId;
   fails("duplicate_action_id", () => validateActionProjectionParity(duplicateId));
 
   const zeroVersion = clone(snapshot);
-  zeroVersion.surface.registrations[0].identityVersion = 0;
+  zeroVersion.surface.actions[0].identityVersion = 0;
   fails("invalid_identity_version", () => validateActionProjectionParity(zeroVersion));
 
   const withdrawnLifecycle = clone(snapshot);
-  withdrawnLifecycle.surface.registrations[0].lifecycle = "withdrawn";
+  withdrawnLifecycle.surface.actions[0].lifecycle = "withdrawn";
   fails("invalid_lifecycle", () => validateActionProjectionParity(withdrawnLifecycle));
 
   const wrongKind = clone(snapshot);
-  wrongKind.surface.registrations[0].kind = "mutation";
+  wrongKind.surface.actions[0].kind = "mutation";
   fails("invalid_kind", () => validateActionProjectionParity(wrongKind));
 
   const admittedExpanded = clone(snapshot);
@@ -167,17 +161,17 @@ test("rejects envelope, registration, and lifecycle drift with exact codes", asy
   fails("lifecycle_overlap", () => validateActionProjectionParity(overlap));
 
   const executableViolation = clone(snapshot);
-  const vulnerable = executableViolation.surface.registrations.find((registration) => registration.actionId === "equip_tool");
+  const vulnerable = executableViolation.surface.actions.find((registration) => registration.actionId === "equip_tool");
   vulnerable.kind = "read_only";
   fails("executable_subset_invalid", () => validateActionProjectionParity(executableViolation));
 
   const readonlyViolation = clone(snapshot);
-  const vulnerableReadOnly = readonlyViolation.surface.registrations.find((registration) => registration.actionId === "inspect_world_map");
+  const vulnerableReadOnly = readonlyViolation.surface.actions.find((registration) => registration.actionId === "inspect_world_map");
   vulnerableReadOnly.kind = "execution";
   fails("readonly_subset_invalid", () => validateActionProjectionParity(readonlyViolation));
 
   const experimentalViolation = clone(snapshot);
-  const vulnerableExperimental = experimentalViolation.surface.registrations.find((registration) => registration.actionId === "clear_debris");
+  const vulnerableExperimental = experimentalViolation.surface.actions.find((registration) => registration.actionId === "clear_debris");
   vulnerableExperimental.lifecycle = "published";
   fails("experimental_subset_invalid", () => validateActionProjectionParity(experimentalViolation));
 });
@@ -194,13 +188,17 @@ test("rejects protocol, ownership, guard-order, and absence drift with exact cod
   fails("invalid_fixed_controls", () => validateActionProjectionParity(missingControl));
 
   const controlRegistered = clone(snapshot);
-  controlRegistered.surface.registrations.push({
-    actionId: "inspect_self",
-    familyId: "protocol",
-    identityVersion: 1,
-    lifecycle: "published",
-    kind: "read_only",
-  });
+  controlRegistered.surface.actions.push({
+     actionId: "inspect_self",
+     identityVersion: 1,
+     argumentSchema: {},
+     outputFacts: {},
+     resourceTemplate: { claims: [] },
+     effect: "read",
+     postcondition: { name: "observation_complete" },
+     lifecycle: "published",
+     kind: "read_only",
+   });
   controlRegistered.lifecycle.readOnlyActionIds = [...controlRegistered.lifecycle.readOnlyActionIds, "inspect_self"];
   fails("control_in_surface", () => validateActionProjectionParity(controlRegistered));
 
@@ -235,8 +233,8 @@ test("rejects protocol, ownership, guard-order, and absence drift with exact cod
   fails("obsolete_route_drift", () => validateActionProjectionParity(missingToken));
 
   const tokenInValue = clone(snapshot);
-  const vulnerable = tokenInValue.surface.registrations.find((registration) => registration.actionId === "equip_tool");
-  vulnerable.familyId = "legacy_movement";
+  const vulnerable = tokenInValue.surface.actions.find((registration) => registration.actionId === "equip_tool");
+  vulnerable.postcondition = { name: "legacy_movement" };
   fails("obsolete_route_present", () => validateActionProjectionParity(tokenInValue));
 });
 
@@ -259,5 +257,5 @@ test("parity checker is a package-local strict consumer with no producer or root
   assert.doesNotMatch(source, /\b(?:readFile|readdir|writeFile|lstat|realpath|spawn)\b|(?:^|[^.\w])exec\s*\(/);
   assert.doesNotMatch(source, /(?:from|import)\s+["'][^"']*(?:host|mod|bridge|runtime|producer|tools)[^"']*["']/i);
   assert.equal(PROJECTION_PARITY_ENVELOPE_KEYS.includes("absentRoutes"), true);
-  assert.ok(PROJECTION_PARITY_GUARD_ORDER.length >= 12);
+  assert.ok(PROJECTION_PARITY_GUARD_ORDER.length >= 11);
 });

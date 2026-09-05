@@ -24,7 +24,7 @@ export type ActiveSwipeSelection =
   | null
   | undefined;
 
-export type SwipeGroup = Readonly<{
+type SwipeGroup = Readonly<{
   parentId: string | null;
   nodes: readonly MessageTreeNode[];
 }>;

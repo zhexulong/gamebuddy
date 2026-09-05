@@ -35,7 +35,7 @@ const STARDew_ACTION_ENTRIES = STARDEW_ACTION_ADAPTERS.map(({ actionId }) => ({
  * The first concrete adapter. Stardew-specific tool/schema/evidence behavior
  * remains here while the Host composition root only consumes this port.
  */
-export function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
+function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
   const actionCatalog = createIntegrationActionCatalog(
     STARDew_ACTION_ENTRIES,
     hasStardewCompletionEvidence,
@@ -401,7 +401,7 @@ function decremented(
 }
 
 /** Fixed Host-side description exported to the test-only Navigation surface producer. */
-export const STARDEW_NAVIGATION_COMPLETION_VERIFICATION = Object.freeze({
+const STARDEW_NAVIGATION_COMPLETION_VERIFICATION = Object.freeze({
   reasonCode: "navigation_completed",
   requiredEvidence: Object.freeze({ arrived: "true", postcondition: "true" }),
 });

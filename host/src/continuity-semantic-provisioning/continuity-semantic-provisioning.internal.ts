@@ -55,7 +55,7 @@ export type CanonicalProductionAuthorityAdmission = Readonly<{
 }>;
 
 /** Production callers receive only typed authority commands, never lifecycle or adoption internals. */
-export type ProductionContinuitySemanticStore = ProductionSagaStore;
+type ProductionContinuitySemanticStore = ProductionSagaStore;
 
 export type FreshContinuityProvision = Readonly<{
   store: ProductionContinuitySemanticStore;
@@ -73,7 +73,7 @@ export type FreshContinuityProvision = Readonly<{
   close(): void;
 }>;
 
-export class FreshContinuityProvisionError extends Error {
+class FreshContinuityProvisionError extends Error {
   public constructor(public readonly code: string) {
     super(code);
     this.name = "FreshContinuityProvisionError";

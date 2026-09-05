@@ -64,7 +64,6 @@ internal sealed class AdmittedGuardianImage : IDisposable, IAsyncDisposable
 
 internal sealed class InstalledGenerationAdmission
 {
-    private const string PointerSchema = "gamebuddy-host-production-current/v1";
     private const string InventorySchema = "gamebuddy-host-production-inventory/v4";
     private const string GuardianAdmissionSchema = "gamebuddy-host-guardian-admission/v1";
     private const string GuardianHelperPath = "native/windows-stardew-bootstrap-guardian/win-x64/GameBuddy.WindowsStardewBootstrapGuardian.exe";
@@ -80,25 +79,19 @@ internal sealed class InstalledGenerationAdmission
     internal InstalledGenerationAdmission(string fixtureProgramRoot) => this.fixtureProgramRoot = CanonicalDirectory(fixtureProgramRoot);
     internal InstalledGenerationAdmission(CurrentUserRootLayout fixtureLayout) => fixtureProgramRoot = CanonicalDirectory((fixtureLayout ?? throw new ArgumentNullException(nameof(fixtureLayout))).ProgramRoot);
 
-    internal Task<AdmittedGuardianImage> AdmitGuardianAsync(CancellationToken cancellationToken) => Task.FromResult(Admit(cancellationToken));
+    internal Task<AdmittedGuardianImage> AdmitGuardianAsync(InstalledGenerationSelection selection, CancellationToken cancellationToken) => Task.FromResult(Admit(selection, cancellationToken));
 
-    internal static InstalledGenerationAdmission FromCurrentUserRegistration() => new();
-
-    private AdmittedGuardianImage Admit(CancellationToken cancellationToken)
+    private AdmittedGuardianImage Admit(InstalledGenerationSelection selection, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
+            ArgumentNullException.ThrowIfNull(selection);
             var programRoot = fixtureProgramRoot ?? CurrentUserRootLayout.DeriveForCurrentUser().ProgramRoot;
-            EnsureOrdinaryDirectory(programRoot);
-            var pointerPath = ChildFile(programRoot, "current.json");
-            using var pointer = ParseDocument(pointerPath);
-            var pointerRoot = pointer.RootElement;
-            if (!ExactProperties(pointerRoot, "schema", "generation", "inventoryDigest") || pointerRoot.GetProperty("schema").GetString() != PointerSchema ||
-                !ValidGeneration(pointerRoot.GetProperty("generation").GetString()) || !ValidDigest(pointerRoot.GetProperty("inventoryDigest").GetString())) throw new GuardianLaunchUnavailableException();
-            var generation = pointerRoot.GetProperty("generation").GetString()!;
-            var generationRoot = ChildDirectory(ChildDirectory(programRoot, "generations"), generation);
-            var pointerDigest = pointerRoot.GetProperty("inventoryDigest").GetString()!;
+            if (!StringComparer.OrdinalIgnoreCase.Equals(CanonicalDirectory(programRoot), selection.ProgramRoot)) throw new GuardianLaunchUnavailableException();
+            var generation = selection.Generation;
+            var generationRoot = selection.GenerationRoot;
+            var pointerDigest = selection.InventoryDigest;
             var inventoryPath = ChildFile(generationRoot, "production-inventory.json");
             using var inventory = ParseDocument(inventoryPath);
             VerifyInventoryDigest(inventory.RootElement, pointerDigest);
@@ -138,7 +131,7 @@ internal sealed class InstalledGenerationAdmission
     private static void VerifyInventoryDigest(JsonElement inventory, string pointerDigest)
     {
         if (!ExactProperties(inventory, "schema", "entries", "externalRuntimeClosure", "digest") || inventory.GetProperty("schema").GetString() != InventorySchema ||
-            !ValidDigest(inventory.GetProperty("digest").GetString()) || !StringComparer.Ordinal.Equals(inventory.GetProperty("digest").GetString(), pointerDigest))
+            !InstalledGenerationPaths.ValidDigest(inventory.GetProperty("digest").GetString()) || !StringComparer.Ordinal.Equals(inventory.GetProperty("digest").GetString(), pointerDigest))
             throw new GuardianLaunchUnavailableException();
     }
 
@@ -146,10 +139,10 @@ internal sealed class InstalledGenerationAdmission
     {
         if (!ExactProperties(value, "schema", "inventoryDigest", "helperPath", "manifestPath", "helperSha256", "manifestSha256", "manifestSchemaVersion", "manifestProtocolVersion", "manifestRid", "manifestHelperFileName") ||
             value.GetProperty("schema").GetString() != GuardianAdmissionSchema ||
-            !ValidDigest(value.GetProperty("inventoryDigest").GetString()) || !StringComparer.Ordinal.Equals(value.GetProperty("inventoryDigest").GetString(), pointerDigest) ||
+            !InstalledGenerationPaths.ValidDigest(value.GetProperty("inventoryDigest").GetString()) || !StringComparer.Ordinal.Equals(value.GetProperty("inventoryDigest").GetString(), pointerDigest) ||
             !ValidRelativeFile(value.GetProperty("helperPath").GetString()) || !ValidRelativeFile(value.GetProperty("manifestPath").GetString()) ||
             value.GetProperty("helperPath").GetString() != GuardianHelperPath || value.GetProperty("manifestPath").GetString() != GuardianManifestPath ||
-            !ValidDigest(value.GetProperty("helperSha256").GetString()) || !ValidDigest(value.GetProperty("manifestSha256").GetString()) ||
+            !InstalledGenerationPaths.ValidDigest(value.GetProperty("helperSha256").GetString()) || !InstalledGenerationPaths.ValidDigest(value.GetProperty("manifestSha256").GetString()) ||
             value.GetProperty("manifestSchemaVersion").GetInt32() != 1 || value.GetProperty("manifestProtocolVersion").GetInt32() != 1 ||
             value.GetProperty("manifestRid").GetString() != "win-x64" || value.GetProperty("manifestHelperFileName").GetString() != GuardianHelperFileName)
             throw new GuardianLaunchUnavailableException();
@@ -202,8 +195,6 @@ internal sealed class InstalledGenerationAdmission
     private static string CanonicalDirectory(string path) { var canonical = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); EnsureOrdinaryDirectory(canonical); return canonical; }
     // This is the exact generation spelling emitted by Host's canonical
     // publishProductionArtifact authority: g-<base36 time>-<pid>-<uuid hex>.
-    private static bool ValidGeneration(string? value) => value is not null && System.Text.RegularExpressions.Regex.IsMatch(value, "^g-[0-9a-z]+-[0-9]+-[a-f0-9]{32}$");
-    private static bool ValidDigest(string? value) => value is not null && System.Text.RegularExpressions.Regex.IsMatch(value, "^[a-f0-9]{64}$");
     private static bool ValidRelativeFile(string? value) => value is not null && System.Text.RegularExpressions.Regex.IsMatch(value, "^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$") && !value.Contains("..", StringComparison.Ordinal);
     private static bool ValidFileName(string? value) => value is not null && System.Text.RegularExpressions.Regex.IsMatch(value, "^[A-Za-z0-9._-]+$");
     private static bool ExactProperties(JsonElement value, params string[] names) => value.ValueKind == JsonValueKind.Object && value.EnumerateObject().Select(x => x.Name).OrderBy(x => x, StringComparer.Ordinal).SequenceEqual(names.OrderBy(x => x, StringComparer.Ordinal), StringComparer.Ordinal);

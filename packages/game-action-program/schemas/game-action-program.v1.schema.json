@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gamebuddy-action-program/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "programId", "nodes", "edges"],
+  "properties": {
+    "schema": { "const": "gamebuddy-action-program/v1" },
+    "programId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,127}$" },
+    "nodes": { "type": "array", "maxItems": 16 },
+    "edges": { "type": "array", "maxItems": 32 }
+  }
+}

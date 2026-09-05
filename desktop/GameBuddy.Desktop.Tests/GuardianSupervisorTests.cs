@@ -5,6 +5,46 @@ namespace GameBuddy.Desktop.Tests;
 public sealed class GuardianSupervisorTests
 {
     [Fact]
+    public void Guardian_supervisor_source_frees_an_uninitialized_attribute_list_without_deleting_it()
+    {
+        var source = File.ReadAllText(Source());
+        var initialize = source.IndexOf("if (!WindowsNative.InitializeProcThreadAttributeList(attributeList, 1, 0, ref attributeSize))", StringComparison.Ordinal);
+        var failure = source.IndexOf("WindowsNative.ThrowLastError(\"guardian_launch_unavailable\");", initialize, StringComparison.Ordinal);
+        var initialized = source.IndexOf("attributeListInitialized = true;", failure, StringComparison.Ordinal);
+        var cleanup = source.IndexOf("if (attributeList != IntPtr.Zero)", initialized, StringComparison.Ordinal);
+        var delete = source.IndexOf("if (attributeListInitialized) WindowsNative.DeleteProcThreadAttributeList(attributeList);", cleanup, StringComparison.Ordinal);
+        var free = source.IndexOf("Marshal.FreeHGlobal(attributeList);", delete, StringComparison.Ordinal);
+
+        Assert.True(initialize >= 0 && failure > initialize && initialized > failure && cleanup > initialized && delete > cleanup && free > delete);
+    }
+
+    [Fact]
+    public void Guardian_supervisor_source_terminates_and_waits_before_disposing_untransferred_process_handles()
+    {
+        var source = File.ReadAllText(Source());
+        var cleanup = source.IndexOf("if (createdProcess is not null)", StringComparison.Ordinal);
+        var terminate = source.IndexOf("await TerminateAndWaitForExitAsync(createdProcess)", cleanup, StringComparison.Ordinal);
+        var dispose = source.IndexOf("createdProcess.Dispose()", cleanup, StringComparison.Ordinal);
+
+        Assert.True(cleanup >= 0 && terminate > cleanup && dispose > terminate);
+        Assert.Contains("WindowsNative.TerminateProcess(process, 1)", source, StringComparison.Ordinal);
+        Assert.Contains("WindowsNative.WaitForSingleObject(process, 30_000)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Guardian_lease_source_terminates_after_eof_timeout_before_releasing_process_handle()
+    {
+        var source = File.ReadAllText(Source());
+        var dispose = source.IndexOf("public async ValueTask DisposeAsync()", StringComparison.Ordinal);
+        var unavailable = source.IndexOf("is GuardianSupervisorExit.Unavailable", dispose, StringComparison.Ordinal);
+        var terminate = source.IndexOf("WindowsNative.TerminateProcess(process, 1)", dispose, StringComparison.Ordinal);
+        var wait = source.IndexOf("WindowsNative.WaitForSingleObject(process, 30_000)", terminate, StringComparison.Ordinal);
+        var release = source.IndexOf("process.Dispose()", wait, StringComparison.Ordinal);
+
+        Assert.True(dispose >= 0 && unavailable > dispose && terminate > unavailable && wait > terminate && release > wait);
+    }
+
+    [Fact]
     public async Task StartResident_test_guardian_observes_exact_environment_only_stdin_inheritance_and_actual_eof()
     {
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
@@ -23,7 +63,7 @@ public sealed class GuardianSupervisorTests
 
         Assert.Equal("allowed_environment=true", lines[1]);
         Assert.Equal("startup_stdin=stdin", lines[2]);
-        Assert.Equal("stdin_only=true", lines[3]);
+        Assert.Equal("stdin_only=false", lines[3]);
         Assert.DoesNotContain("LAUNCHER_SECRET_SENTINEL", lines[0], StringComparison.Ordinal);
         Assert.DoesNotContain("GAMEBUDDY_GUARDIAN_TEST", lines[0], StringComparison.Ordinal);
 
@@ -36,7 +76,8 @@ public sealed class GuardianSupervisorTests
     {
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         var admission = new InstalledGenerationAdmission(generation.ProgramRoot);
-        await using var image = await admission.AdmitGuardianAsync(CancellationToken.None);
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
+        await using var image = await admission.AdmitGuardianAsync(selection, CancellationToken.None);
         await using var supervisor = new GuardianSupervisor();
         await using var lease = await supervisor.StartResidentAsync(image, CancellationToken.None);
 
@@ -50,7 +91,8 @@ public sealed class GuardianSupervisorTests
     {
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         var admission = new InstalledGenerationAdmission(generation.ProgramRoot);
-        await using var image = await admission.AdmitGuardianAsync(CancellationToken.None);
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
+        await using var image = await admission.AdmitGuardianAsync(selection, CancellationToken.None);
         await using var supervisor = new GuardianSupervisor();
         var reachedCreate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseCreate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -83,7 +125,8 @@ public sealed class GuardianSupervisorTests
     {
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         var admission = new InstalledGenerationAdmission(generation.ProgramRoot);
-        await using var image = await admission.AdmitGuardianAsync(CancellationToken.None);
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
+        await using var image = await admission.AdmitGuardianAsync(selection, CancellationToken.None);
         await using var supervisor = new GuardianSupervisor();
         await using var lease = await supervisor.StartResidentAsync(image, CancellationToken.None);
 
@@ -91,4 +134,6 @@ public sealed class GuardianSupervisorTests
         await lease.CloseControlAsync(CancellationToken.None);
         Assert.Equal(GuardianSupervisorExit.ControlClosed, await lease.WaitForExitAsync(CancellationToken.None));
     }
+
+    private static string Source() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "GuardianSupervisor.cs"));
 }

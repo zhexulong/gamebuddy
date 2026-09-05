@@ -4,8 +4,11 @@ import { StringDecoder } from "node:string_decoder";
 export const DEFAULT_SUITE_TIMEOUT_MS = 15 * 60_000;
 export const CLEANUP_TIMEOUT_MS = 5_000;
 const MAX_CAPTURE_BYTES = 64 * 1024;
+const MAX_CONTROL_CHILD_LINE_BYTES = 32 * 1024;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const VALID_TERMINATION_POLICIES = new Set(["immediate", "term-then-kill"]);
+const WINDOWS_TASKKILL_COMMAND = "taskkill.exe";
+const WINDOWS_TASKKILL_OPTIONS = Object.freeze({ windowsHide: true, stdio: "ignore" });
 
 function validationError(code) {
   return new Error(code);
@@ -76,21 +79,28 @@ function validatePid(pid) {
   }
 }
 
+function killWindowsProcessTree(pid, { signal }, spawnProcess = spawn) {
+  validatePid(pid);
+  if (typeof spawnProcess !== "function") throw validationError("invalid_test_supervisor_kill_tree_factory");
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return resolve();
+    const killer = spawnProcess(WINDOWS_TASKKILL_COMMAND, ["/PID", String(pid), "/T", "/F"], WINDOWS_TASKKILL_OPTIONS);
+    killer.once("error", reject);
+    killer.once("close", (code) => {
+      if (code === 0 || code === 128) resolve();
+      else reject(new Error(`test_supervisor_taskkill_failed:${code ?? "signal"}`));
+    });
+  });
+}
+
+export function createWindowsProcessTreeKillerForTest(spawnProcess) {
+  return (pid, options) => killWindowsProcessTree(pid, options, spawnProcess);
+}
+
 function defaultKillTree(pid, { terminationPolicy, graceMs, signal }) {
   validatePid(pid);
   if (process.platform === "win32") {
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) return resolve();
-      const killer = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-      killer.once("error", reject);
-      killer.once("close", (code) => {
-        if (code === 0 || code === 128) resolve();
-        else reject(new Error(`test_supervisor_taskkill_failed:${code ?? "signal"}`));
-      });
-    });
+    return killWindowsProcessTree(pid, { signal });
   }
 
   const group = -pid;
@@ -222,7 +232,7 @@ function assertBoundedJsonLine(value, errorCode) {
   try { serialized = JSON.stringify(value); } catch { throw validationError(errorCode); }
   if (typeof serialized !== "string") throw validationError(errorCode);
   const line = `${serialized}\n`;
-  if (Buffer.byteLength(line, "utf8") > MAX_CAPTURE_BYTES) {
+  if (Buffer.byteLength(line, "utf8") > MAX_CONTROL_CHILD_LINE_BYTES) {
     throw validationError(errorCode);
   }
   return line;
@@ -233,7 +243,7 @@ function parseOneBoundedJsonResult(stdout) {
     throw validationError("control_child_invalid_result");
   }
   const line = stdout.slice(0, -1);
-  if (line.length === 0 || Buffer.byteLength(stdout, "utf8") > MAX_CAPTURE_BYTES) {
+  if (line.length === 0 || Buffer.byteLength(stdout, "utf8") > MAX_CONTROL_CHILD_LINE_BYTES) {
     throw validationError("control_child_invalid_result");
   }
   try { return JSON.parse(line); } catch { throw validationError("control_child_invalid_result"); }

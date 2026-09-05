@@ -45,7 +45,7 @@ export type ConnectedSemanticGameLease = Readonly<{
 }>;
 
 /** Internal construction product; the public module narrows it to its facade type. */
-export type RecoverDeadOwnerRequest = Readonly<{
+type RecoverDeadOwnerRequest = Readonly<{
   request: "recover_dead_owner";
   operationId: string;
 }>;

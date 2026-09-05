@@ -4,7 +4,7 @@ const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_FACT_CONTENT_BYTES = 8_192;
 const MAX_PENDING_FACTS = 128;
 
-export type GameProgramFactClass =
+type GameProgramFactClass =
   | "progress"
   | "terminal"
   | "resource_released"
@@ -14,7 +14,7 @@ export type GameProgramFactClass =
  * Addressed Mod-authoritative fact. The Host carries it unchanged and never
  * derives program state, completion, resource ownership, or a successor.
  */
-export type GameProgramFact = Readonly<{
+type GameProgramFact = Readonly<{
   type: typeof GAME_PROGRAM_FACT_CUSTOM_TYPE;
   cursor: number;
   programId: string;
@@ -39,7 +39,7 @@ export interface GameProgramFactIngressStore {
  * Pi composition must resolve only after its custom message is durably present
  * in the Pi session. No tool result is accepted by this boundary.
  */
-export type DurablePiFactConsumer = (record: Readonly<{
+type DurablePiFactConsumer = (record: Readonly<{
   customType: typeof GAME_PROGRAM_FACT_CUSTOM_TYPE;
   content: string;
   details: GameProgramFact;
@@ -135,11 +135,11 @@ export function createGameProgramFactIngress(
   });
 }
 
-export function encodeGameProgramFact(record: GameProgramFact): string {
+function encodeGameProgramFact(record: GameProgramFact): string {
   return JSON.stringify(decodeGameProgramFact(record));
 }
 
-export function decodeGameProgramFact(value: unknown): GameProgramFact {
+function decodeGameProgramFact(value: unknown): GameProgramFact {
   if (!hasExactEnumerableDataKeys(value, ["type", "cursor", "programId", "nodeId", "nodeAttempt", "factClass", "fact"]))
     throw new Error("invalid_game_program_fact");
   if (value.type !== GAME_PROGRAM_FACT_CUSTOM_TYPE || !isCursor(value.cursor) || !isIdentifier(value.programId) || !isIdentifier(value.nodeId) || !isCursor(value.nodeAttempt) || !isFactClass(value.factClass) || !isStrictJsonRecord(value.fact))

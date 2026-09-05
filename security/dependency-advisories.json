@@ -12,7 +12,7 @@
   "lockfiles": {
     "pnpm-lock.yaml": {
       "present": true,
-      "sha256": "e9e4ebb5f13e2b7aa60d90e5585a8a337d82d2ace720bab91bd62d162d391cd3"
+      "sha256": "c4541266f5f9d456162e759c34d6267c3fc47dcdd5315c693da8461d1854688e"
     },
     "vendor/magic-context/bun.lock": {
       "present": true,

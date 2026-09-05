@@ -11,6 +11,7 @@ const PORTFOLIO_MAX_JSON_BYTES = 64 * 1024;
 const REPOSITORY_ROOT = path.resolve(PACKAGE_DIRECTORY, "../../..");
 const SCAFFOLD_CHECKER = "src/scaffold-contract.mjs";
 const ACTION_SURFACE_CHECKER = "src/action-surface-check.mjs";
+const ACTION_SURFACE_EXPORT_CHECKER = "src/action-surface-export-check.mjs";
 const ACTION_SOURCE_PROJECTION_CHECKER = "src/action-source-projection-check.mjs";
 const STATIC_PRODUCTION_ADMISSION = "static-verifier/verify-production-admission.mjs";
 const ENTRY_KEYS = new Set(["id", "kind", "actionId"]);
@@ -18,6 +19,7 @@ const CANONICAL_ENTRY_IDS = Object.freeze([
   "equip-tool-contract-check",
   "scaffold-contract",
   "action-surface-check",
+  "action-surface-export-check",
   "action-source-projection-check",
   "static-production-admission",
   "package-deterministic-tests",
@@ -34,7 +36,7 @@ function exactKeys(value, keys) {
 
 export function validateDeterministicPortfolio(input) {
   exactKeys(input, new Set(["schema", "entries"]));
-  if (input.schema !== SCHEMA || !Array.isArray(input.entries) || input.entries.length !== 6) fail("invalid_schema");
+  if (input.schema !== SCHEMA || !Array.isArray(input.entries) || input.entries.length !== 7) fail("invalid_schema");
   const seen = new Set();
   const entries = input.entries.map((entry) => {
     if (entry?.kind === "action-check") {
@@ -43,9 +45,12 @@ export function validateDeterministicPortfolio(input) {
     } else if (entry?.kind === "scaffold-check") {
       exactKeys(entry, new Set(["id", "kind"]));
       if (entry.id !== "scaffold-contract") fail("invalid_scaffold_check");
-    } else if (entry?.kind === "action-surface-check") {
+} else if (entry?.kind === "action-surface-check") {
+       exactKeys(entry, new Set(["id", "kind"]));
+       if (entry.id !== "action-surface-check") fail("invalid_action_surface_check");
+    } else if (entry?.kind === "action-surface-export-check") {
       exactKeys(entry, new Set(["id", "kind"]));
-      if (entry.id !== "action-surface-check") fail("invalid_action_surface_check");
+      if (entry.id !== "action-surface-export-check") fail("invalid_action_surface_export_check");
     } else if (entry?.kind === "action-source-projection-check") {
       exactKeys(entry, new Set(["id", "kind"]));
       if (entry.id !== "action-source-projection-check") fail("invalid_action_source_projection_check");
@@ -83,17 +88,18 @@ export async function readDeterministicPortfolio() {
   return validateDeterministicPortfolio(parsed);
 }
 
-function run(command, args) {
+function run(command, args, allowedExitCodes = [0]) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: PACKAGE_DIRECTORY, shell: false, stdio: "inherit", windowsHide: true });
     child.once("error", () => reject(new Error("stardew_action_portfolio_command_failed")));
-    child.once("close", (code, signal) => code === 0 && !signal ? resolve() : reject(new Error("stardew_action_portfolio_command_failed")));
+    child.once("close", (code, signal) => allowedExitCodes.includes(code) && !signal ? resolve(code) : reject(new Error("stardew_action_portfolio_command_failed")));
   });
 }
 
 export async function runDeterministicPortfolio({ runCommand = run, runProject = runActionProject } = {}) {
   if (typeof runCommand !== "function" || typeof runProject !== "function") fail("invalid_runner");
   const entries = await readDeterministicPortfolio();
+  const blockedEntries = [];
   for (const entry of entries) {
     if (entry.kind === "action-check") {
       await runProject({ projectFile: path.join(PACKAGE_DIRECTORY, "game-action-project.json"), invocation: { command: "check", actionId: entry.actionId } });
@@ -101,15 +107,18 @@ export async function runDeterministicPortfolio({ runCommand = run, runProject =
       await runCommand(process.execPath, [SCAFFOLD_CHECKER, REPOSITORY_ROOT]);
     } else if (entry.kind === "action-surface-check") {
       await runCommand(process.execPath, [ACTION_SURFACE_CHECKER]);
+    } else if (entry.kind === "action-surface-export-check") {
+      await runCommand(process.execPath, [ACTION_SURFACE_EXPORT_CHECKER]);
     } else if (entry.kind === "action-source-projection-check") {
       await runCommand(process.execPath, [ACTION_SOURCE_PROJECTION_CHECKER]);
     } else if (entry.kind === "static-production-admission") {
-      await runCommand(process.execPath, [STATIC_PRODUCTION_ADMISSION]);
+      const exitCode = await runCommand(process.execPath, [STATIC_PRODUCTION_ADMISSION], [0, 2]);
+      if (exitCode === 2) blockedEntries.push(entry.id);
     } else if (entry.kind === "package-tests") {
       await runCommand(process.execPath, ["src/run-tests.mjs"]);
     } else fail("invalid_entry");
   }
-  return Object.freeze({ gameId: "stardew", status: "deterministic-ci", entries: entries.map((entry) => entry.id) });
+  return Object.freeze({ gameId: "stardew", status: "deterministic-ci", entries: entries.map((entry) => entry.id), ...(blockedEntries.length ? { blockedEntries: Object.freeze(blockedEntries) } : {}) });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

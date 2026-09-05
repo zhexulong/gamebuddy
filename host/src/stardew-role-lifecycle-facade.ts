@@ -29,7 +29,7 @@ import type { StardewPlayerHostProcessOwner } from "./stardew-player-host-proces
 
 // ── Public view types ───────────────────────────────────────────────────────
 
-export type StardewPlayerHostSlot =
+type StardewPlayerHostSlot =
   | Readonly<{ state: "not_started"; ownership: "none" }>
   | Readonly<{ state: "pending"; ownership: "gamebuddy_direct_spawn" }>
   | Readonly<{ state: "awaiting_attestation"; ownership: "gamebuddy_direct_spawn" }>
@@ -43,7 +43,7 @@ export type StardewPlayerHostSlot =
       attachmentAllowed: boolean;
     }>;
 
-export type StardewAiClientSlot =
+type StardewAiClientSlot =
   | Readonly<{ state: "not_started"; ownership: "none" }>
   | Readonly<{
       state: "awaiting_attestation";

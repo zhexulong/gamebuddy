@@ -128,6 +128,7 @@ describe("GameBuddy stable source m[0]/m[1] lifecycle", () => {
 			expect(textOf(replacementMessages[0])).toContain("initial premise");
 			expect(textOf(replacementMessages[1])).toContain("revised premise");
 			expect(textOf(replacementMessages[1])).toContain("old-canonical-hash");
+			expect(textOf(replacementMessages[1])).not.toContain("initial premise");
 
 			const tombstoneMessages = [user("third")];
 			injectM0M1Pi(

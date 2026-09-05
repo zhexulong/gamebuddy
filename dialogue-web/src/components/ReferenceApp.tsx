@@ -438,6 +438,51 @@ export function ReferenceApp() {
     }
   };
 
+  const handleSwipe = async (messageHandle: string, direction: "prev" | "next"): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    try {
+      await apiRef.current.selectSwipe(
+        {
+          apiVersion: 1,
+          selectionGeneration: selection.generation,
+          messageHandle,
+          direction,
+        },
+        { csrfToken: current.session.snapshot.csrfToken },
+      );
+      await reread();
+    } catch (error) {
+      console.error("Swipe select failed", error);
+    }
+  };
+
+  const handleRegenerate = async (messageHandle: string): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    const idempotencyKey = newIdempotencyKey();
+    try {
+      await apiRef.current.regenerate(
+        {
+          apiVersion: 1,
+          selectionGeneration: selection.generation,
+          messageHandle,
+        },
+        {
+          csrfToken: current.session.snapshot.csrfToken,
+          idempotencyKey,
+        },
+      );
+      startPolling();
+    } catch (error) {
+      console.error("Regenerate failed", error);
+    }
+  };
+
   const submitAvailable =
     view.kind === "ready" &&
     view.session.pending === null &&
@@ -479,6 +524,8 @@ export function ReferenceApp() {
               companionName={view.session.snapshot.chat.companion.name}
               chatTitle={view.session.snapshot.chat.title}
               labels={labels()}
+              onSwipe={handleSwipe}
+              onRegenerate={handleRegenerate}
             />
             {terminalTurnNotice !== null && (
               <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>

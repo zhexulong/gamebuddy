@@ -2,7 +2,7 @@ export type VoicePollingPort = Readonly<{
   pollEvents: () => Promise<void>;
 }>;
 
-export type VoicePollingErrorCode =
+type VoicePollingErrorCode =
   | "voice_gateway_disconnected"
   | "voice_gateway_response_timeout"
   | "voice_gateway_socket_error"
@@ -13,9 +13,9 @@ export type VoicePollingErrorCode =
   | "voice_gateway_protocol_error"
   | "voice_poll_failed";
 
-export type VoicePollingStatus = "running" | "stopped" | "closed";
+type VoicePollingStatus = "running" | "stopped" | "closed";
 
-export type VoicePollingErrorState = Readonly<{
+type VoicePollingErrorState = Readonly<{
   code: VoicePollingErrorCode;
   timestampMs: number;
   count: number;

@@ -28,6 +28,7 @@ const CANONICAL_PACKAGE_ENTRIES = Object.freeze([
   "equip-tool-contract-check",
   "scaffold-contract",
   "action-surface-check",
+  "action-surface-export-check",
   "action-source-projection-check",
   "static-production-admission",
   "package-deterministic-tests",

@@ -32,13 +32,10 @@ export {
   WORK_BRIEF_SCHEMA,
   assertWorkBriefStageAuthorized,
   checkWorkBrief,
-  checkWorkBriefDiff,
   checkWorkBriefOwnership,
   compareWorkBriefDiff,
   createIncompleteWorkBriefHandoff,
-  emitIncompleteWorkBriefHandoff,
   parseGitDiffPaths,
-  runWorkBriefCheck,
   validateFrozenWorkBrief,
 } from "./work-brief.mjs";
 export {

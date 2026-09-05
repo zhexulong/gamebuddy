@@ -8,11 +8,22 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { bindWindowsStaleLockReclaimer, withPathLock } from "./path-lock.js";
 import {
+  createStardewBootstrapGuardianNativePortsFromDesktopSession,
+  createStardewBootstrapGuardianOwner,
   createStardewBootstrapGuardianPrivateArmBindingFacade,
   type StardewBootstrapGuardianNativePorts,
 } from "./stardew-bootstrap-guardian.private.js";
+import type { DesktopGuardianSession, GuardianAck } from "./desktop-guardian-session.internal.js";
+import { settleOwnedPlayerHostRegistrationAttempt } from "./stardew-private-bootstrap-composer.internal.js";
+import {
+  publishStardewInstallationRegistration,
+  readStardewInstallationRegistration,
+} from "./stardew-installation-registration.internal.js";
 import { createStardewPrivateBootstrapCompositionForTesting } from "./stardew-private-bootstrap-composer.test-support-internal.js";
-import type { StardewPrivateBootstrapCoreDependencies } from "./stardew-private-bootstrap-composer.core.js";
+import {
+  createStardewBootstrapGuardianOwnerBinding,
+  type StardewPrivateBootstrapCoreDependencies,
+} from "./stardew-private-bootstrap-composer.core.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 
 const roots: string[] = [];
@@ -47,6 +58,25 @@ test("private arm binding fresh-reads the sole strict v4 owner before one frozen
   assert.equal(result, "accepted");
   assert.equal(calls, 1);
   await assert.rejects(facade.consumeArmBinding(() => "replayed"), /arm_binding_unavailable/);
+});
+
+test("private arm binding rejects a duplicate owner-record key before invoking the callback", async () => {
+  const fixture = await createOwner();
+  const path = join(fixture.root, "stardew-private-bootstrap", "bootstrap-1", "owner.json");
+  const valid = JSON.stringify(ownerRecord());
+  const duplicate = valid.replace(
+    '"ownerRecordRevision":1',
+    '"ownerRecordRevision":1,"ownerRecordRevision":1',
+  );
+  assert.notEqual(duplicate, valid);
+  await writeFile(path, `${duplicate}\n`, "utf8");
+
+  let called = false;
+  await assert.rejects(
+    createFacade(fixture.root).consumeArmBinding(() => { called = true; }),
+    /invalid_stardew_bootstrap_owner|invalid_strict_json_file/,
+  );
+  assert.equal(called, false);
 });
 
 test("private arm binding requires persistence before binding and consumes failed attempts", async () => {
@@ -226,6 +256,91 @@ function simulatedLockHelper(): ChildProcess {
 }
 
 
+test("desktop session adapter binds the owner arm frame, exact acknowledgement, containment, and close", async () => {
+  const fixture = await createDesktopSessionOwnerFixture();
+  const calls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
+  const acknowledgement = (operation: string, role?: "player_host" | "ai_client"): GuardianAck => ({
+    operation,
+    status: "accepted",
+    bootstrapId: "bootstrap-1",
+    generation: "generation-1",
+    inventoryDigest: "inventory",
+    runtimeAdmissionSha256: "admission",
+    guardianInstanceId: "guardian-instance-1",
+    guardianEpoch: 1,
+    attemptId: "bootstrap-1",
+    ...(role === undefined ? {} : { role }),
+  });
+  const session: DesktopGuardianSession = Object.freeze({
+    async arm(input) {
+      calls.push({ operation: "arm", input: { ...input, privateFrame: [...input.privateFrame] } });
+      return acknowledgement("arm_attempt");
+    },
+    async launch() { throw new Error("unexpected_launch"); },
+    async contain(input) {
+      calls.push({ operation: "contain", input: { ...input } });
+      return acknowledgement("contain_role", input.role);
+    },
+    async close() { calls.push({ operation: "close", input: {} }); },
+  });
+  const binding = createStardewBootstrapGuardianOwnerBinding(fixture.phaseOwner);
+  const owner = createStardewBootstrapGuardianOwner(
+    binding,
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000),
+  );
+
+  await owner.arm();
+  await assert.rejects(owner.launchPlayerHost(), /native_launch_plan_unavailable/);
+  assert.equal(await owner.close(), "contained");
+
+  assert.deepEqual(calls.map(({ operation, input }) => [operation, input.role]), [
+    ["arm", undefined], ["contain", "player_host"], ["contain", "ai_client"], ["close", undefined],
+  ]);
+  const armFrame = JSON.parse(Buffer.from(calls[0]!.input.privateFrame as number[]).toString("utf8")) as Record<string, unknown>;
+  assert.deepEqual(armFrame, {
+    guardianInstanceId: "guardian-instance-1", guardianEpoch: 1, attemptId: "bootstrap-1",
+    revision: "revision-1", leaseName: "Local\\Guardian-Lease-1",
+    playerJobName: "Local\\Guardian-Player-1", aiJobName: "Local\\Guardian-Ai-1",
+  });
+});
+
+test("desktop session adapter rejects an acknowledgement outside its exact attempt correlation", async () => {
+  const fixture = await createDesktopSessionOwnerFixture();
+  const binding = createStardewBootstrapGuardianOwnerBinding(fixture.phaseOwner);
+  const session: DesktopGuardianSession = Object.freeze({
+    async arm() {
+      return {
+        operation: "arm_attempt", status: "accepted", bootstrapId: "bootstrap-1", generation: "generation-1",
+        inventoryDigest: "inventory", runtimeAdmissionSha256: "admission", guardianInstanceId: "guardian-instance-1",
+        guardianEpoch: 1, attemptId: "other-attempt",
+      };
+    },
+    async launch() { throw new Error("unexpected_launch"); },
+    async contain() { throw new Error("unexpected_contain"); },
+    async close() { throw new Error("unexpected_close"); },
+  });
+  const owner = createStardewBootstrapGuardianOwner(
+    binding,
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000),
+  );
+
+  await assert.rejects(owner.arm(), /session_ack_mismatch/);
+});
+
+async function createDesktopSessionOwnerFixture() {
+  const root = await createRoot();
+  const dependencies: StardewPrivateBootstrapCoreDependencies = {
+    rawSpawn: () => { throw new Error("not used"); }, rawProbe: () => ({ pid: 1, creationDate: "test" }), rawPlayerHostSpawn: () => { throw new Error("not used"); }, rawPlayerHostProbe: () => ({ pid: 1, creationDate: "test" }),
+    createBootstrapIdentity: () => "bootstrap-1", createGuardianRevision: () => "revision-1", createGuardianInstanceId: () => "guardian-instance-1", createGuardianEpoch: () => 1,
+    createGuardianLeaseName: () => "Local\\Guardian-Lease-1", createGuardianPlayerJobName: () => "Local\\Guardian-Player-1", createGuardianAiJobName: () => "Local\\Guardian-Ai-1", createLaunchGeneration: () => "ai-generation-1", createPlayerHostLaunchGeneration: () => "player-generation-1", createBridgePipeName: () => "bridge", createBridgeToken: () => "bridge-token-012345", nowMs: () => 1_000,
+  };
+  const internal = createStardewPrivateBootstrapCompositionForTesting(dependencies);
+  const composition = internal.composition;
+  const claim = composition.broker.confirm({ playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000 }).consume("browser-1");
+  const phaseOwner = await composition.reserveOwnedPlayerHostPhaseA(root, claim, composition.playerHostProcessOwner.reservePlayerHostLaunch(), composition.aiClientProcessOwner.reserveAiClientLaunch());
+  return { phaseOwner };
+}
+
 test("private owner durably arms, independently activates roles, and contains one role without draining the other", async () => {
   const fixture = await createGuardianOwnerFixture();
   const { owner, events, readRecord } = fixture;
@@ -240,6 +355,79 @@ test("private owner durably arms, independently activates roles, and contains on
   assert.equal(await owner.close(), "contained");
   assert.deepEqual(events, ["drain:playerHost", "drain:aiClient", "release"]);
   assert.deepEqual(await readRecord(), { state: "contained", guardianState: "contained", playerHostState: "contained", aiClientState: "contained", ownerRecordRevision: 8 });
+});
+
+test("concurrent settlement reserves finish and lets only one caller mint", async () => {
+  let releaseStarted!: () => void;
+  const started = new Promise<void>((resolve) => { releaseStarted = resolve; });
+  let release!: () => void;
+  const releaseGate = new Promise<void>((resolve) => { release = resolve; });
+  const fixture = await createGuardianOwnerFixture({ releaseStarted, releaseGate });
+  await fixture.owner.arm();
+  const first = fixture.owner.settle();
+  await started;
+  await assert.rejects(fixture.owner.settle(), /stardew_bootstrap_guardian_settlement_proof_unavailable/);
+  release();
+  await first;
+  assert.deepEqual(fixture.events, ["drain:playerHost", "drain:aiClient", "release"]);
+});
+
+test("guardian exact settlement proof releases only its terminal matching registration pointer", async () => {
+  const fixture = await createGuardianOwnerFixture({ registration: true });
+  await fixture.owner.arm();
+  const proof = await fixture.owner.settle();
+  assert.deepEqual(
+    (await readStardewInstallationRegistration(fixture.root))?.activeAttempt,
+    { bootstrapCorrelation: "bootstrap-1" },
+  );
+  await settleOwnedPlayerHostRegistrationAttempt(fixture.phaseOwner, proof);
+  const registration = await readStardewInstallationRegistration(fixture.root);
+  assert.equal(registration?.activeAttempt, null);
+  assert.equal(registration?.revision, 3);
+  await assert.rejects(
+    settleOwnedPlayerHostRegistrationAttempt(fixture.phaseOwner, proof),
+    /settlement_proof_unavailable/,
+  );
+});
+
+test("settlement rejects a terminal owner replacement unless its exact fence and revision are restored", async () => {
+  for (const mutate of [
+    (record: Record<string, unknown>) => { record.playerId = "replacement-player"; },
+    (record: Record<string, unknown>) => { record.companionId = "replacement-companion"; },
+    (record: Record<string, unknown>) => { (record.guardian as Record<string, unknown>).bindingRevision = "replacement-revision"; },
+    (record: Record<string, unknown>) => { record.ownerRecordRevision = (record.ownerRecordRevision as number) + 1; },
+  ]) {
+    const fixture = await createGuardianOwnerFixture({ registration: true });
+    await fixture.owner.arm();
+    const proof = await fixture.owner.settle();
+    const ownerPath = join(fixture.root, "stardew-private-bootstrap", "bootstrap-1", "owner.json");
+    const terminal = JSON.parse(await readFile(ownerPath, "utf8")) as Record<string, unknown>;
+    const replacement = JSON.parse(JSON.stringify(terminal)) as Record<string, unknown>;
+    mutate(replacement);
+    await writeFile(ownerPath, `${JSON.stringify(replacement)}\n`, "utf8");
+    await assert.rejects(
+      settleOwnedPlayerHostRegistrationAttempt(fixture.phaseOwner, proof),
+      /stardew_bootstrap_registration_unavailable/,
+    );
+    assert.deepEqual(
+      (await readStardewInstallationRegistration(fixture.root))?.activeAttempt,
+      { bootstrapCorrelation: "bootstrap-1" },
+    );
+    await writeFile(ownerPath, `${JSON.stringify(terminal)}\n`, "utf8");
+    await settleOwnedPlayerHostRegistrationAttempt(fixture.phaseOwner, proof);
+    assert.equal((await readStardewInstallationRegistration(fixture.root))?.activeAttempt, null);
+  }
+});
+
+test("private owner final CAS precedes retryable release without repeated native drain or CAS", async () => {
+  const fixture = await createGuardianOwnerFixture({ releaseFailures: 1 });
+  await fixture.owner.arm();
+  assert.equal(await fixture.owner.close(), "unavailable");
+  assert.deepEqual(fixture.events, ["drain:playerHost", "drain:aiClient", "release"]);
+  assert.deepEqual(await fixture.readRecord(), { state: "contained", guardianState: "contained", playerHostState: "contained", aiClientState: "contained", ownerRecordRevision: 6 });
+  assert.equal(await fixture.owner.close(), "contained");
+  assert.deepEqual(fixture.events, ["drain:playerHost", "drain:aiClient", "release", "release"]);
+  assert.deepEqual(await fixture.readRecord(), { state: "contained", guardianState: "contained", playerHostState: "contained", aiClientState: "contained", ownerRecordRevision: 6 });
 });
 
 test("private owner final CAS precedes retryable release without repeated native drain or CAS", async () => {
@@ -309,8 +497,18 @@ test("recovery partial classification quarantines after only the first durable c
   assert.deepEqual(await fixture.readRecord(), { state: "quarantined", guardianState: "quarantined", playerHostState: "contained", aiClientState: "quarantined", ownerRecordRevision: 4 });
 });
 
-async function createGuardianOwnerFixture(input: Readonly<{ held?: boolean; acquireThrows?: boolean; classifyThrowsAt?: number; releaseFailures?: number; classifications?: readonly ("contained" | "unavailable" | "quarantined")[] }> = {}) {
+async function createGuardianOwnerFixture(input: Readonly<{ registration?: boolean; held?: boolean; acquireThrows?: boolean; classifyThrowsAt?: number; releaseFailures?: number; releaseStarted?: () => void; releaseGate?: Promise<void>; classifications?: readonly ("contained" | "unavailable" | "quarantined")[] }> = {}) {
   const root = await createRoot();
+  if (input.registration) {
+    await publishStardewInstallationRegistration(root, null, {
+      schema: "gamebuddy-stardew-installation-registration/v1",
+      binding: { rootLayoutVersion: 1, productInstallationId: "desktop-installation-1" },
+      revision: 1,
+      state: "ready",
+      locator: "C:\\Games\\Stardew Valley",
+      activeAttempt: null,
+    });
+  }
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
     rawSpawn: () => { throw new Error("not used"); }, rawProbe: () => ({ pid: 1, creationDate: "test" }), rawPlayerHostSpawn: () => { throw new Error("not used"); }, rawPlayerHostProbe: () => ({ pid: 1, creationDate: "test" }),
     createBootstrapIdentity: () => "bootstrap-1", createGuardianRevision: () => "revision-1", createGuardianInstanceId: () => "guardian-instance-1", createGuardianEpoch: () => 1,
@@ -319,7 +517,9 @@ async function createGuardianOwnerFixture(input: Readonly<{ held?: boolean; acqu
   const internal = createStardewPrivateBootstrapCompositionForTesting(dependencies);
   const composition = internal.composition;
   const claim = composition.broker.confirm({ playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000 }).consume("browser-1");
-  const phaseOwner = await composition.reserveOwnedPlayerHostPhaseA(root, claim, composition.playerHostProcessOwner.reservePlayerHostLaunch(), composition.aiClientProcessOwner.reserveAiClientLaunch());
+  const phaseOwner = input.registration
+    ? await internal.reserveOwnedPlayerHostPhaseAForActivation(root, claim)
+    : await composition.reserveOwnedPlayerHostPhaseA(root, claim, composition.playerHostProcessOwner.reservePlayerHostLaunch(), composition.aiClientProcessOwner.reserveAiClientLaunch());
   const events: string[] = []; let releaseFailures = input.releaseFailures ?? 0; let classificationIndex = 0;
   const ownerPath = join(root, "stardew-private-bootstrap", "bootstrap-1", "owner.json");
   const readDurable = async () => JSON.parse(await readFile(ownerPath, "utf8")) as Record<string, unknown>;
@@ -333,6 +533,8 @@ async function createGuardianOwnerFixture(input: Readonly<{ held?: boolean; acqu
       },
       async releaseAndExit() {
         const record = await readDurable(); assert.equal(record.state, "contained"); assert.equal(record.guardianState, "contained");
+        input.releaseStarted?.();
+        if (input.releaseGate !== undefined) await input.releaseGate;
         events.push("release"); if (releaseFailures-- > 0) throw new Error("release failed");
       },
     },
@@ -348,5 +550,5 @@ async function createGuardianOwnerFixture(input: Readonly<{ held?: boolean; acqu
     },
   };
   const owner = internal.createStardewBootstrapGuardianOwner(phaseOwner, native);
-  return { internal, phaseOwner, native, owner, events, async readRecord() { const record = JSON.parse(await readFile(ownerPath, "utf8")) as Record<string, unknown>; return { state: record.state, guardianState: record.guardianState, playerHostState: record.playerHostState, aiClientState: record.aiClientState, ownerRecordRevision: record.ownerRecordRevision }; } };
+  return { root, internal, phaseOwner, native, owner, events, async readRecord() { const record = JSON.parse(await readFile(ownerPath, "utf8")) as Record<string, unknown>; return { state: record.state, guardianState: record.guardianState, playerHostState: record.playerHostState, aiClientState: record.aiClientState, ownerRecordRevision: record.ownerRecordRevision }; } };
 }

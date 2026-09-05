@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   CLEANUP_TIMEOUT_MS,
   DEFAULT_SUITE_TIMEOUT_MS,
+  createWindowsProcessTreeKillerForTest,
   runBoundedChild,
   runOneShotControlChild,
 } from "../src/process-supervisor.mjs";
@@ -18,6 +19,34 @@ const childScript = (source) => ["--input-type=module", "-e", source];
 test("exports stable timeout defaults", () => {
   assert.equal(DEFAULT_SUITE_TIMEOUT_MS, 15 * 60_000);
   assert.equal(CLEANUP_TIMEOUT_MS, 5_000);
+});
+
+test("uses the exact Windows taskkill.exe boundary and fails closed for invalid results", async () => {
+  const calls = [];
+  const killer = new EventEmitter();
+  const kill = createWindowsProcessTreeKillerForTest((command, args, options) => {
+    calls.push({ command, args, options });
+    return killer;
+  })(1234, {});
+  killer.emit("close", 0);
+  await kill;
+  assert.deepEqual(calls, [{
+    command: "taskkill.exe",
+    args: ["/PID", "1234", "/T", "/F"],
+    options: { windowsHide: true, stdio: "ignore" },
+  }]);
+
+  for (const code of [128, 7]) {
+    const child = new EventEmitter();
+    const pending = createWindowsProcessTreeKillerForTest(() => child)(1234, {});
+    child.emit("close", code);
+    if (code === 128) await pending;
+    else await assert.rejects(pending, /test_supervisor_taskkill_failed:7/);
+  }
+  assert.throws(
+    () => createWindowsProcessTreeKillerForTest(() => assert.fail("must not spawn"))(0, {}),
+    /test_supervisor_process_id_invalid/,
+  );
 });
 
 test("runs a one-shot control child with one bounded JSON frame and separate stderr", async () => {
@@ -52,6 +81,42 @@ test("rejects malformed, duplicate, oversized, and extra control-child stdout", 
   ]) {
     await assert.rejects(
       runOneShotControlChild({ command: nodeCommand, args: childScript(source), start: {} }),
+      /control_child_invalid_result/,
+    );
+  }
+});
+
+test("enforces a 32 KiB byte limit for one-shot control start and terminal result lines", async () => {
+  const jsonLineWithByteLength = (byteLength) => {
+    const emptyLine = `${JSON.stringify({ value: "" })}\n`;
+    return { value: "x".repeat(byteLength - Buffer.byteLength(emptyLine, "utf8")) };
+  };
+  const payloadLengthForLine = (byteLength) => byteLength - Buffer.byteLength(`${JSON.stringify({ value: "" })}\n`, "utf8");
+  const controlChildResult = (byteLength, keepAlive = false) => childScript(
+    `process.stdout.write(JSON.stringify({ value: "x".repeat(${payloadLengthForLine(byteLength)}) }) + "\\n");${keepAlive ? "setInterval(() => {}, 1000);" : ""}`,
+  );
+  const startAtLimit = jsonLineWithByteLength(32 * 1024);
+  const startResult = await runOneShotControlChild({
+    command: nodeCommand,
+    args: childScript("process.stdout.write('{}\\n');"),
+    start: startAtLimit,
+  });
+  assert.deepEqual(startResult.result, {});
+  const resultAtLimit = await runOneShotControlChild({
+    command: nodeCommand,
+    args: controlChildResult(32 * 1024),
+    start: {},
+  });
+  assert.equal(Buffer.byteLength(resultAtLimit.child.stdout, "utf8"), 32 * 1024);
+
+  for (const byteLength of [32 * 1024 + 1, 64 * 1024]) {
+    const line = jsonLineWithByteLength(byteLength);
+    await assert.rejects(
+      runOneShotControlChild({ command: "never-spawned", start: line, spawnProcess: () => assert.fail("must not spawn") }),
+      /invalid_control_child_start/,
+    );
+    await assert.rejects(
+      runOneShotControlChild({ command: nodeCommand, args: controlChildResult(byteLength, true), start: {} }),
       /control_child_invalid_result/,
     );
   }
@@ -152,6 +217,15 @@ test("bounds public output at 64 KiB without splitting UTF-8", async () => {
   assert.ok(!result.output.endsWith("\uFFFD"));
 });
 
+test("retains the full 64 KiB generic capture budget independently of control lines", async () => {
+  const result = await runBoundedChild({
+    command: nodeCommand,
+    args: childScript("process.stdout.write('x'.repeat(64 * 1024));"),
+    timeoutMs: 5000,
+  });
+  assert.equal(Buffer.byteLength(result.stdout, "utf8"), 64 * 1024);
+});
+
 test("does not append an incomplete leading UTF-8 sequence at the byte limit", async () => {
   const result = await runBoundedChild({
     command: nodeCommand,
@@ -190,22 +264,53 @@ test("rejects mandatory spawn option overrides before spawning", async () => {
 test("cleans a real process tree before rejecting an invalid post-spawn child surface", async () => {
   const temp = await mkdtemp(join(tmpdir(), "game-action-devkit-invalid-child-"));
   const marker = join(temp, "should-not-exist");
+  const children = [];
+  const cleanupPids = [];
   const startRealButReturnInvalidSurface = () => {
-    const realChild = spawn(nodeCommand, childScript(`
+    const child = spawn(nodeCommand, childScript(`
       import { writeFileSync } from "node:fs";
       setTimeout(() => writeFileSync(${JSON.stringify(marker)}, "leaked"), 300);
     `), { detached: process.platform !== "win32", stdio: "ignore", windowsHide: true });
-    return { pid: realChild.pid };
+    const record = { child, pid: child.pid, closed: false };
+    record.close = new Promise((resolve) => {
+      child.once("close", () => {
+        record.closed = true;
+        resolve();
+      });
+    });
+    children.push(record);
+    return { pid: child.pid };
+  };
+  const killRealChildAndWaitForClose = async (pid) => {
+    cleanupPids.push(pid);
+    const record = children.find((candidate) => candidate.pid === pid);
+    assert.ok(record, `cleanup received unknown pid ${pid}`);
+    assert.equal(record.child.kill("SIGKILL"), true);
+    await record.close;
   };
   try {
     await assert.rejects(
-      runBoundedChild({ command: "fake", spawnProcess: startRealButReturnInvalidSurface, cleanupTimeoutMs: 500 }),
+      runBoundedChild({
+        command: "fake",
+        spawnProcess: startRealButReturnInvalidSurface,
+        killTree: killRealChildAndWaitForClose,
+        cleanupTimeoutMs: 500,
+      }),
       /invalid_test_supervisor_child/,
     );
     await assert.rejects(
-      runOneShotControlChild({ command: "fake", start: {}, spawnProcess: startRealButReturnInvalidSurface, cleanupTimeoutMs: 500 }),
+      runOneShotControlChild({
+        command: "fake",
+        start: {},
+        spawnProcess: startRealButReturnInvalidSurface,
+        killTree: killRealChildAndWaitForClose,
+        cleanupTimeoutMs: 500,
+      }),
       /invalid_control_child_process/,
     );
+    assert.equal(children.length, 2);
+    assert.deepEqual(cleanupPids, children.map((record) => record.pid));
+    assert.ok(children.every((record) => record.closed));
     await new Promise((resolve) => setTimeout(resolve, 400));
     await assert.rejects(readFile(marker));
   } finally {

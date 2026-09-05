@@ -23,6 +23,7 @@ import type {
 import type {
   IntegrationActionCatalog,
   IntegrationActionPolicy,
+  IntegrationActionRegistration,
   IntegrationDispatchAdmission,
   IntegrationExecutionReceipt,
 } from "./game-integration-adapter.js";
@@ -106,7 +107,7 @@ export type GameplayTaskSessionFactory = Readonly<{
  * cancellation race by marking the pre-write registration before a receipt is
  * available.
  */
-export type GameplayTaskDispatchAdmission = IntegrationDispatchAdmission &
+type GameplayTaskDispatchAdmission = IntegrationDispatchAdmission &
   Readonly<{
     cancelPending(reasonCode: string): void;
   }>;
@@ -815,9 +816,9 @@ export function admitGameplayAction(
   activeExecution:
     Readonly<{ requestId: string; executionId: string }> | null | undefined,
   catalog: IntegrationActionCatalog,
-  registrations: readonly import("./game-integration-adapter.js").IntegrationActionRegistration[],
+  registrations: readonly IntegrationActionRegistration[],
   capabilities: readonly string[],
-  policy: import("./game-integration-adapter.js").IntegrationActionPolicy,
+  policy: IntegrationActionPolicy,
   snapshotRevision?: number | null,
 ): GameplayActionAdmission {
   const entry = catalog

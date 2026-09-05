@@ -35,7 +35,7 @@ export type TavernLibraryService = Readonly<{
   activeChatSelection(): ReturnType<ChatThreadStore["readActiveThreadSelection"]>;
 }>;
 
-export type NewCompanionRequest = Readonly<{
+type NewCompanionRequest = Readonly<{
   companionId: string;
   continuityId: string;
   name: string;
@@ -44,7 +44,7 @@ export type NewCompanionRequest = Readonly<{
   profileHash: string;
 }>;
 
-export type NewChatRequest = Readonly<{
+type NewChatRequest = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
   personaId?: string;

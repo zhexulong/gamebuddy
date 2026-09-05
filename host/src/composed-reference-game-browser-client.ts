@@ -25,7 +25,7 @@ const COMPOSED_REFERENCE_GAME_API_VERSION = 1 as const;
 
 // ─── Error types ────────────────────────────────────────────────────────────
 
-export class ComposedReferenceGameProtocolError extends Error {
+class ComposedReferenceGameProtocolError extends Error {
   readonly reason: string;
   constructor(reason: string) {
     super(`Composed reference game protocol error: ${reason}`);
@@ -34,7 +34,7 @@ export class ComposedReferenceGameProtocolError extends Error {
   }
 }
 
-export class ComposedReferenceGameProblemError extends Error {
+class ComposedReferenceGameProblemError extends Error {
   readonly code: string;
   readonly status: number;
   readonly requestId: string;
@@ -49,21 +49,21 @@ export class ComposedReferenceGameProblemError extends Error {
 
 // ─── Client interface ───────────────────────────────────────────────────────
 
-export type StardewCabinChoiceV1 = Readonly<{
+type StardewCabinChoiceV1 = Readonly<{
   displayLabel: string;
   availability: "available";
   choiceHandle: string;
   expiresAtMs: number;
 }>;
 
-export type StardewCabinChoicesV1 = Readonly<{ apiVersion: 1; choices: readonly StardewCabinChoiceV1[] }>;
-export type StardewCabinConfirmationRequestV1 = Readonly<{
+type StardewCabinChoicesV1 = Readonly<{ apiVersion: 1; choices: readonly StardewCabinChoiceV1[] }>;
+type StardewCabinConfirmationRequestV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
   choiceHandle: string;
   confirmed: true;
 }>;
-export type StardewCabinConfirmationV1 = Readonly<{ apiVersion: 1; status: "manifest_admitted" }>;
+type StardewCabinConfirmationV1 = Readonly<{ apiVersion: 1; status: "manifest_admitted" }>;
 
 export type ComposedReferenceGameBrowserClient = Readonly<{
   /**

@@ -1,6 +1,6 @@
 export type StopOutcome = "active_turn_cancelled" | "queued_turn_cancelled" | "no_active_turn";
 
-export type StopSystemNoticeKey =
+type StopSystemNoticeKey =
   | "system.stop.active_turn_cancelled"
   | "system.stop.queued_turn_cancelled"
   | "system.stop.no_active_turn";

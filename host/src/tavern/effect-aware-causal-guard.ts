@@ -2,7 +2,7 @@
  * Tavern-only optimistic-concurrency guard. It classifies a requested write;
  * it does not execute writes, call a runtime, or invoke Game capabilities.
  */
-export type TavernInertArtifactWrite = Readonly<{
+type TavernInertArtifactWrite = Readonly<{
   kind: "inert_artifact_write";
   artifactId: string;
   expectedRevision: number;
@@ -19,7 +19,7 @@ export type TavernResponseMutation = Readonly<{
   effect: "none" | "external" | "game";
 }>;
 
-export type TavernCausalMutation = TavernInertArtifactWrite | TavernResponseMutation;
+type TavernCausalMutation = TavernInertArtifactWrite | TavernResponseMutation;
 
 export type TavernCausalState = Readonly<{
   artifactRevisions: Readonly<Record<string, number>>;

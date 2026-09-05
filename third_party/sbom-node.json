@@ -47,7 +47,7 @@
       },
       {
         "name": "gamebuddy:generator-input-lockfile-sha256",
-        "value": "99c039271a8d2665765c15a8301c1b42f1f733085fdaaec9fe4ba0e4da7128d8"
+        "value": "c4541266f5f9d456162e759c34d6267c3fc47dcdd5315c693da8461d1854688e"
       }
     ]
   },
@@ -1057,8 +1057,44 @@
     },
     {
       "type": "library",
+      "name": "@oxc-parser/binding-win32-x64-msvc",
+      "version": "0.147.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://oxc.rs/docs/guide/usage/parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "@oxc-project/types",
-      "version": "0.142.0",
+      "version": "0.142.0,0.147.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://oxc.rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@oxc-resolver/binding-win32-x64-msvc",
+      "version": "11.24.2",
       "licenses": [
         {
           "license": {
@@ -2168,6 +2204,24 @@
     },
     {
       "type": "library",
+      "name": "fast-check",
+      "version": "4.9.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://fast-check.dev/"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "fast-deep-equal",
       "version": "3.1.3",
       "licenses": [
@@ -2199,6 +2253,24 @@
         {
           "type": "website",
           "url": "https://github.com/fastify/fast-uri"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fd-package-json",
+      "version": "2.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-tooling/fd-package-json#readme"
         }
       ]
     },
@@ -2253,6 +2325,24 @@
         {
           "type": "website",
           "url": "https://google.github.io/flatbuffers/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "formatly",
+      "version": "0.7.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/JoshuaKGoldberg/formatly#readme"
         }
       ]
     },
@@ -2331,7 +2421,7 @@
     {
       "type": "library",
       "name": "get-tsconfig",
-      "version": "4.14.2",
+      "version": "4.14.2,4.14.3",
       "licenses": [
         {
           "license": {
@@ -2744,6 +2834,24 @@
     },
     {
       "type": "library",
+      "name": "knip",
+      "version": "6.34.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://knip.dev"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "lightningcss",
       "version": "1.33.0",
       "licenses": [
@@ -3050,6 +3158,42 @@
     },
     {
       "type": "library",
+      "name": "oxc-parser",
+      "version": "0.147.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://oxc.rs/docs/guide/usage/parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "oxc-resolver",
+      "version": "11.24.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://oxc.rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "p-retry",
       "version": "4.6.2",
       "licenses": [
@@ -3063,6 +3207,24 @@
         {
           "type": "website",
           "url": "https://github.com/sindresorhus/p-retry#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "package-manager-detector",
+      "version": "1.8.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/antfu-collective/package-manager-detector#readme"
         }
       ]
     },
@@ -3141,7 +3303,7 @@
     {
       "type": "library",
       "name": "picomatch",
-      "version": "4.0.5",
+      "version": "4.0.5,4.0.7",
       "licenses": [
         {
           "license": {
@@ -3261,6 +3423,24 @@
         {
           "type": "website",
           "url": "https://protobufjs.github.io/protobuf.js/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pure-rand",
+      "version": "8.4.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/dubzzz/pure-rand#readme"
         }
       ]
     },
@@ -3590,6 +3770,24 @@
     },
     {
       "type": "library",
+      "name": "smol-toml",
+      "version": "1.8.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/squirrelchat/smol-toml#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "source-map-js",
       "version": "1.2.1",
       "licenses": [
@@ -3621,6 +3819,24 @@
         {
           "type": "website",
           "url": "https://github.com/alexei/sprintf.js#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "strip-json-comments",
+      "version": "5.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/strip-json-comments#readme"
         }
       ]
     },
@@ -3752,6 +3968,24 @@
     },
     {
       "type": "library",
+      "name": "unbash",
+      "version": "4.0.11",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/webpro-nl/unbash#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "undici",
       "version": "8.9.0",
       "licenses": [
@@ -3801,6 +4035,24 @@
         {
           "type": "website",
           "url": "https://vite.dev"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "walk-up-path",
+      "version": "4.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/isaacs/walk-up-path#readme"
         }
       ]
     },

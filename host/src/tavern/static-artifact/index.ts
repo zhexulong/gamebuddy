@@ -10,14 +10,14 @@ import {
   type WindowsReparseInspectorCapability,
 } from "../../windows-reparse-inspector/index.js";
 
-export const TAVERN_BROWSER_ARTIFACT_MANIFEST = "tavern-browser-artifact-manifest.json" as const;
+const TAVERN_BROWSER_ARTIFACT_MANIFEST = "tavern-browser-artifact-manifest.json" as const;
 export const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
 
 export type TavernStaticArtifactIdentity = Readonly<{
   browserContract: typeof TAVERN_BROWSER_CONTRACT;
   profileId: string;
 }>;
-export type TavernStaticArtifactAsset = Readonly<{
+type TavernStaticArtifactAsset = Readonly<{
   path: string;
   sha256: string;
   bytes: number;

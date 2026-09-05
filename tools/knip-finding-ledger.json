@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "findings": [],
+  "toolBoundaryDisposition": {
+    "status": "resolved",
+    "scopes": [
+      {"report":"workspace","identity":"packages/game-action-devkit/src/process-supervisor.mjs|binaries|taskkill.exe"},
+      {"report":"production","identity":"packages/game-action-devkit/src/process-supervisor.mjs|binaries|taskkill.exe"}
+    ],
+    "owner": "game-action-devkit",
+    "approval": "user-approved exact taskkill.exe tool boundary; resolved after raw reports became clean",
+    "obligation": "Preserve Windows process-tree termination using taskkill.exe /PID <pid> /T /F.",
+    "risk": "Removing or masking it can leave timed-out or cancelled child game and harness processes running.",
+    "evidence": ["packages/game-action-devkit/src/process-supervisor.mjs:80-95","packages/game-action-devkit/tests/process-supervisor.test.mjs","tools/knip-config.test.mjs"],
+    "validUntil": "2026-10-05T00:00:00.000Z"
+  }
+}

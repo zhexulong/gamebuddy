@@ -24,23 +24,23 @@
  * HTTP exists here.
  */
 
-export const TAVERN_BROWSER_API_VERSION = 1 as const;
-export const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
+const TAVERN_BROWSER_API_VERSION = 1 as const;
+const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
 
-export type WorldInfoItemV1 = Readonly<{
+type WorldInfoItemV1 = Readonly<{
   handle: string;
   title: string;
   summary: string | null;
   selected: boolean;
 }>;
 
-export type WorldInfoStateV1 = Readonly<{
+type WorldInfoStateV1 = Readonly<{
   state: "none" | "selected" | "locked" | "unavailable";
   revision: string;
   items: readonly WorldInfoItemV1[];
 }>;
 
-export type BrowserMessageV1 = Readonly<{
+type BrowserMessageV1 = Readonly<{
   handle: string;
   role: "player" | "companion";
   text: string;
@@ -69,7 +69,7 @@ export type TavernStateSnapshotV1 = Readonly<{
   eventStream: null;
 }>;
 
-export type ChatListEntryV1 = Readonly<{
+type ChatListEntryV1 = Readonly<{
   handle: string;
   title: string | null;
   status: "active";
@@ -77,18 +77,18 @@ export type ChatListEntryV1 = Readonly<{
   isSelected: boolean;
 }>;
 
-export type ChatListV1 = Readonly<{
+type ChatListV1 = Readonly<{
   apiVersion: 1;
   chats: readonly ChatListEntryV1[];
 }>;
 
-export type BrowserDraftV1 = Readonly<{
+type BrowserDraftV1 = Readonly<{
   apiVersion: 1;
   revision: number;
   text: string | null;
 }>;
 
-export type ChatTitleV1 = Readonly<{
+type ChatTitleV1 = Readonly<{
   apiVersion: 1;
   title: string | null;
   managementRevision: number;

@@ -134,7 +134,13 @@ internal sealed class BridgeSession
         BridgeNavigationReadResult payload;
         if (operation == "find_destination")
         {
-            DestinationSearchResult result = new DestinationSearch().Find(set, args.Query!);
+            var context = new NavigationBindingContext(
+                this.navigationRuntimeInstanceId,
+                this.scope,
+                set.Generation,
+                ++this.navigationObservationSequence,
+                DateTimeOffset.UtcNow);
+            DestinationSearchResult result = new DestinationSearch().Find(set, args.Query!, this.navigationReferences, context);
             payload = new BridgeNavigationReadResult(
                 result.Status,
                 result.Reason,

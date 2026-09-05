@@ -8,7 +8,7 @@ export type ProductionChatRuntimeDeadlineCancellationInput = Readonly<{
 const productionChatRuntimeDeadlineCancellations = new WeakSet<object>();
 
 /** Host composition-only authority; never re-export from the production store surface. */
-export function productionChatRuntimeDeadlineCancellation(
+function productionChatRuntimeDeadlineCancellation(
   principal: ProductionPrincipal,
   permit: ProductionChatRuntimePermit,
 ): ProductionChatRuntimeDeadlineCancellationInput {

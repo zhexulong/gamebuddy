@@ -10,10 +10,8 @@
       "id": "scaffold-contract",
       "kind": "scaffold-check"
     },
-    {
-      "id": "action-surface-check",
-      "kind": "action-surface-check"
-    },
+{ "id": "action-surface-check", "kind": "action-surface-check" },
+    { "id": "action-surface-export-check", "kind": "action-surface-export-check" },
     {
       "id": "action-source-projection-check",
       "kind": "action-source-projection-check"

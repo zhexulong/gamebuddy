@@ -24,7 +24,7 @@ export type NewCompanionReview = Readonly<{
   reviewedFields: readonly string[];
   approvedAtMs: number;
 }>;
-export type NewCompanionMetadata = Readonly<{
+type NewCompanionMetadata = Readonly<{
   companionId: string;
   continuityId: string;
   name: string;

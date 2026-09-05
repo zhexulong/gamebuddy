@@ -4,17 +4,17 @@ const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 export const CONTROL_PROTOCOL_VERSION = 1 as const;
 export const MAX_CONTROL_LINE_BYTES = 16 * 1024;
 export const MAX_CONTROL_IDENTIFIER_BYTES = 128;
-export const MAX_CONTROL_LAUNCH_TOKEN_BYTES = 256;
+const MAX_CONTROL_LAUNCH_TOKEN_BYTES = 256;
 export const MAX_CONTROL_TEXT_BYTES = 4_000;
-export const MAX_CONTROL_LOCALE_BYTES = 64;
+const MAX_CONTROL_LOCALE_BYTES = 64;
 
-export type HelloControlRequest = Readonly<{
+type HelloControlRequest = Readonly<{
   type: "hello";
   protocolVersion: 1;
   launchToken: string;
 }>;
 
-export type PlayerInputControlRequest = Readonly<{
+type PlayerInputControlRequest = Readonly<{
   type: "player_input";
   requestId: string;
   runtimeInstanceId: string;
@@ -23,7 +23,7 @@ export type PlayerInputControlRequest = Readonly<{
   locale: string;
 }>;
 
-export type StopAllControlRequest = Readonly<{
+type StopAllControlRequest = Readonly<{
   type: "stop_all";
   requestId: string;
   runtimeInstanceId: string;

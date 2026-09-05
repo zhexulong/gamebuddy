@@ -25,6 +25,9 @@
     "quality:check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:host-production-import-boundary && pnpm check:text-hygiene && pnpm test:stardew:core && pnpm test:stardew:integration",
     "dependency-audit": "node tools/generate-sbom.mjs --verify",
     "check:dependency-risk": "node tools/check-dependency-risk.mjs",
+    "test:knip-config": "node --test tools/knip-config.test.mjs",
+    "report:knip": "knip --config knip.json --reporter json",
+    "report:knip:production": "knip --config knip.json --production --reporter json",
     "test:dependency-risk": "node --test tools/check-dependency-risk.test.mjs",
     "test:ci-snapshot": "node --test tools/ci-snapshot.test.mjs",
     "test:portfolio-manifest": "node --test tools/test-portfolio-manifest.test.mjs",
@@ -153,9 +156,10 @@
     "test:stardew-static-portfolio-projection": "dotnet integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll integrations/stardew/bin/Release/net6.0/GameBuddy.Stardew.dll"
   },
   "devDependencies": {
-    "@gamebuddy/game-action-devkit": "workspace:*",
     "@biomejs/biome": "2.2.4",
+    "@gamebuddy/game-action-devkit": "workspace:*",
     "@vscode/tree-sitter-wasm": "0.3.1",
+    "knip": "6.34.0",
     "web-tree-sitter": "0.26.11"
   },
   "workspaces": [

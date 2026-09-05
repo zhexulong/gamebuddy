@@ -14,13 +14,13 @@ import {
  * `/bootstrap` or `/state` as a composed refresh source.
  */
 
-export const COMPOSED_REFERENCE_GAME_BROWSER_API_V1 =
+const COMPOSED_REFERENCE_GAME_BROWSER_API_V1 =
   "composed_reference_game_browser_api/v1" as const;
-export const COMPOSED_REFERENCE_GAME_BROWSER_API_VERSION = 1 as const;
-export const COMPOSED_REFERENCE_GAME_PROFILE_ID = "gamebuddy.composed.reference-game" as const;
-export const COMPOSED_REFERENCE_GAME_TAVERN_PROFILE_ID =
+const COMPOSED_REFERENCE_GAME_BROWSER_API_VERSION = 1 as const;
+const COMPOSED_REFERENCE_GAME_PROFILE_ID = "gamebuddy.composed.reference-game" as const;
+const COMPOSED_REFERENCE_GAME_TAVERN_PROFILE_ID =
   "gamebuddy.chat-core.reference-pipeline" as const;
-export const COMPOSED_REFERENCE_GAME_PROFILE_ID_GAME = "gamebuddy.game.preview" as const;
+const COMPOSED_REFERENCE_GAME_PROFILE_ID_GAME = "gamebuddy.game.preview" as const;
 
 const BASE64URL_ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -177,42 +177,42 @@ export type StardewCabinChoiceV1 = Readonly<{
   expiresAtMs: number;
 }>;
 
-export type StardewCabinChoicesV1 = Readonly<{
+type StardewCabinChoicesV1 = Readonly<{
   apiVersion: 1;
   choices: readonly StardewCabinChoiceV1[];
 }>;
 
-export type StardewCabinConfirmationRequestV1 = Readonly<{
+type StardewCabinConfirmationRequestV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
   choiceHandle: string;
   confirmed: true;
 }>;
 
-export type GameSetupRequestV1 = Readonly<{
+type GameSetupRequestV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
 }>;
 
-export type GameLaunchRequestV1 = Readonly<{
+type GameLaunchRequestV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
   expectedInstanceGeneration: number;
 }>;
 
-export type GameStopRequestV1 = Readonly<{
+type GameStopRequestV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
   expectedAttachmentGeneration: number;
 }>;
 
-export type GameDisconnectRequestV1 = Readonly<{
+type GameDisconnectRequestV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
   expectedAttachmentGeneration: number;
 }>;
 
-export type StardewCabinConfirmationV1 = Readonly<{
+type StardewCabinConfirmationV1 = Readonly<{
   apiVersion: 1;
   status: "manifest_admitted";
 }>;
@@ -228,8 +228,6 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1>;
 }>;
 
-/** Alias retained for callers that use the broker's client terminology. */
-export type ComposedReferenceGameBrowserClient = ComposedReferenceGameBrowserApi;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -605,8 +603,3 @@ export function createComposedReferenceGameBrowserApi(
     },
   });
 }
-
-export const createComposedReferenceGameBrowserClient = createComposedReferenceGameBrowserApi;
-
-/** Re-exported for focused tests and browser composition diagnostics. */
-export { TavernProtocolError };

@@ -30,6 +30,26 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:host-windows-test-preflight
       - run: pnpm test:host-windows-test-preflight
+      - name: Validate Knip configuration
+        run: pnpm test:knip-config
+      - name: Run blocking Knip reachability reports
+        run: node tools/run-knip-reports.mjs --output-dir "${{ runner.temp }}\gamebuddy-knip" --allowed-root "${{ runner.temp }}" --ledger tools/knip-finding-ledger.json
+      - name: Upload Knip workspace report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: knip-workspace-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gamebuddy-knip/workspace.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Knip production report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: knip-production-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gamebuddy-knip/production.json
+          if-no-files-found: error
+          retention-days: 14
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm check:host-production-import-boundary
@@ -40,6 +60,7 @@ jobs:
       - run: pnpm test
       - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit
+      - run: pnpm check:dependency-risk
       - run: git diff --exit-code -- third_party/sbom-node.json
 
   voice-gateway:

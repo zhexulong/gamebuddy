@@ -3,17 +3,17 @@ import { join, resolve } from "node:path";
 import type { TavernArtifactStore } from "../artifact-store.js";
 import { type UserPersona, validateTavernArtifact } from "../types.js";
 
-export type PlayerPersonaProjection = Readonly<{
+type PlayerPersonaProjection = Readonly<{
   revision: number;
   name: string;
   description?: string;
 }>;
 
-export type CreatePlayerPersonaRequest = Readonly<{
+type CreatePlayerPersonaRequest = Readonly<{
   name: string;
   description?: string;
 }>;
-export type UpdatePlayerPersonaRequest = CreatePlayerPersonaRequest & Readonly<{ expectedRevision: number }>;
+type UpdatePlayerPersonaRequest = CreatePlayerPersonaRequest & Readonly<{ expectedRevision: number }>;
 
 export type PersonaManagementService = Readonly<{
   create(request: CreatePlayerPersonaRequest): Promise<PlayerPersonaProjection>;

@@ -123,38 +123,65 @@ internal sealed class BridgeSession
         if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
 
         string operation = envelope!.Payload.Operation;
-        if (operation != "inspect_world_map" || !this.capabilityPublicationProvider().CapabilitySet.AllowsReadOperation(operation))
+        if (operation is not ("inspect_world_map" or "find_destination")
+            || !this.capabilityPublicationProvider().CapabilitySet.AllowsReadOperation(operation))
         { reasonCode = "operation_not_available"; return false; }
 
         DerivedDestinationSet? set = this.navigationSetProvider();
         if (set is null) { reasonCode = "world_map_unavailable"; return false; }
 
-        var context = new NavigationBindingContext(
-            this.navigationRuntimeInstanceId,
-            this.scope,
-            set.Generation,
-            ++this.navigationObservationSequence,
-            DateTimeOffset.UtcNow);
         BridgeNavigationReadArgs args = envelope.Payload.Args;
-        WorldMapProjection projection = new(this.navigationReferences);
-        WorldMapProjectionResult result = args.NodeRef is not null && args.Cursor is null
-            ? projection.ProjectNode(set, args.NodeRef, context)
-            : args.Cursor is not null && args.NodeRef is null
-                ? projection.ProjectCursor(set, args.Cursor, context)
-                : args.NodeRef is null && args.Cursor is null
-                    ? projection.ProjectRoot(set, context)
-                    : WorldMapProjectionResult.Blocked("world_map_unavailable");
-        BridgeNavigationReadResult payload = result.BlockedReason is null
-            ? new BridgeNavigationReadResult(
-                "succeeded",
-                "world_map_observed",
-                result.Entries!.Select(entry => new BridgeWorldMapEntry(
-                    entry.Label,
-                    entry.ContextLabel,
-                    entry.NodeRef,
-                    entry.Destination is null ? null : ToBridgeSelector(entry.Destination))).ToArray(),
-                result.NextCursor)
-            : new BridgeNavigationReadResult("blocked", result.BlockedReason, null, null);
+        BridgeNavigationReadResult payload;
+        if (operation == "find_destination")
+        {
+            var context = new NavigationBindingContext(
+                this.navigationRuntimeInstanceId,
+                this.scope,
+                set.Generation,
+                ++this.navigationObservationSequence,
+                DateTimeOffset.UtcNow);
+            DestinationSearchResult result = new DestinationSearch().Find(set, args.Query!, this.navigationReferences, context);
+            payload = new BridgeNavigationReadResult(
+                result.Status,
+                result.Reason,
+                null,
+                null,
+                result.Candidates?.Select(candidate => new BridgeDestinationSearchCandidate(
+                    candidate.Label,
+                    candidate.ContextLabel,
+                    ToBridgeSelector(candidate.Selector),
+                    candidate.UnlockState)).ToArray(),
+                result.Destination is null ? null : ToBridgeSelector(result.Destination),
+                result.UnlockState);
+        }
+        else
+        {
+            var context = new NavigationBindingContext(
+                this.navigationRuntimeInstanceId,
+                this.scope,
+                set.Generation,
+                ++this.navigationObservationSequence,
+                DateTimeOffset.UtcNow);
+            WorldMapProjection projection = new(this.navigationReferences);
+            WorldMapProjectionResult result = args.NodeRef is not null && args.Cursor is null
+                ? projection.ProjectNode(set, args.NodeRef, context)
+                : args.Cursor is not null && args.NodeRef is null
+                    ? projection.ProjectCursor(set, args.Cursor, context)
+                    : args.NodeRef is null && args.Cursor is null
+                        ? projection.ProjectRoot(set, context)
+                        : WorldMapProjectionResult.Blocked("world_map_unavailable");
+            payload = result.BlockedReason is null
+                ? new BridgeNavigationReadResult(
+                    "succeeded",
+                    "world_map_observed",
+                    result.Entries!.Select(entry => new BridgeWorldMapEntry(
+                        entry.Label,
+                        entry.ContextLabel,
+                        entry.NodeRef,
+                        entry.Destination is null ? null : ToBridgeSelector(entry.Destination))).ToArray(),
+                    result.NextCursor)
+                : new BridgeNavigationReadResult("blocked", result.BlockedReason, null, null);
+        }
         response = Reply("navigation_read_result", envelope.CorrelationId, payload);
         reasonCode = "accepted";
         return true;
@@ -195,12 +222,62 @@ internal sealed class BridgeSession
             if (!TryToBridgeReceipt(latest, out BridgeReceipt replayReceipt)) { reasonCode = "receipt_lineage_unavailable"; return false; }
             response = Reply("execution_receipt", envelope.CorrelationId, replayReceipt); reasonCode = "idempotent_replay"; return true;
         }
+        string durableReason = "receipt_not_found";
+        if (request.Action == "navigate_to_destination"
+            && this.executions.TryGetDurableAdmission(request.RequestId, request.IdempotencyKey, out FarmhandExecutionJournalRecord durableAdmission, out durableReason))
+        {
+            if (!MatchesDurableNavigationAdmission(request, durableAdmission))
+            {
+                reasonCode = "durable_execution_tuple_mismatch";
+                return false;
+            }
+            if (durableAdmission.Receipt is not FarmhandExecutionReceipt durableReceipt)
+            {
+                reasonCode = "execution_recovery_pending";
+                return false;
+            }
+            if (!TryToBridgeReceipt(
+                    new LocalExecutionReceipt(
+                        durableReceipt.ExecutionId,
+                        durableReceipt.RequestId,
+                        durableReceipt.State,
+                        durableReceipt.ReasonCode,
+                        durableReceipt.Revision,
+                        durableReceipt.Evidence,
+                        durableReceipt.ActionId),
+                    out BridgeReceipt recoveredReceipt,
+                    durableReceipt.ActionId))
+            {
+                reasonCode = "receipt_lineage_unavailable";
+                return false;
+            }
+            response = Reply("execution_receipt", envelope.CorrelationId, recoveredReceipt);
+            reasonCode = "durable_replay";
+            return true;
+        }
+        else if (request.Action == "navigate_to_destination" && durableReason != "receipt_not_found")
+        {
+            reasonCode = durableReason;
+            return false;
+        }
+
+        string? executionId = request.Action == "navigate_to_destination"
+            ? Guid.NewGuid().ToString("N")
+            : null;
+        if (executionId is not null && !this.executions.TryAdmitNavigation(request, executionId, out reasonCode))
+            return false;
         // Bind immutable request/action lineage before routing because a handler
         // may synchronously publish its first receipt.
         RememberIdempotency(request.IdempotencyKey, fingerprint, request.RequestId, request.Action);
-        if (!this.actionRouter.TryRoute(request, this.executions, out LocalExecutionReceipt receipt, out reasonCode))
+        if (!this.actionRouter.TryRoute(request, this.executions, executionId, out LocalExecutionReceipt receipt, out reasonCode))
         {
             ForgetIdempotency(request.IdempotencyKey);
+            return false;
+        }
+        if (this.executions.HasDurabilityFailure(request.RequestId))
+        {
+            ForgetIdempotency(request.IdempotencyKey);
+            reasonCode = "execution_receipt_persistence_failed";
             return false;
         }
         if (!TryToBridgeReceipt(receipt, out BridgeReceipt bridgeReceipt)) { reasonCode = "receipt_lineage_unavailable"; return false; }
@@ -242,6 +319,19 @@ internal sealed class BridgeSession
         if (this.idempotency.TryGetValue(query.IdempotencyKey, out IdempotentExecution? binding)
             && !string.Equals(binding.RequestId, query.RequestId, StringComparison.Ordinal))
         { reasonCode = "idempotency_key_conflict"; return false; }
+        if (this.executions.TryGetDurableReceipt(query.RequestId, query.IdempotencyKey, out LocalExecutionReceipt durableReceipt, out reasonCode))
+        {
+            if (!TryToBridgeReceipt(durableReceipt, out BridgeReceipt durableBridgeReceipt, durableReceipt.ActionId))
+            { reasonCode = "receipt_lineage_unavailable"; return false; }
+            response = Reply("execution_receipt", envelope.CorrelationId, durableBridgeReceipt);
+            reasonCode = "accepted";
+            return true;
+        }
+        if (this.executions.HasDurabilityFailure(query.RequestId))
+        {
+            reasonCode = "execution_receipt_persistence_failed";
+            return false;
+        }
         if (!this.executions.TryGetReceipt(query.RequestId, out LocalExecutionReceipt receipt)
             || !string.Equals(receipt.RequestId, query.RequestId, StringComparison.Ordinal))
         {
@@ -720,6 +810,30 @@ internal sealed class BridgeSession
         };
     }
 
+    private static bool MatchesDurableNavigationAdmission(
+        BridgeExecutionRequest request,
+        FarmhandExecutionJournalRecord durableAdmission)
+    {
+        if (!string.Equals(request.Action, "navigate_to_destination", StringComparison.Ordinal)
+            || durableAdmission.Request is null
+            || !string.Equals(durableAdmission.ActionId, "navigate_to_destination", StringComparison.Ordinal)
+            || durableAdmission.Request.ArgumentKind != FarmhandCanonicalArgumentKind.NavigationDestination
+            || request.Args.Destination is null)
+        {
+            return false;
+        }
+
+        BridgeNavigationDestinationSelector destination = request.Args.Destination;
+        FarmhandCanonicalRequest expected = FarmhandCanonicalRequest.NavigationDestination(
+            "navigate_to_destination",
+            destination.Kind,
+            destination.Label,
+            destination.Ref);
+        return Equals(durableAdmission.Request, expected)
+            && durableAdmission.ExpectedRevision == request.ExpectedRevision
+            && durableAdmission.DeadlineMs == request.DeadlineMs;
+    }
+
     private bool IsFreshExecutionRequest(BridgeExecutionRequest request, out string reasonCode)
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -743,20 +857,20 @@ internal sealed class BridgeSession
 
     private void ForgetIdempotency(string key) => this.idempotency.Remove(key);
 
-    private bool TryToBridgeReceipt(LocalExecutionReceipt receipt, out BridgeReceipt bridgeReceipt)
+    private bool TryToBridgeReceipt(LocalExecutionReceipt receipt, out BridgeReceipt bridgeReceipt, string? actionId = null)
     {
         bridgeReceipt = default!;
         IdempotentExecution? binding = this.idempotency.Values.FirstOrDefault(candidate =>
             string.Equals(candidate.RequestId, receipt.RequestId, StringComparison.Ordinal));
-        if (binding is null
-            || !BridgeProtocol.IsOpaqueId(binding.ActionId)
+        string? resolvedActionId = actionId ?? receipt.ActionId ?? binding?.ActionId;
+        if (!BridgeProtocol.IsOpaqueId(resolvedActionId)
             || !BridgeProtocol.IsOpaqueId(receipt.ExecutionId)
             || !BridgeProtocol.IsOpaqueId(receipt.RequestId))
             return false;
         bridgeReceipt = new BridgeReceipt(
             receipt.ExecutionId,
             receipt.RequestId,
-            binding.ActionId,
+            resolvedActionId!,
             receipt.State.ToWireValue(),
             receipt.ReasonCode,
             receipt.Revision,
@@ -774,7 +888,7 @@ internal sealed record IdempotentExecution(string Fingerprint, string RequestId,
 internal sealed record IdempotentPresentation(string Fingerprint, BridgeCompanionPresentationReceipt? Receipt, string ReasonCode);
 internal sealed record IdempotentSystemNotice(string Fingerprint, BridgeSystemNoticeReceipt? Receipt, string ReasonCode);
 internal sealed record BridgeHello(string Token);
-internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, long CatalogRevision, IReadOnlyList<string> EnabledActionIds, string PresentationLocale, IReadOnlyList<FarmhandActionRegistrationWire> Registrations, string RuntimeRole, string? LaunchGeneration);
+internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, long CatalogRevision, IReadOnlyList<string> EnabledActionIds, string PresentationLocale, IReadOnlyList<FarmhandActionRegistrationWire> Registrations, string RuntimeRole, [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)] string? LaunchGeneration);
 internal sealed record BridgeCatalogUpdate(long CatalogRevision, IReadOnlyList<string> EnabledActionIds);
 internal sealed record BridgeObserveRequest();
 internal sealed record BridgeCancelRequest(string RequestId, string ExecutionId, string CancelId, long CancelEpoch, string ReasonCode);

@@ -27,8 +27,8 @@ export type TavernExactContentReceipt = Readonly<{
   chatSurfaceSessionId: string;
   digest: string;
 }>;
-export type SagaVector = Readonly<{ partitionRevision: number; fenceEpoch: number; selectionRevision: number }>;
-export type GameRevisionVector = Readonly<{
+type SagaVector = Readonly<{ partitionRevision: number; fenceEpoch: number; selectionRevision: number }>;
+type GameRevisionVector = Readonly<{
   partitionRevision: number;
   gameRevision: number;
   leaseRevision: number;
@@ -41,15 +41,15 @@ export type ProductionSagaReadback = Readonly<{
   chatSurfaceSessionId: string | null;
   receipt: TavernExactContentReceipt | null;
 }>;
-export type ProductionStoreMetadata = Readonly<{ storeId: string; schemaVersion: number }>;
+type ProductionStoreMetadata = Readonly<{ storeId: string; schemaVersion: number }>;
 /** Immutable admission facts supplied only by the provisioner after canonical bootstrap validation. */
-export type ProductionBootstrapContext = Readonly<{
+type ProductionBootstrapContext = Readonly<{
   bootstrap: ProductionBootstrapInput;
   metadata: ProductionStoreMetadata;
 }>;
-export type ProductionSagaInput = Readonly<{ holderBindingDigest: string; operationId: string; expected: SagaVector }>;
+type ProductionSagaInput = Readonly<{ holderBindingDigest: string; operationId: string; expected: SagaVector }>;
 /** Fresh-only post-initial Chat command. The bound bootstrap principal is never caller input. */
-export type ProductionChatCommandInput = Readonly<{
+type ProductionChatCommandInput = Readonly<{
   operationId: string;
   chatThreadId: string;
   chatSurfaceSessionId: string;
@@ -63,7 +63,7 @@ export type ProductionChatLifecycleInput = Readonly<{
   expected: SagaVector;
   operation: "archive" | "trash" | "restore";
 }>;
-export type ProductionChatLifecycle = "active" | "archived" | "trashed";
+type ProductionChatLifecycle = "active" | "archived" | "trashed";
 export type ProductionChatCatalog = Readonly<{
   vector: SagaVector;
   activeSelection: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string; selectionRevision: number }> | null;
@@ -117,7 +117,7 @@ export type ProductionChatRuntimeReceipt = Readonly<{
   fenceToken: string;
   occurredAtMs: number;
 }>;
-export type ProductionChatRuntimeRecoveryReceipt = Readonly<{
+type ProductionChatRuntimeRecoveryReceipt = Readonly<{
   kind: "chat_runtime_recovery_completed";
   operationId: string;
   requestId: string;
@@ -144,12 +144,12 @@ export type ProductionChatRuntimePrepareOutcome = Readonly<{
   permit: ProductionChatRuntimePermit | null;
   readback: ProductionChatRuntimeReadback;
 }>;
-export type ProductionChatRuntimeTerminalInput = Readonly<{
+type ProductionChatRuntimeTerminalInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionChatRuntimePermit;
   receipt: ProductionChatRuntimeReceipt;
 }>;
-export type ProductionChatRuntimeFailureInput = Readonly<{
+type ProductionChatRuntimeFailureInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionChatRuntimePermit;
   /** Existing coordinator path: effect failure is distinct from deadline cancellation. */
@@ -183,7 +183,7 @@ export type ProductionChatRuntimeTeardownReceipt = Readonly<{
   fenceToken: string;
   occurredAtMs: number;
 }>;
-export type ProductionChatRuntimeTeardownRecoveryReceipt = Readonly<{
+type ProductionChatRuntimeTeardownRecoveryReceipt = Readonly<{
   kind: "chat_runtime_teardown_recovery_completed";
   operationId: string;
   requestId: string;
@@ -207,22 +207,22 @@ export type ProductionChatRuntimeTeardownReadback = Readonly<{
   receipt: ProductionChatRuntimeTeardownReceipt | ProductionChatRuntimeTeardownRecoveryReceipt | null;
   recoveryReason: "effect_failed" | "receipt_invalid" | "deadline_expired" | "revision_conflict" | null;
 }>;
-export type ProductionChatRuntimeTeardownPrepareOutcome = Readonly<{
+type ProductionChatRuntimeTeardownPrepareOutcome = Readonly<{
   outcome: "effect_owned" | "completed" | "effect_pending" | "recovery_required";
   permit: ProductionChatRuntimeTeardownPermit | null;
   readback: ProductionChatRuntimeTeardownReadback;
 }>;
-export type ProductionChatRuntimeTeardownTerminalInput = Readonly<{
+type ProductionChatRuntimeTeardownTerminalInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionChatRuntimeTeardownPermit;
   receipt: ProductionChatRuntimeTeardownReceipt;
 }>;
-export type ProductionChatRuntimeTeardownFailureInput = Readonly<{
+type ProductionChatRuntimeTeardownFailureInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionChatRuntimeTeardownPermit;
   reason: "effect_failed";
 }>;
-export type ProductionChatRuntimeTeardownRecoveryInput = Readonly<{
+type ProductionChatRuntimeTeardownRecoveryInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionChatRuntimeTeardownPermit;
   proof: ProductionChatRuntimeRecoveryProof;
@@ -230,7 +230,7 @@ export type ProductionChatRuntimeTeardownRecoveryInput = Readonly<{
 }>;
 /** Branded internal operation for the sole authority that may cancel an expired permit. */
 export type ProductionChatRuntimeRecoveryProof = Readonly<{ owner: ProductionChatRuntimeOwner; proof: "proven_dead" }>;
-export type ProductionChatRuntimeRecoveryInput = Readonly<{
+type ProductionChatRuntimeRecoveryInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionChatRuntimePermit;
   proof: ProductionChatRuntimeRecoveryProof;
@@ -275,7 +275,7 @@ export type ProductionGameTerminalReceipt = Readonly<{
   fenceToken: string;
   occurredAtMs: number;
 }>;
-export type ProductionGameRecoveryReceipt = Readonly<{
+type ProductionGameRecoveryReceipt = Readonly<{
   kind: "recovery_completed";
   operationId: string;
   requestId: string;
@@ -297,24 +297,24 @@ export type ProductionGameReadback = Readonly<{
   receipt: ProductionGameTerminalReceipt | ProductionGameRecoveryReceipt | null;
   recoveryReason: "effect_failed" | "receipt_invalid" | "deadline_expired" | "revision_conflict" | null;
 }>;
-export type ProductionGamePrepareOutcome = Readonly<{
+type ProductionGamePrepareOutcome = Readonly<{
   outcome: "effect_owned" | "completed" | "effect_pending" | "recovery_required";
   permit: ProductionGamePermit | null;
   readback: ProductionGameReadback;
 }>;
-export type ProductionGameTerminalInput = Readonly<{
+type ProductionGameTerminalInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionGamePermit;
   receipt: ProductionGameTerminalReceipt;
 }>;
-export type ProductionGameFailureInput = Readonly<{
+type ProductionGameFailureInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionGamePermit;
   reason: "effect_failed";
 }>;
 /** Opaque result from a fresh independent Windows OS owner query. */
-export type ProductionGameRecoveryProof = WindowsOwnerDeathVerification;
-export type ProductionGameRecoveryInput = Readonly<{
+type ProductionGameRecoveryProof = WindowsOwnerDeathVerification;
+type ProductionGameRecoveryInput = Readonly<{
   /** Recovery is never an implicit close/failure fallback. */
   request: "recover_dead_owner";
   principal: ProductionPrincipal;

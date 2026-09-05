@@ -3,7 +3,7 @@ import { readStrictJsonFile } from "./strict-json-reader.js";
 import type { ExecutionRequest } from "./protocol.js";
 import { resolve } from "node:path";
 
-export const STARDEW_LOGICAL_ACTION_RECOVERY_STATES = Object.freeze([
+const STARDEW_LOGICAL_ACTION_RECOVERY_STATES = Object.freeze([
   "prepared",
   "sent_unknown",
   "recovery_pending",
@@ -12,7 +12,7 @@ export const STARDEW_LOGICAL_ACTION_RECOVERY_STATES = Object.freeze([
 ] as const);
 export type StardewLogicalActionRecoveryState = (typeof STARDEW_LOGICAL_ACTION_RECOVERY_STATES)[number];
 
-export type StardewLogicalActionRecoveryDispatchMaterial = Readonly<{
+type StardewLogicalActionRecoveryDispatchMaterial = Readonly<{
   actionId: string;
   canonicalRequest: Readonly<ExecutionRequest>;
   canonicalArgs: Readonly<Record<string, unknown>>;
@@ -48,13 +48,13 @@ export type StardewLogicalActionRecoveryJournalOpenOptions = Readonly<{
   maxBytes?: number;
 }>;
 
-export const HOST_NODE_ADMISSION_STATES = Object.freeze([
+const HOST_NODE_ADMISSION_STATES = Object.freeze([
   "challenge_received",
   "grant_issued",
   "admission_rejected",
   "admission_unavailable",
 ] as const);
-export type HostNodeAdmissionState = (typeof HOST_NODE_ADMISSION_STATES)[number];
+type HostNodeAdmissionState = (typeof HOST_NODE_ADMISSION_STATES)[number];
 
 /** Controller-named exact node; Host treats all fields as opaque canonical data. */
 export type NodeAdmissionChallenge = Readonly<{

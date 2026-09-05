@@ -9,7 +9,7 @@ import type { DeliveryDisposition } from "./event-pump.js";
  */
 export const LIVE_SOURCE_ATTESTATION_SCHEMA = "gamebuddy-production-live-source-attestation/v1" as const;
 
-export type LiveSourceAttestationKind =
+type LiveSourceAttestationKind =
   | "native_player_input_observed"
   | "native_stop_all_observed"
   | "pi_turn_accepted"

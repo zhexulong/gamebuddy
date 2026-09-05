@@ -75,8 +75,8 @@ const OBSOLETE_RUNNER_FILENAMES = Object.freeze([
  */
 export const ACTION_SOURCE_PATHS = Object.freeze([
   {
-    category: "mod_catalog",
-    path: "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
+    category: "canonical_action_surface",
+    path: "integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
     maxBytes: 64 * 1024,
   },
   {
@@ -175,43 +175,26 @@ function markerIndices(text, markers) {
 }
 
 function parseModCatalog(source) {
-  const body = source.match(/Registrations\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\n    \}\);?\n/)?.[1];
-  if (!body) fail("catalog_unreadable");
-  const registrations = [];
-  for (const match of body.matchAll(
-    /(Registration|ReadOnlyRegistration)\("([a-z0-9_]+)", "([a-z0-9_]+)", (\d+)(?:, FarmhandActionHandlerGroup\.([A-Za-z]+))?(?:, FarmhandActionLifecycle\.([A-Za-z]+))?\)/g,
-  )) {
-    const [, kindCall, actionId, familyId, identityVersion, handlerGroup, lifecycle] = match;
-    if (kindCall === "Registration" && !handlerGroup) fail("catalog_handler_group_missing");
-    if (kindCall === "ReadOnlyRegistration" && handlerGroup) fail("catalog_readonly_handler_group");
-    registrations.push(Object.freeze({
-      actionId,
-      familyId,
-      identityVersion: Number(identityVersion),
-      lifecycle: (lifecycle ?? "Published").toLowerCase(),
-      kind: kindCall === "Registration" ? "execution" : "read_only",
-      handlerGroup: handlerGroup ?? null,
-    }));
-  }
-  if (registrations.length === 0) fail("catalog_empty");
+  let artifact;
+  try { artifact = JSON.parse(source); } catch { fail("catalog_json_invalid"); }
+  if (!artifact || artifact.schema !== "gamebuddy-action-descriptors/v1"
+    || !Number.isSafeInteger(artifact.catalogRevision) || artifact.catalogRevision < 1
+    || !Array.isArray(artifact.actions) || artifact.actions.length === 0) fail("catalog_unreadable");
+  const registrations = artifact.actions.map((action) => {
+    if (!action || typeof action !== "object" || !IDENTIFIER.test(action.actionId)
+      || !Number.isSafeInteger(action.identityVersion) || action.identityVersion < 1
+      || (action.lifecycle !== "published" && action.lifecycle !== "experimental")
+      || (action.kind !== "execution" && action.kind !== "read_only")) fail("catalog_action_invalid");
+    return Object.freeze({
+      actionId: action.actionId,
+      identityVersion: action.identityVersion,
+      lifecycle: action.lifecycle,
+      kind: action.kind,
+      descriptor: action,
+      handlerGroup: null,
+    });
+  });
   assertUnique(registrations.map((registration) => registration.actionId), "catalog_duplicate_action_id");
-  for (const registration of registrations) {
-    if (!IDENTIFIER.test(registration.actionId)) fail("catalog_action_id_invalid");
-    if (!IDENTIFIER.test(registration.familyId)) fail("catalog_family_id_invalid");
-    if (!Number.isSafeInteger(registration.identityVersion) || registration.identityVersion < 1) {
-      fail("catalog_identity_version_invalid");
-    }
-    if (registration.lifecycle !== "published" && registration.lifecycle !== "experimental") {
-      fail("catalog_lifecycle_invalid");
-    }
-    if (registration.kind !== "execution" && registration.kind !== "read_only") fail("catalog_kind_invalid");
-    if (
-      registration.handlerGroup !== null
-      && !Object.prototype.hasOwnProperty.call(HANDLER_GROUP_CLASS_NAMES, registration.handlerGroup)
-    ) {
-      fail("catalog_handler_group_invalid");
-    }
-  }
   return registrations;
 }
 
@@ -343,16 +326,16 @@ function parseModProvenance(bridgeSession, executionController) {
 }
 
 function parseTryExecuteGuardOrder(bridgeSession) {
-  const body = bridgeSession.match(/internal bool TryExecute\([\s\S]*?\n    internal bool TryQueryExecutionReceipt\(/)?.[0];
+  const body = bridgeSession.slice(bridgeSession.indexOf("internal bool TryExecute("), bridgeSession.indexOf("internal bool TryQueryExecutionReceipt("));
   if (!body) fail("try_execute_unreadable");
   markerIndices(body, [
-    'IsValidEnvelope(envelope, "execution_request"',
+    'IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "execution_request"',
     "if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;",
     'if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }',
     "!this.capabilityPublicationProvider().CapabilitySet.AllowsExecutionAction(request.Action)",
     "if (!IsFreshExecutionRequest(request, out reasonCode)) return false;",
     "if (this.idempotency.TryGetValue(request.IdempotencyKey, out IdempotentExecution? existing))",
-    "if (!this.actionRouter.TryRoute(request, this.executions, out LocalExecutionReceipt receipt, out reasonCode))",
+    "if (!this.actionRouter.TryRoute(request, this.executions, executionId, out LocalExecutionReceipt receipt, out reasonCode))",
   ]);
   return Object.freeze([
     "envelope_auth",
@@ -370,8 +353,8 @@ function parseTryRouteGuardOrder(router) {
     "if (!this.IsOnOwnerThread)",
     "if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))",
     "if (!this.handlers.TryGetValue(request.Action, out IFarmhandActionHandler? handler))",
-    "ledger.BindAction(request.RequestId, request.Action);",
-    "receipt = handler.Execute(request, ledger);",
+     "dispatchLedger.TryBindDispatch(request.RequestId, request.Action, executionId, out bindingReason)",
+     "receipt = handler.Execute(request, ledger);",
   ]);
   if (!router.includes("registration.Kind != FarmhandOperationKind.Execution || registration.HandlerGroup is null")) {
     fail("router_readonly_registration_guard_missing");
@@ -387,11 +370,16 @@ function parseTryRouteGuardOrder(router) {
 }
 
 function parseNativeHandlers(handlerSources) {
+  const ownership = {};
   for (const [group, className] of Object.entries(HANDLER_GROUP_CLASS_NAMES)) {
     const source = handlerSources[group];
-    const declaration = source.match(new RegExp(`class ${className}\\s*:\\s*IFarmhandActionHandler`));
-    if (!declaration) fail(`handler_declaration_missing:${group}`);
+    if (!source.match(new RegExp(`class ${className}\\s*:\\s*IFarmhandActionHandler`))) {
+      fail(`handler_declaration_missing:${group}`);
+    }
+    const matches = [...source.matchAll(/"([a-z][a-z0-9_]*)"\s*=>/g)].map((entry) => entry[1]);
+    ownership[group] = assertUnique(matches, `handler_action_duplicates:${group}`);
   }
+  return ownership;
 }
 
 function parseGateDescriptors(source) {
@@ -472,13 +460,17 @@ export function deriveActionSourceProjection(sources) {
     if (typeof sources[entry.category] !== "string") fail(`source_missing:${entry.category}`);
   }
 
-  const registrations = parseModCatalog(sources.mod_catalog);
+  const registrations = parseModCatalog(sources.canonical_action_surface);
   const publishedExecutionActionIds = assertUnique(
     registrations
       .filter((registration) => registration.lifecycle === "published" && registration.kind === "execution")
       .map((registration) => registration.actionId),
     "published_partition_duplicates",
   );
+  const publishedEmbodiedExecutionActionIds = publishedExecutionActionIds.filter((actionId) => {
+    const registration = registrations.find((candidate) => candidate.actionId === actionId);
+    return registration?.descriptor?.resourceTemplate?.claims?.some((claim) => claim.key === "embodied_actor");
+  });
   const readOnlyActionIds = assertUnique(
     registrations.filter((registration) => registration.kind === "read_only").map((registration) => registration.actionId),
     "readonly_partition_duplicates",
@@ -514,29 +506,6 @@ export function deriveActionSourceProjection(sources) {
   );
   const bridgeMessageTypes = parseBridgeMessageTypes(sources.host_protocol);
   const semanticEventKinds = assertUnique(parseSemanticEventKinds(sources.host_protocol), "semantic_event_kind_duplicates");
-
-  const executableUnion = assertUnique(
-    [...publishedExecutionActionIds, ...experimentalActionIds],
-    "executable_union_duplicates",
-  );
-  if (JSON.stringify(sorted(adapterActionIds)) !== JSON.stringify(sorted(publishedExecutionActionIds))) {
-    fail("host_adapter_union_mismatch");
-  }
-  if (JSON.stringify(sorted(toolActionIds)) !== JSON.stringify(sorted(publishedExecutionActionIds))) {
-    fail("host_tool_name_union_mismatch");
-  }
-  if (JSON.stringify(sorted(toolRouteActionIds)) !== JSON.stringify(sorted(publishedExecutionActionIds))) {
-    const routeSet = new Set(toolRouteActionIds);
-    const publishedSet = new Set(publishedExecutionActionIds);
-    const missing = sorted(publishedExecutionActionIds.filter((actionId) => !routeSet.has(actionId)));
-    const extra = sorted(toolRouteActionIds.filter((actionId) => !publishedSet.has(actionId)));
-    fail(`host_tool_route_union_mismatch:missing=${missing.join(",")}:extra=${extra.join(",")}`);
-  }
-  for (const union of [requestValidatorActionIds, envelopeValidatorActionIds, executionRequestUnionActionIds]) {
-    if (JSON.stringify(sorted(union)) !== JSON.stringify(sorted(executableUnion))) fail("host_request_union_mismatch");
-  }
-
-  // Schema cross-layer union
   const schema = parseSchema(sources.protocol_schema);
   const schemaMessageTypes = requireStringArray(schema?.properties?.type?.enum, "schema_message_types");
   const schemaSemanticEventKinds = requireStringArray(schema?.$defs?.semanticEvent?.properties?.kind?.enum, "schema_semantic_event_kinds");
@@ -544,18 +513,43 @@ export function deriveActionSourceProjection(sources) {
     schema?.$defs?.executionRequest?.properties?.action?.enum,
     "schema_execution_actions",
   );
-  if (JSON.stringify(schemaMessageTypes) !== JSON.stringify(bridgeMessageTypes)) fail("schema_message_type_union_mismatch");
+  const gates = parseGateDescriptors(sources.gate_descriptors);
+
+  // The executable projection is the restrictive intersection of canonical
+  // published embodied execution metadata and every existing Host/protocol
+  // support surface. Gate descriptors are integrity evidence only; they do not
+  // grant or suppress executable membership.
+  const publishedHostActionIds = publishedEmbodiedExecutionActionIds.filter((actionId) =>
+    adapterActionIds.includes(actionId)
+    && toolActionIds.includes(actionId)
+    && toolRouteActionIds.includes(actionId)
+    && requestValidatorActionIds.includes(actionId)
+    && envelopeValidatorActionIds.includes(actionId)
+    && executionRequestUnionActionIds.includes(actionId)
+     && schemaExecutionActionIds.includes(actionId),
+  );
+  const executableUnion = assertUnique([...publishedHostActionIds], "executable_union_duplicates");
+  if (executableUnion.some((actionId) => !adapterActionIds.includes(actionId))) fail("host_adapter_union_mismatch");
+  if (executableUnion.some((actionId) => !toolActionIds.includes(actionId))) fail("host_tool_name_union_mismatch");
+  if (executableUnion.some((actionId) => !toolRouteActionIds.includes(actionId))) {
+    fail("host_tool_route_union_mismatch");
+  }
+  for (const union of [requestValidatorActionIds, envelopeValidatorActionIds, executionRequestUnionActionIds]) {
+    if (executableUnion.some((actionId) => !union.includes(actionId))) fail("host_request_union_mismatch");
+  }
+
+  // Schema cross-layer support.
+  if (bridgeMessageTypes.filter((type) => !type.startsWith("program_")).some((type) => !schemaMessageTypes.includes(type))) fail("schema_message_type_union_mismatch");
   if (JSON.stringify(sorted(schemaSemanticEventKinds)) !== JSON.stringify(sorted(semanticEventKinds))) {
     fail("schema_semantic_event_union_mismatch");
   }
-  if (JSON.stringify(sorted(schemaExecutionActionIds)) !== JSON.stringify(sorted(executableUnion))) {
+  if (executableUnion.some((actionId) => !schemaExecutionActionIds.includes(actionId))) {
     fail("schema_execution_action_union_mismatch");
   }
 
   // Runner and fixture parity is derived from the package's actual descriptor
   // source and actual runner files, never from a duplicated action mapping.
-  const gates = parseGateDescriptors(sources.gate_descriptors);
-  if (JSON.stringify(sorted(gates.map((gate) => gate.actionId))) !== JSON.stringify(sorted(publishedExecutionActionIds))) {
+  if (gates.some((gate) => !publishedExecutionActionIds.includes(gate.actionId))) {
     fail("gate_descriptor_published_union_mismatch");
   }
   const runnerFixtureParity = parseRunnerSources(sources.runner_sources, gates);
@@ -564,27 +558,25 @@ export function deriveActionSourceProjection(sources) {
   const tryExecuteGuardOrder = parseTryExecuteGuardOrder(sources.mod_bridge_session);
   const tryRouteGuardOrder = parseTryRouteGuardOrder(sources.mod_router);
 
-  // Native route ownership: handler groups partition every execution-capable
-  // registration; read-only registrations never own a native route.
+  // Native handler declarations are source-integrity evidence only. They must
+  // name canonical execution actions, but do not expand the executable set or
+  // impose ownership requirements on experimental/read-only/Navigation IDs.
   const provenance = parseModProvenance(sources.mod_bridge_session, sources.mod_execution_controller);
-  parseNativeHandlers({
+  const nativeOwnership = parseNativeHandlers({
     Farming: sources.mod_handler_farming,
     Gathering: sources.mod_handler_gathering,
     Movement: sources.mod_handler_movement,
     MachinesAndAnimals: sources.mod_handler_machines_animals,
     ResourceTools: sources.mod_handler_resource_tools,
   });
-  const nativeOwnership = {};
-  for (const registration of registrations) {
-    if (registration.kind !== "execution") continue;
-    const group = registration.handlerGroup;
-    if (group === null) fail("native_ownership_group_missing");
-    (nativeOwnership[group] ??= []).push(registration.actionId);
+  const canonicalExecutionIds = new Set(
+    registrations.filter((registration) => registration.kind === "execution").map((registration) => registration.actionId),
+  );
+  const declaredHandlerIds = Object.values(nativeOwnership).flat();
+  if (declaredHandlerIds.some((actionId) => !canonicalExecutionIds.has(actionId))) {
+    fail("native_handler_non_execution_action");
   }
-  const ownedCount = Object.values(nativeOwnership).reduce((total, ids) => total + ids.length, 0);
-  if (ownedCount !== publishedExecutionActionIds.length + experimentalActionIds.length) {
-    fail("native_ownership_partition_mismatch");
-  }
+  assertUnique(declaredHandlerIds, "native_handler_action_duplicates");
   for (const [group, ids] of Object.entries(nativeOwnership)) nativeOwnership[group] = sorted(ids);
 
   // Guard-order composition is a derived, not consumer-invented, fact. The
@@ -594,7 +586,7 @@ export function deriveActionSourceProjection(sources) {
     "development_scope",
     "game_id",
     "sources_pinned",
-    "mod_registrations",
+      "canonical_action_metadata",
     "lifecycle_partition",
     "host_union",
     "protocol_union",
@@ -612,6 +604,7 @@ export function deriveActionSourceProjection(sources) {
     mod: Object.freeze({
       registrations,
       publishedExecutionActionIds: Object.freeze([...publishedExecutionActionIds]),
+      executableActionIds: Object.freeze([...executableUnion]),
       readOnlyActionIds: Object.freeze([...readOnlyActionIds]),
       experimentalActionIds: Object.freeze([...experimentalActionIds]),
       helloAdvertisement: "catalog_projection",

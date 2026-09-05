@@ -83,6 +83,14 @@ const ProblemCode = Type.Union([
   Type.Literal("state_reconciliation_required"),
 ]);
 
+export const BrowserSwipeInfoV1Schema = strictObject({
+  currentIndex: Revision,
+  totalSwipes: PositiveGeneration,
+  label: Type.String({ minLength: 1, maxLength: 32 }),
+  hasPrevious: Type.Boolean(),
+  hasNext: Type.Boolean(),
+});
+
 export const BrowserMessageV1Schema = strictObject({
   handle: OpaqueHandle,
   role: Type.Union([Type.Literal("player"), Type.Literal("companion")]),
@@ -90,6 +98,7 @@ export const BrowserMessageV1Schema = strictObject({
   locale: Type.Union([Type.Literal("en"), Type.Literal("zh-CN"), Type.Literal("und")]),
   order: Revision,
   revision: Revision,
+  swipeInfo: Type.Optional(BrowserSwipeInfoV1Schema),
 });
 export const BrowserTurnV1Schema = strictObject({
   handle: OpaqueHandle,
@@ -274,7 +283,7 @@ export const TavernStateSnapshotV1Schema = strictObject({
     strictObject({
       companion: strictObject({ name: Type.String({ minLength: 1, maxLength: 256 }) }),
       title: Type.Union([Type.String({ maxLength: 256 }), Type.Null()]),
-      transcript: Type.Array(BrowserMessageV1Schema, { maxItems: 500 }),
+      transcript: Type.Array(BrowserMessageV1Schema),
       draft: strictObject({ revision: Revision, present: Type.Boolean() }),
       turn: Type.Union([BrowserTurnV1Schema, Type.Null()]),
       worldInfo: Type.Union([Type.Null(), WorldInfoStateV1Schema]),
@@ -337,6 +346,22 @@ export const MessageSubmissionStatusQueryV1Schema = strictObject({
 export const CancelTurnCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
   selectionGeneration: PositiveGeneration,
+});
+export const SwipeSelectCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  messageHandle: OpaqueHandle,
+  direction: Type.Optional(Type.Union([Type.Literal("prev"), Type.Literal("next")])),
+  targetIndex: Type.Optional(Revision),
+});
+export const SwipeSelectResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  message: BrowserMessageV1Schema,
+});
+export const RegenerateMessageCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  messageHandle: OpaqueHandle,
 });
 export const SubmitResultV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -706,11 +731,15 @@ export const TavernBrowserContractV1 = Object.freeze({
     SubmitResultV1Schema,
     MessageSubmissionStatusV1Schema,
     CancelTurnResultV1Schema,
+    SwipeSelectCommandV1Schema,
+    SwipeSelectResultV1Schema,
+    RegenerateMessageCommandV1Schema,
     TavernProblemV1Schema,
     BrowserEventV1Schema,
   }),
 });
 
+export type BrowserSwipeInfoV1 = Static<typeof BrowserSwipeInfoV1Schema>;
 export type BrowserMessageV1 = Static<typeof BrowserMessageV1Schema>;
 export type BrowserTurnV1 = Static<typeof BrowserTurnV1Schema>;
 export type BrowserDraftV1 = Static<typeof BrowserDraftV1Schema>;
@@ -721,6 +750,9 @@ export type TavernBrowserOperationV1 = Static<typeof TavernBrowserOperationV1Sch
 export type TavernStateEventStreamV1 = Static<typeof TavernStateEventStreamV1Schema>;
 export type TavernBrowserNavigationItemIdV1 = Static<typeof NavigationItemId>;
 export type SubmitMessageCommandV1 = Static<typeof SubmitMessageCommandV1Schema>;
+export type SwipeSelectCommandV1 = Static<typeof SwipeSelectCommandV1Schema>;
+export type SwipeSelectResultV1 = Static<typeof SwipeSelectResultV1Schema>;
+export type RegenerateMessageCommandV1 = Static<typeof RegenerateMessageCommandV1Schema>;
 export type MessageSubmissionStatusQueryV1 = Static<typeof MessageSubmissionStatusQueryV1Schema>;
 export type MessageSubmissionStatusV1 = Static<typeof MessageSubmissionStatusV1Schema>;
 export type CancelTurnCommandV1 = Static<typeof CancelTurnCommandV1Schema>;
