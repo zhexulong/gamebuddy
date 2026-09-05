@@ -6,19 +6,24 @@
     },
     "packages/*": {
       "entry": ["src/index.{js,mjs,ts,tsx}!", "src/process-supervisor.mjs!", "src/verifier.mjs!", "src/model.mjs!", "src/descriptors.mjs!", "bin/game-action.mjs!"],
-      "project": ["src/**/*.{js,mjs,jsx,ts,tsx}", "tests/**/*.{js,mjs,ts,tsx}", "bin/**/*.{js,mjs,ts}"]
+      "project": ["src/**/*.{js,mjs,jsx,ts,tsx}", "tests/**/*.{js,mjs,ts,tsx}", "bin/**/*.{js,mjs,ts}", "src/index.{js,mjs,ts,tsx}!", "src/process-supervisor.mjs!", "src/verifier.mjs!", "src/model.mjs!", "src/descriptors.mjs!", "bin/game-action.mjs!"]
     },
     "host": {
       "entry": ["src/main.ts!", "src/dialogue-web-main.ts!", "src/stardew-attachment.ts!", "src/farmhand-companion-preview.ts!", "src/tavern/player-turn-acceptance.ts!", "src/tavern/provider-attempt-claim.ts!", "src/tavern/chat-provider-start.ts!", "src/tavern/reference-pipeline-static-shell-composition.ts!", "src/tavern-management-dialogue-web.ts!", "src/tavern/tavern-management-static-shell-composition.ts!", "scripts/*.mjs"],
-      "project": ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs"]
+      "project": ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs", "src/main.ts!", "src/desktop-runtime-bootstrap.internal.ts!", "src/dialogue-web-main.ts!", "src/dialogue-launch-mode.ts!", "src/stardew-attachment.ts!", "src/farmhand-companion-preview.ts!", "src/tavern/static-artifact/index.ts!", "src/tavern/player-turn-acceptance.ts!", "src/tavern/provider-attempt-claim.ts!", "src/tavern/chat-provider-start.ts!", "src/tavern/reference-pipeline-static-shell-composition.ts!", "src/tavern-management-dialogue-web.ts!", "src/tavern/tavern-management-static-shell-composition.ts!"]
     },
     "voice-gateway": {
       "entry": ["src/main.ts!"],
-      "project": ["src/**/*.{ts,tsx}"]
+      "project": ["src/**/*.{ts,tsx}", "src/main.ts!", "src/gateway.ts!", "src/mimo.ts!", "src/sensevoice.ts!", "src/server.ts!", "src/tts-asr-loop.ts!", "src/windows-audio.ts!", "src/windows-capture.ts!"]
     },
     "dialogue-web": {
       "entry": ["src/main.tsx!"],
-      "project": ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs"]
+      "project": ["src/**/*.{ts,tsx,mjs}", "scripts/**/*.mjs", "src/main.tsx!"],
+      "vite": {
+        "config": "vite.config.ts",
+        "entry": "index.html",
+        "project": ["index.html", "src/**/*.{ts,tsx,mjs}"]
+      }
     },
     "integrations/stardew/action-development": {
       "entry": ["src/**/*.mjs", "tests/**/*.mjs", "scripts/**/*.mjs", "scenarios/**/*.mjs"],
