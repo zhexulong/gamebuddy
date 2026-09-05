@@ -575,6 +575,39 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
+    public void SuccessWithoutDeclaredOutputFactsRequiresProofButAllowsNoFact()
+    {
+        var authority = Open();
+        authority.Submit(NoOutputFactProgram("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, null, null, "evidence", "postcondition"))
+            .Code.Should().Be(BodyProgramControllerResultCode.TerminalProofMissing);
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, null, "receipt", "evidence", "postcondition"))
+            .IsSuccess.Should().BeTrue();
+
+        BodyProgramJournalProgram program = authority.Snapshot.Programs.Single();
+        program.State.Should().Be(BodyProgramState.Succeeded);
+        program.Nodes.Single().State.Should().Be(BodyProgramNodeState.Succeeded);
+        program.Facts.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void SuccessWithoutDeclaredOutputFactsRejectsFact()
+    {
+        var authority = Open();
+        authority.Submit(NoOutputFactProgram("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, Fact(grant), "receipt", "evidence", "postcondition"))
+            .Code.Should().Be(BodyProgramControllerResultCode.FactProvenanceMismatch);
+    }
+
+    [Fact]
     public void NonSuccessOutcomeRejectsFactReceiptEvidenceAndPostcondition()
     {
         var authority = Open();
@@ -683,6 +716,10 @@ public sealed class BodyProgramAuthorityTests
         ActionProgramCandidateNode first = new("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), deadline);
         return twoNodes ? new(programId, new[] { first, new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first" }, Bindings("tile", new ActionProgramBinding("first", "arrival")), deadline) }) : new(programId, new[] { first });
     }
+    private static ActionProgramCandidate NoOutputFactProgram(string programId, long deadline) => new(programId, new[]
+    {
+        new ActionProgramCandidateNode("first", "till_soil", RuntimeMap("tile", 8), Array.Empty<string>(), Bindings(), deadline),
+    });
     private static HostAdmissionGrant Grant(NodeAdmissionChallenge challenge) => new(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision, challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalArguments, challenge.DerivedResourceClaims, challenge.DeadlineMs, "grant");
     private static RuntimeFact Fact(HostAdmissionGrant grant) => new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "arrival", CanonicalMap("arrival", 7));
     private static BodyProgramPolicyIdentity Policy(string value = "policy-a", long revision = 1) => new(value, revision);
