@@ -281,7 +281,7 @@ test("pins scripts, exposes the clean scope, and validates the actual CLI contra
           .filter(([category, entries]) => category !== "file" && entries.length > 0)
           .flatMap(([category, entries]) => entries.map((entry) => ({ file: issue.file, category, name: entry.name }))),
       );
-      assert.equal(validateFindingLedger(actual, findingLedger), true);
+      assert.equal(validateFindingLedger("production", actual, findingLedger), true);
     }
   }
 });
@@ -332,33 +332,53 @@ test("validates exact finding ledger schema and identity", () => {
     schemaVersion: 1,
     findings: [
       {
+        report: "workspace",
         identity: "src/a.mjs|files|src/a.mjs",
         owner: "team",
         obligation: "resolve",
         risk: "candidate",
         evidence: ["report"],
-        validUntil: "2099-01-01T00:00:00Z",
+        validUntil: "2099-01-01T00:00:00.000Z",
         status: "unresolved_blocking",
       },
     ],
   };
-  assert.equal(validateFindingLedger(valid, ledger, new Date("2026-01-01")), true);
+  assert.equal(validateFindingLedger("workspace", valid, ledger, new Date("2026-01-01")), true);
+  for (const identity of [
+    "src/a.mjs",
+    "src/a.mjs|files",
+    "src/a.mjs|files|src/a.mjs|extra",
+    "|files|src/a.mjs",
+    "src/a.mjs||src/a.mjs",
+    "src/a.mjs|files|",
+  ])
+    assert.equal(
+      validateFindingLedger(
+        "workspace",
+        valid,
+        { ...ledger, findings: [{ ...ledger.findings[0], identity }] },
+        new Date("2026-01-01"),
+      ),
+      false,
+      identity,
+    );
   for (const change of [
     { owner: "" },
     { evidence: [] },
-    { validUntil: "2020-01-01T00:00:00Z" },
+    { validUntil: "2020-01-01T00:00:00.000Z" },
     { status: "unknown" },
     { extra: true },
   ])
     assert.equal(
       validateFindingLedger(
+        "workspace",
         valid,
         { ...ledger, findings: [{ ...ledger.findings[0], ...change }] },
         new Date("2026-01-01"),
       ),
       false,
     );
-  assert.equal(validateFindingLedger([], ledger), false);
+  assert.equal(validateFindingLedger("workspace", [], ledger), false);
 });
 
 test("accepts the complete Knip JSON reporter shape and rejects malformed nested rows", () => {
@@ -454,17 +474,16 @@ test("promotes valid finding reports and returns exit code 1", async () => {
     allowedRoot: resolve(output, ".."),
     ledger: {
       schemaVersion: 1,
-      findings: [
-        {
-          identity: "src/example.mjs|files|src/example.mjs",
-          status: "unresolved_blocking",
-          owner: "test",
-          obligation: "test",
-          risk: "test",
-          evidence: ["test"],
-          validUntil: "2099-01-01T00:00:00Z",
-        },
-      ],
+      findings: ["workspace", "production"].map((report) => ({
+        report,
+        identity: "src/example.mjs|files|src/example.mjs",
+        status: "unresolved_blocking",
+        owner: "test",
+        obligation: "test",
+        risk: "test",
+        evidence: ["test"],
+        validUntil: "2099-01-01T00:00:00.000Z",
+      })),
     },
     run: async () => ({
       code: 1,
@@ -479,6 +498,107 @@ test("promotes valid finding reports and returns exit code 1", async () => {
     assert.deepEqual(promoted, { issues: [{ file: "src/example.mjs", files: [{ name: "src/example.mjs" }] }] });
   }
   await rm(result.output, { recursive: true, force: true });
+});
+
+test("runner derives injective canonical identities for ordered nested cycle and duplicate groups", async () => {
+  const record = (report, category, key) => ({
+    report,
+    identity: `src/nested.mjs|${category}|${key}`,
+    owner: "test",
+    obligation: "test",
+    risk: "test",
+    evidence: ["fixture"],
+    validUntil: "2099-01-01T00:00:00.000Z",
+    status: "unresolved_blocking",
+  });
+  const nestedReport = (cycles, duplicates) => ({
+    issues: [{ file: "src/nested.mjs", cycles, duplicates }],
+  });
+  const run = async (name, ledger, report, expectedCode) => {
+    const output = await mkdtemp(resolve(tmpdir(), `gamebuddy-knip-nested-${name}-`));
+    await rm(output, { recursive: true, force: true });
+    try {
+      const result = await runReports(output, {
+        allowedRoot: resolve(output, ".."),
+        ledger,
+        run: async () => ({ code: 1, stdout: JSON.stringify(report), stderr: "" }),
+      });
+      assert.equal(result.exitCode, expectedCode, name);
+      return result;
+    } finally {
+      await rm(output, { recursive: true, force: true });
+    }
+  };
+  const oneOfEach = nestedReport(
+    [[{ name: "cycle-a" }, { name: "cycle-b" }]],
+    [[{ name: "duplicate-a" }, { name: "duplicate-b" }]],
+  );
+  const knownLedger = {
+    schemaVersion: 1,
+    findings: ["workspace", "production"].flatMap((report) => [
+      record(report, "cycles", "7:cycle-a7:cycle-b"),
+      record(report, "duplicates", "11:duplicate-a11:duplicate-b"),
+    ]),
+  };
+  await run("known", knownLedger, oneOfEach, 1);
+
+  const distinctGroups = nestedReport(
+    [
+      [{ name: "cycle-a" }, { name: "cycle-b" }],
+      [{ name: "cycle-c" }, { name: "cycle-d" }],
+    ],
+    [],
+  );
+  await run(
+    "distinct",
+    {
+      schemaVersion: 1,
+      findings: ["workspace", "production"].flatMap((report) => [
+        record(report, "cycles", "7:cycle-a7:cycle-b"),
+        record(report, "cycles", "7:cycle-c7:cycle-d"),
+      ]),
+    },
+    distinctGroups,
+    1,
+  );
+
+  await run("malformed", { schemaVersion: 1, findings: [] }, nestedReport([[{ name: 1 }]], []), 2);
+  await run("unknown", { schemaVersion: 1, findings: [] }, oneOfEach, 2);
+
+  const commaDelimitedNames = nestedReport([[{ name: "a,b" }, { name: "c" }]], []);
+  await run(
+    "known-comma-delimited-nested-group",
+    {
+      schemaVersion: 1,
+      findings: ["workspace", "production"].map((report) => record(report, "cycles", "3:a,b1:c")),
+    },
+    commaDelimitedNames,
+    1,
+  );
+  await run(
+    "comma-delimited-nested-group-collision",
+    {
+      schemaVersion: 1,
+      findings: ["workspace", "production"].map((report) => record(report, "cycles", "3:a,b1:c")),
+    },
+    nestedReport([[{ name: "a" }, { name: "b,c" }]], []),
+    2,
+  );
+  await run(
+    "identity-collision",
+    {
+      schemaVersion: 1,
+      findings: ["workspace", "production"].map((report) => record(report, "cycles", "7:cycle-a7:cycle-b")),
+    },
+    nestedReport(
+      [
+        [{ name: "cycle-a" }, { name: "cycle-b" }],
+        [{ name: "cycle-a" }, { name: "cycle-b" }],
+      ],
+      [],
+    ),
+    2,
+  );
 });
 
 test("classifies the pinned Knip parser result as an execution error without promotion", async () => {
@@ -526,63 +646,55 @@ test("classifies valid JSON fatal stderr as execution errors without promotion",
   await rm(result.output, { recursive: true, force: true });
 });
 
-test("runner enforces the ledger matrix with isolated pinned Knip fixtures", async () => {
+test("runner validates frozen dual-report ledger records independently", async () => {
   const identity = "package.json|dependencies|unused-dep";
-  const record = (status, value = identity) => ({
+  const record = (report, status = "unresolved_blocking", value = identity) => ({
+    report,
     identity: value,
     owner: "test",
     obligation: "test",
     risk: "test",
     evidence: ["fixture"],
-    validUntil: "2099-01-01T00:00:00Z",
+    validUntil: "2099-01-01T00:00:00.000Z",
     status,
   });
-  const run = async (name, ledger, expectedCode, { orphan = true, promoted = false, unusedDependency = true } = {}) => {
-    const fixture = await createKnipFixture(`gamebuddy-knip-ledger-${name}-`, { orphan, unusedDependency });
+  const run = async (name, findings, expectedCode, responses) => {
+    const fixture = await createKnipFixture(`gamebuddy-knip-ledger-${name}-`);
     const ledgerPath = resolve(fixture, "ledger.json");
     const output = resolve(fixture, "reports");
     try {
-      await writeFile(ledgerPath, `${JSON.stringify(ledger)}\n`);
+      await writeFile(ledgerPath, `${JSON.stringify({ schemaVersion: 1, findings })}\n`);
+      let call = 0;
       const result = await productionRunReports(output, {
         allowedRoot: fixture,
         ledgerPath,
-        run: async (_command, _args, cwd) => {
-          assert.equal(cwd, root);
-          const report = unusedDependency
-            ? { issues: [{ file: "package.json", dependencies: [{ name: "unused-dep" }] }] }
-            : { issues: [] };
-          return { code: unusedDependency ? 1 : 0, stdout: JSON.stringify(report), stderr: "" };
-        },
+        run: async () => responses[call++],
       }).catch(() => ({ exitCode: 2 }));
       assert.equal(result.exitCode, expectedCode, name);
-      if (promoted) for (const report of ["workspace.json", "production.json"]) await access(resolve(output, report));
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }
   };
+  const finding = {
+    code: 1,
+    stdout: JSON.stringify({ issues: [{ file: "package.json", dependencies: [{ name: "unused-dep" }] }] }),
+    stderr: "",
+  };
+  const empty = { code: 0, stdout: '{"issues":[]}', stderr: "" };
 
-  await run("unresolved", { schemaVersion: 1, findings: [record("unresolved_blocking")] }, 1, { promoted: true });
-  await run("resolved-present", { schemaVersion: 1, findings: [record("resolved")] }, 2);
-  await run(
-    "unknown",
-    { schemaVersion: 1, findings: [record("unresolved_blocking", "unknown.mjs|files|unknown.mjs")] },
-    2,
-  );
-  await run("invalid-schema", { schemaVersion: 2, findings: [] }, 2);
-  await run(
-    "expired",
-    { schemaVersion: 1, findings: [{ ...record("unresolved_blocking"), validUntil: "2020-01-01T00:00:00Z" }] },
-    2,
-  );
-  await run("unknown-field", { schemaVersion: 1, findings: [{ ...record("unresolved_blocking"), extra: true }] }, 2);
-  const missingField = record("unresolved_blocking");
-  delete missingField.evidence;
-  await run("missing-field", { schemaVersion: 1, findings: [missingField] }, 2);
-  await run("empty", { schemaVersion: 1, findings: [] }, 0, {
-    orphan: false,
-    promoted: true,
-    unusedDependency: false,
-  });
+  await run("known-workspace-unresolved", [record("workspace"), record("production")], 1, [finding, finding]);
+  await run("workspace-unknown", [record("production")], 2, [finding, empty]);
+  await run("production-unknown", [record("workspace")], 2, [empty, finding]);
+  await run("same-identity-once-per-report", [record("workspace"), record("production")], 1, [finding, finding]);
+  await run("resolved", [record("workspace", "resolved"), record("production", "resolved")], 2, [finding, finding]);
+  await run("expired", [{ ...record("workspace"), validUntil: "2020-01-01T00:00:00.000Z" }], 2, [finding, empty]);
+  await run("report-mismatch", [{ ...record("workspace"), report: "invalid" }], 2, [empty, empty]);
+  await run("duplicate", [record("workspace"), record("workspace")], 2, [empty, empty]);
+  await run("empty-valid", [], 0, [empty, empty]);
+  await run("execution-error-precedence", [record("workspace")], 2, [
+    finding,
+    { code: 2, stdout: "{}", stderr: "bad config" },
+  ]);
 });
 
 test("classifies parser output as execution errors and preserves independent valid reports", async () => {
@@ -773,7 +885,7 @@ test("executable runner uses repository Knip config with external CI output admi
       { cwd: allowedRoot, encoding: "utf8", shell: false },
     ).catch((error) => error);
     const code = result.code ?? result.status ?? 0;
-    assert.equal(code, 1, `${result.stdout}\n${result.stderr}`);
+    assert.equal(code, 2, `${result.stdout}\n${result.stderr}`);
     for (const report of ["workspace.json", "production.json"]) await access(resolve(output, report));
   } finally {
     await rm(allowedRoot, { recursive: true, force: true });
