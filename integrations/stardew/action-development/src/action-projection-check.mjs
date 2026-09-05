@@ -171,6 +171,5 @@ export function validateActionProjection(input, options) {
   return projection;
 }
 
-export const checkActionProjection = validateActionProjection;
 export const isExecutableActionRegistration = isExecutable;
 export const ACTION_PROJECTION_DESCRIPTOR_KEYS = DESCRIPTOR_KEYS;

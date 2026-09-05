@@ -380,7 +380,6 @@ export function parseActionSurface(text) {
   return validateActionSurface(parseJsonText(text));
 }
 
-export const parseActionSurfaceJson = parseActionSurface;
 
 export function isActionSurfaceIdentifier(value) {
   return typeof value === "string" && value.length <= ACTION_SURFACE_MAX_IDENTIFIER_LENGTH && IDENTIFIER.test(value);
