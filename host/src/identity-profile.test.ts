@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 import {
   buildChatCompanionSystemPrompt,
   buildCompanionSystemPrompt,
@@ -72,8 +72,8 @@ test("IdentityProfile canonicalizes a bounded reviewed persona guide", () => {
 });
 
 test("IdentityProfile writes reject a replaced symlink target without touching the outside sentinel", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-identity-profile-boundary-"));
-  const outside = await mkdtemp(join(tmpdir(), "gamebuddy-identity-profile-outside-"));
+  const root = await canonicalTestRoot("gamebuddy-identity-profile-boundary-");
+  const outside = await canonicalTestRoot("gamebuddy-identity-profile-outside-");
   const outsideFile = join(outside, "sentinel.json");
   const target = join(root, "identity-profile.json");
   try {
@@ -99,7 +99,7 @@ test("IdentityProfile writes reject a replaced symlink target without touching t
 });
 
 test("IdentityProfile binding is opaque and never stores profile body", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-identity-profile-"));
+  const root = await canonicalTestRoot("gamebuddy-identity-profile-");
   const binding = createIdentityProfileBinding("a".repeat(64), DEFAULT_IDENTITY_PROFILE, "session.jsonl");
   const path = join(root, "binding.json");
   await writeFile(path, JSON.stringify(binding), "utf8");

@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { createChatThreadStore } from "../chat-thread-store.js";
 import {
   type ChatLifecycleAtomicGuard,
@@ -12,7 +11,7 @@ import {
 } from "./chat-lifecycle-service.js";
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-lifecycle-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-lifecycle-");
   let time = 10;
   const store = createChatThreadStore(root, "a".repeat(64), () => time++);
   const create = async (id: string, title?: string) => {

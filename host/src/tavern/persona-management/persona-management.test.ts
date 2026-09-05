@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { TavernArtifactStore } from "../artifact-store.js";
 import { validateTavernArtifact } from "../types.js";
 import { createPersonaManagementService } from "./persona-management.js";
 
 test("persona management creates a strict safe player projection and reads back its revision", async () => {
-  const root = await mkdtemp(join(tmpdir(), "persona-management-"));
+  const root = await canonicalTestRoot("persona-management-");
   try {
     const service = createPersonaManagementService(new TavernArtifactStore(root), root);
 
@@ -25,7 +25,7 @@ test("persona management creates a strict safe player projection and reads back 
 });
 
 test("persona management creates canonical revision trees and updates exact revisions", async () => {
-  const root = await mkdtemp(join(tmpdir(), "persona-management-"));
+  const root = await canonicalTestRoot("persona-management-");
   try {
     const store = new TavernArtifactStore(root);
     const service = createPersonaManagementService(store, root);
@@ -48,7 +48,7 @@ test("persona management creates canonical revision trees and updates exact revi
 });
 
 test("persona management fails closed when its highest numeric revision is corrupt", async () => {
-  const root = await mkdtemp(join(tmpdir(), "persona-management-"));
+  const root = await canonicalTestRoot("persona-management-");
   try {
     const store = new TavernArtifactStore(root);
     const service = createPersonaManagementService(store, root);
@@ -64,7 +64,7 @@ test("persona management fails closed when its highest numeric revision is corru
 });
 
 test("persona management rejects nonnumeric revision-directory entries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "persona-management-"));
+  const root = await canonicalTestRoot("persona-management-");
   try {
     const service = createPersonaManagementService(new TavernArtifactStore(root), root);
     await service.create({ name: "Alex" });
@@ -77,7 +77,7 @@ test("persona management rejects nonnumeric revision-directory entries", async (
 });
 
 test("persona management rejects arbitrary fields, unsafe text, and duplicate creation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "persona-management-"));
+  const root = await canonicalTestRoot("persona-management-");
   try {
     const service = createPersonaManagementService(new TavernArtifactStore(root), root);
     await assert.rejects(

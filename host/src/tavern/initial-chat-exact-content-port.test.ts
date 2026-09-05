@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
   type CreateChatThreadRequest,
   createChatThreadStore,
@@ -40,7 +40,7 @@ function stateDigest(state: unknown): string {
 }
 
 async function capability() {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-exact-content-"));
+  const root = await canonicalTestRoot("gamebuddy-exact-content-");
   const store = createChatThreadStore(
     root,
     "a".repeat(64),

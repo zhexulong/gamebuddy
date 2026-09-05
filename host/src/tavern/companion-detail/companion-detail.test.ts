@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { TavernArtifactStore } from "../artifact-store.js";
 import { resolveTavernPaths } from "../tavern-paths.js";
 import { validateTavernArtifact } from "../types.js";
@@ -11,7 +11,7 @@ import { createCompanionDetailService } from "./companion-detail-service.js";
 const hash = "a".repeat(64);
 
 async function setup() {
-  const root = await mkdtemp(join(tmpdir(), "tavern-companion-detail-"));
+  const root = await canonicalTestRoot("tavern-companion-detail-");
   const paths = resolveTavernPaths(
     {
       root,

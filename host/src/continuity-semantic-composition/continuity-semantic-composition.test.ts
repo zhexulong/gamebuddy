@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import {
   createFreshSemanticProductionAuthorityFromDeploymentManifest,
   createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest,
@@ -44,7 +44,7 @@ test(
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
     for (const phase of ["claimed_empty", "chat_registered", "content_verified"] as const) {
-      const root = mkdtempSync(join(tmpdir(), `initial-chat-${phase}-`));
+      const root = canonicalTestRootSync(`initial-chat-${phase}-`);
       try {
         const manifestPath = chatManifest(root);
         const manifest = await loadHostDeploymentManifest(manifestPath);
@@ -117,7 +117,7 @@ test(
   "known initial Chat resume rejects binding-preserving Tavern content mutation after content verification",
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "initial-chat-content-tamper-"));
+    const root = canonicalTestRootSync("initial-chat-content-tamper-");
     try {
       const manifestPath = chatManifest(root);
       const manifest = await loadHostDeploymentManifest(manifestPath);

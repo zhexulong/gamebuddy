@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
 import {
@@ -58,7 +57,7 @@ function forgedLease(): MountedChatRuntimeLease {
 }
 
 test("binding service rejects forged leases, non-composed profiles and profiles without world-info.bind", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-world-info-forged-"));
+  const root = await canonicalTestRoot("gamebuddy-world-info-forged-");
   try {
     const forged = forgedLease();
     assert.throws(
@@ -163,7 +162,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
 }
 
 async function mounted(body: string): Promise<Record<string, unknown>> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-world-info-service-"));
+  const root = await canonicalTestRoot("gamebuddy-world-info-service-");
   try {
     return await runMountedChild(body, root);
   } finally {

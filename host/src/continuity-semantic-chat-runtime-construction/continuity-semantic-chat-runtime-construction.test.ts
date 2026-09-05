@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
   type ChatRuntimeBindingExecution,
   withConsumedChatRuntimeBinding,
@@ -43,7 +43,7 @@ function permit(execution: ChatRuntimeBindingExecution): ProductionChatRuntimePe
 }
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "chat-runtime-construction-"));
+  const root = await canonicalTestRoot("chat-runtime-construction-");
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
   const manifest = Object.freeze({

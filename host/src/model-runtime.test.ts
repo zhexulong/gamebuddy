@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -17,7 +17,7 @@ test("product default selects DeepSeek V4 Flash at high thinking", () => {
 });
 
 test("Companion Agent registry is identity-scoped and uses DeepSeek V4 Flash through the configured CPA provider", async () => {
-  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-deepseek-agent-model-"));
+  const root = await canonicalTestRoot("gamebuddy-deepseek-agent-model-");
   const runtime = await createCompanionRuntime(identity, root, undefined, {
     provider: "cpa-oai",
     modelId: "deepseek-v4-flash",

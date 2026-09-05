@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
@@ -130,7 +129,7 @@ async function prepareRunning(
 }
 
 test("presentation commits exactly one durable presentation from running and reopens identical", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-commit-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-commit-");
   try {
     const { attemptId, store, base } = await prepareRunning(root);
     const committedAt = base + 10;
@@ -171,7 +170,7 @@ test("presentation commits exactly one durable presentation from running and reo
 });
 
 test("presentation commit retry with the identical message is idempotent and never double-appends", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-retry-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-retry-");
   try {
     const { attemptId, base } = await prepareRunning(root);
     const command = {
@@ -200,7 +199,7 @@ test("presentation commit retry with the identical message is idempotent and nev
 });
 
 test("presentation completion claims and completes only from an exact committed presentation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-complete-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-complete-");
   try {
     const { attemptId, base } = await prepareRunning(root);
     await assert.rejects(
@@ -258,7 +257,7 @@ test("presentation completion claims and completes only from an exact committed 
 });
 
 test("presentation cancel after commit keeps the bubble historical and terminalizes cancelled", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-cancel-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-cancel-");
   try {
     const { attemptId, base } = await prepareRunning(root);
     await transitionMountedPresentation(
@@ -295,7 +294,7 @@ test("presentation cancel after commit keeps the bubble historical and terminali
 });
 
 test("presentation cancel before commit declines the late presentation callback", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-cancel-early-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-cancel-early-");
   try {
     const { attemptId, store, base } = await prepareRunning(root);
     const early = await transitionMountedPresentation(
@@ -330,7 +329,7 @@ test("presentation cancel before commit declines the late presentation callback"
 });
 
 test("presentation fails from a live running attempt and rejects attempt-starting or terminal sources", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-fail-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-fail-");
   try {
     const { attemptId, base } = await prepareRunning(root);
     const failed = await transitionMountedPresentation(
@@ -358,7 +357,7 @@ test("presentation fails from a live running attempt and rejects attempt-startin
 });
 
 test("presentation fail is not reachable before the provider start observation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-fail-early-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-fail-early-");
   try {
     const store = createChatThreadStore(
       root,
@@ -400,7 +399,7 @@ test("presentation fail is not reachable before the provider start observation",
 });
 
 test("presentation transition authority rejects a revoked capability before durable mutation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-authority-revoked-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-authority-revoked-");
   try {
     const { attemptId, store, base } = await prepareRunning(root);
     const revoked = createMountedTurnTransitionAuthority();
@@ -428,7 +427,7 @@ test("presentation transition authority rejects a revoked capability before dura
 });
 
 test("presentation exact attempt binding rejects a foreign attempt or binding", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-attempt-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-attempt-");
   try {
     const { attemptId, store, base } = await prepareRunning(root);
     await assert.rejects(

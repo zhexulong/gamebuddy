@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
@@ -150,7 +149,7 @@ async function prepare(
 }
 
 test("cancel authority prerequisite: claim_cancel rejects an accepted_queued turn with zero mutation and no later-activation poisoning", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-cancel-auth-accepted-"));
+  const root = await canonicalTestRoot("gamebuddy-cancel-auth-accepted-");
   try {
     const { store } = await prepare(root, "accepted_queued");
     const before = await store.resumeThread("thread_01", "surface_01");
@@ -204,7 +203,7 @@ test("cancel authority prerequisite: claim_cancel rejects an accepted_queued tur
 });
 
 test("cancel authority prerequisite: claim_cancel rejects attempt_starting sources until durable running, with zero mutation at each rejection", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-cancel-auth-starting-"));
+  const root = await canonicalTestRoot("gamebuddy-cancel-auth-starting-");
   try {
     const { store, attemptId } = await prepare(root, "attempt_starting");
     const unarmed = await store.resumeThread("thread_01", "surface_01");
@@ -264,7 +263,7 @@ test("cancel authority prerequisite: claim_cancel rejects attempt_starting sourc
 });
 
 test("cancel authority prerequisite: claim_cancel rejects a not_started attempt with zero mutation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-cancel-auth-not-started-"));
+  const root = await canonicalTestRoot("gamebuddy-cancel-auth-not-started-");
   try {
     const { store, attemptId } = await prepare(root, "not_started");
     const before = await store.resumeThread("thread_01", "surface_01");
@@ -285,7 +284,7 @@ test("cancel authority prerequisite: claim_cancel rejects a not_started attempt 
 });
 
 test("cancel authority prerequisite: active P5 cancel and completion-first arbitration are unchanged", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-cancel-auth-active-"));
+  const root = await canonicalTestRoot("gamebuddy-cancel-auth-active-");
   try {
     const { store, attemptId } = await prepare(root, "running");
     const base = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
@@ -330,7 +329,7 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
 
     // Completion-first: cancel loses the arbitration at the store CAS and the
     // terminal completion stays stable.
-    const secondRoot = await mkdtemp(join(tmpdir(), "gamebuddy-cancel-auth-complete-"));
+    const secondRoot = await canonicalTestRoot("gamebuddy-cancel-auth-complete-");
     try {
       const second = await prepare(secondRoot, "running");
       const secondBase = (await second.store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;

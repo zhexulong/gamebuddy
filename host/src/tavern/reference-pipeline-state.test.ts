@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { type BrowserTurnV1, composeTavernProfile, TavernBrowserValidatorsV1 } from "./browser-contract/index.js";
@@ -38,7 +37,7 @@ function referenceProfile() {
 }
 
 test("reference facade rejects a forged structural mounted lease before durable access", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-reference-forged-"));
+  const root = await canonicalTestRoot("gamebuddy-reference-forged-");
   try {
     const forged = Object.freeze({
       runtimeSession: Object.freeze({}),
@@ -151,7 +150,7 @@ const mountPreamble = `
 `;
 
 async function mounted(body: string): Promise<Record<string, unknown>> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-reference-state-"));
+  const root = await canonicalTestRoot("gamebuddy-reference-state-");
   const facadeUrl = new URL("./reference-pipeline-state.js", import.meta.url).href;
   const coordinatorUrl = new URL(
     "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",

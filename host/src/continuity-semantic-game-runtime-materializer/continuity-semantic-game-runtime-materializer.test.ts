@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -39,7 +39,7 @@ import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-ru
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
 async function canonicalTemporaryRoot(prefix: string): Promise<string> {
-  return mkdtemp(join(await realpath(tmpdir()), prefix));
+  return canonicalTestRoot(prefix);
 }
 
 test.before(async () => {

@@ -1,16 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
-  type AttemptStartingTurn,
   claimMountedAttempt,
   createChatThreadStore,
   type GreetingSource,
-  type RunningTurn,
   transitionMountedProviderStart as rawTransitionP4MountedProviderStart,
   transitionMountedPresentation as rawTransitionP5MountedPresentation,
 } from "./chat-thread-store.js";
@@ -58,7 +56,7 @@ const source: GreetingSource = {
 const opening = { messageId: "opening_01", text: "Welcome to the tavern.", source } as const;
 
 async function store(key = "a".repeat(64)) {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-");
   let time = 10;
   const s = createChatThreadStore(root, key, () => time++);
   return { root, store: s, key };
@@ -413,7 +411,7 @@ test("normalized transcript has no fixed entry ceiling", async () => {
 });
 
 test("concurrent transactions across store instances preserve monotonic managementRevision with 0 deadlocks", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-concurrency-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-concurrency-");
   const continuityKey = "c".repeat(64);
   try {
     const store1 = createChatThreadStore(root, continuityKey, () => 100);
@@ -463,7 +461,7 @@ test("concurrent transactions across store instances preserve monotonic manageme
 });
 
 test("P4 durable turn acceptance, claim, start, and presentation transitions work atomically", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p4p5-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p4p5-");
   const continuityKey = createHash("sha256")
     .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
     .digest("hex");
