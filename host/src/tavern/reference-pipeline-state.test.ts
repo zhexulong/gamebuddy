@@ -319,7 +319,7 @@ test(
   // ChatThreadStore's sole durable authority is the per-continuity SQLite
   // database. Corrupt that actual authority—not an inert legacy path—so the
   // read must fail closed with no browser projection.
-  await fs.writeFile(fx.root + "/tavern/v1/continuities/" + key + "/tavern.sqlite", "{ corrupted", "utf8");
+  await fs.writeFile(fx.root + "/tavern/v2/continuities/" + key + "/tavern.sqlite", "{ corrupted", "utf8");
   let corruptRejection = "none";
   try { await reopenedFacade.read(); } catch (error) { corruptRejection = String(error); }
   let corruptDraftRejection = "none";

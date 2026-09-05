@@ -1,6 +1,6 @@
 import type { Snapshot } from "./protocol.js";
 
-export const GAME_SNAPSHOT_PROJECTION_SCHEMA = "gamebuddy-game-snapshot-projection/v1" as const;
+const GAME_SNAPSHOT_PROJECTION_SCHEMA = "gamebuddy-game-snapshot-projection/v1" as const;
 /** The projection is smaller than the bridge frame and remains safe to attach to a turn batch. */
 export const MAX_GAME_SNAPSHOT_PROJECTION_BYTES = 4_096;
 const MAX_PROJECTION_TEXT_BYTES = 1_024;

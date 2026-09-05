@@ -17,8 +17,8 @@ import {
 } from "./browser-contract/index.js";
 import type { ChatEventStream } from "./chat-event-stream.js";
 import { type ChatThreadState, type ChatTurnLedger, createChatThreadStore } from "./chat-thread-store.js";
+import { formatSwipeLabel } from "./message-tree.js";
 
-const MAX_TRANSCRIPT_MESSAGES = 500;
 type BrowserDraftV1 = Static<typeof BrowserDraftV1Schema>;
 type ReferencePipelineBinding = Readonly<{
   chatThreadId: string;
@@ -165,7 +165,6 @@ function project(
   state: ChatThreadState,
   eventStream?: ChatEventStream,
 ): ReferencePipelineState {
-  if (state.messages.length > MAX_TRANSCRIPT_MESSAGES) throw unavailable();
   const projection = lease.browserProjection;
   const transcript = Object.freeze(state.messages.map((message, order) => projectMessage(lease, message, order)));
   const turn = projectTurn(lease, profile, state.turnLedger);
@@ -205,6 +204,20 @@ function projectMessage(
 ): BrowserMessageV1 {
   if (message.role !== "player" && message.role !== "companion") throw unavailable();
   if (!safeBrowserRevision(order) || !safeBrowserRevision(1)) throw unavailable();
+
+  const totalSwipes = message.swipes && message.swipes.length > 0 ? message.swipes.length : 1;
+  const currentIndex = message.activeSwipeIndex ?? 0;
+  const swipeInfo =
+    message.role === "companion" && totalSwipes > 1
+      ? Object.freeze({
+          currentIndex,
+          totalSwipes,
+          label: formatSwipeLabel(currentIndex, totalSwipes),
+          hasPrevious: currentIndex > 0,
+          hasNext: currentIndex < totalSwipes - 1,
+        })
+      : undefined;
+
   return Object.freeze({
     handle: lease.browserProjection.projectMessageHandle(message.messageId),
     role: message.role,
@@ -215,6 +228,7 @@ function projectMessage(
     order,
     // The reference pipeline has no message mutation, so durable records are immutable.
     revision: 1,
+    ...(swipeInfo !== undefined ? { swipeInfo } : {}),
   });
 }
 

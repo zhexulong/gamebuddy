@@ -13,8 +13,11 @@ import {
   type ComposedTavernProfile,
   type MessageSubmissionStatusQueryV1Schema,
   type MessageSubmissionStatusV1Schema,
+  type RegenerateMessageCommandV1,
   type SubmitMessageCommandV1,
   type SubmitResultV1Schema,
+  type SwipeSelectCommandV1,
+  type SwipeSelectResultV1,
   TAVERN_BROWSER_API_VERSION,
   TavernBrowserValidatorsV1,
 } from "./browser-contract/index.js";
@@ -122,6 +125,8 @@ export type ChatPipelineService = Readonly<{
   readSubmissionStatus(query: MessageSubmissionStatusQueryV1): Promise<MessageSubmissionStatusV1>;
   /** Stops the exact active turn and returns its fresh browser-safe projection. */
   cancel(turnHandle: string, command: CancelTurnCommandV1): Promise<BrowserTurnV1>;
+  selectSwipe?(command: SwipeSelectCommandV1): Promise<SwipeSelectResultV1>;
+  regenerate?(command: RegenerateMessageCommandV1, idempotencyKey: string): Promise<SubmitResultV1>;
   /**
    * Rejects new admission and drains admitted acceptance, commit callbacks and
    * background start work before resolving. The mounted lease itself stays
@@ -381,6 +386,112 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
           payload: result,
         });
       return result;
+    },
+
+    async selectSwipe(command: SwipeSelectCommandV1): Promise<SwipeSelectResultV1> {
+      assertOpen();
+      if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+      if (!TavernBrowserValidatorsV1.SwipeSelectCommandV1Schema.Check(command)) throw unavailable();
+      if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+      const stateBefore = await resumeState();
+      const targetMessage = stateBefore.messages.find(
+        (m: ChatThreadState["messages"][number]) =>
+          lease.browserProjection.projectMessageHandle(m.messageId) === command.messageHandle,
+      );
+      if (!targetMessage) throw unavailable();
+      const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
+      let state: ChatThreadState;
+      try {
+        state = await store.selectSwipe!(lease.chatThreadId, targetMessage.messageId, {
+          direction: command.direction,
+          targetIndex: command.targetIndex,
+        });
+      } finally {
+        store.close?.();
+      }
+      const updatedMessage = state.messages.find(
+        (m: ChatThreadState["messages"][number]) => m.messageId === targetMessage.messageId,
+      );
+      if (!updatedMessage) throw unavailable();
+      const messageIndex = state.messages.indexOf(updatedMessage);
+      const totalSwipes = updatedMessage.swipes && updatedMessage.swipes.length > 0 ? updatedMessage.swipes.length : 1;
+      const currentIndex = updatedMessage.activeSwipeIndex ?? 0;
+      const swipeInfo =
+        updatedMessage.role === "companion" && totalSwipes > 1
+          ? Object.freeze({
+              currentIndex,
+              totalSwipes,
+              label: `◀ ${currentIndex + 1}/${totalSwipes} ▶`,
+              hasPrevious: currentIndex > 0,
+              hasNext: currentIndex < totalSwipes - 1,
+            })
+          : undefined;
+      const projected: BrowserMessageV1 = Object.freeze({
+        handle: lease.browserProjection.projectMessageHandle(updatedMessage.messageId),
+        role: updatedMessage.role,
+        text: updatedMessage.text,
+        locale: "und",
+        order: messageIndex,
+        revision: 1,
+        ...(swipeInfo !== undefined ? { swipeInfo } : {}),
+      });
+      return Object.freeze({
+        apiVersion: TAVERN_BROWSER_API_VERSION,
+        message: projected,
+      });
+    },
+
+    async regenerate(command: RegenerateMessageCommandV1, idempotencyKey: string): Promise<SubmitResultV1> {
+      assertOpen();
+      assertComposedProfile(profile);
+      if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+      if (!TavernBrowserValidatorsV1.RegenerateMessageCommandV1Schema.Check(command)) throw unavailable();
+      if (!validIdempotencyKey(idempotencyKey)) throw unavailable();
+      if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+      const state = await resumeState();
+      const targetMessage = state.messages.find(
+        (m: ChatThreadState["messages"][number]) =>
+          lease.browserProjection.projectMessageHandle(m.messageId) === command.messageHandle,
+      ) ?? [...state.messages].reverse().find((m: ChatThreadState["messages"][number]) => m.role === "companion");
+      if (!targetMessage) throw unavailable();
+      const targetIndex = state.messages.indexOf(targetMessage);
+      const parentPlayerMessage = [...state.messages.slice(0, targetIndex)].reverse().find(
+        (m: ChatThreadState["messages"][number]) => m.role === "player",
+      );
+      const promptText = parentPlayerMessage ? parentPlayerMessage.text : "请继续";
+
+      pending += 1;
+      try {
+        const accepted = await accept.accept(
+          Object.freeze({
+            text: promptText,
+            locale: "und",
+            idempotencyKey,
+            expectedDraftRevision: state.draft.revision,
+          }),
+        );
+        const acceptedState = await resumeState();
+        const result = await projectCommittedResult(accepted, acceptedState, "accepted");
+        if (eventStream !== undefined && profile.routeIds.includes("events")) {
+          eventStream.publish({
+            eventType: "message.committed",
+            selectionGeneration: lease.browserProjection.selectionGeneration,
+            payload: result.message,
+          });
+        }
+        const attempt = startOnce();
+        backgroundStarts.add(attempt);
+        void attempt
+          .finally(() => {
+            backgroundStarts.delete(attempt);
+            notifyDrain();
+          })
+          .catch(() => undefined);
+        return result;
+      } finally {
+        pending -= 1;
+        notifyDrain();
+      }
     },
 
     async close(): Promise<void> {

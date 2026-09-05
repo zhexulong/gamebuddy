@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   WORK_BRIEF_SCHEMA,
   checkWorkBrief,
-  checkWorkBriefDiff,
   checkWorkBriefOwnership,
   compareWorkBriefDiff,
   createIncompleteWorkBriefHandoff,
@@ -118,9 +117,9 @@ test("parses rename metadata and Git name-status rename records without changing
 });
 
 test("rejects wrong base, unowned paths, and missing required checks", () => {
-  assert.throws(() => checkWorkBriefDiff(brief, observation({ baseCommit: WRONG_BASE_COMMIT })), /base_commit_mismatch/);
-  assert.throws(() => checkWorkBriefDiff(brief, observation({ changedPaths: ["host/src/main.ts"] })), /changed_path_unowned/);
-  assert.throws(() => checkWorkBriefDiff(brief, observation({ completedChecks: [] })), /missing_required_checks/);
+  assert.throws(() => compareWorkBriefDiff(brief, observation({ baseCommit: WRONG_BASE_COMMIT })), /base_commit_mismatch/);
+  assert.throws(() => compareWorkBriefDiff(brief, observation({ changedPaths: ["host/src/main.ts"] })), /changed_path_unowned/);
+  assert.throws(() => compareWorkBriefDiff(brief, observation({ completedChecks: [] })), /missing_required_checks/);
 });
 
 test("rejects case-fold collisions instead of treating them as owned", () => {
@@ -136,9 +135,9 @@ test("rejects case-fold collisions instead of treating them as owned", () => {
 });
 
 test("rejects live execution without explicit brief authorization", () => {
-  assert.throws(() => checkWorkBriefDiff(brief, observation({ stage: "live" })), /live_unauthorized/);
+  assert.throws(() => compareWorkBriefDiff(brief, observation({ stage: "live" })), /live_unauthorized/);
   const authorized = { ...brief, liveAuthorized: true };
-  assert.equal(checkWorkBriefDiff(authorized, observation({ stage: "live" })).stage, "live");
+  assert.equal(compareWorkBriefDiff(authorized, observation({ stage: "live" })).stage, "live");
 });
 
 test("accepts an injected observer and passes only bounded identity context", async () => {

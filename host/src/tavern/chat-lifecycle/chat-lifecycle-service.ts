@@ -1,27 +1,27 @@
 import type { ActiveChatThreadSelection, ChatThread, ChatThreadStore } from "../chat-thread-store.js";
 
-export type ChatLifecycleStatus = "active" | "archived" | "trashed";
+type ChatLifecycleStatus = "active" | "archived" | "trashed";
 
 /** Public lifecycle projection is metadata-only: it intentionally has no IDs or transcript content. */
-export type ChatLifecycleMetadata = Readonly<{
+type ChatLifecycleMetadata = Readonly<{
   status: ChatLifecycleStatus;
   managementRevision: number;
   title: string | null;
 }>;
 
 /** Host-internal route-adapter result. Its opaque binding is never public DTO data. */
-export type InternalChatLifecycleResult = Readonly<{
+type InternalChatLifecycleResult = Readonly<{
   binding: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>;
   metadata: ChatLifecycleMetadata;
 }>;
 
-export type ChatLifecycleTransitionRequest = Readonly<{
+type ChatLifecycleTransitionRequest = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
   expectedManagementRevision: number;
 }>;
 
-export type SearchChatTitlesRequest = Readonly<{ literal: string; status: ChatLifecycleStatus }>;
+type SearchChatTitlesRequest = Readonly<{ literal: string; status: ChatLifecycleStatus }>;
 
 export type ChatLifecycleService = Readonly<{
   archive(request: ChatLifecycleTransitionRequest): Promise<ChatLifecycleMetadata>;

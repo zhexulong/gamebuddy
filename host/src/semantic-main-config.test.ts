@@ -34,7 +34,7 @@ test("main destructive cutover uses only semantic operator construction and faca
   );
   assert.match(
     source,
-    /const lease = await facade\.runEnter\(\);\s*if \(voice !== undefined && voiceConfig !== undefined\) \{\s*if \(voiceConfig\.voiceSessionId !== lease\.gameSessionId\) throw new Error\("voice_session_receipt_mismatch"\);\s*await voice\.bootstrapSession\(lease\.gameSessionId\);/,
+    /const lease = await facade\.runEnter\(\);\s*taskLease = lease;\s*if \(voice !== undefined && voiceConfig !== undefined\) \{\s*if \(voiceConfig\.voiceSessionId !== lease\.gameSessionId\) throw new Error\("voice_session_receipt_mismatch"\);\s*await voice\.bootstrapSession\(lease\.gameSessionId\);/,
   );
   assert.match(source, /lease\.activateCommittedIngress\(\);/);
   assert.doesNotMatch(source, /gamePresentation: Object\.freeze/);

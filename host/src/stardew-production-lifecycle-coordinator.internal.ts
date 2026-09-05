@@ -21,6 +21,7 @@ import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "
 import {
   createStardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.internal.js";
+import type { StardewPrivateBootstrapInternalComposition } from "./stardew-private-bootstrap-composer.core.js";
 import type { StardewOwnedPlayerHostPhaseAOwner } from "./stardew-private-bootstrap-composer.js";
 import {
   createStardewOwnedFarmhandGameSessionMaterializer,
@@ -123,7 +124,7 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   close(): Promise<void>;
 }>;
 
-type BootstrapComposition = ReturnType<typeof createStardewPrivateBootstrapComposition>;
+type BootstrapComposition = StardewPrivateBootstrapInternalComposition;
 type ActivationState = StardewPrivateActivationSnapshot["state"];
 type MaterializeFarmhandGameSession = StardewOwnedFarmhandGameSessionMaterializer["materialize"];
 

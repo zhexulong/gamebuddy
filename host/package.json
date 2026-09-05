@@ -22,11 +22,11 @@
     "@cortexkit/pi-magic-context": "file:../vendor/magic-context/packages/pi-plugin",
     "@earendil-works/pi-coding-agent": "0.84.4",
     "@gamebuddy/voice-protocol": "workspace:*",
-    "typebox": "1.1.38",
-    "yauzl": "3.4.0"
+    "typebox": "1.1.38"
   },
   "devDependencies": {
     "@gamebuddy/game-action-devkit": "workspace:*",
+    "yauzl": "3.4.0",
     "@types/node": "24.10.1",
     "ajv": "8.17.1",
     "fast-check": "4.9.0",

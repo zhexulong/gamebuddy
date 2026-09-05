@@ -9,7 +9,7 @@ const MAX_JSON_NODES = ST_CARD_DECODER_LIMITS_V1.jsonNodes;
 const MAX_PNG_CHUNKS = ST_CARD_DECODER_LIMITS_V1.pngChunks;
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
-export type StCardImportClassification =
+type StCardImportClassification =
   | "accepted_typed"
   | "preserved_opaque"
   | "dropped_unsupported"

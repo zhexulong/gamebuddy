@@ -108,7 +108,7 @@ test("service source keeps start/claim private and imports no HTTP/response surf
   // No raw store transition/coordinator ingress and no HTTP/response/transport import.
   assert.doesNotMatch(
     source,
-    /acceptMountedPlayerMessage|claimMountedAttempt|transitionMountedProviderStart|transitionMountedPresentation|startMounted|consumeMounted/,
+    /from ["'][^"']*(chat-thread-store|player-turn-acceptance\.internal|provider-attempt-claim\.internal|continuity-semantic-production-coordinator\.internal)["']/,
   );
   assert.doesNotMatch(source, /from ["'][^"']*(node:http|express|router|request|respons(e|es?)|fetch)[^"']*["']/);
   // The opaque browser-safe surface is exactly the frozen Task-2 contract.

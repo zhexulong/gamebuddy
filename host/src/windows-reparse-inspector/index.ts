@@ -42,7 +42,7 @@ export type WindowsPathSecurity = Readonly<WindowsPathObjectIdentity & {
 }>;
 
 /** Mints the build-only capability from the sole repository-relative helper pair. */
-export async function createBuildWindowsReparseInspector(): Promise<WindowsReparseInspectorCapability> {
+async function createBuildWindowsReparseInspector(): Promise<WindowsReparseInspectorCapability> {
   return await createFixedInspector(resolve(repositoryRoot, "host", "native", "windows-reparse-inspector", ".dist", rid));
 }
 

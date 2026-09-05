@@ -10,7 +10,5 @@ const policy = createStaticArtifactManifestPolicy({
   profileId: PROFILE_ID,
 }, import.meta.url);
 
-export const createBuildArtifactInspectionPolicy = policy.createBuildArtifactInspectionPolicy;
 export const createProductionArtifactManifest = policy.createProductionArtifactManifest;
 export const verifyProductionArtifactManifest = policy.verifyProductionArtifactManifest;
-export const __testOnly = policy.__testOnly;

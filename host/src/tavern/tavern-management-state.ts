@@ -17,7 +17,6 @@ import {
 import { type ChatThreadState, type ChatTurnLedger, createChatThreadStore } from "./chat-thread-store.js";
 import type { WorldInfoBindingManagementService } from "./world-info-binding/world-info-binding-management-service.js";
 
-const MAX_TRANSCRIPT_MESSAGES = 500;
 type TavernManagementBinding = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
@@ -160,7 +159,6 @@ async function project(
   state: ChatThreadState,
   worldInfoService?: WorldInfoBindingManagementService,
 ): Promise<TavernManagementState> {
-  if (state.messages.length > MAX_TRANSCRIPT_MESSAGES) throw unavailable();
   const projection = lease.browserProjection;
   const transcript = Object.freeze(state.messages.map((message, order) => projectMessage(lease, message, order)));
   const turn = projectTurn(lease, state.turnLedger);

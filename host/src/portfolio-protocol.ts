@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 
-export const PORTFOLIO_PROTOCOL_VERSION = 1;
+const PORTFOLIO_PROTOCOL_VERSION = 1;
 export const PORTFOLIO_INTEGRATION_ID = "stardew_portfolio";
 export const PORTFOLIO_TOPOLOGY = "single_player_native_companion";
 export const PORTFOLIO_MAX_MESSAGE_BYTES = 16 * 1024;
 
 /** Closed reason-code vocabulary for this versioned wire contract. */
-export const PORTFOLIO_REASON_CODES = [
+const PORTFOLIO_REASON_CODES = [
   "accepted",
   "observed",
   "fresh_observed",
@@ -116,7 +116,7 @@ export const PORTFOLIO_REASON_CODES = [
   "skip_event_completed",
   "portfolio_skip_event_not_armed",
 ] as const;
-export type PortfolioReasonCode = (typeof PORTFOLIO_REASON_CODES)[number];
+type PortfolioReasonCode = (typeof PORTFOLIO_REASON_CODES)[number];
 
 export type PortfolioScope = Readonly<{
   integrationId: typeof PORTFOLIO_INTEGRATION_ID;
@@ -159,7 +159,7 @@ export function bootstrapScope(identity: PortfolioBootstrapIdentity): PortfolioB
   };
 }
 
-export const PORTFOLIO_SLEEP_DAY_ACTION = "single_player_sleep_and_advance_day" as const;
+const PORTFOLIO_SLEEP_DAY_ACTION = "single_player_sleep_and_advance_day" as const;
 /** The only phases a Host may materialize for the bounded day lifecycle. */
 export const PORTFOLIO_SLEEP_DAY_PHASES = [
   "fresh_observed",
@@ -172,8 +172,8 @@ export const PORTFOLIO_SLEEP_DAY_PHASES = [
   "reopened",
   "terminal",
 ] as const;
-export type PortfolioSleepDayPhaseName = (typeof PORTFOLIO_SLEEP_DAY_PHASES)[number];
-export type PortfolioSleepDayTerminalState =
+type PortfolioSleepDayPhaseName = (typeof PORTFOLIO_SLEEP_DAY_PHASES)[number];
+type PortfolioSleepDayTerminalState =
   | "succeeded"
   | "blocked"
   | "failed"
@@ -183,7 +183,7 @@ export type PortfolioSleepDayTerminalState =
   | "uncertain";
 
 /** Opaque correlation identifiers are carried, but never interpreted, by the Host. */
-export type PortfolioTraceId = string;
+type PortfolioTraceId = string;
 
 export type PortfolioSleepDayRequest = Readonly<{
   action: typeof PORTFOLIO_SLEEP_DAY_ACTION;
@@ -244,7 +244,7 @@ export type PortfolioSleepDayReceipt = Readonly<{
   }>;
 }>;
 
-export type PortfolioSleepDayCancelRequest = Readonly<{
+type PortfolioSleepDayCancelRequest = Readonly<{
   action: typeof PORTFOLIO_SLEEP_DAY_ACTION;
   requestId: string;
   traceId: PortfolioTraceId;
@@ -253,8 +253,8 @@ export type PortfolioSleepDayCancelRequest = Readonly<{
 }>;
 
 export const PORTFOLIO_MINE_ELEVATOR_ACTION = "select_mine_elevator_floor" as const;
-export const PORTFOLIO_MINE_ELEVATOR_MINIMUM_CHECKPOINT = 5;
-export const PORTFOLIO_MINE_ELEVATOR_MAXIMUM_CHECKPOINT = 120;
+const PORTFOLIO_MINE_ELEVATOR_MINIMUM_CHECKPOINT = 5;
+const PORTFOLIO_MINE_ELEVATOR_MAXIMUM_CHECKPOINT = 120;
 export const PORTFOLIO_MINE_ELEVATOR_PHASES = [
   "fresh_observed",
   "accepted",
@@ -262,7 +262,7 @@ export const PORTFOLIO_MINE_ELEVATOR_PHASES = [
   "postcondition",
   "terminal",
 ] as const;
-export const PORTFOLIO_MINE_ELEVATOR_PHASE_REASONS: Readonly<
+const PORTFOLIO_MINE_ELEVATOR_PHASE_REASONS: Readonly<
   Record<PortfolioMineElevatorPhaseName, PortfolioReasonCode>
 > = {
   fresh_observed: "fresh_observed",
@@ -271,8 +271,8 @@ export const PORTFOLIO_MINE_ELEVATOR_PHASE_REASONS: Readonly<
   postcondition: "postcondition_observed",
   terminal: "mine_elevator_floor_selected",
 };
-export type PortfolioMineElevatorPhaseName = (typeof PORTFOLIO_MINE_ELEVATOR_PHASES)[number];
-export type PortfolioMineElevatorTerminalState =
+type PortfolioMineElevatorPhaseName = (typeof PORTFOLIO_MINE_ELEVATOR_PHASES)[number];
+type PortfolioMineElevatorTerminalState =
   | "succeeded"
   | "blocked"
   | "failed"
@@ -379,8 +379,8 @@ export const PORTFOLIO_SKIP_EVENT_PHASES = [
   "postcondition",
   "terminal",
 ] as const;
-export type PortfolioSkipEventPhaseName = (typeof PORTFOLIO_SKIP_EVENT_PHASES)[number];
-export type PortfolioSkipEventTerminalState = PortfolioMineElevatorTerminalState;
+type PortfolioSkipEventPhaseName = (typeof PORTFOLIO_SKIP_EVENT_PHASES)[number];
+type PortfolioSkipEventTerminalState = PortfolioMineElevatorTerminalState;
 export type PortfolioSkipEventRequest = Readonly<{
   action: typeof PORTFOLIO_SKIP_EVENT_ACTION;
   requestId: string;
@@ -849,7 +849,7 @@ export function validatePortfolioMineElevatorCancelRequest(
     : "invalid_portfolio_mine_elevator_cancel_request";
 }
 
-export function validatePortfolioMineElevatorPhase(value: unknown): string | null {
+function validatePortfolioMineElevatorPhase(value: unknown): string | null {
   return isRecord(value) &&
     hasExactKeys(value, ["requestId", "traceId", "executionId", "phase", "revision", "reasonCode"]) &&
     validId(value.requestId) &&
@@ -1075,7 +1075,7 @@ export function validatePortfolioMineElevatorReceipt(value: unknown): string | n
   return null;
 }
 
-export function validatePortfolioMineElevatorPhaseTrace(value: readonly PortfolioMineElevatorPhase[]): string | null {
+function validatePortfolioMineElevatorPhaseTrace(value: readonly PortfolioMineElevatorPhase[]): string | null {
   return value.length >= 2 &&
     value.some((phase) => validatePortfolioMineElevatorPhase(phase) !== null) === false &&
     value[0]?.phase === "fresh_observed" &&
@@ -1149,7 +1149,7 @@ export function validatePortfolioSleepDayCancelRequest(value: unknown): string |
     : "invalid_portfolio_sleep_day_cancel_request";
 }
 
-export function validatePortfolioSleepDayPhase(value: unknown): string | null {
+function validatePortfolioSleepDayPhase(value: unknown): string | null {
   return isRecord(value) &&
     hasExactKeys(value, ["requestId", "traceId", "executionId", "phase", "revision", "reasonCode"]) &&
     validId(value.requestId) &&
@@ -1589,7 +1589,7 @@ function isMonotonicSleepDayPhaseTrace(phases: readonly PortfolioSleepDayPhase[]
   return true;
 }
 
-export function validatePortfolioSleepDayPhaseTrace(value: readonly PortfolioSleepDayPhase[]): string | null {
+function validatePortfolioSleepDayPhaseTrace(value: readonly PortfolioSleepDayPhase[]): string | null {
   if (
     value.length < 2 ||
     value.some((phase) => validatePortfolioSleepDayPhase(phase) !== null) ||
@@ -1612,8 +1612,8 @@ export const PORTFOLIO_MINE_LADDER_PHASES = [
   "postcondition",
   "terminal",
 ] as const;
-export type PortfolioMineLadderPhaseName = (typeof PORTFOLIO_MINE_LADDER_PHASES)[number];
-export type PortfolioMineLadderTerminalState = PortfolioMineElevatorTerminalState;
+type PortfolioMineLadderPhaseName = (typeof PORTFOLIO_MINE_LADDER_PHASES)[number];
+type PortfolioMineLadderTerminalState = PortfolioMineElevatorTerminalState;
 export type PortfolioMineLadderRequest = Readonly<{
   action: typeof PORTFOLIO_MINE_LADDER_ACTION;
   requestId: string;
@@ -1731,7 +1731,7 @@ export function validatePortfolioMineLadderRequest(
     ? null
     : "invalid_portfolio_mine_ladder_request";
 }
-export function validatePortfolioMineLadderProbe(value: unknown, scope: PortfolioScope): string | null {
+function validatePortfolioMineLadderProbe(value: unknown, scope: PortfolioScope): string | null {
   return isRecord(value) &&
     hasExactKeys(value, [
       "requestId",
@@ -1861,7 +1861,7 @@ export function materializePortfolioMineLadderFreshFloor(
     throw new Error("portfolio_mine_ladder_fresh_floor_correlation_mismatch");
   return Object.freeze({ ...floor, scope: Object.freeze({ ...floor.scope }) });
 }
-export function validatePortfolioMineLadderPhase(v: unknown): string | null {
+function validatePortfolioMineLadderPhase(v: unknown): string | null {
   return isRecord(v) &&
     hasExactKeys(v, ["requestId", "traceId", "executionId", "phase", "revision", "reasonCode"]) &&
     validId(v.requestId) &&
@@ -2094,7 +2094,7 @@ export function materializePortfolioMineLadderReceipt(
     postcondition: Object.freeze({ ...x.postcondition }),
   });
 }
-export const PORTFOLIO_MINE_ENTRY_ACTION = "enter_mine" as const;
+const PORTFOLIO_MINE_ENTRY_ACTION = "enter_mine" as const;
 export const PORTFOLIO_MINE_ENTRY_PHASES = [
   "fresh_observed",
   "accepted",
@@ -2102,8 +2102,8 @@ export const PORTFOLIO_MINE_ENTRY_PHASES = [
   "postcondition",
   "terminal",
 ] as const;
-export type PortfolioMineEntryPhaseName = (typeof PORTFOLIO_MINE_ENTRY_PHASES)[number];
-export type PortfolioMineEntryTerminalState = PortfolioMineElevatorTerminalState;
+type PortfolioMineEntryPhaseName = (typeof PORTFOLIO_MINE_ENTRY_PHASES)[number];
+type PortfolioMineEntryTerminalState = PortfolioMineElevatorTerminalState;
 export type PortfolioMineEntryRequest = Readonly<{
   action: typeof PORTFOLIO_MINE_ENTRY_ACTION;
   requestId: string;
@@ -2220,7 +2220,7 @@ export function validatePortfolioMineEntryRequest(
     ? null
     : "invalid_portfolio_enter_mine_request";
 }
-export function validatePortfolioMineEntryProbe(value: unknown, scope: PortfolioScope): string | null {
+function validatePortfolioMineEntryProbe(value: unknown, scope: PortfolioScope): string | null {
   return isRecord(value) &&
     hasExactKeys(value, [
       "requestId",
@@ -2305,7 +2305,7 @@ export function validatePortfolioMineEntryCancelRequest(v: unknown, s: Portfolio
     ? null
     : "invalid_portfolio_enter_mine_cancel_request";
 }
-export function validatePortfolioMineEntryFreshFloor(v: unknown, s: PortfolioScope): string | null {
+function validatePortfolioMineEntryFreshFloor(v: unknown, s: PortfolioScope): string | null {
   return isRecord(v) &&
     hasExactKeys(v, [
       "requestId",
@@ -2348,7 +2348,7 @@ export function materializePortfolioMineEntryFreshFloor(
     throw new Error("portfolio_enter_mine_fresh_floor_correlation_mismatch");
   return Object.freeze({ ...floor, scope: Object.freeze({ ...floor.scope }) });
 }
-export function validatePortfolioMineEntryPhase(v: unknown): string | null {
+function validatePortfolioMineEntryPhase(v: unknown): string | null {
   return isRecord(v) &&
     hasExactKeys(v, ["requestId", "traceId", "executionId", "phase", "revision", "reasonCode"]) &&
     validId(v.requestId) &&
@@ -2411,7 +2411,7 @@ function isMonotonicMineEntryPhaseTrace(phases: readonly PortfolioMineEntryPhase
   }
   return true;
 }
-export function validatePortfolioMineEntryReceipt(v: unknown): string | null {
+function validatePortfolioMineEntryReceipt(v: unknown): string | null {
   if (
     !isRecord(v) ||
     !hasExactKeys(v, [
@@ -2633,7 +2633,7 @@ export function validatePortfolioSkipEventProbe(v: unknown, s: PortfolioScope): 
     (v.opaqueEventTarget === null || (validId(v.opaqueEventTarget) && v.opaqueEventTarget !== "none"))
     ? null : "invalid_portfolio_skip_event_probe";
 }
-export function validatePortfolioSkipEventPhase(v: unknown): string | null {
+function validatePortfolioSkipEventPhase(v: unknown): string | null {
   return isRecord(v) && hasExactKeys(v, ["requestId", "traceId", "executionId", "phase", "revision", "reasonCode"]) &&
     validId(v.requestId) && validId(v.traceId) && validId(v.executionId) &&
     typeof v.phase === "string" && (PORTFOLIO_SKIP_EVENT_PHASES as readonly string[]).includes(v.phase) &&

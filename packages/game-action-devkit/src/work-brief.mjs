@@ -426,7 +426,6 @@ export function compareWorkBriefDiff(briefOrInput, options) {
   });
 }
 
-export const checkWorkBriefDiff = compareWorkBriefDiff;
 
 function handoffBriefValue(brief) {
   try {
@@ -475,7 +474,6 @@ export function createIncompleteWorkBriefHandoff(briefOrInput, options = {}) {
   });
 }
 
-export const emitIncompleteWorkBriefHandoff = createIncompleteWorkBriefHandoff;
 
 function observerInput(brief, observer) {
   return Object.freeze({
@@ -549,7 +547,6 @@ export function checkWorkBrief(briefOrInput, options) {
   })();
 }
 
-export const runWorkBriefCheck = checkWorkBrief;
 
 export function assertWorkBriefStageAuthorized(brief, stage) {
   const validated = validateFrozenWorkBrief(brief);
@@ -557,5 +554,3 @@ export function assertWorkBriefStageAuthorized(brief, stage) {
   if (normalizedStage === "live" && !validated.liveAuthorized) fail("live_unauthorized");
   return Object.freeze({ gameId: validated.gameId, actionId: validated.actionId, stage: normalizedStage, liveAuthorized: validated.liveAuthorized });
 }
-
-export { BASE_COMMIT_PATTERN, EFFECTS, ID_PATTERN, STATUSES, STAGES };

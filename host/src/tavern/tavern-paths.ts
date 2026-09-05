@@ -27,7 +27,7 @@ export function resolveTavernPaths(paths: RuntimePaths, identity: CompanionIdent
     continuityId: identity.continuityId,
   });
 }
-export function tavernRootForPath(path: string): string {
+function tavernRootForPath(path: string): string {
   const resolved = resolve(path);
   const normalized = resolved.replaceAll("\\", "/");
   const match = /^(.*\/tavern\/v1)(?:\/|$)/iu.exec(normalized);

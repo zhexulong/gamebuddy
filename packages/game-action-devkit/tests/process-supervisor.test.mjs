@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   CLEANUP_TIMEOUT_MS,
   DEFAULT_SUITE_TIMEOUT_MS,
+  createWindowsProcessTreeKillerForTest,
   runBoundedChild,
   runOneShotControlChild,
 } from "../src/process-supervisor.mjs";
@@ -18,6 +19,34 @@ const childScript = (source) => ["--input-type=module", "-e", source];
 test("exports stable timeout defaults", () => {
   assert.equal(DEFAULT_SUITE_TIMEOUT_MS, 15 * 60_000);
   assert.equal(CLEANUP_TIMEOUT_MS, 5_000);
+});
+
+test("uses the exact Windows taskkill.exe boundary and fails closed for invalid results", async () => {
+  const calls = [];
+  const killer = new EventEmitter();
+  const kill = createWindowsProcessTreeKillerForTest((command, args, options) => {
+    calls.push({ command, args, options });
+    return killer;
+  })(1234, {});
+  killer.emit("close", 0);
+  await kill;
+  assert.deepEqual(calls, [{
+    command: "taskkill.exe",
+    args: ["/PID", "1234", "/T", "/F"],
+    options: { windowsHide: true, stdio: "ignore" },
+  }]);
+
+  for (const code of [128, 7]) {
+    const child = new EventEmitter();
+    const pending = createWindowsProcessTreeKillerForTest(() => child)(1234, {});
+    child.emit("close", code);
+    if (code === 128) await pending;
+    else await assert.rejects(pending, /test_supervisor_taskkill_failed:7/);
+  }
+  assert.throws(
+    () => createWindowsProcessTreeKillerForTest(() => assert.fail("must not spawn"))(0, {}),
+    /test_supervisor_process_id_invalid/,
+  );
 });
 
 test("runs a one-shot control child with one bounded JSON frame and separate stderr", async () => {

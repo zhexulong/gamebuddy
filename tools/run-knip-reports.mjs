@@ -122,6 +122,11 @@ function validFindingIdentity(identity) {
 }
 
 const reportNames = new Set(["workspace", "production"]);
+const toolBoundaryTarget = "packages/game-action-devkit/src/process-supervisor.mjs|binaries|taskkill.exe";
+const toolBoundaryScopes = Object.freeze([
+  Object.freeze({ report: "workspace", identity: toolBoundaryTarget }),
+  Object.freeze({ report: "production", identity: toolBoundaryTarget }),
+]);
 const ledgerRecordFields = new Set([
   "report",
   "identity",
@@ -132,48 +137,76 @@ const ledgerRecordFields = new Set([
   "validUntil",
   "status",
 ]);
+const toolBoundaryFields = new Set([
+  "status",
+  "scopes",
+  "owner",
+  "approval",
+  "obligation",
+  "risk",
+  "evidence",
+  "validUntil",
+]);
+
+function validExpiringDisposition(entry, current, fields) {
+  return (
+    plainObject(entry) &&
+    Object.keys(entry).length === fields.size &&
+    Object.keys(entry).every((key) => fields.has(key)) &&
+    typeof entry.owner === "string" && !!entry.owner.trim() &&
+    typeof entry.obligation === "string" && !!entry.obligation.trim() &&
+    typeof entry.risk === "string" && !!entry.risk.trim() &&
+    Array.isArray(entry.evidence) && entry.evidence.length > 0 && entry.evidence.every((item) => typeof item === "string" && !!item.trim()) &&
+    typeof entry.validUntil === "string" &&
+    /^(?:\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/.test(entry.validUntil) &&
+    (() => {
+      const expiry = new Date(entry.validUntil);
+      return !Number.isNaN(expiry.valueOf()) &&
+        (entry.validUntil.length === 10 ? expiry.toISOString().slice(0, 10) === entry.validUntil : expiry.toISOString() === entry.validUntil) &&
+        expiry > current;
+    })()
+  );
+}
+
+function validToolBoundaryDisposition(value, current) {
+  if (
+    !validExpiringDisposition(value, current, toolBoundaryFields) ||
+    typeof value.approval !== "string" || !value.approval.trim() ||
+    !["approved_exact_tool_boundary", "resolved"].includes(value.status) ||
+    !Array.isArray(value.scopes) || value.scopes.length !== toolBoundaryScopes.length
+  )
+    return false;
+  return value.scopes.every(
+    (scope, index) =>
+      plainObject(scope) &&
+      Object.keys(scope).length === 2 &&
+      scope.report === toolBoundaryScopes[index].report &&
+      scope.identity === toolBoundaryScopes[index].identity,
+  );
+}
+
 function validLedger(ledger, now = new Date()) {
   if (
     !plainObject(ledger) ||
-    ledger.schemaVersion !== 1 ||
+    ledger.schemaVersion !== 2 ||
     !Array.isArray(ledger.findings) ||
-    !Object.keys(ledger).every((key) => key === "schemaVersion" || key === "findings")
+    !Object.keys(ledger).every((key) => key === "schemaVersion" || key === "findings" || key === "toolBoundaryDisposition")
   )
     return false;
   const current = now instanceof Date && !Number.isNaN(now.valueOf()) ? now : new Date(0);
+  if (ledger.toolBoundaryDisposition !== undefined && !validToolBoundaryDisposition(ledger.toolBoundaryDisposition, current)) return false;
   const identities = new Set();
   for (const entry of ledger.findings) {
     if (
-      !plainObject(entry) ||
-      !Object.keys(entry).every((key) => ledgerRecordFields.has(key)) ||
-      Object.keys(entry).length !== ledgerRecordFields.size ||
+      !validExpiringDisposition(entry, current, ledgerRecordFields) ||
       !reportNames.has(entry.report) ||
       !validFindingIdentity(entry.identity) ||
-      typeof entry.owner !== "string" ||
-      !entry.owner.trim() ||
-      typeof entry.obligation !== "string" ||
-      !entry.obligation.trim() ||
-      typeof entry.risk !== "string" ||
-      !entry.risk.trim() ||
-      !Array.isArray(entry.evidence) ||
-      entry.evidence.length === 0 ||
-      !entry.evidence.every((item) => typeof item === "string" && item.trim()) ||
-      typeof entry.validUntil !== "string" ||
-      !/^(?:\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/.test(entry.validUntil) ||
       !["unresolved_blocking", "resolved"].includes(entry.status)
     )
       return false;
-    const expiry = new Date(entry.validUntil);
     const recordIdentity = `${entry.report}\u0000${entry.identity}`;
-    if (
-      Number.isNaN(expiry.valueOf()) ||
-      (entry.validUntil.length === 10
-        ? expiry.toISOString().slice(0, 10) !== entry.validUntil
-        : expiry.toISOString() !== entry.validUntil) ||
-      expiry <= current ||
-      identities.has(recordIdentity)
-    )
-      return false;
+    if (identities.has(recordIdentity)) return false;
+    if (toolBoundaryScopes.some((scope) => scope.report === entry.report && scope.identity === entry.identity)) return false;
     identities.add(recordIdentity);
   }
   return true;
@@ -185,8 +218,50 @@ export function validateFindingLedger(report, actual, ledger, now = new Date()) 
   const known = new Map(records.map((entry) => [entry.identity, entry.status]));
   const actualIdentities = actual.map(findingIdentity);
   if (new Set(actualIdentities).size !== actualIdentities.length) return false;
-  for (const identity of actualIdentities) if (!known.has(identity) || known.get(identity) === "resolved") return false;
+  for (const identity of actualIdentities) {
+    const approvedBoundary = ledger.toolBoundaryDisposition?.status === "approved_exact_tool_boundary" &&
+      toolBoundaryScopes.some((scope) => scope.report === report && scope.identity === identity);
+    if (!approvedBoundary && (!known.has(identity) || known.get(identity) === "resolved")) return false;
+  }
   return records.every((entry) => entry.status !== "unresolved_blocking" || actualIdentities.includes(entry.identity));
+}
+
+export function evaluateFindingLedger(actualByReport, ledger, now = new Date()) {
+  if (!validLedger(ledger, now)) return { valid: false, errors: ["invalid_ledger"] };
+  const actual = new Map();
+  for (const report of reportNames) {
+    const findings = actualByReport[report];
+    if (!Array.isArray(findings)) return { valid: false, errors: ["invalid_report_scope"] };
+    const identities = findings.map(findingIdentity);
+    if (new Set(identities).size !== identities.length) return { valid: false, errors: ["duplicate_actual_identity"] };
+    actual.set(report, identities);
+  }
+  const boundary = ledger.toolBoundaryDisposition;
+  for (const scope of toolBoundaryScopes) {
+    const count = actual.get(scope.report).filter((identity) => identity === scope.identity).length;
+    if (boundary?.status === "approved_exact_tool_boundary" && count !== 1)
+      return { valid: false, errors: ["approved_tool_boundary_unseen_or_duplicate"] };
+    if (boundary?.status === "resolved" && count !== 0) return { valid: false, errors: ["resolved_tool_boundary_current"] };
+    if (boundary === undefined && count !== 0) return { valid: false, errors: ["unapproved_tool_boundary_current"] };
+  }
+  let unresolvedBlockingCount = 0;
+  for (const report of reportNames) {
+    const records = ledger.findings.filter((entry) => entry.report === report);
+    const known = new Map(records.map((entry) => [entry.identity, entry.status]));
+    for (const identity of actual.get(report)) {
+      if (identity === toolBoundaryTarget && boundary?.status === "approved_exact_tool_boundary") continue;
+      if (!known.has(identity) || known.get(identity) === "resolved") return { valid: false, errors: ["unknown_or_resolved_current"] };
+      unresolvedBlockingCount += 1;
+    }
+    if (records.some((entry) => entry.status === "unresolved_blocking" && !actual.get(report).includes(entry.identity)))
+      return { valid: false, errors: ["unseen_unresolved_blocking"] };
+  }
+  return {
+    valid: true,
+    errors: [],
+    unresolvedBlockingCount,
+    admittedExactToolBoundaryCount: boundary?.status === "approved_exact_tool_boundary" ? toolBoundaryScopes.length : 0,
+  };
 }
 
 export function execute(command, args, cwd) {
@@ -408,6 +483,9 @@ export async function runReports(output, { allowedRoot, ledgerPath, ledger, cwd 
       )
     )
       error = "Knip reported a parser or configuration error";
+    const findingCount = !error ? reportFindings(report).length : 0;
+    if (!error && ((result.code === 0 && findingCount !== 0) || (result.code === 1 && findingCount === 0)))
+      error = "Knip exit code does not match report findings";
     const finding = result.code === 1 && !error;
     const successful = (result.code === 0 || finding) && !error;
     if (successful) await promote(destination, name, report);
@@ -415,12 +493,14 @@ export async function runReports(output, { allowedRoot, ledgerPath, ledger, cwd 
   }
   const failed = results.some((result) => result.error || ![0, 1].includes(result.code));
   if (failed) return { output: destination, results, exitCode: 2 };
-  for (const result of results) {
-    const report = result.name === "workspace.json" ? "workspace" : "production";
-    if (!validateFindingLedger(report, reportFindings(result.report), findingLedger))
-      return { output: destination, results, exitCode: 2 };
-  }
-  return { output: destination, results, exitCode: results.some((result) => result.finding) ? 1 : 0 };
+  const evaluation = evaluateFindingLedger(
+    Object.fromEntries(
+      results.map((result) => [result.name === "workspace.json" ? "workspace" : "production", reportFindings(result.report)]),
+    ),
+    findingLedger,
+  );
+  if (!evaluation.valid) return { output: destination, results, evaluation, exitCode: 2 };
+  return { output: destination, results, evaluation, exitCode: evaluation.unresolvedBlockingCount > 0 ? 1 : 0 };
 }
 
 if (import.meta.main) {
@@ -429,6 +509,24 @@ if (import.meta.main) {
     const result = await runReports(output, { allowedRoot, ledgerPath, cwd: root });
     for (const report of result.results)
       console.error(`${report.name}: exit ${report.code ?? "spawn-failure"}${report.finding ? " (findings)" : ""}`);
+    if (result.evaluation)
+      console.error(JSON.stringify({
+        kind: "knip-admissibility-summary",
+        schemaVersion: 1,
+        runnerExitCode: result.exitCode,
+        rawReports: Object.fromEntries(result.results.map((report) => [
+          report.name.replace(".json", ""),
+          {
+            knipExitCode: report.code,
+            rawFindingCount: report.report ? reportFindings(report.report).length : null,
+            admittedExactToolBoundaryCount: report.report
+              ? reportFindings(report.report).filter((finding) => findingIdentity(finding) === toolBoundaryTarget).length
+              : 0,
+          },
+        ])),
+        unresolvedBlockingCount: result.evaluation.unresolvedBlockingCount,
+        admittedExactToolBoundaryCount: result.evaluation.admittedExactToolBoundaryCount,
+      }));
     process.exitCode = result.exitCode;
   } catch (error) {
     console.error(`Knip report runner failed: ${error.message}`);

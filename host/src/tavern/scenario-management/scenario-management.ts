@@ -3,19 +3,19 @@ import { join, resolve } from "node:path";
 import type { TavernArtifactStore } from "../artifact-store.js";
 import { type Scenario, validateTavernArtifact } from "../types.js";
 
-export type PlayerScenarioProjection = Readonly<{
+type PlayerScenarioProjection = Readonly<{
   revision: number;
   name: string;
   description: string;
   preview: string;
 }>;
 
-export type CreatePlayerScenarioRequest = Readonly<{
+type CreatePlayerScenarioRequest = Readonly<{
   name: string;
   description: string;
 }>;
 
-export type UpdatePlayerScenarioRequest = CreatePlayerScenarioRequest &
+type UpdatePlayerScenarioRequest = CreatePlayerScenarioRequest &
   Readonly<{
     expectedRevision: number;
   }>;

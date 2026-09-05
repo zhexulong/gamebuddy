@@ -20,7 +20,7 @@ export type IntegrationWorldScope = Readonly<{
   worldId: string;
 }>;
 
-export type IntegrationActionLifecycle =
+type IntegrationActionLifecycle =
   "published" | "experimental" | "diagnostic" | "planned";
 
 /** The common deny-by-exception policy shape. Each adapter owns its parser. */
@@ -88,7 +88,7 @@ export type IntegrationActionRegistration = Readonly<{
   kind?: "execution" | "read_only";
 }>;
 
-export type IntegrationVisibleAction = IntegrationActionAdapter &
+type IntegrationVisibleAction = IntegrationActionAdapter &
   IntegrationActionRegistration;
 
 export type IntegrationReceiptEvidence = Readonly<{
@@ -119,7 +119,7 @@ export type IntegrationToolContext = Readonly<{
   policy?: IntegrationActionPolicy;
 }>;
 
-export type IntegrationToolSet = Readonly<{
+type IntegrationToolSet = Readonly<{
   observation: readonly ToolDefinition[];
   actions: readonly ToolDefinition[];
   knowledge: readonly ToolDefinition[];
@@ -130,7 +130,7 @@ export type IntegrationModuleConformance = Readonly<{
   actionCatalogRevision: string;
 }>;
 
-export type IntegrationKnowledgeMetadata = Readonly<{
+type IntegrationKnowledgeMetadata = Readonly<{
   mounted: boolean;
   gameVersion: string | null;
   bundleVersion: number | null;

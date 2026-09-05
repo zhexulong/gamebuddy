@@ -3,7 +3,7 @@ import { Compile, type Validator } from "typebox/compile";
 import { Format } from "typebox/format";
 
 export const GAME_BROWSER_API_V1 = "game_browser_api/v1" as const;
-export const GAME_BROWSER_API_VERSION = 1 as const;
+const GAME_BROWSER_API_VERSION = 1 as const;
 
 // ─── Shared primitives (reuse Tavern's base64url format, registered by tavern/browser-contract) ───
 
@@ -149,30 +149,30 @@ const CompatibilityMessage = Type.Union([Type.String({ minLength: 1, maxLength: 
 const MissingItemLabel = Type.String({ minLength: 1, maxLength: 256 });
 const GameTitleLabel = Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]);
 
-export const GamePrerequisiteStateV1Schema = strictObject({
+const GamePrerequisiteStateV1Schema = strictObject({
   status: PrerequisiteStatus,
   detectedGame: DetectedGameLabel,
   missingItems: Type.Array(MissingItemLabel, { maxItems: 50 }),
 });
 
-export const GameInstanceV1Schema = strictObject({
+const GameInstanceV1Schema = strictObject({
   status: InstanceStatus,
   gameTitle: GameTitleLabel,
   /** Redacted launch-ready generation: 0 until the coordinator owns/stages the instance. */
   generation: NonNegativeGeneration,
 });
 
-export const GameCompatibilityV1Schema = strictObject({
+const GameCompatibilityV1Schema = strictObject({
   status: CompatibilityStatus,
   message: CompatibilityMessage,
 });
 
-export const GameAttachmentStateV1Schema = strictObject({
+const GameAttachmentStateV1Schema = strictObject({
   status: AttachmentStatus,
   generation: NonNegativeGeneration,
 });
 
-export const GameCapabilitySummaryV1Schema = strictObject({
+const GameCapabilitySummaryV1Schema = strictObject({
   available: Type.Boolean(),
   count: Type.Integer({ minimum: 0, maximum: 512 }),
 });
@@ -202,19 +202,19 @@ export const GameBrowserStateV1Schema = strictObject({
 
 // ─── Read commands ──────────────────────────────────────────────────────────
 
-export const GamePrerequisitesReadCommandV1Schema = strictObject({
+const GamePrerequisitesReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
-export const GameInstancesReadCommandV1Schema = strictObject({
+const GameInstancesReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
-export const GameStateReadCommandV1Schema = strictObject({
+const GameStateReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
-export const GameDiagnosticsReadCommandV1Schema = strictObject({
+const GameDiagnosticsReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
@@ -279,7 +279,7 @@ export const StardewCabinConfirmResultV1Schema = strictObject({
 
 // ─── Problem schema ─────────────────────────────────────────────────────────
 
-export const GameProblemV1Schema = strictObject({
+const GameProblemV1Schema = strictObject({
   type: Type.String({ minLength: 1, maxLength: 256 }),
   title: Type.String({ minLength: 1, maxLength: 256 }),
   status: Type.Integer({ minimum: 400, maximum: 599 }),
@@ -327,9 +327,9 @@ const GameReleaseTier = Type.Union([Type.Literal("game_preview")]);
 const contractDeclaredOperationIds = new Set<string>(GAME_BROWSER_OPERATION_IDS_V1);
 const contractDeclaredNavigationItemIds = new Set<string>(["game"]);
 
-export type GameBrowserOperationIdV1 = (typeof GAME_BROWSER_OPERATION_IDS_V1)[number];
-export type GameBrowserNavigationItemIdV1 = "game";
-export type GameReleaseTierV1 = "game_preview";
+type GameBrowserOperationIdV1 = (typeof GAME_BROWSER_OPERATION_IDS_V1)[number];
+type GameBrowserNavigationItemIdV1 = "game";
+type GameReleaseTierV1 = "game_preview";
 
 export type ComposedGameProfile = Readonly<{
   readonly profileId: string;
@@ -451,22 +451,22 @@ export const GameBrowserValidatorsV1: Readonly<Record<keyof typeof GameBrowserCo
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type GameBrowserStateV1 = Static<typeof GameBrowserStateV1Schema>;
-export type GamePrerequisiteStateV1 = Static<typeof GamePrerequisiteStateV1Schema>;
-export type GameInstanceV1 = Static<typeof GameInstanceV1Schema>;
-export type GameCompatibilityV1 = Static<typeof GameCompatibilityV1Schema>;
-export type GameAttachmentStateV1 = Static<typeof GameAttachmentStateV1Schema>;
-export type GameCapabilitySummaryV1 = Static<typeof GameCapabilitySummaryV1Schema>;
-export type GamePrerequisitesReadCommandV1 = Static<typeof GamePrerequisitesReadCommandV1Schema>;
+type GamePrerequisiteStateV1 = Static<typeof GamePrerequisiteStateV1Schema>;
+type GameInstanceV1 = Static<typeof GameInstanceV1Schema>;
+type GameCompatibilityV1 = Static<typeof GameCompatibilityV1Schema>;
+type GameAttachmentStateV1 = Static<typeof GameAttachmentStateV1Schema>;
+type GameCapabilitySummaryV1 = Static<typeof GameCapabilitySummaryV1Schema>;
+type GamePrerequisitesReadCommandV1 = Static<typeof GamePrerequisitesReadCommandV1Schema>;
 export type GamePrerequisitesSetupCommandV1 = Static<typeof GamePrerequisitesSetupCommandV1Schema>;
-export type GameInstancesReadCommandV1 = Static<typeof GameInstancesReadCommandV1Schema>;
-export type GameStateReadCommandV1 = Static<typeof GameStateReadCommandV1Schema>;
+type GameInstancesReadCommandV1 = Static<typeof GameInstancesReadCommandV1Schema>;
+type GameStateReadCommandV1 = Static<typeof GameStateReadCommandV1Schema>;
 export type GameLaunchCommandV1 = Static<typeof GameLaunchCommandV1Schema>;
-export type GameAttachCommandV1 = Static<typeof GameAttachCommandV1Schema>;
+type GameAttachCommandV1 = Static<typeof GameAttachCommandV1Schema>;
 export type GameStopCommandV1 = Static<typeof GameStopCommandV1Schema>;
-export type GameReconnectCommandV1 = Static<typeof GameReconnectCommandV1Schema>;
+type GameReconnectCommandV1 = Static<typeof GameReconnectCommandV1Schema>;
 export type GameDisconnectCommandV1 = Static<typeof GameDisconnectCommandV1Schema>;
-export type GameDiagnosticsReadCommandV1 = Static<typeof GameDiagnosticsReadCommandV1Schema>;
-export type GameProblemV1 = Static<typeof GameProblemV1Schema>;
+type GameDiagnosticsReadCommandV1 = Static<typeof GameDiagnosticsReadCommandV1Schema>;
+type GameProblemV1 = Static<typeof GameProblemV1Schema>;
 export type StardewCabinChoicesV1 = Static<typeof StardewCabinChoicesV1Schema>;
 export type StardewCabinConfirmCommandV1 = Static<typeof StardewCabinConfirmCommandV1Schema>;
 export type StardewCabinConfirmResultV1 = Static<typeof StardewCabinConfirmResultV1Schema>;

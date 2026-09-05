@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { type AsrProvider, REQUIRED_PCM_FORMAT } from "./gateway.js";
 
-export const SENSEVOICE_RUNTIME_ID = "funasr-llamacpp";
+const SENSEVOICE_RUNTIME_ID = "funasr-llamacpp";
 // The source runtime's binary is currently `llama-funasr-cli`: it requires a
 // SenseVoice audio encoder plus a llama decoder and therefore is not a
 // one-file SenseVoice executable.
@@ -180,7 +180,7 @@ function pcm16ToWav(pcm16: Uint8Array): Uint8Array {
   return Uint8Array.from(Buffer.concat([header, Buffer.from(pcm16)]));
 }
 
-export class SenseVoiceRuntimeError extends Error {
+class SenseVoiceRuntimeError extends Error {
   public constructor(stderr: string) {
     super(`sensevoice_runtime_failed:${sanitizeRuntimeFailure(stderr)}`);
   }

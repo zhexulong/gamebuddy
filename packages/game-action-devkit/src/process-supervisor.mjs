@@ -7,6 +7,8 @@ const MAX_CAPTURE_BYTES = 64 * 1024;
 const MAX_CONTROL_CHILD_LINE_BYTES = 32 * 1024;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const VALID_TERMINATION_POLICIES = new Set(["immediate", "term-then-kill"]);
+const WINDOWS_TASKKILL_COMMAND = "taskkill.exe";
+const WINDOWS_TASKKILL_OPTIONS = Object.freeze({ windowsHide: true, stdio: "ignore" });
 
 function validationError(code) {
   return new Error(code);
@@ -77,21 +79,28 @@ function validatePid(pid) {
   }
 }
 
+function killWindowsProcessTree(pid, { signal }, spawnProcess = spawn) {
+  validatePid(pid);
+  if (typeof spawnProcess !== "function") throw validationError("invalid_test_supervisor_kill_tree_factory");
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return resolve();
+    const killer = spawnProcess(WINDOWS_TASKKILL_COMMAND, ["/PID", String(pid), "/T", "/F"], WINDOWS_TASKKILL_OPTIONS);
+    killer.once("error", reject);
+    killer.once("close", (code) => {
+      if (code === 0 || code === 128) resolve();
+      else reject(new Error(`test_supervisor_taskkill_failed:${code ?? "signal"}`));
+    });
+  });
+}
+
+export function createWindowsProcessTreeKillerForTest(spawnProcess) {
+  return (pid, options) => killWindowsProcessTree(pid, options, spawnProcess);
+}
+
 function defaultKillTree(pid, { terminationPolicy, graceMs, signal }) {
   validatePid(pid);
   if (process.platform === "win32") {
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) return resolve();
-      const killer = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-      killer.once("error", reject);
-      killer.once("close", (code) => {
-        if (code === 0 || code === 128) resolve();
-        else reject(new Error(`test_supervisor_taskkill_failed:${code ?? "signal"}`));
-      });
-    });
+    return killWindowsProcessTree(pid, { signal });
   }
 
   const group = -pid;

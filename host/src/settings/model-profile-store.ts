@@ -2,9 +2,9 @@ import { atomicWriteFile, withPathLock } from "../path-lock.js";
 import type { CompanionModelConfig } from "../runtime.js";
 import { readStrictJsonFile } from "../strict-json-reader.js";
 
-export const MODEL_PROFILE_MODEL_ID = "deepseek-v4-flash" as const;
+const MODEL_PROFILE_MODEL_ID = "deepseek-v4-flash" as const;
 export type ModelProfileSurface = "chat" | "game";
-export type ModelThinkingLevel = "high";
+type ModelThinkingLevel = "high";
 export type ModelProfile = Readonly<{
   surface: ModelProfileSurface;
   revision: number;

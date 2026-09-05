@@ -17,7 +17,7 @@ import {
 // ─── API identity ───────────────────────────────────────────────────────────
 
 export const COMPOSED_REFERENCE_GAME_BROWSER_API_V1 = "composed_reference_game_browser_api/v1" as const;
-export const COMPOSED_REFERENCE_GAME_BROWSER_API_VERSION = 1 as const;
+const COMPOSED_REFERENCE_GAME_BROWSER_API_VERSION = 1 as const;
 export const COMPOSED_REFERENCE_PROFILE_ID = "gamebuddy.composed.reference-game" as const;
 
 // ─── Reference identity constants ───────────────────────────────────────────

@@ -944,3 +944,177 @@ test("local bridge rejects an inbound navigation_read_request", async () => {
     assert.equal((await disconnected).reasonCode, "unexpected_inbound_request");
   });
 });
+
+
+async function withBodyProgramBridge(
+  name: string,
+  respond: (socket: Socket, request: Extract<BridgeMessage, { type: "program_events" }>) => void,
+  run: (client: LocalStardewBridgeClient) => Promise<void>,
+): Promise<void> {
+  const pipeName = `gamebuddy_body_program_${name}_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < length + 4) return;
+        const request = JSON.parse(buffer.subarray(4, length + 4).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(length + 4);
+        if (request.type === "hello") {
+          socket.write(frame({
+            ...request,
+            messageId: `body_program_hello_${name}`,
+            type: "hello_ack",
+            payload: {
+              sessionId: `body_program_session_${name}`,
+              capabilities: [],
+              catalogRevision: 1,
+              enabledActionIds: [],
+              presentationLocale: "en-US",
+              registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+              runtimeRole: "native_local_fixture",
+              launchGeneration: null,
+            },
+          }));
+        } else if (request.type === "program_events") {
+          respond(socket, request);
+        }
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
+  try {
+    await run(await LocalStardewBridgeClient.connect(scope, pipeName, token));
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+}
+
+test("body program closes the named pipe for a structurally valid wrong correlated response", async () => {
+  await withBodyProgramBridge("wrong_correlated_response", (socket, request) => {
+    socket.write(frame({
+      ...request,
+      messageId: "body_program_wrong_type",
+      type: "program_status_result",
+      payload: { programId: request.payload.programId, status: "accepted", catalogRevision: 1 },
+    }));
+  }, async (client) => {
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    await assert.rejects(
+      client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
+      /body_program_protocol_invalid/,
+    );
+    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+    assert.equal(client.state.connected, false);
+  });
+});
+
+test("body program closes the named pipe for a wrong correlated programId", async () => {
+  await withBodyProgramBridge("wrong_program_id", (socket, request) => {
+    socket.write(frame({
+      ...request,
+      messageId: "body_program_wrong_program",
+      type: "program_events_result",
+      payload: { programId: "foreign_program", nextCursor: 1, events: [{ cursor: 1, kind: "accepted", catalogRevision: 1 }] },
+    }));
+  }, async (client) => {
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    await assert.rejects(
+      client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
+      /body_program_protocol_invalid/,
+    );
+    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+    assert.equal(client.state.connected, false);
+  });
+});
+
+test("body program closes the named pipe when events exceed the requested page size", async () => {
+  await withBodyProgramBridge("page_size", (socket, request) => {
+    socket.write(frame({
+      ...request,
+      messageId: "body_program_excess_events",
+      type: "program_events_result",
+      payload: {
+        programId: request.payload.programId,
+        nextCursor: 2,
+        events: [
+          { cursor: 1, kind: "accepted", catalogRevision: 1 },
+          { cursor: 2, kind: "running", catalogRevision: 1 },
+        ],
+      },
+    }));
+  }, async (client) => {
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    await assert.rejects(
+      client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
+      /body_program_protocol_invalid/,
+    );
+    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+    assert.equal(client.state.connected, false);
+  });
+});
+
+test("body program requests forward exact authenticated messages and retain modeled rejections", async () => {
+  const pipeName = `gamebuddy_body_program_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const requests: BridgeMessage[] = [];
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < length + 4) return;
+        const request = JSON.parse(buffer.subarray(4, length + 4).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(length + 4);
+        requests.push(request);
+        if (request.type === "hello") {
+          socket.write(frame({ ...request, messageId: "body_program_hello", type: "hello_ack", payload: {
+            sessionId: "body_program_session", capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US",
+            registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+            runtimeRole: "native_local_fixture", launchGeneration: null,
+          } }));
+          continue;
+        }
+        const bodyProgramRequest = request as Readonly<{
+          type: "program_verify" | "program_submit" | "program_status" | "program_events";
+          payload: Readonly<{ programId: string; cursor?: number }>;
+        }>;
+        const payload = bodyProgramRequest.type === "program_status"
+          ? { programId: bodyProgramRequest.payload.programId, status: "accepted", catalogRevision: 1 }
+          : bodyProgramRequest.type === "program_events"
+            ? { programId: bodyProgramRequest.payload.programId, nextCursor: (bodyProgramRequest.payload.cursor ?? 0) + 1, events: [{ cursor: (bodyProgramRequest.payload.cursor ?? 0) + 1, kind: "accepted", catalogRevision: 1 }] }
+            : { programId: bodyProgramRequest.payload.programId, status: "rejected", diagnostics: ["program_id_conflict"] };
+        const type = request.type === "program_verify" ? "program_verify_result" : request.type === "program_submit" ? "program_submit_result" : request.type === "program_status" ? "program_status_result" : "program_events_result";
+        socket.write(frame({ ...request, messageId: `body_program_${type}`, type, payload }));
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const candidate = { programId: "program_01", nodes: [{ nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: Date.now() + 10_000 }] } as const;
+    assert.equal((await client.programVerify(candidate)).status, "rejected");
+    assert.equal((await client.programSubmit(candidate)).status, "rejected");
+    assert.equal((await client.programStatus({ programId: "program_01" })).catalogRevision, 1);
+    assert.equal((await client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 })).nextCursor, 1);
+    assert.deepEqual(requests.slice(1).map((request) => request.type), ["program_verify", "program_submit", "program_status", "program_events"]);
+    for (const request of requests.slice(1)) assert.deepEqual(request.scope, scope);
+    client.close();
+    await assert.rejects(client.programStatus({ programId: "program_01" }), /bridge_not_authenticated/);
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
