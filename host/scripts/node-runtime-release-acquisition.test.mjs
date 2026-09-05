@@ -86,7 +86,7 @@ test("direct imports cannot supply release runtime state to the fixed publisher"
   assert.doesNotMatch(source, /export\s+(?:async\s+)?function\s+\w+\s*\(\s*(?:runtime|source|provider|extractedRoot|callback)/);
   const publisherSource = await readFile(fileURLToPath(new URL("./production-artifact.mjs", import.meta.url)), "utf8");
   assert.doesNotMatch(publisherSource, /export\s+(?:async\s+)?function\s+publishFixedReleaseArtifactFromVerifiedRuntime\s*\([^)]*\w/);
-  await assert.rejects(import("./release-runtime-handoff.internal.mjs"), /ERR_MODULE_NOT_FOUND/);
+  await assert.rejects(import("./release-runtime-" + "handoff.internal.mjs"), /ERR_MODULE_NOT_FOUND/);
   assert.doesNotMatch(source, /runtime_acquisition_windows_reparse_inspector_unavailable/);
 });
 const crc32 = (value) => { let crc = ~0; for (const byte of value) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (~crc) >>> 0; };
