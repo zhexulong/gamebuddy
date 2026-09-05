@@ -8,7 +8,11 @@ const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultTestRoot = resolve(hostRoot, "dist-test");
 const defaultScriptTestRoot = resolve(hostRoot, "scripts");
 const DEFAULT_TEST_BATCH_SIZE = 10;
-const DEFAULT_TEST_SUITE_TIMEOUT_MS = 15 * 60_000;
+// Windows release CI runs each compiled file in an isolated Node coordinator.
+// The whole suite remains bounded, but 15 minutes cannot accommodate its
+// measured serialized Windows baseline and can shrink a final child below its
+// own startup/cleanup minimum. Keep one shared 25-minute deadline.
+const DEFAULT_TEST_SUITE_TIMEOUT_MS = 25 * 60_000;
 
 function configuredBatchSize(value, defaultValue = DEFAULT_TEST_BATCH_SIZE) {
   if (value === undefined) return defaultValue;

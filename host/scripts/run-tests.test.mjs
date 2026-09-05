@@ -82,6 +82,18 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
   assert.deepEqual(chunkTestFiles(paths, 3), [["a.test.js", "b.test.js", "c.test.js"], ["d.test.js", "e.test.js"]]);
 });
 
+test("uses a bounded 25-minute shared deadline when no suite timeout is supplied", async () => {
+  const calls = [];
+  await runTestBatches(["a.test.js"], {
+    suite: "fixture",
+    now: () => 0,
+    run: async (batch, options) => {
+      calls.push({ batch, timeoutMs: options.timeoutMs });
+    },
+  });
+  assert.deepEqual(calls, [{ batch: ["a.test.js"], timeoutMs: 25 * 60_000 }]);
+});
+
 test("uses only a positive decimal compiled batch size override", async () => {
   await assert.rejects(runCompiledTests({ batchSize: 0 }), /invalid_test_batch_size/);
   await assert.rejects(runCompiledTests({ batchSize: 1.5 }), /invalid_test_batch_size/);
