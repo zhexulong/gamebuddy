@@ -87,6 +87,13 @@ function validItem(value, fields) {
 function validIssueEntries(entries, fields) {
   return Array.isArray(entries) && entries.every((entry) => validItem(entry, fields));
 }
+function validNestedIssueEntries(entries, fields) {
+  return (
+    Array.isArray(entries) &&
+    entries.length > 0 &&
+    entries.every((entry) => validItem(entry, fields) && !entry.name.includes("|"))
+  );
+}
 export function validReport(value) {
   if (!plainObject(value) || !Array.isArray(value.issues) || !Object.keys(value).every((key) => key === "issues"))
     return false;
@@ -100,7 +107,7 @@ export function validReport(value) {
         const fields = issueFields.get(key);
         if (!fields) return false;
         if (key === "cycles" || key === "duplicates")
-          return Array.isArray(entries) && entries.every((group) => validIssueEntries(group, fields));
+          return Array.isArray(entries) && entries.every((group) => validNestedIssueEntries(group, fields));
         return validIssueEntries(entries, fields);
       }),
   );
@@ -110,7 +117,21 @@ function findingIdentity({ file, category, name }) {
   return `${file}|${category}|${name}`;
 }
 
-const ledgerRecordFields = new Set(["identity", "owner", "obligation", "risk", "evidence", "validUntil", "status"]);
+function validFindingIdentity(identity) {
+  return typeof identity === "string" && /^[^|]+\|[^|]+\|[^|]+$/.test(identity);
+}
+
+const reportNames = new Set(["workspace", "production"]);
+const ledgerRecordFields = new Set([
+  "report",
+  "identity",
+  "owner",
+  "obligation",
+  "risk",
+  "evidence",
+  "validUntil",
+  "status",
+]);
 function validLedger(ledger, now = new Date()) {
   if (
     !plainObject(ledger) ||
@@ -126,8 +147,8 @@ function validLedger(ledger, now = new Date()) {
       !plainObject(entry) ||
       !Object.keys(entry).every((key) => ledgerRecordFields.has(key)) ||
       Object.keys(entry).length !== ledgerRecordFields.size ||
-      typeof entry.identity !== "string" ||
-      !entry.identity ||
+      !reportNames.has(entry.report) ||
+      !validFindingIdentity(entry.identity) ||
       typeof entry.owner !== "string" ||
       !entry.owner.trim() ||
       typeof entry.obligation !== "string" ||
@@ -138,19 +159,29 @@ function validLedger(ledger, now = new Date()) {
       entry.evidence.length === 0 ||
       !entry.evidence.every((item) => typeof item === "string" && item.trim()) ||
       typeof entry.validUntil !== "string" ||
+      !/^(?:\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/.test(entry.validUntil) ||
       !["unresolved_blocking", "resolved"].includes(entry.status)
     )
       return false;
     const expiry = new Date(entry.validUntil);
-    if (Number.isNaN(expiry.valueOf()) || expiry <= current || identities.has(entry.identity)) return false;
-    identities.add(entry.identity);
+    const recordIdentity = `${entry.report}\u0000${entry.identity}`;
+    if (
+      Number.isNaN(expiry.valueOf()) ||
+      (entry.validUntil.length === 10
+        ? expiry.toISOString().slice(0, 10) !== entry.validUntil
+        : expiry.toISOString() !== entry.validUntil) ||
+      expiry <= current ||
+      identities.has(recordIdentity)
+    )
+      return false;
+    identities.add(recordIdentity);
   }
   return true;
 }
 
-export function validateFindingLedger(actual, ledger, now = new Date()) {
-  if (!Array.isArray(actual) || !validLedger(ledger, now)) return false;
-  const records = ledger.findings;
+export function validateFindingLedger(report, actual, ledger, now = new Date()) {
+  if (!reportNames.has(report) || !Array.isArray(actual) || !validLedger(ledger, now)) return false;
+  const records = ledger.findings.filter((entry) => entry.report === report);
   const known = new Map(records.map((entry) => [entry.identity, entry.status]));
   const actualIdentities = actual.map(findingIdentity);
   if (new Set(actualIdentities).size !== actualIdentities.length) return false;
@@ -327,11 +358,24 @@ async function loadLedger(ledgerPath, ledger, output) {
   return parsed;
 }
 
+function nestedGroupIdentity(group) {
+  // Preserve reporter order intentionally: Knip nested groups are ordered sequences.
+  return group.map(({ name }) => `${name.length}:${name}`).join("");
+}
+
 function reportFindings(report) {
   return report.issues.flatMap((issue) =>
     Object.entries(issue)
       .filter(([category, entries]) => category !== "file" && entries.length > 0)
-      .flatMap(([category, entries]) => entries.map((entry) => ({ file: issue.file, category, name: entry.name }))),
+      .flatMap(([category, entries]) => {
+        if (category === "cycles" || category === "duplicates")
+          return entries.map((group) => ({
+            file: issue.file,
+            category,
+            name: nestedGroupIdentity(group),
+          }));
+        return entries.map((entry) => ({ file: issue.file, category, name: entry.name }));
+      }),
   );
 }
 
@@ -370,12 +414,13 @@ export async function runReports(output, { allowedRoot, ledgerPath, ledger, cwd 
     results.push({ name, code: result.code, finding, promoted: successful, error, stderr: result.stderr, report });
   }
   const failed = results.some((result) => result.error || ![0, 1].includes(result.code));
-  if (!failed) {
-    const production = results.find(({ name }) => name === "production.json");
-    if (!production || !validateFindingLedger(reportFindings(production.report), findingLedger))
+  if (failed) return { output: destination, results, exitCode: 2 };
+  for (const result of results) {
+    const report = result.name === "workspace.json" ? "workspace" : "production";
+    if (!validateFindingLedger(report, reportFindings(result.report), findingLedger))
       return { output: destination, results, exitCode: 2 };
   }
-  return { output: destination, results, exitCode: failed ? 2 : results.some((result) => result.finding) ? 1 : 0 };
+  return { output: destination, results, exitCode: results.some((result) => result.finding) ? 1 : 0 };
 }
 
 if (import.meta.main) {
