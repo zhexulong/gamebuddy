@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import test, { before } from "node:test";
 import { fileURLToPath } from "node:url";
+import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { createUnmountedDialogueSemanticFacade } from "../continuity-semantic-deployment-composition/continuity-semantic-deployment-composition.js";
 import { createCanonicalProductionAuthorityAdmission } from "../continuity-semantic-provisioning/continuity-semantic-provisioning.internal.js";
 import {
@@ -132,7 +133,7 @@ function manifest(root: string): string {
 }
 
 test("v38 coordinator Chat request boundary reaches the actual store with an exact writable vector copy", () => {
-  const root = mkdtempSync(join(tmpdir(), "semantic-chat-runtime-store-boundary-"));
+  const root = canonicalTestRootSync("semantic-chat-runtime-store-boundary-");
   const bootstrap: ProductionBootstrapInput = {
     principal,
     bootstrapOperationId: "bootstrap_01",
@@ -285,7 +286,7 @@ test("production coordinator exports only the known Game constructor and its saf
 });
 
 test("unmounted composition owns its genuine mutex and exposes only the narrow Dialogue facade", async () => {
-  const root = mkdtempSync(join(tmpdir(), "semantic-s4-compose-"));
+  const root = canonicalTestRootSync("semantic-s4-compose-");
   try {
     const authority = await createUnmountedDialogueSemanticFacade(Object.freeze({ manifestPath: manifest(root) }));
     assert.deepEqual(Object.keys(authority).sort(), [
@@ -309,7 +310,7 @@ test("unmounted composition owns its genuine mutex and exposes only the narrow D
 });
 
 test("production Dialogue exposes close-drained manifest-bound Chat commands without caller IDs or vectors", async () => {
-  const root = mkdtempSync(join(tmpdir(), "semantic-chat-commands-"));
+  const root = canonicalTestRootSync("semantic-chat-commands-");
   try {
     const manifestPath = manifest(root),
       deployment = await loadHostDeploymentManifest(manifestPath);
@@ -349,7 +350,7 @@ test("production Dialogue exposes close-drained manifest-bound Chat commands wit
 });
 
 test("production Dialogue authorizes post-initial Tavern materialization outside the semantic mutex, then selects and archives", async () => {
-  const root = mkdtempSync(join(tmpdir(), "semantic-chat-flow-"));
+  const root = canonicalTestRootSync("semantic-chat-flow-");
   try {
     const manifestPath = manifest(root),
       deployment = await loadHostDeploymentManifest(manifestPath);
@@ -390,7 +391,7 @@ test("production Dialogue authorizes post-initial Tavern materialization outside
 });
 
 test("production Dialogue Chat operations reject forged Tavern receipt and retain no caller-selected capability", async () => {
-  const root = mkdtempSync(join(tmpdir(), "semantic-chat-receipt-"));
+  const root = canonicalTestRootSync("semantic-chat-receipt-");
   try {
     const manifestPath = manifest(root),
       deployment = await loadHostDeploymentManifest(manifestPath);
@@ -428,7 +429,7 @@ test(
   "known Chat resume rejects an absent saga and a terminal selected saga",
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
-    const absentRoot = mkdtempSync(join(tmpdir(), "semantic-known-absent-"));
+    const absentRoot = canonicalTestRootSync("semantic-known-absent-");
     try {
       const absentPath = manifest(absentRoot);
       const absentManifest = await loadHostDeploymentManifest(absentPath);
@@ -442,7 +443,7 @@ test(
     } finally {
       cleanup(absentRoot);
     }
-    const selectedRoot = mkdtempSync(join(tmpdir(), "semantic-known-selected-"));
+    const selectedRoot = canonicalTestRootSync("semantic-known-selected-");
     try {
       const selectedPath = manifest(selectedRoot);
       const selectedManifest = await loadHostDeploymentManifest(selectedPath);
@@ -465,7 +466,7 @@ test(
   "public known Game authority constructor owns fresh store transitions without exposing its store or mutex",
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "semantic-known-game-"));
+    const root = canonicalTestRootSync("semantic-known-game-");
     try {
       const manifestPath = manifest(root);
       const deployment = await loadHostDeploymentManifest(manifestPath);
@@ -538,7 +539,7 @@ test(
   "independent known-open processes serialize Game admission and a closed terminal permits the next process",
   { skip: process.platform !== "win32" ? "requires real Windows named mutex and child processes" : false },
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "semantic-known-game-process-"));
+    const root = canonicalTestRootSync("semantic-known-game-process-");
     let first: ChildProcess | undefined;
     let contender: ChildProcess | undefined;
     let successor: ChildProcess | undefined;
@@ -585,7 +586,7 @@ test(
   "independent initial Chat crash after registration fails closed when explicit creation did not complete",
   { skip: process.platform !== "win32" ? "requires real Windows named mutex and child processes" : false },
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "semantic-initial-process-"));
+    const root = canonicalTestRootSync("semantic-initial-process-");
     let crashed: ChildProcess | undefined;
     let successor: ChildProcess | undefined;
     try {
@@ -617,7 +618,7 @@ test(
   "an abandoned root mutex quarantines durably across independent known-open processes",
   { skip: process.platform !== "win32" ? "requires real Windows named mutex and child processes" : false },
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "semantic-known-game-abandoned-"));
+    const root = canonicalTestRootSync("semantic-known-game-abandoned-");
     let abandoned: ChildProcess | undefined;
     let first: ChildProcess | undefined;
     let second: ChildProcess | undefined;
@@ -655,8 +656,8 @@ test(
   "production mounted lease mints browser projections from its verified record without exposing durable identifiers",
   { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
   async () => {
-    const firstRoot = mkdtempSync(join(tmpdir(), "semantic-browser-projection-first-"));
-    const secondRoot = mkdtempSync(join(tmpdir(), "semantic-browser-projection-second-"));
+    const firstRoot = canonicalTestRootSync("semantic-browser-projection-first-");
+    const secondRoot = canonicalTestRootSync("semantic-browser-projection-second-");
     const mountInIsolatedProductionProcess = async (manifestPath: string) => {
       const coordinatorUrl = new URL("./continuity-semantic-production-coordinator.internal.js", import.meta.url).href;
       const manifestUrl = new URL("../deployment-manifest.js", import.meta.url).href;
@@ -747,8 +748,8 @@ test(
   "mounted lease lifecycle tears down successfully, revokes its predicate, and rejects mount starts after authority close",
   { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
   async () => {
-    const leaseRoot = mkdtempSync(join(tmpdir(), "semantic-mounted-lease-lifecycle-"));
-    const closeRoot = mkdtempSync(join(tmpdir(), "semantic-mounted-authority-close-"));
+    const leaseRoot = canonicalTestRootSync("semantic-mounted-lease-lifecycle-");
+    const closeRoot = canonicalTestRootSync("semantic-mounted-authority-close-");
     try {
       const leaseManifest = await loadHostDeploymentManifest(manifest(leaseRoot));
       const leaseAuthority =
@@ -779,7 +780,7 @@ test(
   "known-root Chat successor mounts only after terminal teardown and preserves the exact selected Chat",
   { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "semantic-known-chat-successor-"));
+    const root = canonicalTestRootSync("semantic-known-chat-successor-");
     let first:
       | Awaited<
           ReturnType<typeof publicCoordinator.createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest>
@@ -819,7 +820,7 @@ test(
 );
 
 test("production construction derives admission from the deployment manifest and refuses duplicate fresh authority", async () => {
-  const root = mkdtempSync(join(tmpdir(), "semantic-s4-manifest-"));
+  const root = canonicalTestRootSync("semantic-s4-manifest-");
   try {
     const manifestPath = manifest(root);
     const authority = await createUnmountedDialogueSemanticFacade(Object.freeze({ manifestPath }));

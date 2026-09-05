@@ -52,32 +52,32 @@ export type StardewCompatibilityReasonCode =
  * undetermined value. `not_applicable` is legal only for the native
  * multiplayer peer check (there may be no native multiplayer session).
  */
-export type CompatibilityCheckValue =
+type CompatibilityCheckValue =
   | "confirmed_ok"
   | "confirmed_failure"
   | "confirmed_mismatch"
   | "unknown";
 
 /** A concrete runtime is either present, confirmed missing, or unknown. */
-export type RuntimePresenceCheck =
+type RuntimePresenceCheck =
   | "confirmed_ok"
   | "confirmed_failure"
   | "unknown";
 
 /** The SMAPI loader is either healthy, confirmed failed, or unknown. */
-export type LoaderStatusCheck =
+type LoaderStatusCheck =
   | "confirmed_ok"
   | "confirmed_failure"
   | "unknown";
 
 /** The bridge protocol major is confirmed matching, confirmed mismatched, or unknown. */
-export type BridgeProtocolMajorCheck =
+type BridgeProtocolMajorCheck =
   | "confirmed_ok"
   | "confirmed_mismatch"
   | "unknown";
 
 /** The native multiplayer peer protocol supports not_applicable. */
-export type NativeMultiplayerPeerCheck =
+type NativeMultiplayerPeerCheck =
   | "confirmed_ok"
   | "confirmed_failure"
   | "confirmed_mismatch"

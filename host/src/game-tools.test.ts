@@ -315,7 +315,7 @@ catalogRevision: 1,
       received = request;
       return {
         executionId: "execution_tool_01",
-        actionId: "move_to_tile",
+        actionId: "equip_tool",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "tool_selected",

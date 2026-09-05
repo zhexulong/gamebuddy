@@ -29,13 +29,13 @@
  * created in this module.
  */
 
-export const TAVERN_BROWSER_API_VERSION = 1 as const;
-export const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
+const TAVERN_BROWSER_API_VERSION = 1 as const;
+const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
 export const REFERENCE_PIPELINE_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline" as const;
 
 // --- Frozen v1 DTO shapes (structural mirrors of host/src/tavern/browser-contract). ---
 
-export type BrowserSwipeInfoV1 = Readonly<{
+type BrowserSwipeInfoV1 = Readonly<{
   currentIndex: number;
   totalSwipes: number;
   label: string;
@@ -123,7 +123,7 @@ export type BrowserEventV1 =
       payload: Readonly<{ reason: "gap" | "epoch_changed" | "restart" | "ambiguous_cursor" }>;
     }>;
 
-export type TavernBrowserOperationV1 = Readonly<{
+type TavernBrowserOperationV1 = Readonly<{
   operationId: "chat.submit" | "chat.cancel" | "draft.save" | "draft.discard";
   labelKey:
     | "tavern.nav.chat"
@@ -159,7 +159,7 @@ export type TavernStateSnapshotV1 = Readonly<{
   eventStream: Readonly<{ epoch: string; cursor: string }> | null;
 }>;
 
-export type SubmitMessageCommandV1 = Readonly<{
+type SubmitMessageCommandV1 = Readonly<{
   apiVersion: 1;
   selectionGeneration: number;
   text: string;
@@ -174,14 +174,14 @@ export type SubmitResultV1 = Readonly<{
   turn: BrowserTurnV1;
 }>;
 
-export type CancelTurnCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number }>;
-export type CancelTurnResultV1 = Readonly<{
+type CancelTurnCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number }>;
+type CancelTurnResultV1 = Readonly<{
   apiVersion: 1;
   disposition: "cancelled" | "completion_won" | "already_terminal";
   turn: BrowserTurnV1;
 }>;
 
-export type MessageSubmissionStatusQueryV1 = Readonly<{
+type MessageSubmissionStatusQueryV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
   selectionGeneration: number;
@@ -767,7 +767,8 @@ export function validateSubmissionStatus(value: unknown): MessageSubmissionStatu
   return value;
 }
 
-export function validateCancelTurnResult(value: unknown): CancelTurnResultV1 {
+
+function validateCancelTurnResult(value: unknown): CancelTurnResultV1 {
   if (!isCancelTurnResult(value)) throw new TavernProtocolError();
   return value;
 }
@@ -820,7 +821,7 @@ async function exchange<T>(
   return decode(bodyValue);
 }
 
-export type ReferencePipelineEventSource = Readonly<{ close(): void }>;
+type ReferencePipelineEventSource = Readonly<{ close(): void }>;
 
 export type ReferencePipelineApi = Readonly<{
   /** POST /api/tavern/v1/bootstrap (one-time bootstrap token). */

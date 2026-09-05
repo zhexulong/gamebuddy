@@ -5,13 +5,13 @@ const HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/u;
 const DEFAULT_WINDOW = 64;
 
 export type ResyncReason = "gap" | "epoch_changed" | "restart" | "ambiguous_cursor";
-export type ChatEventStreamCursor = Readonly<{ epoch: string; sequence: number }>;
-export type ChatEventStreamSubscription = Readonly<{
+type ChatEventStreamCursor = Readonly<{ epoch: string; sequence: number }>;
+type ChatEventStreamSubscription = Readonly<{
   epoch: string;
   after: number;
   generation: number;
 }>;
-export type ChatEventStreamResult = Readonly<{
+type ChatEventStreamResult = Readonly<{
   kind: "replay" | "resync";
   events: readonly BrowserEventV1[];
   reason?: ResyncReason;

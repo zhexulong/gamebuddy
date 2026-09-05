@@ -3,12 +3,12 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-export const WORLDBOOK_SCHEMA_VERSION = 1 as const;
+const WORLDBOOK_SCHEMA_VERSION = 1 as const;
 const MAX_ENTRIES = 128;
 const MAX_QUERY_RESULTS = 4;
 
-export type WorldBookScope = "companion" | "setting" | "integration" | "world";
-export type WorldBookProvenance = "authored" | "st-card-import" | "reviewed-import";
+type WorldBookScope = "companion" | "setting" | "integration" | "world";
+type WorldBookProvenance = "authored" | "st-card-import" | "reviewed-import";
 export type WorldBookEntry = Readonly<{
   entryId: string;
   title: string;
@@ -31,7 +31,7 @@ export type WorldBookMetadata = Readonly<{ worldBookId: string; revision: number
 export type WorldBookBinding = Readonly<{ metadata: WorldBookMetadata; book: WorldBook }>;
 export type WorldBookQueryScope = Readonly<{ integrationId?: string; saveId?: string; worldId?: string }>;
 
-export function canonicalWorldBook(book: WorldBook): string {
+function canonicalWorldBook(book: WorldBook): string {
   return JSON.stringify({
     schemaVersion: book.schemaVersion,
     worldBookId: book.worldBookId,
@@ -40,7 +40,7 @@ export function canonicalWorldBook(book: WorldBook): string {
     entries: book.entries.map((entry) => ({ ...entry })),
   });
 }
-export function worldBookHash(book: WorldBook): string {
+function worldBookHash(book: WorldBook): string {
   return createHash("sha256").update(canonicalWorldBook(book), "utf8").digest("hex");
 }
 export function worldBookMetadata(book: WorldBook): WorldBookMetadata {

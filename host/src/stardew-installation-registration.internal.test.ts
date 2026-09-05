@@ -19,6 +19,24 @@ import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclai
 
 const locator = "C:\\Games\\Stardew Valley";
 const sentinelLocator = "Q:\\private-sentinel\\Stardew Valley";
+const legacyActionDevelopmentProfileFields = [
+  "profileIdentity",
+  "targetVersion",
+  "gameInstallPath",
+  "modsPath",
+  "releaseDir",
+  "fixtureTransactionRoot",
+  "nativeFixtureRoot",
+  "saveIdentity",
+  "templateIdentity",
+  "gameVersion",
+  "smapiVersion",
+  "adapterVersion",
+  "runtimeLeaseRoot",
+  "runtimeLeaseIdentity",
+  "timeoutMs",
+  "nativeClientConfigFile",
+] as const;
 
 function record(overrides: Partial<StardewInstallationRegistrationRecordV1> = {}): StardewInstallationRegistrationRecordV1 {
   return {
@@ -137,6 +155,19 @@ test("strict parser rejects malformed schemas, unsafe structures, and invalid fi
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
     await writeFile(subject.path, "x".repeat(64 * 1024 + 1), "utf8");
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
+  } finally {
+    await subject.dispose();
+  }
+});
+
+test("strict parser rejects every legacy action-development profile field as unknown without locator leakage", async () => {
+  const subject = await fixture();
+  try {
+    await mkdir(join(subject.root, "stardew-installation-registration"));
+    for (const field of legacyActionDevelopmentProfileFields) {
+      await writeFile(subject.path, JSON.stringify({ ...record(), [field]: sentinelLocator }), "utf8");
+      await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
+    }
   } finally {
     await subject.dispose();
   }
@@ -303,6 +334,15 @@ test("source exposes no browser, action-development, recovery, or independent fe
   const source = await readFile(new URL("./stardew-installation-registration.internal.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /browser\/|action-development|readView|recovery|fence|AdmittedStardewInstallation|consumeAdmitted/);
   assert.doesNotMatch(source, /export (?:async )?function (?:prepare|settle|recover|clear|bind).*Attempt/);
+});
+
+test("product registration and lifecycle composition do not accept legacy action-development profile authority", async () => {
+  const sources = await Promise.all([
+    readFile(new URL("./stardew-installation-registration.internal.js", import.meta.url), "utf8"),
+    readFile(new URL("./stardew-production-lifecycle-coordinator.internal.js", import.meta.url), "utf8"),
+  ]);
+  const legacyProfileAuthority = /gamebuddy-action-target-profile\/v1|action-development(?:[\\/]|\b)|profileFile|gameInstallPath|modsPath|releaseDir|fixtureTransactionRoot|nativeFixtureRoot|runtimeLeaseRoot|runtimeLeaseIdentity|nativeClientConfigFile|--profile/;
+  for (const source of sources) assert.doesNotMatch(source, legacyProfileAuthority);
 });
 
 async function rejectsRedacted(work: () => Promise<unknown>, secret: string): Promise<void> {

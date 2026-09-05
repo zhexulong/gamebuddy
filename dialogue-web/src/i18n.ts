@@ -127,7 +127,7 @@ const en = {
   problemReconciliationFailedDetail: "The chat state could not be safely reconciled.",
 } as const;
 
-export type MessageKey = keyof typeof en;
+type MessageKey = keyof typeof en;
 export type Messages = Readonly<Record<MessageKey, string>>;
 
 const zh: Messages = {

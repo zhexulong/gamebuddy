@@ -8,7 +8,7 @@ import { type TavernCompanion, validateTavernArtifact } from "../types.js";
  * This boundary deliberately excludes identifiers, continuity, artifact hashes,
  * paths, raw profiles, sources, lifecycle state, and all mutation operations.
  */
-export type TavernCompanionDetail = Readonly<{
+type TavernCompanionDetail = Readonly<{
   name: string;
 }>;
 

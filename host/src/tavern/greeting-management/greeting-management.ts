@@ -3,17 +3,17 @@ import { join, resolve } from "node:path";
 import type { TavernArtifactStore } from "../artifact-store.js";
 import { type GreetingSet, validateTavernArtifact } from "../types.js";
 
-export type GreetingVariantProjection = Readonly<{ label?: string; text: string }>;
-export type GreetingSetProjection = Readonly<{
+type GreetingVariantProjection = Readonly<{ label?: string; text: string }>;
+type GreetingSetProjection = Readonly<{
   revision: number;
   label?: string;
   variants: readonly GreetingVariantProjection[];
 }>;
-export type CreateGreetingSetRequest = Readonly<{
+type CreateGreetingSetRequest = Readonly<{
   label: string;
   variants: readonly Readonly<{ label: string; text: string }>[];
 }>;
-export type UpdateGreetingSetRequest = CreateGreetingSetRequest & Readonly<{ expectedRevision: number }>;
+type UpdateGreetingSetRequest = CreateGreetingSetRequest & Readonly<{ expectedRevision: number }>;
 export type GreetingManagementService = Readonly<{
   create(request: CreateGreetingSetRequest): Promise<GreetingSetProjection>;
   read(): Promise<GreetingSetProjection | null>;

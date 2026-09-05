@@ -33,7 +33,7 @@ export function chatLifecycleRouteEnabled(routeId: string): boolean {
   return SELECTED_CHAT_LIFECYCLE_V1.routes.some((route) => route.id === routeId);
 }
 
-export function selectedChatLifecycleBootstrapModel(): Readonly<{
+function selectedChatLifecycleBootstrapModel(): Readonly<{
   profile: Readonly<{ schemaVersion: number; id: string }>;
   routes: readonly ChatLifecycleRoute[];
 }> {

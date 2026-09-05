@@ -16,10 +16,10 @@ const OWNER_FILE = "owner.json";
 const OPAQUE = /^[A-Za-z0-9_-]{1,128}$/;
 
 type GuardianRole = "playerHost" | "aiClient";
-export type StardewBootstrapGuardianOutcome = "contained" | "unavailable" | "quarantined";
+type StardewBootstrapGuardianOutcome = "contained" | "unavailable" | "quarantined";
 
 /** Native contracts only: Batch C supplies the Win32 implementations. */
-export type StardewBootstrapGuardianControlledClosePort = Readonly<{
+type StardewBootstrapGuardianControlledClosePort = Readonly<{
   /** Desktop-backed public arm acknowledgement, before the durable CAS. */
   arm?: (binding: StardewBootstrapGuardianOwnerBinding) => Promise<void>;
   /** Desktop-backed public role acknowledgement, before the durable CAS. */
@@ -29,20 +29,20 @@ export type StardewBootstrapGuardianControlledClosePort = Readonly<{
 }>;
 
 declare const recoveryCapabilityBrand: unique symbol;
-export type StardewBootstrapGuardianRecoveryCapability = Readonly<{
+type StardewBootstrapGuardianRecoveryCapability = Readonly<{
   readonly [recoveryCapabilityBrand]: never;
 }>;
 /** The pre-CAS ingress deliberately has no Job names, owner record revision, or durable role state. */
 /** The post-CAS ingress is authorized only after the durable recovering CAS. */
-export type StardewBootstrapGuardianRecoveryClassificationBinding = StardewBootstrapGuardianOwnerBinding;
-export type StardewBootstrapGuardianRecoveryGatePort = Readonly<{
+type StardewBootstrapGuardianRecoveryClassificationBinding = StardewBootstrapGuardianOwnerBinding;
+type StardewBootstrapGuardianRecoveryGatePort = Readonly<{
   acquire(binding: StardewBootstrapGuardianRecoveryGateBinding): Promise<
     | Readonly<{ kind: "held" }>
     | Readonly<{ kind: "acquired"; capability: StardewBootstrapGuardianRecoveryCapability }>
   >;
   release(capability: StardewBootstrapGuardianRecoveryCapability): Promise<void>;
 }>;
-export type StardewBootstrapGuardianRecoveryClassificationPort = Readonly<{
+type StardewBootstrapGuardianRecoveryClassificationPort = Readonly<{
   classify(binding: StardewBootstrapGuardianRecoveryClassificationBinding, capability: StardewBootstrapGuardianRecoveryCapability, role: GuardianRole): Promise<"contained" | "unavailable" | "quarantined">;
 }>;
 
@@ -303,7 +303,7 @@ function validateNativePorts(value: StardewBootstrapGuardianNativePorts): void {
 }
 
 export type StardewBootstrapGuardianArmCorrelation = Readonly<{ runtimeRoot: string; bootstrapId: string; playerId: string; companionId: string; expectedRevision: string; expectedOwnerRecordRevision: number }>;
-export type StardewBootstrapGuardianArmBinding = Readonly<StardewGuardianBinding & { ownerRecordRevision: number }>;
+type StardewBootstrapGuardianArmBinding = Readonly<StardewGuardianBinding & { ownerRecordRevision: number }>;
 export type StardewBootstrapGuardianPrivateArmBindingFacade = Readonly<{ consumeArmBinding<T>(callback: (binding: StardewBootstrapGuardianArmBinding) => Promise<T> | T): Promise<T> }>;
 
 export function createStardewBootstrapGuardianPrivateArmBindingFacade(correlation: StardewBootstrapGuardianArmCorrelation): StardewBootstrapGuardianPrivateArmBindingFacade {

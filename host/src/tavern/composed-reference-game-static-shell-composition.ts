@@ -31,7 +31,7 @@ const LOOPBACK_HOST = "127.0.0.1";
  * composed API profile. The composed reference-game profile must not
  * introduce a second static identity or a second listener.
  */
-export const COMPOSED_REFERENCE_GAME_BROWSER_ARTIFACT_IDENTITY: TavernStaticArtifactIdentity = Object.freeze({
+const COMPOSED_REFERENCE_GAME_BROWSER_ARTIFACT_IDENTITY: TavernStaticArtifactIdentity = Object.freeze({
   browserContract: TAVERN_BROWSER_CONTRACT,
   profileId: "gamebuddy.tavern.browser.v1",
 });

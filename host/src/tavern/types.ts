@@ -1,9 +1,9 @@
 /** Pure Tavern artifact schemas. These values are inert product data, never prompts or executable imports. */
-export const TAVERN_SCHEMA_VERSION = 1 as const;
+const TAVERN_SCHEMA_VERSION = 1 as const;
 const ID = /^[A-Za-z0-9._-]{1,128}$/u;
 const TEXT = /[\u0000-\u001f\u007f]/u;
-export type RuntimeEligibility = "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
-export type ArtifactRevision = Readonly<{ schemaVersion: typeof TAVERN_SCHEMA_VERSION; revision: number }>;
+type RuntimeEligibility = "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
+type ArtifactRevision = Readonly<{ schemaVersion: typeof TAVERN_SCHEMA_VERSION; revision: number }>;
 export type CharacterCandidate = ArtifactRevision &
   Readonly<{
     candidateId: string;
@@ -61,7 +61,7 @@ export type Scenario = ArtifactRevision &
     owner: "companion_default" | "chat_override" | "imported_candidate";
   }>;
 export type DialogueExamples = ArtifactRevision & Readonly<{ examplesId: string; blocks: readonly string[] }>;
-export type GreetingVariant = Readonly<{ variantId: string; label?: string; text: string }>;
+type GreetingVariant = Readonly<{ variantId: string; label?: string; text: string }>;
 export type GreetingSet = ArtifactRevision &
   Readonly<{ greetingSetId: string; label?: string; variants: readonly GreetingVariant[] }>;
 export type WorldBookBinding = Readonly<{
@@ -71,10 +71,10 @@ export type WorldBookBinding = Readonly<{
   canonicalHash: string;
   scope: "companion" | "chat";
 }>;
-export type OpeningSelection =
+type OpeningSelection =
   | Readonly<{ kind: "blank" }>
   | Readonly<{ kind: "greeting"; sourceRevision: number; variantId: string; messageId: string }>;
-export type ChatThread = ArtifactRevision &
+type ChatThread = ArtifactRevision &
   Readonly<{
     chatThreadId: string;
     companionId: string;
@@ -84,8 +84,8 @@ export type ChatThread = ArtifactRevision &
     openingSelection: OpeningSelection;
     openingLockedAtEventId?: string;
   }>;
-export type TavernMessageVariant = Readonly<{ variantId: string; text: string }>;
-export type TavernMessage = Readonly<{
+type TavernMessageVariant = Readonly<{ variantId: string; text: string }>;
+type TavernMessage = Readonly<{
   messageId: string;
   role: "player" | "companion";
   text: string;

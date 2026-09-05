@@ -19,7 +19,7 @@ import type { CompanionHostService } from "../host-service.js";
  * The connected Host surface retained by the exact Game runtime. It deliberately
  * excludes binding, permit, coordinator, and runtime-session authority.
  */
-export type ConnectedGameRuntime = Readonly<{
+type ConnectedGameRuntime = Readonly<{
   host: CompanionHostService;
   lifecycleSnapshot(): HostGameLifecycleSnapshot;
   /** Present only when the source-owned operational gate was explicitly armed. */
@@ -158,7 +158,7 @@ export async function materializeExactEnter(
 }
 
 /** Mints Host lifecycle evidence only after final liveness and deadline admission. */
-export function finalizeMaterializedGameRuntime(
+function finalizeMaterializedGameRuntime(
   enterPermit: ProductionGamePermit,
   runtime: RuntimeDisposal,
 ): MaterializedGameRuntime {
@@ -222,7 +222,7 @@ export function finalizeMaterializedGameRuntime(
 }
 
 /** Mints closed-record Host lifecycle evidence only after exact permit admission. */
-export function mintRuntimeBootstrappedReceipt(permit: ProductionGamePermit): ProductionGameTerminalReceipt {
+function mintRuntimeBootstrappedReceipt(permit: ProductionGamePermit): ProductionGameTerminalReceipt {
   return mintGameRuntimeReceipt(permit, "runtime_bootstrapped");
 }
 
@@ -286,7 +286,7 @@ function mintGameRuntimeReceipt(
 }
 
 /** Reverse acquisition order. The composer subsequently closes the S4b binding. */
-export async function closeMaterializedRuntime(runtime: RuntimeDisposal): Promise<void> {
+async function closeMaterializedRuntime(runtime: RuntimeDisposal): Promise<void> {
   const errors: unknown[] = [];
   const attempt = (operation: () => void): void => {
     try {
@@ -313,7 +313,7 @@ export async function closeMaterializedRuntime(runtime: RuntimeDisposal): Promis
   if (errors.length > 0) throw new AggregateError(errors, "game_runtime_materialization_close_failed");
 }
 
-export function assertRuntimeDisposal(value: unknown): asserts value is RuntimeDisposal {
+function assertRuntimeDisposal(value: unknown): asserts value is RuntimeDisposal {
   if (
     !value ||
     typeof value !== "object" ||

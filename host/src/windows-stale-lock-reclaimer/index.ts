@@ -112,8 +112,7 @@ export async function requestWindowsStaleLockReclaimer(): Promise<WindowsStaleLo
   const published = await createPublishedWindowsStaleLockReclaimer(resolve(dirname(modulePath), "..")).catch(
     () => undefined,
   );
-  if (published !== undefined) return published;
-  return await createBuildWindowsStaleLockReclaimer().catch(() => undefined);
+  return published;
 }
 
 /**

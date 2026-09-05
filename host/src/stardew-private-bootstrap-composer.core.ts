@@ -663,7 +663,7 @@ function createClosedComposition(
            reuseExistingOwner,
         });
         durableOwner = registrationBoundClaims.delete(claim)
-          ? await prepareAndBindOwnedRegistrationAttempt(runtimeRoot, claimRegistration.facts, guardian, persist)
+          ? await prepareAndBindOwnedRegistrationAttempt(runtimeRoot, claimRegistration.facts, persist)
           : await persist();
       } catch (error) {
         try { playerHostLaunchRegistration.registration.revoke(); } catch { /* fail closed */ }
@@ -817,61 +817,6 @@ type DurableOwner = Readonly<{
 type DurableOwnerFor<TRecord extends StardewPrivateBootstrapOwnerRecord> =
   Omit<DurableOwner, "record"> & Readonly<{ record: TRecord }>;
 
-/**
- * The owner is written only after a bounded marker is durable and before the
- * registration pointer. On a restart, the marker can only repair the exact
- * prepared pair or retain unavailability; it never becomes attempt authority.
- */
-async function reconcilePreparedRegistrationMarker(
-  runtimeRoot: string,
-  bootstrapFacts: StardewPrivateBootstrapFacts,
-   registration: Parameters<Parameters<typeof withStardewInstallationRegistrationOwnerTransaction>[1]>[0],
-   marker: StardewInstallationRegistrationOwnerTransactionMarker,
-   expectedGuardian: StardewGuardianBinding,
-   persist: (reuseExistingOwner?: boolean) => Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>>,
-   ): Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord> | null> {
-  if (marker.operation !== "prepare_bind" || marker.bootstrapCorrelation !== bootstrapFacts.bootstrapId ||
-      marker.ownerRecordRevision !== 1) throw new Error("stardew_bootstrap_registration_unavailable");
-  const ownerPath = join(runtimeRoot, "stardew-private-bootstrap", bootstrapFacts.bootstrapId, OWNER_FILE);
-  let owner: StardewPrivateBootstrapOwnerRecord | null = null;
-  try {
-    owner = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, runtimeRoot), { containmentRoot: runtimeRoot });
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) throw error;
-  }
-  const current = await registration.readRegistration();
-   if (owner === null) {
-     // A marker without its owner is a torn transaction. Registration is not a
-     // recovery authority; retain the marker and fail closed.
-     throw new Error("stardew_bootstrap_registration_unavailable");
-   }
-  if (owner.bootstrapId !== bootstrapFacts.bootstrapId || owner.playerId !== bootstrapFacts.playerId ||
-       owner.companionId !== bootstrapFacts.companionId || owner.expiresAtMs !== bootstrapFacts.expiresAtMs ||
-       JSON.stringify(owner.guardian) !== JSON.stringify(expectedGuardian) ||
-       owner.ownerRecordRevision !== 1 || owner.state !== "reserved" ||
-      owner.guardianState !== "reserved" || owner.playerHostState !== "reserved" || owner.aiClientState !== "reserved") {
-    throw new Error("stardew_bootstrap_registration_unavailable");
-  }
-  if (current === null || current.state !== "ready") throw new Error("stardew_bootstrap_registration_unavailable");
-   if (current.revision === marker.registrationRevision &&
-       current.activeAttempt?.bootstrapCorrelation === marker.bootstrapCorrelation) {
-     // The owner and pointer already form the prepared pair. Re-read the
-     // exact owner through the owner-private reuse path before clearing the
-     // coordination marker; clearing first would lose recovery.
-     const recovered = await persist(true);
-     await registration.clearMarker(marker);
-     return recovered;
-   }
-  if (current.revision !== marker.registrationRevision - 1 || current.activeAttempt !== null) {
-    throw new Error("stardew_bootstrap_registration_unavailable");
-  }
-   await registration.bindPreparedPointer(current.revision, marker);
-   // Keep the marker until the strict owner reread succeeds. An interrupted
-   // reread or marker removal remains recoverable by the same owner only.
-   const recovered = await persist(true);
-   await registration.clearMarker(marker);
-   return recovered;
-}
 
 async function reconcileSettledRegistrationMarker(
   runtimeRoot: string,
@@ -905,17 +850,16 @@ async function reconcileSettledRegistrationMarker(
  async function prepareAndBindOwnedRegistrationAttempt(
    runtimeRoot: string,
    bootstrapFacts: StardewPrivateBootstrapFacts,
-   expectedGuardian: StardewGuardianBinding,
-   persist: (reuseExistingOwner?: boolean) => Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>>,
+    persist: () => Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>>,
 ): Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>> {
   const root = resolve(runtimeRoot);
   try {
-     const recoverOwner = async () => persist(true);
     return await withStardewInstallationRegistrationOwnerTransaction(root, async (registration) => {
-      const existingMarker = await registration.readMarker();
-      if (existingMarker !== null) {
-        const recovered = await reconcilePreparedRegistrationMarker(root, bootstrapFacts, registration, existingMarker, expectedGuardian, recoverOwner);
-        if (recovered !== null) return recovered;
+      // A normal launch is not a recovery authority. Retain any interrupted
+      // prepare transaction exactly as found for its owner-specific settlement
+      // or recovery path, and never adopt its owner or active-attempt pointer.
+      if (await registration.readMarker() !== null) {
+        throw new Error("stardew_bootstrap_registration_unavailable");
       }
 
       const current = await registration.readRegistration();

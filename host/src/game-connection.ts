@@ -35,7 +35,7 @@ export type StardewBridgeConnectionState = Readonly<{
  * Host-neutral integration identity. Any save/world/player binding remains
  * adapter-owned and is verified through GameIntegrationAdapter.
  */
-export type IntegrationScope = Readonly<{
+type IntegrationScope = Readonly<{
   integrationId: string;
 }>;
 

@@ -1,8 +1,8 @@
 import type { ChatThread, ChatThreadStore } from "../chat-thread-store.js";
 
 /** Player-safe title metadata. Opaque thread and ownership bindings stay Host-local. */
-export type ChatTitleManagementMetadata = Readonly<{ title: string | null; revision: number }>;
-export type SetChatTitleRequest = Readonly<{ title: string; expectedRevision: number }>;
+type ChatTitleManagementMetadata = Readonly<{ title: string | null; revision: number }>;
+type SetChatTitleRequest = Readonly<{ title: string; expectedRevision: number }>;
 export type ChatTitleManagementBinding = Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>;
 export type ChatTitleManagementService = Readonly<{
   read(): Promise<ChatTitleManagementMetadata>;

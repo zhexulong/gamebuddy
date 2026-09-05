@@ -3,13 +3,13 @@ import type { WorldBook } from "../worldbook.js";
 import type { ChatThreadMessage } from "./chat-thread-store.js";
 
 export const TAVERN_INTERCHANGE_VERSION = "tavern-interchange/v1" as const;
-export const TAVERN_INTERCHANGE_LIMITS_V1 = Object.freeze({
+const TAVERN_INTERCHANGE_LIMITS_V1 = Object.freeze({
   inputBytes: 262_144,
   chatMessages: 256,
   worldBookEntries: 128,
   textBytes: 4_000,
 });
-export type InterchangeDisposition = Readonly<{
+type InterchangeDisposition = Readonly<{
   field: string;
   classification: "accepted_typed" | "dropped_unsupported" | "rejected_invalid";
   reason: string;

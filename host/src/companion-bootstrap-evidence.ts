@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const COMPANION_BOOTSTRAP_EVIDENCE_SCHEMA = "gamebuddy-companion-bootstrap-evidence/v1" as const;
+const COMPANION_BOOTSTRAP_EVIDENCE_SCHEMA = "gamebuddy-companion-bootstrap-evidence/v1" as const;
 export type CompanionBootstrapEvidence = Readonly<{
   schema: typeof COMPANION_BOOTSTRAP_EVIDENCE_SCHEMA;
   evidenceClass: "deterministic_bootstrap_composition";
@@ -13,7 +13,7 @@ export type CompanionBootstrapEvidence = Readonly<{
 
 const SHA256 = /^[a-f0-9]{64}$/;
 /** Must match the launcher D0 deadline: attest-or-tear-down is bounded. */
-export const DETERMINISTIC_BOOTSTRAP_DELIVERY_DEADLINE_MS = 1_500;
+const DETERMINISTIC_BOOTSTRAP_DELIVERY_DEADLINE_MS = 1_500;
 
 /** Creates the redacted, source-owned D0 attestation; raw launch material and runtime values never cross this boundary. */
 export function createCompanionBootstrapEvidence(

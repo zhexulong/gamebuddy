@@ -1753,3 +1753,51 @@ test("navigation read results enforce the operation-independent exact wire union
   for (const payload of invalid)
     assert.equal(validateBridgeMessage(newEnvelope("navigation_read_result", scope, payload, "nav_invalid", now), scope, now), "invalid_navigation_read_result");
 });
+
+
+test("body-program wire messages require exact bounded payloads", () => {
+  const candidate = {
+    programId: "program_01",
+    nodes: [{
+      nodeId: "node_01",
+      actionId: "move_to_tile",
+      arguments: { x: { type: "integer", canonicalValue: "5" } },
+      dependsOn: [],
+      bindings: {},
+      deadlineMs: now + 60_000,
+    }],
+  } as const;
+  assert.equal(validateBridgeMessage(newEnvelope("program_verify", scope, candidate, "program_verify_01", now), scope, now), null);
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope("program_submit", scope, { ...candidate, nodes: [] }, "program_submit_01", now),
+      scope,
+      now,
+    ),
+    "invalid_body_program_request",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope("program_events_result", scope, {
+        programId: "program_01",
+        nextCursor: 1,
+        events: [{ cursor: 1, kind: "accepted", catalogRevision: 1 }],
+      }, "program_events_01", now),
+      scope,
+      now,
+    ),
+    null,
+  );
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope("program_events_result", scope, {
+        programId: "program_01",
+        nextCursor: 1,
+        events: [{ cursor: -1, kind: "accepted", catalogRevision: 1 }],
+      }, "program_events_02", now),
+      scope,
+      now,
+    ),
+    "invalid_body_program_result",
+  );
+});

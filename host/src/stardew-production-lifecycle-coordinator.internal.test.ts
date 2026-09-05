@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
+import { publishStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
 
 import {
   createComposedReferenceGameBrowserRequestHandler,
@@ -277,6 +278,14 @@ async function createFixture(input: Readonly<{
   const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-lifecycle-coordinator-"));
   const packageRoot = join(runtimeRoot, "package");
   temporaryRoots.push(runtimeRoot);
+  await publishStardewInstallationRegistration(runtimeRoot, null, {
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1, productInstallationId: "desktop-installation-1" },
+    revision: 1,
+    state: "ready",
+    locator: gameDirectoryCandidate,
+    activeAttempt: null,
+  });
   await mkdir(packageRoot);
   for (const entry of packageEntries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const spawnCalls: Array<Readonly<{

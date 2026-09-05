@@ -76,9 +76,6 @@ importers:
       typebox:
         specifier: 1.1.38
         version: 1.1.38
-      yauzl:
-        specifier: 3.4.0
-        version: 3.4.0
     devDependencies:
       '@gamebuddy/game-action-devkit':
         specifier: workspace:*
@@ -95,9 +92,12 @@ importers:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+      yauzl:
+        specifier: 3.4.0
+        version: 3.4.0
 
   integrations/stardew/action-development:
-    dependencies:
+    devDependencies:
       '@gamebuddy/game-action-devkit':
         specifier: workspace:*
         version: link:../../../packages/game-action-devkit

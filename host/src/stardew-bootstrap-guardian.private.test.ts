@@ -8,16 +8,22 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { bindWindowsStaleLockReclaimer, withPathLock } from "./path-lock.js";
 import {
+  createStardewBootstrapGuardianNativePortsFromDesktopSession,
+  createStardewBootstrapGuardianOwner,
   createStardewBootstrapGuardianPrivateArmBindingFacade,
   type StardewBootstrapGuardianNativePorts,
 } from "./stardew-bootstrap-guardian.private.js";
+import type { DesktopGuardianSession, GuardianAck } from "./desktop-guardian-session.internal.js";
 import { settleOwnedPlayerHostRegistrationAttempt } from "./stardew-private-bootstrap-composer.internal.js";
 import {
   publishStardewInstallationRegistration,
   readStardewInstallationRegistration,
 } from "./stardew-installation-registration.internal.js";
 import { createStardewPrivateBootstrapCompositionForTesting } from "./stardew-private-bootstrap-composer.test-support-internal.js";
-import type { StardewPrivateBootstrapCoreDependencies } from "./stardew-private-bootstrap-composer.core.js";
+import {
+  createStardewBootstrapGuardianOwnerBinding,
+  type StardewPrivateBootstrapCoreDependencies,
+} from "./stardew-private-bootstrap-composer.core.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 
 const roots: string[] = [];
@@ -246,6 +252,91 @@ function simulatedLockHelper(): ChildProcess {
   return child as unknown as ChildProcess;
 }
 
+
+test("desktop session adapter binds the owner arm frame, exact acknowledgement, containment, and close", async () => {
+  const fixture = await createDesktopSessionOwnerFixture();
+  const calls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
+  const acknowledgement = (operation: string, role?: "player_host" | "ai_client"): GuardianAck => ({
+    operation,
+    status: "accepted",
+    bootstrapId: "bootstrap-1",
+    generation: "generation-1",
+    inventoryDigest: "inventory",
+    runtimeAdmissionSha256: "admission",
+    guardianInstanceId: "guardian-instance-1",
+    guardianEpoch: 1,
+    attemptId: "bootstrap-1",
+    ...(role === undefined ? {} : { role }),
+  });
+  const session: DesktopGuardianSession = Object.freeze({
+    async arm(input) {
+      calls.push({ operation: "arm", input: { ...input, privateFrame: [...input.privateFrame] } });
+      return acknowledgement("arm_attempt");
+    },
+    async launch() { throw new Error("unexpected_launch"); },
+    async contain(input) {
+      calls.push({ operation: "contain", input: { ...input } });
+      return acknowledgement("contain_role", input.role);
+    },
+    async close() { calls.push({ operation: "close", input: {} }); },
+  });
+  const binding = createStardewBootstrapGuardianOwnerBinding(fixture.phaseOwner);
+  const owner = createStardewBootstrapGuardianOwner(
+    binding,
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000),
+  );
+
+  await owner.arm();
+  await assert.rejects(owner.launchPlayerHost(), /native_launch_plan_unavailable/);
+  assert.equal(await owner.close(), "contained");
+
+  assert.deepEqual(calls.map(({ operation, input }) => [operation, input.role]), [
+    ["arm", undefined], ["contain", "player_host"], ["contain", "ai_client"], ["close", undefined],
+  ]);
+  const armFrame = JSON.parse(Buffer.from(calls[0]!.input.privateFrame as number[]).toString("utf8")) as Record<string, unknown>;
+  assert.deepEqual(armFrame, {
+    guardianInstanceId: "guardian-instance-1", guardianEpoch: 1, attemptId: "bootstrap-1",
+    revision: "revision-1", leaseName: "Local\\Guardian-Lease-1",
+    playerJobName: "Local\\Guardian-Player-1", aiJobName: "Local\\Guardian-Ai-1",
+  });
+});
+
+test("desktop session adapter rejects an acknowledgement outside its exact attempt correlation", async () => {
+  const fixture = await createDesktopSessionOwnerFixture();
+  const binding = createStardewBootstrapGuardianOwnerBinding(fixture.phaseOwner);
+  const session: DesktopGuardianSession = Object.freeze({
+    async arm() {
+      return {
+        operation: "arm_attempt", status: "accepted", bootstrapId: "bootstrap-1", generation: "generation-1",
+        inventoryDigest: "inventory", runtimeAdmissionSha256: "admission", guardianInstanceId: "guardian-instance-1",
+        guardianEpoch: 1, attemptId: "other-attempt",
+      };
+    },
+    async launch() { throw new Error("unexpected_launch"); },
+    async contain() { throw new Error("unexpected_contain"); },
+    async close() { throw new Error("unexpected_close"); },
+  });
+  const owner = createStardewBootstrapGuardianOwner(
+    binding,
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000),
+  );
+
+  await assert.rejects(owner.arm(), /session_ack_mismatch/);
+});
+
+async function createDesktopSessionOwnerFixture() {
+  const root = await createRoot();
+  const dependencies: StardewPrivateBootstrapCoreDependencies = {
+    rawSpawn: () => { throw new Error("not used"); }, rawProbe: () => ({ pid: 1, creationDate: "test" }), rawPlayerHostSpawn: () => { throw new Error("not used"); }, rawPlayerHostProbe: () => ({ pid: 1, creationDate: "test" }),
+    createBootstrapIdentity: () => "bootstrap-1", createGuardianRevision: () => "revision-1", createGuardianInstanceId: () => "guardian-instance-1", createGuardianEpoch: () => 1,
+    createGuardianLeaseName: () => "Local\\Guardian-Lease-1", createGuardianPlayerJobName: () => "Local\\Guardian-Player-1", createGuardianAiJobName: () => "Local\\Guardian-Ai-1", createLaunchGeneration: () => "ai-generation-1", createPlayerHostLaunchGeneration: () => "player-generation-1", createBridgePipeName: () => "bridge", createBridgeToken: () => "bridge-token-012345", nowMs: () => 1_000,
+  };
+  const internal = createStardewPrivateBootstrapCompositionForTesting(dependencies);
+  const composition = internal.composition;
+  const claim = composition.broker.confirm({ playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000 }).consume("browser-1");
+  const phaseOwner = await composition.reserveOwnedPlayerHostPhaseA(root, claim, composition.playerHostProcessOwner.reservePlayerHostLaunch(), composition.aiClientProcessOwner.reserveAiClientLaunch());
+  return { phaseOwner };
+}
 
 test("private owner durably arms, independently activates roles, and contains one role without draining the other", async () => {
   const fixture = await createGuardianOwnerFixture();

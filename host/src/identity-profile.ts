@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { atomicWriteFile, type PathLockOptions, withPathLock } from "./path-lock.js";
 
-export const IDENTITY_PROFILE_SCHEMA_VERSION = 1 as const;
+const IDENTITY_PROFILE_SCHEMA_VERSION = 1 as const;
 
 export type IdentityProfile = Readonly<{
   schemaVersion: typeof IDENTITY_PROFILE_SCHEMA_VERSION;
@@ -49,7 +49,7 @@ export const DEFAULT_IDENTITY_PROFILE: IdentityProfile = Object.freeze({
   }),
 });
 
-export function canonicalIdentityProfile(profile: IdentityProfile): string {
+function canonicalIdentityProfile(profile: IdentityProfile): string {
   return JSON.stringify({
     schemaVersion: profile.schemaVersion,
     profileId: profile.profileId,
@@ -203,7 +203,7 @@ export function validateIdentityProfile(value: unknown): IdentityProfile {
   });
 }
 
-export function validateIdentityProfileBinding(value: unknown): IdentityProfileBinding {
+function validateIdentityProfileBinding(value: unknown): IdentityProfileBinding {
   if (
     !isRecord(value) ||
     value.schemaVersion !== IDENTITY_PROFILE_SCHEMA_VERSION ||

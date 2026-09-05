@@ -9,6 +9,7 @@ import {
   pnpmCommand,
   pnpmSpawnOptions,
   runReports as productionRunReports,
+  evaluateFindingLedger,
   validateFindingLedger,
   validReport,
 } from "./run-knip-reports.mjs";
@@ -54,7 +55,7 @@ const dialogueWebDynamicImports = [...dialogueWebMain.matchAll(/await import\(["
 const findingLedger = JSON.parse(await readFile(resolve(root, "tools/knip-finding-ledger.json"), "utf8"));
 async function runReports(output, options = {}) {
   return productionRunReports(output, {
-    ledger: { schemaVersion: 1, findings: [] },
+    ledger: { schemaVersion: 2, findings: [] },
     ...options,
   });
 }
@@ -83,7 +84,7 @@ async function cli(args, cwd = root) {
 test("declares the pnpm workspace projection and safe exclusions", async () => {
   assert.deepEqual(Object.keys(config.workspaces), expected);
   assert.deepEqual(config.workspaces["."], {
-    entry: ["tools/*.mjs"],
+    entry: ["tools/*.mjs", "tools/lib/voice-final-gate-server.mjs"],
     project: ["tools/**/*.mjs"],
   });
   assert.deepEqual(config.ignore, approvedIgnore);
@@ -118,7 +119,12 @@ test("declares the pnpm workspace projection and safe exclusions", async () => {
 
 test("maps Host production entries to artifact roots and production TypeScript files", async () => {
   const hostEntries = config.workspaces.host.entry.filter((pattern) => pattern.endsWith("!"));
-  assert.deepEqual(hostEntries, expectedHostProductionEntries);
+  assert.deepEqual(hostEntries, [
+    ...expectedHostProductionEntries,
+    "src/runtime-core.internal.ts!",
+    "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts!",
+    "src/voice-gateway-client.ts!",
+  ]);
 
   for (const entryRoot of productionArtifactConfig.entryRoots) {
     const sourceFile = productionSourceForArtifactRoot(entryRoot);
@@ -138,7 +144,23 @@ test("maps Host production entries to artifact roots and production TypeScript f
 
   const dialogueWebEntry = config.workspaces["dialogue-web"].entry;
   assert.equal(dialogueWebHtmlEntry, "src/main.tsx");
-  assert.deepEqual(dialogueWebEntry, ["src/main.tsx!"]);
+  assert.deepEqual(dialogueWebEntry, [
+    "src/main.tsx!",
+    "tests/i18n.test.mjs",
+    "tests/reference-pipeline-api.test.mjs",
+    "tests/reference-pipeline-session.test.mjs",
+    "tests/management-pipeline-api.test.mjs",
+    "tests/main-entry.test.mjs",
+    "tests/manifest-boundary.test.mjs",
+    "tests/reference-pipeline-composed-browser.test.mjs",
+    "tests/composed-reference-game-browser-api.test.mjs",
+    "tests/reference-pipeline-browser.spec.ts",
+    "tests/management-pipeline-browser.spec.ts",
+    "src/components/ComposedReferenceGameApp.tsx!",
+    "src/components/ManagementApp.tsx!",
+    "src/components/Composer.tsx!",
+    "src/components/drawers/ChatsDrawer.tsx!",
+  ]);
   await access(resolve(dialogueWebRoot, dialogueWebHtmlEntry));
   assert.deepEqual(config.workspaces["dialogue-web"].vite, {
     config: "vite.config.ts",
@@ -159,7 +181,7 @@ test("requires an explicit existing canonical allowed root and accepts only its 
     await mkdir(nested);
     const nestedResult = await runReports(resolve(nested, "out"), {
       allowedRoot,
-      ledger: { schemaVersion: 1, findings: [] },
+      ledger: { schemaVersion: 2, findings: [] },
       run: async () => ({ code: 0, stdout: '{"issues":[]}', stderr: "" }),
     });
     assert.equal(nestedResult.exitCode, 0);
@@ -195,7 +217,28 @@ test("pins scripts, exposes the clean scope, and validates the actual CLI contra
     "src/tavern/reference-pipeline-static-shell-composition.ts!",
     "src/tavern-management-dialogue-web.ts!",
     "src/tavern/tavern-management-static-shell-composition.ts!",
+    "src/tavern/static-artifact/index.ts!",
   ]);
+  assert.deepEqual(config.workspaces.host.entry.slice(-5), [
+    "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.ts",
+    "src/tavern/static-artifact/index.ts!",
+    "src/runtime-core.internal.ts!",
+    "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts!",
+    "src/voice-gateway-client.ts!",
+  ]);
+  assert.deepEqual(
+    config.workspaces["packages/*"].entry,
+    [
+      "src/index.{js,mjs,ts,tsx}!",
+      "src/process-supervisor.mjs!",
+      "src/verifier.mjs!",
+      "src/model.mjs!",
+      "src/descriptors.mjs!",
+      "bin/game-action.mjs!",
+      "tests/fixtures/project/adapter.mjs",
+      "tests/fixtures/project/child.mjs",
+    ],
+  );
   assert.deepEqual(
     config.workspaces["packages/*"].project.filter((pattern) => pattern.endsWith("!")),
     [
@@ -244,8 +287,17 @@ test("pins scripts, exposes the clean scope, and validates the actual CLI contra
     "src/descriptors.mjs!",
     "bin/game-action.mjs!",
     ...expectedHostProductionEntries,
+    "src/runtime-core.internal.ts!",
+    "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts!",
+    "src/voice-gateway-client.ts!",
     "src/main.ts!",
+    "src/gateway.ts!",
+    "src/server.ts!",
     "src/main.tsx!",
+    "src/components/ComposedReferenceGameApp.tsx!",
+    "src/components/ManagementApp.tsx!",
+    "src/components/Composer.tsx!",
+    "src/components/drawers/ChatsDrawer.tsx!",
   ]);
   assert.ok(!productionEntries.some((pattern) => pattern.includes("src/**/*")));
   const productionProjects = Object.values(config.workspaces).flatMap(({ project }) =>
@@ -329,7 +381,7 @@ test("proves pinned CLI finding and fatal-error contracts in an isolated config"
 test("validates exact finding ledger schema and identity", () => {
   const valid = [{ file: "src/a.mjs", category: "files", name: "src/a.mjs" }];
   const ledger = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     findings: [
       {
         report: "workspace",
@@ -379,6 +431,48 @@ test("validates exact finding ledger schema and identity", () => {
       false,
     );
   assert.equal(validateFindingLedger("workspace", [], ledger), false);
+});
+
+test("admits only the literal dual-report taskkill.exe boundary and fails closed on drift", () => {
+  const target = "packages/game-action-devkit/src/process-supervisor.mjs|binaries|taskkill.exe";
+  const approved = {
+    schemaVersion: 2,
+    findings: [],
+    toolBoundaryDisposition: {
+      status: "approved_exact_tool_boundary",
+      scopes: [{ report: "workspace", identity: target }, { report: "production", identity: target }],
+      owner: "game-action-devkit",
+      approval: "user-approved exact taskkill.exe tool boundary",
+      obligation: "Preserve process-tree termination.",
+      risk: "Children can outlive cancellation.",
+      evidence: ["supervisor test"],
+      validUntil: "2099-01-01T00:00:00.000Z",
+    },
+  };
+  const finding = { file: "packages/game-action-devkit/src/process-supervisor.mjs", category: "binaries", name: "taskkill.exe" };
+  assert.deepEqual(evaluateFindingLedger({ workspace: [finding], production: [finding] }, approved, new Date("2026-01-01")), {
+    valid: true,
+    errors: [],
+    unresolvedBlockingCount: 0,
+    admittedExactToolBoundaryCount: 2,
+  });
+  for (const change of [
+    { scopes: [{ report: "workspace", identity: target }, { report: "production", identity: "x|binaries|taskkill.exe" }] },
+    { scopes: [{ report: "workspace", identity: target }] },
+    { scopes: [{ report: "workspace", identity: target }, { report: "production", identity: target }, { report: "production", identity: target }] },
+    { status: "resolved" },
+    { validUntil: "2020-01-01T00:00:00.000Z" },
+  ])
+    assert.equal(evaluateFindingLedger({ workspace: [finding], production: [finding] }, {
+      ...approved,
+      toolBoundaryDisposition: { ...approved.toolBoundaryDisposition, ...change },
+    }, new Date("2026-01-01")).valid, false);
+  assert.equal(evaluateFindingLedger({ workspace: [finding], production: [] }, approved, new Date("2026-01-01")).valid, false);
+  assert.equal(evaluateFindingLedger({ workspace: [finding, finding], production: [finding] }, approved, new Date("2026-01-01")).valid, false);
+  assert.equal(evaluateFindingLedger({
+    workspace: [finding, { file: "x.mjs", category: "binaries", name: "cmd.exe" }],
+    production: [finding],
+  }, approved, new Date("2026-01-01")).valid, false);
 });
 
 test("accepts the complete Knip JSON reporter shape and rejects malformed nested rows", () => {
@@ -432,7 +526,7 @@ test("uses the platform-local pnpm command without shell interpretation", async 
   const calls = [];
   const result = await runReports(output, {
     allowedRoot: resolve(output, ".."),
-    ledger: { schemaVersion: 1, findings: [] },
+    ledger: { schemaVersion: 2, findings: [] },
     run: async (command, args, cwd) => {
       calls.push({ command, args, cwd });
       return { code: 0, stdout: '{"issues":[]}', stderr: "" };
@@ -473,7 +567,7 @@ test("promotes valid finding reports and returns exit code 1", async () => {
   const result = await runReports(output, {
     allowedRoot: resolve(output, ".."),
     ledger: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       findings: ["workspace", "production"].map((report) => ({
         report,
         identity: "src/example.mjs|files|src/example.mjs",
@@ -534,7 +628,7 @@ test("runner derives injective canonical identities for ordered nested cycle and
     [[{ name: "duplicate-a" }, { name: "duplicate-b" }]],
   );
   const knownLedger = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     findings: ["workspace", "production"].flatMap((report) => [
       record(report, "cycles", "7:cycle-a7:cycle-b"),
       record(report, "duplicates", "11:duplicate-a11:duplicate-b"),
@@ -552,7 +646,7 @@ test("runner derives injective canonical identities for ordered nested cycle and
   await run(
     "distinct",
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       findings: ["workspace", "production"].flatMap((report) => [
         record(report, "cycles", "7:cycle-a7:cycle-b"),
         record(report, "cycles", "7:cycle-c7:cycle-d"),
@@ -562,14 +656,14 @@ test("runner derives injective canonical identities for ordered nested cycle and
     1,
   );
 
-  await run("malformed", { schemaVersion: 1, findings: [] }, nestedReport([[{ name: 1 }]], []), 2);
-  await run("unknown", { schemaVersion: 1, findings: [] }, oneOfEach, 2);
+  await run("malformed", { schemaVersion: 2, findings: [] }, nestedReport([[{ name: 1 }]], []), 2);
+  await run("unknown", { schemaVersion: 2, findings: [] }, oneOfEach, 2);
 
   const commaDelimitedNames = nestedReport([[{ name: "a,b" }, { name: "c" }]], []);
   await run(
     "known-comma-delimited-nested-group",
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       findings: ["workspace", "production"].map((report) => record(report, "cycles", "3:a,b1:c")),
     },
     commaDelimitedNames,
@@ -578,7 +672,7 @@ test("runner derives injective canonical identities for ordered nested cycle and
   await run(
     "comma-delimited-nested-group-collision",
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       findings: ["workspace", "production"].map((report) => record(report, "cycles", "3:a,b1:c")),
     },
     nestedReport([[{ name: "a" }, { name: "b,c" }]], []),
@@ -587,7 +681,7 @@ test("runner derives injective canonical identities for ordered nested cycle and
   await run(
     "identity-collision",
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       findings: ["workspace", "production"].map((report) => record(report, "cycles", "7:cycle-a7:cycle-b")),
     },
     nestedReport(
@@ -637,12 +731,12 @@ test("classifies valid JSON fatal stderr as execution errors without promotion",
   await rm(ordinary, { recursive: true, force: true });
   const result = await runReports(ordinary, {
     allowedRoot: resolve(ordinary, ".."),
-    ledger: { schemaVersion: 1, findings: [] },
+    ledger: { schemaVersion: 2, findings: [] },
     run: async () => ({ code: 1, stdout: '{"issues":[]}', stderr: "finding" }),
   });
-  assert.equal(result.exitCode, 1);
-  assert.equal(result.results[0].finding, true);
-  assert.equal(result.results[0].promoted, true);
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.results[0].finding, false);
+  assert.equal(result.results[0].promoted, false);
   await rm(result.output, { recursive: true, force: true });
 });
 
@@ -663,7 +757,7 @@ test("runner validates frozen dual-report ledger records independently", async (
     const ledgerPath = resolve(fixture, "ledger.json");
     const output = resolve(fixture, "reports");
     try {
-      await writeFile(ledgerPath, `${JSON.stringify({ schemaVersion: 1, findings })}\n`);
+      await writeFile(ledgerPath, `${JSON.stringify({ schemaVersion: 2, findings })}\n`);
       let call = 0;
       const result = await productionRunReports(output, {
         allowedRoot: fixture,
@@ -716,13 +810,15 @@ test("classifies parser output as execution errors and preserves independent val
     run: async () => {
       calls++;
       return calls === 1
-        ? { code: 1, stdout: '{"issues":[]}', stderr: "" }
+        ? { code: 1, stdout: '{"issues":[{"file":"src/example.mjs","files":[{"name":"src/example.mjs"}]}]}', stderr: "" }
         : { code: 2, stdout: "{}", stderr: "bad config" };
     },
   });
   assert.equal(result.exitCode, 2);
   assert.equal(calls, 2);
-  assert.deepEqual(JSON.parse(await readFile(resolve(result.output, "workspace.json"))), { issues: [] });
+  assert.deepEqual(JSON.parse(await readFile(resolve(result.output, "workspace.json"))), {
+    issues: [{ file: "src/example.mjs", files: [{ name: "src/example.mjs" }] }],
+  });
   await assert.rejects(() =>
     runReports(result.output, {
       allowedRoot: resolve(result.output, ".."),
@@ -866,7 +962,7 @@ test("rejects invalid JSON, malformed reports, and spawn failures without promot
   }
 });
 
-test("executable runner uses repository Knip config with external CI output admission", async () => {
+test("executable runner preserves raw clean reports and exits successfully", async () => {
   const allowedRoot = await mkdtemp(resolve(tmpdir(), "gamebuddy-knip-ci-root-"));
   const output = resolve(allowedRoot, "reports");
   const ledgerPath = resolve(root, "tools/knip-finding-ledger.json");
@@ -885,8 +981,13 @@ test("executable runner uses repository Knip config with external CI output admi
       { cwd: allowedRoot, encoding: "utf8", shell: false },
     ).catch((error) => error);
     const code = result.code ?? result.status ?? 0;
-    assert.equal(code, 2, `${result.stdout}\n${result.stderr}`);
-    for (const report of ["workspace.json", "production.json"]) await access(resolve(output, report));
+    assert.equal(code, 0, `${result.stdout}\n${result.stderr}`);
+    for (const report of ["workspace.json", "production.json"]) {
+      const reportPath = resolve(output, report);
+      await access(reportPath);
+      const parsed = JSON.parse(await readFile(reportPath, "utf8"));
+      assert.deepEqual(parsed.issues, []);
+    }
   } finally {
     await rm(allowedRoot, { recursive: true, force: true });
   }

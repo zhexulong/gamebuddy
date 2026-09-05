@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle";
+type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle";
 export type WorldFact = Readonly<{
   /** Adapter-owned source label, or Host's explicitly non-world transport label. */
   source: string;
@@ -225,7 +225,7 @@ export class CompanionEventPump {
 }
 
 /** Receipt progress is latest-only; terminal and invalidating states remain ordinary facts. */
-export function isMeaningfulProgressFact(fact: WorldFact): boolean {
+function isMeaningfulProgressFact(fact: WorldFact): boolean {
   return (
     fact.kind === "execution_receipt" &&
     typeof fact.payload.state === "string" &&

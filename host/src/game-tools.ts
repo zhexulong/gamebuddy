@@ -1212,11 +1212,15 @@ async function executeBridge(
     ...admission.owner,
     requestId: request.requestId,
     idempotencyKey: request.idempotencyKey,
+    recoveryMaterial: {
+      logicalActionId: request.requestId,
+      request,
+    },
   };
   await admission.observer.beforeWrite(dispatch);
   try {
     const receipt = await integration.execute(request);
-    admission.observer.bindReceipt(receipt);
+    await admission.observer.bindReceipt(receipt);
     return receipt;
   } catch (error) {
     await admission.observer.markUncertain(dispatch);

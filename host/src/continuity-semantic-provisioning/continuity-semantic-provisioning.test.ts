@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import {
   openKnownProductionContinuity,
@@ -17,7 +18,7 @@ const input = (runtimeCwd: string) => ({
   authorityGeneration: 1,
 });
 test("production provisioning is fresh-only and malformed store is byte-preserved", () => {
-  const root = mkdtempSync(join(tmpdir(), "s3-provision-"));
+  const root = canonicalTestRootSync("s3-provision-");
   try {
     const fresh = provisionFreshProductionContinuity(input(root));
     assert.equal(fresh.schemaVersion, PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION);
@@ -39,7 +40,7 @@ test("production provisioning is fresh-only and malformed store is byte-preserve
 });
 
 test("provision close is terminal at the public store boundary", () => {
-  const root = mkdtempSync(join(tmpdir(), "s3-close-terminal-"));
+  const root = canonicalTestRootSync("s3-close-terminal-");
   try {
     const fresh = provisionFreshProductionContinuity(input(root));
     fresh.close();
@@ -55,7 +56,7 @@ test("provision close is terminal at the public store boundary", () => {
 });
 
 test("fresh authority writes the exact v42 fresh-only schema and v21 marker pair", () => {
-  const root = mkdtempSync(join(tmpdir(), "s3-marker-exact-"));
+  const root = canonicalTestRootSync("s3-marker-exact-");
   try {
     const fresh = provisionFreshProductionContinuity(input(root));
     const expectedStoreId = fresh.storeId;
@@ -124,7 +125,7 @@ test("historical fresh marker pairs through v41/v21 are rejected byte-preserving
     { version: 21, schemaVersion: 40 },
     { version: 21, schemaVersion: 41 },
   ]) {
-    const root = mkdtempSync(join(tmpdir(), "s3-marker-"));
+    const root = canonicalTestRootSync("s3-marker-");
     try {
       const fresh = provisionFreshProductionContinuity(input(root));
       fresh.close();
@@ -171,7 +172,7 @@ test("fresh authority marker rejects every mutated field without rewriting marke
     { field: "storeId", value: "0".repeat(36) },
   ];
   for (const { field, value } of fields) {
-    const root = mkdtempSync(join(tmpdir(), "s3-marker-field-"));
+    const root = canonicalTestRootSync("s3-marker-field-");
     try {
       const fresh = provisionFreshProductionContinuity(input(root));
       fresh.close();

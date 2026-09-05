@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-export const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 16 * 1024;
 export const MAX_EVENTS_PER_WINDOW = 32;
 export const EVENT_WINDOW_MS = 1_000;
@@ -39,7 +39,7 @@ export const EXECUTION_STATES = [
 ] as const;
 export type ExecutionState = (typeof EXECUTION_STATES)[number];
 
-export type ActiveExecution = Readonly<{
+type ActiveExecution = Readonly<{
   executionId: string;
   requestId: string;
   action: string;
@@ -374,7 +374,7 @@ export type ExecutionReceiptQuery = Readonly<{
   idempotencyKey: string;
 }>;
 
-export type NavigationSelector = Readonly<{
+type NavigationSelector = Readonly<{
   kind: "label" | "ref";
   label: string | null;
   ref: string | null;
@@ -386,14 +386,14 @@ export type NavigationReadRequest =
   | Readonly<{ operation: "inspect_world_map"; args: Readonly<{ cursor: string }> }>
   | Readonly<{ operation: "find_destination"; args: Readonly<{ query: string }> }>;
 
-export type NavigationWorldMapEntry = Readonly<{
+type NavigationWorldMapEntry = Readonly<{
   label: string;
   contextLabel: string | null;
   nodeRef: string | null;
   destination: NavigationSelector | null;
 }>;
 
-export type NavigationSearchCandidate = Readonly<{
+type NavigationSearchCandidate = Readonly<{
   label: string;
   contextLabel: string | null;
   destination: NavigationSelector;
@@ -475,7 +475,7 @@ export function nextCancelIdentity(previous: CancelIdentity | null): CancelIdent
   return { cancelId: previous.cancelId, cancelEpoch: previous.cancelEpoch + 1 };
 }
 
-export type BodyTrace = Readonly<{
+type BodyTrace = Readonly<{
   category:
     | "execution_started"
     | "route_progress"
@@ -492,7 +492,7 @@ export type BodyTrace = Readonly<{
   tile?: Readonly<{ x: number; y: number }>;
 }>;
 
-export type SemanticEvent = Readonly<{
+type SemanticEvent = Readonly<{
   kind:
     | "snapshot_changed"
     | "execution_state"
@@ -540,13 +540,13 @@ export type SystemNoticeRequest = Readonly<{
   locale: string;
 }>;
 
-export type SystemNoticeReceipt = Readonly<{
+type SystemNoticeReceipt = Readonly<{
   noticeId: string;
   revision: number;
 }>;
 
 /** Host acknowledgement only after its registered listener has synchronously received a native player-control fact. */
-export type PlayerControlReceipt = Readonly<{
+type PlayerControlReceipt = Readonly<{
   controlId: string;
   sourceEventId: string;
   status: "accepted";
@@ -561,16 +561,16 @@ export type ActionRegistration = Readonly<{
 }>;
 
 /** Mod-declared registrations, ordered exactly as the Mod projected them. */
-export type ActionCatalog = Readonly<{
+type ActionCatalog = Readonly<{
   /** Ordered, deduplicated action-id index. */
   byActionId: ReadonlyMap<string, ActionRegistration>;
   /** Ordered projection preserving Mod declaration order. */
   entries: readonly ActionRegistration[];
 }>;
 
-export type BodyProgramRuntimeValue = Readonly<{ type: string; canonicalValue: string }>;
-export type BodyProgramFactReference = Readonly<{ nodeId: string; factName: string }>;
-export type BodyProgramNode = Readonly<{
+type BodyProgramRuntimeValue = Readonly<{ type: string; canonicalValue: string }>;
+type BodyProgramFactReference = Readonly<{ nodeId: string; factName: string }>;
+type BodyProgramNode = Readonly<{
   nodeId: string;
   actionId: string;
   arguments: Readonly<Record<string, BodyProgramRuntimeValue>>;
@@ -583,7 +583,7 @@ export type BodyProgramStatusRequest = Readonly<{ programId: string }>;
 export type BodyProgramEventsRequest = Readonly<{ programId: string; cursor: number; pageSize: number }>;
 export type BodyProgramCommandResult = Readonly<{ programId: string; status: string; diagnostics: readonly string[] }>;
 export type BodyProgramStatusResult = Readonly<{ programId: string; status: string; catalogRevision: number }>;
-export type BodyProgramEvent = Readonly<{ cursor: number; kind: string; catalogRevision: number }>;
+type BodyProgramEvent = Readonly<{ cursor: number; kind: string; catalogRevision: number }>;
 export type BodyProgramEventsResult = Readonly<{
   programId: string;
   nextCursor: number;
@@ -631,7 +631,7 @@ export type BridgeMessage =
   | Envelope<"semantic_event", SemanticEvent>
   | Envelope<"lifecycle", Readonly<{ state: "connected" | "disconnected" | "world_unavailable"; reasonCode: string }>>;
 
-export const BRIDGE_MESSAGE_TYPES = [
+const BRIDGE_MESSAGE_TYPES = [
   "hello", "hello_ack", "observe_request", "navigation_read_request", "navigation_read_result", "snapshot", "catalog_update",
   "execution_request", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
   "system_notice_receipt", "companion_presentation_receipt", "player_control_receipt", "execution_receipt",
@@ -756,7 +756,7 @@ export function newEnvelope<TType extends BridgeMessage["type"], TPayload>(
   };
 }
 
-export function validateScope(expected: Scope, actual: Scope): string | null {
+function validateScope(expected: Scope, actual: Scope): string | null {
   for (const key of Object.keys(expected) as (keyof Scope)[]) {
     if (expected[key] !== actual[key]) return `scope_mismatch:${key}`;
   }

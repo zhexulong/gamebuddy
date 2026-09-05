@@ -40,7 +40,7 @@ export function assertChatStableContextLifecycle(value: unknown): asserts value 
  * or publication work can mutate the runtime surface. The receiver is part of
  * the captured operation, rather than being looked up during reverse cleanup.
  */
-export function captureChatStableContextClear(value: ChatRuntimeStableContextLifecycle): () => Promise<void> {
+function captureChatStableContextClear(value: ChatRuntimeStableContextLifecycle): () => Promise<void> {
   return value.clearTavernStableContext.bind(value);
 }
 
@@ -152,7 +152,7 @@ export async function materializeExactChatRuntime(
 }
 
 /** Mints Host lifecycle evidence only after the exact post-factory admission. */
-export function finalizeMaterializedChatRuntime(
+function finalizeMaterializedChatRuntime(
   permit: ProductionChatRuntimePermit,
   runtime: ChatRuntimeMaterialization,
 ): MaterializedChatRuntime {
@@ -180,7 +180,7 @@ export function finalizeMaterializedChatRuntime(
   });
 }
 
-export function mintChatRuntimeReceipt(permit: ProductionChatRuntimePermit): ProductionChatRuntimeReceipt {
+function mintChatRuntimeReceipt(permit: ProductionChatRuntimePermit): ProductionChatRuntimeReceipt {
   assertPermit(permit);
   const occurredAtMs = Date.now();
   if (occurredAtMs > permit.deadlineAtMs) throw new Error("chat_runtime_materialization_deadline_expired");

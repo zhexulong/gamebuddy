@@ -6,7 +6,7 @@ import type {
 } from "../world-info-management/world-info-management.js";
 
 /** Exact immutable managed source delivered to Tavern stable materialization. */
-export type ManagedWorldInfoSource = Readonly<{
+type ManagedWorldInfoSource = Readonly<{
   binding: TavernStableManagedWorldInfoBinding;
   content: string;
 }>;

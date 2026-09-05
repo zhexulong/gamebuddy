@@ -290,6 +290,35 @@ test("activation reservation atomically compensates Player Host when AI generati
   );
 });
 
+test("normal activation fails closed without adopting or cleaning prepared registration state", async () => {
+  const cases = [
+    { name: "prepare marker", marker: true, activeAttempt: false, owner: false },
+    { name: "matching prepared owner and active attempt", marker: true, activeAttempt: true, owner: true },
+    { name: "active attempt with missing prepared owner", marker: false, activeAttempt: true, owner: false },
+  ] as const;
+
+  for (const scenario of cases) {
+    const harness = createHarness();
+    const root = await createRoot(`gamebuddy-normal-prepare-${scenario.name.replaceAll(" ", "-")}-`);
+    const fixture = await writeRegistrationAttemptFixture(root, scenario);
+    const browserSessionId = `browser-${scenario.name.replaceAll(" ", "-")}`;
+    const claim = harness.composition.broker.confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId,
+      expiresAtMs: 5_000,
+    }).consume(browserSessionId);
+
+    await assert.rejects(
+      harness.testCore.reserveOwnedPlayerHostPhaseAForActivation(root, claim),
+      /stardew_bootstrap_registration_unavailable/,
+      scenario.name,
+    );
+    await assertAttemptFixtureUnchanged(fixture);
+    assert.deepEqual(harness.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
+    assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
+  }
+});
 type SpawnCall = Readonly<{
   executable: string;
   args: readonly string[];
@@ -604,6 +633,52 @@ function expectedRecord(input: Readonly<{
   };
 }
 
+async function writeRegistrationAttemptFixture(
+  root: string,
+  input: Readonly<{ marker: boolean; activeAttempt: boolean; owner: boolean }>,
+): Promise<Readonly<{ before: Map<string, string | null> }>> {
+  const registrationDirectory = join(root, "stardew-installation-registration");
+  const registrationPath = join(registrationDirectory, "registration.json");
+  const markerPath = join(registrationDirectory, "owner-transaction.json");
+  const preparedOwnerPath = ownerPath(root);
+  await mkdir(registrationDirectory, { recursive: true });
+  await writeFile(registrationPath, JSON.stringify({
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1, productInstallationId: "installation-1" },
+    revision: input.activeAttempt ? 2 : 1,
+    state: "ready",
+    locator: "C:\\StardewValley",
+    activeAttempt: input.activeAttempt ? { bootstrapCorrelation: "bootstrap-1" } : null,
+  }), "utf8");
+  if (input.marker) await writeFile(markerPath, JSON.stringify({
+    schema: "gamebuddy-stardew-installation-owner-transaction/v1",
+    operation: "prepare_bind",
+    bootstrapCorrelation: "bootstrap-1",
+    registrationRevision: 2,
+    ownerRecordRevision: 1,
+  }), "utf8");
+  if (input.owner) {
+    await mkdir(dirname(preparedOwnerPath), { recursive: true });
+    await writeFile(preparedOwnerPath, JSON.stringify(expectedOwnedRecord()), "utf8");
+  }
+  const before = new Map<string, string | null>();
+  for (const path of [registrationPath, markerPath, preparedOwnerPath]) {
+    try { before.set(path, await readFile(path, "utf8")); }
+    catch (error) {
+      if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) throw error;
+      before.set(path, null);
+    }
+  }
+  return Object.freeze({ before });
+}
+
+async function assertAttemptFixtureUnchanged(fixture: Awaited<ReturnType<typeof writeRegistrationAttemptFixture>>): Promise<void> {
+  for (const [path, expected] of fixture.before) {
+    if (expected === null) await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
+    else assert.equal(await readFile(path, "utf8"), expected);
+  }
+}
+
 test("v4 owner transition CAS enforces legal lifecycle transitions, immutable fences, and exact revisions", async () => {
   const harness = createHarness();
   const root = await createRoot();
@@ -871,6 +946,7 @@ test("production internal composition exposes only the private C1 materializer w
     "createOwnedPlayerHostAttachmentFlow",
     "createOwnedPlayerHostManifestHandoffCoordinator",
     "createStardewBootstrapGuardianOwner",
+    "createStardewBootstrapGuardianOwnerFromDesktopSession",
     "launchOwnedAiClientStageD",
     "launchOwnedPlayerHostStageC",
     "materializeAiClientProfileAfterManifestAdmission",

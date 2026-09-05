@@ -8,7 +8,7 @@ const OPTION_TO_FIELD = new Map([
   ["--brief", "briefFile"],
 ]);
 const COMMANDS = new Set(["check", "preflight", "run-live", "status"]);
-export const DEFAULT_PROJECT_FILE_NAME = "game-action-project.json";
+const DEFAULT_PROJECT_FILE_NAME = "game-action-project.json";
 export const MAX_CLI_STDOUT_BYTES = 64 * 1024;
 export const MAX_CLI_REPORT_BYTES = MAX_CLI_STDOUT_BYTES - 1;
 

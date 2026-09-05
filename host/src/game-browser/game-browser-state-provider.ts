@@ -14,7 +14,7 @@ import type {
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /** Browser-session facts minted by the browser-session owner, never by Game state. */
-export type GameBrowserReadStateContext = Readonly<{
+type GameBrowserReadStateContext = Readonly<{
   csrfToken: string;
   browserSessionExpiresAtMs: number;
 }>;

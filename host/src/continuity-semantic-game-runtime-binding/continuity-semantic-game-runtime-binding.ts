@@ -60,11 +60,6 @@ const recoveryContextBrand = new WeakSet<object>();
 const recoveryContextRecords = new WeakMap<object, StardewRecoveryBindingContextRecord>();
 
 
-export type {
-  OpaqueGameRuntimeBindingToken,
-  OpaqueRuntimeOwnerIdentity,
-} from "./continuity-semantic-game-runtime-binding.internal.js";
-export type { WindowsRuntimeOwnerIdentityPort } from "./continuity-semantic-game-runtime-binding.windows-owner-identity.js";
 export { createWindowsRuntimeOwnerIdentityPort } from "./continuity-semantic-game-runtime-binding.windows-owner-identity.js";
 
 /** All authority inputs are construction-owned; no caller may inject an owner proof. */
@@ -337,8 +332,6 @@ function sameStableIdentity(left: StableGameRuntimeBindingIdentity, right: Stabl
   );
 }
 
-/** Explicit construction-zone spelling retained for call sites that name the production boundary. */
-export const createProductionGameRuntimeBinding = createGameRuntimeBinding;
 
 function exactWorldScope(
   value: unknown,

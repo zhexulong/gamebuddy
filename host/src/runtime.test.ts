@@ -538,7 +538,7 @@ test("generic runtime keeps an explicit game surface when the Host construction 
   try {
     assert.doesNotMatch(runtime.session.systemPrompt, /companion_text/);
     assert.doesNotMatch(runtime.session.systemPrompt, /private/);
-    assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
+    assert.match(runtime.session.systemPrompt, /\[Character: GameBuddy Companion\]/);
     assert.equal(
       runtime.session.agent.state.tools.some(
         (tool) =>
@@ -571,7 +571,7 @@ test("Chat surface runtime is a pure native-content dialogue surface with no mou
   try {
     assert.doesNotMatch(runtime.session.systemPrompt, /companion_text/);
     assert.doesNotMatch(runtime.session.systemPrompt, /private/);
-    assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
+    assert.match(runtime.session.systemPrompt, /\[Character: GameBuddy Companion\]/);
     assert.deepEqual(runtime.session.agent.state.tools, []);
     assert.equal(runtime.paths.surfaceSessionId, "chat_surface_01");
   } finally {
@@ -802,6 +802,7 @@ test("runtime composes a ledger admission before mounting and executing a live S
       return {
         requestId: request.requestId,
         executionId: "execution_equip_01",
+        actionId: "equip_tool",
         state: "succeeded" as const,
         reasonCode: "tool_selected",
         revision: 1,
@@ -1435,8 +1436,8 @@ test("runtime binds the Host-owned IdentityProfile to Pi system prompt and fails
   );
   const runtime = await createCompanionRuntime(identity, root);
   try {
-    assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
-    assert.match(
+    assert.match(runtime.session.systemPrompt, /\[Character: GameBuddy Companion\]/);
+    assert.doesNotMatch(
       runtime.session.systemPrompt,
       new RegExp(runtime.identityProfile.canonicalHash),
     );

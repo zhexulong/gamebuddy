@@ -41,6 +41,7 @@ const scope: Scope = Object.freeze({
 });
 const token = "farmhand_bridge_token_0123456789";
 const generation = "ai-generation-attestation";
+const continuityId = "continuity_attestation";
 
 async function receiptBackedBinding(launch: import("./integration-launcher.js").IntegrationLaunchHandle): Promise<GameRuntimeBinding> {
   const root = await mkdtemp(join(tmpdir(), "stardew-s4c-admission-"));
@@ -253,9 +254,10 @@ test("S4c body-program admission expires with its factory callback and rejects f
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
     const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({
-      playerId: "player_attestation",
-      companionId: scope.companionId,
-      saveId: scope.saveId,
+       playerId: "player_attestation",
+       companionId: scope.companionId,
+       continuityId,
+       saveId: scope.saveId,
       worldId: scope.worldId,
     }));
     const binding = await receiptBackedBinding(launch);
@@ -298,7 +300,7 @@ test("actual attested pipe materializes exactly four fixed body-program tools an
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
     const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({
-      playerId: "player_attestation", companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId,
+      playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId,
     }));
     const binding = await receiptBackedBinding(launch);
     let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
@@ -355,7 +357,7 @@ test("attested fixed body-program closures recheck restrictive live policy witho
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
     const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({
-      playerId: "player_attestation", companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId,
+      playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId,
     }));
     const binding = await receiptBackedBinding(launch);
     let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
@@ -424,7 +426,7 @@ test("attested status and events each emit one frame without preflight, cursor c
   const requests: BridgeMessage[] = [];
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({ playerId: "player_attestation", companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId }));
+    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({ playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId }));
     const binding = await receiptBackedBinding(launch);
     let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
     try {
@@ -447,7 +449,7 @@ test("attested submit timeout emits exactly one program frame and is not retried
   const requests: BridgeMessage[] = [];
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 10_000);
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({ playerId: "player_attestation", companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId }));
+    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({ playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId }));
     const binding = await receiptBackedBinding(launch);
     let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
     try {
@@ -471,21 +473,27 @@ test("attested fixed closure survives refresh by identity, then drains before re
   const requests: BridgeMessage[] = [];
   let heldStatus: BridgeMessage | undefined;
   let heldSocket: Socket | undefined;
+  let resolveStatusSent!: () => void;
+  const statusSent = new Promise<void>((resolve) => { resolveStatusSent = resolve; });
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({ playerId: "player_attestation", companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId }));
+    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({ playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId }));
     const binding = await receiptBackedBinding(launch);
     let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
     try {
       materialized = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => createHostGameRuntimeMaterializer().materializeEnter(reserveGameRuntimeMaterialization(execution), enterPermit(execution))));
       const runtime = observeMaterializedProductionRuntimeForTest(materialized);
-      const status = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_action_program_status")!;
-      await runtime.refreshIntegrationTools?.();
-      assert.equal(runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_action_program_status"), status);
-      const started = status.execute("draining_status", { programId: "program_05" }, new AbortController().signal, () => undefined);
-      await delay(0);
-      const closing = materialized.close();
-      await assert.rejects(() => status.execute("revoked_status", { programId: "program_05" }, new AbortController().signal, () => undefined), /action_program_runtime_unavailable/);
+       const beforeRefresh = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_action_program_status")!;
+       await runtime.refreshIntegrationTools?.();
+       const status = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_action_program_status")!;
+       assert.notEqual(status, beforeRefresh);
+        const started = status.execute("draining_status", { programId: "program_05" }, new AbortController().signal, () => undefined);
+        await Promise.race([
+          statusSent,
+          delay(1_000).then(() => { throw new Error("status_request_not_observed"); }),
+        ]);
+        const closing = materialized.close();
+       await assert.rejects(() => status.execute("revoked_status", { programId: "program_05" }, new AbortController().signal, () => undefined), /action_program_runtime_unavailable/);
       assert.equal(requests.filter((request) => request.type === "program_status").length, 1);
       assert.ok(heldStatus);
       heldSocket!.write(frame({ ...heldStatus, messageId: "status_drain_attestation", type: "program_status_result", payload: { programId: "program_05", status: "accepted", catalogRevision: 1 } }));
@@ -498,7 +506,12 @@ test("attested fixed closure survives refresh by identity, then drains before re
     }
   }, (request, socket) => {
     requests.push(request);
-    if (request.type === "program_status") { heldStatus = request; heldSocket = socket; return true; }
+    if (request.type === "program_status") {
+      heldStatus = request;
+      heldSocket = socket;
+      resolveStatusSent();
+      return true;
+    }
   });
 });
 

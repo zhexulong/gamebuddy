@@ -7,10 +7,10 @@
  * empty or orphan punctuation chunks.
  */
 
-export const DEFAULT_MAX_CHUNK_LENGTH = 35;
-export const DEFAULT_MIN_FIRST_CHUNK_LENGTH = 5;
+const DEFAULT_MAX_CHUNK_LENGTH = 35;
+const DEFAULT_MIN_FIRST_CHUNK_LENGTH = 5;
 
-export const DEFAULT_PAUSE_PUNCTUATIONS = Object.freeze(
+const DEFAULT_PAUSE_PUNCTUATIONS = Object.freeze(
   new Set([
     "，", "。", "！", "？", "；", "：", "、", "…", "—", "～",
     ",", ".", "!", "?", ";", ":", "~",
@@ -18,7 +18,7 @@ export const DEFAULT_PAUSE_PUNCTUATIONS = Object.freeze(
   ]),
 );
 
-export const DEFAULT_TRAILING_PUNCTUATIONS = Object.freeze(
+const DEFAULT_TRAILING_PUNCTUATIONS = Object.freeze(
   new Set([
     "”", "’", "\"", "'", "）", ")", "】", "]", "》", ">", "」", "』",
     "…", "—", "～", ".", "!", "?", "！", "？", ",", "，", "；", ";", "~", ":", "：",

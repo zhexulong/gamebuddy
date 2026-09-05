@@ -14,7 +14,7 @@ import {
 } from "./continuity-semantic-chat-runtime-materializer.internal.js";
 
 /** The mounted materialization product remains an internal production-chain type. */
-export type { ChatRuntimeDisposal, ChatRuntimeMaterializer };
+export type { ChatRuntimeMaterializer };
 
 /**
  * The sole production Chat runtime path. Construction remains Host-owned and
