@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
-export const TARGET_VERSION = "1.6.15.24356";
+const TARGET_VERSION = "1.6.15.24356";
 export const TARGET_LENGTH = 6268416;
 export const TARGET_SHA256 = "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee";
 export const TOOL_VERSION = "ilspycmd: 9.1.0.7988";
@@ -16,7 +16,7 @@ export const TOOL_PAYLOAD_RELATIVE_PATH =
   ".dotnet/tools/.store/ilspycmd/9.1.0.7988/ilspycmd/9.1.0.7988/tools/net8.0/any";
 export const TOOL_CLOSURE_SHA256 = "660c68db0da4f412c3294728453654fe9714c0ee19748bea94031bf57fd0c166";
 export const OPTIONS = Object.freeze(["--disable-updatecheck", "-p", "--nested-directories"]);
-export const CONTRACT_PATH = "tools/stardew-portfolio-m10-museum-action-contract.json";
+const CONTRACT_PATH = "tools/stardew-portfolio-m10-museum-action-contract.json";
 export const BLOCKER_CODE = "m10_donate_museum_method_scoped_forbidden_ui_transaction_global_ingress_unproven";
 export const NON_CLAIM =
   "Exact-target bounded source evidence only: MuseumMenu method-scoped anchors demonstrate one forbidden UI transaction containing eligibility and placement validation, collection insertion, and exact-one consumption; LibraryMuseum anchors are helpers. This checker does not establish uniqueness over the global ingress universe, source realization, authorization, publication, live execution, or release evidence. MuseumMenu UI callback invocation remains forbidden and unapproved.";
@@ -651,7 +651,7 @@ export function validate(model, contractHash, state, _root) {
     anchorCount: model.anchors.length,
   };
 }
-export { sha, toolClosure };
+
 
 export async function writeVerifiedAtomicJson(
   output,

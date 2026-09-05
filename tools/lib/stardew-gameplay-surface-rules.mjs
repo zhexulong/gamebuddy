@@ -65,19 +65,19 @@ export function knownToolBasisIds(typeName) {
   return TOOL_RULES[typeName] ? [...TOOL_RULES[typeName]] : [];
 }
 
-export function isGameplayMethod(methodName) {
+function isGameplayMethod(methodName) {
   return !isUiInputMethod(methodName) && GAMEPLAY_METHOD_PATTERNS.some((pattern) => pattern.test(methodName));
 }
 
-export function isMenuType(typeName) {
+function isMenuType(typeName) {
   return typeName.startsWith("StardewValley.Menus.");
 }
 
-export function isMinigameType(typeName) {
+function isMinigameType(typeName) {
   return typeName.startsWith("StardewValley.Minigames.");
 }
 
-export function hasUiInputMethods(methodNames) {
+function hasUiInputMethods(methodNames) {
   return methodNames.some(isUiInputMethod);
 }
 

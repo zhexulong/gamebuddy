@@ -256,7 +256,9 @@ function parseExecutionRequestUnion(source) {
 }
 
 function parseBridgeMessageTypes(source) {
-  const body = source.match(/export const BRIDGE_MESSAGE_TYPES = \[([\s\S]*?)\] as const;/)?.[1];
+  // This protocol list is deliberately module-private: BridgeMessage is its
+  // public boundary. Parse the literal list regardless of export visibility.
+  const body = source.match(/(?:export )?const BRIDGE_MESSAGE_TYPES = \[([\s\S]*?)\] as const;/)?.[1];
   if (!body) fail("bridge_message_types_unreadable");
   const types = [...body.matchAll(/"([a-z0-9_]+)"/g)].map((entry) => entry[1]);
   if (types.length === 0) fail("bridge_message_types_empty");
@@ -264,9 +266,9 @@ function parseBridgeMessageTypes(source) {
 }
 
 function parseSemanticEventKinds(source) {
-  const explicit = source.match(/export type SemanticEvent[\s\S]*?reasonCode: string;/)?.[0] ?? "";
+  const explicit = source.match(/(?:export )?type SemanticEvent[\s\S]*?reasonCode: string;/)?.[0] ?? "";
   const kinds = [...explicit.matchAll(/\| "([a-z0-9_]+)"/g)].map((entry) => entry[1]);
-  const bodyTrace = source.match(/export type BodyTrace[\s\S]*?;\n}>;/)?.[0] ?? "";
+  const bodyTrace = source.match(/(?:export )?type BodyTrace[\s\S]*?;\n}>;/)?.[0] ?? "";
   const bodyTraceKinds = [...bodyTrace.matchAll(/\| "([a-z0-9_]+)"/g)].map((entry) => entry[1]);
   const all = [...kinds, ...bodyTraceKinds];
   if (all.length === 0) fail("semantic_event_kinds_empty");

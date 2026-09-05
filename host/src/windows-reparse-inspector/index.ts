@@ -46,6 +46,16 @@ async function createBuildWindowsReparseInspector(): Promise<WindowsReparseInspe
   return await createFixedInspector(resolve(repositoryRoot, "host", "native", "windows-reparse-inspector", ".dist", rid));
 }
 
+/**
+ * The emitted browser-artifact policy may only request the repository-owned
+ * build inspector through this narrow object; no capability or helper path is
+ * exposed to its caller.
+ */
+export const BUILD_ARTIFACT_REPARSE_INSPECTION = Object.freeze({
+  create: createBuildWindowsReparseInspector,
+  assertNoReparse: assertNoWindowsReparse,
+});
+
 /** Mints the published-artifact capability from its sole fixed internal helper pair. */
 export async function createPublishedWindowsReparseInspector(
   hostArtifactRoot: string,

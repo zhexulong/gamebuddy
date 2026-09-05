@@ -22,7 +22,7 @@ export async function auditStandaloneCoupling() {
   try { packageJson = JSON.parse(await readFile(path.join(PACKAGE_DIRECTORY, "package.json"), "utf8")); } catch { fail("package_unreadable"); }
   const workspaceDevkit = packageJson.dependencies?.["@gamebuddy/game-action-devkit"] === "workspace:*";
   const items = Object.freeze([
-    Object.freeze({ id: "devkit-workspace-link", present: workspaceDevkit && await present(DEVKIT_PACKAGE), reason: "current package resolves devkit through monorepo workspace:* rather than a packed dependency" }),
+    Object.freeze({ id: "devkit-workspace-link", present: workspaceDevkit && await present(DEVKIT_PACKAGE), reason: "the production package resolves devkit through monorepo workspace:* rather than a packed dependency" }),
     Object.freeze({ id: "stardew-contract-exporter-project", present: await present(CORE_EXPORTER), reason: "equip_tool contract drift check executes this Stardew-owned exporter project outside action-development/" }),
     Object.freeze({ id: "stardew-core-source-closure", present: await present(CORE_PROJECT) && await present(CORE_SOURCE_DIRECTORY), reason: "the exporter ProjectReference targets GameBuddy.Stardew.Core; SDK default compile items require the Stardew-owned src/Core/** closure, not just the exporter project" }),
   ]);

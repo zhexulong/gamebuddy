@@ -40,9 +40,11 @@ const explicitVerificationRoots = productionArtifactConfig.verificationRoots.fil
 const transitiveVerificationRoots = productionArtifactConfig.verificationRoots.filter(
   (artifactRoot) => !productionTsconfig.files.includes(productionSourceForArtifactRoot(artifactRoot)),
 );
-const expectedHostProductionEntries = [...productionArtifactConfig.entryRoots, ...explicitVerificationRoots].map(
-  (artifactRoot) => `${productionSourceForArtifactRoot(artifactRoot)}!`,
-);
+const expectedHostProductionEntries = [
+  ...productionArtifactConfig.entryRoots,
+  ...explicitVerificationRoots,
+  "tavern/static-artifact/index.js",
+].map((artifactRoot) => `${productionSourceForArtifactRoot(artifactRoot)}!`);
 const dialogueWebRoot = resolve(root, "dialogue-web");
 const dialogueWebHtml = await readFile(resolve(dialogueWebRoot, "index.html"), "utf8");
 const dialogueWebMain = await readFile(resolve(dialogueWebRoot, "src/main.tsx"), "utf8");
@@ -84,7 +86,15 @@ async function cli(args, cwd = root) {
 test("declares the pnpm workspace projection and safe exclusions", async () => {
   assert.deepEqual(Object.keys(config.workspaces), expected);
   assert.deepEqual(config.workspaces["."], {
-    entry: ["tools/*.mjs", "tools/lib/voice-final-gate-server.mjs"],
+    entry: [
+      "tools/*.mjs",
+      "tools/stardew-player-command-graph.test.mjs",
+      "tools/stardew-gameplay-surface-rules.test.mjs",
+      "tools/stardew-player-command-equivalence-audit.test.mjs",
+      "tools/stardew-portfolio-m9-accept-special-order-source-boundary.test.mjs",
+      "tools/stardew-portfolio-sleep-day-source-boundary.test.mjs",
+      "tools/lib/voice-final-gate-server.mjs",
+    ],
     project: ["tools/**/*.mjs"],
   });
   assert.deepEqual(config.ignore, approvedIgnore);
@@ -124,6 +134,7 @@ test("maps Host production entries to artifact roots and production TypeScript f
     "src/runtime-core.internal.ts!",
     "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts!",
     "src/voice-gateway-client.ts!",
+    "src/windows-reparse-inspector/index.ts!",
   ]);
 
   for (const entryRoot of productionArtifactConfig.entryRoots) {
@@ -218,13 +229,14 @@ test("pins scripts, exposes the clean scope, and validates the actual CLI contra
     "src/tavern-management-dialogue-web.ts!",
     "src/tavern/tavern-management-static-shell-composition.ts!",
     "src/tavern/static-artifact/index.ts!",
+    "src/windows-reparse-inspector/index.ts!",
   ]);
   assert.deepEqual(config.workspaces.host.entry.slice(-5), [
-    "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.ts",
     "src/tavern/static-artifact/index.ts!",
     "src/runtime-core.internal.ts!",
     "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts!",
     "src/voice-gateway-client.ts!",
+    "src/windows-reparse-inspector/index.ts!",
   ]);
   assert.deepEqual(
     config.workspaces["packages/*"].entry,
@@ -290,6 +302,7 @@ test("pins scripts, exposes the clean scope, and validates the actual CLI contra
     "src/runtime-core.internal.ts!",
     "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts!",
     "src/voice-gateway-client.ts!",
+    "src/windows-reparse-inspector/index.ts!",
     "src/main.ts!",
     "src/gateway.ts!",
     "src/server.ts!",

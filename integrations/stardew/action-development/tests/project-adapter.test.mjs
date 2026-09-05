@@ -24,6 +24,13 @@ async function runActionProject(input) {
   return await createTestProjectAdapter(registrations ?? ACTION_REGISTRY).runActionProject({ ...input, dependencies });
 }
 
+function productionRegistration(registration) {
+  return Object.freeze({
+    ...registration,
+    check: async ({ actionId }) => Object.freeze({ gameId: "stardew", actionId, verified: true }),
+  });
+}
+
 function syntheticRegistration(overrides = {}) {
   const actionId = overrides.actionId ?? "inspect_weather";
   return Object.freeze({
@@ -52,7 +59,11 @@ function expected(command, status, fields = {}) {
 }
 
 test("returns neutral bounded reports for check and blocked preflight", async () => {
-  const checked = await runActionProject({ manifest, invocation: { command: "check", ...action } });
+  const checked = await runActionProject({
+    manifest,
+    invocation: { command: "check", ...action },
+    dependencies: { __testOnlyActionRegistrations: ACTION_REGISTRY.entries.map(productionRegistration) },
+  });
   assert.deepEqual(checked, expected(action, "checked"));
   assert.ok(Object.isFrozen(checked));
 

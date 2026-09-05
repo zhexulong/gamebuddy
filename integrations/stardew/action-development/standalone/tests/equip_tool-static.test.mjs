@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { validateFrozenWorkBrief } from "../../../../packages/game-action-devkit/src/work-brief.mjs";
+import { validateFrozenWorkBrief } from "../../../../../packages/game-action-devkit/src/work-brief.mjs";
 import { validateEquipToolStaticDescriptor } from "../src/static-descriptor.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));

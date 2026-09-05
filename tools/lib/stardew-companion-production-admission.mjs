@@ -3,7 +3,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { win32 } from "node:path";
 import { superviseStardewCompanionAdmissionProbe } from "../../host/scripts/supervise-stardew-companion-live-session.mjs";
 
-export const PRODUCTION_ADMISSION_PROFILES = Object.freeze({
+const PRODUCTION_ADMISSION_PROFILES = Object.freeze({
   preview_run_a_v1: Object.freeze(["SIM-01", "SIM-02"]),
   preview_run_b_v1: Object.freeze(["SIM-03"]),
 });
@@ -50,7 +50,7 @@ const ALLOWED_REASON_CODES = new Set([
 ]);
 const SOURCE_ATTESTATION_UNAVAILABLE = "companion_live_source_attestation_unavailable";
 
-export class ProductionAdmissionError extends Error {
+class ProductionAdmissionError extends Error {
   constructor(code) {
     super(code);
     this.name = "ProductionAdmissionError";
@@ -116,7 +116,7 @@ export function parseProductionAdmissionInvocation(argv, { platform = process.pl
 }
 
 /** Read-only Phase A. Operator config and runtime root are deliberately never opened in P7. */
-export async function validateProductionAdmissionPhaseA(invocation, { read = readFile } = {}) {
+async function validateProductionAdmissionPhaseA(invocation, { read = readFile } = {}) {
   if (
     !invocation ||
     invocation.preflightOnly !== true ||

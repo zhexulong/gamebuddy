@@ -4,7 +4,7 @@
 // action-specific. It owns only authenticated bridge lifetime, correlation to
 // one execution, terminal receipt waiting, and the required fresh reread.
 
-export const TERMINAL_EXECUTION_STATES = new Set([
+const TERMINAL_EXECUTION_STATES = new Set([
   "blocked",
   "invalidated",
   "succeeded",

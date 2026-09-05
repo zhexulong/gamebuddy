@@ -167,11 +167,13 @@ test("Windows inspection policy mints one opaque capability and inspects every m
   const capability = Object.freeze({});
   try {
     const policy = await __testOnly.createWindowsReparsePolicyForTest(async () => ({
-      async createBuildWindowsReparseInspector() { constructions += 1; return capability; },
-      async assertNoWindowsReparse(receivedCapability, path) {
-        assert.strictEqual(receivedCapability, capability, "every inspection must receive the minted opaque capability");
-        calls.push(path);
-      },
+      BUILD_ARTIFACT_REPARSE_INSPECTION: Object.freeze({
+        async create() { constructions += 1; return capability; },
+        async assertNoReparse(receivedCapability, path) {
+          assert.strictEqual(receivedCapability, capability, "every inspection must receive the minted opaque capability");
+          calls.push(path);
+        },
+      }),
     }));
     assert.equal(constructions, 1, "the adapter must mint exactly one capability per artifact operation");
     await verifyProductionArtifactManifest(artifactRoot, policy);
@@ -196,8 +198,10 @@ test("Windows inspection policy fails closed when the shared adapter is unavaila
   const artifactRoot = await createArtifactFixture("artifact-boundary-inspection-unavailable");
   try {
     const policy = await __testOnly.createWindowsReparsePolicyForTest(async () => ({
-      createBuildWindowsReparseInspector: async () => Object.freeze({}),
-      assertNoWindowsReparse: async () => { throw new Error("invalid helper protocol"); },
+      BUILD_ARTIFACT_REPARSE_INSPECTION: Object.freeze({
+        create: async () => Object.freeze({}),
+        assertNoReparse: async () => { throw new Error("invalid helper protocol"); },
+      }),
     }));
     await assert.rejects(verifyProductionArtifactManifest(artifactRoot, policy), /invalid helper protocol/);
   } finally {

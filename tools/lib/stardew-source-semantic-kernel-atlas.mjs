@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const ATLAS_SCHEMA_VERSION = 1;
+const ATLAS_SCHEMA_VERSION = 1;
 const TARGET = Object.freeze({ game: "Stardew Valley", version: "1.6.15", build: 24356 });
 
 function fail(message, details = {}) {
