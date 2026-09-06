@@ -20,7 +20,7 @@ import type {
 import {
   bindStardewPrivateBootstrapOwnerTestSupport,
   createStardewPrivateBootstrapComposerTestSupport,
-} from "./stardew-private-bootstrap-composer.test-support.js";
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 
 type AssertFalse<T extends false> = T;

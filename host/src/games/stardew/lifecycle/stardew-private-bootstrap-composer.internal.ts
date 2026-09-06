@@ -2,6 +2,13 @@ import type {
   StardewOwnedPlayerHostPhaseAOwner,
 } from "./stardew-private-bootstrap-composer.js";
 import {
+  createProductionStagingDependencies,
+  productionPlayerHostProbe,
+  productionPlayerHostSpawn,
+  productionProbe,
+  productionSpawn,
+} from "../../../containment/auth/desktop-guardian-session.internal.js";
+import {
   consumeOwnedPlayerHostPhaseAOwner as consumeOwnedPlayerHostPhaseAOwnerCore,
   createStardewBootstrapGuardianOwnerBinding,
   createStardewPrivateBootstrapProductionCore,
@@ -17,7 +24,7 @@ import {
   type StardewBootstrapGuardianNativePorts,
   type StardewBootstrapGuardianOwner,
 } from "./stardew-bootstrap-guardian.private.js";
-import type { DesktopGuardianSession } from "./desktop-guardian-session.internal.js";
+import type { DesktopGuardianSession } from "../../../containment/auth/desktop-guardian-session.internal.js";
 
 /** Constructs the complete trusted production bootstrap composition. */
 export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapInternalComposition & Readonly<{
@@ -35,14 +42,23 @@ export function createStardewPrivateBootstrapComposition(): StardewPrivateBootst
     deadlineUnixMs: number,
   ): StardewBootstrapGuardianOwner;
 }> {
-  const core = createStardewPrivateBootstrapProductionCore();
+  const core = createStardewPrivateBootstrapProductionCore({
+    rawSpawn: productionSpawn,
+    rawProbe: productionProbe,
+    rawPlayerHostSpawn: productionPlayerHostSpawn,
+    rawPlayerHostProbe: productionPlayerHostProbe,
+    staging: createProductionStagingDependencies(),
+  });
   return Object.freeze({
     ...core,
     createStardewBootstrapGuardianOwner: (owner, native) =>
       createStardewBootstrapGuardianOwner(createStardewBootstrapGuardianOwnerBinding(owner), native),
     createStardewBootstrapGuardianOwnerFromDesktopSession: (owner, session, deadlineUnixMs) => {
       const binding = createStardewBootstrapGuardianOwnerBinding(owner);
-      return createStardewBootstrapGuardianOwner(binding, createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, deadlineUnixMs));
+      return createStardewBootstrapGuardianOwner(
+        binding,
+        createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, deadlineUnixMs),
+      );
     },
   });
 }

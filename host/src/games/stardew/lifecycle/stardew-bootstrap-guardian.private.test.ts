@@ -3,28 +3,29 @@ import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
-import { bindWindowsStaleLockReclaimer, withPathLock } from "./path-lock.js";
+import { fileURLToPath } from "node:url";
+import { bindWindowsStaleLockReclaimer, withPathLock } from "../../../path-lock.js";
 import {
   createStardewBootstrapGuardianNativePortsFromDesktopSession,
   createStardewBootstrapGuardianOwner,
   createStardewBootstrapGuardianPrivateArmBindingFacade,
   type StardewBootstrapGuardianNativePorts,
 } from "./stardew-bootstrap-guardian.private.js";
-import type { DesktopGuardianSession, GuardianAck } from "./desktop-guardian-session.internal.js";
+import type { DesktopGuardianSession, GuardianAck } from "../../../containment/auth/desktop-guardian-session.internal.js";
 import { settleOwnedPlayerHostRegistrationAttempt } from "./stardew-private-bootstrap-composer.internal.js";
 import {
   publishStardewInstallationRegistration,
   readStardewInstallationRegistration,
-} from "./stardew-installation-registration.internal.js";
+} from "../../../stardew-installation-registration.internal.js";
 import { createStardewPrivateBootstrapCompositionForTesting } from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import {
   createStardewBootstrapGuardianOwnerBinding,
   type StardewPrivateBootstrapCoreDependencies,
 } from "./stardew-private-bootstrap-composer.core.js";
-import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
+import { createTestWindowsStaleLockReclaimer } from "../../../windows-stale-lock-reclaimer/index.test-support.js";
 
 const roots: string[] = [];
 const binding = Object.freeze({
@@ -253,7 +254,7 @@ function simulatedLockHelper(): ChildProcess {
 }
 
 
-test("desktop session adapter binds the owner arm frame, exact acknowledgement, containment, and close", async () => {
+test("desktop session adapter relays only a Guardian-private deferred launch plan with exact acknowledgement", async () => {
   const fixture = await createDesktopSessionOwnerFixture();
   const calls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
   const acknowledgement = (operation: string, role?: "player_host" | "ai_client"): GuardianAck => ({
@@ -273,7 +274,10 @@ test("desktop session adapter binds the owner arm frame, exact acknowledgement, 
       calls.push({ operation: "arm", input: { ...input, privateFrame: [...input.privateFrame] } });
       return acknowledgement("arm_attempt");
     },
-    async launch() { throw new Error("unexpected_launch"); },
+    async launch(input) {
+      calls.push({ operation: "launch", input: { ...input, privateFrame: [...input.privateFrame] } });
+      return acknowledgement("launch_role", input.role);
+    },
     async contain(input) {
       calls.push({ operation: "contain", input: { ...input } });
       return acknowledgement("contain_role", input.role);
@@ -281,24 +285,59 @@ test("desktop session adapter binds the owner arm frame, exact acknowledgement, 
     async close() { calls.push({ operation: "close", input: {} }); },
   });
   const binding = createStardewBootstrapGuardianOwnerBinding(fixture.phaseOwner);
+  const plan = Uint8Array.from([1, 2, 3, 4]);
   const owner = createStardewBootstrapGuardianOwner(
     binding,
-    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000),
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000, {
+      async create(actualBinding, target) {
+        assert.equal(actualBinding, binding);
+        assert.equal(target, "playerHost");
+        return plan;
+      },
+    }),
   );
 
   await owner.arm();
-  await assert.rejects(owner.launchPlayerHost(), /native_launch_plan_unavailable/);
+  await owner.launchPlayerHost();
   assert.equal(await owner.close(), "contained");
 
   assert.deepEqual(calls.map(({ operation, input }) => [operation, input.role]), [
-    ["arm", undefined], ["contain", "player_host"], ["contain", "ai_client"], ["close", undefined],
+    ["arm", undefined], ["launch", "player_host"], ["contain", "player_host"], ["contain", "ai_client"], ["close", undefined],
   ]);
+  assert.deepEqual(calls[1]!.input.privateFrame, [...plan]);
   const armFrame = JSON.parse(Buffer.from(calls[0]!.input.privateFrame as number[]).toString("utf8")) as Record<string, unknown>;
   assert.deepEqual(armFrame, {
     guardianInstanceId: "guardian-instance-1", guardianEpoch: 1, attemptId: "bootstrap-1",
     revision: "revision-1", leaseName: "Local\\Guardian-Lease-1",
     playerJobName: "Local\\Guardian-Player-1", aiJobName: "Local\\Guardian-Ai-1",
   });
+});
+
+test("desktop session adapter stays unavailable without a private launch-plan authority and never imports Node spawning", async () => {
+  const fixture = await createDesktopSessionOwnerFixture();
+  const binding = createStardewBootstrapGuardianOwnerBinding(fixture.phaseOwner);
+  const session: DesktopGuardianSession = Object.freeze({
+    async arm(): Promise<GuardianAck> {
+      return {
+        operation: "arm_attempt", status: "accepted", bootstrapId: "bootstrap-1", generation: "generation-1",
+        inventoryDigest: "inventory", runtimeAdmissionSha256: "admission", guardianInstanceId: "guardian-instance-1",
+        guardianEpoch: 1, attemptId: "bootstrap-1",
+      };
+    },
+    async launch() { throw new Error("unexpected_launch"); },
+    async contain() { throw new Error("unexpected_contain"); },
+    async close() { throw new Error("unexpected_close"); },
+  });
+  const owner = createStardewBootstrapGuardianOwner(
+    binding,
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000),
+  );
+  await assert.rejects(owner.launchPlayerHost(), /owner_transition_unavailable/);
+  await owner.arm();
+  await assert.rejects(owner.launchPlayerHost(), /native_launch_plan_unavailable/);
+
+  const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "src", "games", "stardew", "lifecycle", "stardew-bootstrap-guardian.private.ts"), "utf8");
+  assert.doesNotMatch(source, /node:child_process|\bspawn(?:Sync)?\s*\(/);
 });
 
 test("desktop session adapter rejects an acknowledgement outside its exact attempt correlation", async () => {

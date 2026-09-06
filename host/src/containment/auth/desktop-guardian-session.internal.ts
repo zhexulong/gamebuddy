@@ -1,3 +1,11 @@
+export {
+  productionPlayerHostProbe,
+  productionPlayerHostSpawn,
+  productionProbe,
+  productionSpawn,
+} from "../windows/stardew-process-implementations.js";
+export { createProductionStagingDependencies, type PrivateModProfileStagingDependencies } from "../../bootstrap/roots/stardew-private-mod-profile-staging.js";
+
 type Role = "player_host" | "ai_client";
 
 export type GuardianAck = Readonly<{

@@ -22,11 +22,11 @@ import type {
   StardewAiClientLaunchReservation,
   StardewAiClientProcessProbe,
   StardewAiClientProcessSpawn,
-} from "./stardew-ai-client-process-owner.js";
-import { StardewAttachmentFlow } from "./stardew-attachment.js";
-import { bindWindowsStaleLockReclaimer, pathLockPath, withPathLock } from "./path-lock.js";
-import type { StardewPlayerHostBootstrapClaim } from "./stardew-player-host-bootstrap.js";
-import type { StardewPlayerHostLaunchReservation } from "./stardew-player-host-process-owner.js";
+} from "../../../stardew-ai-client-process-owner.js";
+import { StardewAttachmentFlow } from "../../../stardew-attachment.js";
+import { bindWindowsStaleLockReclaimer, pathLockPath, withPathLock } from "../../../path-lock.js";
+import type { StardewPlayerHostBootstrapClaim } from "../../../stardew-player-host-bootstrap.js";
+import type { StardewPlayerHostLaunchReservation } from "../../../stardew-player-host-process-owner.js";
 import * as productionComposer from "./stardew-private-bootstrap-composer.js";
 import type { StardewBootstrapGuardianNativePorts } from "./stardew-bootstrap-guardian.private.js";
 import type {
@@ -57,13 +57,13 @@ import {
   materializeAiClientProfileAfterManifestAdmissionForTesting,
   type StardewPrivateModProfileStagingTestSupportInput,
 } from "./stardew-private-bootstrap-composer.test-support-internal.js";
-import { createTestWindowsReparseInspector } from "./windows-reparse-inspector/index.test-support.js";
-import type { WindowsPathObjectIdentity } from "./windows-reparse-inspector/index.js";
-import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
+import { createTestWindowsReparseInspector } from "../../../windows-reparse-inspector/index.test-support.js";
+import type { WindowsPathObjectIdentity } from "../../../windows-reparse-inspector/index.js";
+import { createTestWindowsStaleLockReclaimer } from "../../../windows-stale-lock-reclaimer/index.test-support.js";
 import {
   admitStardewInstallation,
   type AdmittedStardewInstallation,
-} from "./stardew-installation-admission.js";
+} from "../../../stardew-installation-admission.js";
 // StardewOwnedPlayerHostStageCResult is the return type of
 // launchOwnedPlayerHostStageCForTesting, derived from the test-support import.
 
@@ -828,7 +828,7 @@ test("v4 owner quarantine is monotonic, fence-bound, preserves contained roles, 
 });
 
 test("public composer declaration excludes guardian native record facts", async () => {
-  const source = await readFile(join(resolve(dirname(fileURLToPath(import.meta.url)), "..", "src"), "stardew-private-bootstrap-composer.ts"), "utf8");
+  const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "src", "games", "stardew", "lifecycle", "stardew-private-bootstrap-composer.ts"), "utf8");
   for (const forbidden of ["StardewGuardianBinding", "StardewPrivateBootstrapOwnerRecord", "StardewExternalPlayerHostBootstrapOwnerRecord", "StardewOwnedPlayerHostBootstrapOwnerRecord", "leaseName", "playerJobName", "aiJobName", "ownerRecordRevision", "schema"]) assert.equal(source.includes(forbidden), false, forbidden);
 });
 
@@ -886,7 +886,7 @@ test("production internal exports no testing constructor, raw owner view, or bin
 });
 
 test("only the production internal and dedicated test-only adapter import the composer core", async () => {
-  const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "src", "games", "stardew", "lifecycle");
   const leaves = (await readdir(sourceRoot, { recursive: true }))
     .map((leaf) => leaf.replaceAll("\\", "/"))
     .filter((leaf) => leaf.endsWith(".ts"));

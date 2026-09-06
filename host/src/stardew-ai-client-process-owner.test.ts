@@ -13,7 +13,7 @@ import type {
   StardewAiClientProcessSpawn,
 } from "./stardew-ai-client-process-owner.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
-import { createStardewPrivateBootstrapComposerTestSupport } from "./stardew-private-bootstrap-composer.test-support.js";
+import { createStardewPrivateBootstrapComposerTestSupport } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 
 type AssertFalse<T extends false> = T;

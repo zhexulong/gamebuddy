@@ -7,11 +7,11 @@ import {
   createStardewProductionLifecycleCoordinatorFromTestingComposition,
   type StardewProductionLifecycleCoordinator,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
-import { createStardewPrivateBootstrapCompositionForTesting } from "./stardew-private-bootstrap-composer.test-support-internal.js";
-import type { StardewPrivateBootstrapCoreDependencies } from "./stardew-private-bootstrap-composer.test-support-internal.js";
+import { createStardewPrivateBootstrapCompositionForTesting } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
+import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import type { StopOwnedPlayerHostResult } from "./stardew-player-host-process-owner.js";
-import type { StardewPrivateFarmhandBridgeConnection } from "./stardew-private-bootstrap-composer.core.js";
+import type { StardewPrivateFarmhandBridgeConnection } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { createTestWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.test-support.js";
 import type { StardewFolderPickerResult } from "./windows-stardew-folder-picker/index.js";

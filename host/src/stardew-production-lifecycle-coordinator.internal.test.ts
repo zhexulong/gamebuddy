@@ -26,7 +26,7 @@ import {
   type StardewLifecycleCoordinatorTestingOverrides,
 } from "./stardew-production-lifecycle-coordinator.test-support-internal.js";
 import { createStardewProductionLifecycleCoordinator } from "./stardew-production-lifecycle-coordinator.internal.js";
-import type { StardewPrivateBootstrapCoreDependencies } from "./stardew-private-bootstrap-composer.test-support-internal.js";
+import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import { createTestWindowsReparseInspector } from "./windows-reparse-inspector/index.test-support.js";
 import type { WindowsPathObjectIdentity } from "./windows-reparse-inspector/index.js";

@@ -9,8 +9,8 @@ import type { StardewAiClientProcessOwner } from "./stardew-ai-client-process-ow
 import type { StardewPlayerHostProcessOwner, StardewPlayerHostProcessStatus } from "./stardew-player-host-process-owner.js";
 import { StardewAttachmentFlow } from "./stardew-attachment.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
-import type { StardewExternalPlayerHostPhaseAOwner } from "./stardew-private-bootstrap-composer.js";
-import { createStardewPrivateBootstrapComposerTestSupport } from "./stardew-private-bootstrap-composer.test-support.js";
+import type { StardewExternalPlayerHostPhaseAOwner } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
+import { createStardewPrivateBootstrapComposerTestSupport } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support.js";
 import {
   createStardewRoleLifecycleFacade,
   type StardewRoleLifecycleView,

@@ -8,7 +8,7 @@ import {
   createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
   STARDEW_INTEGRATION_LAUNCHER,
 } from "./stardew-integration-launcher.js";
-import type { StardewPrivateFarmhandBridgeConnection } from "./stardew-private-bootstrap-composer.core.js";
+import type { StardewPrivateFarmhandBridgeConnection } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import { createGameRuntimeBindingFromReceiptBackedLaunch } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 
 export type StardewOwnedFarmhandGameSessionMaterializer = Readonly<{

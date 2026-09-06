@@ -3,19 +3,19 @@ import type {
   StardewAiClientLaunchReservation,
   StardewAiClientProcessOwner,
   StardewAiClientProcessStatus,
-} from "./stardew-ai-client-process-owner.js";
+} from "../../../stardew-ai-client-process-owner.js";
 import type {
   StardewPlayerHostBootstrapBroker,
   StardewPlayerHostBootstrapClaim,
-} from "./stardew-player-host-bootstrap.js";
-import type { StardewAttachmentFlow } from "./stardew-attachment.js";
-import type { StardewRoleLifecycleFacade } from "./stardew-role-lifecycle-facade.js";
+} from "../../../stardew-player-host-bootstrap.js";
+import type { StardewAttachmentFlow } from "../../../stardew-attachment.js";
+import type { StardewRoleLifecycleFacade } from "../../../stardew-role-lifecycle-facade.js";
 import type {
   LaunchPlayerHostInput,
   StardewPlayerHostLaunchReservation,
   StardewPlayerHostProcessOwner,
   StardewPlayerHostProcessStatus,
-} from "./stardew-player-host-process-owner.js";
+} from "../../../stardew-player-host-process-owner.js";
 import { createStardewPrivateBootstrapComposition as createProductionComposition } from "./stardew-private-bootstrap-composer.internal.js";
 
 

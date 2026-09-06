@@ -1,27 +1,23 @@
-import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rmdir, writeFile } from "node:fs/promises";
 import { platform } from "node:os";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
   type LaunchAiClientInput,
   type StardewAiClientLaunchReservation,
   type StardewAiClientProcessOwner,
   type StardewAiClientProcessProbe,
-  type StardewAiClientProcessProbeResult,
   type StardewAiClientProcessSpawn,
-  type StardewAiClientProcessSpawnResult,
   type StardewAiClientProcessStatus,
   type StopOwnedAiClientResult,
-} from "./stardew-ai-client-process-owner.js";
+} from "../../../stardew-ai-client-process-owner.js";
 import {
   type StardewPlayerHostBootstrapBroker,
   type StardewPlayerHostBootstrapCapability,
   type StardewPlayerHostBootstrapClaim,
   type StardewPlayerHostBootstrapRequest,
   type StardewPlayerHostBootstrapView,
-} from "./stardew-player-host-bootstrap.js";
+} from "../../../stardew-player-host-bootstrap.js";
 import {
   type LaunchPlayerHostInput,
   type StardewPlayerHostLaunchReservation,
@@ -29,14 +25,13 @@ import {
   type StardewPlayerHostProcessProbe,
   type StardewPlayerHostProcessProbeResult,
   type StardewPlayerHostProcessSpawn,
-  type StardewPlayerHostProcessSpawnResult,
   type StardewPlayerHostProcessStatus,
   type StopOwnedPlayerHostResult,
-} from "./stardew-player-host-process-owner.js";
+} from "../../../stardew-player-host-process-owner.js";
 import {
   consumeAdmittedStardewInstallation,
   type AdmittedStardewInstallation,
-} from "./stardew-installation-admission.core.js";
+} from "../../../stardew-installation-admission.core.js";
 import {
   atomicWriteFile,
   captureSafeFileIdentity,
@@ -45,24 +40,22 @@ import {
   removeOwnedSafeFile,
   verifySafePathBoundary,
   withPathLock,
-} from "./path-lock.js";
-import {
-  readPublishedStardewModPackageContract,
-  verifyPublishedStardewModPackage,
-} from "./stardew-mod-package-contract.js";
+} from "../../../path-lock.js";
 import {
   withStardewInstallationRegistrationOwnerTransaction,
   type StardewInstallationRegistrationOwnerTransactionMarker,
-} from "./stardew-installation-registration.internal.js";
-import { readStrictJsonFile } from "./strict-json-reader.js";
-import type { Scope } from "./protocol.js";
-import { createStardewRoleLifecycleFacade } from "./stardew-role-lifecycle-facade.js";
+} from "../../../stardew-installation-registration.internal.js";
+import { readStrictJsonFile } from "../../../strict-json-reader.js";
+import type { Scope } from "../../../protocol.js";
+import { createStardewRoleLifecycleFacade } from "../../../stardew-role-lifecycle-facade.js";
 import {
   StardewAttachmentFlow,
   type StardewJoinManifest,
   type StardewVerifiedCabinChoice,
-} from "./stardew-attachment.js";
-import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
+} from "../../../stardew-attachment.js";
+import {
+  type PrivateModProfileStagingDependencies,
+} from "../../../containment/auth/desktop-guardian-session.internal.js";
 import type {
   StardewAiClientLaunch,
   StardewExternalPlayerHostPhaseAOwner,
@@ -267,15 +260,18 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
 }>;
 
-export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBootstrapInternalComposition {
+export function createStardewPrivateBootstrapProductionCore(
+  physical: Pick<StardewPrivateBootstrapCoreDependencies, "rawSpawn" | "rawProbe" | "rawPlayerHostSpawn" | "rawPlayerHostProbe"> &
+    Readonly<{ staging: PrivateModProfileStagingDependencies }>,
+): StardewPrivateBootstrapInternalComposition {
   if (platform() !== "win32") {
     throw new Error("stardew_private_bootstrap_composition_requires_windows");
   }
   const closed = createStardewPrivateBootstrapCore({
-    rawSpawn: productionSpawn,
-    rawProbe: productionProbe,
-    rawPlayerHostSpawn: productionPlayerHostSpawn,
-    rawPlayerHostProbe: productionPlayerHostProbe,
+     rawSpawn: physical.rawSpawn,
+     rawProbe: physical.rawProbe,
+     rawPlayerHostSpawn: physical.rawPlayerHostSpawn,
+     rawPlayerHostProbe: physical.rawPlayerHostProbe,
      createBootstrapIdentity: randomUUID,
      createGuardianRevision: randomUUID,
      createGuardianInstanceId: randomUUID,
@@ -287,7 +283,8 @@ export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBoo
     createPlayerHostLaunchGeneration: randomUUID,
     createBridgePipeName: createPrivateBridgePipeName,
     createBridgeToken: createPrivateBridgeToken,
-    nowMs: Date.now,
+     nowMs: Date.now,
+     staging: physical.staging,
   });
   return Object.freeze({
     composition: closed.composition,
@@ -501,7 +498,7 @@ function createClosedComposition(
   const manifestHandoff = createManifestHandoffCoordinatorCore(
     compositionIdentity,
     dependencies.nowMs,
-    () => stagingDependencies ?? productionStagingDependencies(),
+    () => requireStagingDependencies(stagingDependencies),
     dependencies.createBridgePipeName,
     dependencies.createBridgeToken,
   );
@@ -1247,12 +1244,6 @@ function restoreOwnedPhaseAOwnerAfterFailure(owner: StardewOwnedPlayerHostPhaseA
   if (facts.bindingState.value !== "terminal") facts.bindingState.value = "unbound";
 }
 
-type PrivateModProfileStagingDependencies = Readonly<{
-  readPackage(): Promise<Readonly<{ root: string; entries: readonly string[] }>>;
-  createSecret(): string;
-  nowMs(): number;
-}>;
-
 /**
  * The Phase-B profile operation is intentionally concrete and closed: its
  * package root, layout, config, secret, and result remain composition-owned.
@@ -1262,25 +1253,17 @@ export async function stageOwnedPlayerHostPhaseB(
   owner: StardewOwnedPlayerHostPhaseAOwner,
 ): Promise<void> {
   const facts = requireOwnedPhaseAFacts(owner);
-  const dependencies = facts.stagingDependencies ?? productionStagingDependencies();
+  const dependencies = requireStagingDependencies(facts.stagingDependencies);
   await stageOwnedPlayerHostPhaseBWithValidatedDependencies(owner, dependencies);
 }
 
-function productionStagingDependencies(): PrivateModProfileStagingDependencies {
-  const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
-  return Object.freeze({
-    async readPackage() {
-      const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
-      const contract = await readPublishedStardewModPackageContract(artifactRoot);
-      await verifyPublishedStardewModPackage(artifactRoot, contract, inspector);
-      return Object.freeze({
-        root: resolve(artifactRoot, contract.descriptor.destination.replaceAll("/", sep)),
-        entries: contract.entries,
-      });
-    },
-    createSecret: createPrivateProvisioningSecret,
-    nowMs: Date.now,
-  });
+function requireStagingDependencies(
+  dependencies: PrivateModProfileStagingDependencies | undefined,
+): PrivateModProfileStagingDependencies {
+  if (dependencies === undefined) {
+    throw new Error("stardew_private_mod_profile_staging_dependencies_missing");
+  }
+  return dependencies;
 }
 
 async function stageOwnedPlayerHostPhaseBWithValidatedDependencies(
@@ -1823,7 +1806,7 @@ async function stageAiClientProfile(
     throw new Error("stardew_ai_client_bridge_material_invalid");
   const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
   const ownerPath = join(transactionDirectory, OWNER_FILE);
-  const managed = new Map<string, import("./path-lock.js").SafeFileIdentity>();
+  const managed = new Map<string, import("../../../path-lock.js").SafeFileIdentity>();
   const createdDirectories: string[] = [];
   let recordExtended = false;
   let originalRecord: StardewPrivateBootstrapOwnerRecord | undefined;
@@ -2020,7 +2003,7 @@ async function stagePlayerHostModProfile(
   const facts = requireOwnedPhaseAFacts(owner);
   const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
   const ownerPath = join(transactionDirectory, OWNER_FILE);
-  const managed = new Map<string, import("./path-lock.js").SafeFileIdentity>();
+  const managed = new Map<string, import("../../../path-lock.js").SafeFileIdentity>();
   const createdDirectories: string[] = [];
   let recordExtended = false;
   return withPathLock(ownerPath, async () => {
@@ -2100,7 +2083,7 @@ async function writeManagedFile(
   path: string,
   content: string | Uint8Array,
   transactionDirectory: string,
-  managed: Map<string, import("./path-lock.js").SafeFileIdentity>,
+  managed: Map<string, import("../../../path-lock.js").SafeFileIdentity>,
 ): Promise<void> {
   await verifySafePathBoundary(path, transactionDirectory);
   await writeFile(path, content, { encoding: typeof content === "string" ? "utf8" : undefined, flag: "wx" });
@@ -2113,7 +2096,7 @@ async function writeManagedFile(
 }
 
 async function rollbackStagedPlayerHostProfile(
-  managed: ReadonlyMap<string, import("./path-lock.js").SafeFileIdentity>,
+  managed: ReadonlyMap<string, import("../../../path-lock.js").SafeFileIdentity>,
   createdDirectories: readonly string[],
   transactionDirectory: string,
 ): Promise<void> {
@@ -2140,10 +2123,6 @@ function validatePackageSource(value: unknown): asserts value is Readonly<{ root
       JSON.stringify(value.entries) !== JSON.stringify(PHASE_B_PACKAGE_ENTRIES)) {
     throw new Error("stardew_private_mod_profile_staging_package_invalid");
   }
-}
-
-function createPrivateProvisioningSecret(): string {
-  return `${randomUUID()}${randomUUID()}`;
 }
 
 function createPrivateBridgePipeName(): string {
@@ -2747,92 +2726,6 @@ function createAiClientProcessOwner(
     },
   });
   return owner;
-}
-
-function productionSpawn(
-  executable: string,
-  args: readonly string[],
-  options: {
-    readonly cwd?: string;
-    readonly shell: boolean;
-    readonly windowsHide: boolean;
-    readonly env: Readonly<NodeJS.ProcessEnv>;
-  },
-): StardewAiClientProcessSpawnResult {
-  const child = spawn(executable, args, options);
-  const pid = child.pid;
-  if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) {
-    child.kill();
-    throw new Error("spawned_child_missing_valid_pid");
-  }
-  return Object.freeze({
-    pid,
-    kill: () => child.kill(),
-  });
-}
-
-function productionProbe(pid: number): StardewAiClientProcessProbeResult {
-  const result = probeWindowsProcess(pid);
-  return result;
-}
-
-function productionPlayerHostSpawn(
-  executable: string,
-  args: readonly string[],
-  options: {
-    readonly cwd?: string;
-    readonly shell: boolean;
-    readonly windowsHide: boolean;
-    readonly env: Readonly<NodeJS.ProcessEnv>;
-  },
-): StardewPlayerHostProcessSpawnResult {
-  const child = spawn(executable, args, options);
-  const pid = child.pid;
-  if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) {
-    child.kill();
-    throw new Error("spawned_player_host_child_missing_valid_pid");
-  }
-  return Object.freeze({
-    pid,
-    kill: () => child.kill(),
-  });
-}
-
-function productionPlayerHostProbe(pid: number): StardewPlayerHostProcessProbeResult {
-  return probeWindowsProcess(pid);
-}
-
-function probeWindowsProcess(pid: number): Readonly<{ pid: number; creationDate: string }> | null {
-  const result = spawnSync(
-    "powershell.exe",
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      `Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object ProcessId, CreationDate | ConvertTo-Json -Compress`,
-    ],
-    {
-      shell: false,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 10_000,
-      encoding: "utf8",
-    },
-  );
-  if (result.error !== undefined || result.status !== 0 || result.signal !== null) return null;
-  const trimmed = (result.stdout ?? "").trim();
-  if (trimmed.length === 0) return null;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (!isRecord(parsed)) return null;
-    const resultPid = parsed.ProcessId ?? parsed.pid;
-    const creationDate = parsed.CreationDate ?? parsed.creationDate;
-    if (typeof resultPid !== "number" || resultPid <= 0 ||
-        typeof creationDate !== "string" || creationDate.length === 0) return null;
-    return { pid: resultPid, creationDate };
-  } catch {
-    return null;
-  }
 }
 
 function validatePlayerHostLaunchInput(input: LaunchPlayerHostInput): void {

@@ -13,7 +13,7 @@ const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
 const sourceRoot = resolve(packageRoot, "src");
 const compiledEntry = resolve(sourceDirectory, "desktop-host-entry.internal.js");
-const compiledBootstrapHelper = resolve(sourceDirectory, "desktop-runtime-bootstrap.internal.js");
+const compiledBootstrapHelper = resolve(sourceDirectory, "..", "wire", "desktop-runtime-bootstrap.internal.js");
 const fixedFrame = {
   schema: "gamebuddy-desktop-host-bootstrap/v1",
   protocolVersion: 1,
@@ -70,7 +70,7 @@ test("compiled entry rejects malformed bootstrap wire without acknowledgement", 
   }
 });
 
-test("Host bootstrap acknowledges a freshly valid root without a local runtime sidecar or runtime tree", async (t) => {
+test("Host bootstrap rejects a valid root until private Guardian session admission is available", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only bootstrap root, reparse, and current-user ownership admission");
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-desktop-bootstrap-"));
   try {
@@ -84,31 +84,17 @@ test("Host bootstrap acknowledges a freshly valid root without a local runtime s
     };
     await Promise.all([moduleDirectory, rootLayout.dataRoot, rootLayout.operationalRoot, rootLayout.presentationRoot].map(async (path) => await mkdir(path, { recursive: true })));
     await writeFile(join(moduleDirectory, "desktop-host-entry.internal.js"), await readFile(compiledEntry));
-    await writeFile(join(moduleDirectory, "desktop-runtime-bootstrap.internal.js"), await readFile(compiledBootstrapHelper));
-    await cp(resolve(sourceDirectory, "windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
-    await cp(resolve(sourceDirectory, "strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
+    await mkdir(join(moduleDirectory, "wire"), { recursive: true });
+     await writeFile(join(moduleDirectory, "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(compiledBootstrapHelper));
+await cp(resolve(sourceDirectory, "..", "..", "windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
+     await cp(resolve(sourceDirectory, "..", "..", "strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
     await cp(resolve(packageRoot, "native", "windows-reparse-inspector", ".dist", "win-x64"), join(moduleDirectory, "native", "windows-reparse-inspector", "win-x64"), { recursive: true });
 
     const frameValue = { ...fixedFrame, bootstrapId: `${"a".repeat(56)}${process.pid.toString(16).padStart(8, "0")}`, rootLayout };
     const frame = Buffer.from(`${JSON.stringify(frameValue)}\n`);
-    const expectedAcknowledgement = Buffer.from(`${JSON.stringify({
-      schema: "gamebuddy-desktop-host-bootstrap/v1",
-      protocolVersion: 1,
-      status: "accepted",
-      bootstrapId: frameValue.bootstrapId,
-      generation: frameValue.generation,
-      inventoryDigest: frameValue.inventoryDigest,
-      runtimeAdmissionSha256: frameValue.runtimeAdmissionSha256,
-      rootLayoutSchema: "gamebuddy-windows-root-layout/v1",
-    })}\n`);
-    const accepted = startEntry(frame, join(moduleDirectory, "desktop-host-entry.internal.js"), fixtureRoot);
-    const acknowledgement = await accepted.stdoutEnded;
-    assert.deepEqual(acknowledgement, expectedAcknowledgement);
-    assert.equal(accepted.child.exitCode, null, "child must remain active after acknowledgement");
-    assert.equal(accepted.child.kill("SIGTERM"), true);
-    const result = await accepted.result;
-    assert.equal(result.code, null, result.stderr.toString("utf8"));
-    assert.deepEqual(result.stdout, expectedAcknowledgement);
+    const rejectedWithoutSession = await runEntry(frame, join(moduleDirectory, "desktop-host-entry.internal.js"), fixtureRoot);
+    assert.notEqual(rejectedWithoutSession.code, 0);
+    assert.deepEqual(rejectedWithoutSession.stdout, Buffer.alloc(0));
 
     const invalidRootFrame = Buffer.from(`${JSON.stringify({ ...frameValue, rootLayout: { ...rootLayout, dataRoot: join(fixtureRoot, "GameBuddy", "other") } })}\n`);
     const rejected = await runEntry(invalidRootFrame, join(moduleDirectory, "desktop-host-entry.internal.js"), fixtureRoot);
@@ -120,14 +106,14 @@ test("Host bootstrap acknowledges a freshly valid root without a local runtime s
 });
 
 test("Desktop bootstrap source consumes only frame facts before fresh root validation and acknowledgement", async () => {
-  const source = await readFile(resolve(sourceRoot, "desktop-runtime-bootstrap.internal.ts"), "utf8");
-  const entrySource = await readFile(resolve(sourceRoot, "desktop-host-entry.internal.ts"), "utf8");
+  const source = await readFile(resolve(sourceRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.ts"), "utf8");
+  const entrySource = await readFile(resolve(sourceRoot, "bootstrap", "entry", "desktop-host-entry.internal.ts"), "utf8");
 
   for (const forbidden of ["process.argv", "node:child_process", "spawn(", "console.", "current.json"]) assert.equal(source.includes(forbidden), false, `forbidden bootstrap ingress: ${forbidden}`);
   assert.match(source, /process\.env\.LOCALAPPDATA/);
   assert.match(entrySource, /import\.meta\.main/);
   assert.doesNotMatch(source, /import\.meta\.main/);
-  assert.match(entrySource, /from "\.\/desktop-runtime-bootstrap\.internal\.js"/);
+  assert.match(entrySource, /from "\.\.\/wire\/desktop-runtime-bootstrap\.internal\.js"/);
   assert.match(source, /createPublishedWindowsReparseInspector/);
   assert.match(source, /inspectWindowsPathIdentityChain/);
   assert.match(source, /inspectWindowsPathSecurity/);
@@ -135,15 +121,18 @@ test("Desktop bootstrap source consumes only frame facts before fresh root valid
   assert.match(source, /strictlyContains\(layout\.programRoot, moduleDirectory\)/);
   assert.match(source, /strictlyContains\(moduleDirectory, mutableRoot\)/);
   assert.match(source, /new WeakSet<object>/);
-  assert.match(source, /new WeakMap<object, undefined>/);
+  assert.match(source, /new WeakMap<object, DesktopRootLayout>/);
   assert.doesNotMatch(source, /host-runtime-admission/);
   assert.doesNotMatch(source, /runtimeClosure|enumerateRuntimeTree|sameRuntimeTree/);
   assert.doesNotMatch(source, /node:crypto|createHash|readdir\(|readVerifiedArtifactFile|artifactPath|safeArtifactAncestors/);
-  assert.doesNotMatch(source, /connectGuardianSession|createConnection\(|gamebuddy-desktop-guardian-session\/v1|sessionToken/);
+  assert.match(source, /createConnection\(/);
+  assert.match(source, /gamebuddy-desktop-guardian-session\/v1/);
+  assert.match(source, /createDesktopPrivateHostCompositionForBootstrap\(rootAuthority, guardianAuthority\)/);
+  assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
 
   const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory)");
   const securityCheck = source.indexOf("Promise.all(roots.map((root) => inspectWindowsPathSecurity(inspector, root)))");
-  const mint = source.indexOf("mintDesktopRootLayoutCapability(rootLayout)");
+  const mint = source.indexOf("const rootAuthority = mintDesktopRootLayoutCapability(rootLayout)");
   const acknowledgement = source.indexOf("writeAcknowledgement(frame)");
   assert.ok(rootValidation >= 0 && securityCheck >= 0 && rootValidation < mint && rootValidation < acknowledgement, "root security validation must precede mint and acknowledgement");
 });
