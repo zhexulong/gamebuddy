@@ -16,8 +16,7 @@
     "reasonCode": { "type": "string", "minLength": 1, "maxLength": 512 },
     "claimScope": { "type": "string", "minLength": 1, "maxLength": 512 },
     "runId": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "evidenceRoot": { "type": "string", "minLength": 1, "maxLength": 512 },
-    "briefFile": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 512 }, { "type": "null" }] }
+    "evidenceRoot": { "type": "string", "minLength": 1, "maxLength": 512 }
   },
   "$defs": {
     "identifier": {

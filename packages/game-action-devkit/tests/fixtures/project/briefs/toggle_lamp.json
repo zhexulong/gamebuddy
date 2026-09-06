@@ -1,5 +1,0 @@
-{
-  "schema": "generic-action-fixture-brief/v1",
-  "actionId": "toggle_lamp",
-  "intent": "toggle the fixture lamp"
-}

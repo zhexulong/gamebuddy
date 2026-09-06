@@ -12,8 +12,8 @@ const execFile = promisify(execFileCallback);
 const binFile = fileURLToPath(new URL("../bin/game-action.mjs", import.meta.url));
 
 test("parses one thin explicit project dispatch without a registry", () => {
-  const parsed = parseGameActionArgs(["check", "--project", "game-action-project.json", "--action", "equip_tool", "--brief", "briefs/equip.json"]);
-  assert.deepEqual(parsed, { projectFile: "game-action-project.json", invocation: { command: "check", actionId: "equip_tool", briefFile: "briefs/equip.json" } });
+  const parsed = parseGameActionArgs(["check", "--project", "game-action-project.json", "--action", "equip_tool", "--profile", "profiles/default.json"]);
+  assert.deepEqual(parsed, { projectFile: "game-action-project.json", invocation: { command: "check", actionId: "equip_tool", profileFile: "profiles/default.json" } });
   assert.ok(Object.isFrozen(parsed));
   assert.ok(Object.isFrozen(parsed.invocation));
 });
@@ -23,6 +23,7 @@ test("resolves the omitted project only from the current working directory and r
   assert.throws(() => parseGameActionArgs(["inventory"]), /invalid_command/);
   assert.throws(() => parseGameActionArgs(["check", "--project", "a", "--project", "b"]), /invalid_projectFile/);
   assert.throws(() => parseGameActionArgs(["check", "--project", "a", "--game", "stardew"]), /unknown_option/);
+  assert.throws(() => parseGameActionArgs(["check", "--project", "a", "--brief", "brief.json"]), /unknown_option/);
   assert.throws(() => parseGameActionArgs(["check", "--project", "a", "equip_tool"]), /invalid_command/);
   assert.throws(() => parseGameActionArgs(["check", "--project"]), /invalid_projectFile/);
 });

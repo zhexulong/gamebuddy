@@ -67,6 +67,5 @@ export async function runActionProject({ manifest, invocation }) {
     status: STATUS_BY_COMMAND[invocation.command],
     claimScope: "fixture_only",
     actionId: invocation.actionId ?? null,
-    briefFile: invocation.briefFile ?? null,
   };
 }

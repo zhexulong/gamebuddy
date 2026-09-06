@@ -10,7 +10,6 @@ import {
   DEFAULT_SUITE_TIMEOUT_MS,
   createWindowsProcessTreeKillerForTest,
   runBoundedChild,
-  runOneShotControlChild,
 } from "../src/process-supervisor.mjs";
 
 const nodeCommand = process.execPath;
@@ -47,152 +46,6 @@ test("uses the exact Windows taskkill.exe boundary and fails closed for invalid 
     () => createWindowsProcessTreeKillerForTest(() => assert.fail("must not spawn"))(0, {}),
     /test_supervisor_process_id_invalid/,
   );
-});
-
-test("runs a one-shot control child with one bounded JSON frame and separate stderr", async () => {
-  const result = await runOneShotControlChild({
-    command: nodeCommand,
-    args: childScript(`
-      let input = "";
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", (chunk) => { input += chunk; });
-      process.stdin.on("end", () => {
-        const start = JSON.parse(input);
-        process.stderr.write("diagnostic");
-        process.stdout.write(JSON.stringify({ accepted: start.actionId }) + "\\n");
-      });
-    `),
-    start: { actionId: "toggle_lamp" },
-  });
-  assert.deepEqual(result.result, { accepted: "toggle_lamp" });
-  assert.equal(result.child.stderr, "diagnostic");
-  assert.equal(result.child.stdout, '{"accepted":"toggle_lamp"}\n');
-  assert.equal(result.child.stdout.includes("diagnostic"), false);
-  assert.deepEqual(result.exit, { code: 0, signal: null });
-  assert.ok(Number.isSafeInteger(result.child.pid));
-});
-
-test("rejects malformed, duplicate, oversized, and extra control-child stdout", async () => {
-  for (const source of [
-    "process.stdout.write('not-json\\n'); setInterval(() => {}, 1000);",
-    "process.stdout.write('{}\\n{}\\n'); setInterval(() => {}, 1000);",
-    "process.stdout.write('{}\\nextra'); setInterval(() => {}, 1000);",
-    "process.stdout.write(JSON.stringify({ value: 'x'.repeat(64 * 1024) }) + '\\n'); setInterval(() => {}, 1000);"
-  ]) {
-    await assert.rejects(
-      runOneShotControlChild({ command: nodeCommand, args: childScript(source), start: {} }),
-      /control_child_invalid_result/,
-    );
-  }
-});
-
-test("enforces a 32 KiB byte limit for one-shot control start and terminal result lines", async () => {
-  const jsonLineWithByteLength = (byteLength) => {
-    const emptyLine = `${JSON.stringify({ value: "" })}\n`;
-    return { value: "x".repeat(byteLength - Buffer.byteLength(emptyLine, "utf8")) };
-  };
-  const payloadLengthForLine = (byteLength) => byteLength - Buffer.byteLength(`${JSON.stringify({ value: "" })}\n`, "utf8");
-  const controlChildResult = (byteLength, keepAlive = false) => childScript(
-    `process.stdout.write(JSON.stringify({ value: "x".repeat(${payloadLengthForLine(byteLength)}) }) + "\\n");${keepAlive ? "setInterval(() => {}, 1000);" : ""}`,
-  );
-  const startAtLimit = jsonLineWithByteLength(32 * 1024);
-  const startResult = await runOneShotControlChild({
-    command: nodeCommand,
-    args: childScript("process.stdout.write('{}\\n');"),
-    start: startAtLimit,
-  });
-  assert.deepEqual(startResult.result, {});
-  const resultAtLimit = await runOneShotControlChild({
-    command: nodeCommand,
-    args: controlChildResult(32 * 1024),
-    start: {},
-  });
-  assert.equal(Buffer.byteLength(resultAtLimit.child.stdout, "utf8"), 32 * 1024);
-
-  for (const byteLength of [32 * 1024 + 1, 64 * 1024]) {
-    const line = jsonLineWithByteLength(byteLength);
-    await assert.rejects(
-      runOneShotControlChild({ command: "never-spawned", start: line, spawnProcess: () => assert.fail("must not spawn") }),
-      /invalid_control_child_start/,
-    );
-    await assert.rejects(
-      runOneShotControlChild({ command: nodeCommand, args: controlChildResult(byteLength, true), start: {} }),
-      /control_child_invalid_result/,
-    );
-  }
-});
-
-test("does not spawn a pre-aborted control child", async () => {
-  const controller = new AbortController();
-  controller.abort();
-  await assert.rejects(
-    runOneShotControlChild({ command: "never-spawned", start: {}, signal: controller.signal, spawnProcess: () => assert.fail("must not spawn") }),
-    /control_child_aborted/,
-  );
-});
-
-test("writes one JSON start line and uses caller abort as control-child cancellation", async () => {
-  const controller = new AbortController();
-  const result = runOneShotControlChild({
-    command: nodeCommand,
-    args: childScript(`
-      let frames = 0;
-      process.stdin.on("data", () => { frames += 1; });
-      process.stdin.on("end", () => { if (frames !== 1) process.exitCode = 1; else setInterval(() => {}, 1000); });
-    `),
-    start: { request: "one" },
-    signal: controller.signal,
-  });
-  setTimeout(() => controller.abort(), 50).unref();
-  await assert.rejects(result, /control_child_aborted/);
-  await assert.rejects(
-    runOneShotControlChild({ command: nodeCommand, args: childScript(""), start: { value: "x".repeat(64 * 1024) } }),
-    /invalid_control_child_start/,
-  );
-  const stderrResult = await runOneShotControlChild({
-    command: nodeCommand,
-    args: childScript("process.stderr.write('x'.repeat(128 * 1024)); process.stdout.write('{}\\n');"),
-    start: {},
-  });
-  assert.ok(Buffer.byteLength(stderrResult.child.stderr, "utf8") <= 64 * 1024);
-});
-
-test("returns independent exit facts for valid result with nonzero code or signal", async () => {
-  const nonzero = await runOneShotControlChild({
-    command: nodeCommand,
-    args: childScript("process.stdout.write('{}\\n'); process.exit(7);"),
-    start: {},
-  });
-  assert.deepEqual(nonzero.exit, { code: 7, signal: null });
-  const signalChild = fakeChild();
-  const signaled = runOneShotControlChild({ command: "fake", start: {}, spawnProcess: () => signalChild });
-  signalChild.stdout.emit("data", Buffer.from("{}\n"));
-  signalChild.emit("close", null, "SIGTERM");
-  assert.deepEqual((await signaled).exit, { code: null, signal: "SIGTERM" });
-});
-
-test("abort observed before completed close fails closed; close/result first returns exit facts", async () => {
-  const controller = new AbortController();
-  const child = fakeChild();
-  const pending = runOneShotControlChild({
-    command: "fake",
-    start: {},
-    signal: controller.signal,
-    spawnProcess: () => child,
-    killTree: async () => { child.emit("close", null, "SIGKILL"); },
-  });
-  controller.abort();
-  await assert.rejects(pending, /control_child_aborted/);
-
-  const completeChild = fakeChild();
-  const settled = runOneShotControlChild({
-    command: "fake",
-    start: {},
-    spawnProcess: () => completeChild,
-  });
-  completeChild.stdout.emit("data", Buffer.from("{}\n"));
-  completeChild.emit("close", 7, null);
-  assert.deepEqual((await settled).exit, { code: 7, signal: null });
 });
 
 test("deadline races child close, not only exit", async () => {
@@ -254,10 +107,6 @@ test("rejects mandatory spawn option overrides before spawning", async () => {
       runBoundedChild({ command: "never-spawned", spawnOptions: { [key]: true }, spawnProcess: () => assert.fail("must not spawn") }),
       /test_supervisor_spawn_options_override_mandatory/,
     );
-    await assert.rejects(
-      runOneShotControlChild({ command: "never-spawned", start: {}, spawnOptions: { [key]: true }, spawnProcess: () => assert.fail("must not spawn") }),
-      /test_supervisor_spawn_options_override_mandatory/,
-    );
   }
 });
 
@@ -298,17 +147,7 @@ test("cleans a real process tree before rejecting an invalid post-spawn child su
       }),
       /invalid_test_supervisor_child/,
     );
-    await assert.rejects(
-      runOneShotControlChild({
-        command: "fake",
-        start: {},
-        spawnProcess: startRealButReturnInvalidSurface,
-        killTree: killRealChildAndWaitForClose,
-        cleanupTimeoutMs: 500,
-      }),
-      /invalid_control_child_process/,
-    );
-    assert.equal(children.length, 2);
+    assert.equal(children.length, 1);
     assert.deepEqual(cleanupPids, children.map((record) => record.pid));
     assert.ok(children.every((record) => record.closed));
     await new Promise((resolve) => setTimeout(resolve, 400));

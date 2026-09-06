@@ -6,7 +6,6 @@ export {
   CLEANUP_TIMEOUT_MS,
   DEFAULT_SUITE_TIMEOUT_MS,
   runBoundedChild,
-  runOneShotControlChild,
 } from "./process-supervisor.mjs";
 export {
   cleanupAtomicDirectory,
@@ -27,17 +26,6 @@ export {
   readActionProjectManifest,
   runActionProject,
 } from "./project-runner.mjs";
-export {
-  WORK_BRIEF_HANDOFF_SCHEMA,
-  WORK_BRIEF_SCHEMA,
-  assertWorkBriefStageAuthorized,
-  checkWorkBrief,
-  checkWorkBriefOwnership,
-  compareWorkBriefDiff,
-  createIncompleteWorkBriefHandoff,
-  parseGitDiffPaths,
-  validateFrozenWorkBrief,
-} from "./work-brief.mjs";
 export {
   beginPrivateResultFile,
   cleanupPrivateResultFile,

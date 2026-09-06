@@ -5,7 +5,6 @@ const OPTION_TO_FIELD = new Map([
   ["--project", "projectFile"],
   ["--action", "actionId"],
   ["--profile", "profileFile"],
-  ["--brief", "briefFile"],
 ]);
 const COMMANDS = new Set(["check", "preflight", "run-live", "status"]);
 const DEFAULT_PROJECT_FILE_NAME = "game-action-project.json";
@@ -37,7 +36,7 @@ export function parseGameActionArgs(args) {
   if (command === undefined) fail("missing_command");
   const projectFile = values.projectFile ?? path.resolve(process.cwd(), DEFAULT_PROJECT_FILE_NAME);
   const invocation = { command };
-  for (const field of ["actionId", "profileFile", "briefFile"]) {
+  for (const field of ["actionId", "profileFile"]) {
     if (values[field] !== undefined) invocation[field] = values[field];
   }
   return Object.freeze({ projectFile, invocation: Object.freeze(invocation) });
