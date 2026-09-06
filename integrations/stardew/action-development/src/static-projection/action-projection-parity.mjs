@@ -13,8 +13,8 @@ export const PROJECTION_PARITY_ENVELOPE_KEYS = Object.freeze([
   "guardOrder",
   "absentRoutes",
 ]);
-export const PROJECTION_PARITY_SURFACE_KEYS = Object.freeze(["schema", "catalogRevision", "actions"]);
-export const PROJECTION_PARITY_ACTION_KEYS = Object.freeze([
+const PROJECTION_PARITY_SURFACE_KEYS = Object.freeze(["schema", "catalogRevision", "actions"]);
+const PROJECTION_PARITY_ACTION_KEYS = Object.freeze([
   "actionId",
   "identityVersion",
   "lifecycle",
@@ -25,14 +25,14 @@ export const PROJECTION_PARITY_ACTION_KEYS = Object.freeze([
   "effect",
   "postcondition",
 ]);
-export const PROJECTION_PARITY_LIFECYCLE_KEYS = Object.freeze([
+const PROJECTION_PARITY_LIFECYCLE_KEYS = Object.freeze([
   "admittedLifecycles",
   "executableActionIds",
   "readOnlyActionIds",
   "experimentalActionIds",
 ]);
-export const PROJECTION_PARITY_PROTOCOL_KEYS = Object.freeze(["schemas", "fixedControls"]);
-export const PROJECTION_PARITY_OWNERSHIP_KEYS = Object.freeze([
+const PROJECTION_PARITY_PROTOCOL_KEYS = Object.freeze(["schemas", "fixedControls"]);
+const PROJECTION_PARITY_OWNERSHIP_KEYS = Object.freeze([
   "localFixtureOwnedActionIds",
   "nativeActionIds",
 ]);
@@ -68,13 +68,13 @@ export const PROJECTION_PARITY_ABSENT_ROUTE_TOKENS = Object.freeze([
   "read_repair",
   "withdrawn",
 ]);
-export const PROJECTION_PARITY_MAX_JSON_BYTES = 32 * 1024;
-export const PROJECTION_PARITY_MAX_REGISTRATIONS = 128;
-export const PROJECTION_PARITY_MAX_IDENTIFIER_LENGTH = 128;
-export const PROJECTION_PARITY_MAX_IDENTITY_VERSION = 2_147_483_647;
-export const PROJECTION_PARITY_MAX_IDS = 128;
-export const PROJECTION_PARITY_MAX_SCHEMAS = 64;
-export const PROJECTION_PARITY_MAX_FILES = 64;
+const PROJECTION_PARITY_MAX_JSON_BYTES = 32 * 1024;
+const PROJECTION_PARITY_MAX_REGISTRATIONS = 128;
+const PROJECTION_PARITY_MAX_IDENTIFIER_LENGTH = 128;
+const PROJECTION_PARITY_MAX_IDENTITY_VERSION = 2_147_483_647;
+const PROJECTION_PARITY_MAX_IDS = 128;
+const PROJECTION_PARITY_MAX_SCHEMAS = 64;
+const PROJECTION_PARITY_MAX_FILES = 64;
 
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
 const SCHEMA_ID = /^[a-z0-9][a-z0-9._-]*\/v[1-9][0-9]*$/;

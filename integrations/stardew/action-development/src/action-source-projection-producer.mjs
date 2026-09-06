@@ -73,7 +73,7 @@ const OBSOLETE_RUNNER_FILENAMES = Object.freeze([
  * Explicit fixed source list of the current production sources. The producer
  * reads exactly these paths and rejects any unexplained read failure.
  */
-export const ACTION_SOURCE_PATHS = Object.freeze([
+const ACTION_SOURCE_PATHS = Object.freeze([
   {
     category: "canonical_action_surface",
     path: "integrations/stardew/action-development/contracts/generated/action-surface.v1.json",

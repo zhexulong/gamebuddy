@@ -28,7 +28,7 @@ const entries = Object.freeze([
   { id: "synthetic-tie-b", labels: { "en-US": "Stone" }, aliases: [] },
 ]);
 const rejected = () => ({ kind: "not_found", stage: "fuzzy_below_threshold", candidates: [] });
-export const CORPUS_SELECTION_RECORD_V1 = Object.freeze({
+const CORPUS_SELECTION_RECORD_V1 = Object.freeze({
   artifactKind: "stardew_navigation_p4c_redacted_corpus_selection",
   schemaVersion: 1,
   selectionVersion: "p4c-real-selection-v1",

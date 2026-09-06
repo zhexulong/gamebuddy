@@ -27,8 +27,8 @@ if ($LASTEXITCODE -ne 0) { throw "GameBuddy.Stardew.Core.Tests failed with exit 
 & dotnet test (Join-Path $projectRoot "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj") --configuration $Configuration "-p:GamePath=$GamePath"
 if ($LASTEXITCODE -ne 0) { throw "GameBuddy.Stardew.Integration.Tests failed with exit code $LASTEXITCODE." }
 
-# Run Action Projection Validation
-& pnpm test:stardew-action-projection
-if ($LASTEXITCODE -ne 0) { throw "Action projection verifier failed with exit code $LASTEXITCODE." }
+# Run the package-owned deterministic action-development validation.
+& pnpm --dir (Join-Path $projectRoot "integrations/stardew/action-development") action:ci
+if ($LASTEXITCODE -ne 0) { throw "Action development package CI failed with exit code $LASTEXITCODE." }
 
 Write-Host "Local action projection verification passed."

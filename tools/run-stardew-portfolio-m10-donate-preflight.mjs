@@ -362,4 +362,4 @@ export async function runM10MuseumDonatePreflight(args = {}) {
   });
 }
 
-export const M10_MUSEUM_DONATE_PREFLIGHT_ACTION = ACTION;
+const M10_MUSEUM_DONATE_PREFLIGHT_ACTION = ACTION;

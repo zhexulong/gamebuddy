@@ -398,5 +398,5 @@ export async function runM9AcceptPreflight(args = {}) {
   return Object.freeze({ state: "BLOCKED", code: "m9_accept_source_semantic_edge_unestablished", given, when, then });
 }
 
-export const M9_ACCEPT_PREFLIGHT_ACTION = ACTION;
-export const M9_ACCEPT_PREFLIGHT_TOPOLOGY = TOPOLOGY;
+const M9_ACCEPT_PREFLIGHT_ACTION = ACTION;
+const M9_ACCEPT_PREFLIGHT_TOPOLOGY = TOPOLOGY;

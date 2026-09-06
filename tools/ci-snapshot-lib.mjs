@@ -4,11 +4,11 @@ import { dirname, isAbsolute, normalize, relative, resolve, sep } from "node:pat
 
 export const SNAPSHOT_SCHEMA = "gamebuddy-no-commit-clean-room-snapshot/v1";
 export const REQUIRED_INPUTS_SCHEMA = "gamebuddy-required-snapshot-inputs/v2";
-export const REQUIRED_INPUT_REFERENCE_REQUIREMENT =
+const REQUIRED_INPUT_REFERENCE_REQUIREMENT =
   "must be proven by a tracked build or CI reference before admission";
-export const REQUIRED_INPUT_REFERENCE_MARKER_PREFIX = "gamebuddy-snapshot-input:";
-export const SNAPSHOT_CONTROL_OWNER = "snapshot-tooling";
-export const SNAPSHOT_CONTROL_PURPOSE = "required-input control";
+const REQUIRED_INPUT_REFERENCE_MARKER_PREFIX = "gamebuddy-snapshot-input:";
+const SNAPSHOT_CONTROL_OWNER = "snapshot-tooling";
+const SNAPSHOT_CONTROL_PURPOSE = "required-input control";
 export const REQUIRED_INPUTS_PATH = ".ci/required-snapshot-inputs.json";
 
 export const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -104,7 +104,7 @@ function exactKeys(value, keys) {
   );
 }
 
-export function classifyCandidatePaths(paths, inputs) {
+function classifyCandidatePaths(paths, inputs) {
   const declared = new Map(inputs.map((input) => [input.path, input]));
   const candidates = paths
     .map((path) => {
@@ -157,7 +157,7 @@ const EXCLUDED_CANDIDATE_PREFIXES = Object.freeze([
 ]);
 const EXCLUDED_CANDIDATE_NAMES = new Set(["HANDOFF.md", "contentprobe.err", "contentprobe.out"]);
 
-export function assertRequiredInputDescriptor(input, code = "required_inputs_invalid") {
+function assertRequiredInputDescriptor(input, code = "required_inputs_invalid") {
   if (
     !exactKeys(input, ["path", "owner", "purpose", "type", "mode", "sha256", "referencedBy", "referenceRequirement"]) ||
     input.type !== "file" ||
@@ -237,7 +237,7 @@ export async function readRequiredInputs(root) {
   return Object.freeze(inputs);
 }
 
-export async function verifyRequiredInputs(root, inputs) {
+async function verifyRequiredInputs(root, inputs) {
   const verified = [];
   const resolvedInputs = inputs ?? (await readRequiredInputs(root));
   for (const input of resolvedInputs) {
@@ -253,7 +253,7 @@ export async function verifyRequiredInputs(root, inputs) {
   return Object.freeze(verified);
 }
 
-export async function fileIdentity(root, path, code = "file_invalid") {
+async function fileIdentity(root, path, code = "file_invalid") {
   const safePath = assertSafeRelativePath(path, code);
   const absolute = resolve(root, safePath);
   inside(root, absolute, code);

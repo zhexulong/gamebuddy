@@ -325,5 +325,5 @@ export async function runM8ElevatorPreflight({
   return Object.freeze({ state: "PREFLIGHT_READY", given, then });
 }
 
-export const M8_ELEVATOR_PREFLIGHT_ACTION = ACTION;
-export const M8_ELEVATOR_PREFLIGHT_TOPOLOGY = TOPOLOGY;
+const M8_ELEVATOR_PREFLIGHT_ACTION = ACTION;
+const M8_ELEVATOR_PREFLIGHT_TOPOLOGY = TOPOLOGY;

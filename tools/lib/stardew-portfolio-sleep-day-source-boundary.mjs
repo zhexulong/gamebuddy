@@ -317,7 +317,7 @@ async function checkedMkdtemp(prefix, code) {
   await checkedPath(output, code);
   return output;
 }
-export async function checkedRemove(root, code) {
+async function checkedRemove(root, code) {
   if (!root) return;
   const boundary = await checkedPath(root, code);
   await rm(root, { recursive: true, force: false });
@@ -480,7 +480,7 @@ async function validateSnapshot(target) {
   if (bytes.length !== TARGET_LENGTH || sha(bytes) !== TARGET_SHA256)
     fail("target_snapshot_mismatch", "Target snapshot content changed.");
 }
-export async function targetAssembly(gamePath) {
+async function targetAssembly(gamePath) {
   if (!gamePath) fail("game_path_required", "Explicit --game-path or GAMEBUDDY_STARDEW_GAME_PATH is required.");
   const assemblyPath = path.join(path.resolve(gamePath), "Stardew Valley.dll"),
     sourceBoundary = await checkedPath(assemblyPath, "target_assembly_missing");
@@ -529,7 +529,7 @@ export async function targetAssembly(gamePath) {
     throw error;
   }
 }
-export async function disposeTarget(target) {
+async function disposeTarget(target) {
   if (target?.snapshotRoot) await checkedRemove(target.snapshotRoot, "snapshot_cleanup_failed");
 }
 async function lockedTool() {
@@ -552,7 +552,7 @@ async function lockedTool() {
   if (version !== TOOL_VERSION) fail("tool_version_mismatch", "Locked ilspycmd version mismatch.");
   return { path: TOOL_PATH, sha256: TOOL_SHA256, payload: { files, sha256: digest(files) } };
 }
-export async function decompile(target, { execute = exec } = {}) {
+async function decompile(target, { execute = exec } = {}) {
   await validateSnapshot(target);
   const output = await checkedMkdtemp(
     path.join(process.env.TEMP || os.tmpdir(), "gb-sleep-day-decompile-"),
@@ -579,7 +579,7 @@ export async function decompile(target, { execute = exec } = {}) {
     throw error;
   }
 }
-export async function sourceState(root) {
+async function sourceState(root) {
   const rootBoundary = await checkedPath(root, "decompile_tree_invalid"),
     sourceFiles = await filesUnder(root, root, [], true),
     files = [],
@@ -633,7 +633,7 @@ function anchor(state, definition) {
     semanticRole,
   };
 }
-export async function derive(target, decompRoot, tool) {
+async function derive(target, decompRoot, tool) {
   const state = await sourceState(decompRoot),
     locked = tool || (await lockedTool());
   return {

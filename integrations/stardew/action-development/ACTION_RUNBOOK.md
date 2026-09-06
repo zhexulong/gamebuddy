@@ -16,7 +16,8 @@ explicitly selected:
 pnpm --dir integrations/stardew/action-development test
 pnpm --dir integrations/stardew/action-development action:inventory
 pnpm --dir integrations/stardew/action-development action:check
-pnpm --dir integrations/stardew/action-development action:ci
+  pnpm --dir integrations/stardew/action-development action:ci
+  pnpm --dir integrations/stardew/action-development check:bridge-ledger
 pnpm --dir integrations/stardew/action-development action:extraction-rehearsal
 pnpm --dir integrations/stardew/action-development action:publish-release-bundle -- --source <absolute-source-dir> --destination <absolute-destination-dir>
 ```

@@ -51,7 +51,7 @@ async function createBuildWindowsReparseInspector(): Promise<WindowsReparseInspe
  * build inspector through this narrow object; no capability or helper path is
  * exposed to its caller.
  */
-export const BUILD_ARTIFACT_REPARSE_INSPECTION = Object.freeze({
+const BUILD_ARTIFACT_REPARSE_INSPECTION = Object.freeze({
   create: createBuildWindowsReparseInspector,
   assertNoReparse: assertNoWindowsReparse,
 });

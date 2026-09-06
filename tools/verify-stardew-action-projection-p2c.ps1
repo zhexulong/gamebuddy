@@ -205,10 +205,8 @@ try {
     }
 
     Write-Phase "promotion-and-descriptors"
-    & pnpm test:stardew-action-projection
-    Assert-ExternalSuccess "pnpm test:stardew-action-projection"
-    & pnpm check:stardew-action-surface
-    Assert-ExternalSuccess "pnpm check:stardew-action-surface"
+    & pnpm --dir (Join-Path $projectRoot "integrations/stardew/action-development") action:ci
+    Assert-ExternalSuccess "pnpm --dir integrations/stardew/action-development action:ci"
 
     Write-Phase "shared-harness-consumer-classes"
     & node --test --test-concurrency=1 (Join-Path $projectRoot "tools/verify-stardew-action-projection.test.mjs")

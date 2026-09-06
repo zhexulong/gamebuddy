@@ -143,10 +143,6 @@ export function projectExecutableRegistrations(input, options) {
   return projectActionSurface(input, options).executable;
 }
 
-export function projectReadOnlyRegistrations(input, options) {
-  return projectActionSurface(input, options).readOnly;
-}
-
 /**
  * Assert the restrictive projection laws and return the immutable projection.
  * This is a package-local consistency check, not a publication or authority
@@ -170,6 +166,3 @@ export function validateActionProjection(input, options) {
   }
   return projection;
 }
-
-export const isExecutableActionRegistration = isExecutable;
-export const ACTION_PROJECTION_DESCRIPTOR_KEYS = DESCRIPTOR_KEYS;

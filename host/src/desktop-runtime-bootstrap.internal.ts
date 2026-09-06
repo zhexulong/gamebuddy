@@ -36,6 +36,12 @@ type DesktopRootLayoutCapability = object & { readonly [desktopRootLayoutCapabil
 const desktopRootLayoutCapabilities = new WeakSet<object>();
 const desktopRootLayoutCapabilityStates = new WeakMap<object, undefined>();
 
+/** Static identity for the fixed process entry; importing this module has no side effect. */
+export const DESKTOP_RUNTIME_BOOTSTRAP_ENTRY = Object.freeze({
+  schema: "gamebuddy-desktop-runtime-bootstrap-entry/v1",
+  entry: "desktop-runtime-bootstrap.internal.js",
+});
+
 /** One-shot private bootstrap sequence invoked only by the fixed host entry. */
 export async function runDesktopHostBootstrap(moduleDirectory: string): Promise<void> {
   if (process.platform !== "win32") throw unavailable();
