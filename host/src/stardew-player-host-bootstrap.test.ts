@@ -7,7 +7,7 @@ import type {
 import type {
   StardewPlayerHostBootstrapClaim,
 } from "./stardew-player-host-bootstrap.js";
-import { createStardewPrivateBootstrapComposerTestSupport } from "./stardew-private-bootstrap-composer.test-support.js";
+import { createStardewPrivateBootstrapComposerTestSupport } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support.js";
 
 type AssertFalse<T extends false> = T;
 type ClaimCannotBeStructurallyMinted = AssertFalse<

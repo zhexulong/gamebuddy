@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { withPathLock } from "./path-lock.js";
+import { withPathLock } from "../../../path-lock.js";
 import {
   consumeStardewBootstrapGuardianOwnerBinding,
   mintStardewBootstrapGuardianSettlementProof,
@@ -9,7 +9,7 @@ import {
   type StardewBootstrapGuardianRecoveryGateBinding,
 } from "./stardew-private-bootstrap-composer.core.js";
 import type { StardewGuardianBinding } from "./stardew-private-bootstrap-owner-records.private.js";
-import type { DesktopGuardianSession, GuardianAck } from "./desktop-guardian-session.internal.js";
+import type { DesktopGuardianSession, GuardianAck } from "../../../containment/auth/desktop-guardian-session.internal.js";
 import { readStardewBootstrapGuardianNativeArmFrame } from "./stardew-private-bootstrap-composer.core.js";
 
 const OWNER_FILE = "owner.json";
@@ -52,6 +52,14 @@ export type StardewBootstrapGuardianNativePorts = Readonly<{
   recoveryClassification: StardewBootstrapGuardianRecoveryClassificationPort;
 }>;
 
+/**
+ * A later Guardian-private plan authority may supply exact opaque native launch
+ * bytes. This Host adapter neither constructs nor interprets those bytes.
+ */
+type StardewBootstrapGuardianDeferredLaunchPlanPort = Readonly<{
+  create(binding: StardewBootstrapGuardianOwnerBinding, role: GuardianRole): Promise<Uint8Array>;
+}>;
+
 export type StardewBootstrapGuardianOwner = Readonly<{
   /** Durable acknowledgement only; it does not claim or launch a native process. */
   arm(): Promise<void>;
@@ -76,12 +84,14 @@ export type StardewBootstrapGuardianOwner = Readonly<{
 /**
  * Adapts the authenticated Desktop session without exposing its transport. The
  * owner binding is the sole source for every correlation/native arm fact.
- * Launch is intentionally unavailable until an exact native launch plan exists.
+ * Launch remains unavailable unless a Guardian-private authority supplies its
+ * exact opaque plan; this adapter only relays that plan through the session.
  */
 export function createStardewBootstrapGuardianNativePortsFromDesktopSession(
   binding: StardewBootstrapGuardianOwnerBinding,
   session: DesktopGuardianSession,
   deadlineUnixMs: number,
+  deferredLaunchPlan?: StardewBootstrapGuardianDeferredLaunchPlanPort,
 ): StardewBootstrapGuardianNativePorts {
   if (!Number.isSafeInteger(deadlineUnixMs) || deadlineUnixMs <= Date.now()) throw new Error("stardew_bootstrap_guardian_session_unavailable");
   const arm = readStardewBootstrapGuardianNativeArmFrame(binding);
@@ -99,8 +109,13 @@ export function createStardewBootstrapGuardianNativePortsFromDesktopSession(
         const ack = await session.arm({ ...correlation, deadlineUnixMs, privateFrame: body });
         expect(ack, "arm_attempt");
       },
-      async launchRole(_ownerBinding: StardewBootstrapGuardianOwnerBinding, target: GuardianRole) {
-        throw new Error("stardew_bootstrap_guardian_native_launch_plan_unavailable");
+      async launchRole(ownerBinding: StardewBootstrapGuardianOwnerBinding, target: GuardianRole) {
+        if (deferredLaunchPlan === undefined) throw new Error("stardew_bootstrap_guardian_native_launch_plan_unavailable");
+        const privateFrame = await deferredLaunchPlan.create(ownerBinding, target);
+        if (!(privateFrame instanceof Uint8Array)) throw new Error("stardew_bootstrap_guardian_native_launch_plan_unavailable");
+        const expectedRole = role(target);
+        const ack = await session.launch({ ...correlation, deadlineUnixMs, role: expectedRole, privateFrame });
+        expect(ack, "launch_role", expectedRole);
       },
       async drainRole(_ownerBinding: StardewBootstrapGuardianOwnerBinding, target: GuardianRole) {
         const ack = await session.contain({ ...correlation, deadlineUnixMs, attemptId: arm.attemptId, role: role(target) });

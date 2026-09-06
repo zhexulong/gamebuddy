@@ -20,9 +20,9 @@ import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspec
 import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "./windows-stardew-folder-picker/index.js";
 import {
   createStardewPrivateBootstrapComposition,
-} from "./stardew-private-bootstrap-composer.internal.js";
-import type { StardewPrivateBootstrapInternalComposition } from "./stardew-private-bootstrap-composer.core.js";
-import type { StardewOwnedPlayerHostPhaseAOwner } from "./stardew-private-bootstrap-composer.js";
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.js";
+import type { StardewPrivateBootstrapInternalComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+import type { StardewOwnedPlayerHostPhaseAOwner } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import {
   createStardewOwnedFarmhandGameSessionMaterializer,
   type StardewOwnedFarmhandGameSessionMaterializer,
@@ -30,7 +30,7 @@ import {
 import {
   didStardewOwnedPlayerHostStageCEnterControlledLaunch,
   type StardewManifestHandoffChoice,
-} from "./stardew-private-bootstrap-composer.core.js";
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import type {
   GameDisconnectCommandV1,
   GamePrerequisitesSetupCommandV1,

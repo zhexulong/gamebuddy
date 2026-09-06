@@ -12,7 +12,7 @@ import {
   type StardewBootstrapGuardianNativePorts,
   type StardewBootstrapGuardianOwner,
 } from "./stardew-bootstrap-guardian.private.js";
-import type { AdmittedStardewInstallation } from "./stardew-installation-admission.js";
+import type { AdmittedStardewInstallation } from "../../../stardew-installation-admission.js";
 import type { StardewManifestHandoffCoordinator } from "./stardew-private-bootstrap-composer.core.js";
 import type {
   StardewOwnedPlayerHostPhaseAOwner,
@@ -41,7 +41,7 @@ export type StardewPrivateModProfileStagingTestSupportInput = Readonly<{
 
 export type StardewPrivateBootstrapTestingComposition = Readonly<{
   composition: PublicStardewPrivateBootstrapComposition;
-  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): import("./stardew-attachment.js").StardewAttachmentFlow;
+  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): import("../../../stardew-attachment.js").StardewAttachmentFlow;
   readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   consumeStagedOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): void;
@@ -63,7 +63,7 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   ): Promise<StardewOwnedPlayerHostStageCResult>;
   reserveOwnedPlayerHostPhaseAForActivation(
     runtimeRoot: string,
-    claim: import("./stardew-player-host-bootstrap.js").StardewPlayerHostBootstrapClaim,
+    claim: import("../../../stardew-player-host-bootstrap.js").StardewPlayerHostBootstrapClaim,
   ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
   stageOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
   terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): void;

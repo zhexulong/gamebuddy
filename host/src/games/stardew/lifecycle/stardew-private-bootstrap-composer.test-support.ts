@@ -11,11 +11,11 @@ import type {
 import type {
   StardewAiClientProcessProbe,
   StardewAiClientProcessSpawn,
-} from "./stardew-ai-client-process-owner.js";
+} from "../../../stardew-ai-client-process-owner.js";
 import type {
   StardewPlayerHostProcessProbe,
   StardewPlayerHostProcessSpawn,
-} from "./stardew-player-host-process-owner.js";
+} from "../../../stardew-player-host-process-owner.js";
 
 export type StardewPrivateBootstrapComposerTestSupportInput = Readonly<{
   rawSpawn: StardewAiClientProcessSpawn;
