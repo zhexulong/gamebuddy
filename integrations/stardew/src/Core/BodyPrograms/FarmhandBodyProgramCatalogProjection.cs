@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew.Core.BodyPrograms;
@@ -81,14 +80,7 @@ public static class FarmhandBodyProgramCatalogProjection
             accepted.Add(descriptor!);
         }
 
-        string revisionText = artifact.DescriptorRevision;
-        if (!long.TryParse(revisionText, NumberStyles.None, CultureInfo.InvariantCulture, out long revision)
-            || revision < 0
-            || revision.ToString(CultureInfo.InvariantCulture) != revisionText)
-        {
-            rejections.Add(new("<catalog>", "catalog_revision_blocked", "The static descriptor revision is not a canonical numeric revision."));
-            return new(FarmhandBodyProgramCatalogProjectionStatus.Blocked, null, Freeze(rejections));
-        }
+        long revision = artifact.CatalogRevision;
 
         if (accepted.Count == 0)
             return new(FarmhandBodyProgramCatalogProjectionStatus.Blocked, null, Freeze(rejections));
@@ -115,10 +107,10 @@ public static class FarmhandBodyProgramCatalogProjection
         code = null;
         message = null;
 
-        if (source.ResourceTemplate.Keys.Count > 0)
+        if (source.ResourceTemplate.Claims.Count > 0)
         {
             code = "resource_mapping_blocked";
-            message = "Resource template keys have no unambiguous Body Program resource template mapping.";
+            message = "Resource template claims have no unambiguous Body Program resource template mapping.";
             return false;
         }
 

@@ -256,7 +256,7 @@ async function validateSnapshot(target) {
     fail("snapshot_boundary_invalid", "Snapshot identity changed.");
   return boundary;
 }
-export async function targetAssembly(gamePath) {
+async function targetAssembly(gamePath) {
   if (!gamePath || typeof gamePath !== "string")
     fail("game_path_required", "Explicit --game-path or GAMEBUDDY_STARDEW_GAME_PATH is required.");
   const assemblyPath = path.join(path.resolve(gamePath), "Stardew Valley.dll");
@@ -300,7 +300,7 @@ export async function targetAssembly(gamePath) {
     throw error;
   }
 }
-export async function disposeTarget(target) {
+async function disposeTarget(target) {
   if (target?.snapshotRoot) await rm(target.snapshotRoot, { recursive: true, force: true });
 }
 async function toolPayloadState() {
@@ -356,7 +356,7 @@ export async function decompile(target, { execute = exec } = {}) {
     throw error;
   }
 }
-export async function sourceState(decompRoot) {
+async function sourceState(decompRoot) {
   const paths = await listCs(decompRoot);
   const normalized = paths
     .map((sourcePath) => ({
@@ -415,7 +415,7 @@ function checkedAnchor(state, definition) {
     semanticRole,
   };
 }
-export async function derive(target, decompRoot, authorityHash, tool = undefined) {
+async function derive(target, decompRoot, authorityHash, tool = undefined) {
   const state = await sourceState(decompRoot);
   const locked = tool || (await lockedTool());
   const anchors = ANCHORS.map((definition) => checkedAnchor(state, definition));

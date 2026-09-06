@@ -3,7 +3,7 @@ import { types } from "node:util";
 import path from "node:path";
 
 export const MAX_TEST_MODULES = 256;
-export const MAX_TEST_MODULE_PATH_LENGTH = 512;
+const MAX_TEST_MODULE_PATH_LENGTH = 512;
 
 const TEST_MODULE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const TEST_MODULE_SUFFIX = ".test.mjs";

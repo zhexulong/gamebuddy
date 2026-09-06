@@ -5,9 +5,9 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-export const HOST_VERIFICATION_ARTIFACT_MANIFEST = "verification-artifact-manifest.json";
-export const HOST_VERIFICATION_ARTIFACT_SCHEMA = "gamebuddy-host-verification-artifact/v1";
-export const HOST_TEST_ARTIFACT_TOPOLOGY = "host_test_verification/v1";
+const HOST_VERIFICATION_ARTIFACT_MANIFEST = "verification-artifact-manifest.json";
+const HOST_VERIFICATION_ARTIFACT_SCHEMA = "gamebuddy-host-verification-artifact/v1";
+const HOST_TEST_ARTIFACT_TOPOLOGY = "host_test_verification/v1";
 
 const slash = (value) => value.replaceAll("\\", "/");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
@@ -259,7 +259,7 @@ export async function assertHostVerificationArtifactManifest({ root = hostRoot, 
 }
 
 /** Test cleanup helper: only deletes a manifest path rooted under a disposable dist-test tree. */
-export async function removeHostVerificationArtifactManifest({ root = hostRoot, outputRoot = resolve(root, "dist-test") } = {}) {
+async function removeHostVerificationArtifactManifest({ root = hostRoot, outputRoot = resolve(root, "dist-test") } = {}) {
   const resolvedRoot = resolve(root); const resolvedOutput = resolve(outputRoot);
   assertInside(resolvedRoot, resolvedOutput, "output_root_invalid");
   if (slash(relative(resolvedRoot, resolvedOutput)) !== "dist-test") throw manifestError("output_root_invalid");

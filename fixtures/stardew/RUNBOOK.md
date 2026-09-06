@@ -662,8 +662,8 @@ commit them:
 4. Run the promotion checks after registry/Mod/tool changes:
 
    ```powershell
-   pnpm check:stardew-action-surface
-   pnpm test:stardew-action-gate-descriptors
+pnpm --dir integrations/stardew/action-development action:ci
+pnpm test:stardew-action-gate-descriptors
    ```
 
    The publish-surface checker verifies the published action set has no

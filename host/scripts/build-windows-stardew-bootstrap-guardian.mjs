@@ -5,21 +5,21 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
-export const hostRoot = resolve(dirname(scriptPath), "..");
-export const repositoryRoot = resolve(hostRoot, "..");
-export const projectRoot = resolve(hostRoot, "native", "windows-stardew-bootstrap-guardian");
+const hostRoot = resolve(dirname(scriptPath), "..");
+const repositoryRoot = resolve(hostRoot, "..");
+const projectRoot = resolve(hostRoot, "native", "windows-stardew-bootstrap-guardian");
 export const projectFile = resolve(projectRoot, "GameBuddy.WindowsStardewBootstrapGuardian.csproj");
 export const fixtureProjectFile = resolve(projectRoot, "fixtures", "RoleRootFixture.csproj");
 export const outputRoot = resolve(projectRoot, ".dist");
 export const guardianOutputRoot = resolve(outputRoot, "win-x64");
-export const fixtureOutputRoot = resolve(outputRoot, "fixtures");
+const fixtureOutputRoot = resolve(outputRoot, "fixtures");
 export const helperFileName = "GameBuddy.WindowsStardewBootstrapGuardian.exe";
 export const fixtureFileName = "RoleRootFixture.exe";
 export const testGuardianFileName = "GameBuddy.WindowsStardewBootstrapGuardian.Test.exe";
 export const manifestFileName = "windows-stardew-bootstrap-guardian.manifest.json";
-export const protocolVersion = 1;
-export const manifestSchemaVersion = 1;
-export const rid = "win-x64";
+const protocolVersion = 1;
+const manifestSchemaVersion = 1;
+const rid = "win-x64";
 const trustedDotnetPath = "C:\\Program Files\\dotnet\\dotnet.exe";
 const timeoutMs = 5 * 60_000;
 const probeTimeoutMs = 10_000;
@@ -44,7 +44,7 @@ async function ensureDirectory(path) {
   await verifyPhysicalPath(path);
 }
 
-export async function resolveRepositoryDotnet() {
+async function resolveRepositoryDotnet() {
   const state = await lstat(trustedDotnetPath).catch(() => undefined);
   if (!state?.isFile() || state.isSymbolicLink() || !contained("C:\\", trustedDotnetPath)) throw new Error("windows_stardew_bootstrap_guardian_dotnet_missing");
   return trustedDotnetPath;

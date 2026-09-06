@@ -124,7 +124,7 @@ export function validateMultiSourceRawObservation(envelope, key, arm, { now }) {
 }
 
 function requiredPath(value, error) { if (typeof value !== 'string' || !value.length || !isAbsolute(value)) fail(error); return resolve(value); }
-export function validateMultiSourceRunEnvironment(env = process.env) {
+function validateMultiSourceRunEnvironment(env = process.env) {
   return Object.freeze({
     gamePath: requiredPath(env.GAMEBUDDY_STARDEW_GAME_PATH, 'game_path_missing_or_relative'),
     productionBuildPath: requiredPath(env.GAMEBUDDY_NAVIGATION_MULTISOURCE_PRODUCTION_BUILD_PATH, 'production_build_path_missing_or_relative'),
@@ -135,12 +135,12 @@ export function validateMultiSourceRunEnvironment(env = process.env) {
     artifactPath: requiredPath(env.GAMEBUDDY_NAVIGATION_MULTISOURCE_ARTIFACT_PATH, 'artifact_path_missing_or_relative'),
   });
 }
-export function assertMultiSourceProfile(entries) { return assertExactDirectory(entries, ['GameBuddy.NavigationP4Loader', 'GameBuddy.NavigationTopologyCharacterization'], 'profile'); }
-export function assertExactDirectory(entries, expected, name = 'directory') {
+function assertMultiSourceProfile(entries) { return assertExactDirectory(entries, ['GameBuddy.NavigationP4Loader', 'GameBuddy.NavigationTopologyCharacterization'], 'profile'); }
+function assertExactDirectory(entries, expected, name = 'directory') {
   if (!Array.isArray(entries) || entries.length !== expected.length || entries.some((entry) => !expected.includes(entry))) fail(`${name}_not_exact`);
   return true;
 }
-export function assertExactSmapiLaunch(executable, args, gamePath, profileRoot) {
+function assertExactSmapiLaunch(executable, args, gamePath, profileRoot) {
   if (resolve(executable) !== join(resolve(gamePath), 'StardewModdingAPI.exe') || !Array.isArray(args) || args.length !== 2 || args[0] !== '--mods-path' || resolve(args[1]) !== resolve(profileRoot)) fail('smapi_identity_or_mods_path_invalid');
   return true;
 }

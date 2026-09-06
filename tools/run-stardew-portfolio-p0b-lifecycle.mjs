@@ -23,7 +23,7 @@ const DEFAULT_KEY_ENVIRONMENT_NAME = "GAMEBUDDY_PORTFOLIO_START_MANIFEST_KEY";
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const SAFE_NAME = /^[A-Za-z0-9_-]{1,128}$/;
 
-export function parsePortfolioP0bCliArgs(argv = []) {
+function parsePortfolioP0bCliArgs(argv = []) {
   const values = {};
   const flags = new Map([
     ["--game-path", "gamePath"],

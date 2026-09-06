@@ -66,7 +66,7 @@ export function validatePortfolioM2CropActionContract(value) {
   if (JSON.stringify(value.forbidden) !== JSON.stringify(FORBIDDEN)) fail("M2 forbidden boundary was weakened.");
   return Object.freeze({ primitives: PRIMITIVES, state: "blocked", liveClosure: "none" });
 }
-export async function checkPortfolioM2CropActionContract(
+async function checkPortfolioM2CropActionContract(
   path = "tools/stardew-portfolio-m2-crop-action-contract.json",
 ) {
   return validatePortfolioM2CropActionContract(JSON.parse(await readFile(path, "utf8")));

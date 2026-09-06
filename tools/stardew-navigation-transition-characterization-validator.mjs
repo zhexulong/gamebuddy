@@ -19,9 +19,9 @@ import { readFile } from "node:fs/promises";
  * It performs no target-runtime launch, no fixture, and no mutation.
  */
 
-export const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 1;
 export const TARGET_BUILD = "1.6.15.24356";
-export const TERMINAL_STATES = Object.freeze(["passed", "blocked"]);
+const TERMINAL_STATES = Object.freeze(["passed", "blocked"]);
 export const PASS_PREDICATE = "successful_characterization";
 export const BLOCK_PREDICATES = Object.freeze([
   "transition_family_unapproved",

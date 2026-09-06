@@ -51,7 +51,6 @@ export async function runActionSurfaceCheck() {
 export {
   ACTION_SURFACE_ARTIFACT_RELATIVE_PATH,
   ACTION_SURFACE_CHECK_MAX_REPORT_BYTES,
-  ACTION_SURFACE_CHECK_SCHEMA,
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

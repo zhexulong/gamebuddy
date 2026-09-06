@@ -357,7 +357,7 @@ export function deriveMapRealization(probe) {
     candidateTiles,
   };
 }
-export function validateMapProbe(probe) {
+function validateMapProbe(probe) {
   deriveMapRealization(probe);
   return true;
 }

@@ -25,9 +25,9 @@
     "quality:check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:host-production-import-boundary && pnpm check:text-hygiene && pnpm test:stardew:core && pnpm test:stardew:integration",
     "dependency-audit": "node tools/generate-sbom.mjs --verify",
     "check:dependency-risk": "node tools/check-dependency-risk.mjs",
-    "test:knip-config": "node --test tools/knip-config.test.mjs",
-    "report:knip": "knip --config knip.json --reporter json",
-    "report:knip:production": "knip --config knip.json --production --reporter json",
+    "knip": "knip --config knip.json",
+    "knip:production": "knip --config knip.json --production",
+    "check:knip": "pnpm knip && pnpm knip:production",
     "test:dependency-risk": "node --test tools/check-dependency-risk.test.mjs",
     "test:ci-snapshot": "node --test tools/ci-snapshot.test.mjs",
     "test:portfolio-manifest": "node --test tools/test-portfolio-manifest.test.mjs",
@@ -46,6 +46,7 @@
     "verify:stardew-action-projection-local": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-local.ps1 -Configuration Debug",
     "verify:stardew-action-projection-p2c": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-p2c.ps1 -Configuration Debug",
     "check:host-production-import-boundary": "node tools/check-host-production-import-boundary.mjs",
+    "check:host-module-graph": "depcruise --config .dependency-cruiser.host-production.cjs host/src/main.ts host/src/dialogue-web-main.ts host/src/stardew-attachment.ts host/src/farmhand-companion-preview.ts",
     "check:stardew-portfolio-prerequisites": "node tools/check-stardew-portfolio-prerequisites.mjs",
     "check:stardew-portfolio-p0b": "node tools/check-stardew-portfolio-p0b.mjs",
     "check:stardew-portfolio-isolation": "node tools/check-stardew-portfolio-isolation.mjs",
@@ -152,13 +153,13 @@
     "check:tavern-release-prerequisites": "node tools/check-tavern-release-prerequisites.mjs",
     "test:stardew-static-companion-fixture": "node --test tools/stardew-companion-live-scenario.test.mjs tools/stardew-companion-live-scorer.test.mjs",
     "test:stardew-static-companion-evidence": "node --test tools/lib/stardew-companion-live-evidence.test.mjs",
-    "test:stardew-static-companion-admission": "node --test tools/lib/stardew-companion-production-admission.test.mjs",
-    "test:stardew-static-portfolio-projection": "dotnet integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll integrations/stardew/bin/Release/net6.0/GameBuddy.Stardew.dll"
+    "test:stardew-static-companion-admission": "node --test tools/lib/stardew-companion-production-admission.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
     "@gamebuddy/game-action-devkit": "workspace:*",
     "@vscode/tree-sitter-wasm": "0.3.1",
+    "dependency-cruiser": "17.3.2",
     "knip": "6.34.0",
     "web-tree-sitter": "0.26.11"
   },

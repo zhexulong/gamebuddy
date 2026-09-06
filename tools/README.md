@@ -348,7 +348,7 @@ in their own product UI.
 ## Fun-ASR offline regression baseline
 
 ```powershell
-node tools/run-funasr-offline-baseline.mjs `
+pnpm --dir voice-gateway check:funasr-baseline `
   --manifest "$env:LOCALAPPDATA\GameBuddy\voice-assets\funasr-llamacpp\sensevoice-assets.manifest.json"
 ```
 
@@ -364,7 +364,7 @@ reported by a validation runner.
 For the currently verified bridge/ledger guards, run:
 
 ```powershell
-node tools/run-stardew-bridge-ledger-smoke.mjs `
+pnpm --dir integrations/stardew/action-development check:bridge-ledger `
   --client-config "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-profiles\\A-ai-client\\GameBuddy\\config.json"
 ```
 
@@ -383,7 +383,7 @@ unchanged and enables the same embedded, no-tool Historian only when Magic
 Context's own context-pressure scheduler requires it.
 
 ```powershell
-node tools/run-ongoing-interaction-historian-authoring.mjs
+pnpm --dir host check:historian-authoring
 ```
 
 A pass executes two native Magic Context scenarios: a one-off Episodic fixture
