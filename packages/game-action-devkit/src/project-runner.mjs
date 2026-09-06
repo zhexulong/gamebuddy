@@ -5,9 +5,9 @@ import { pathToFileURL } from "node:url";
 
 const COMMANDS = new Set(["check", "preflight", "run-live", "status"]);
 const MANIFEST_KEYS = new Set(["schema", "gameId", "projectVersion", "adapter", "portfolio", "toolInventory", "evidenceRoot", "defaultProfileExample"]);
-const REPORT_KEYS = new Set(["schema", "gameId", "actionId", "scenarioId", "status", "outcome", "reasonCode", "claimScope", "runId", "evidenceRoot", "briefFile"]);
+const REPORT_KEYS = new Set(["schema", "gameId", "actionId", "scenarioId", "status", "outcome", "reasonCode", "claimScope", "runId", "evidenceRoot"]);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const REPORT_FIELD_MAX_LENGTHS = Object.freeze({ gameId: 128, actionId: 128, scenarioId: 128, status: 128, runId: 128, outcome: 512, reasonCode: 512, claimScope: 512, evidenceRoot: 512, briefFile: 512 });
+const REPORT_FIELD_MAX_LENGTHS = Object.freeze({ gameId: 128, actionId: 128, scenarioId: 128, status: 128, runId: 128, outcome: 512, reasonCode: 512, claimScope: 512, evidenceRoot: 512 });
 const MAX_ADAPTER_REPORT_BYTES = 64 * 1024 - 1;
 
 function fail(code) {
@@ -52,7 +52,7 @@ async function assertCanonicalOwnedDirectory(baseDirectory, declaredDirectory) {
 
 export function normalizeInvocation(invocation) {
   if (!isObject(invocation)) fail("invalid_invocation");
-  const allowed = new Set(["command", "actionId", "profileFile", "briefFile"]);
+  const allowed = new Set(["command", "actionId", "profileFile"]);
   if (Object.keys(invocation).some((key) => !allowed.has(key))) fail("invalid_invocation_key");
   if (!COMMANDS.has(invocation.command)) fail("invalid_command");
   const normalized = { command: invocation.command };
@@ -64,7 +64,6 @@ export function normalizeInvocation(invocation) {
     if (typeof invocation.profileFile !== "string" || !path.isAbsolute(invocation.profileFile) || invocation.profileFile.includes("\0") || path.normalize(invocation.profileFile) !== invocation.profileFile) fail("invalid_profileFile");
     normalized.profileFile = invocation.profileFile;
   }
-  if (invocation.briefFile !== undefined) normalized.briefFile = assertRelativeFile(invocation.briefFile, "invalid_briefFile");
   return Object.freeze(normalized);
 }
 
@@ -156,8 +155,8 @@ function validateAdapterReport(report, manifest) {
   if (typeof report.schema !== "string" || report.schema.length === 0) fail("adapter_report_invalid");
   assertReportString(report.gameId, "gameId", { opaque: true });
   assertReportString(report.status, "status");
-  for (const field of ["actionId", "scenarioId", "briefFile"]) {
-    if (Object.hasOwn(report, field)) assertReportString(report[field], field, { nullable: true, opaque: field !== "briefFile" });
+  for (const field of ["actionId", "scenarioId"]) {
+    if (Object.hasOwn(report, field)) assertReportString(report[field], field, { nullable: true, opaque: true });
   }
   for (const field of ["outcome", "reasonCode", "claimScope", "runId", "evidenceRoot"]) {
     if (Object.hasOwn(report, field)) assertReportString(report[field], field);
@@ -187,25 +186,9 @@ export async function runActionProject({ projectFile, invocation }) {
     ? await loadActionProjectManifest(projectFile, { allowMissingPortfolio: true })
     : await readActionProjectManifest(projectFile);
   if (normalizedInvocation.command === "preflight" && normalizedInvocation.profileFile === undefined) fail("profile_required");
-  let canonicalBriefFile;
-  if (normalizedInvocation.briefFile !== undefined) {
-    const declaredBriefFile = path.resolve(manifest.baseDirectory, normalizedInvocation.briefFile);
-    if (!declaredBriefFile.startsWith(`${manifest.baseDirectory}${path.sep}`)) fail("brief_path_escape");
-    try {
-      canonicalBriefFile = await realpath(declaredBriefFile);
-      if (!canonicalBriefFile.startsWith(`${manifest.baseDirectory}${path.sep}`)) fail("brief_dependency_escape");
-      if (!(await lstat(canonicalBriefFile)).isFile()) fail("brief_dependency_invalid");
-    } catch (error) {
-      if (String(error?.message).startsWith("game_action_project_")) throw error;
-      fail("brief_dependency_missing");
-    }
-  }
-  const resolvedInvocation = canonicalBriefFile === undefined
-    ? normalizedInvocation
-    : Object.freeze({ ...normalizedInvocation, briefFile: canonicalBriefFile });
-  const immutableInvocation = resolvedInvocation.command === "run-live"
-    ? Object.freeze({ ...resolvedInvocation, runId: mintEvidenceRunId() })
-    : resolvedInvocation;
+  const immutableInvocation = normalizedInvocation.command === "run-live"
+    ? Object.freeze({ ...normalizedInvocation, runId: mintEvidenceRunId() })
+    : normalizedInvocation;
   let adapter;
   try { adapter = await import(pathToFileURL(manifest.adapterFile).href); } catch { fail("adapter_unloadable"); }
   if (typeof adapter.runActionProject !== "function") fail("adapter_contract_missing");

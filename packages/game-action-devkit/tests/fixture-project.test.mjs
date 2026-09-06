@@ -7,15 +7,12 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  WORK_BRIEF_SCHEMA,
   beginEvidenceRun,
-  checkWorkBriefOwnership,
   finalizeEvidenceRun,
   finalizeIncompleteEvidenceRun,
   readEvidenceStatus,
   readPassedEvidence,
   runBoundedChild,
-  validateFrozenWorkBrief,
 } from "../src/index.mjs";
 import { parseGameActionArgs, runGameActionCli } from "../src/cli.mjs";
 import { readActionProjectManifest, runActionProject } from "../src/project-runner.mjs";
@@ -26,9 +23,7 @@ const projectFile = path.join(fixtureRoot, "project.json");
 const profileFile = path.join(fixtureRoot, "profile.json");
 const profileSchemaFile = new URL("../schemas/game-action-profile-envelope.v1.schema.json", import.meta.url);
 const childFile = path.join(fixtureRoot, "child.mjs");
-const briefFile = "briefs/toggle_lamp.json";
 const binFile = fileURLToPath(new URL("../bin/game-action.mjs", import.meta.url));
-const fixtureBaseCommit = "a".repeat(40);
 
 async function fixtureFiles() {
   const entries = await readdir(fixtureRoot, { withFileTypes: true, recursive: true });
@@ -66,7 +61,7 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
 
   const status = await runActionProject({
     projectFile,
-    invocation: { command: "status", actionId: "toggle_lamp", briefFile },
+    invocation: { command: "status", actionId: "toggle_lamp" },
   });
   assert.deepEqual(status, {
     schema: "gamebuddy-action-scenario-result/v1",
@@ -74,7 +69,6 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     status: "status_ready",
     claimScope: "fixture_only",
     actionId: "toggle_lamp",
-    briefFile: path.join(fixtureRoot, briefFile),
   });
 
   const preflight = await runActionProject({
@@ -87,7 +81,6 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     status: "preflight_ready",
     claimScope: "fixture_only",
     actionId: "toggle_lamp",
-    briefFile: null,
   });
 
   const live = await runActionProject({
@@ -111,8 +104,8 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     projectFile,
     "--action",
     "toggle_lamp",
-    "--brief",
-    briefFile,
+    "--profile",
+    profileFile,
   ]);
   const checked = await runGameActionCli([
     "check",
@@ -120,13 +113,13 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     projectFile,
     "--action",
     "toggle_lamp",
-    "--brief",
-    briefFile,
+    "--profile",
+    profileFile,
   ]);
   assert.deepEqual(parsed.invocation, {
     command: "check",
     actionId: "toggle_lamp",
-    briefFile,
+    profileFile,
   });
   assert.deepEqual(checked, {
     schema: "gamebuddy-action-scenario-result/v1",
@@ -134,7 +127,6 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     status: "check_passed",
     claimScope: "fixture_only",
     actionId: "toggle_lamp",
-    briefFile: path.join(fixtureRoot, briefFile),
   });
 
   await assert.rejects(
@@ -143,7 +135,7 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
   );
 });
 
-test("runs fixture child supervision, records non-production evidence, and enforces brief ownership", async () => {
+test("runs fixture child supervision and records non-production evidence", async () => {
   const child = await runBoundedChild({ command: process.execPath, args: [childFile], cwd: fixtureRoot, timeoutMs: 5000 });
   assert.equal(child.code, 0);
   assert.equal(child.signal, null);
@@ -168,37 +160,6 @@ test("runs fixture child supervision, records non-production evidence, and enfor
   } finally {
     await rm(evidenceRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   }
-
-  const brief = {
-    schema: WORK_BRIEF_SCHEMA,
-    gameId: "clockwork_fixture",
-    actionId: "toggle_lamp",
-    baseCommit: fixtureBaseCommit,
-    contractVersion: 1,
-    status: "frozen",
-    effect: "mutation",
-    claimScope: "fixture_only",
-    ownedPaths: ["packages/game-action-devkit/tests/fixtures/project/**"],
-    sharedHubs: [],
-    requiredPortfolioEntries: [],
-    checks: ["fixture_child"],
-    liveAuthorized: false,
-  };
-  assert.equal(validateFrozenWorkBrief(brief, {
-    expectedGameId: "clockwork_fixture",
-    expectedActionId: "toggle_lamp",
-    expectedBaseCommit: fixtureBaseCommit,
-  }).gameId, "clockwork_fixture");
-  assert.deepEqual(checkWorkBriefOwnership(brief, ["packages/game-action-devkit/tests/fixtures/project/child.mjs"], {
-    expectedGameId: "clockwork_fixture",
-    expectedActionId: "toggle_lamp",
-    expectedBaseCommit: fixtureBaseCommit,
-  }), {
-    ownedPaths: ["packages/game-action-devkit/tests/fixtures/project/child.mjs"],
-    sharedHubPaths: [],
-  });
-  assert.throws(() => validateFrozenWorkBrief(brief, { expectedGameId: "wrong_fixture" }), /game_mismatch/);
-  assert.throws(() => checkWorkBriefOwnership(brief, ["packages/game-action-devkit/tests/fixture-project.test.mjs"]), /changed_path_unowned/);
 });
 
 test("accepts the fixture profile against the published envelope shape without a runtime validator", async () => {

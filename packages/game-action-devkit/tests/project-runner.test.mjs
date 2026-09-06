@@ -49,7 +49,7 @@ async function withProject(files, callback) {
   } finally { await removeTree(root); }
 }
 
-const adapter = `export async function runActionProject({ manifest, invocation }) { return { schema: "gamebuddy-action-scenario-result/v1", gameId: manifest.gameId, status: invocation.command, actionId: invocation.actionId ?? null, ...(invocation.runId === undefined ? {} : { runId: invocation.runId }), evidenceRoot: manifest.evidenceRoot, briefFile: invocation.briefFile ?? null }; }`;
+const adapter = `export async function runActionProject({ manifest, invocation }) { return { schema: "gamebuddy-action-scenario-result/v1", gameId: manifest.gameId, status: invocation.command, actionId: invocation.actionId ?? null, ...(invocation.runId === undefined ? {} : { runId: invocation.runId }), evidenceRoot: manifest.evidenceRoot }; }`;
 const manifestValue = { schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "./adapter.mjs", portfolio: "./portfolio.json", toolInventory: "./inventory.json", evidenceRoot: "./artifacts/action-runs", defaultProfileExample: "./profile.json" };
 const manifest = JSON.stringify(manifestValue);
 const dependencies = { "adapter.mjs": adapter, "portfolio.json": "{}", "inventory.json": "{}", "profile.json": "{}" };
@@ -64,7 +64,7 @@ test("normalizes only explicit immutable invocation fields", () => {
     assert.throws(() => normalizeInvocation({ command: "run-live", runId: "operator-run" }), /invalid_invocation_key/);
     assert.throws(() => normalizeInvocation({ command: "run-live", evidenceRoot: "C:/operator" }), /invalid_invocation_key/);
   assert.throws(() => normalizeInvocation({ command: "check", actionId: "../equip" }), /invalid_action_id/);
-  assert.throws(() => normalizeInvocation({ command: "check", briefFile: "../brief.json" }), /invalid_briefFile/);
+  assert.throws(() => normalizeInvocation({ command: "check", briefFile: "../brief.json" }), /invalid_invocation_key/);
 });
 
 test("loads a strict project manifest and delegates without a game registry", async () => {
@@ -72,7 +72,7 @@ test("loads a strict project manifest and delegates without a game registry", as
     const loaded = await readActionProjectManifest(path.join(root, "project.json"));
     assert.equal(loaded.gameId, "stardew");
     const result = await runActionProject({ projectFile: loaded.manifestFile, invocation: { command: "status", actionId: "equip_tool" } });
-    assert.deepEqual(result, { schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: "status", actionId: "equip_tool", evidenceRoot: path.join(root, "artifacts", "action-runs"), briefFile: null });
+    assert.deepEqual(result, { schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: "status", actionId: "equip_tool", evidenceRoot: path.join(root, "artifacts", "action-runs") });
   });
 });
 
@@ -155,29 +155,6 @@ test("mints a fresh bounded opaque run id and passes canonical manifest roots fo
   });
 });
 
-test("resolves a declared brief to one canonical project-owned regular file", async (t) => {
-  await withProject({ "project.json": manifest, ...dependencies, "briefs/equip.json": "{}" }, async (root) => {
-    const result = await runActionProject({
-      projectFile: path.join(root, "project.json"),
-      invocation: { command: "preflight", actionId: "equip_tool", profileFile: path.join(root, "profile.json"), briefFile: "briefs/equip.json" },
-    });
-    assert.equal(result.briefFile, path.join(root, "briefs", "equip.json"));
-
-    const outside = await mkdtemp(path.join(os.tmpdir(), "action-project-brief-outside-"));
-    try {
-      await writeFile(path.join(outside, "brief.json"), "{}");
-      try { await symlink(path.join(outside, "brief.json"), path.join(root, "briefs", "linked.json"), "file"); } catch (error) {
-        if (error?.code === "EPERM") return t.skip("file symlinks unavailable");
-        throw error;
-      }
-      await assert.rejects(
-        runActionProject({ projectFile: path.join(root, "project.json"), invocation: { command: "preflight", actionId: "equip_tool", profileFile: path.join(root, "profile.json"), briefFile: "briefs/linked.json" } }),
-        /brief_dependency_escape/,
-      );
-    } finally { await removeTree(outside); }
-  });
-});
-
 test("rejects adapter and inventory dependencies that physically escape the project directory", async (t) => {
   const outside = await mkdtemp(path.join(os.tmpdir(), "action-project-outside-"));
   try {
@@ -224,7 +201,6 @@ test("validates the neutral scenario-result schema and field bounds", async () =
       status: "ok",
       actionId: null,
       scenarioId: null,
-      briefFile: null,
       outcome: "x".repeat(512),
       reasonCode: "x".repeat(512),
       claimScope: "x".repeat(512),
