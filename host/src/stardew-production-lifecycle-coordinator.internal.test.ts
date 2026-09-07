@@ -10,7 +10,10 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
-import { publishStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
+import {
+  publishStardewInstallationRegistration,
+  readStardewInstallationRegistration,
+} from "./stardew-installation-registration.internal.js";
 
 import {
   createComposedReferenceGameBrowserRequestHandler,
@@ -726,14 +729,35 @@ test("staged Player Host admits internally, direct-spawns once, and projects onl
   });
 });
 
-test("Game setup stages an admitted installation without launching Player Host", async () => {
+test("Game setup registers only the selected installation and Player Host fresh-admits it immediately before spawning", async () => {
   await withWindowsPlatform(async () => {
-    const fixture = await createFixture();
+    const setupChain = installationChain.map((entry, index) => index === 2
+      ? Object.freeze({ ...entry, fileId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })
+      : entry);
+    const launchChain = installationChain.map((entry, index) => index === 2
+      ? Object.freeze({ ...entry, fileId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" })
+      : entry);
+    const fixture = await createFixture({
+      inspectorChains: [setupChain, setupChain, launchChain, launchChain, launchChain],
+    });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
       assert.deepEqual(fixture.playerSpawnCalls, []);
       assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
+      assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), {
+        schema: "gamebuddy-stardew-installation-registration/v1",
+        binding: { rootLayoutVersion: 1 },
+        revision: 3,
+        state: "ready",
+        locator: gameDirectoryCandidate,
+        activeAttempt: { bootstrapCorrelation: "bootstrap-coordinator-1" },
+      });
+      await fixture.coordinator.activationOwner.launchPlayerHost(
+        fixture.broker.issue("game_launch"),
+        { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
+      );
+      assert.equal(fixture.playerSpawnCalls.length, 1);
       assert.equal(JSON.stringify(fixture.coordinator.activationOwner.readPrivateActivationSnapshot()).includes(gameDirectoryCandidate), false);
     } finally {
       await fixture.coordinator.close();

@@ -11,7 +11,7 @@ import { bindWindowsStaleLockReclaimer, pathLockPath } from "./path-lock.js";
 import {
   publishStardewInstallationRegistration,
   readStardewInstallationRegistration,
-  withStardewInstallationRegistrationOwnerTransaction,
+  withStardewLifecycleInstallationRegistrationOwner,
   type StardewInstallationRegistrationOwnerTransactionMarker,
   type StardewInstallationRegistrationRecordV1,
 } from "./stardew-installation-registration.internal.js";
@@ -253,7 +253,7 @@ test("sole owner locked transaction binds and releases only a matching pointer w
   };
   try {
     await publishStardewInstallationRegistration(subject.root, null, record());
-    await withStardewInstallationRegistrationOwnerTransaction(subject.root, async (storage) => {
+    await withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
       assert.equal((await storage.readRegistration())?.activeAttempt, null);
       await storage.writeMarker(prepareMarker);
       const paired = await storage.bindPreparedPointer(1, prepareMarker);
@@ -266,7 +266,7 @@ test("sole owner locked transaction binds and releases only a matching pointer w
       publishStardewInstallationRegistration(subject.root, 2, record({ revision: 3 })),
       { message: "stardew_installation_registration_busy" },
     );
-    await withStardewInstallationRegistrationOwnerTransaction(subject.root, async (storage) => {
+    await withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
       await storage.writeMarker(settlementMarker);
       const released = await storage.releaseSettledPointer(2, settlementMarker);
       assert.equal(released.activeAttempt, null);
@@ -279,7 +279,40 @@ test("sole owner locked transaction binds and releases only a matching pointer w
   }
 });
 
-test("owner transaction rejects a mismatched marker and leaves the durable marker unavailable", async () => {
+test("owner transaction rejects stale and mismatched settlement markers without rewriting their revision", async () => {
+  const subject = await fixture();
+  const prepareMarker: StardewInstallationRegistrationOwnerTransactionMarker = {
+    schema: "gamebuddy-stardew-installation-owner-transaction/v1",
+    operation: "prepare_bind",
+    bootstrapCorrelation: "bootstrap_01",
+    registrationRevision: 2,
+    ownerRecordRevision: 1,
+  };
+  const settlementMarker: StardewInstallationRegistrationOwnerTransactionMarker = {
+    ...prepareMarker,
+    operation: "settlement_release",
+    registrationRevision: 3,
+    ownerRecordRevision: 8,
+  };
+  const markerPath = join(subject.root, "stardew-installation-registration", "owner-transaction.json");
+  try {
+    await publishStardewInstallationRegistration(subject.root, null, record());
+    await withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
+      await storage.writeMarker(prepareMarker);
+      await storage.bindPreparedPointer(1, prepareMarker);
+      await storage.clearMarker(prepareMarker);
+    });
+    await writeFile(markerPath, JSON.stringify({ ...settlementMarker, registrationRevision: 2 }), "utf8");
+    await assert.rejects(withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
+      await storage.releaseSettledPointer(2, settlementMarker);
+    }), { message: "stardew_installation_registration_unavailable" });
+    assert.equal((await readStardewInstallationRegistration(subject.root))?.revision, 2);
+  } finally {
+    await subject.dispose();
+  }
+});
+
+test("owner transaction rejects a mismatched bind marker and leaves the durable marker unavailable", async () => {
   const subject = await fixture();
   const marker: StardewInstallationRegistrationOwnerTransactionMarker = {
     schema: "gamebuddy-stardew-installation-owner-transaction/v1",
@@ -290,12 +323,49 @@ test("owner transaction rejects a mismatched marker and leaves the durable marke
   };
   try {
     await publishStardewInstallationRegistration(subject.root, null, record());
-    await assert.rejects(withStardewInstallationRegistrationOwnerTransaction(subject.root, async (storage) => {
+    await assert.rejects(withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
       await storage.writeMarker(marker);
       await storage.bindPreparedPointer(1, { ...marker, bootstrapCorrelation: "other" });
     }), { message: "stardew_installation_registration_unavailable" });
     await assert.rejects(publishStardewInstallationRegistration(subject.root, 1, record({ revision: 2 })), {
       message: "stardew_installation_registration_unavailable",
+    });
+  } finally {
+    await subject.dispose();
+  }
+});
+
+test("owner transaction locator replacement preserves the pointer and rejects stale or foreign writers", async () => {
+  const subject = await fixture();
+  const prepareMarker: StardewInstallationRegistrationOwnerTransactionMarker = {
+    schema: "gamebuddy-stardew-installation-owner-transaction/v1",
+    operation: "prepare_bind",
+    bootstrapCorrelation: "bootstrap_01",
+    registrationRevision: 2,
+    ownerRecordRevision: 1,
+  };
+  try {
+    await publishStardewInstallationRegistration(subject.root, null, record());
+    await withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
+      await storage.writeMarker(prepareMarker);
+      await storage.bindPreparedPointer(1, prepareMarker);
+      await storage.clearMarker(prepareMarker);
+    });
+    await withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
+      const replaced = await storage.replaceActiveAttemptLocator(2, "bootstrap_01", "D:\\Games\\Stardew Valley");
+      assert.deepEqual(replaced, record({
+        revision: 3,
+        locator: "D:\\Games\\Stardew Valley",
+        activeAttempt: { bootstrapCorrelation: "bootstrap_01" },
+      }));
+      await assert.rejects(
+        storage.replaceActiveAttemptLocator(2, "bootstrap_01", "E:\\Games\\Stardew Valley"),
+        { message: "stardew_installation_registration_conflict" },
+      );
+      await assert.rejects(
+        storage.replaceActiveAttemptLocator(3, "foreign_attempt", "E:\\Games\\Stardew Valley"),
+        { message: "stardew_installation_registration_conflict" },
+      );
     });
   } finally {
     await subject.dispose();
@@ -333,7 +403,10 @@ test("public read and publish are unavailable when owner-transaction marker is p
 test("source exposes no browser, action-development, recovery, or independent fence seam", async () => {
   const source = await readFile(new URL("./stardew-installation-registration.internal.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /browser\/|action-development|readView|recovery|fence|AdmittedStardewInstallation|consumeAdmitted/);
-  assert.doesNotMatch(source, /export (?:async )?function (?:prepare|settle|recover|clear|bind).*Attempt/);
+  assert.doesNotMatch(source, /export (?:async )?function (?:prepare|settle|recover|clear|bind|replace).*Attempt/);
+   assert.match(source, /export async function withStardewLifecycleInstallationRegistrationOwner/);
+   assert.doesNotMatch(source, /export async function withStardewInstallationRegistrationOwnerTransaction/);
+  assert.doesNotMatch(source, /export (?:async )?function replaceStardewInstallationRegistrationLocator/);
 });
 
 test("product registration and lifecycle composition do not accept legacy action-development profile authority", async () => {
@@ -343,6 +416,7 @@ test("product registration and lifecycle composition do not accept legacy action
   ]);
   const legacyProfileAuthority = /gamebuddy-action-target-profile\/v1|action-development(?:[\\/]|\b)|profileFile|gameInstallPath|modsPath|releaseDir|fixtureTransactionRoot|nativeFixtureRoot|runtimeLeaseRoot|runtimeLeaseIdentity|nativeClientConfigFile|--profile/;
   for (const source of sources) assert.doesNotMatch(source, legacyProfileAuthority);
+  assert.doesNotMatch(sources[1], /replaceStardewInstallationRegistrationLocator|bootstrapId/);
 });
 
 async function rejectsRedacted(work: () => Promise<unknown>, secret: string): Promise<void> {

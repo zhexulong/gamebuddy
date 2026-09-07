@@ -426,6 +426,26 @@ test("guardian exact settlement proof releases only its terminal matching regist
   );
 });
 
+test("guardian settlement releases an active registration after its owner-authorized locator replacement", async () => {
+  const fixture = await createGuardianOwnerFixture({ registration: true });
+  await fixture.owner.arm();
+  const proof = await fixture.owner.settle();
+  await fixture.internal.replaceStagedInstallationLocator(
+    fixture.phaseOwner,
+    2,
+    "D:\\Games\\Replacement Stardew Valley",
+  );
+  await settleOwnedPlayerHostRegistrationAttempt(fixture.phaseOwner, proof);
+  assert.deepEqual(await readStardewInstallationRegistration(fixture.root), {
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1 },
+    revision: 4,
+    state: "ready",
+    locator: "D:\\Games\\Replacement Stardew Valley",
+    activeAttempt: null,
+  });
+});
+
 test("settlement rejects a terminal owner replacement unless its exact fence and revision are restored", async () => {
   for (const mutate of [
     (record: Record<string, unknown>) => { record.playerId = "replacement-player"; },
