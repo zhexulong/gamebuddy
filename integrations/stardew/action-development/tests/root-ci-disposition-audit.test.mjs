@@ -6,7 +6,7 @@ test("proves the root CI cutover to one package-owned deterministic Stardew comm
   const report = await auditRootStardewCiDisposition();
   assert.equal(report.schema, "gamebuddy-stardew-root-ci-disposition-audit/v1");
   assert.equal(report.status, "package-owned");
-  assert.equal(report.workflowCommand, "pnpm --dir integrations/stardew/action-development action:ci");
+  assert.equal(report.workflowCommand, "pnpm --dir integrations/stardew/action-development test");
   assert.equal(report.workflowCommandOccurrences, 1);
   assert.equal(report.rootStardewPortfolioEntryCount, 0);
   assert.deepEqual(report.packageEntries, [

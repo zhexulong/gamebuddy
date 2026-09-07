@@ -29,7 +29,7 @@
     "README.md"
   ],
 	"scripts": {
-		"build": "tsc -p ../retina-local-fs/tsconfig.build.json && rm -rf dist && mkdir -p dist && bun build src/index.ts src/subagent-entry.ts src/historian-calibration-extension.ts src/embedded-historian-gate.ts --outdir dist --target node --format esm --splitting --external @earendil-works/pi-coding-agent --external @earendil-works/pi-tui --external @huggingface/transformers --external node:sqlite",
+		"build": "tsc -p ../retina-local-fs/tsconfig.build.json && rm -rf dist && mkdir -p dist && bun build src/index.ts src/subagent-entry.ts src/historian-calibration-extension.ts src/embedded-historian-gate.ts src/gamebuddy-authored-context-bridge.internal.ts --outdir dist --target node --format esm --splitting --external @earendil-works/pi-coding-agent --external @earendil-works/pi-tui --external @huggingface/transformers --external node:sqlite",
 		"build:e2e-argv": "bun build src/subagent-runner.ts --outfile ../../tests/docker/.generated/subagent-runner-e2e.mjs --target node --format esm --external node:sqlite",
 		"typecheck": "tsc -p ../retina-local-fs/tsconfig.build.json && tsc --noEmit",
 		"test": "bun install --frozen-lockfile && bun test",
@@ -73,11 +73,14 @@
 			"optional": true
 		}
 	},
-	"exports": {
-		".": {
-			"import": "./dist/index.js"
-		}
-	},
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    },
+    "./internal/gamebuddy-authored-context-bridge": {
+      "import": "./dist/gamebuddy-authored-context-bridge.internal.js"
+    }
+  },
 	"pi": {
 		"extensions": [
 			"./dist/index.js"

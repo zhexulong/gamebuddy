@@ -59,6 +59,11 @@ test("package test and build:test serialize their complete dist-test ownership",
   await assert.rejects(access(resolve(hostRoot, "dist", "test-fixtures", "windows-named-mutex-safety-seal-worker.js")), { code: "ENOENT" });
   await assert.rejects(access(resolve(hostRoot, "dist-test", "main.js")), { code: "ENOENT" });
   await assert.rejects(access(resolve(hostRoot, "dist-test", "dialogue-web-main.js")), { code: "ENOENT" });
+  const productionMaterializer = await readFile(resolve(hostRoot, "src", "continuity-semantic-game-runtime-materializer", "continuity-semantic-game-runtime-materializer.ts"), "utf8");
+  const testMaterializer = await readFile(resolve(hostRoot, "dist-test", "continuity-semantic-game-runtime-materializer", "continuity-semantic-game-runtime-materializer.js"), "utf8");
+  assert.doesNotMatch(productionMaterializer, /materializer\.test-support/);
+  assert.match(testMaterializer, /recordMaterializedProductionRuntimeForTest/);
+  assert.match(testMaterializer, /forgetMaterializedProductionRuntimeForTest/);
 });
 
 test("a raced cross-process candidate never leaves a malformed published lock", async () => {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-export const SCENARIO_IDS = Object.freeze(["SIM-01", "SIM-02", "SIM-03", "SIM-04", "SIM-05"]);
+const SCENARIO_IDS = Object.freeze(["SIM-01", "SIM-02", "SIM-03", "SIM-04", "SIM-05"]);
 const RUN_ORDER = Object.freeze(["SIM-01", "SIM-02", "SIM-04", "SIM-05", "SIM-03"]);
 const TOPOLOGY = "native_ai_farmhand_multiplayer";
 const EVENT_KEYS = Object.freeze([
@@ -42,7 +42,7 @@ const TIMING_PROFILES = new Set(["active_execution", "provider_or_tool_wait"]);
 const OPAQUE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VERSION = /^[0-9][0-9A-Za-z._-]{0,31}$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
-export const COMPANION_FIXTURE_EVIDENCE_SCHEMA = "gamebuddy_stardew_companion_fixture_evidence/v1";
+const COMPANION_FIXTURE_EVIDENCE_SCHEMA = "gamebuddy_stardew_companion_fixture_evidence/v1";
 const SUMMARY_KEYS = Object.freeze(["schema", "suiteId", "evidenceClass", "scenarios", "evidenceDigest"]);
 const fixtureRoot = new URL("../../fixtures/stardew/companion-live/", import.meta.url);
 

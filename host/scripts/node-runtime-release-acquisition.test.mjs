@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { basename, join, resolve } from "node:path";
 import test from "node:test";
-import { assertProtectedWindowsReleaseCiEnvironment, withSyntheticVerifiedReleaseBundledRuntimeForTest } from "./node-runtime-release-acquisition.mjs";
+import { assertProtectedWindowsReleaseCiEnvironment, takeComposedFixedReleaseRuntimeForPublisher, withSyntheticVerifiedReleaseBundledRuntimeForTest, withSyntheticVerifiedReleaseBundledRuntimeFixedReleaseCompositionForTest } from "./node-runtime-release-acquisition.mjs";
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const bootstrapPairCaptures = new AsyncLocalStorage();
@@ -158,6 +158,15 @@ test("production boundary modules expose no generic publisher/provider test APIs
 test("non-Windows synthetic acquisition retains isolated test scratch behavior", { skip: process.platform === "win32" }, async () => {
   const bytes = zip([{ name: "node-v24.20.0-win-x64/node.exe", content: Buffer.from("node") }]);
   await assert.doesNotReject(withSyntheticVerifiedReleaseBundledRuntimeForTest({ descriptor: descriptor(bytes), zipBytes: bytes }, async () => undefined));
+});
+test("test-only fixed-release composition makes a synthetic source available only to the fixed consumer", async () => {
+  const node = Buffer.from("node");
+  const bytes = zip([{ name: "node-v24.20.0-win-x64/node.exe", content: node }]);
+  await withSyntheticVerifiedReleaseBundledRuntimeFixedReleaseCompositionForTest({ descriptor: descriptor(bytes, node), zipBytes: bytes }, async () => {
+    const source = takeComposedFixedReleaseRuntimeForPublisher();
+    assert.equal(source.descriptor.nodeSha256, hash(node));
+    assert.throws(() => takeComposedFixedReleaseRuntimeForPublisher(), /verified_bundled_runtime_input_required/);
+  });
 });
 test("acquired runtime lifecycle disposes once after admission or publisher callback settlement", async () => {
   const bytes = zip([{ name: "node-v24.20.0-win-x64/node.exe", content: Buffer.from("node") }]);

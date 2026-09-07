@@ -17,6 +17,14 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Remove="Fixtures\ExactChildBootstrapFixture\**\*.cs" />
+    <Compile Remove="Fixtures\DesktopHostRuntimeFixture\**\*.cs" />
     <ProjectReference Include="..\GameBuddy.Desktop\GameBuddy.Desktop.csproj" />
+    <ProjectReference Include="Fixtures\ExactChildBootstrapFixture\ExactChildBootstrapFixture.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="Fixtures\DesktopHostRuntimeFixture\DesktopHostRuntimeFixture.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <Target Name="PublishExactChildBootstrapFixture" AfterTargets="Build">
+    <MSBuild Projects="Fixtures\ExactChildBootstrapFixture\ExactChildBootstrapFixture.csproj" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(MSBuildProjectDirectory)\bin\$(Configuration)\net8.0-windows\Fixtures\ExactChildBootstrapFixture\" />
+    <MSBuild Projects="Fixtures\DesktopHostRuntimeFixture\DesktopHostRuntimeFixture.csproj" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(MSBuildProjectDirectory)\bin\$(Configuration)\net8.0-windows\Fixtures\DesktopHostRuntimeFixture\" />
+  </Target>
 </Project>

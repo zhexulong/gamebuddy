@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace GameBuddy.Desktop.Tests.Fixtures;
 
@@ -19,6 +21,9 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
     internal string GuardianPairRoot => Path.Combine(GenerationRoot, "native", "windows-stardew-bootstrap-guardian", "win-x64");
     internal string GuardianExePath => Path.Combine(GuardianPairRoot, "GameBuddy.WindowsStardewBootstrapGuardian.exe");
     internal string TestGuardianExePath => Path.Combine(root, "fixtures", "GameBuddy.WindowsStardewBootstrapGuardian.Test.exe");
+    internal string ExactChildReportPath => Path.Combine(GenerationRoot, "runtime", "exact-child-bootstrap-report.json");
+    internal string ExactChildRuntimePath => Path.Combine(GenerationRoot, "runtime", "node.exe");
+    internal string HostRuntimeFixturePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "DesktopHostRuntimeFixture", "DesktopHostRuntimeFixture.exe");
     internal string GenerationId => Path.GetFileName(GenerationRoot);
 
     internal static async Task<DisposableInstalledGuardianGeneration> BuildAsync()
@@ -30,6 +35,7 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
             CopyDirectory(await CanonicalProgramRoot.Value.ConfigureAwait(false), fixture.ProgramRoot);
             Directory.CreateDirectory(Path.GetDirectoryName(fixture.TestGuardianExePath)!);
             File.Copy(Path.Combine(await CanonicalFixtureRoot.Value.ConfigureAwait(false), "GameBuddy.WindowsStardewBootstrapGuardian.Test.exe"), fixture.TestGuardianExePath);
+            if (!File.Exists(fixture.HostRuntimeFixturePath)) throw new InvalidOperationException("The Desktop Host runtime fixture was not published.");
             return fixture;
         }
         catch
@@ -52,9 +58,37 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
         var templateRoot = Path.Combine(Path.GetTempPath(), "GameBuddy.Desktop.Tests", "canonical-host-generation", Guid.NewGuid().ToString("N"));
         var programRoot = Path.Combine(templateRoot, "Programs", "GameBuddy");
         var script = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "host", "scripts", "build-desktop-launcher-test-generation.mjs"));
-        await RunHostPublisherAsync(script, programRoot).ConfigureAwait(false);
+        var fixtureRuntimeRoot = Path.Combine(AppContext.BaseDirectory, "Fixtures", "ExactChildBootstrapFixture");
+        if (!File.Exists(Path.Combine(fixtureRuntimeRoot, "node.exe")))
+            throw new InvalidOperationException("The self-contained exact-child fixture was not published.");
+        await RunHostPublisherAsync(script, programRoot, fixtureRuntimeRoot).ConfigureAwait(false);
         return programRoot;
     }
+
+    internal void ReplaceHostRuntimeWithFixture()
+    {
+        var sourceDirectory = Path.GetDirectoryName(HostRuntimeFixturePath)!;
+        var destinationDirectory = Path.GetDirectoryName(ExactChildRuntimePath)!;
+        File.Copy(Path.Combine(sourceDirectory, "DesktopHostRuntimeFixture.exe"), ExactChildRuntimePath, overwrite: true);
+        foreach (var extension in new[] { ".dll", ".deps.json", ".runtimeconfig.json" })
+        {
+            File.Copy(Path.Combine(sourceDirectory, "DesktopHostRuntimeFixture" + extension), Path.Combine(destinationDirectory, "DesktopHostRuntimeFixture" + extension), overwrite: true);
+            File.Copy(Path.Combine(sourceDirectory, "DesktopHostRuntimeFixture" + extension), Path.Combine(destinationDirectory, "node" + extension), overwrite: true);
+        }
+        var admissionPath = Path.Combine(GenerationRoot, "host-runtime-admission.json");
+        using var admission = JsonDocument.Parse(File.ReadAllBytes(admissionPath));
+        var properties = admission.RootElement.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.Clone(), StringComparer.Ordinal);
+        properties["runtimeSha256"] = JsonDocument.Parse($"\"{DigestFile(ExactChildRuntimePath)}\"").RootElement.Clone();
+        File.WriteAllText(admissionPath, JsonSerializer.Serialize(properties) + "\n");
+        var admissionDigest = DigestFile(admissionPath);
+        var pointerPath = Path.Combine(ProgramRoot, "current.json");
+        using var pointer = JsonDocument.Parse(File.ReadAllBytes(pointerPath));
+        var pointerProperties = pointer.RootElement.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.Clone(), StringComparer.Ordinal);
+        pointerProperties["runtimeAdmissionSha256"] = JsonDocument.Parse($"\"{admissionDigest}\"").RootElement.Clone();
+        File.WriteAllText(pointerPath, JsonSerializer.Serialize(pointerProperties) + "\n");
+    }
+
+    private static string DigestFile(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
 
     internal void ReplaceGenerationsWithJunction()
     {
@@ -79,16 +113,20 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
         foreach (var directory in Directory.EnumerateDirectories(source)) CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
     }
 
-    private static async Task RunHostPublisherAsync(string script, string outputRoot)
+    private static async Task RunHostPublisherAsync(string script, string outputRoot, string fixtureRuntimeRoot)
     {
-        using var process = Process.Start(new ProcessStartInfo("node.exe", $"\"{script}\" \"{outputRoot}\"")
+        var start = new ProcessStartInfo(FindTestPublisherNodeExecutable())
         {
             WorkingDirectory = Path.GetDirectoryName(script)!,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-        }) ?? throw new InvalidOperationException("Could not start the canonical Host production artifact publisher.");
+        };
+        start.ArgumentList.Add(script);
+        start.ArgumentList.Add(outputRoot);
+        start.ArgumentList.Add(fixtureRuntimeRoot);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the canonical Host production artifact publisher.");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(15)).ConfigureAwait(false); }
@@ -96,6 +134,16 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
         if (process.ExitCode != 0) throw new InvalidOperationException($"The canonical Host production artifact publisher failed: {await stderr.ConfigureAwait(false)}");
         _ = await stdout.ConfigureAwait(false);
         _ = await stderr.ConfigureAwait(false);
+    }
+
+    // This interpreter is solely a test-harness dependency for the canonical publisher;
+    // it is never copied into, advertised by, or admitted from the published generation.
+    private static string FindTestPublisherNodeExecutable()
+    {
+        var systemNode = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe");
+        if (File.Exists(systemNode)) return systemNode;
+
+        throw new InvalidOperationException("test_publisher_node_unavailable");
     }
 
     public ValueTask DisposeAsync()

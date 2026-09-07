@@ -1,20 +1,20 @@
 import type {
-  StardewOwnedPlayerHostPhaseAOwner,
+  StardewOwnedPlayerHostBootstrap,
 } from "./stardew-private-bootstrap-composer.js";
 import {
-  createProductionStagingDependencies,
   productionPlayerHostProbe,
   productionPlayerHostSpawn,
   productionProbe,
   productionSpawn,
-} from "../../../containment/auth/desktop-guardian-session.internal.js";
+} from "./stardew-process-implementations.js";
+import { createProductionStagingDependencies } from "../../../bootstrap/roots/stardew-private-mod-profile-staging.js";
 import {
-  consumeOwnedPlayerHostPhaseAOwner as consumeOwnedPlayerHostPhaseAOwnerCore,
+  consumeOwnedPlayerHostBootstrap as consumeOwnedPlayerHostBootstrapCore,
   createStardewBootstrapGuardianOwnerBinding,
   createStardewPrivateBootstrapProductionCore,
   settleOwnedPlayerHostRegistrationAttempt as settleOwnedPlayerHostRegistrationAttemptCore,
-  stageOwnedPlayerHostPhaseB as stageOwnedPlayerHostPhaseBCore,
-  terminalizeOwnedPlayerHostPhaseAOwner as terminalizeOwnedPlayerHostPhaseAOwnerCore,
+  stageOwnedPlayerHostProfile as stageOwnedPlayerHostProfileCore,
+  terminalizeOwnedPlayerHostBootstrap as terminalizeOwnedPlayerHostBootstrapCore,
   type StardewBootstrapGuardianSettlementProof,
   type StardewPrivateBootstrapInternalComposition,
 } from "./stardew-private-bootstrap-composer.core.js";
@@ -29,7 +29,7 @@ import type { DesktopGuardianSession } from "../../../containment/auth/desktop-g
 /** Constructs the complete trusted production bootstrap composition. */
 export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapInternalComposition & Readonly<{
   createStardewBootstrapGuardianOwner(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     native: StardewBootstrapGuardianNativePorts,
   ): StardewBootstrapGuardianOwner;
 
@@ -37,7 +37,7 @@ export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapI
 
 export function createStardewPrivateBootstrapComposition(): StardewPrivateBootstrapTrustedComposition & Readonly<{
   createStardewBootstrapGuardianOwnerFromDesktopSession(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     session: DesktopGuardianSession,
     deadlineUnixMs: number,
   ): StardewBootstrapGuardianOwner;
@@ -64,31 +64,31 @@ export function createStardewPrivateBootstrapComposition(): StardewPrivateBootst
 }
 
 /** Consumes an exact composer-minted owner for one Stage-B preparation attempt. */
-export function consumeOwnedPlayerHostPhaseAOwner<T>(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+export function consumeOwnedPlayerHostBootstrap<T>(
+  owner: StardewOwnedPlayerHostBootstrap,
   callback: () => Promise<T> | T,
 ): Promise<T> | T {
-  return consumeOwnedPlayerHostPhaseAOwnerCore(owner, callback);
+  return consumeOwnedPlayerHostBootstrapCore(owner, callback);
 }
 
 /** Permanently terminalizes an owner after post-staging admission failure. */
-export function terminalizeOwnedPlayerHostPhaseAOwner(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+export function terminalizeOwnedPlayerHostBootstrap(
+  owner: StardewOwnedPlayerHostBootstrap,
 ): void {
-  terminalizeOwnedPlayerHostPhaseAOwnerCore(owner);
+  terminalizeOwnedPlayerHostBootstrapCore(owner);
 }
 
 /** Releases a matching pointer only through a Guardian-private proof. */
 export async function settleOwnedPlayerHostRegistrationAttempt(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   proof: StardewBootstrapGuardianSettlementProof,
 ): Promise<void> {
   await settleOwnedPlayerHostRegistrationAttemptCore(owner, proof);
 }
 
-/** Runs the closed production Phase-B profile staging operation. */
-export async function stageOwnedPlayerHostPhaseB(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+/** Runs the closed production Player Host profile staging profile staging operation. */
+export async function stageOwnedPlayerHostProfile(
+  owner: StardewOwnedPlayerHostBootstrap,
 ): Promise<void> {
-  await stageOwnedPlayerHostPhaseBCore(owner);
+  await stageOwnedPlayerHostProfileCore(owner);
 }

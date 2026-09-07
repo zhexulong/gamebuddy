@@ -8,68 +8,71 @@ namespace GameBuddy.Stardew.Core.Tests;
 public sealed class FarmhandBodyProgramCatalogProjectionTests
 {
     [Fact]
-    public void CurrentModSurfaceFailsClosedWhenDescriptorRevisionIsNotNumeric()
+    public void CurrentModCatalogPublishesScalarExecutionSubsetAtIndependentRevision()
     {
         FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
 
-        result.Status.Should().Be(FarmhandBodyProgramCatalogProjectionStatus.Blocked);
-        result.Catalog.Should().BeNull();
-        result.Rejections.Should().Contain(rejection =>
-            rejection.ActionId == "<catalog>" && rejection.Code == "catalog_revision_blocked");
+        result.IsPublished.Should().BeTrue();
+        result.Catalog!.Revision.Should().Be(FarmhandActionSurfacePublication.CatalogRevision);
+        result.Catalog.TryGetAction("move_to_tile", out BodyProgramActionDescriptor? action).Should().BeTrue();
+        action!.ResourceTemplate.Should().ContainSingle().Which.Should().Be(new BodyProgramResourceTemplateClaim("embodied_actor", BodyProgramResourceTemplateValue.ScopePlayer));
+        action.Metadata.Should().Be(new BodyProgramActionMetadata("published", "execution", "write", "native_action_postcondition"));
     }
 
     [Fact]
-    public void ScalarExecutionRegistrationProjectsToNonEmptySubset()
+    public void ResourceTemplateScopePlayerIsProjectedFromModOwnedRegistration()
     {
         FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create(
-            Artifact("42", new FarmhandActionDescriptorProjection(
-                "scalar_action", 3, "execution",
-                new Dictionary<string, FarmhandActionArgumentSchema>
-                {
-                    ["count"] = new("integer"),
-                    ["enabled"] = new("boolean"),
-                },
-                 new Dictionary<string, string> { ["done"] = "string" },
-                 new FarmhandActionResourceTemplate(Array.Empty<string>()), "write",
-                new FarmhandActionPostcondition("ignored"))));
+            Artifact(42, new FarmhandActionDescriptorProjection(
+                "resource_action", 3, "published", "execution",
+                new Dictionary<string, FarmhandActionArgumentSchema>(),
+                new Dictionary<string, string>(),
+                new FarmhandActionResourceTemplate(new[] { new FarmhandActionResourceTemplateValueProjection("embodied_actor", "ScopePlayer") }), "write",
+                new FarmhandActionPostcondition("native_action_postcondition"))));
 
         result.IsPublished.Should().BeTrue();
         result.Catalog!.Revision.Should().Be(42);
-        result.Catalog.TryGetAction("scalar_action", out BodyProgramActionDescriptor? action).Should().BeTrue();
-        action!.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("count", BodyProgramArgumentKind.Integer));
-        action.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("enabled", BodyProgramArgumentKind.Boolean));
-         action.OutputFacts.Should().Contain(new BodyProgramFactDescriptor("done", BodyProgramArgumentKind.String));
-         action.ResourceTemplate.Should().BeEmpty();
+        result.Catalog.TryGetAction("resource_action", out BodyProgramActionDescriptor? action).Should().BeTrue();
+        action!.ResourceTemplate.Should().ContainSingle().Which.Should().Be(new BodyProgramResourceTemplateClaim("embodied_actor", BodyProgramResourceTemplateValue.ScopePlayer));
     }
 
     [Fact]
-    public void ResourceTemplateKeysAreBlockedWithoutSymbolicTemplateSemantics()
-    {
-        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create(
-            Artifact("42", new FarmhandActionDescriptorProjection(
-                "resource_action", 3, "execution",
-                new Dictionary<string, FarmhandActionArgumentSchema>(),
-                new Dictionary<string, string>(),
-                new FarmhandActionResourceTemplate(new[] { "embodied_actor" }), "write",
-                new FarmhandActionPostcondition("ignored"))));
-
-        result.Status.Should().Be(FarmhandBodyProgramCatalogProjectionStatus.Blocked);
-        result.Catalog.Should().BeNull();
-        result.Rejections.Should().Contain(rejection =>
-            rejection.ActionId == "resource_action" && rejection.Code == "resource_mapping_blocked");
-    }
-
-    [Fact]
-    public void NavigationResourceMappingIsBlockedBeforeObjectArguments()
+    public void NavigateRemainsWithdrawnWhenItsTypedObjectContractIsUnavailable()
     {
         FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
 
         result.Rejections.Should().Contain(rejection =>
             rejection.ActionId == "navigate_to_destination"
-            && rejection.Code == "resource_mapping_blocked");
-        result.Rejections.Should().NotContain(rejection =>
-            rejection.ActionId == "navigate_to_destination"
             && rejection.Code == "object_or_unsupported_argument");
+        result.Catalog!.TryGetAction("navigate_to_destination", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ReadOnlyAndExperimentalRegistrationsRemainOutsideExecutionCatalog()
+    {
+        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
+
+        result.Rejections.Should().Contain(rejection => rejection.ActionId == "inspect_world_map" && rejection.Code == "read_only_not_execution");
+        result.Rejections.Should().Contain(rejection => rejection.ActionId == "clear_debris" && rejection.Code == "lifecycle_not_published");
+    }
+
+    [Theory]
+    [InlineData(-1, false)]
+    [InlineData(0, true)]
+    [InlineData(42, true)]
+    public void CatalogRevisionMustBeNonNegative(long revision, bool accepted)
+    {
+        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create(
+            Artifact(revision, new FarmhandActionDescriptorProjection(
+                "scalar_action", 3, "published", "execution",
+                new Dictionary<string, FarmhandActionArgumentSchema>(),
+                new Dictionary<string, string>(),
+                new FarmhandActionResourceTemplate(Array.Empty<FarmhandActionResourceTemplateValueProjection>()), "write",
+                new FarmhandActionPostcondition("ignored"))));
+
+        result.IsPublished.Should().Be(accepted);
+        if (!accepted)
+            result.Rejections.Should().Contain(rejection => rejection.ActionId == "<catalog>" && rejection.Code == "catalog_revision_blocked");
     }
 
     [Fact]
@@ -78,7 +81,7 @@ public sealed class FarmhandBodyProgramCatalogProjectionTests
         FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create(
             new FarmhandActionDescriptorArtifact(
                 "alternate-schema/v1",
-                "42",
+                42,
                 Array.Empty<FarmhandActionDescriptorProjection>()));
 
         result.Status.Should().Be(FarmhandBodyProgramCatalogProjectionStatus.Blocked);
@@ -87,47 +90,6 @@ public sealed class FarmhandBodyProgramCatalogProjectionTests
             rejection.ActionId == "<catalog>" && rejection.Code == "catalog_schema_blocked");
     }
 
-    [Theory]
-    [InlineData("0", true)]
-    [InlineData("42", true)]
-    [InlineData("042", false)]
-    [InlineData("+42", false)]
-    [InlineData("", false)]
-    [InlineData(" ", false)]
-    [InlineData("-1", false)]
-    [InlineData("9223372036854775808", false)]
-    public void DescriptorRevisionRequiresCanonicalNonNegativeDecimal(string revision, bool accepted)
-    {
-        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create(
-            Artifact(revision, new FarmhandActionDescriptorProjection(
-                "scalar_action", 3, "execution",
-                new Dictionary<string, FarmhandActionArgumentSchema>(),
-                new Dictionary<string, string>(),
-                new FarmhandActionResourceTemplate(Array.Empty<string>()), "write",
-                new FarmhandActionPostcondition("ignored"))));
-
-        result.IsPublished.Should().Be(accepted);
-        if (accepted)
-        {
-            result.Rejections.Should().NotContain(rejection => rejection.Code == "catalog_revision_blocked");
-        }
-        else
-        {
-            result.Rejections.Should().Contain(rejection =>
-                rejection.ActionId == "<catalog>" && rejection.Code == "catalog_revision_blocked");
-        }
-    }
-
-    [Fact]
-    public void CurrentModSurfaceRejectsReadOnlyRegistrationsAsExecution()
-    {
-        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
-
-        result.Rejections.Should().Contain(rejection =>
-            rejection.ActionId == "inspect_world_map"
-            && rejection.Code == "read_only_not_execution");
-    }
-
-    private static FarmhandActionDescriptorArtifact Artifact(string revision, params FarmhandActionDescriptorProjection[] actions) =>
+    private static FarmhandActionDescriptorArtifact Artifact(long revision, params FarmhandActionDescriptorProjection[] actions) =>
         new(FarmhandActionSurfaceExport.Schema, revision, actions);
 }

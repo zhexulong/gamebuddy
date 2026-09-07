@@ -29,26 +29,25 @@ fresh-root frozen-install rehearsal. The release-bundle command publishes only
 the exact bundle requested by its explicit source and destination arguments;
 it does not publish an action capability.
 
-## Read-only target preflight
+## Current control-live status
 
-Supply a local, absolute profile path based on `profiles/example.json`. The
-committed example is intentionally placeholder-only and cannot become READY:
+`equip_tool` remains published, but its Action Development Platform control route is
+currently **BLOCKED** with `host_runner_not_registered`. Do not supply a target
+profile, invoke `action:preflight`, or invoke `action:run-live` as a way to launch
+or mutate a target.
 
-```bash
-pnpm --dir integrations/stardew/action-development action:preflight --action equip_tool --profile <absolute-profile-json>
-```
+The former `gamebuddy-action-target-profile/v1` route is native-local candidate
+wiring. It is not a product installation authority and cannot create, seed, or
+bypass the Host-private installation registration. The replacement control route
+will be profile-free: bounded control intent enters the same private lifecycle core
+as the browser flow, which consumes a previously ready registration and performs
+request-local admission. No replacement command exists until the coordinator-owned
+runner, fixture boundary, registration/containment prerequisites, and route cutover
+are implemented and accepted.
 
-The profile contains no token, credential, pipe name, or endpoint.
-`nativeClientConfigFile` is only the fixed locator for the existing
-harness-owned ephemeral client configuration. `releaseDir` is the
-operator-supplied absolute source directory for the exact GameBuddy Mod bundle;
-it must be physically separate from `modsPath/GameBuddy`. Preflight validates
-every bundle file as a regular non-link, the GameBuddy manifest identity and
-adapter version, and a SHA-256 bundle binding from the real bytes. It also
-validates trusted target/fixture/lease paths, exact versions, an idle fixture
-transaction, and an unheld runtime lease before connecting for exactly one fresh
-observation. It does not acquire the lease, prepare or restore a fixture, launch
-Stardew, begin evidence, submit an action, or write runtime state.
+`action:check`, `action:inventory`, `action:ci`, and extraction rehearsal remain
+deterministic/offline package commands. They do not prove a target is ready or
+authorize a live action.
 
 ## Development flow
 
@@ -83,27 +82,20 @@ projections and cannot grant capability. Evidence status (`complete` or
 `uncertain`). A static check, fixture setup, successful launch, or source audit
 never substitutes for target-runtime evidence.
 
-## Live `equip_tool` gate
+## Future `equip_tool` control gate
 
-The package exposes the canonical action-neutral `action:run-live` script. The
-caller must provide the exact action and absolute target profile explicitly:
+After the approved Host-owned control route is implemented, the authoritative
+runbook will name its profile-free command and the factual preflight it requires.
+Until then, do not invent a substitute command, revive the old native-local route,
+or treat a profile-based preflight as readiness.
 
-```bash
-pnpm --dir integrations/stardew/action-development action:run-live --action equip_tool --profile <absolute-profile-json>
-```
+The future gate remains subject to: a ready registration; guardian/bootstrap
+containment and settlement facts; coordinator-owned fixture preparation and restore;
+a fresh target admission; aggregate independent review; and explicit authorization.
+It will still accept only one serial action with the same logical action's succeeded
+receipt, non-empty evidence, fresh action-specific postcondition, accepted cleanup,
+and no uncertain retry.
 
-Do not invoke the devkit binary through an alternate route or pass unsupported
-options.
-
-Before using it, complete the action-specific non-mutating preflight and one
-aggregate independent review, then obtain explicit authorization from the
-Stardew project owner. The gate runs in strict order: READY preflight, exact
-release-bundle revalidation, exclusive target-runtime lease, staged evidence,
-fixture preparation, package-owned scenario child, exact private result
-validation, fixture restoration, lease release, and only then complete evidence
-finalization. It does not retry uncertain mutations. A failed harness is
-repaired offline before another mutation is attempted.
-
-If a command is not listed in this runbook or in the package's `scripts` map,
-stop and resolve the source-of-truth discrepancy; do not invent a replacement
-command or infer live/publication authorization.
+If a command is not listed in this runbook or in the package's `scripts` map, stop
+and resolve the source-of-truth discrepancy; do not invent a replacement command or
+infer live/publication authorization.

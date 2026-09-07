@@ -11,80 +11,14 @@ import type {
 import type { RuntimeSession } from "../runtime.js";
 
 /** Minimal reverse-disposal boundary; no Pi session, runtime root, or binding leaks. */
+type ChatRuntimeStableContextLifecycle = Readonly<{}>;
+
 export type ChatRuntimeDisposal = Readonly<{
   session: Readonly<{ dispose(): void }>;
-  /** Optional only for deterministic test fakes that never published stable context. */
-  clearPublishedStableContext?: () => Promise<void>;
-}>;
-export type ChatRuntimeStableContextLifecycle = Readonly<{
-  publishTavernStableContext(snapshot: unknown): Promise<void>;
-  clearTavernStableContext(): Promise<void>;
+  authoredContextCapability?: Readonly<{ clear(): Promise<void> }>;
 }>;
 
-/**
- * Publication is an all-or-nothing lifecycle: a runtime must prove its clear
- * capability before the caller invokes the publisher.
- */
-export function assertChatStableContextLifecycle(value: unknown): asserts value is ChatRuntimeStableContextLifecycle {
-  if (
-    !value ||
-    typeof value !== "object" ||
-    typeof (value as { publishTavernStableContext?: unknown }).publishTavernStableContext !== "function" ||
-    typeof (value as { clearTavernStableContext?: unknown }).clearTavernStableContext !== "function"
-  )
-    throw new Error("chat_runtime_stable_context_lifecycle_unavailable");
-}
 
-/**
- * Captures the runtime-owned clear operation before any later materialization
- * or publication work can mutate the runtime surface. The receiver is part of
- * the captured operation, rather than being looked up during reverse cleanup.
- */
-function captureChatStableContextClear(value: ChatRuntimeStableContextLifecycle): () => Promise<void> {
-  return value.clearTavernStableContext.bind(value);
-}
-
-/**
- * Publishes the construction-owned stable context and returns only the
- * reverse-disposal resources needed by the exact materializer. This boundary
- * owns the publication-attempt cleanup path; callers cannot inject a runtime
- * factory into the production materializer.
- */
-export async function materializeAndPublishChatStableContext(
-  runtime: unknown,
-  session: ChatRuntimeDisposal["session"],
-  materialize: () => Promise<unknown>,
-): Promise<ChatRuntimeDisposal> {
-  let clearPublishedStableContext!: () => Promise<void>;
-  let publicationAttempted = false;
-  try {
-    assertChatStableContextLifecycle(runtime);
-    clearPublishedStableContext = captureChatStableContextClear(runtime);
-    const publishTavernStableContext = runtime.publishTavernStableContext.bind(runtime);
-    const stableContext = await materialize();
-    publicationAttempted = true;
-    await publishTavernStableContext(stableContext);
-    return Object.freeze({
-      session,
-      clearPublishedStableContext,
-    });
-  } catch (error) {
-    const errors: unknown[] = [error];
-    if (publicationAttempted) {
-      try {
-        await clearPublishedStableContext!();
-      } catch (clearError) {
-        errors.push(clearError);
-      }
-    }
-    try {
-      session.dispose();
-    } catch (disposeError) {
-      errors.push(disposeError);
-    }
-    throw new AggregateError(errors, "chat_runtime_materialization_failed");
-  }
-}
 export type MaterializedChatRuntime = Readonly<{
   receipt: ProductionChatRuntimeReceipt;
   /**
@@ -200,13 +134,7 @@ function mintChatRuntimeReceipt(permit: ProductionChatRuntimePermit): Production
 /** Reverse close of resources acquired by one Chat runtime factory. */
 export async function closeMaterializedChatRuntime(runtime: ChatRuntimeDisposal): Promise<void> {
   const errors: unknown[] = [];
-  if (typeof runtime.clearPublishedStableContext === "function") {
-    try {
-      await runtime.clearPublishedStableContext();
-    } catch (error) {
-      errors.push(error);
-    }
-  }
+  try { await runtime.authoredContextCapability?.clear(); } catch (error) { errors.push(error); }
   try {
     runtime.session.dispose();
   } catch (error) {

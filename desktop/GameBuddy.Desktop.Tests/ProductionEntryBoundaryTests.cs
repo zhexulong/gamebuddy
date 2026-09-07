@@ -23,6 +23,38 @@ public sealed class ProductionEntryBoundaryTests
     }
 
     [Fact]
+    public void Host_only_testing_entry_bootstraps_host_without_admitting_or_attaching_a_guardian()
+    {
+        var source = File.ReadAllText(DesktopProgramSource());
+        var hostEntry = source[source.IndexOf("internal static async Task<DesktopLaunchResult> RunHostForTestingAsync", StringComparison.Ordinal)..source.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)];
+
+        Assert.Contains("supervisor.StartHostAsync(selection, runtime, layout, cancellationToken)", hostEntry, StringComparison.Ordinal);
+        Assert.DoesNotContain("InstalledGenerationAdmission", hostEntry, StringComparison.Ordinal);
+        Assert.DoesNotContain("AdmitGuardianAsync", hostEntry, StringComparison.Ordinal);
+        Assert.DoesNotContain("GuardianSupervisor", hostEntry, StringComparison.Ordinal);
+        Assert.DoesNotContain("StartRecoveryAsync", hostEntry, StringComparison.Ordinal);
+        Assert.DoesNotContain("AttachResidentGuardianAsync", hostEntry, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Production_entry_admits_the_matching_guardian_then_attaches_it_only_after_host_bootstrap()
+    {
+        var source = File.ReadAllText(DesktopProgramSource());
+        var productionPath = source[source.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)..];
+
+        var admit = productionPath.IndexOf("AdmitGuardianAsync(selection, cancellationToken)", StringComparison.Ordinal);
+        var host = productionPath.IndexOf("runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken)", StringComparison.Ordinal);
+        var resident = productionPath.IndexOf("guardianSupervisor.StartResidentAsync(image, cancellationToken)", StringComparison.Ordinal);
+        var attach = productionPath.IndexOf("host.AttachResidentGuardianAsync(resident, cancellationToken)", StringComparison.Ordinal);
+        Assert.True(admit >= 0 && host > admit && resident > host && attach > resident);
+        Assert.Contains("await host.WaitForExitAsync(cancellationToken)", productionPath, StringComparison.Ordinal);
+        Assert.Contains("if (resident is not null) await resident.DisposeAsync()", productionPath, StringComparison.Ordinal);
+        Assert.Contains("return DesktopLaunchResult.Unavailable;", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("StartRecoveryAsync", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("GuardianStarted", productionPath, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProductionAssembly_does_not_reference_the_fixture_test_assembly()
     {
         Assert.DoesNotContain(

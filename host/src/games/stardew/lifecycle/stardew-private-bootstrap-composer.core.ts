@@ -53,18 +53,20 @@ import {
   type StardewJoinManifest,
   type StardewVerifiedCabinChoice,
 } from "../../../stardew-attachment.js";
-import {
-  type PrivateModProfileStagingDependencies,
-} from "../../../containment/auth/desktop-guardian-session.internal.js";
+export type PrivateModProfileStagingDependencies = Readonly<{
+  readPackage(): Promise<Readonly<{ root: string; entries: readonly string[] }>>;
+  createSecret(): string;
+  nowMs(): number;
+}>;
 import type {
   StardewAiClientLaunch,
   StardewExternalPlayerHostPhaseAOwner,
-  StardewOwnedPlayerHostPhaseAOwner,
+  StardewOwnedPlayerHostBootstrap,
   StardewPlayerHostLaunch,
   StardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.js";
 import type {
-  StardewExternalPlayerHostBootstrapOwnerRecord,
+  StardewExternalPlayerHostPhaseAOwnerOwnerRecord,
   StardewGuardianBinding,
   StardewOwnedPlayerHostBootstrapOwnerRecord,
   StardewPrivateBootstrapOwnerRecord,
@@ -180,7 +182,7 @@ export type StardewPrivateBootstrapCoreDependencies = Readonly<{
 }>;
 
 /**
- * Constructs the complete production Phase A authority boundary for both the
+ * Constructs the complete production Player Host bootstrap reservation authority boundary for both the
  * external and directly owned Player-Host topologies. Registrar callbacks,
  * trusted facts, generations, and persistence remain closure-only; callers
  * receive only the broker, the two role-specific process owners, and joins.
@@ -212,9 +214,9 @@ export type StardewManifestHandoffChoice = Readonly<{
 }>;
 
 export type StardewManifestHandoffCoordinator = Readonly<{
-  list(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<readonly StardewManifestHandoffChoice[]>;
+  list(owner: StardewOwnedPlayerHostBootstrap): Promise<readonly StardewManifestHandoffChoice[]>;
   select(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     candidateCabinId: string,
   ): Promise<StardewManifestHandoffSelection>;
   confirmAndAdmit(
@@ -226,38 +228,38 @@ export type StardewManifestHandoffCoordinator = Readonly<{
 type StardewManifestAdmissionValue = Awaited<ReturnType<StardewManifestHandoffCoordinator["confirmAndAdmit"]>>;
 
 type MaterializeAiClientProfileAfterManifestAdmission = (
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   admission: StardewManifestAdmissionValue,
 ) => Promise<void>;
 
 export type StardewPrivateBootstrapInternalComposition = Readonly<{
   readonly composition: StardewPrivateBootstrapComposition;
-  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow;
-  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
+  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostBootstrap): StardewAttachmentFlow;
+  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostBootstrap): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   materializeAiClientProfileAfterManifestAdmission(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     admission: StardewManifestAdmission,
   ): Promise<void>;
-  launchOwnedAiClientStageD(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+  launchMaterializedAiClient(
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
   consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
-  launchOwnedPlayerHostStageC(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+  launchStagedPlayerHost(
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
-  reserveOwnedPlayerHostPhaseAForActivation(
+  reserveOwnedPlayerHostBootstrapForActivation(
     runtimeRoot: string,
     claim: StardewPlayerHostBootstrapClaim,
-  ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
-  stageOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
-  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): void;
-  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
+  ): Promise<StardewOwnedPlayerHostBootstrap>;
+  stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): void;
+  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
 export function createStardewPrivateBootstrapProductionCore(
@@ -292,11 +294,11 @@ export function createStardewPrivateBootstrapProductionCore(
     readAndCorrelateOwnedPlayerHostSession: closed.readAndCorrelateOwnedPlayerHostSession,
     createOwnedPlayerHostManifestHandoffCoordinator: closed.createOwnedPlayerHostManifestHandoffCoordinator,
     materializeAiClientProfileAfterManifestAdmission: closed.materializeAiClientProfileAfterManifestAdmission,
-    launchOwnedAiClientStageD: closed.launchOwnedAiClientStageD,
+    launchMaterializedAiClient: closed.launchMaterializedAiClient,
     consumeOwnedFarmhandBridgeConnection: closed.consumeOwnedFarmhandBridgeConnection,
-    launchOwnedPlayerHostStageC: closed.launchOwnedPlayerHostStageC,
-    reserveOwnedPlayerHostPhaseAForActivation: closed.reserveOwnedPlayerHostPhaseAForActivation,
-    stageOwnedPlayerHostPhaseB: closed.stageOwnedPlayerHostPhaseB,
+    launchStagedPlayerHost: closed.launchStagedPlayerHost,
+    reserveOwnedPlayerHostBootstrapForActivation: closed.reserveOwnedPlayerHostBootstrapForActivation,
+    stageOwnedPlayerHostProfile: closed.stageOwnedPlayerHostProfile,
     terminalizeOwnedPlayerHostOwner: closed.terminalizeOwnedPlayerHostOwner,
     quarantineOwnedPlayerHostOwner: closed.quarantineOwnedPlayerHostOwner,
   });
@@ -329,32 +331,32 @@ export function createStardewPrivateBootstrapTestCore(
   dependencies: StardewPrivateBootstrapCoreDependencies,
 ): Readonly<{
   composition: StardewPrivateBootstrapComposition;
-  consumeStagedOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): void;
-  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow;
-  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
+  consumeStagedOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): void;
+  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostBootstrap): StardewAttachmentFlow;
+  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostBootstrap): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   materializeAiClientProfileAfterManifestAdmission: MaterializeAiClientProfileAfterManifestAdmission;
-  launchOwnedAiClientStageD(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+  launchMaterializedAiClient(
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
   consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
-  launchOwnedPlayerHostStageC(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+  launchStagedPlayerHost(
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
-  reserveOwnedPlayerHostPhaseAForActivation(
+  reserveOwnedPlayerHostBootstrapForActivation(
     runtimeRoot: string,
     claim: StardewPlayerHostBootstrapClaim,
-  ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
-  stageOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
-  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): void;
-  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
+  ): Promise<StardewOwnedPlayerHostBootstrap>;
+  stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): void;
+  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   bindOwnedPlayerHostPhaseAOwner(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
   ): StardewOwnedPlayerHostPhaseACoreTestView;
     createOwnerTransitionsForTesting(
       input: Readonly<{
@@ -367,22 +369,22 @@ export function createStardewPrivateBootstrapTestCore(
   validateTestingDependencies(dependencies);
   const base = createStardewPrivateBootstrapCore(dependencies);
   const owned = new WeakSet<object>();
-  const reserveOwnedPlayerHostPhaseA = base.composition.reserveOwnedPlayerHostPhaseA.bind(base.composition);
+  const reserveOwnedPlayerHostBootstrap = base.composition.reserveOwnedPlayerHostBootstrap.bind(base.composition);
   const composition: StardewPrivateBootstrapComposition = Object.freeze({
     ...base.composition,
-    async reserveOwnedPlayerHostPhaseA(...args) {
-      const owner = await reserveOwnedPlayerHostPhaseA(...args);
+    async reserveOwnedPlayerHostBootstrap(...args) {
+      const owner = await reserveOwnedPlayerHostBootstrap(...args);
       owned.add(owner);
       return owner;
     },
   });
   return Object.freeze({
     composition,
-    consumeStagedOwnedPlayerHostPhaseB(owner) {
+    consumeStagedOwnedPlayerHostProfile(owner) {
       // Composition-bound test-only staged consume: the base closed
       // composition supplies its stored identity, so owners minted by any
       // other composition are rejected before the staged marker changes.
-      base.consumeStagedOwnedPlayerHostPhaseB(owner);
+      base.consumeStagedOwnedPlayerHostProfile(owner);
     },
     createOwnedPlayerHostAttachmentFlow(owner) {
       // Composition-bound test-only attachment factory: the base closed
@@ -399,23 +401,23 @@ export function createStardewPrivateBootstrapTestCore(
     materializeAiClientProfileAfterManifestAdmission(owner, admission) {
       return base.materializeAiClientProfileAfterManifestAdmission(owner, admission);
     },
-    launchOwnedAiClientStageD(owner, installation) {
-      return base.launchOwnedAiClientStageD(owner, installation);
+    launchMaterializedAiClient(owner, installation) {
+      return base.launchMaterializedAiClient(owner, installation);
     },
     consumeOwnedFarmhandBridgeConnection(owner, callback) {
       return base.consumeOwnedFarmhandBridgeConnection(owner, callback);
     },
-    launchOwnedPlayerHostStageC(owner, installation) {
-      // Composition-bound test-only Stage-C launch: the base closed
+    launchStagedPlayerHost(owner, installation) {
+      // Composition-bound test-only staged Player Host launch: the base closed
       // composition supplies its stored identity, so forged and
       // cross-composition owners are rejected before the launch attempt.
-      return base.launchOwnedPlayerHostStageC(owner, installation);
+      return base.launchStagedPlayerHost(owner, installation);
     },
-    reserveOwnedPlayerHostPhaseAForActivation(runtimeRoot, claim) {
-      return base.reserveOwnedPlayerHostPhaseAForActivation(runtimeRoot, claim);
+    reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim) {
+      return base.reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim);
     },
-    stageOwnedPlayerHostPhaseB(owner) {
-      return base.stageOwnedPlayerHostPhaseB(owner);
+    stageOwnedPlayerHostProfile(owner) {
+      return base.stageOwnedPlayerHostProfile(owner);
     },
     terminalizeOwnedPlayerHostOwner(owner) {
       base.terminalizeOwnedPlayerHostOwner(owner);
@@ -424,7 +426,7 @@ export function createStardewPrivateBootstrapTestCore(
       return base.quarantineOwnedPlayerHostOwner(owner);
     },
     bindOwnedPlayerHostPhaseAOwner(owner) {
-      const facts = requireOwnedPhaseAFacts(owner);
+      const facts = requireOwnedPlayerHostBootstrapFacts(owner);
       return Object.freeze({
         get record() { return facts.durableOwner.record as StardewOwnedPlayerHostBootstrapOwnerRecord; },
         get transactionDirectory() { return facts.durableOwner.transactionDirectory; },
@@ -455,30 +457,30 @@ function createStardewPrivateBootstrapCore(
  */
 type ClosedBootstrapCore = Readonly<{
   readonly composition: StardewPrivateBootstrapComposition;
-  consumeStagedOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): void;
-  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow;
-  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
+  consumeStagedOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): void;
+  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostBootstrap): StardewAttachmentFlow;
+  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostBootstrap): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   materializeAiClientProfileAfterManifestAdmission: MaterializeAiClientProfileAfterManifestAdmission;
-  launchOwnedAiClientStageD(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+  launchMaterializedAiClient(
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
   consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
-  launchOwnedPlayerHostStageC(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+  launchStagedPlayerHost(
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
-  reserveOwnedPlayerHostPhaseAForActivation(
+  reserveOwnedPlayerHostBootstrapForActivation(
     runtimeRoot: string,
     claim: StardewPlayerHostBootstrapClaim,
-  ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
-  stageOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
-  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): void;
-  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
+  ): Promise<StardewOwnedPlayerHostBootstrap>;
+  stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): void;
+  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
 function createClosedComposition(
@@ -580,7 +582,7 @@ function createClosedComposition(
       claimRegistration.state = "binding";
       aiLaunchRegistration.state = "binding";
 
-      let durableOwner: DurableOwnerFor<StardewExternalPlayerHostBootstrapOwnerRecord>;
+      let durableOwner: DurableOwnerFor<StardewExternalPlayerHostPhaseAOwnerOwnerRecord>;
       try {
         durableOwner = await persistPrivateBootstrapOwner({
           runtimeRoot,
@@ -616,7 +618,7 @@ function createClosedComposition(
         dependencies.nowMs,
       );
     },
-    async reserveOwnedPlayerHostPhaseA(
+    async reserveOwnedPlayerHostBootstrap(
       runtimeRoot,
       claim,
       playerHostReservation,
@@ -690,33 +692,33 @@ function createClosedComposition(
         dependencies.nowMs,
         compositionIdentity,
       );
-      const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+      const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
       facts.stagingDependencies = stagingDependencies;
       return owner;
     },
   });
   return Object.freeze({
     composition,
-    consumeStagedOwnedPlayerHostPhaseB: (owner: StardewOwnedPlayerHostPhaseAOwner): void => {
-      consumeStagedOwnedPlayerHostPhaseB(owner, compositionIdentity);
+    consumeStagedOwnedPlayerHostProfile: (owner: StardewOwnedPlayerHostBootstrap): void => {
+      consumeStagedOwnedPlayerHostProfile(owner, compositionIdentity);
     },
-     createOwnedPlayerHostAttachmentFlow: (owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow =>
+     createOwnedPlayerHostAttachmentFlow: (owner: StardewOwnedPlayerHostBootstrap): StardewAttachmentFlow =>
        createOwnedPlayerHostAttachmentFlowCore(owner, compositionIdentity, dependencies.nowMs),
-     readAndCorrelateOwnedPlayerHostSession: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean> =>
+     readAndCorrelateOwnedPlayerHostSession: (owner: StardewOwnedPlayerHostBootstrap): Promise<boolean> =>
        readAndCorrelateOwnedPlayerHostSessionCore(owner, compositionIdentity, dependencies.nowMs),
       createOwnedPlayerHostManifestHandoffCoordinator: (): StardewManifestHandoffCoordinator =>
         manifestHandoffCoordinator,
       materializeAiClientProfileAfterManifestAdmission: (
-        owner: StardewOwnedPlayerHostPhaseAOwner,
+        owner: StardewOwnedPlayerHostBootstrap,
         admission: StardewManifestAdmissionValue,
       ): Promise<void> => manifestHandoff.materialize(owner, admission),
-       launchOwnedAiClientStageD: (
-         owner: StardewOwnedPlayerHostPhaseAOwner,
+       launchMaterializedAiClient: (
+         owner: StardewOwnedPlayerHostBootstrap,
          installation: AdmittedStardewInstallation,
        ): Promise<StardewOwnedAiClientStageDResult> =>
-         launchOwnedAiClientStageD(owner, installation, compositionIdentity),
+         launchMaterializedAiClient(owner, installation, compositionIdentity),
        consumeOwnedFarmhandBridgeConnection: <T extends Readonly<{ close(): void | Promise<void> }>>(
-         owner: StardewOwnedPlayerHostPhaseAOwner,
+         owner: StardewOwnedPlayerHostBootstrap,
          callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
         ): Promise<T> => consumeOwnedFarmhandBridgeConnection(
           owner,
@@ -724,15 +726,15 @@ function createClosedComposition(
           compositionIdentity,
           () => aiClientProcessOwner.readStatus(),
         ),
-        launchOwnedPlayerHostStageC: (
-       owner: StardewOwnedPlayerHostPhaseAOwner,
+        launchStagedPlayerHost: (
+       owner: StardewOwnedPlayerHostBootstrap,
        installation: AdmittedStardewInstallation,
      ): Promise<StardewOwnedPlayerHostStageCResult> =>
-       launchOwnedPlayerHostStageC(owner, installation, compositionIdentity),
-      reserveOwnedPlayerHostPhaseAForActivation: async (
+       launchStagedPlayerHost(owner, installation, compositionIdentity),
+      reserveOwnedPlayerHostBootstrapForActivation: async (
         runtimeRoot: string,
         claim: StardewPlayerHostBootstrapClaim,
-      ): Promise<StardewOwnedPlayerHostPhaseAOwner> => {
+      ): Promise<StardewOwnedPlayerHostBootstrap> => {
         const claimRegistration = claims.get(claim);
         if (claimRegistration === undefined || claimRegistration.state !== "available")
           throw new Error("stardew_bootstrap_claim_not_available");
@@ -742,7 +744,7 @@ function createClosedComposition(
           playerReservation = playerHostProcessOwner.reservePlayerHostLaunch();
           aiReservation = aiClientProcessOwner.reserveAiClientLaunch();
           registrationBoundClaims.add(claim);
-          return await composition.reserveOwnedPlayerHostPhaseA(
+          return await composition.reserveOwnedPlayerHostBootstrap(
             runtimeRoot,
             claim,
             playerReservation,
@@ -767,27 +769,27 @@ function createClosedComposition(
           throw error;
         }
       },
-      stageOwnedPlayerHostPhaseB: async (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
-        requireOwnedPhaseAFacts(owner, compositionIdentity);
-        await consumeOwnedPlayerHostPhaseAOwner(owner, async () => {
+      stageOwnedPlayerHostProfile: async (owner: StardewOwnedPlayerHostBootstrap): Promise<void> => {
+        requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+        await consumeOwnedPlayerHostBootstrap(owner, async () => {
           try {
-            await stageOwnedPlayerHostPhaseB(owner);
+            await stageOwnedPlayerHostProfile(owner);
           } catch (error) {
             try {
-              await requireOwnedPhaseAFacts(owner, compositionIdentity).quarantineOwner();
+              await requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity).quarantineOwner();
             } finally {
-              terminalizeOwnedPlayerHostPhaseAOwner(owner);
+              terminalizeOwnedPlayerHostBootstrap(owner);
             }
             throw error;
           }
         });
       },
-      terminalizeOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): void => {
-        requireOwnedPhaseAFacts(owner, compositionIdentity);
-        terminalizeOwnedPlayerHostPhaseAOwner(owner);
+      terminalizeOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostBootstrap): void => {
+        requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+        terminalizeOwnedPlayerHostBootstrap(owner);
       },
-      quarantineOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
-        const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+      quarantineOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostBootstrap): Promise<void> => {
+        const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
         return facts.quarantineOwner();
       },
     });
@@ -903,10 +905,10 @@ async function reconcileSettledRegistrationMarker(
  * containment proof remains the only authority that can release the pointer.
  */
 export async function settleOwnedPlayerHostRegistrationAttempt(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   proof: StardewBootstrapGuardianSettlementProof,
 ): Promise<void> {
-  const facts = requireOwnedPhaseAFacts(owner);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   const proofReservation = reserveStardewBootstrapGuardianSettlementProof(owner, proof);
   try {
     const runtimeRoot = dirname(dirname(facts.durableOwner.transactionDirectory));
@@ -966,7 +968,7 @@ export async function settleOwnedPlayerHostRegistrationAttempt(
 
 function persistPrivateBootstrapOwner(
   input: PersistPrivateBootstrapOwnerInput<Readonly<{ kind: "external_unattested" }>>,
-): Promise<DurableOwnerFor<StardewExternalPlayerHostBootstrapOwnerRecord>>;
+): Promise<DurableOwnerFor<StardewExternalPlayerHostPhaseAOwnerOwnerRecord>>;
 function persistPrivateBootstrapOwner(
   input: PersistPrivateBootstrapOwnerInput<Readonly<{
     kind: "launch_reserved";
@@ -1083,9 +1085,9 @@ async function persistPrivateBootstrapOwner(
   });
 }
 
-type OwnedPhaseAOwnerBindingState = "unbound" | "binding" | "bound" | "terminal";
+type OwnedPlayerHostBootstrapBindingState = "unbound" | "binding" | "bound" | "terminal";
 
-type OwnedPhaseBState = "not_staged" | "staged" | "launching";
+type OwnedPlayerHostProfileStagingState = "not_staged" | "staged" | "launching";
 type ManifestHandoffSelectionState =
   | "available"
   | "confirming"
@@ -1096,7 +1098,7 @@ type ManifestHandoffSelectionState =
 
 type ManifestHandoffSelectionFacts = {
   readonly compositionIdentity: object;
-  readonly owner: StardewOwnedPlayerHostPhaseAOwner;
+  readonly owner: StardewOwnedPlayerHostBootstrap;
   readonly flow: StardewAttachmentFlow;
   readonly choice: StardewVerifiedCabinChoice;
   readonly verifiedAdvertisementRuntimeRole: string;
@@ -1109,7 +1111,7 @@ type ManifestHandoffSelectionFacts = {
 
 type ManifestHandoffAdmissionFacts = Readonly<{
   readonly compositionIdentity: object;
-  readonly owner: StardewOwnedPlayerHostPhaseAOwner;
+  readonly owner: StardewOwnedPlayerHostBootstrap;
   readonly flow: StardewAttachmentFlow;
   readonly choice: StardewVerifiedCabinChoice;
   readonly requestId: string;
@@ -1130,7 +1132,7 @@ type ManifestHandoffCoordinatorCore = Readonly<{
  * HostFarmhandProvisioning config (never re-read from config.json) to the
  * composition identity, owner lifetime, and quarantine lifecycle. No getter,
  * DTO field, manifest ingress, browser projection, or serialization surface
- * exists; a future closed Stage-D primitive owns the only read path through
+ * exists; a future closed materialized AI Client primitive owns the only read path through
  * the same WeakMap.
  */
 type StardewPrivateBootstrapMaterial = Readonly<{
@@ -1152,7 +1154,7 @@ type StardewPrivateBridgeMaterial = Readonly<{
   readonly connection: Omit<StardewPrivateFarmhandBridgeConnection, "launchGeneration">;
 }>;
 
-type OwnedPhaseAFacts = {
+type OwnedPlayerHostBootstrapFacts = {
   readonly compositionIdentity: object;
   readonly immutableFence: StardewOwnerImmutableFence;
   readonly durableOwner: DurableOwner;
@@ -1162,8 +1164,8 @@ type OwnedPhaseAFacts = {
   readonly readClock: () => number;
   readonly launchStates: { playerHost: LaunchState; aiClient: LaunchState };
   readonly quarantine: { started: boolean; promise: Promise<void> | null };
-  readonly bindingState: { value: OwnedPhaseAOwnerBindingState };
-  readonly phaseBState: { value: OwnedPhaseBState };
+  readonly bindingState: { value: OwnedPlayerHostBootstrapBindingState };
+  readonly playerHostProfileStagingState: { value: OwnedPlayerHostProfileStagingState };
   readonly aiClientProfileState: { value: "not_materialized" | "materializing" | "materialized" | "failed" };
   readonly bridgeConnectionState: { value: "unavailable" | "available" | "binding" | "consumed" };
   readonly privateMaterial: { value: StardewPrivateBootstrapMaterial | null };
@@ -1174,17 +1176,17 @@ type OwnedPhaseAFacts = {
   quarantineOwner: () => Promise<void>;
 };
 
-const ownedPhaseAFacts = new WeakMap<object, OwnedPhaseAFacts>();
+const ownedPlayerHostBootstrapFacts = new WeakMap<object, OwnedPlayerHostBootstrapFacts>();
 
-function requireOwnedPhaseAFacts(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+function requireOwnedPlayerHostBootstrapFacts(
+  owner: StardewOwnedPlayerHostBootstrap,
   compositionIdentity?: object,
-): OwnedPhaseAFacts {
-  if (typeof owner !== "object" || owner === null) throw new Error("stardew_owned_phase_a_owner_not_registered");
-  const facts = ownedPhaseAFacts.get(owner);
+): OwnedPlayerHostBootstrapFacts {
+  if (typeof owner !== "object" || owner === null) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
+  const facts = ownedPlayerHostBootstrapFacts.get(owner);
   if (facts === undefined ||
       (compositionIdentity !== undefined && facts.compositionIdentity !== compositionIdentity)) {
-    throw new Error("stardew_owned_phase_a_owner_not_registered");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   return facts;
 }
@@ -1195,13 +1197,13 @@ function requireOwnedPhaseAFacts(
  * session launcher instance. Failed asynchronous preparation restores `unbound` only
  * after its callback settles, so a complete later retry remains possible.
  */
-export function consumeOwnedPlayerHostPhaseAOwner<T>(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+export function consumeOwnedPlayerHostBootstrap<T>(
+  owner: StardewOwnedPlayerHostBootstrap,
   callback: () => Promise<T> | T,
 ): Promise<T> | T {
-  const facts = requireOwnedPhaseAFacts(owner);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   if (typeof callback !== "function" || facts.bindingState.value !== "unbound") {
-    throw new Error("stardew_owned_phase_a_owner_not_registered");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   facts.bindingState.value = "binding";
   try {
@@ -1213,7 +1215,7 @@ export function consumeOwnedPlayerHostPhaseAOwner<T>(
           return value;
         },
         (error: unknown) => {
-          restoreOwnedPhaseAOwnerAfterFailure(owner);
+          restoreOwnedPlayerHostBootstrapAfterFailure(owner);
           throw error;
         },
       );
@@ -1221,7 +1223,7 @@ export function consumeOwnedPlayerHostPhaseAOwner<T>(
     facts.bindingState.value = "bound";
     return result;
   } catch (error) {
-    restoreOwnedPhaseAOwnerAfterFailure(owner);
+    restoreOwnedPlayerHostBootstrapAfterFailure(owner);
     throw error;
   }
 }
@@ -1230,31 +1232,31 @@ export function consumeOwnedPlayerHostPhaseAOwner<T>(
  * Marks an exact consumed owner permanently unavailable after Stage B has
  * succeeded and subsequent final admission failed after quarantine started.
  */
-export function terminalizeOwnedPlayerHostPhaseAOwner(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+export function terminalizeOwnedPlayerHostBootstrap(
+  owner: StardewOwnedPlayerHostBootstrap,
 ): void {
-  const facts = requireOwnedPhaseAFacts(owner);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   if (facts.bindingState.value !== "binding")
-    throw new Error("stardew_owned_phase_a_owner_not_registered");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   facts.bindingState.value = "terminal";
 }
 
-function restoreOwnedPhaseAOwnerAfterFailure(owner: StardewOwnedPlayerHostPhaseAOwner): void {
-  const facts = requireOwnedPhaseAFacts(owner);
+function restoreOwnedPlayerHostBootstrapAfterFailure(owner: StardewOwnedPlayerHostBootstrap): void {
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   if (facts.bindingState.value !== "terminal") facts.bindingState.value = "unbound";
 }
 
 /**
- * The Phase-B profile operation is intentionally concrete and closed: its
+ * The Player Host profile staging profile operation is intentionally concrete and closed: its
  * package root, layout, config, secret, and result remain composition-owned.
  * It consumes no launch reservation and returns no path or launch authority.
  */
-export async function stageOwnedPlayerHostPhaseB(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+export async function stageOwnedPlayerHostProfile(
+  owner: StardewOwnedPlayerHostBootstrap,
 ): Promise<void> {
-  const facts = requireOwnedPhaseAFacts(owner);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   const dependencies = requireStagingDependencies(facts.stagingDependencies);
-  await stageOwnedPlayerHostPhaseBWithValidatedDependencies(owner, dependencies);
+  await stageOwnedPlayerHostProfileWithValidatedDependencies(owner, dependencies);
 }
 
 function requireStagingDependencies(
@@ -1266,13 +1268,13 @@ function requireStagingDependencies(
   return dependencies;
 }
 
-async function stageOwnedPlayerHostPhaseBWithValidatedDependencies(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+async function stageOwnedPlayerHostProfileWithValidatedDependencies(
+  owner: StardewOwnedPlayerHostBootstrap,
   dependencies: PrivateModProfileStagingDependencies,
 ): Promise<void> {
-  const facts = requireOwnedPhaseAFacts(owner);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   if (facts.bindingState.value !== "binding")
-    throw new Error("stardew_owned_phase_a_owner_not_staging");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_staging");
   try {
     if (facts.expiresAtMs <= dependencies.nowMs())
       throw new Error("stardew_private_mod_profile_staging_expired");
@@ -1286,7 +1288,7 @@ async function stageOwnedPlayerHostPhaseBWithValidatedDependencies(
     try { await facts.quarantineOwner(); } catch { /* staging failure remains primary */ }
     throw error;
   }
-  facts.phaseBState.value = "staged";
+  facts.playerHostProfileStagingState.value = "staged";
 }
 
 /**
@@ -1299,20 +1301,20 @@ async function stageOwnedPlayerHostPhaseBWithValidatedDependencies(
  * the closed composition and the dedicated test composition reach it with
  * their stored identity.
  */
-function consumeStagedOwnedPlayerHostPhaseB(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+function consumeStagedOwnedPlayerHostProfile(
+  owner: StardewOwnedPlayerHostBootstrap,
   compositionIdentity: object,
 ): void {
-  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
   if (facts.bindingState.value !== "bound")
-    throw new Error("stardew_owned_phase_a_owner_not_bound");
-  if (facts.phaseBState.value !== "staged")
-    throw new Error("stardew_owned_phase_a_phase_b_not_staged");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_bound");
+  if (facts.playerHostProfileStagingState.value !== "staged")
+    throw new Error("stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged");
   if (facts.quarantine.started)
-    throw new Error("stardew_owned_phase_a_owner_quarantined");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_quarantined");
   if (facts.expiresAtMs <= facts.readClock())
-    throw new Error("stardew_owned_phase_a_owner_expired");
-  facts.phaseBState.value = "not_staged";
+    throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
+  facts.playerHostProfileStagingState.value = "not_staged";
 }
 
 /**
@@ -1333,8 +1335,8 @@ function createManifestHandoffCoordinatorCore(
   const selections = new WeakMap<StardewManifestHandoffSelection, ManifestHandoffSelectionFacts>();
   const admissions = new WeakMap<StardewManifestAdmission, ManifestHandoffAdmissionFacts>();
   const coordinator = {
-    async list(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<readonly StardewManifestHandoffChoice[]> {
-      const ownerFacts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+    async list(owner: StardewOwnedPlayerHostBootstrap): Promise<readonly StardewManifestHandoffChoice[]> {
+      const ownerFacts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
       assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
       const flow = createOwnedPlayerHostAttachmentFlowCore(owner, compositionIdentity, readClock);
       const session = await flow.readLiveSession();
@@ -1350,10 +1352,10 @@ function createManifestHandoffCoordinatorCore(
       return Object.freeze(choices);
     },
     async select(
-      owner: StardewOwnedPlayerHostPhaseAOwner,
+      owner: StardewOwnedPlayerHostBootstrap,
       candidateCabinId: string,
     ): Promise<StardewManifestHandoffSelection> {
-      const ownerFacts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+      const ownerFacts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
       assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
       const flow = createOwnedPlayerHostAttachmentFlowCore(owner, compositionIdentity, readClock);
       const expectedGeneration = requirePlayerHostLaunchGeneration(ownerFacts);
@@ -1393,7 +1395,7 @@ function createManifestHandoffCoordinatorCore(
         throw new Error("invalid_stardew_manifest_handoff_selection");
       if (facts.state !== "available") throw new Error("invalid_stardew_manifest_handoff_selection");
       facts.state = "confirming";
-      const ownerFacts = requireOwnedPhaseAFacts(facts.owner, compositionIdentity);
+      const ownerFacts = requireOwnedPlayerHostBootstrapFacts(facts.owner, compositionIdentity);
       try {
         assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
         await assertPlayerHostGenerationCorrelation(ownerFacts, facts.verifiedAdvertisementGeneration);
@@ -1442,7 +1444,7 @@ function createManifestHandoffCoordinatorCore(
     },
   } satisfies StardewManifestHandoffCoordinator;
   const materialize: MaterializeAiClientProfileAfterManifestAdmission = async (owner, admission) => {
-    const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+    const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
     const admissionFacts = admissions.get(admission);
     if (admissionFacts === undefined || admissionFacts.compositionIdentity !== compositionIdentity ||
         admissionFacts.owner !== owner || admissionFacts.consumed.value ||
@@ -1491,13 +1493,13 @@ function createManifestHandoffCoordinatorCore(
   return Object.freeze({ coordinator: Object.freeze(coordinator), materialize });
 }
 
-function requirePlayerHostLaunchGeneration(facts: OwnedPhaseAFacts): string {
+function requirePlayerHostLaunchGeneration(facts: OwnedPlayerHostBootstrapFacts): string {
   const playerHost = facts.durableOwner.record.playerHost;
   if (playerHost.kind !== "launch_reserved") throw new Error("stardew_player_host_generation_unavailable");
   return playerHost.launchGeneration;
 }
 
-async function quarantinePlayerHostGenerationMismatch(facts: OwnedPhaseAFacts): Promise<never> {
+async function quarantinePlayerHostGenerationMismatch(facts: OwnedPlayerHostBootstrapFacts): Promise<never> {
   try {
     await facts.quarantineOwner();
   } catch {
@@ -1508,7 +1510,7 @@ async function quarantinePlayerHostGenerationMismatch(facts: OwnedPhaseAFacts): 
 }
 
 async function assertPlayerHostGenerationCorrelation(
-  facts: OwnedPhaseAFacts,
+  facts: OwnedPlayerHostBootstrapFacts,
   advertisementGeneration: string,
 ): Promise<void> {
   if (advertisementGeneration !== requirePlayerHostLaunchGeneration(facts))
@@ -1516,7 +1518,7 @@ async function assertPlayerHostGenerationCorrelation(
 }
 
 function assertManifestHandoffOwnerAdmissible(
-  facts: OwnedPhaseAFacts,
+  facts: OwnedPlayerHostBootstrapFacts,
   readClock: () => number,
 ): void {
   if (
@@ -1542,11 +1544,11 @@ function redactManifestHandoffError(error: unknown): Error {
 }
 
 async function readAndCorrelateOwnedPlayerHostSessionCore(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   compositionIdentity: object,
   readClock: () => number,
 ): Promise<boolean> {
-  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
   const flow = createOwnedPlayerHostAttachmentFlowCore(owner, compositionIdentity, readClock);
   try {
     const session = await flow.readLiveSession();
@@ -1560,13 +1562,13 @@ async function readAndCorrelateOwnedPlayerHostSessionCore(
 }
 
 function createOwnedPlayerHostAttachmentFlowCore(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   compositionIdentity: object,
   readClock: () => number,
 ): StardewAttachmentFlow {
   try {
-    const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
-    // Stage C clears phaseBState after consuming only the Player Host launch
+    const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+    // staged Player Host clears playerHostProfileStagingState after consuming only the Player Host launch
     // reservation. Private session material deliberately remains available for
     // the later authenticated attachment read path, so material presence—not
     // the transient staging state—is the admission proof here.
@@ -1589,14 +1591,14 @@ function createOwnedPlayerHostAttachmentFlowCore(
 }
 
 /**
- * Core-private composition-bound Stage-C launch primitive. Requires the exact
+ * Core-private composition-bound staged Player Host launch primitive. Requires the exact
  * closure-owned composition identity that minted the owner, which must be
- * `bindingState=bound` and `phaseBState=staged`. Atomically marks an in-flight
+ * `bindingState=bound` and `playerHostProfileStagingState=staged`. Atomically marks an in-flight
  * launch attempt, fresh-rechecks the admitted SMAPI identity, derives exactly
  * `<root>/StardewModdingAPI.exe`, args `['--mods-path',
  * <transaction>/player-host/Mods]`, cwd root, and consumes the exact reserved
  * Player Host launch. Fresh identity failure: zero spawn and restores
- * `phaseBState=staged` for retry. Spawn/process probe failure preserves the
+ * `playerHostProfileStagingState=staged` for retry. Spawn/process probe failure preserves the
  * existing one-shot owner behavior; the staged marker drains permanently.
  * Never exported from this module; only the closed composition and the
  * dedicated test composition reach it with their stored identity.
@@ -1608,24 +1610,24 @@ export function didStardewOwnedPlayerHostStageCEnterControlledLaunch(error: unkn
   return typeof error === "object" && error !== null && stageCControlledLaunchErrors.has(error);
 }
 
-async function launchOwnedPlayerHostStageC(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+async function launchStagedPlayerHost(
+  owner: StardewOwnedPlayerHostBootstrap,
   installation: AdmittedStardewInstallation,
   compositionIdentity: object,
 ): Promise<StardewOwnedPlayerHostStageCResult> {
-  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
   if (facts.bindingState.value !== "bound")
-    throw new Error("stardew_owned_phase_a_owner_not_bound");
-  if (facts.phaseBState.value !== "staged")
-    throw new Error("stardew_owned_phase_a_phase_b_not_staged");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_bound");
+  if (facts.playerHostProfileStagingState.value !== "staged")
+    throw new Error("stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged");
   if (facts.quarantine.started)
-    throw new Error("stardew_owned_phase_a_owner_quarantined");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_quarantined");
   if (facts.expiresAtMs <= facts.readClock())
-    throw new Error("stardew_owned_phase_a_owner_expired");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
 
   // Atomically mark the in-flight launch attempt before any await so a
-  // concurrent Stage-C invocation for the exact owner can never double-spawn.
-  facts.phaseBState.value = "launching";
+  // concurrent staged Player Host invocation for the exact owner can never double-spawn.
+  facts.playerHostProfileStagingState.value = "launching";
 
   const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
   const modsPath = join(transactionDirectory, HOST_PROFILE_ROOT, MODS_DIRECTORY);
@@ -1643,14 +1645,14 @@ async function launchOwnedPlayerHostStageC(
       );
     });
     // Launch succeeded: the staged profile has been used.
-    facts.phaseBState.value = "not_staged";
+    facts.playerHostProfileStagingState.value = "not_staged";
     return result;
   } catch (error) {
     // A fresh identity failure never enters the Player Host launch consumer:
     // zero spawns happened, so the staged marker restores for a complete
     // retry. Spawn/probe/expiry/quarantine-on-entry failures keep the existing
     // one-shot owner behavior; the staged marker drains permanently.
-    facts.phaseBState.value = launchEntered ? "not_staged" : "staged";
+    facts.playerHostProfileStagingState.value = launchEntered ? "not_staged" : "staged";
     if (launchEntered && typeof error === "object" && error !== null) {
       stageCControlledLaunchErrors.add(error);
     }
@@ -1665,16 +1667,16 @@ async function launchOwnedPlayerHostStageC(
  * Bridge config is checked again after that asynchronous reread; only then may
  * the exact reserved AI launch be consumed.
  */
-async function launchOwnedAiClientStageD(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+async function launchMaterializedAiClient(
+  owner: StardewOwnedPlayerHostBootstrap,
   installation: AdmittedStardewInstallation,
   compositionIdentity: object,
 ): Promise<StardewOwnedAiClientStageDResult> {
-  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
   if (facts.bindingState.value !== "bound" || facts.aiClientProfileState.value !== "materialized")
     throw new Error("stardew_ai_client_profile_not_materialized");
-  if (facts.quarantine.started) throw new Error("stardew_owned_phase_a_owner_quarantined");
-  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+  if (facts.quarantine.started) throw new Error("stardew_owned_player_host_bootstrap_owner_quarantined");
+  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
   if (facts.launchStates.aiClient !== "available") throw new Error("stardew_ai_client_launch_not_available");
 
   const bridgeMaterial = facts.privateBridgeMaterial.value;
@@ -1701,14 +1703,14 @@ async function launchOwnedAiClientStageD(
   await verifySafePathBoundary(configPath, transactionDirectory);
   if (await readFile(configPath, "utf8") !== bridgeMaterial.configJson)
     throw new Error("stardew_ai_client_bridge_config_changed");
-  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
 
   const modsPath = join(transactionDirectory, AI_CLIENT_PROFILE_ROOT, MODS_DIRECTORY);
   return consumeAdmittedStardewInstallation(installation, async (root, executable) => {
     await verifySafePathBoundary(configPath, transactionDirectory);
     if (await readFile(configPath, "utf8") !== bridgeMaterial.configJson)
       throw new Error("stardew_ai_client_bridge_config_changed");
-    if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+    if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
     return facts.consumeAiClientLaunch((launch) => launch({
       executable,
       args: ["--mods-path", modsPath],
@@ -1718,17 +1720,17 @@ async function launchOwnedAiClientStageD(
 }
 
 async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   compositionIdentity: object,
   readAiClientStatus: () => StardewAiClientProcessStatus,
 ): Promise<T> {
-  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
   if (typeof callback !== "function") throw new TypeError("invalid_stardew_farmhand_bridge_connection_callback");
   if (facts.bindingState.value !== "bound" || facts.aiClientProfileState.value !== "materialized")
     throw new Error("stardew_farmhand_bridge_profile_not_materialized");
-  if (facts.quarantine.started) throw new Error("stardew_owned_phase_a_owner_quarantined");
-  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+  if (facts.quarantine.started) throw new Error("stardew_owned_player_host_bootstrap_owner_quarantined");
+  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
   if (facts.bridgeConnectionState.value !== "available")
     throw new Error("stardew_farmhand_bridge_connection_not_available");
   if (readAiClientStatus().kind !== "awaiting_ai_client_attestation")
@@ -1766,7 +1768,7 @@ async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close()
     await verifySafePathBoundary(configPath, transactionDirectory);
     if (await readFile(configPath, "utf8") !== bridgeMaterial.configJson)
       throw new Error("stardew_ai_client_bridge_config_changed");
-    if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+    if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
     if (facts.aiClientRegistration.launchGeneration !== current.aiClient.launchGeneration)
       throw new Error("stardew_ai_client_generation_mismatch");
     if (readAiClientStatus().kind !== "awaiting_ai_client_attestation")
@@ -1790,14 +1792,14 @@ async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close()
 }
 
 async function stageAiClientProfile(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   admission: ManifestHandoffAdmissionFacts,
   packageSource: Readonly<{ root: string; entries: readonly string[] }>,
   dependencies: PrivateModProfileStagingDependencies,
   createBridgePipeName: () => string,
   createBridgeToken: () => string,
 ): Promise<StardewPrivateBridgeMaterial> {
-  const facts = requireOwnedPhaseAFacts(owner);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   const material = facts.privateMaterial.value;
   if (material === null) throw new Error("stardew_ai_client_profile_materialization_material_missing");
   const pipeName = createBridgePipeName();
@@ -1916,7 +1918,7 @@ async function stageAiClientProfile(
 }
 
 function readClockForMaterialization(
-  facts: OwnedPhaseAFacts,
+  facts: OwnedPlayerHostBootstrapFacts,
   _admission: ManifestHandoffAdmissionFacts,
   dependencies: PrivateModProfileStagingDependencies,
 ): number {
@@ -1996,11 +1998,11 @@ async function assertAiClientDestinationAbsent(transactionDirectory: string, roo
 }
 
 async function stagePlayerHostModProfile(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   packageSource: Readonly<{ root: string; entries: readonly string[] }>,
   dependencies: PrivateModProfileStagingDependencies,
 ): Promise<StardewPrivateBootstrapMaterial> {
-  const facts = requireOwnedPhaseAFacts(owner);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
   const ownerPath = join(transactionDirectory, OWNER_FILE);
   const managed = new Map<string, import("../../../path-lock.js").SafeFileIdentity>();
@@ -2154,7 +2156,7 @@ function composeOwnedPlayerHostOwner(
   expiresAtMs: number,
   readClock: () => number,
   compositionIdentity: object,
-): StardewOwnedPlayerHostPhaseAOwner {
+): StardewOwnedPlayerHostBootstrap {
   let playerHostLaunchState: LaunchState = "available";
   let aiClientLaunchState: LaunchState = "available";
   let quarantineStarted = false;
@@ -2212,11 +2214,11 @@ function composeOwnedPlayerHostOwner(
     }
   };
 
-  const owner = Object.freeze({}) as StardewOwnedPlayerHostPhaseAOwner;
-  const bindingState: { value: OwnedPhaseAOwnerBindingState } = { value: "unbound" };
-  const phaseBState: { value: OwnedPhaseBState } = { value: "not_staged" };
-  const aiClientProfileState: OwnedPhaseAFacts["aiClientProfileState"] = { value: "not_materialized" };
-  const facts: OwnedPhaseAFacts = {
+  const owner = Object.freeze({}) as StardewOwnedPlayerHostBootstrap;
+  const bindingState: { value: OwnedPlayerHostBootstrapBindingState } = { value: "unbound" };
+  const playerHostProfileStagingState: { value: OwnedPlayerHostProfileStagingState } = { value: "not_staged" };
+  const aiClientProfileState: OwnedPlayerHostBootstrapFacts["aiClientProfileState"] = { value: "not_materialized" };
+  const facts: OwnedPlayerHostBootstrapFacts = {
     compositionIdentity,
     immutableFence: immutableFenceFor(durableOwner.record),
     durableOwner,
@@ -2237,7 +2239,7 @@ function composeOwnedPlayerHostOwner(
       set promise(value: Promise<void> | null) { quarantinePromise = value; },
     },
     bindingState,
-    phaseBState,
+    playerHostProfileStagingState,
     aiClientProfileState,
     bridgeConnectionState: { value: "unavailable" },
     privateMaterial: { value: null },
@@ -2287,13 +2289,13 @@ function composeOwnedPlayerHostOwner(
       return quarantinePromise;
     },
   };
-  ownedPhaseAFacts.set(owner, facts);
+  ownedPlayerHostBootstrapFacts.set(owner, facts);
   return owner;
 }
 
 function composeExternalPlayerHostOwner(
   durableOwner: DurableOwner & Readonly<{
-    record: StardewExternalPlayerHostBootstrapOwnerRecord;
+    record: StardewExternalPlayerHostPhaseAOwnerOwnerRecord;
   }>,
   registration: StardewAiClientLaunchRegistration,
   expiresAtMs: number,
@@ -2979,7 +2981,7 @@ const guardianOwnerBindings = new WeakMap<object, GuardianOwnerBindingFacts>();
 const guardianSettlementProofs = new WeakMap<object, GuardianSettlementProofFacts>();
 
 /**
- * Creates one exact Guardian owner binding for a composer-minted owned Phase-A
+ * Creates one exact Guardian owner binding for a composer-minted owned Player Host bootstrap reservation
  * owner. No path, fence, record, revision, or persistence callback crosses
  * this boundary; every named transition advances the closure-held CAS cursor.
  */
@@ -3015,10 +3017,10 @@ export function readStardewBootstrapGuardianNativeArmFrame(
 }
 
 export function createStardewBootstrapGuardianOwnerBinding(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   compositionIdentity?: object,
 ): StardewBootstrapGuardianOwnerBinding {
-  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
   const existing = guardianOwnerBindings.get(owner);
   if (existing !== undefined) throw new Error("stardew_bootstrap_guardian_owner_binding_unavailable");
   const initial = facts.durableOwner.record;
@@ -3105,7 +3107,7 @@ type ReservedStardewBootstrapGuardianSettlementProof = Readonly<{
 }>;
 
 function reserveStardewBootstrapGuardianSettlementProof(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   proof: StardewBootstrapGuardianSettlementProof,
 ): ReservedStardewBootstrapGuardianSettlementProof {
   const proofFacts = typeof proof === "object" && proof !== null

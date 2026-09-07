@@ -15,7 +15,7 @@ import {
 import type { AdmittedStardewInstallation } from "../../../stardew-installation-admission.js";
 import type { StardewManifestHandoffCoordinator } from "./stardew-private-bootstrap-composer.core.js";
 import type {
-  StardewOwnedPlayerHostPhaseAOwner,
+  StardewOwnedPlayerHostBootstrap,
   StardewPrivateBootstrapComposition as PublicStardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.js";
 
@@ -41,40 +41,40 @@ export type StardewPrivateModProfileStagingTestSupportInput = Readonly<{
 
 export type StardewPrivateBootstrapTestingComposition = Readonly<{
   composition: PublicStardewPrivateBootstrapComposition;
-  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): import("../../../stardew-attachment.js").StardewAttachmentFlow;
-  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
+  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostBootstrap): import("../../../stardew-attachment.js").StardewAttachmentFlow;
+  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostBootstrap): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
-  consumeStagedOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): void;
+  consumeStagedOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): void;
   materializeAiClientProfileAfterManifestAdmission(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     admission: StardewManifestAdmissionForTesting,
   ): Promise<void>;
-  launchOwnedAiClientStageD(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+  launchMaterializedAiClient(
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
   consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
-  launchOwnedPlayerHostStageC(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+  launchStagedPlayerHost(
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
-  reserveOwnedPlayerHostPhaseAForActivation(
+  reserveOwnedPlayerHostBootstrapForActivation(
     runtimeRoot: string,
     claim: import("../../../stardew-player-host-bootstrap.js").StardewPlayerHostBootstrapClaim,
-  ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
-  stageOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
-  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): void;
+  ): Promise<StardewOwnedPlayerHostBootstrap>;
+  stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): void;
   bindOwnedPlayerHostPhaseAOwner(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
   ): StardewOwnedPlayerHostPhaseATestView;
   quarantineOwnedPlayerHostOwner(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
   ): Promise<void>;
   createStardewBootstrapGuardianOwner(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     native: StardewBootstrapGuardianNativePorts,
   ): StardewBootstrapGuardianOwner;
   createOwnerTransitionsForTesting: ReturnType<typeof createStardewPrivateBootstrapTestCore>["createOwnerTransitionsForTesting"];
@@ -82,44 +82,44 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
 
 const testOwnerBinders = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
-  (owner: StardewOwnedPlayerHostPhaseAOwner) => StardewOwnedPlayerHostPhaseATestView
+  (owner: StardewOwnedPlayerHostBootstrap) => StardewOwnedPlayerHostPhaseATestView
 >();
 const testOwnerViews = new WeakMap<
   object,
   Readonly<{
     composition: PublicStardewPrivateBootstrapComposition;
-    bind: (owner: StardewOwnedPlayerHostPhaseAOwner) => StardewOwnedPlayerHostPhaseATestView;
+    bind: (owner: StardewOwnedPlayerHostBootstrap) => StardewOwnedPlayerHostPhaseATestView;
   }>
 >();
-const testOwnedPhaseBConsumers = new WeakMap<
+const testOwnedPlayerHostProfileConsumers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
-  (owner: StardewOwnedPlayerHostPhaseAOwner) => void
+  (owner: StardewOwnedPlayerHostBootstrap) => void
 >();
 const testAiClientMaterializers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
   (
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     admission: StardewManifestAdmissionForTesting,
   ) => Promise<void>
 >();
-const testStageDLaunchers = new WeakMap<
+const testMaterializedAiClientLaunchers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
   (
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ) => Promise<StardewOwnedAiClientStageDResult>
 >();
 const testBridgeConnectionConsumers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
   <T extends Readonly<{ close(): void | Promise<void> }>>(
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ) => Promise<T>
 >();
-const testStageCLaunchers = new WeakMap<
+const testStagedPlayerHostLaunchers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
   (
-    owner: StardewOwnedPlayerHostPhaseAOwner,
+    owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ) => Promise<StardewOwnedPlayerHostStageCResult>
 >();
@@ -132,11 +132,11 @@ function registerTestingComposition(
   testingComposition: StardewPrivateBootstrapTestingComposition,
 ): StardewPrivateBootstrapTestingComposition {
   const base = testingComposition.composition;
-  const reserveOwnedPlayerHostPhaseA = base.reserveOwnedPlayerHostPhaseA.bind(base);
+  const reserveOwnedPlayerHostBootstrap = base.reserveOwnedPlayerHostBootstrap.bind(base);
   const composition: PublicStardewPrivateBootstrapComposition = Object.freeze({
     ...base,
-    async reserveOwnedPlayerHostPhaseA(...args) {
-      const owner = await reserveOwnedPlayerHostPhaseA(...args);
+    async reserveOwnedPlayerHostBootstrap(...args) {
+      const owner = await reserveOwnedPlayerHostBootstrap(...args);
       testOwnerViews.set(owner, Object.freeze({
         composition,
         bind: testingComposition.bindOwnedPlayerHostPhaseAOwner,
@@ -145,11 +145,11 @@ function registerTestingComposition(
     },
   });
   testOwnerBinders.set(composition, testingComposition.bindOwnedPlayerHostPhaseAOwner);
-  testOwnedPhaseBConsumers.set(composition, testingComposition.consumeStagedOwnedPlayerHostPhaseB);
+  testOwnedPlayerHostProfileConsumers.set(composition, testingComposition.consumeStagedOwnedPlayerHostProfile);
   testAiClientMaterializers.set(composition, testingComposition.materializeAiClientProfileAfterManifestAdmission);
-  testStageDLaunchers.set(composition, testingComposition.launchOwnedAiClientStageD);
+  testMaterializedAiClientLaunchers.set(composition, testingComposition.launchMaterializedAiClient);
   testBridgeConnectionConsumers.set(composition, testingComposition.consumeOwnedFarmhandBridgeConnection);
-  testStageCLaunchers.set(composition, testingComposition.launchOwnedPlayerHostStageC);
+  testStagedPlayerHostLaunchers.set(composition, testingComposition.launchStagedPlayerHost);
   const registered = Object.freeze({ ...testingComposition, composition });
   testOwnerTransitionFactories.set(registered, testingComposition.createOwnerTransitionsForTesting);
   return registered;
@@ -186,14 +186,14 @@ export function createOwnerTransitionsForTesting(
 }
 
 export function bindStardewPrivateBootstrapOwnerTestSupport(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   composition?: PublicStardewPrivateBootstrapComposition,
 ): StardewOwnedPlayerHostPhaseATestView {
   const registration = testOwnerViews.get(owner);
   if (registration === undefined ||
       (composition !== undefined && registration.composition !== composition) ||
       (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
-    throw new Error("stardew_owned_phase_a_owner_not_registered");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   return registration.bind(owner);
 }
@@ -206,18 +206,18 @@ export function bindStardewPrivateBootstrapOwnerTestSupport(
  * changes. On the matching composition the staged profile is consumed exactly
  * once and the staged marker is permanently drained.
  */
-export function consumeStagedOwnedPlayerHostPhaseBForTesting(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+export function consumeStagedOwnedPlayerHostProfileForTesting(
+  owner: StardewOwnedPlayerHostBootstrap,
   composition?: PublicStardewPrivateBootstrapComposition,
 ): void {
   const registration = testOwnerViews.get(owner);
   if (registration === undefined ||
       (composition !== undefined && registration.composition !== composition) ||
       (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
-    throw new Error("stardew_owned_phase_a_owner_not_registered");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
-  const consume = testOwnedPhaseBConsumers.get(registration.composition);
-  if (consume === undefined) throw new Error("stardew_owned_phase_a_owner_not_registered");
+  const consume = testOwnedPlayerHostProfileConsumers.get(registration.composition);
+  if (consume === undefined) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   consume(owner);
 }
 
@@ -227,7 +227,7 @@ export function consumeStagedOwnedPlayerHostPhaseBForTesting(
  * must own the bind before the private materializer is reached.
  */
 export const materializeAiClientProfileAfterManifestAdmissionForTesting = async (
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   admission: StardewManifestAdmissionForTesting,
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<void> => {
@@ -238,12 +238,12 @@ export const materializeAiClientProfileAfterManifestAdmissionForTesting = async 
     throw new Error("stardew_ai_client_profile_materialization_not_admissible");
   }
   const materialize = testAiClientMaterializers.get(registration.composition);
-  if (materialize === undefined) throw new Error("stardew_owned_phase_a_owner_not_registered");
+  if (materialize === undefined) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   await materialize(owner, admission);
 };
 
-export async function launchOwnedAiClientStageDForTesting(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+export async function launchMaterializedAiClientForTesting(
+  owner: StardewOwnedPlayerHostBootstrap,
   installation: AdmittedStardewInstallation,
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<StardewOwnedAiClientStageDResult> {
@@ -251,15 +251,15 @@ export async function launchOwnedAiClientStageDForTesting(
   if (registration === undefined ||
       (composition !== undefined && registration.composition !== composition) ||
       (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
-    throw new Error("stardew_owned_phase_a_owner_not_registered");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
-  const launch = testStageDLaunchers.get(registration.composition);
-  if (launch === undefined) throw new Error("stardew_owned_phase_a_owner_not_registered");
+  const launch = testMaterializedAiClientLaunchers.get(registration.composition);
+  if (launch === undefined) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   return launch(owner, installation);
 }
 
 export async function consumeOwnedFarmhandBridgeConnectionForTesting<T extends Readonly<{ close(): void | Promise<void> }>>(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+  owner: StardewOwnedPlayerHostBootstrap,
   callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<T> {
@@ -267,15 +267,15 @@ export async function consumeOwnedFarmhandBridgeConnectionForTesting<T extends R
   if (registration === undefined ||
       (composition !== undefined && registration.composition !== composition) ||
       (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
-    throw new Error("stardew_owned_phase_a_owner_not_registered");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   const consume = testBridgeConnectionConsumers.get(registration.composition);
-  if (consume === undefined) throw new Error("stardew_owned_phase_a_owner_not_registered");
+  if (consume === undefined) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   return consume(owner, callback);
 }
 
-export async function launchOwnedPlayerHostStageCForTesting(
-  owner: StardewOwnedPlayerHostPhaseAOwner,
+export async function launchStagedPlayerHostForTesting(
+  owner: StardewOwnedPlayerHostBootstrap,
   installation: AdmittedStardewInstallation,
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<StardewOwnedPlayerHostStageCResult> {
@@ -283,9 +283,9 @@ export async function launchOwnedPlayerHostStageCForTesting(
   if (registration === undefined ||
       (composition !== undefined && registration.composition !== composition) ||
       (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
-    throw new Error("stardew_owned_phase_a_owner_not_registered");
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
-  const launch = testStageCLaunchers.get(registration.composition);
-  if (launch === undefined) throw new Error("stardew_owned_phase_a_owner_not_registered");
+  const launch = testStagedPlayerHostLaunchers.get(registration.composition);
+  if (launch === undefined) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   return launch(owner, installation);
 }

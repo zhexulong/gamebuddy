@@ -176,17 +176,17 @@ function service(recorder: {
     async readDraft() {
       recorder.draftReads += 1;
       if (recorder.draftError !== undefined) throw recorder.draftError;
-      return { apiVersion: 1, revision: state.draft.revision, text: state.draft.text };
+      return { apiVersion: 1 as const, revision: state.draft.revision, text: state.draft.text };
     },
     async saveDraft(command) {
       recorder.draftSaves += 1;
       if (recorder.draftError !== undefined) throw recorder.draftError;
-      return { apiVersion: 1, revision: command.expectedRevision + 1, text: command.text };
+      return { apiVersion: 1 as const, revision: command.expectedRevision + 1, text: command.text };
     },
     async discardDraft(command) {
       recorder.draftDiscards += 1;
       if (recorder.draftError !== undefined) throw recorder.draftError;
-      return { apiVersion: 1, revision: command.expectedRevision + 1, text: null };
+      return { apiVersion: 1 as const, revision: command.expectedRevision + 1, text: null };
     },
     async listChats(query) {
       recorder.lists += 1;

@@ -11,6 +11,9 @@ internal sealed class WindowsRoleLauncher
     private const uint ExtendedStartupInfoPresent = 0x00080000;
     private const int ProcThreadAttributeJobList = 0x0002000D;
     private const uint ProcThreadAttributeInput = 1;
+    private const uint WaitObject0 = 0;
+    private const uint WaitTimeout = 0x00000102;
+    private const uint RoleAbortWaitMilliseconds = 30_000;
 
     internal static void ValidateAbi()
     {
@@ -109,6 +112,7 @@ internal sealed class WindowsRoleLauncher
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CreateProcessW(string applicationName, System.Text.StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string? currentDirectory, ref STARTUPINFOEX startupInfo, out PROCESS_INFORMATION processInformation);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint ResumeThread(SafeKernelHandle thread);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(SafeKernelHandle process, uint code);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(SafeKernelHandle handle, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool IsProcessInJob(SafeKernelHandle process, IntPtr job, out bool result);
     private static bool IsProcessInJob(SafeKernelHandle process, IntPtr job) => IsProcessInJob(process, job, out var result) && result;
 
@@ -120,7 +124,15 @@ internal sealed class WindowsRoleLauncher
         internal SafeKernelHandle Process { get; }
         internal SafeKernelHandle Thread { get; }
         internal LaunchedRole(SafeKernelHandle process, SafeKernelHandle thread) { Process = process; Thread = thread; }
-        internal void Abort() { if (!Process.IsInvalid) TerminateProcess(Process, 1); Dispose(); }
+        internal void Abort()
+        {
+            if (Process.IsInvalid) throw new InvalidOperationException("windows_stardew_bootstrap_guardian_role_abort_process_invalid");
+            if (!TerminateProcess(Process, 1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_role_abort_terminate_failed");
+            var wait = WaitForSingleObject(Process, RoleAbortWaitMilliseconds);
+            if (wait == WaitTimeout) throw new TimeoutException("windows_stardew_bootstrap_guardian_role_abort_timeout");
+            if (wait != WaitObject0) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_role_abort_wait_failed");
+            Dispose();
+        }
         public void Dispose() { Thread.Dispose(); Process.Dispose(); }
     }
     internal sealed class SafeKernelHandle : SafeHandleZeroOrMinusOneIsInvalid { internal static SafeKernelHandle Invalid => new(IntPtr.Zero, false); internal SafeKernelHandle() : base(true) { } internal SafeKernelHandle(IntPtr value, bool owns) : base(owns) => SetHandle(value); protected override bool ReleaseHandle() => CloseHandle(handle); [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle); }

@@ -59,15 +59,23 @@ internal static class Program
             var layout = CurrentUserRootLayout.DeriveForCurrentUser();
             await using var selection = InstalledGenerationSelection.Acquire(layout.ProgramRoot);
             await using var runtime = new InstalledHostRuntimeAdmission().Admit(selection);
-            await using var image = await new InstalledGenerationAdmission().AdmitGuardianAsync(selection, cancellationToken).ConfigureAwait(false);
+            await using var image = await new InstalledGenerationAdmission(layout).AdmitGuardianAsync(selection, cancellationToken).ConfigureAwait(false);
             await using var runtimeSupervisor = new RuntimeSupervisor();
             await using var guardianSupervisor = new GuardianSupervisor();
-            await using var host = await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken,
-                recoveryCancellationToken => guardianSupervisor.StartRecoveryAsync(image, recoveryCancellationToken)).ConfigureAwait(false);
-            await using var guardian = await guardianSupervisor.StartResidentAsync(image, cancellationToken).ConfigureAwait(false);
-            await host.AttachResidentGuardianAsync(guardian, cancellationToken).ConfigureAwait(false);
-            _ = await guardian.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-            return DesktopLaunchResult.GuardianStarted;
+            await using var host = await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken).ConfigureAwait(false);
+            GuardianSupervisorLease? resident = null;
+            try
+            {
+                resident = await guardianSupervisor.StartResidentAsync(image, cancellationToken).ConfigureAwait(false);
+                await host.AttachResidentGuardianAsync(resident, cancellationToken).ConfigureAwait(false);
+                resident = null;
+            }
+            finally
+            {
+                if (resident is not null) await resident.DisposeAsync().ConfigureAwait(false);
+            }
+            _ = await host.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            return DesktopLaunchResult.Unavailable;
         }
         catch (GuardianLaunchUnavailableException) { return DesktopLaunchResult.Unavailable; }
         catch (RootRegistrationUnavailableException) { return DesktopLaunchResult.Unavailable; }

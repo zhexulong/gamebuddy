@@ -19,6 +19,10 @@ public sealed class GuardianBrokerTests
         Assert.Contains("ai_contained", source, StringComparison.Ordinal);
         Assert.Contains("ReleaseAndVerifyExitAsync", source, StringComparison.Ordinal);
         Assert.Contains("GetNamedPipeClientProcessId", source, StringComparison.Ordinal);
+        Assert.Contains("VerifySameCurrentUserSid(child);", source, StringComparison.Ordinal);
+        Assert.Contains("OpenProcessToken(child, WindowsNative.TokenQuery", source, StringComparison.Ordinal);
+        Assert.Contains("WindowsNative.EqualSid(currentSid, childSid)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("OpenProcess(WindowsNative.ProcessQueryLimitedInformation", source, StringComparison.Ordinal);
         Assert.Contains("PipeOptions.CurrentUserOnly", source, StringComparison.Ordinal);
         Assert.DoesNotContain("sessionToken", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Process.Start", source, StringComparison.Ordinal);
@@ -62,10 +66,31 @@ public sealed class GuardianBrokerTests
         Assert.Contains("privateFrame, deadline", source, StringComparison.Ordinal);
         Assert.Contains("BindCommandDeadline(parsed, cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("parsed.ThrowIfExpired(commandCancellation)", source, StringComparison.Ordinal);
-        Assert.Contains("var result = await guardian!.RelayResidentAsync", source, StringComparison.Ordinal);
+        Assert.Contains("var relay = guardian!.RelayResidentAsync", source, StringComparison.Ordinal);
+        Assert.Contains("WatchForHostPipeReadAsync", source, StringComparison.Ordinal);
+        Assert.Contains("byte? queuedCommandFirstByte", source, StringComparison.Ordinal);
+        Assert.Contains("ReadFrameAsync(cancellationToken, queuedCommandFirstByte)", source, StringComparison.Ordinal);
+        Assert.Contains("if (firstByte is null)", source, StringComparison.Ordinal);
+        Assert.Contains("await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None)", source, StringComparison.Ordinal);
+        Assert.Contains("if (sessionClosing.IsCancellationRequested) throw new GuardianLaunchUnavailableException();", source, StringComparison.Ordinal);
         Assert.Contains("parsed.ThrowIfExpired(commandCancellation);\n                AdvanceTransition(parsed);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("deadlineUnixMs =", source, StringComparison.Ordinal);
         Assert.DoesNotContain("sessionToken", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Broker_source_arbitrates_queued_command_bytes_against_eof_before_acknowledgement()
+    {
+        var source = File.ReadAllText(Source("DesktopHostBootstrapBroker.cs"));
+        var relay = source.IndexOf("var relay = guardian!.RelayResidentAsync", StringComparison.Ordinal);
+        var pipeRead = source.IndexOf("var pipeRead = WatchForHostPipeReadAsync", relay, StringComparison.Ordinal);
+        var eof = source.IndexOf("if (firstByte is null)", pipeRead, StringComparison.Ordinal);
+        var cleanup = source.IndexOf("await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None)", eof, StringComparison.Ordinal);
+        var acknowledgement = source.IndexOf("await WriteAcknowledgementAsync", cleanup, StringComparison.Ordinal);
+
+        Assert.True(relay >= 0 && pipeRead > relay && eof > pipeRead && cleanup > eof && acknowledgement > cleanup);
+        Assert.Contains("queuedCommandFirstByte = firstByte;", source, StringComparison.Ordinal);
+        Assert.Contains("ReadFrameAsync(cancellationToken, queuedCommandFirstByte)", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -83,6 +108,8 @@ public sealed class GuardianBrokerTests
         Assert.Contains("command.ThrowIfExpired(commandCancellation);\n            if (await ReadPublicResultAsync", source, StringComparison.Ordinal);
         Assert.Contains("BindDeadline(cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("await CloseControlAsync(CancellationToken.None)", source, StringComparison.Ordinal);
+        Assert.Contains("CloseControlAndWaitForExitAsync", source, StringComparison.Ordinal);
+        Assert.Contains("WaitForExitAsync(cancellationToken, 30_000)", source, StringComparison.Ordinal);
         Assert.Contains("InjectArmToken", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Console.", source, StringComparison.Ordinal);
     }

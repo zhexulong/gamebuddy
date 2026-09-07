@@ -26,6 +26,15 @@ const readPackageManifest = async () => JSON.parse(await readFile(packageManifes
 const readWorkspaceLockfile = async () => readFile(lockfilePath, "utf8");
 const opaqueStagingLeaf = () => randomBytes(16).toString("hex");
 const nodeDefensePolicy = Object.freeze({ inspect: async () => {} });
+const validInspectorAdapter = Object.freeze({
+  createBuildWindowsReparseInspector: async () => Object.freeze({}),
+  assertNoWindowsReparse: async () => {},
+});
+const validInspectorDescriptor = Object.freeze({
+  schemaVersion: 1,
+  kind: "gamebuddy.windows_reparse_inspector.v1",
+  adapter: validInspectorAdapter,
+});
 
 function runViteBuild(outputDirectory, cwd = packageRoot) {
   return new Promise((resolveRun, rejectRun) => {
@@ -81,19 +90,18 @@ test("Dialogue Web runtime boundary keeps the Vite toolchain build-only", async 
   assert.match(devDependencySection, /      vite:/);
 });
 
-test("Windows Vite build succeeds with the exact emitted adapter and fixed helper pair", async () => {
+test("direct Vite production build fails closed without a Host-generated inspector descriptor", async () => {
   const privateOutput = resolve(privateStagingParent, opaqueStagingLeaf());
   try {
     await mkdir(privateStagingParent, { recursive: true });
     await mkdir(privateOutput);
     const result = await runViteBuild(privateOutput, resolve(packageRoot, ".."));
-    assert.equal(result.code, 0, result.output);
-    await verifyProductionArtifactManifest(privateOutput);
+    assert.notEqual(result.code, 0, result.output);
+    assert.match(result.output, /windows_reparse_inspection_unavailable/);
   } finally {
     await rm(privateOutput, { recursive: true, force: true });
   }
 });
-
 test("private Vite output rejects roots outside its browser-owned staging parent", async () => {
   const externalParent = await mkdtemp(join(tmpdir(), "gamebuddy-browser-build-invalid-"));
   const externalLeaf = join(externalParent, opaqueStagingLeaf());
@@ -160,19 +168,23 @@ async function createArtifactFixture(name) {
   return artifactRoot;
 }
 
-test("Windows inspection policy mints one opaque capability and inspects every manifest traversal and read location", async () => {
+test("Windows inspection policy accepts an explicit trusted adapter descriptor and inspects every manifest traversal and read location", async () => {
   const artifactRoot = await createArtifactFixture("artifact-boundary-inspection-coverage");
   const calls = [];
   let constructions = 0;
   const capability = Object.freeze({});
   try {
-    const policy = await __testOnly.createWindowsReparsePolicyForTest(async () => ({
-      async createBuildWindowsReparseInspector() { constructions += 1; return capability; },
-      async assertNoWindowsReparse(receivedCapability, path) {
-        assert.strictEqual(receivedCapability, capability, "every inspection must receive the minted opaque capability");
-        calls.push(path);
+    const policy = await __testOnly.createWindowsReparsePolicyForTest({
+      schemaVersion: 1,
+      kind: "gamebuddy.windows_reparse_inspector.v1",
+      adapter: {
+        async createBuildWindowsReparseInspector() { constructions += 1; return capability; },
+        async assertNoWindowsReparse(receivedCapability, path) {
+          assert.strictEqual(receivedCapability, capability, "every inspection must receive the minted opaque capability");
+          calls.push(path);
+        },
       },
-    }));
+    });
     assert.equal(constructions, 1, "the adapter must mint exactly one capability per artifact operation");
     await verifyProductionArtifactManifest(artifactRoot, policy);
     const required = [
@@ -189,16 +201,37 @@ test("Windows inspection policy mints one opaque capability and inspects every m
   }
 });
 
-test("Windows inspection policy fails closed when the shared adapter is unavailable or invalid", async () => {
-  for (const adapter of [async () => { throw new Error("missing"); }, async () => ({})]) {
-    await assert.rejects(__testOnly.createWindowsReparsePolicyForTest(adapter), /windows_reparse_inspection_unavailable/);
+test("Windows inspection policy fails closed for missing, malformed, or invalid explicit adapters without legacy fallback", async () => {
+  for (const descriptor of [
+    undefined,
+    { ...validInspectorDescriptor, unexpected: true },
+    { ...validInspectorDescriptor, adapter: "file:///foreign/adapter.js" },
+    { ...validInspectorDescriptor, adapter: {} },
+  ]) {
+    await assert.rejects(__testOnly.createWindowsReparsePolicyForTest(descriptor), /windows_reparse_inspection_unavailable/);
   }
+  const source = await readFile(new URL("../scripts/browser-artifact-manifest.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /\.dist-production-emitted|dist-test|fixedEmittedPolicyAdapter|adapterModuleUrl|import\s*\(/);
+  const inheritedPath = process.env.PATH;
+  process.env.PATH = "/hostile/path";
+  try {
+    const policy = await __testOnly.createWindowsReparsePolicyForTest(validInspectorDescriptor);
+    await policy.inspect("C:\\trusted\\artifact");
+  } finally {
+    if (inheritedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = inheritedPath;
+  }
+
   const artifactRoot = await createArtifactFixture("artifact-boundary-inspection-unavailable");
   try {
-    const policy = await __testOnly.createWindowsReparsePolicyForTest(async () => ({
-      createBuildWindowsReparseInspector: async () => Object.freeze({}),
-      assertNoWindowsReparse: async () => { throw new Error("invalid helper protocol"); },
-    }));
+    const policy = await __testOnly.createWindowsReparsePolicyForTest({
+      schemaVersion: 1,
+      kind: "gamebuddy.windows_reparse_inspector.v1",
+      adapter: {
+        createBuildWindowsReparseInspector: async () => Object.freeze({}),
+        assertNoWindowsReparse: async () => { throw new Error("invalid helper protocol"); },
+      },
+    });
     await assert.rejects(verifyProductionArtifactManifest(artifactRoot, policy), /invalid helper protocol/);
   } finally {
     await rm(artifactRoot, { recursive: true, force: true });

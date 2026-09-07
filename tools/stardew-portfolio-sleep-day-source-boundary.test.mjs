@@ -184,7 +184,7 @@ test("sleep/day Windows attribute queries use a bootstrap-validated PowerShell p
     "windowsAttributes implementation must exist",
   );
   assert.match(attributes, /await validatedWindowsPowerShellPath\(\)/);
-  assert.match(attributes, /exec\(powershellPath,/);
+  assert.match(attributes, /exec\(\s*powershellPath,/);
   assert.doesNotMatch(attributes, /path\.join\(systemRoot, "System32"/);
   assert.match(validated, /bootstrapNoLinkAncestors\(executable, reparseCode\)/);
   assert.match(validated, /GB_SLEEP_BOOTSTRAP_PATHS: JSON\.stringify\(ancestors\)/);

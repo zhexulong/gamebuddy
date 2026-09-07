@@ -70,6 +70,29 @@ public sealed class WorldMapProjectionTests
     }
 
     [Fact]
+    public void DuplicateLabelReferences_ResolveExactProducerBinding_AndBecomeStaleWithTheGeneration()
+    {
+        DerivedDestinationSet set = Set(Node.Root(
+            Leaf("Cabin", "cabin_west", "West"),
+            Leaf("Cabin", "cabin_east", "East")));
+        var store = new NavigationReferenceStore();
+
+        WorldMapProjectionResult result = new WorldMapProjection(store).ProjectRoot(set, Context);
+
+        WorldMapProjectionEntry west = result.Entries!.Single(entry => entry.ContextLabel == "West");
+        west.Destination!.Kind.Should().Be("ref");
+        west.Destination.Label.Should().BeNull();
+        west.Destination.Ref.Should().MatchRegex("^dr1_[A-Za-z0-9_-]{22}$");
+        store.TryResolveDestination(west.Destination, Context, out NavigationDestinationBinding? binding, out string reason)
+            .Should().BeTrue(reason);
+        binding.Should().Be(new NavigationDestinationBinding("stardew", "cabin_west", "generation_01", 1));
+
+        store.TryResolveDestination(west.Destination!, Context with { SourceGeneration = "generation_02" }, out _, out reason)
+            .Should().BeFalse();
+        reason.Should().Be("destination_ref_stale");
+    }
+
+    [Fact]
     public void UnresolvedLeaf_IsOmitted()
     {
         DerivedDestinationSet set = Set(Node.Root(

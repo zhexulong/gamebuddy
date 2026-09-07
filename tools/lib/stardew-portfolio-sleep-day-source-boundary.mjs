@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
-export const TARGET_VERSION = "1.6.15.24356";
+const TARGET_VERSION = "1.6.15.24356";
 export const TARGET_LENGTH = 6268416;
 export const TARGET_SHA256 = "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee";
 export const TOOL_VERSION = "ilspycmd: 9.1.0.7988";
@@ -278,7 +278,7 @@ export async function assertNoReparsePoint(
     identity: tuple(resolved, attributes) || fail(reparseCode, `Path identity is ambiguous: ${file}`),
   };
 }
-export async function assertNoReparseAncestors(file, options = {}) {
+async function assertNoReparseAncestors(file, options = {}) {
   let current = path.resolve(file),
     root = path.parse(current).root;
   const identities = [];
@@ -309,13 +309,13 @@ async function checkedRead(file, code, encoding) {
 export async function checkedReadFile(file, code, encoding) {
   return checkedRead(file, code, encoding);
 }
-export async function checkedMkdir(directory, code) {
+async function checkedMkdir(directory, code) {
   const parent = await checkedPath(path.dirname(directory), code);
   await mkdir(directory, { recursive: false, mode: 0o700 });
   await assertPathBoundary(parent, code);
   return checkedPath(directory, code);
 }
-export async function checkedMkdtemp(prefix, code) {
+async function checkedMkdtemp(prefix, code) {
   const parent = await checkedPath(path.dirname(prefix), code);
   const output = await mkdtemp(prefix);
   await assertPathBoundary(parent, code);
@@ -537,7 +537,7 @@ export async function targetAssembly(gamePath) {
 export async function disposeTarget(target) {
   if (target?.snapshotRoot) await checkedRemove(target.snapshotRoot, "snapshot_cleanup_failed");
 }
-export async function lockedTool() {
+async function lockedTool() {
   const launcherBoundary = await checkedPath(TOOL_PATH, "tool_missing"),
     launcher = await checkedRead(TOOL_PATH, "tool_missing");
   if (sha(launcher) !== TOOL_SHA256) fail("tool_hash_mismatch", "Locked ilspycmd hash mismatch.");
@@ -790,4 +790,3 @@ export function validate(model, state, payload) {
     anchorCount: ANCHORS.length,
   };
 }
-export { sha, digest };

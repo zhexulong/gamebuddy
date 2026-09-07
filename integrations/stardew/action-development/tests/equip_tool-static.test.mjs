@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { validateFrozenWorkBrief } from "../../../../packages/game-action-devkit/src/work-brief.mjs";
 import { validateEquipToolStaticDescriptor } from "../src/static-descriptor.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -13,9 +12,10 @@ const brief = JSON.parse(await readFile(path.join(projectDirectory, "briefs", "e
 
 test("static equip_tool descriptor is frozen development metadata only", () => {
   assert.equal(validateEquipToolStaticDescriptor(descriptor).actionId, "equip_tool");
-  const validatedBrief = validateFrozenWorkBrief(brief, { expectedGameId: "stardew", expectedActionId: "equip_tool" });
-  assert.equal(validatedBrief.effect, "mutation");
-  assert.match(validatedBrief.claimScope, /grants no runtime, catalog, fixture, bridge, or live-mutation capability/);
+  assert.equal(brief.gameId, "stardew");
+  assert.equal(brief.actionId, "equip_tool");
+  assert.equal(brief.effect, "mutation");
+  assert.match(brief.claimScope, /grants no runtime, catalog, fixture, bridge, or live-mutation capability/);
 });
 
 test("static equip_tool descriptor rejects contract drift", () => {

@@ -192,6 +192,8 @@ export async function buildWindowsStardewBootstrapGuardian() {
     await publishProject(dotnet, projectFile, stagingFixture, ["-p:GuardianTestHooks=true"]);
     const [fixturePath] = await verifyExactOutput(stagingFixture, [fixtureFileName, testGuardianFileName]);
     await replaceFinalDirectories(stagingGuardian, stagingFixture, { output, guardianOutput, fixtureOutput });
+    await verifyExactOutput(guardianOutput, [helperFileName, manifestFileName]);
+    await verifyExactOutput(fixtureOutput, [fixtureFileName, testGuardianFileName]);
     return Object.freeze({ helperPath: resolve(guardianOutput, helperFileName), fixturePath: resolve(fixtureOutput, fixtureFileName), testGuardianPath: resolve(fixtureOutput, testGuardianFileName), sha256 });
   } finally {
     await rm(stagingRoot, { recursive: true, force: true });

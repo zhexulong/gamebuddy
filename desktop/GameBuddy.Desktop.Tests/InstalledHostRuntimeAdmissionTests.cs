@@ -70,18 +70,20 @@ public sealed class InstalledHostRuntimeAdmissionTests
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 
-        new InstalledHostRuntimeAdmission().Admit(selection);
+        using var runtime = new InstalledHostRuntimeAdmission().Admit(selection);
         await using var image = await new InstalledGenerationAdmission(generation.ProgramRoot).AdmitGuardianAsync(selection, CancellationToken.None);
         Assert.Equal(generation.GenerationId, image.GenerationId);
     }
 
-    [Fact]
-    public async Task Admit_rejects_runtime_or_bootstrap_tamper()
+    [Theory]
+    [InlineData("runtime/node.exe")]
+    [InlineData("desktop-host-entry.internal.js")]
+    public async Task Admit_rejects_runtime_or_bootstrap_tamper(string admittedFile)
     {
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
-        var bootstrap = Path.Combine(generation.GenerationRoot, "desktop-runtime-bootstrap.internal.js");
-        await File.AppendAllTextAsync(bootstrap, "tamper");
+        await File.AppendAllTextAsync(Path.Combine(generation.GenerationRoot, admittedFile), "tamper");
         await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
+
         Assert.Throws<GuardianLaunchUnavailableException>(() => new InstalledHostRuntimeAdmission().Admit(selection));
     }
 

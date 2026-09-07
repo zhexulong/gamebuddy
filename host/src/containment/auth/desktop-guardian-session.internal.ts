@@ -1,12 +1,14 @@
-export {
-  productionPlayerHostProbe,
-  productionPlayerHostSpawn,
-  productionProbe,
-  productionSpawn,
-} from "../windows/stardew-process-implementations.js";
-export { createProductionStagingDependencies, type PrivateModProfileStagingDependencies } from "../../bootstrap/roots/stardew-private-mod-profile-staging.js";
 
-type Role = "player_host" | "ai_client";
+export type ContainmentRole = string;
+
+export type ContainmentCorrelation = Readonly<{
+  guardianInstanceId: string;
+  guardianEpoch: number;
+  attemptId: string;
+}>;
+
+export type ContainmentDeadline = Readonly<{ deadlineUnixMs: number }>;
+type ContainmentPrivateFrame = Readonly<{ privateFrame: Uint8Array }>;
 
 export type GuardianAck = Readonly<{
   operation: string;
@@ -18,12 +20,12 @@ export type GuardianAck = Readonly<{
   guardianInstanceId: string;
   guardianEpoch: number;
   attemptId: string;
-  role?: Role;
+  role?: ContainmentRole;
 }>;
 
 export type DesktopGuardianSession = Readonly<{
   arm(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; privateFrame: Uint8Array }>): Promise<GuardianAck>;
-  launch(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role: Role; privateFrame: Uint8Array }>): Promise<GuardianAck>;
-  contain(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role: Role }>): Promise<GuardianAck>;
+  launch(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role: ContainmentRole; privateFrame: Uint8Array }>): Promise<GuardianAck>;
+  contain(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role: ContainmentRole }>): Promise<GuardianAck>;
   close(): Promise<void>;
 }>;

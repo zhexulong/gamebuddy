@@ -177,7 +177,7 @@ export async function publishFixedReleaseProductionArtifact() {
   return acquireReleaseRuntimePublisher({ descriptor, fetchRelease: fetch }, async () => buildFixedReleaseProductionArtifact());
 }
 
-export async function withSyntheticVerifiedReleaseBundledRuntimeForTest({ descriptor, zipBytes, cleanupForTest, scratchRootForTest, afterAcquisitionForTest }, callback) {
+async function withSyntheticVerifiedReleaseBundledRuntimeStateForTest({ descriptor, zipBytes, cleanupForTest, scratchRootForTest, afterAcquisitionForTest }, callback) {
   if (typeof callback !== "function" || (scratchRootForTest !== undefined && typeof scratchRootForTest !== "function")
     || (afterAcquisitionForTest !== undefined && typeof afterAcquisitionForTest !== "function")) throw new Error("invalid_runtime_test_acquisition");
   const scratchRoot = scratchRootForTest ?? (async () => {
@@ -190,9 +190,23 @@ export async function withSyntheticVerifiedReleaseBundledRuntimeForTest({ descri
     cleanup: cleanupForTest ?? rm,
     scratchRoot,
     afterAcquisition: afterAcquisitionForTest,
-  }, async (state) => await callback(Object.freeze({
+  }, callback);
+}
+
+export async function withSyntheticVerifiedReleaseBundledRuntimeForTest(options, callback) {
+  return await withSyntheticVerifiedReleaseBundledRuntimeStateForTest(options, async (state) => await callback(Object.freeze({
     extractedRoot: state.extractedRoot,
     files: Object.freeze(state.files.map((entry) => Object.freeze({ ...entry }))),
     descriptor: state.descriptor,
   })));
+}
+
+/** Test-only fixed-release composition for disposable canonical generations. */
+export async function withSyntheticVerifiedReleaseBundledRuntimeFixedReleaseCompositionForTest(options, build) {
+  return await withSyntheticVerifiedReleaseBundledRuntimeStateForTest(options, async (state) => {
+    // This module-private marker is the test-only capability consumed by the
+    // counterpart publisher; no caller can supply a runtime object or marker.
+    state.testOnlyFixedReleaseComposition = true;
+    return await composeFixedReleaseRuntimeBuild(state, build);
+  });
 }

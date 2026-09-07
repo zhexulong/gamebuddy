@@ -257,7 +257,7 @@ function simulatedLockHelper(): ChildProcess {
 test("desktop session adapter relays only a Guardian-private deferred launch plan with exact acknowledgement", async () => {
   const fixture = await createDesktopSessionOwnerFixture();
   const calls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
-  const acknowledgement = (operation: string, role?: "player_host" | "ai_client"): GuardianAck => ({
+  const acknowledgement = (operation: string, role?: string): GuardianAck => ({
     operation,
     status: "accepted",
     bootstrapId: "bootstrap-1",
@@ -373,7 +373,7 @@ async function createDesktopSessionOwnerFixture() {
   const internal = createStardewPrivateBootstrapCompositionForTesting(dependencies);
   const composition = internal.composition;
   const claim = composition.broker.confirm({ playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000 }).consume("browser-1");
-  const phaseOwner = await composition.reserveOwnedPlayerHostPhaseA(root, claim, composition.playerHostProcessOwner.reservePlayerHostLaunch(), composition.aiClientProcessOwner.reserveAiClientLaunch());
+  const phaseOwner = await composition.reserveOwnedPlayerHostBootstrap(root, claim, composition.playerHostProcessOwner.reservePlayerHostLaunch(), composition.aiClientProcessOwner.reserveAiClientLaunch());
   return { phaseOwner };
 }
 
@@ -554,8 +554,8 @@ async function createGuardianOwnerFixture(input: Readonly<{ registration?: boole
   const composition = internal.composition;
   const claim = composition.broker.confirm({ playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000 }).consume("browser-1");
   const phaseOwner = input.registration
-    ? await internal.reserveOwnedPlayerHostPhaseAForActivation(root, claim)
-    : await composition.reserveOwnedPlayerHostPhaseA(root, claim, composition.playerHostProcessOwner.reservePlayerHostLaunch(), composition.aiClientProcessOwner.reserveAiClientLaunch());
+    ? await internal.reserveOwnedPlayerHostBootstrapForActivation(root, claim)
+    : await composition.reserveOwnedPlayerHostBootstrap(root, claim, composition.playerHostProcessOwner.reservePlayerHostLaunch(), composition.aiClientProcessOwner.reserveAiClientLaunch());
   const events: string[] = []; let releaseFailures = input.releaseFailures ?? 0; let classificationIndex = 0;
   const ownerPath = join(root, "stardew-private-bootstrap", "bootstrap-1", "owner.json");
   const readDurable = async () => JSON.parse(await readFile(ownerPath, "utf8")) as Record<string, unknown>;

@@ -37,6 +37,19 @@ test("published production Guardian contains no test-hook barrier surface", asyn
   }
 });
 
+test("failed role abort retains its root handle until bounded exit confirmation", async () => {
+  const source = await readFile(resolve(here, "WindowsRoleLauncher.cs"), "utf8");
+  const abortStart = source.indexOf("internal void Abort()");
+  const abort = source.slice(abortStart, source.indexOf("public void Dispose()", abortStart));
+  assert.ok(abortStart >= 0, "LaunchedRole.Abort is missing");
+  assert.match(source, /RoleAbortWaitMilliseconds\s*=\s*30_000/);
+  assert.match(abort, /if \(!TerminateProcess\(Process, 1\)\) throw new Win32Exception\(Marshal\.GetLastWin32Error\(\), "windows_stardew_bootstrap_guardian_role_abort_terminate_failed"\);/);
+  assert.match(abort, /WaitForSingleObject\(Process, RoleAbortWaitMilliseconds\)/);
+  assert.match(abort, /if \(wait == WaitTimeout\) throw new TimeoutException\("windows_stardew_bootstrap_guardian_role_abort_timeout"\);/);
+  assert.match(abort, /if \(wait != WaitObject0\) throw new Win32Exception\(Marshal\.GetLastWin32Error\(\), "windows_stardew_bootstrap_guardian_role_abort_wait_failed"\);/);
+  assert.match(abort, /Dispose\(\);\s*\}/);
+});
+
 test("production Guardian source has no post-create assignment, breakaway, or shell fallback", async () => {
   const files = ["Program.cs", "GuardianProtocol.cs", "WindowsJobOwner.cs", "WindowsRoleLauncher.cs", "GuardianPrivateLaunchIngress.cs", "GuardianRecoveryIngress.cs"];
   const source = (await Promise.all(files.map((name) => readFile(resolve(here, name), "utf8")))).join("\n");

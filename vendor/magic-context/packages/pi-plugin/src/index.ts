@@ -34,19 +34,6 @@ export {
     type GameBuddyPlayerMemoryCrudFacade,
 } from "./gamebuddy-player-memory-crud-facade";
 export {
-    clearPublishedGameBuddyStableContext,
-    GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION,
-    type GameBuddyStableContextBinding,
-    type GameBuddyStableContextMaterialization,
-    type GameBuddyStableContextSnapshot,
-    GameBuddyStableContextSource,
-    GameBuddyStableContextSourceError,
-    materializeGameBuddyStableContextSnapshot,
-    publishGameBuddyStableContextSnapshot,
-    readPublishedGameBuddyStableContext,
-    validateGameBuddyStableContextSnapshot,
-} from "./gamebuddy-stable-context-source";
-export {
     excludeMemorySource,
     isMemorySourceExcluded,
     type MemorySourceExclusionInput,

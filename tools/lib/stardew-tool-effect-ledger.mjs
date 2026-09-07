@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { methodBody } from "./stardew-source-semantic-kernel.mjs";
 
-export const TOOL_EFFECT_LEDGER_SCHEMA_VERSION = 1;
+const TOOL_EFFECT_LEDGER_SCHEMA_VERSION = 1;
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");

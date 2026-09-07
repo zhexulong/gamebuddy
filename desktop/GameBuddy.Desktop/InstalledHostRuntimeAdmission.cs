@@ -50,7 +50,7 @@ internal sealed class InstalledHostRuntimeAdmission
 {
     private const string AdmissionSchema = "host-runtime-admission/v1";
     private const string RuntimePath = "runtime/node.exe";
-    private const string BootstrapPath = "desktop-runtime-bootstrap.internal.js";
+    private const string BootstrapPath = "desktop-host-entry.internal.js";
     private const string RuntimeVersion = "v24.20.0";
     private const string RuntimePlatform = "win32";
     private const string RuntimeArch = "x64";

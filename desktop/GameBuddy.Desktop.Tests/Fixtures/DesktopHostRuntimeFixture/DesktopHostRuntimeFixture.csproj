@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>DesktopHostRuntimeFixture</AssemblyName>
+    <RootNamespace>GameBuddy.Desktop.Tests.Fixtures.DesktopHostRuntimeFixture</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.fixture" />
+  </ItemGroup>
+  <Target Name="VerifyFixtureSourceBoundary" BeforeTargets="CoreCompile">
+    <Exec Command="powershell -NoProfile -NonInteractive -Command &quot;$forbidden = ('Gua' + 'rdian'),('Star' + 'dew'),('bri' + 'dge'),('brow' + 'ser'),('pro' + 'vider'),('Process' + '.Start'),('child' + '_process'); $matches = Select-String -Path '$(MSBuildProjectFullPath)','$(MSBuildProjectDirectory)\Program.fixture' -Pattern $forbidden -SimpleMatch; if ($matches) { $matches | ForEach-Object { Write-Error $_ }; exit 1 }&quot;" />
+  </Target>
+</Project>

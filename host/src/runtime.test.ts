@@ -1262,9 +1262,9 @@ test("internal Historian fixture override can disable automatic authoring withou
   }
 });
 
-test("Tavern stable context is available only through the exact live chat Pi binding", async () => {
+test("public Chat runtime exposes no authored-context publication or capability API", async () => {
   const root = await mkdtemp(
-    join(tmpdir(), "gamebuddy-tavern-stable-context-"),
+    join(tmpdir(), "gamebuddy-tavern-authored-context-public-api-"),
   );
   const tavernIdentity = { ...identity, continuityId: "continuity_01" };
   const runtime = await createCompanionRuntime(
@@ -1281,47 +1281,10 @@ test("Tavern stable context is available only through the exact live chat Pi bin
     "chat",
   );
   try {
-    assert.equal(typeof runtime.publishTavernStableContext, "function");
-    const sessionId = runtime.sessionManager.getSessionId();
-    const content = "A quiet tavern premise.";
-    const hash = createHash("sha256").update(content, "utf8").digest("hex");
-    const body = {
-      version: "gamebuddy-stable-context-source/v1",
-      continuityId: tavernIdentity.continuityId,
-      sessionId,
-      surface: "tavern",
-      sources: [
-        {
-          sourceId: "scenario",
-          kind: "scenario",
-          revision: "1",
-          canonicalHash: hash,
-          content,
-          budgetTokens: 32,
-          totalOrderKey: "0001",
-          provenance: "runtime-test",
-        },
-      ],
-    };
-    const snapshot = {
-      ...body,
-      canonicalHash: createHash("sha256")
-        .update(canonicalStableJson(body), "utf8")
-        .digest("hex"),
-    };
-    await assert.doesNotReject(() =>
-      runtime.publishTavernStableContext!(snapshot),
-    );
-    // The SDK session id is the explicit binding; a mismatched snapshot fails before publication.
-    await assert.rejects(
-      () =>
-        runtime.publishTavernStableContext!({
-          ...snapshot,
-          sessionId: "other",
-        }),
-      /does not match active binding/,
-    );
-    await runtime.clearTavernStableContext?.();
+    assert.equal("publishTavernStableContext" in runtime, false);
+    assert.equal("clearTavernStableContext" in runtime, false);
+    assert.equal("prepareAuthoredContext" in runtime, false);
+    assert.equal("assertAuthoredContextInstall" in runtime, false);
   } finally {
     runtime.session.dispose();
   }
@@ -1352,7 +1315,7 @@ test("Game operational marker registration is Game-only and initialization clean
   ]);
   const registration = core.slice(
     core.indexOf("if (gameOperationalGate !== undefined)"),
-    core.indexOf("if (tavernStableContextSnapshot !== undefined)"),
+    core.indexOf("return {"),
   );
   assert.doesNotMatch(wrapper, /registerGameOperationalGateMarker|fixedTools/);
   assert.match(registration, /registerGameOperationalGateMarker/);

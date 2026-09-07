@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
     <EnableModDeploy>false</EnableModDeploy>
     <EnableModZip>false</EnableModZip>
     <GamePath Condition="'$(GamePath)' == '' and '$(GAMEBUDDY_STARDEW_GAME_PATH)' != ''">$(GAMEBUDDY_STARDEW_GAME_PATH)</GamePath>

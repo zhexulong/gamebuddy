@@ -3,10 +3,10 @@ import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export const PORTFOLIO_TOPOLOGY = "single_player_native_companion";
-export const PORTFOLIO_SAVE_PREFIX = "GameBuddyPortfolio";
-export const PORTFOLIO_LOCK_DIRECTORY = ".stardew-portfolio-profile.lock";
+const PORTFOLIO_SAVE_PREFIX = "GameBuddyPortfolio";
+const PORTFOLIO_LOCK_DIRECTORY = ".stardew-portfolio-profile.lock";
 
-export const PORTFOLIO_BUNDLE_FILES = Object.freeze([
+const PORTFOLIO_BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",
   "GameBuddy.Stardew.Core.dll",
   "manifest.json",

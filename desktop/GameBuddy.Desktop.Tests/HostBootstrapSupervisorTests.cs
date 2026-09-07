@@ -1,7 +1,56 @@
+using System.Text.Json;
+using GameBuddy.Desktop.Tests.Fixtures;
+using Xunit.Sdk;
+
 namespace GameBuddy.Desktop.Tests;
 
 public sealed class HostBootstrapSupervisorTests
 {
+    [Fact]
+    public async Task StartHostAsync_admits_and_bootstraps_the_exact_test_child_runtime()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        Assert.True(OperatingSystem.IsWindows());
+
+        await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
+        var registration = new CurrentUserRootRegistrationRecord(
+            CurrentUserRootRegistration.SchemaVersion,
+            generation.ProgramRoot,
+            Path.Combine(generation.LocalApplicationData, "GameBuddy", "data"),
+            Path.Combine(generation.LocalApplicationData, "GameBuddy", "operational"),
+            Path.Combine(generation.LocalApplicationData, "GameBuddy", "presentation"));
+        foreach (var path in new[] { registration.DataRoot, registration.OperationalRoot, registration.PresentationRoot }) Directory.CreateDirectory(path);
+        var layout = CurrentUserRootLayout.DeriveForTesting(registration, new LocalApplicationDataProvider(generation.LocalApplicationData));
+
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
+        await using var runtime = new InstalledHostRuntimeAdmission().Admit(selection);
+        await using var supervisor = new RuntimeSupervisor();
+        await using var lease = await supervisor.StartHostAsync(selection, runtime, layout, CancellationToken.None);
+
+        Assert.True(File.Exists(generation.ExactChildReportPath));
+        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(generation.ExactChildReportPath));
+        var frame = report.RootElement.GetProperty("frame");
+        Assert.Equal(new[] { "schema", "protocolVersion", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayout" }, frame.EnumerateObject().Select(property => property.Name));
+        Assert.Equal("gamebuddy-desktop-host-bootstrap/v1", frame.GetProperty("schema").GetString());
+        Assert.Equal(1, frame.GetProperty("protocolVersion").GetInt32());
+        Assert.Matches("^[a-f0-9]{64}$", frame.GetProperty("bootstrapId").GetString()!);
+        Assert.Equal(generation.GenerationId, frame.GetProperty("generation").GetString());
+        Assert.Equal(selection.InventoryDigest, frame.GetProperty("inventoryDigest").GetString());
+        Assert.Equal(selection.RuntimeAdmissionSha256, frame.GetProperty("runtimeAdmissionSha256").GetString());
+        var rootLayout = frame.GetProperty("rootLayout");
+        Assert.Equal(new[] { "schema", "programRoot", "dataRoot", "operationalRoot", "presentationRoot" }, rootLayout.EnumerateObject().Select(property => property.Name));
+        Assert.Equal("gamebuddy-windows-root-layout/v1", rootLayout.GetProperty("schema").GetString());
+        Assert.Equal(layout.ProgramRoot, rootLayout.GetProperty("programRoot").GetString());
+        Assert.Equal(layout.DataRoot, rootLayout.GetProperty("dataRoot").GetString());
+        Assert.Equal(layout.OperationalRoot, rootLayout.GetProperty("operationalRoot").GetString());
+        Assert.Equal(layout.PresentationRoot, rootLayout.GetProperty("presentationRoot").GetString());
+        Assert.Equal(NormalizeWindowsPath(generation.ExactChildRuntimePath), NormalizeWindowsPath(report.RootElement.GetProperty("executablePath").GetString()!));
+        Assert.True(new FileInfo(generation.ExactChildRuntimePath).Length < 33_554_432);
+
+        using var livenessTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lease.WaitForExitAsync(livenessTimeout.Token));
+    }
+
     [Fact]
     public void Supervisor_source_binds_only_the_admitted_runtime_and_fixed_bootstrap_entry_to_CreateProcess()
     {
@@ -17,14 +66,36 @@ public sealed class HostBootstrapSupervisorTests
     }
 
     [Fact]
-    public void Runtime_lease_source_exposes_only_the_guardian_lease_attach_seam()
+    public void Runtime_lease_owns_the_authenticated_broker_and_resident_guardian_containment()
     {
         var source = File.ReadAllText(SupervisorSource());
-        var leaseSource = source[source.IndexOf("internal sealed class RuntimeSupervisorLease", StringComparison.Ordinal)..];
 
-        Assert.Contains("AttachResidentGuardianAsync(GuardianSupervisorLease guardian", leaseSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("new GuardianSupervisor", leaseSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("StartResidentAsync", leaseSource, StringComparison.Ordinal);
+        Assert.Contains("DesktopHostBootstrapBroker.Create(bootstrapId, selection, layout)", source, StringComparison.Ordinal);
+        Assert.Contains("await broker.AuthenticateHostAsync(process, timeout.Token)", source, StringComparison.Ordinal);
+        Assert.Contains("new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker)", source, StringComparison.Ordinal);
+        Assert.Contains("internal async Task AttachResidentGuardianAsync(GuardianSupervisorLease lease", source, StringComparison.Ordinal);
+        Assert.Contains("await currentBroker.AttachResidentGuardianAsync(lease, cancellationToken)", source, StringComparison.Ordinal);
+        Assert.Contains("WindowsNative.WaitForSingleObject(child, 0) != WindowsNative.WaitTimeout", source, StringComparison.Ordinal);
+        Assert.Contains("await (Interlocked.Exchange(ref broker, null)?.DisposeAsync()", source, StringComparison.Ordinal);
+        Assert.Contains("await (Interlocked.Exchange(ref residentGuardian, null)?.DisposeAsync()", source, StringComparison.Ordinal);
+        Assert.Contains("if (exited) await CloseAsync(CancellationToken.None)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("new GuardianSupervisor", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("GuardianRecovery", source, StringComparison.Ordinal);
+        Assert.Contains("internal async Task<bool> WaitForExitAsync(CancellationToken cancellationToken)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Supervisor_source_creates_binds_and_authenticates_broker_before_acknowledgement_and_lock_transfer()
+    {
+        var source = File.ReadAllText(SupervisorSource());
+        var create = source.IndexOf("DesktopHostBootstrapBroker.Create(bootstrapId, selection, layout)", StringComparison.Ordinal);
+        var frame = source.IndexOf("var frame = BuildFrame(selection, layout, bootstrapId)", StringComparison.Ordinal);
+        var write = source.IndexOf("HostBootstrapPipeIo.WriteOneFrameAsync(parentStdinWriter, frame", StringComparison.Ordinal);
+        var authenticate = source.IndexOf("await broker.AuthenticateHostAsync(process, timeout.Token)", StringComparison.Ordinal);
+        var acknowledgement = source.IndexOf("var ack = await ReadOneAcknowledgementAsync", StringComparison.Ordinal);
+        var transfer = source.IndexOf("var locks = runtime.TransferLocks()", StringComparison.Ordinal);
+
+        Assert.True(create >= 0 && create < frame && frame < write && write < authenticate && authenticate < acknowledgement && acknowledgement < transfer);
     }
 
     [Fact]
@@ -116,7 +187,7 @@ public sealed class HostBootstrapSupervisorTests
     }
 
     [Fact]
-    public void Supervisor_source_terminates_waits_and_then_disposes_a_host_after_bootstrap_or_authentication_failure()
+    public void Supervisor_source_terminates_host_and_disposes_broker_after_authentication_or_acknowledgement_failure()
     {
         var source = File.ReadAllText(SupervisorSource());
         var authentication = source.IndexOf("await broker.AuthenticateHostAsync(process, timeout.Token)", StringComparison.Ordinal);
@@ -126,7 +197,8 @@ public sealed class HostBootstrapSupervisorTests
         var wait = source.IndexOf("WindowsNative.WaitForSingleObject(process, 30_000)", terminate, StringComparison.Ordinal);
         var dispose = source.IndexOf("process.Dispose()", wait, StringComparison.Ordinal);
 
-        Assert.True(authentication >= 0 && cleanup > authentication && launched > cleanup && terminate > launched && wait > terminate && dispose > wait);
+        var brokerDispose = source.IndexOf("if (!brokerTransferred && broker is not null) await broker.DisposeAsync()", dispose, StringComparison.Ordinal);
+        Assert.True(authentication >= 0 && cleanup > authentication && launched > cleanup && terminate > launched && wait > terminate && dispose > wait && brokerDispose > dispose);
     }
 
     [Fact]
@@ -149,6 +221,13 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Contains("AdmitFile(selection.GenerationRoot, RuntimePath, runtimeSha256)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("private const string RuntimeSha256", source, StringComparison.Ordinal);
     }
+
+    private sealed class LocalApplicationDataProvider(string path) : ILocalApplicationDataProvider
+    {
+        public string GetLocalApplicationDataPath() => path;
+    }
+
+    private static string NormalizeWindowsPath(string path) => Path.GetFullPath(path).TrimStart('\\', '?');
 
     private static string SupervisorSource() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "RuntimeSupervisor.cs"));
     private static string RuntimeAdmissionSource() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "InstalledHostRuntimeAdmission.cs"));

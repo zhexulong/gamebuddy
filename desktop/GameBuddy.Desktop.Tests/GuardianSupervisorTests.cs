@@ -63,7 +63,7 @@ public sealed class GuardianSupervisorTests
 
         Assert.Equal("allowed_environment=true", lines[1]);
         Assert.Equal("startup_stdin=stdin", lines[2]);
-        Assert.Equal("stdin_only=false", lines[3]);
+        Assert.Equal("stdin_only=true", lines[3]);
         Assert.DoesNotContain("LAUNCHER_SECRET_SENTINEL", lines[0], StringComparison.Ordinal);
         Assert.DoesNotContain("GAMEBUDDY_GUARDIAN_TEST", lines[0], StringComparison.Ordinal);
 
