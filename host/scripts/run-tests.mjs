@@ -138,7 +138,11 @@ export async function runTestBatches(paths, {
     if (remainingMs < 100) throw runnerError("test_suite_timeout", suite);
     const batchLabel = `${suite}:batch=${index + 1}/${batches.length}`;
     console.error(`host_test_suite_batch_start:suite=${batchLabel}:files=${batch.length}:paths=${batchFilesForLog(batch)}:remaining_ms=${remainingMs}`);
-    await run(batch, { timeoutMs: remainingMs, onHeartbeat: reportHeartbeat(batchLabel) });
+    for (const path of batch) {
+      const fileRemainingMs = deadlineMs - now();
+      if (fileRemainingMs < 100) throw runnerError("test_suite_timeout", suite);
+      await run([path], { timeoutMs: fileRemainingMs, onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relative(hostRoot, path).replaceAll("\\\\", "/")}`) });
+    }
   }
 }
 

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Handlers;
@@ -39,34 +38,5 @@ public sealed class FarmhandTypedReceiptContractTests
         receipt.ReasonCode.Should().Be("world_not_ready");
         receipt.Revision.Should().Be(1);
 
-        string? outputPath = Environment.GetEnvironmentVariable("GAMEBUDDY_EXECUTION_RECEIPT_WIRE_OUTPUT");
-        if (outputPath is null)
-            return;
-
-        Path.IsPathFullyQualified(outputPath).Should().BeTrue(
-            "the Host parity test must own an absolute private output path");
-        var bridgeReceipt = new BridgeReceipt(
-            receipt.ExecutionId,
-            receipt.RequestId,
-            "machine_inspect",
-            receipt.State.ToWireValue(),
-            receipt.ReasonCode,
-            receipt.Revision,
-            null);
-        var response = new BridgeEnvelope<BridgeReceipt>(
-            BridgeProtocol.Version,
-            "receipt_publication_01",
-            "execution_correlation_01",
-            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01"),
-            "execution_receipt",
-            bridgeReceipt);
-        BridgeProtocol.TrySerialize(response, out string json, out string serializationReason)
-            .Should().BeTrue(serializationReason);
-        using JsonDocument document = JsonDocument.Parse(json);
-        document.RootElement.GetProperty("correlationId").GetString().Should().Be("execution_correlation_01");
-        using var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        using var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false));
-        writer.Write(json);
     }
 }

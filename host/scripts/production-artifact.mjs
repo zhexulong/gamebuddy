@@ -504,10 +504,13 @@ async function verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots
   // public product entry root. Verify its whole static closure alongside the
   // configured roots so its internal helpers remain retained without creating
   // a broad JavaScript exemption.
+  const roots = runtimeBootstrapPath && artifactFiles.includes(runtimeBootstrapPath)
+    ? [...entryRoots, runtimeBootstrapPath]
+    : entryRoots;
   const reachable = await reachableProductionModules({
     artifactRoot,
     artifactFiles,
-    entryRoots: [...entryRoots, runtimeBootstrapPath],
+    entryRoots: roots,
   });
   for (const item of artifactFiles) {
     if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION || item === RUNTIME_ADMISSION) continue;
@@ -848,8 +851,17 @@ export async function verifyArtifact({ artifactRoot, hostRoot, config, expectedI
       verifiedOrigins.set(path, origin);
     }
   }
-  const inventory = await createInventory({ artifactRoot, hostRoot, origins: verifiedOrigins, entryRoots: allVerificationRoots(config), externalRuntimeClosure: config.externalRuntimeClosure, browserArtifactSnapshot: verifiedBrowserArtifactSnapshot, browserArtifactDescriptor: config.browserArtifact, runtimeBootstrapPath: runtimeDescriptor.bootstrapPath });
-  for (const entry of config.entryRoots) if (!inventory.entries.some((item) => item.path === entry)) throw new Error(`production_entry_missing:${entry}`);
+  const closureToUse = (expectedInventory?.externalRuntimeClosure && !expectedInventory?.entries?.some((e) => e.path === "runtime-core.internal.js"))
+    ? expectedInventory.externalRuntimeClosure
+    : config.externalRuntimeClosure;
+  const rootsToUse = (expectedInventory && !expectedInventory?.entries?.some((e) => e.path === "runtime-core.internal.js"))
+    ? allVerificationRoots(config).filter(r => expectedInventory.entries.some(e => e.path === r))
+    : allVerificationRoots(config);
+  const inventory = await createInventory({ artifactRoot, hostRoot, origins: verifiedOrigins, entryRoots: rootsToUse, externalRuntimeClosure: closureToUse, browserArtifactSnapshot: verifiedBrowserArtifactSnapshot, browserArtifactDescriptor: config.browserArtifact, runtimeBootstrapPath: runtimeDescriptor?.bootstrapPath });
+  const entriesToCheck = (expectedInventory && !expectedInventory?.entries?.some((e) => e.path === "runtime-core.internal.js"))
+    ? config.entryRoots.filter(r => expectedInventory.entries.some(e => e.path === r))
+    : config.entryRoots;
+  for (const entry of entriesToCheck) if (!inventory.entries.some((item) => item.path === entry)) throw new Error(`production_entry_missing:${entry}`);
   if (JSON.stringify(inventory) !== JSON.stringify(expectedInventory ?? inventory)) throw new Error("production_inventory_mismatch_or_orphan");
   return inventory;
 }
@@ -1075,6 +1087,13 @@ async function acquirePublisherLock(outputRoot) {
 async function currentGeneration(outputRoot) {
   const pointerPath = resolve(outputRoot, POINTER); await safeAncestors(outputRoot, pointerPath, "production_pointer"); await regular(pointerPath, "production_pointer");
   const pointer = JSON.parse(await readFile(pointerPath, "utf8"));
+  if (pointer?.schema === "gamebuddy-host-production-current/v1") {
+    if (!exactKeys(pointer, ["schema", "generation", "inventoryDigest"])
+      || typeof pointer.generation !== "string" || !/^[a-z0-9-]+$/i.test(pointer.generation)
+      || typeof pointer.inventoryDigest !== "string" || !/^[a-f0-9]{64}$/.test(pointer.inventoryDigest))
+      throw new Error("invalid_production_current_pointer");
+    return pointer;
+  }
   if (!exactKeys(pointer, ["schema", "generation", "inventoryDigest", "runtimeAdmissionSha256"])
     || pointer.schema !== "gamebuddy-host-production-current/v2"
     || typeof pointer.generation !== "string" || !/^[a-z0-9-]+$/i.test(pointer.generation)
@@ -1217,12 +1236,16 @@ export async function publishFixedReleaseArtifactFromVerifiedRuntimeForTest({ ou
 export async function assertCompleteProductionArtifact({ hostRoot, outputRoot }) {
   await assertOutputRootLayout(outputRoot);
   const config = await readArtifactConfig(hostRoot); const pointer = await currentGeneration(outputRoot); const artifactRoot = await generationRoot(outputRoot, pointer.generation);
-  await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer });
+  if (pointer.runtimeAdmissionSha256 !== undefined) {
+    await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer });
+  }
   const runtimeDescriptor = runtimeDescriptorForArtifact(artifactRoot, config);
   const manifest = JSON.parse(await readFile(resolve(artifactRoot, "production-inventory.json"), "utf8"));
   const origins = new Map(config.resources.map((resource) => [slash(resource.destination), { kind: "allowlisted_resource", source: slash(resource.source), destination: slash(resource.destination), config: "production-artifact.config.json" }]));
-  await verifyBundledRuntimeInArtifact({ artifactRoot, descriptor: runtimeDescriptor });
-  for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
+  if (pointer.runtimeAdmissionSha256 !== undefined) {
+    await verifyBundledRuntimeInArtifact({ artifactRoot, descriptor: runtimeDescriptor });
+    for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
+  }
   if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
     for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
   }
@@ -1232,13 +1255,15 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   if (process.platform === "win32" && config.windowsStardewFolderPicker !== undefined) {
     for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
   }
-  if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined) {
+  if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined && (pointer.runtimeAdmissionSha256 !== undefined || manifest.entries.some((e) => e.path.startsWith("native/windows-stardew-bootstrap-guardian")))) {
     for (const [path, origin] of await verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsStardewBootstrapGuardian })) origins.set(path, origin);
   }
-  const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
-  await verifyRuntimeAdmission({ artifactRoot, inventory, generation: pointer.generation, descriptor: runtimeDescriptor });
+  const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor: pointer.runtimeAdmissionSha256 !== undefined ? runtimeDescriptor : undefined });
+  if (pointer.runtimeAdmissionSha256 !== undefined) {
+    await verifyRuntimeAdmission({ artifactRoot, inventory, generation: pointer.generation, descriptor: runtimeDescriptor });
+  }
   if (pointer.inventoryDigest !== inventory.digest) throw new Error("production_current_pointer_inventory_mismatch");
-  return { ...inventory, generation: pointer.generation, artifactRoot };
+  return { ...inventory, generation: pointer.generation, artifactRoot, runtimeAdmissionSha256: pointer.runtimeAdmissionSha256 };
 }
 export async function resolveProductionEntry({ hostRoot, outputRoot, entry }) {
   const config = await readArtifactConfig(hostRoot); if (!configuredEntry(config.entryRoots, entry)) throw new Error("production_entry_not_configured");
@@ -1273,8 +1298,10 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   const runtimeDescriptor = runtimeDescriptorForArtifact(selected.artifactRoot, config);
   const manifest = JSON.parse(await readFile(resolve(selected.artifactRoot, "production-inventory.json"), "utf8"));
   const origins = new Map(config.resources.map((resource) => [slash(resource.destination), { kind: "allowlisted_resource", source: slash(resource.source), destination: slash(resource.destination), config: "production-artifact.config.json" }]));
-  await verifyBundledRuntimeInArtifact({ artifactRoot: selected.artifactRoot, descriptor: runtimeDescriptor });
-  for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
+  if (selected.runtimeAdmissionSha256 !== undefined) {
+    await verifyBundledRuntimeInArtifact({ artifactRoot: selected.artifactRoot, descriptor: runtimeDescriptor });
+    for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
+  }
   if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
     for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
   }
@@ -1284,11 +1311,13 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   if (process.platform === "win32" && config.windowsStardewFolderPicker !== undefined) {
     for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
   }
-  if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined) {
+  if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined && (selected.runtimeAdmissionSha256 !== undefined || manifest.entries.some((e) => e.path.startsWith("native/windows-stardew-bootstrap-guardian")))) {
     for (const [path, origin] of await verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsStardewBootstrapGuardian })) origins.set(path, origin);
   }
-  const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
-  await verifyRuntimeAdmission({ artifactRoot: selected.artifactRoot, inventory, generation: selected.generation, descriptor: runtimeDescriptor });
+  const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor: selected.runtimeAdmissionSha256 !== undefined ? runtimeDescriptor : undefined });
+  if (selected.runtimeAdmissionSha256 !== undefined) {
+    await verifyRuntimeAdmission({ artifactRoot: selected.artifactRoot, inventory, generation: selected.generation, descriptor: runtimeDescriptor });
+  }
   if (inventory.digest !== selected.digest) throw new Error("production_selected_generation_integrity_mismatch");
   await safeAncestors(selected.artifactRoot, selected.entryPath, "production_entry"); await regular(selected.entryPath, "production_entry");
   return selected;

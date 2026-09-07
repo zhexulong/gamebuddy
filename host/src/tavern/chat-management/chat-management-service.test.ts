@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
 import { composeTavernProfile } from "../browser-contract/index.js";
@@ -52,7 +51,7 @@ function forgedLease(): MountedChatRuntimeLease {
 }
 
 test("management service rejects forged structural leases, non-composed profiles and profiles without chat.rename", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-management-forged-"));
+  const root = await canonicalTestRoot("gamebuddy-management-forged-");
   try {
     const forged = forgedLease();
     assert.throws(
@@ -107,7 +106,7 @@ const mountPreamble = `
   const coordinator = await import(coordinatorUrl);
   const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = coordinator;
   const { createChatManagementService } = await import(serviceUrl);
-  const { createChatThreadStore } = await import(storeUrl);
+   const { createChatThreadStore, createProfileAwareChatThreadCreationCapability } = await import(storeUrl);
   const { identityKey } = await import(runtimeUrl);
   const { composeTavernProfile, TavernBrowserValidatorsV1 } = await import(contractUrl);
   const { createTavernManagementStateFacade } = await import(facadeUrl);
@@ -162,7 +161,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
 }
 
 async function mounted(body: string): Promise<Record<string, unknown>> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-management-service-"));
+  const root = await canonicalTestRoot("gamebuddy-management-service-");
   try {
     return await runMountedChild(body, root);
   } finally {
@@ -176,7 +175,9 @@ test("mounted management service lists durable metadata only and renames the exa
     const generation = lease.browserProjection.selectionGeneration;
     const list = await service.listChats({ apiVersion: 1, state: "active" });
     const listValue = list;
-    const second = await store().createThread({ chatThreadId: "thread_02", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_02", opening: "blank" });
+     const secondStore = store();
+     const secondCreation = createProfileAwareChatThreadCreationCapability(secondStore, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+     const second = await secondCreation.createExplicit({ chatThreadId: "thread_02", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_02", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), opening: "blank" });
     const two = await service.listChats({ apiVersion: 1 });
     const rename = await service.renameChatTitle({ apiVersion: 1, selectionGeneration: generation, chatHandle: handle, expectedManagementRevision: 1, title: "Renamed Farm Chat" });
     const readBack = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);

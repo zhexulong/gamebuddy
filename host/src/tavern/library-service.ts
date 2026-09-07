@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import type { IdentityProfileMetadata } from "../identity-profile.js";
 import { join } from "node:path";
 import { type TavernArtifactStore, TavernRevisionConflict } from "./artifact-store.js";
+import { createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
 import type {
   ChatThread,
   ChatThreadState,
@@ -25,6 +27,8 @@ import {
  * It persists inert Tavern metadata only: companion runtime provisioning,
  * IdentityProfile mutation, Magic Context, and Game operations stay outside it.
  */
+export type IdentityProfileMetadataReader = Readonly<{ readExact(): Promise<IdentityProfileMetadata> }>;
+
 export type TavernLibraryService = Readonly<{
   listCompanions(): Promise<readonly TavernCompanion[]>;
   createNewCompanion(input: NewCompanionRequest): Promise<TavernCompanion>;
@@ -60,7 +64,10 @@ export function createTavernLibraryService(
   paths: TavernPaths,
   store: TavernArtifactStore,
   threads: ChatThreadStore,
+  profileMetadataReader: IdentityProfileMetadataReader,
 ): TavernLibraryService {
+  const metadataReader = profileMetadataReader;
+  const threadCreation = createProfileAwareChatThreadCreationCapability(threads, metadataReader);
   const companionPath = join(paths.companionRoot, "companion.json");
   const personaPath = (personaId: string, revision: number) =>
     tavernRevisionPath(join(paths.playerRoot, "personas", personaId), revision);
@@ -175,7 +182,7 @@ export function createTavernLibraryService(
         ...(input.worldBookBinding === undefined ? {} : { worldBookBinding: input.worldBookBinding }),
         opening,
       };
-      return threads.createThread(request);
+      return threadCreation.createExplicit(request);
     },
 
     async openChat(chatThreadId, chatSurfaceSessionId): Promise<ChatThreadState> {

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { TavernArtifactStore } from "../artifact-store.js";
 import { validateTavernArtifact } from "../types.js";
 import { createGreetingManagementService } from "./greeting-management.js";
@@ -58,7 +58,7 @@ test("GreetingSet labels are backward-compatible and strictly inert text", () =>
 });
 
 test("greeting management creates an exact authored opening set and reads back its revision", async () => {
-  const root = await mkdtemp(join(tmpdir(), "greeting-management-"));
+  const root = await canonicalTestRoot("greeting-management-");
   try {
     const service = createGreetingManagementService(new TavernArtifactStore(root), root);
     const request = {
@@ -81,7 +81,7 @@ test("greeting management creates an exact authored opening set and reads back i
 });
 
 test("greeting management fails closed for corrupt canonical revisions", async () => {
-  const root = await mkdtemp(join(tmpdir(), "greeting-management-"));
+  const root = await canonicalTestRoot("greeting-management-");
   try {
     const store = new TavernArtifactStore(root);
     const service = createGreetingManagementService(store, root);
@@ -96,7 +96,7 @@ test("greeting management fails closed for corrupt canonical revisions", async (
 });
 
 test("greeting management rejects nonnumeric revision-directory entries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "greeting-management-"));
+  const root = await canonicalTestRoot("greeting-management-");
   try {
     const service = createGreetingManagementService(new TavernArtifactStore(root), root);
     await service.create({ label: "One", variants: [{ label: "First", text: "Hello" }] });
@@ -109,7 +109,7 @@ test("greeting management rejects nonnumeric revision-directory entries", async 
 });
 
 test("greeting management ignores a legacy singleton when no canonical revision exists", async () => {
-  const root = await mkdtemp(join(tmpdir(), "greeting-management-"));
+  const root = await canonicalTestRoot("greeting-management-");
   try {
     await (await import("node:fs/promises")).mkdir(join(resolve(root), "greeting-management"), { recursive: true });
     await writeFile(
@@ -124,7 +124,7 @@ test("greeting management ignores a legacy singleton when no canonical revision 
 });
 
 test("greeting management rejects unsafe or extensible input and duplicate creation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "greeting-management-"));
+  const root = await canonicalTestRoot("greeting-management-");
   try {
     const service = createGreetingManagementService(new TavernArtifactStore(root), root);
     await assert.rejects(

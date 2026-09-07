@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
@@ -12,6 +13,12 @@ import { serializeRecord } from "./test-artifact-lock.mjs";
 
 async function temporaryDirectory() {
   return await mkdtemp(join(hostRoot, ".test-artifact-lock-repair-test-"));
+}
+
+function canonicalOutsideFixtureParent({ platform = process.platform, localAppData = process.env.LOCALAPPDATA, temporaryDirectory = tmpdir() } = {}) {
+  const parent = platform === "win32" ? localAppData : temporaryDirectory;
+  if (typeof parent !== "string" || parent.length === 0) throw new Error("test_local_app_data_unavailable");
+  return parent;
 }
 
 function record(overrides = {}) {
@@ -104,8 +111,20 @@ test("replacement installed during the move is preserved and never overwritten",
   await rm(directory, { recursive: true, force: true });
 });
 
+test("selects LOCALAPPDATA for Windows outside fixtures", () => {
+  assert.equal(
+    canonicalOutsideFixtureParent({ platform: "win32", localAppData: "C:\\Users\\Test\\AppData\\Local", temporaryDirectory: "/tmp" }),
+    "C:\\Users\\Test\\AppData\\Local",
+  );
+  assert.equal(
+    canonicalOutsideFixtureParent({ platform: "linux", localAppData: "C:\\Users\\Test\\AppData\\Local", temporaryDirectory: "/tmp" }),
+    "/tmp",
+  );
+  assert.throws(() => canonicalOutsideFixtureParent({ platform: "win32", localAppData: "", temporaryDirectory: "/tmp" }), /test_local_app_data_unavailable/);
+});
+
 test("repair refuses paths outside host root", async () => {
-  const directory = await mkdtemp(join("/tmp", "gamebuddy-artifact-lock-outside-"));
+  const directory = await mkdtemp(join(canonicalOutsideFixtureParent(), "gamebuddy-artifact-lock-outside-"));
   const path = resolve(directory, "lock");
   await writeFile(path, "");
   await assert.rejects(

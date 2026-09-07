@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { canonicalHash, canonicalJson, TavernArtifactStore, TavernRevisionConflict } from "./artifact-store.js";
 import { type TavernArtifact, validateTavernArtifact } from "./types.js";
 
 test("artifact store canonicalizes, atomically read-backs, and rejects revision conflicts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-store-"));
+  const root = await canonicalTestRoot("tavern-store-");
   try {
     const store = new TavernArtifactStore(root);
     const path = join(root, "tavern", "v1", "players", "p", "personas", "a.json");
@@ -26,8 +26,8 @@ test("artifact store canonicalizes, atomically read-backs, and rejects revision 
   }
 });
 test("artifact writes reject a symlinked parent and do not create through it", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-store-symlink-"));
-  const outside = await mkdtemp(join(tmpdir(), "tavern-store-outside-"));
+  const root = await canonicalTestRoot("tavern-store-symlink-");
+  const outside = await canonicalTestRoot("tavern-store-outside-");
   try {
     const real = join(root, "real");
     const linked = join(root, "tavern");
@@ -63,7 +63,7 @@ test("artifact writes reject a symlinked parent and do not create through it", a
 });
 
 test("artifact writes reject a parent replaced between setup and lock boundary", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-store-replaced-"));
+  const root = await canonicalTestRoot("tavern-store-replaced-");
   try {
     const parent = join(root, "tavern");
     const moved = join(root, "moved");
@@ -98,7 +98,7 @@ test("artifact writes reject a parent replaced between setup and lock boundary",
 });
 
 test("artifact reads reject an envelope with unknown keys", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-store-envelope-schema-"));
+  const root = await canonicalTestRoot("tavern-store-envelope-schema-");
   try {
     const store = new TavernArtifactStore(root);
     const path = join(root, "tavern", "v1", "players", "p", "personas", "a.json");
@@ -112,7 +112,7 @@ test("artifact reads reject an envelope with unknown keys", async () => {
 });
 
 test("compareAndWrite does not treat malformed existing JSON as a new artifact", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-store-corrupt-"));
+  const root = await canonicalTestRoot("tavern-store-corrupt-");
   try {
     const store = new TavernArtifactStore(root);
     const path = join(root, "tavern", "v1", "players", "p", "personas", "a.json");
@@ -134,7 +134,7 @@ test("compareAndWrite does not treat malformed existing JSON as a new artifact",
 });
 
 test("artifact reads reject duplicate decoded envelope keys before validation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-store-duplicate-key-"));
+  const root = await canonicalTestRoot("tavern-store-duplicate-key-");
   try {
     const store = new TavernArtifactStore(root);
     const path = join(root, "artifact.json");
@@ -150,7 +150,7 @@ test("artifact reads reject duplicate decoded envelope keys before validation", 
 });
 
 test("revision repository rejects junk entries and never falls back from a corrupt highest numeric revision", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-revisions-"));
+  const root = await canonicalTestRoot("tavern-revisions-");
   try {
     const store = new TavernArtifactStore(root);
     const repository = store.openRevisionRepository({
@@ -176,7 +176,7 @@ test("revision repository rejects junk entries and never falls back from a corru
 });
 
 test("revision repository rejects a corrupt lower numeric revision even when the highest revision is valid", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-revisions-lower-corrupt-"));
+  const root = await canonicalTestRoot("tavern-revisions-lower-corrupt-");
   try {
     const store = new TavernArtifactStore(root);
     const repository = store.openRevisionRepository({
@@ -200,7 +200,7 @@ test("revision repository rejects a corrupt lower numeric revision even when the
 });
 
 test("revision repository rejects a highest revision whose embedded identity or revision mismatches its filename", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tavern-revisions-mismatch-"));
+  const root = await canonicalTestRoot("tavern-revisions-mismatch-");
   try {
     const store = new TavernArtifactStore(root);
     const repository = store.openRevisionRepository({

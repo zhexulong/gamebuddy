@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import test from "node:test";
-import { createChatThreadStore } from "../chat-thread-store.js";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
+import {
+  createChatThreadStore,
+  createProfileAwareChatThreadCreationCapability,
+} from "../chat-thread-store.js"
 import {
   type ChatLifecycleAtomicGuard,
   type ChatLifecycleMutationReader,
@@ -12,11 +14,12 @@ import {
 } from "./chat-lifecycle-service.js";
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-lifecycle-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-lifecycle-");
   let time = 10;
   const store = createChatThreadStore(root, "a".repeat(64), () => time++);
+  const creation = createProfileAwareChatThreadCreationCapability(store, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
   const create = async (id: string, title?: string) => {
-    const _state = await store.createThread({
+    const _state = await creation.createExplicit({
       chatThreadId: id,
       companionId: "companion_01",
       continuityId: "continuity_01",

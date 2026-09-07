@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -140,7 +140,9 @@ function simulatedLockHelper(): ChildProcess {
 test.beforeEach(() => bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(simulatedLockHelper)));
 test.after(() => bindWindowsStaleLockReclaimer(undefined));
 test.after(async () => {
-  for (const root of temporaryRoots.splice(0)) await rm(root, { recursive: true, force: true });
+  for (const root of temporaryRoots.splice(0)) {
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 });
 
 function stateForChat(context: ComposedReferenceGameBrowserReadContext) {
@@ -187,6 +189,7 @@ async function withWindowsPlatform<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 async function closeServer(server: Server): Promise<void> {
+  server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
@@ -254,8 +257,19 @@ async function createAdmissionBroker() {
   return {
     handler,
     issue,
-    async close() { await handler.close(); await closeServer(server); },
+    async close() {
+      const handlerDrain = handler.close();
+      server.closeAllConnections();
+      await closeServer(server);
+      await handlerDrain;
+    },
   };
+}
+
+async function canonicalTemporaryRoot(prefix: string): Promise<string> {
+  const parent = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof parent !== "string" || parent.length === 0) throw new Error("test_local_app_data_unavailable");
+  return await mkdtemp(join(await realpath(parent), prefix));
 }
 
 async function createFixture(input: Readonly<{
@@ -278,7 +292,7 @@ async function createFixture(input: Readonly<{
   nowMs?: () => number;
   afterPlayerSpawn?(): void;
 }> = {}) {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-lifecycle-coordinator-"));
+  const runtimeRoot = await canonicalTemporaryRoot("gamebuddy-lifecycle-coordinator-");
   const packageRoot = join(runtimeRoot, "package");
   temporaryRoots.push(runtimeRoot);
   await publishStardewInstallationRegistration(runtimeRoot, null, {
@@ -620,7 +634,7 @@ test("same admission joins the exact activation Promise while a conflicting admi
     release();
     await first;
     assert.equal(fixture.packageReadCount(), 2);
-    const secondRuntimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-lifecycle-conflict-"));
+    const secondRuntimeRoot = await canonicalTemporaryRoot("gamebuddy-lifecycle-conflict-");
     temporaryRoots.push(secondRuntimeRoot);
     const second = createStardewProductionLifecycleCoordinatorForTesting(
       Object.freeze({

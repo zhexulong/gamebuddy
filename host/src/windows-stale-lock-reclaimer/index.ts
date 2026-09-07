@@ -363,7 +363,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const operationTails = new WeakMap<object, Promise<void>>();
+
 async function runOperation(state: ReclaimerState, request: WindowsStaleLockReclaimerRequest): Promise<string> {
+  const previous = operationTails.get(state);
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous === undefined ? current : previous.then(() => current);
+  operationTails.set(state, tail);
+  if (previous !== undefined) await previous;
+  try {
+    return await executeOperation(state, request);
+  } finally {
+    release();
+    if (operationTails.get(state) === tail) operationTails.delete(state);
+  }
+}
+
+async function executeOperation(state: ReclaimerState, request: WindowsStaleLockReclaimerRequest): Promise<string> {
   const serialized = Buffer.from(JSON.stringify(request), "utf8");
   if (serialized.length > outputLimitBytes) throw unavailable();
   return await new Promise<string>((resolveOperation, rejectOperation) => {

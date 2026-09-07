@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 if (process.platform !== "win32") throw new Error("durable acceptance requires real Windows production mounting");
 
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, rm } from 'node:fs/promises';
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { createChatThreadStore } from "./chat-thread-store.js";
+import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
 import { createPlayerTurnAcceptor } from "./player-turn-acceptance.js";
 
 const key = "a".repeat(64);
@@ -31,15 +30,16 @@ async function cleanupTestRoot(root: string): Promise<void> {
 }
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-p4-"));
+  const root = await canonicalTestRoot("gamebuddy-p4-");
   const store = createChatThreadStore(root, key, () => 100);
-  await store.createThread({
+  const creation = createProfileAwareChatThreadCreationCapability(store, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+  await creation.createExplicit({
     chatThreadId: command.chatThreadId,
     companionId: command.companionId,
     continuityId: command.continuityId,
     chatSurfaceSessionId: command.chatSurfaceSessionId,
-    opening: "blank",
-  });
+     opening: "blank",
+   });
   return { root, store };
 }
 
@@ -82,7 +82,7 @@ test("public player turn acceptor calls only its private bridge, never raw store
 });
 
 test("player turn opaque admission is one-shot, rejects reentry and close drains the accepted store transaction", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-p4-admission-"));
+  const root = await canonicalTestRoot("gamebuddy-p4-admission-");
   try {
     const coordinatorUrl = new URL(
       "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
@@ -196,7 +196,7 @@ test("player turn opaque admission is one-shot, rejects reentry and close drains
 });
 
 test("facade genuine mount binds root and principal before durable writes, replays exact receipts, and closes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-p4-mounted-"));
+  const root = await canonicalTestRoot("gamebuddy-p4-mounted-");
   try {
     const coordinatorUrl = new URL(
       "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",

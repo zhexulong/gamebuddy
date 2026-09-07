@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
   type ChatRuntimeBindingExecution,
   withConsumedChatRuntimeBinding,
@@ -11,7 +11,7 @@ import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtim
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { identityKey } from "../runtime.js";
-import { createChatThreadStore } from "../tavern/chat-thread-store.js";
+import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "../tavern/chat-thread-store.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
 
@@ -43,7 +43,7 @@ function permit(execution: ChatRuntimeBindingExecution): ProductionChatRuntimePe
 }
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "chat-runtime-construction-"));
+  const root = await canonicalTestRoot("chat-runtime-construction-");
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
   const manifest = Object.freeze({
@@ -59,13 +59,14 @@ async function fixture() {
     ownerProof: Object.freeze({ processId: 42, creationTime100ns: "123456" }),
   });
   const threads = createChatThreadStore(runtimeRoot, identityKey(principal));
-  await threads.createThread({
+  const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+  await creation.createExplicit({
     chatThreadId: "thread_01",
     chatSurfaceSessionId: "chat_session_01",
     companionId: principal.companionId,
     continuityId: principal.continuityId,
-    opening: "blank",
-  });
+     opening: "blank",
+   });
   return Object.freeze({ root, runtimeRoot, binding, threads });
 }
 

@@ -4,6 +4,7 @@ import type {
   ChatThreadMessage,
   ChatThreadState,
   ChatThreadStore,
+  ProfileAwareChatThreadCreationCapability,
   TavernStableArtifactBinding,
   TavernStableWorldBookBinding,
 } from "./chat-thread-store.js";
@@ -106,8 +107,9 @@ export type TavernSemanticChatContentPort = Readonly<{
 export async function createTavernConversation(
   store: ChatThreadStore,
   binding: TavernConversationBinding,
+  creation: ProfileAwareChatThreadCreationCapability,
 ): Promise<TavernConversation> {
-  return createConversation(store, binding, await store.createThread({ ...binding, opening: "blank" }));
+  return createConversation(store, binding, await creation.createExplicit({ ...binding, opening: "blank" }));
 }
 
 /**
@@ -123,9 +125,12 @@ export async function resumeExactTavernConversation(
   return createConversation(store, record, state);
 }
 
-export function createTavernSemanticChatContentPort(store: ChatThreadStore): TavernSemanticChatContentPort {
+export function createTavernSemanticChatContentPort(
+  store: ChatThreadStore,
+  creation: ProfileAwareChatThreadCreationCapability,
+): TavernSemanticChatContentPort {
   return Object.freeze({
-    createExplicit: (binding) => createExactTavernConversation(store, binding),
+    createExplicit: (binding) => createExactTavernConversation(store, binding, creation),
     resumeExact: (record) => resumeExactTavernConversationReceipt(store, record),
   });
 }
@@ -133,9 +138,10 @@ export function createTavernSemanticChatContentPort(store: ChatThreadStore): Tav
 async function createExactTavernConversation(
   store: ChatThreadStore,
   binding: TavernConversationBinding,
+  creation: ProfileAwareChatThreadCreationCapability,
 ): Promise<TavernExactContentOpen> {
   try {
-    await store.createThread({ ...binding, opening: "blank" });
+    await creation.createExplicit({ ...binding, opening: "blank" });
   } catch (error) {
     throw classifyExactContentError(error, "chat_thread_already_exists", "tavern_exact_content_already_exists");
   }

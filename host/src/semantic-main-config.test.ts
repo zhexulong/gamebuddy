@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 import { loadSemanticVoiceConfig, parseSemanticMainCommand } from "./semantic-main-config.js";
 
 test("main destructive cutover uses only semantic operator construction and facade teardown", async () => {
@@ -96,7 +96,7 @@ test("semantic main command accepts only exact normal-entry or explicit dead-own
 });
 
 test("semantic voice config requires the exact all-or-nothing wrapper", async () => {
-  const root = await mkdtemp(join(tmpdir(), "semantic-main-config-"));
+  const root = await canonicalTestRoot("semantic-main-config-");
   const path = join(root, "voice.json");
   const valid = {
     schemaVersion: 1,
