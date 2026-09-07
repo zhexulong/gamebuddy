@@ -264,8 +264,8 @@ export function runM7ClaimRewardPreflight(input = {}) {
   });
 }
 
-export const M7_CLAIM_REWARD_PREFLIGHT_ACTION = ACTION;
-export const M7_CLAIM_REWARD_PREFLIGHT_SOURCE_BLOCKER = SOURCE_BLOCKER;
+const M7_CLAIM_REWARD_PREFLIGHT_ACTION = ACTION;
+const M7_CLAIM_REWARD_PREFLIGHT_SOURCE_BLOCKER = SOURCE_BLOCKER;
 
 if (process.argv[1]?.endsWith("run-stardew-portfolio-m7-claim-reward-preflight.mjs"))
   console.log(

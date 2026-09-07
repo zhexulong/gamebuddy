@@ -18,12 +18,12 @@ export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
   "kind",
 ]);
 export const ACTION_SURFACE_MAX_JSON_BYTES = 64 * 1024;
-export const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
+const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;
-export const ACTION_SURFACE_MAX_IDENTITY_VERSION = 2_147_483_647;
-export const ACTION_SURFACE_MAX_JSON_DEPTH = 8;
-export const ACTION_SURFACE_MAX_DATA_NODES = 2048;
-export const ACTION_SURFACE_MAX_OBJECT_KEYS = 16;
+const ACTION_SURFACE_MAX_IDENTITY_VERSION = 2_147_483_647;
+const ACTION_SURFACE_MAX_JSON_DEPTH = 8;
+const ACTION_SURFACE_MAX_DATA_NODES = 2048;
+const ACTION_SURFACE_MAX_OBJECT_KEYS = 16;
 export const ACTION_SURFACE_MAX_ARRAY_ITEMS = 128;
 
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
@@ -383,10 +383,4 @@ export function parseActionSurface(text) {
 
 export function isActionSurfaceIdentifier(value) {
   return typeof value === "string" && value.length <= ACTION_SURFACE_MAX_IDENTIFIER_LENGTH && IDENTIFIER.test(value);
-}
-
-export function actionSurfaceErrorCode(error) {
-  if (!(error instanceof Error)) return null;
-  const match = new RegExp(`^${ERROR_PREFIX}_(.+)$`).exec(error.message);
-  return match?.[1] ?? null;
 }

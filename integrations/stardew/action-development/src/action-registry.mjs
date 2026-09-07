@@ -110,12 +110,7 @@ const equipToolActionRegistration = Object.freeze({
   verifyCleanup: async ({ actionId, invocation, result }) => verifyCleanupResult(actionId, invocation, result),
 });
 
-export const ACTION_REGISTRATIONS = Object.freeze([equipToolActionRegistration]);
-export const ACTION_REGISTRATION_MANIFEST = Object.freeze({
-  schema: "gamebuddy-stardew-action-registration/v1",
-  gameId: "stardew",
-  actionIds: Object.freeze(ACTION_REGISTRATIONS.map(({ actionId }) => actionId)),
-});
+const ACTION_REGISTRATIONS = Object.freeze([equipToolActionRegistration]);
 
 function normalizeRegistrations(registrations) {
   if (registrations instanceof Map) return [...registrations.values()];
@@ -124,7 +119,7 @@ function normalizeRegistrations(registrations) {
   fail("registry_invalid");
 }
 
-export function validateActionRegistration(registration) {
+function validateActionRegistration(registration) {
   if (!object(registration) || typeof registration.actionId !== "string" || !ACTION_ID_PATTERN.test(registration.actionId)) {
     fail("invalid_registration");
   }
@@ -180,5 +175,3 @@ export function resolveActionRegistration(actionId, registrations = ACTION_REGIS
   if (!registration) fail("action_not_available");
   return validateActionRegistration(registration);
 }
-
-export { REQUIRED_HANDLERS, equipToolActionRegistration };

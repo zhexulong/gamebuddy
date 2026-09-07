@@ -51,11 +51,6 @@ import {
   materializeExactEnter,
 } from "./continuity-semantic-game-runtime-materializer.internal.js";
 
-export type {
-  GameRuntimeMaterializer,
-  MaterializedGameRuntime,
-} from "./continuity-semantic-game-runtime-materializer.internal.js";
-
 type BodyProgramPort = ReturnType<typeof materializeAuthenticatedStardewLaunchPorts>["bodyProgram"];
 type BodyProgramConsumer = object;
 type BodyProgramConsumerRecord = { port: BodyProgramPort; available: boolean; active: number; drained?: () => void };

@@ -6,7 +6,7 @@ import { STARDEW_GAME_INTEGRATION_ADAPTER } from "../host/dist-test/stardew-game
 export const NAVIGATION_ACTION = "navigate_to_destination";
 export const COMPLETION_REASON = "navigation_completed";
 const NON_TERMINAL_STATES = new Set(["accepted", "running", "meaningful_progress"]);
-export const FORBIDDEN_EVIDENCE_PRIMITIVES = Object.freeze([ "route", "tile", "warp", "leg", "source" ]);
+const FORBIDDEN_EVIDENCE_PRIMITIVES = Object.freeze([ "route", "tile", "warp", "leg", "source" ]);
 
 function isRecord(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
 function isOpaqueId(v) { return typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v); }

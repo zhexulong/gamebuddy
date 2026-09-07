@@ -136,7 +136,7 @@ export async function inspectPortfolioTargetInstallation(gamePath) {
   });
 }
 
-export async function observeTarget(gamePath, readVersion) {
+async function observeTarget(gamePath, readVersion) {
   const observed = {};
   for (const [fileName, key] of GAME_FILES) {
     const file = await observeRegularFile(join(gamePath, fileName), `portfolio_target_file_invalid:${fileName}`);
@@ -157,7 +157,7 @@ export async function observeTarget(gamePath, readVersion) {
   return Object.freeze(observed);
 }
 
-export async function observeMod(profileRoot) {
+async function observeMod(profileRoot) {
   const bundle = await inspectPortfolioModBundle(profileRoot);
   if (bundle.state !== "single_bundle" || typeof bundle.directory !== "string")
     throw new Error(bundle.reasons?.[0] ?? "portfolio_mod_bundle_unavailable");

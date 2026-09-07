@@ -19,6 +19,8 @@
     "action:preflight": "node ../../../packages/game-action-devkit/bin/game-action.mjs preflight --project game-action-project.json",
     "action:run-live": "node ../../../packages/game-action-devkit/bin/game-action.mjs run-live --project game-action-project.json",
     "action:portfolio": "node src/portfolio.mjs",
-    "action:ci": "node src/portfolio.mjs --ci"
+    "action:ci": "node src/portfolio.mjs --ci",
+    "action:publish-release-bundle": "node src/publish-release-bundle.mjs",
+    "check:bridge-ledger": "node ../../../tools/run-stardew-bridge-ledger-smoke.mjs"
   }
 }

@@ -242,7 +242,7 @@ async function snapshotIdentity(target) {
     fail("target_snapshot_reparse", "Target snapshot resolved outside its private root.");
   return { rootDev: root.dev, rootIno: root.ino, fileDev: file.dev, fileIno: file.ino, resolvedRoot, resolvedFile };
 }
-export async function verifySnapshot(target) {
+async function verifySnapshot(target) {
   if (
     !target ||
     typeof target !== "object" ||
@@ -618,7 +618,7 @@ export function validateDossier(dossier, authority) {
     fail("invalid_dossier", "Dossier conclusion makes an unauthorized claim.");
   return true;
 }
-export async function mint({ gamePath, output, root = process.cwd() }) {
+async function mint({ gamePath, output, root = process.cwd() }) {
   if (!output) fail("usage", "An explicit --output path is required.");
   const target = await targetAssembly(gamePath);
   try {
@@ -684,7 +684,7 @@ export async function mint({ gamePath, output, root = process.cwd() }) {
     await disposeTargetAssembly(target);
   }
 }
-export async function verify({ gamePath, dossierPath, root = process.cwd() }) {
+async function verify({ gamePath, dossierPath, root = process.cwd() }) {
   const dossier = JSON.parse(await readFile(path.resolve(dossierPath), "utf8"));
   const authority = await contractAuthority(root);
   validateDossier(dossier, authority);

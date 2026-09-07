@@ -5,9 +5,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
-export const hostRoot = resolve(dirname(scriptPath), "..");
-export const repositoryRoot = resolve(hostRoot, "..");
-export const projectRoot = resolve(hostRoot, "native", "windows-af-unix-reparse-fixture");
+const hostRoot = resolve(dirname(scriptPath), "..");
+const repositoryRoot = resolve(hostRoot, "..");
+const projectRoot = resolve(hostRoot, "native", "windows-af-unix-reparse-fixture");
 export const projectFile = resolve(projectRoot, "GameBuddy.WindowsAfUnixReparseFixture.csproj");
 export const outputRoot = resolve(projectRoot, ".dist", "win-x64");
 export const helperFileName = "GameBuddy.WindowsAfUnixReparseFixture.exe";

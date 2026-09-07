@@ -112,6 +112,9 @@
     "tools/run-stardew-native-local-player-move-fixture.ps1",
     "tools/run-stardew-native-local-player-move-smoke.mjs",
     "tools/run-stardew-native-local-player-move-smoke.test.mjs",
+    "tools/run-stardew-native-local-player-navigation-mutation-fixture.ps1",
+    "tools/run-stardew-native-local-player-navigation-mutation-smoke.mjs",
+    "tools/run-stardew-native-local-player-navigation-mutation-smoke.test.mjs",
     "tools/run-stardew-native-local-player-navigation-read-only-fixture.ps1",
     "tools/run-stardew-native-local-player-navigation-read-only-smoke.mjs",
     "tools/run-stardew-native-local-player-npc-relationship-smoke.mjs",
@@ -799,6 +802,24 @@
       "classification": "conformance-test",
       "disposition": "keep-project-local",
       "futureProjectPath": "tests/legacy/run-stardew-native-local-player-move-smoke.test.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-navigation-mutation-fixture.ps1",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-navigation-mutation-fixture.ps1"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-navigation-mutation-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-navigation-mutation-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-navigation-mutation-smoke.test.mjs",
+      "classification": "conformance-test",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "tests/legacy/run-stardew-native-local-player-navigation-mutation-smoke.test.mjs"
     },
     {
       "path": "tools/run-stardew-native-local-player-navigation-read-only-fixture.ps1",
