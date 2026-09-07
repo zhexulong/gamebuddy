@@ -10,7 +10,7 @@ Game names, game rules, installation or recipe facts, executable details, workin
 This module depends only on the narrow `DesktopGuardianSession` platform session contract. Host private composition and game-owned producers may consume the runtime; the runtime never imports a game, action, installation, browser, or lifecycle module.
 
 ## Placement and move rule
-Keep the owner under `containment/runtime`. Move it only if the Host containment boundary is renamed or split; never move game-specific launch details here.
+Keep the public contract under `containment/runtime/contract` and the implementation under `containment/runtime/core`. Move these files only if the Host containment boundary is renamed or split; never move game-specific launch details here.
 
 ## Required verification
 Source-bound checks must prove the runtime has no game or raw launch facts and no production mint factory. Unit tests use only a generic fake platform session and prove one-shot producer use, role/deadline/close rejection, arm-before-launch, ordering, and redacted results. Run the focused Node test, Host typecheck when feasible, physical seam check, `node --check`, and scoped `git diff --check`.
