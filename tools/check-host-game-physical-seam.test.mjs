@@ -49,6 +49,45 @@ test("allows the Stardew lifecycle process owner and approved provenance contrac
   });
 });
 
+test("allows Stardew installation registration mutation only from its lifecycle owner facade consumer", async () => {
+  await withFixture({
+    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts": "import { withStardewLifecycleInstallationRegistrationOwner } from '../../../stardew-installation-registration.internal.js';\nexport const owner = withStardewLifecycleInstallationRegistrationOwner;\n",
+    "host/src/stardew-installation-registration.internal.ts": "export function withStardewLifecycleInstallationRegistrationOwner() {}\n",
+  }, (root) => {
+    assert.equal(checkHostGamePhysicalSeam({ root }).verdict, "passed");
+  });
+});
+
+test("allows read-only Stardew installation registration from the production lifecycle coordinator", async () => {
+  await withFixture({
+    "host/src/stardew-production-lifecycle-coordinator.internal.ts": "import { readStardewInstallationRegistration } from './stardew-installation-registration.internal.js';\nexport const coordinator = readStardewInstallationRegistration;\n",
+    "host/src/stardew-installation-registration.internal.ts": "export function readStardewInstallationRegistration() {}\nexport function withStardewLifecycleInstallationRegistrationOwner() {}\n",
+  }, (root) => assert.equal(checkHostGamePhysicalSeam({ root }).verdict, "passed"));
+});
+
+test("rejects Stardew installation registration mutation outside its lifecycle composer", async () => {
+  await withFixture({
+    "host/src/games/stardew/lifecycle/other.ts": "import { withStardewLifecycleInstallationRegistrationOwner } from '../../../stardew-installation-registration.internal.js';\n",
+    "host/src/stardew-installation-registration.internal.ts": "export function withStardewLifecycleInstallationRegistrationOwner() {}\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.violations[0].kind, "stardew_registration_import_not_owner");
+  });
+});
+
+test("rejects detectable aliases and re-exports of the Stardew registration mutation facade", async () => {
+  await withFixture({
+    "host/src/games/stardew/lifecycle/alias.ts": "import { withStardewLifecycleInstallationRegistrationOwner as mutation } from '../../../stardew-installation-registration.internal.js';\n",
+    "host/src/games/stardew/lifecycle/reexport.ts": "export { withStardewLifecycleInstallationRegistrationOwner as mutation } from '../../../stardew-installation-registration.internal.js';\n",
+    "host/src/stardew-installation-registration.internal.ts": "export function withStardewLifecycleInstallationRegistrationOwner() {}\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.violations.filter(({ kind }) => kind === "stardew_registration_import_not_owner").length, 2);
+  });
+});
+
 test("rejects raw builtins and staging provenance from non-owner Stardew lifecycle siblings", async () => {
   await withFixture({
     "host/src/games/stardew/lifecycle/other.ts": "import 'node:child_process';\nimport { createProductionStagingDependencies } from '../../../bootstrap/roots/stardew-private-mod-profile-staging.js';\n",

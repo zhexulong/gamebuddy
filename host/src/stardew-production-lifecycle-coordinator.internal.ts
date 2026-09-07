@@ -15,6 +15,7 @@ import {
   admitStardewInstallation,
   type AdmittedStardewInstallation,
 } from "./stardew-installation-admission.js";
+import { readStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "./windows-stardew-folder-picker/index.js";
@@ -181,7 +182,6 @@ function createCoordinator(
   let activationPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   let exactOwner: StardewOwnedPlayerHostBootstrap | undefined;
   let ownerQuarantined = false;
-  let admittedInstallation: AdmittedStardewInstallation | undefined;
   // This lifecycle owns one not-yet-launched Player Host instance. Reconnect
   // generations are a separate authority and are not implemented in this slice.
   const expectedPlayerHostInstanceGeneration = 1;
@@ -243,7 +243,7 @@ function createCoordinator(
   const launchReadinessReader: StardewGameSurfaceLaunchReadinessReader = Object.freeze({
       readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView {
         if (launchTerminal) return Object.freeze({ generation: 0, status: "failed" });
-        if (exactOwner !== undefined && admittedInstallation !== undefined && activationState === "staged") {
+        if (exactOwner !== undefined && activationState === "staged") {
           return Object.freeze({ generation: expectedPlayerHostInstanceGeneration, status: "ready" });
         }
         return Object.freeze({ generation: 0, status: "none" });
@@ -357,16 +357,16 @@ function createCoordinator(
     }
   };
 
-  const runPlayerHostLaunch = async (
-    installation: AdmittedStardewInstallation,
-  ): Promise<StardewPrivateActivationSnapshot> => {
+  const runPlayerHostLaunch = async (): Promise<StardewPrivateActivationSnapshot> => {
     const owner = exactOwner;
     if (owner === undefined) throw new Error("stardew_player_host_launch_owner_missing");
     transition("launching_player_host");
     let launchCompleted = false;
     try {
       if (isClosing()) throw new Error("stardew_lifecycle_closing");
-      const result = await internal.launchStagedPlayerHost(owner, installation);
+      const result = await withFreshRegisteredInstallation((installation) =>
+        internal.launchStagedPlayerHost(owner, installation),
+      );
       launchCompleted = true;
       if (result.status.kind !== "awaiting_player_host_attestation")
         throw new Error("stardew_player_host_launch_terminal_projection_invalid");
@@ -386,7 +386,6 @@ function createCoordinator(
           // Close retains and retries the exact-owner quarantine.
         }
       } else if (!isClosing()) {
-        admittedInstallation = undefined;
         launchPromise = undefined;
         transition("staged");
       }
@@ -394,16 +393,13 @@ function createCoordinator(
     }
   };
 
-  const launchSelectedPlayerHost = (
-    installation: AdmittedStardewInstallation,
-  ): Promise<StardewPrivateActivationSnapshot> => {
+  const launchSelectedPlayerHost = (): Promise<StardewPrivateActivationSnapshot> => {
     if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
     if (launchTerminal) return Promise.reject(new Error("stardew_player_host_launch_quarantined"));
     if (launchPromise !== undefined) return launchPromise;
     if (activationState !== "staged")
       return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
-    admittedInstallation = installation;
-    launchPromise = runPlayerHostLaunch(installation);
+    launchPromise = runPlayerHostLaunch();
     return launchPromise;
   };
 
@@ -424,11 +420,29 @@ function createCoordinator(
     return result;
   };
 
-  const selectAndAdmitPlayerHostInstallation = async (): Promise<AdmittedStardewInstallation | undefined> => {
-    const result = await selectStardewFolder(folderPicker);
-    if (result.status === "cancelled") return undefined;
+  const withFreshRegisteredInstallation = async <T>(
+    callback: (installation: AdmittedStardewInstallation) => Promise<T>,
+  ): Promise<T> => {
+    const registration = await readStardewInstallationRegistration(runtimeRoot);
+    if (registration === null || registration.state !== "ready" || registration.locator === null ||
+        registration.activeAttempt === null)
+      throw new Error("stardew_registered_installation_unavailable");
     const inspector = await createInstallationInspector();
-    return admitStardewInstallation(inspector, result.path);
+    const installation = await admitStardewInstallation(inspector, registration.locator);
+    return await callback(installation);
+  };
+
+  const selectAndRegisterPlayerHostInstallation = async (): Promise<boolean> => {
+    const result = await selectStardewFolder(folderPicker);
+    if (result.status === "cancelled") return false;
+    const inspector = await createInstallationInspector();
+    await admitStardewInstallation(inspector, result.path);
+    const current = await readStardewInstallationRegistration(runtimeRoot);
+    const owner = exactOwner;
+    if (current === null || current.state !== "ready" || owner === undefined)
+      throw new Error("stardew_installation_registration_unavailable");
+    await internal.replaceStagedInstallationLocator(owner, current.revision, result.path);
+    return true;
   };
 
   const setupPlayerHost = (
@@ -446,11 +460,9 @@ function createCoordinator(
     let promise!: Promise<void>;
     promise = (async () => {
       try {
-        admittedInstallation = undefined;
-        const installation = await selectAndAdmitPlayerHostInstallation();
-        if (installation === undefined) return;
+        const registered = await selectAndRegisterPlayerHostInstallation();
+        if (!registered) return;
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
-        admittedInstallation = installation;
       } catch (error) {
         if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
         throw new Error("stardew_game_setup_failed", { cause: error });
@@ -478,10 +490,9 @@ function createCoordinator(
     if (launchPromise !== undefined) return Promise.reject(new Error("stardew_game_launch_in_progress"));
     if (command.expectedInstanceGeneration !== expectedPlayerHostInstanceGeneration)
       return Promise.reject(new Error("stardew_game_instance_generation_conflict"));
-    const installation = admittedInstallation;
-    if (installation === undefined || activationState !== "staged")
+    if (activationState !== "staged")
       return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
-    const promise = launchSelectedPlayerHost(installation);
+    const promise = launchSelectedPlayerHost();
     gameLaunches.set(command.idempotencyKey, Object.freeze({
       browserSessionId,
       expectedInstanceGeneration: command.expectedInstanceGeneration,
@@ -542,10 +553,10 @@ function createCoordinator(
         manifestAdmitted = true;
         await internal.materializeAiClientProfileAfterManifestAdmission(handle.owner, admission);
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
-        const installation = admittedInstallation;
-        if (installation === undefined) throw new Error("stardew_ai_client_launch_installation_missing");
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
-        const result = await internal.launchMaterializedAiClient(handle.owner, installation);
+        const result = await withFreshRegisteredInstallation((installation) =>
+          internal.launchMaterializedAiClient(handle.owner, installation),
+        );
         if (result.status.kind !== "awaiting_ai_client_attestation")
           throw new Error("stardew_ai_client_launch_terminal_projection_invalid");
         while (farmhandGameRuntimeFacade === undefined) {

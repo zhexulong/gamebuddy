@@ -56,18 +56,22 @@ type StardewInstallationRegistrationOwnerLockedStorage = Readonly<{
     expectedRegistrationRevision: number,
     marker: StardewInstallationRegistrationOwnerTransactionMarker,
   ): Promise<StardewInstallationRegistrationRecordV1>;
+  replaceActiveAttemptLocator(
+    expectedRegistrationRevision: number,
+    bootstrapCorrelation: string,
+    locator: string,
+  ): Promise<StardewInstallationRegistrationRecordV1>;
   readMarker(): Promise<StardewInstallationRegistrationOwnerTransactionMarker | null>;
   writeMarker(marker: StardewInstallationRegistrationOwnerTransactionMarker): Promise<void>;
   clearMarker(marker: StardewInstallationRegistrationOwnerTransactionMarker): Promise<void>;
 }>;
 
 /**
- * Sole-owner internal transaction seam. The locked storage object is live only
- * for this callback and is intentionally unavailable to registration publishers
- * or any public consumer. It is coordination plumbing, not another attempt
- * owner or a standalone activeAttempt CAS.
+ * The sole lifecycle owner seam. The locked storage object is live only for
+ * this callback; it preserves registration's exclusive ownership of locking,
+ * strict parsing, CAS, atomic writes, and canonical rereads.
  */
-export async function withStardewInstallationRegistrationOwnerTransaction<T>(
+export async function withStardewLifecycleInstallationRegistrationOwner<T>(
   runtimeRoot: string,
   callback: (storage: StardewInstallationRegistrationOwnerLockedStorage) => Promise<T>,
 ): Promise<T> {
@@ -113,7 +117,8 @@ export async function withStardewInstallationRegistrationOwnerTransaction<T>(
             throw unavailable();
           }
           const persistedMarker = await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root);
-          if (persistedMarker === null || serializeOwnerTransactionMarker(persistedMarker) !== serializeOwnerTransactionMarker(checked)) {
+          if (persistedMarker === null ||
+              serializeOwnerTransactionMarker(persistedMarker) !== serializeOwnerTransactionMarker(checked)) {
             throw unavailable();
           }
           const current = await readCurrentRecord(path, root);
@@ -125,6 +130,20 @@ export async function withStardewInstallationRegistrationOwnerTransaction<T>(
             ...current,
             revision: current.revision + 1,
             activeAttempt: null,
+          });
+        },
+        replaceActiveAttemptLocator: async (expectedRegistrationRevision, bootstrapCorrelation, locator) => {
+          requireActive();
+          if (!isPositiveSafeInteger(expectedRegistrationRevision) || !isOpaqueId(bootstrapCorrelation) ||
+              !isCanonicalWindowsDirectory(locator)) throw unavailable();
+          if (await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root) !== null) throw unavailable();
+          const current = await readCurrentRecord(path, root);
+          if (current === null || current.revision !== expectedRegistrationRevision || current.state !== "ready" ||
+              current.activeAttempt?.bootstrapCorrelation !== bootstrapCorrelation) throw conflict();
+          return await writeOwnerTransactionRecord(path, root, {
+            ...current,
+            revision: current.revision + 1,
+            locator,
           });
         },
         readMarker: async () => {

@@ -61,6 +61,11 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  replaceStagedInstallationLocator(
+    owner: StardewOwnedPlayerHostBootstrap,
+    expectedRevision: number,
+    locator: string,
+  ): Promise<void>;
   reserveOwnedPlayerHostBootstrapForActivation(
     runtimeRoot: string,
     claim: import("../../../stardew-player-host-bootstrap.js").StardewPlayerHostBootstrapClaim,
@@ -123,6 +128,10 @@ const testStagedPlayerHostLaunchers = new WeakMap<
     installation: AdmittedStardewInstallation,
   ) => Promise<StardewOwnedPlayerHostStageCResult>
 >();
+const testStagedInstallationLocatorReplacers = new WeakMap<
+  PublicStardewPrivateBootstrapComposition,
+  StardewPrivateBootstrapTestingComposition["replaceStagedInstallationLocator"]
+>();
 const testOwnerTransitionFactories = new WeakMap<
   StardewPrivateBootstrapTestingComposition,
   StardewPrivateBootstrapTestingComposition["createOwnerTransitionsForTesting"]
@@ -150,6 +159,7 @@ function registerTestingComposition(
   testMaterializedAiClientLaunchers.set(composition, testingComposition.launchMaterializedAiClient);
   testBridgeConnectionConsumers.set(composition, testingComposition.consumeOwnedFarmhandBridgeConnection);
   testStagedPlayerHostLaunchers.set(composition, testingComposition.launchStagedPlayerHost);
+  testStagedInstallationLocatorReplacers.set(composition, testingComposition.replaceStagedInstallationLocator);
   const registered = Object.freeze({ ...testingComposition, composition });
   testOwnerTransitionFactories.set(registered, testingComposition.createOwnerTransitionsForTesting);
   return registered;
@@ -272,6 +282,23 @@ export async function consumeOwnedFarmhandBridgeConnectionForTesting<T extends R
   const consume = testBridgeConnectionConsumers.get(registration.composition);
   if (consume === undefined) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   return consume(owner, callback);
+}
+
+export async function replaceStagedInstallationLocatorForTesting(
+  owner: StardewOwnedPlayerHostBootstrap,
+  expectedRevision: number,
+  locator: string,
+  composition?: PublicStardewPrivateBootstrapComposition,
+): Promise<void> {
+  const registration = testOwnerViews.get(owner);
+  if (registration === undefined ||
+      (composition !== undefined && registration.composition !== composition) ||
+      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
+  }
+  const replace = testStagedInstallationLocatorReplacers.get(registration.composition);
+  if (replace === undefined) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
+  return replace(owner, expectedRevision, locator);
 }
 
 export async function launchStagedPlayerHostForTesting(

@@ -42,7 +42,7 @@ import {
   withPathLock,
 } from "../../../path-lock.js";
 import {
-  withStardewInstallationRegistrationOwnerTransaction,
+  withStardewLifecycleInstallationRegistrationOwner,
   type StardewInstallationRegistrationOwnerTransactionMarker,
 } from "../../../stardew-installation-registration.internal.js";
 import { readStrictJsonFile } from "../../../strict-json-reader.js";
@@ -253,6 +253,11 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  replaceStagedInstallationLocator(
+    owner: StardewOwnedPlayerHostBootstrap,
+    expectedRevision: number,
+    locator: string,
+  ): Promise<void>;
   reserveOwnedPlayerHostBootstrapForActivation(
     runtimeRoot: string,
     claim: StardewPlayerHostBootstrapClaim,
@@ -297,6 +302,7 @@ export function createStardewPrivateBootstrapProductionCore(
     launchMaterializedAiClient: closed.launchMaterializedAiClient,
     consumeOwnedFarmhandBridgeConnection: closed.consumeOwnedFarmhandBridgeConnection,
     launchStagedPlayerHost: closed.launchStagedPlayerHost,
+    replaceStagedInstallationLocator: closed.replaceStagedInstallationLocator,
     reserveOwnedPlayerHostBootstrapForActivation: closed.reserveOwnedPlayerHostBootstrapForActivation,
     stageOwnedPlayerHostProfile: closed.stageOwnedPlayerHostProfile,
     terminalizeOwnedPlayerHostOwner: closed.terminalizeOwnedPlayerHostOwner,
@@ -348,6 +354,11 @@ export function createStardewPrivateBootstrapTestCore(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  replaceStagedInstallationLocator(
+    owner: StardewOwnedPlayerHostBootstrap,
+    expectedRevision: number,
+    locator: string,
+  ): Promise<void>;
   reserveOwnedPlayerHostBootstrapForActivation(
     runtimeRoot: string,
     claim: StardewPlayerHostBootstrapClaim,
@@ -413,6 +424,9 @@ export function createStardewPrivateBootstrapTestCore(
       // cross-composition owners are rejected before the launch attempt.
       return base.launchStagedPlayerHost(owner, installation);
     },
+    replaceStagedInstallationLocator(owner, expectedRevision, locator) {
+      return base.replaceStagedInstallationLocator(owner, expectedRevision, locator);
+    },
     reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim) {
       return base.reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim);
     },
@@ -474,6 +488,11 @@ type ClosedBootstrapCore = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  replaceStagedInstallationLocator(
+    owner: StardewOwnedPlayerHostBootstrap,
+    expectedRevision: number,
+    locator: string,
+  ): Promise<void>;
   reserveOwnedPlayerHostBootstrapForActivation(
     runtimeRoot: string,
     claim: StardewPlayerHostBootstrapClaim,
@@ -727,11 +746,22 @@ function createClosedComposition(
           () => aiClientProcessOwner.readStatus(),
         ),
         launchStagedPlayerHost: (
-       owner: StardewOwnedPlayerHostBootstrap,
-       installation: AdmittedStardewInstallation,
-     ): Promise<StardewOwnedPlayerHostStageCResult> =>
-       launchStagedPlayerHost(owner, installation, compositionIdentity),
-      reserveOwnedPlayerHostBootstrapForActivation: async (
+        owner: StardewOwnedPlayerHostBootstrap,
+        installation: AdmittedStardewInstallation,
+      ): Promise<StardewOwnedPlayerHostStageCResult> =>
+        launchStagedPlayerHost(owner, installation, compositionIdentity),
+      replaceStagedInstallationLocator: async (owner, expectedRevision, locator): Promise<void> => {
+        const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+        const runtimeRoot = dirname(dirname(facts.durableOwner.transactionDirectory));
+        await withStardewLifecycleInstallationRegistrationOwner(runtimeRoot, async (registration) => {
+          await registration.replaceActiveAttemptLocator(
+            expectedRevision,
+            facts.durableOwner.record.bootstrapId,
+            locator,
+          );
+        });
+      },
+       reserveOwnedPlayerHostBootstrapForActivation: async (
         runtimeRoot: string,
         claim: StardewPlayerHostBootstrapClaim,
       ): Promise<StardewOwnedPlayerHostBootstrap> => {
@@ -821,7 +851,7 @@ async function reconcileSettledRegistrationMarker(
   runtimeRoot: string,
   terminal: StardewPrivateBootstrapOwnerRecord,
   immutableFence: StardewOwnerImmutableFence,
-  registration: Parameters<Parameters<typeof withStardewInstallationRegistrationOwnerTransaction>[1]>[0],
+  registration: Parameters<Parameters<typeof withStardewLifecycleInstallationRegistrationOwner>[1]>[0],
   marker: StardewInstallationRegistrationOwnerTransactionMarker,
 ): Promise<void> {
   if (marker.operation !== "settlement_release" || marker.bootstrapCorrelation !== terminal.bootstrapId ||
@@ -853,7 +883,7 @@ async function reconcileSettledRegistrationMarker(
 ): Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>> {
   const root = resolve(runtimeRoot);
   try {
-    return await withStardewInstallationRegistrationOwnerTransaction(root, async (registration) => {
+    return await withStardewLifecycleInstallationRegistrationOwner(root, async (registration) => {
       // A normal launch is not a recovery authority. Retain any interrupted
       // prepare transaction exactly as found for its owner-specific settlement
       // or recovery path, and never adopt its owner or active-attempt pointer.
@@ -913,7 +943,7 @@ export async function settleOwnedPlayerHostRegistrationAttempt(
   try {
     const runtimeRoot = dirname(dirname(facts.durableOwner.transactionDirectory));
     const bootstrapCorrelation = facts.durableOwner.record.bootstrapId;
-    await withStardewInstallationRegistrationOwnerTransaction(runtimeRoot, async (registration) => {
+    await withStardewLifecycleInstallationRegistrationOwner(runtimeRoot, async (registration) => {
       const ownerPath = join(runtimeRoot, "stardew-private-bootstrap", bootstrapCorrelation, OWNER_FILE);
       const terminal = await withPathLock(
         ownerPath,
