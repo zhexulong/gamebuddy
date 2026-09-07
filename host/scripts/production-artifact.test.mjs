@@ -33,7 +33,7 @@ const BUNDLED_RUNTIME = {
   archiveRoot: "node-v24.20.0-win-x64",
   runtimePath: "runtime/node.exe",
   nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
-  bootstrapPath: "desktop-host-entry.internal.js",
+  bootstrapPath: "desktop-runtime-bootstrap.internal.js",
   runtimeVersion: "v24.20.0",
   runtimePlatform: "win32",
   runtimeArch: "x64",
@@ -318,7 +318,7 @@ test("production-private runtime publisher emits canonical admission/current bin
         generation: published.generation,
         runtimePath: "runtime/node.exe",
         runtimeSha256: testHash(node),
-        bootstrapPath: "desktop-host-entry.internal.js",
+        bootstrapPath: "desktop-runtime-bootstrap.internal.js",
         bootstrapSha256: testHash(Buffer.from("export {};\n")),
         runtimeVersion: "v24.20.0",
         runtimePlatform: "win32",
@@ -358,7 +358,7 @@ test("production-private runtime publisher emits canonical admission/current bin
       await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer: expectedPointer });
       await verifyRuntimeAdmission({ artifactRoot, inventory: published, generation: published.generation, descriptor });
       const generationsAfterCleanupFailure = await readdir(join(outputRoot, "generations"));
-      assert.equal(generationsAfterCleanupFailure.length, 2);
+      assert.equal(generationsAfterCleanupFailure.length, 1);
       assert.ok(generationsAfterCleanupFailure.includes(published.generation));
       assert.deepEqual(await readdir(outputRoot), ["current.json", "generations"]);
     }),
@@ -375,7 +375,7 @@ test("current production config fixes the bundled Node runtime and bootstrap ent
     archiveRoot: "node-v24.20.0-win-x64",
     runtimePath: "runtime/node.exe",
     nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
-    bootstrapPath: "desktop-host-entry.internal.js",
+    bootstrapPath: "desktop-runtime-bootstrap.internal.js",
     runtimeVersion: "v24.20.0",
     runtimePlatform: "win32",
     runtimeArch: "x64",
@@ -419,6 +419,7 @@ test("production config is exact v3 and retains the current Chat/reference verif
     (() => { const { verificationRoots, ...withoutRoots } = valid; return withoutRoots; })(),
     (() => { const { bundledRuntime, ...withoutRuntime } = valid; return withoutRuntime; })(),
     { ...valid, bundledRuntime: { ...BUNDLED_RUNTIME, runtimeVersion: "v24.20.1" } },
+    { ...valid, bundledRuntime: { ...BUNDLED_RUNTIME, bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js" } },
     { ...valid, verificationRoots: [] },
     { ...valid, verificationRoots: ["main.js"] },
     { ...valid, verificationRoots: [REQUIRED_VERIFICATION_ROOTS[0]] },
@@ -546,7 +547,7 @@ async function emit(root, content = "export {};\n") {
   await rm(emitted, { recursive: true, force: true });
   await mkdir(join(emitted, "tavern"), { recursive: true });
   await writeFile(join(emitted, "main.js"), `import "typebox";\n${content}`);
-  await writeFile(join(emitted, "desktop-host-entry.internal.js"), "export {};\n");
+  await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
   for (const verificationRoot of REQUIRED_VERIFICATION_ROOTS) {
     await mkdir(dirname(join(emitted, verificationRoot)), { recursive: true });
     await writeFile(join(emitted, verificationRoot), "export {};\n");
@@ -811,7 +812,7 @@ test("synthetic publisher sidecar binds exact fixed runtime/bootstrap facts and 
     generation: second.generation,
     runtimePath: "runtime/node.exe",
     runtimeSha256: testHash(Buffer.from("test node runtime")),
-    bootstrapPath: "desktop-host-entry.internal.js",
+    bootstrapPath: "desktop-runtime-bootstrap.internal.js",
     bootstrapSha256: testHash(Buffer.from("export {};\n")),
   });
   for (const replacement of [
@@ -837,7 +838,7 @@ test("synthetic publisher recheck fails closed for fixed runtime/bootstrap mutat
   const dist = join(root, "dist");
   for (const [path, content] of [
     ["runtime/node.exe", "replaced runtime"],
-    ["desktop-host-entry.internal.js", "replaced bootstrap"],
+    ["desktop-runtime-bootstrap.internal.js", "replaced bootstrap"],
   ]) {
     await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
     const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
@@ -1151,14 +1152,13 @@ test("publisher retains only the fixed Desktop formal entry closure without expo
   const dist = join(root, "dist");
   const emitted = await emit(root);
   await mkdir(join(emitted, "desktop"), { recursive: true });
-  await writeFile(join(emitted, "desktop-host-entry.internal.js"), 'import "./desktop/private-helper.js";\n');
+  await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), 'import "./desktop/private-helper.js";\n');
   await writeFile(join(emitted, "desktop/private-helper.js"), "export const privateHelper = true;\n");
 
   const published = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-  for (const module of ["desktop-host-entry.internal.js", "desktop/private-helper.js"])
+  for (const module of ["desktop-runtime-bootstrap.internal.js", "desktop/private-helper.js"])
     assert.ok(published.entries.some((entry) => entry.path === module), `${module} must be retained`);
   const config = await readArtifactConfig(root);
-  assert.equal(config.entryRoots.includes("desktop-host-entry.internal.js"), false);
   assert.equal(config.entryRoots.includes("desktop-runtime-bootstrap.internal.js"), false);
 
   await mkdir(join(emitted, "unreachable"));
@@ -1172,7 +1172,7 @@ test("publisher retains only the fixed Desktop formal entry closure without expo
   await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
   await assert.rejects(
     publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }),
-    /production_module_unreachable_from_entry_roots:desktop-runtime-bootstrap\.internal\.js/,
+    /production_module_unreachable_from_entry_roots:desktop\/private-helper\.js/,
   );
 }));
 
@@ -1269,7 +1269,7 @@ test("concurrent publishers serialize, preserve current, and reject stale direct
   await writeFile(join(first, "main.js"), 'import "typebox"; "first";');
   await writeFile(join(second, "main.js"), 'import "typebox"; "second";');
   for (const emitted of [first, second])
-    await writeFile(join(emitted, "desktop-host-entry.internal.js"), "export {};\n");
+    await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
   for (const verificationRoot of REQUIRED_VERIFICATION_ROOTS) {
     await mkdir(dirname(join(first, verificationRoot)), { recursive: true });
     await mkdir(dirname(join(second, verificationRoot)), { recursive: true });
@@ -1633,7 +1633,7 @@ test("starter accepts exactly one configured root then forwards config arguments
       await mkdir(dirname(join(emitted, verificationRoot)), { recursive: true });
       await writeFile(join(emitted, verificationRoot), "export {};\n");
     }
-    await writeFile(join(emitted, "desktop-host-entry.internal.js"), "export {};\n");
+    await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
     await writeFile(join(emitted, entry), 'import "typebox"; process.stdout.write(JSON.stringify({ args: process.argv.slice(2), controlsPresent: Boolean(process.env.GAMEBUDDY_CONTROL_PIPE || process.env.GAMEBUDDY_CONTROL_TOKEN) }));');
     await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
     const child = await runChild(process.execPath, [start, entry, "--config", `${entry}.json`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });

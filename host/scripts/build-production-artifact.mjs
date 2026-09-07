@@ -18,7 +18,6 @@ const magicContextSourceEntry = resolve(magicContextSourceRoot, "dist", "index.j
 const dialogueWebRoot = resolve(repositoryRoot, "dialogue-web");
 const browserStagingParent = resolve(dialogueWebRoot, ".build-staging");
 const emittedStaticArtifactVerifier = "tavern/static-artifact/index.js";
-const desktopRuntimeBootstrap = "desktop-host-entry.internal.js";
 const browserIdentity = Object.freeze({
   browserContract: "tavern_browser_api/v1",
   profileId: "gamebuddy.tavern.browser.v1",
@@ -438,7 +437,7 @@ async function buildComposedProductionArtifact({
     await retainEntrypointClosure({
       emittedRoot: stagingRoot,
       closureRoot,
-      entryRoots: [...config.entryRoots, ...config.verificationRoots, desktopRuntimeBootstrap],
+      entryRoots: [...config.entryRoots, ...config.verificationRoots, config.bundledRuntime.bootstrapPath],
     });
     await copyVerifiedWindowsReparseInspector({ closureRoot, config });
     const copiedBrowserRoot = await copyVerifiedBrowserTree({
