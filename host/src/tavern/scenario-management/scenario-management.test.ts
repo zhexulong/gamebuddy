@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { TavernArtifactStore } from "../artifact-store.js";
 import { createScenarioManagementService } from "./scenario-management.js";
 
 test("scenario management durably creates, reads, and exactly revises a safe player projection", async () => {
-  const root = await mkdtemp(join(tmpdir(), "scenario-management-"));
+  const root = await canonicalTestRoot("scenario-management-");
   try {
     const service = createScenarioManagementService(new TavernArtifactStore(root), root);
     const description = "A quiet evening at the Stardrop Saloon.";
@@ -42,7 +42,7 @@ test("scenario management durably creates, reads, and exactly revises a safe pla
 });
 
 test("scenario management fails closed for corrupt canonical revisions", async () => {
-  const root = await mkdtemp(join(tmpdir(), "scenario-management-"));
+  const root = await canonicalTestRoot("scenario-management-");
   try {
     const store = new TavernArtifactStore(root);
     const service = createScenarioManagementService(store, root);
@@ -66,7 +66,7 @@ test("scenario management fails closed for corrupt canonical revisions", async (
 });
 
 test("scenario management rejects nonnumeric revision-directory entries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "scenario-management-"));
+  const root = await canonicalTestRoot("scenario-management-");
   try {
     const service = createScenarioManagementService(new TavernArtifactStore(root), root);
     await service.create({ name: "One", description: "First" });
@@ -79,7 +79,7 @@ test("scenario management rejects nonnumeric revision-directory entries", async 
 });
 
 test("scenario management ignores a legacy singleton when no canonical revision exists", async () => {
-  const root = await mkdtemp(join(tmpdir(), "scenario-management-"));
+  const root = await canonicalTestRoot("scenario-management-");
   try {
     await (await import("node:fs/promises")).mkdir(join(resolve(root), "scenario-management"), { recursive: true });
     await writeFile(
@@ -94,7 +94,7 @@ test("scenario management ignores a legacy singleton when no canonical revision 
 });
 
 test("scenario management accepts only safe player name and description fields", async () => {
-  const root = await mkdtemp(join(tmpdir(), "scenario-management-"));
+  const root = await canonicalTestRoot("scenario-management-");
   try {
     const service = createScenarioManagementService(new TavernArtifactStore(root), root);
     await assert.rejects(

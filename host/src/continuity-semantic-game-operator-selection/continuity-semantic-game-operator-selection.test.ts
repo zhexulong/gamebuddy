@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 
 import type { GameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
@@ -18,7 +18,7 @@ const principal = { continuityId: "continuity_01", companionId: "companion_01", 
 type Fixture = Readonly<{ root: string; runtimeRoot: string; manifestPath: string; configPath: string }>;
 
 async function fixture(): Promise<Fixture> {
-  const root = await mkdtemp(join(tmpdir(), "semantic-game-operator-"));
+  const root = await canonicalTestRoot("semantic-game-operator-");
   const runtimeRoot = join(root, "runtime");
   const manifestPath = join(root, "manifest.json");
   const configPath = join(root, "game-operator.json");

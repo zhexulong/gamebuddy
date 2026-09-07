@@ -14,7 +14,7 @@ import {
  * append-only messages, swipe variants, and turn lifecycle; it neither reads
  * Pi/Magic Context state nor implements message edit/branch or any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 2 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 3 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -63,6 +63,9 @@ export type ChatThread = Readonly<{
   chatThreadId: string;
   companionId: string;
   continuityId: string;
+  profileId: string;
+  profileRevision: number;
+  profileCanonicalHash: string;
   /** Tavern-only selected presentation sources; never runtime identity or Game state. */
   personaId?: string;
   scenarioId?: string;
@@ -107,6 +110,33 @@ export type AcceptedQueuedTurn = Readonly<{
   messageId: string;
   acceptedAtMs: number;
 }>;
+
+export type AuthoredContextSourceRef = Readonly<{
+  sourceId: string;
+  kind: "persona" | "scenario" | "dialogue_examples" | "lorebook_constant";
+  revision: string;
+  canonicalHash: string;
+  totalOrderKey: string;
+}>;
+
+export type AcceptedTurnAuthoredContextPlan = Readonly<{
+  threadId: string;
+  turnId: string;
+  continuityId: string;
+  companionId: string;
+  playerId: string;
+  profileId: string;
+  profileRevision: number;
+  profileCanonicalHash: string;
+  chatSurfaceSessionId: string;
+  stableSources: readonly AuthoredContextSourceRef[];
+  stableTokenCount: number;
+}>;
+
+export function validateAcceptedTurnAuthoredContextPlan(value: unknown): AcceptedTurnAuthoredContextPlan {
+  if (!value || typeof value !== "object") throw new Error("invalid_chat_turn_context_plan");
+  return value as AcceptedTurnAuthoredContextPlan;
+}
 
 /** Durable, immutable record of P4b's claim boundary; it is never a prompt capability. */
 export type AttemptClaimV1 = Readonly<{
@@ -241,6 +271,7 @@ type MountedAcceptanceInput = Readonly<{
   companionId: string;
   continuityId: string;
   selectionGeneration: number;
+  authoredContextPlan?: AcceptedTurnAuthoredContextPlan;
   text: string;
   locale: string;
   idempotencyKey: string;
@@ -253,6 +284,7 @@ type MountedAcceptanceCommand = Readonly<{
   locale: string;
   idempotencyKey: string;
   expectedDraftRevision: number;
+  authoredContextPlan: AcceptedTurnAuthoredContextPlan;
 }>;
 
 export type ChatThreadState = Readonly<{
@@ -262,6 +294,7 @@ export type ChatThreadState = Readonly<{
   turnLedger: ChatTurnLedger | null;
   /** P4a's immutable acceptance result; it is intentionally not rewritten by P4b. */
   idempotency: readonly Readonly<{ key: string; fingerprint: string; result: AcceptedQueuedTurn }>[];
+  currentTurnContextPlan?: AcceptedTurnAuthoredContextPlan;
 }>;
 
 /**
@@ -288,15 +321,27 @@ export type CreateChatThreadRequest = Readonly<{
   opening: "blank" | Readonly<{ messageId: string; text: string; source: GreetingSource }>;
 }>;
 
+export type IdentityProfileMetadataReader = Readonly<{
+  readExact(): Promise<Readonly<{ profileId: string; revision: number; canonicalHash: string }>>;
+}>;
+type ProfileAwareCreateRequest = CreateChatThreadRequest & Readonly<{
+  profileId: string;
+  profileRevision: number;
+  profileCanonicalHash: string;
+}>;
+
 export type InitialChatExactContentCapability = Readonly<{
   /** Opens only an already persisted, exact thread/surface binding. */
   resumeExact(chatThreadId: string, chatSurfaceSessionId: string): Promise<ChatThreadState>;
-  /** Creates a new durable thread; callers must not use this to resume. */
+  /** Creates a new durable thread using profile metadata owned by this capability. */
+  createExplicit(request: CreateChatThreadRequest): Promise<ChatThreadState>;
+}>;
+
+export type ProfileAwareChatThreadCreationCapability = Readonly<{
   createExplicit(request: CreateChatThreadRequest): Promise<ChatThreadState>;
 }>;
 
 export type ChatThreadStore = Readonly<{
-  createThread(request: CreateChatThreadRequest): Promise<ChatThreadState>;
   /** Lists durable thread metadata only; transcript data remains explicitly opened. */
   listThreads?(): Promise<readonly ChatThread[]>;
   /** Returns no selection rather than guessing from a latest thread. */
@@ -661,13 +706,45 @@ function identityKeyForP4(playerId: string, companionId: string, continuityId: s
 
 const initialExactContentCapabilities = new WeakSet<object>();
 const initialExactContentCapabilityByStore = new WeakMap<object, InitialChatExactContentCapability>();
+const profileAwareCreationCapabilities = new WeakSet<object>();
+const createProfileAwareByStore = new WeakMap<
+  object,
+  (request: CreateChatThreadRequest, profileMetadataReader: IdentityProfileMetadataReader) => Promise<ChatThreadState>
+>();
 
 /** Only a store created by this module can mint this unmounted capability. */
-export function createInitialChatExactContentCapability(store: ChatThreadStore): InitialChatExactContentCapability {
+export function createProfileAwareChatThreadCreationCapability(
+  store: ChatThreadStore,
+  profileMetadataReader: IdentityProfileMetadataReader,
+): ProfileAwareChatThreadCreationCapability {
+  if (!genuineChatThreadStores.has(store)) throw new Error("untrusted_chat_thread_store");
+  const create = createProfileAwareByStore.get(store);
+  if (create === undefined) throw new Error("missing_chat_thread_store_capability");
+  const capability: ProfileAwareChatThreadCreationCapability = Object.freeze({
+    createExplicit: async (request) => create(request, profileMetadataReader),
+  });
+  profileAwareCreationCapabilities.add(capability);
+  return capability;
+}
+
+export function isProfileAwareChatThreadCreationCapability(value: unknown): value is ProfileAwareChatThreadCreationCapability {
+  return !!value && typeof value === "object" && profileAwareCreationCapabilities.has(value);
+}
+
+export function createInitialChatExactContentCapability(
+  store: ChatThreadStore,
+  profileMetadataReader: IdentityProfileMetadataReader,
+): InitialChatExactContentCapability {
   if (!genuineChatThreadStores.has(store)) throw new Error("untrusted_chat_thread_store");
   const capability = initialExactContentCapabilityByStore.get(store);
   if (capability === undefined) throw new Error("missing_chat_thread_store_capability");
-  return capability;
+  const creation = createProfileAwareChatThreadCreationCapability(store, profileMetadataReader);
+  const exactCapability: InitialChatExactContentCapability = Object.freeze({
+    resumeExact: capability.resumeExact,
+    createExplicit: creation.createExplicit,
+  });
+  initialExactContentCapabilities.add(exactCapability);
+  return exactCapability;
 }
 
 /** Port-only identity check; matching methods or proxies are never capabilities. */
@@ -695,7 +772,7 @@ class ExactThreadAlreadyExistsError extends Error {
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
-  if (version === 2) {
+  if (version === 3) {
     assertNormalizedSchema(db);
     return;
   }
@@ -711,6 +788,9 @@ function initSchema(db: DatabaseSync): void {
       thread_id TEXT PRIMARY KEY,
       companion_id TEXT NOT NULL,
       continuity_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      profile_revision INTEGER NOT NULL CHECK(profile_revision > 0),
+      profile_canonical_hash TEXT NOT NULL,
       title TEXT,
       persona_id TEXT,
       scenario_id TEXT,
@@ -885,6 +965,31 @@ function initSchema(db: DatabaseSync): void {
       UNIQUE(thread_id, turn_id)
     );
 
+    CREATE TABLE tavern_turn_context_plans (
+      turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
+      thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      continuity_id TEXT NOT NULL,
+      companion_id TEXT NOT NULL,
+      player_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      profile_revision INTEGER NOT NULL CHECK(profile_revision > 0),
+      profile_canonical_hash TEXT NOT NULL,
+      chat_surface_session_id TEXT NOT NULL,
+      stable_token_count INTEGER NOT NULL CHECK(stable_token_count >= 0)
+    );
+
+    CREATE TABLE tavern_turn_context_sources (
+      turn_id TEXT NOT NULL REFERENCES tavern_turn_context_plans(turn_id) ON DELETE CASCADE,
+      ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+      source_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('persona', 'scenario', 'dialogue_examples', 'lorebook_constant')),
+      revision TEXT NOT NULL,
+      canonical_hash TEXT NOT NULL,
+      total_order_key TEXT NOT NULL,
+      PRIMARY KEY(turn_id, ordinal),
+      UNIQUE(turn_id, kind, source_id)
+    );
+
     CREATE TABLE tavern_drafts (
       thread_id TEXT PRIMARY KEY REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
       draft_content TEXT,
@@ -908,7 +1013,7 @@ function initSchema(db: DatabaseSync): void {
     CREATE INDEX idx_tavern_idempotency_turn
       ON tavern_chat_submit_idempotency(turn_id);
   `);
-  db.exec("PRAGMA user_version = 2");
+  db.exec("PRAGMA user_version = 3");
   assertNormalizedSchema(db);
 }
 
@@ -925,6 +1030,8 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     "tavern_turn_presentations",
     "tavern_turn_terminalizations",
     "tavern_chat_submit_idempotency",
+    "tavern_turn_context_plans",
+    "tavern_turn_context_sources",
     "tavern_drafts",
     "tavern_active_selection",
   ];
@@ -940,6 +1047,9 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     "thread_id",
     "companion_id",
     "continuity_id",
+    "profile_id",
+    "profile_revision",
+    "profile_canonical_hash",
     "chat_surface_session_id",
     "opening_kind",
     "opening_message_id",
@@ -979,7 +1089,7 @@ export function createChatThreadStore(
   now: () => number = Date.now,
 ): ChatThreadStore {
   assertId("continuityKey", continuityKey);
-  const continuityRoot = join(root, "tavern", "v2", "continuities", continuityKey);
+  const continuityRoot = join(root, "tavern", "v3", "continuities", continuityKey);
   const dbPath = join(continuityRoot, "tavern.sqlite");
 
   function withDb<T>(fn: (db: DatabaseSync) => T): T {
@@ -998,11 +1108,20 @@ export function createChatThreadStore(
     }
   }
 
-  const store: ChatThreadStore = Object.freeze({
-    async createThread(request): Promise<ChatThreadState> {
+  const createProfileAware = async (
+    request: CreateChatThreadRequest,
+    profileMetadataReader: IdentityProfileMetadataReader,
+  ): Promise<ChatThreadState> => {
       validateCreate(request);
+  const profile = validateProfileMetadata(await profileMetadataReader.readExact());
+       const profileAwareRequest: ProfileAwareCreateRequest = Object.freeze({
+         ...request,
+         profileId: profile.profileId,
+         profileRevision: profile.profileRevision,
+         profileCanonicalHash: profile.profileCanonicalHash,
+      });
       return withDb((db) => {
-        const existing = db.prepare("SELECT 1 FROM tavern_threads WHERE thread_id = ?").get(request.chatThreadId);
+        const existing = db.prepare("SELECT 1 FROM tavern_threads WHERE thread_id = ?").get(profileAwareRequest.chatThreadId);
         if (existing) {
           throw new ExactThreadAlreadyExistsError();
         }
@@ -1016,27 +1135,31 @@ export function createChatThreadStore(
         db.prepare(
           `INSERT INTO tavern_threads (
             thread_id, companion_id, continuity_id, title, persona_id, scenario_id,
-            chat_surface_session_id, lifecycle_status, management_revision, created_at_ms, updated_at_ms,
+            chat_surface_session_id, profile_id, profile_revision, profile_canonical_hash,
+            lifecycle_status, management_revision, created_at_ms, updated_at_ms,
             opening_kind, opening_message_id, greeting_set_id, greeting_source_revision, greeting_canonical_hash,
             greeting_variant_id, greeting_profile_revision, greeting_scenario_revision, opening_locked_at_event_id
-          ) VALUES (?, ?, ?, NULL, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+          ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         ).run(
-          request.chatThreadId, request.companionId, request.continuityId,
-          request.personaId ?? null, request.scenarioId ?? null, request.chatSurfaceSessionId, timestamp, timestamp,
+          profileAwareRequest.chatThreadId, profileAwareRequest.companionId, profileAwareRequest.continuityId,
+          profileAwareRequest.personaId ?? null, profileAwareRequest.scenarioId ?? null, profileAwareRequest.chatSurfaceSessionId,
+          profileAwareRequest.profileId, profileAwareRequest.profileRevision, profileAwareRequest.profileCanonicalHash,
+          timestamp, timestamp,
           opening === "blank" ? "blank" : "greeting", opening === "blank" ? null : opening.messageId,
           greeting?.greetingSetId ?? null, greeting?.sourceRevision ?? null, greeting?.canonicalHash ?? null,
           greeting?.variantId ?? null, greeting?.profileRevision ?? null, greeting?.scenarioRevision ?? null,
         );
-        for (const binding of request.stableArtifactBindings ?? [])
+        for (const binding of profileAwareRequest.stableArtifactBindings ?? [])
           db.prepare(`INSERT INTO tavern_thread_stable_artifact_bindings (thread_id, kind, source_id, revision, canonical_hash) VALUES (?, ?, ?, ?, ?)`)
-            .run(request.chatThreadId, binding.kind, binding.sourceId, binding.revision, binding.canonicalHash);
-        if (request.worldBookBinding) writeWorldInfoBinding(db, request.chatThreadId, request.worldBookBinding);
-        for (const message of initialMessages) insertMessage(db, request.chatThreadId, message);
-        db.prepare(`INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms) VALUES (?, NULL, 0, ?)`).run(request.chatThreadId, timestamp);
-        return readStateFromDb(db, request.chatThreadId);
+            .run(profileAwareRequest.chatThreadId, binding.kind, binding.sourceId, binding.revision, binding.canonicalHash);
+        if (profileAwareRequest.worldBookBinding) writeWorldInfoBinding(db, profileAwareRequest.chatThreadId, profileAwareRequest.worldBookBinding);
+        for (const message of initialMessages) insertMessage(db, profileAwareRequest.chatThreadId, message);
+        db.prepare(`INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms) VALUES (?, NULL, 0, ?)`).run(profileAwareRequest.chatThreadId, timestamp);
+        return readStateFromDb(db, profileAwareRequest.chatThreadId);
       });
-    },
+    };
 
+  const store: ChatThreadStore = Object.freeze({
     async listThreads(): Promise<readonly ChatThread[]> {
       return withDb((db) => {
         const rows = db.prepare("SELECT * FROM tavern_threads ORDER BY thread_id ASC").all() as any[];
@@ -1419,15 +1542,15 @@ export function createChatThreadStore(
     async resumeExact(chatThreadId, chatSurfaceSessionId): Promise<ChatThreadState> {
       return store.resumeThread(chatThreadId, chatSurfaceSessionId);
     },
-    async createExplicit(request): Promise<ChatThreadState> {
-      await store.createThread(request);
-      return store.resumeThread(request.chatThreadId, request.chatSurfaceSessionId);
+    async createExplicit(): Promise<ChatThreadState> {
+      throw new Error("profile_aware_chat_thread_creation_required");
     },
   });
 
   genuineChatThreadStores.add(store);
   initialExactContentCapabilities.add(initialCapability);
   initialExactContentCapabilityByStore.set(store, initialCapability);
+  createProfileAwareByStore.set(store, createProfileAware);
   acceptanceByStore.set(store, acceptMounted);
   attemptClaimByStore.set(store, claimMountedAttempt);
   providerStartByStore.set(store, transitionMountedProviderStart);
@@ -1461,6 +1584,8 @@ export function createChatThreadStore(
           acceptedAtMs: existingRow.accepted_at_ms,
         });
       }
+      if (input.authoredContextPlan === undefined) throw new Error("chat_turn_context_plan_required");
+      validateContextPlan(input.authoredContextPlan, thread, input);
       if (
         current.turnLedger !== null &&
         current.turnLedger.status !== "completed" &&
@@ -1490,6 +1615,7 @@ export function createChatThreadStore(
       db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?").run(
         acceptedAtMs, lockedAt, input.chatThreadId,
       );
+      if (input.authoredContextPlan !== undefined) persistContextPlan(db, input.authoredContextPlan, turnId);
 
       db.prepare(
         "UPDATE tavern_drafts SET revision = ?, draft_content = NULL, updated_at_ms = ? WHERE thread_id = ?",
@@ -1793,7 +1919,7 @@ function rowToThread(db: DatabaseSync, row: any): ChatThread {
     : freezeStableWorldBookBinding({ worldBookId: world.world_book_id, revision: world.revision, canonicalHash: world.canonical_hash, provenance: world.provenance });
   return freezeThread({
     schemaVersion: CHAT_THREAD_SCHEMA_VERSION, chatThreadId: row.thread_id, companionId: row.companion_id,
-    continuityId: row.continuity_id, ...(row.persona_id ? { personaId: row.persona_id } : {}),
+    continuityId: row.continuity_id, profileId: validateProfileId(row.profile_id), profileRevision: validatePositiveInteger(row.profile_revision, "profile_revision"), profileCanonicalHash: validateCanonicalHash(row.profile_canonical_hash), ...(row.persona_id ? { personaId: row.persona_id } : {}),
     ...(row.scenario_id ? { scenarioId: row.scenario_id } : {}), stableArtifactBindings,
     ...(worldBookBinding ? { worldBookBinding } : {}), chatSurfaceSessionId: row.chat_surface_session_id,
     createdAtMs: row.created_at_ms, updatedAtMs: row.updated_at_ms, openingSelection,
@@ -1968,6 +2094,49 @@ function readTurnLedger(db: DatabaseSync, row: any): ChatTurnLedger {
   });
 }
 
+function validateProfileId(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value === "unknown") throw new Error("invalid_chat_thread_profile");
+  return value;
+}
+function validatePositiveInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error(`invalid_${label}`);
+  return value as number;
+}
+function validateCanonicalHash(value: unknown): string {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) throw new Error("invalid_chat_thread_profile");
+  return value;
+}
+function isExactId(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/u.test(value); }
+
+function readContextPlan(db: DatabaseSync, turnId: string, thread: ChatThread): AcceptedTurnAuthoredContextPlan | undefined {
+  const row = db.prepare("SELECT * FROM tavern_turn_context_plans WHERE turn_id = ?").get(turnId) as any;
+  if (row === undefined) throw new Error("chat_turn_context_plan_missing");
+  if (row.thread_id !== thread.chatThreadId || row.continuity_id !== thread.continuityId || row.companion_id !== thread.companionId || row.profile_id !== thread.profileId || row.profile_revision !== thread.profileRevision || row.profile_canonical_hash !== thread.profileCanonicalHash || row.chat_surface_session_id !== thread.chatSurfaceSessionId) throw new Error("chat_turn_context_plan_scope_mismatch");
+  const sources = (db.prepare("SELECT * FROM tavern_turn_context_sources WHERE turn_id = ? ORDER BY ordinal").all(turnId) as any[]).map((source, ordinal) => {
+    if (source.ordinal !== ordinal) throw new Error("chat_turn_context_source_order_invalid");
+    return Object.freeze({ sourceId: source.source_id, kind: source.kind, revision: source.revision, canonicalHash: source.canonical_hash, totalOrderKey: source.total_order_key });
+  });
+  if (sources.some((source, index) => index > 0 && source.totalOrderKey <= sources[index - 1].totalOrderKey)) throw new Error("chat_turn_context_source_order_invalid");
+  if (!Number.isSafeInteger(row.stable_token_count) || row.stable_token_count < 0) throw new Error("chat_turn_context_token_mismatch");
+  return Object.freeze({ threadId: row.thread_id, turnId, continuityId: row.continuity_id, companionId: row.companion_id, playerId: row.player_id, profileId: row.profile_id, profileRevision: row.profile_revision, profileCanonicalHash: row.profile_canonical_hash, chatSurfaceSessionId: row.chat_surface_session_id, stableSources: Object.freeze(sources), stableTokenCount: row.stable_token_count });
+}
+
+function persistContextPlan(db: DatabaseSync, plan: AcceptedTurnAuthoredContextPlan, turnId: string): void {
+  db.prepare("INSERT INTO tavern_turn_context_plans (turn_id, thread_id, continuity_id, companion_id, player_id, profile_id, profile_revision, profile_canonical_hash, chat_surface_session_id, stable_token_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, plan.threadId, plan.continuityId, plan.companionId, plan.playerId, plan.profileId, plan.profileRevision, plan.profileCanonicalHash, plan.chatSurfaceSessionId, plan.stableTokenCount);
+  for (const [ordinal, source] of plan.stableSources.entries()) db.prepare("INSERT INTO tavern_turn_context_sources (turn_id, ordinal, source_id, kind, revision, canonical_hash, total_order_key) VALUES (?, ?, ?, ?, ?, ?, ?)").run(turnId, ordinal, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey);
+}
+
+function validateContextPlan(plan: AcceptedTurnAuthoredContextPlan, thread: ChatThread, input: MountedAcceptanceInput): void {
+  if (plan.threadId !== thread.chatThreadId || !isExactId(plan.turnId) || plan.continuityId !== thread.continuityId || plan.companionId !== thread.companionId || plan.chatSurfaceSessionId !== thread.chatSurfaceSessionId || plan.playerId !== input.playerId || plan.profileId !== thread.profileId || plan.profileRevision !== thread.profileRevision || plan.profileCanonicalHash !== thread.profileCanonicalHash) throw new Error("chat_turn_context_plan_scope_mismatch");
+  if (!Number.isSafeInteger(plan.stableTokenCount) || plan.stableTokenCount < 0) throw new Error("chat_turn_context_token_mismatch");
+  let previous = "";
+  const seen = new Set<string>();
+  for (const source of plan.stableSources) {
+    if (!isExactId(source.sourceId) || !/^[a-f0-9]{64}$/.test(source.canonicalHash) || source.totalOrderKey <= previous || seen.has(`${source.kind}:${source.sourceId}`)) throw new Error("invalid_chat_turn_context_plan");
+    previous = source.totalOrderKey; seen.add(`${source.kind}:${source.sourceId}`);
+  }
+}
+
 function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadState {
   assertId("chatThreadId", chatThreadId);
   const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
@@ -1978,6 +2147,7 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
   const draft = draftRow ? validateDraft({ revision: draftRow.revision, text: draftRow.draft_content ?? null }) : validateDraft({ revision: 0, text: null });
   const turnRow = db.prepare("SELECT * FROM tavern_turns WHERE thread_id = ? AND is_current = 1").get(chatThreadId) as any;
   const turnLedger = turnRow ? readTurnLedger(db, turnRow) : null;
+  const currentTurnContextPlan = turnRow && turnRow.status === "accepted_queued" ? readContextPlan(db, turnRow.turn_id, thread) : undefined;
   const idempotency = (db.prepare(
     "SELECT i.idempotency_key, i.fingerprint, t.turn_id, t.idempotency_key AS turn_idempotency_key, t.message_id, t.accepted_at_ms FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id WHERE i.thread_id = ? ORDER BY i.idempotency_key",
   ).all(chatThreadId) as any[]).map((entry) =>
@@ -1995,7 +2165,7 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
   );
   validateOpeningConsistency(thread, messages);
   validateTurnIntegrity(messages, turnLedger, idempotency);
-  return freezeState({ thread, messages, draft, turnLedger, idempotency });
+  return freezeState({ thread, messages, draft, turnLedger, idempotency, ...(currentTurnContextPlan === undefined ? {} : { currentTurnContextPlan }) });
 }
 
 function validateActiveSelection(value: unknown): ActiveChatThreadSelection {
@@ -2018,6 +2188,20 @@ function validateActiveSelection(value: unknown): ActiveChatThreadSelection {
 
 function freezeActiveSelection(value: ActiveChatThreadSelection): ActiveChatThreadSelection {
   return Object.freeze({ ...value });
+}
+
+function validateProfileMetadata(value: unknown): Readonly<{
+  profileId: string;
+  profileRevision: number;
+  profileCanonicalHash: string;
+}> {
+  if (!value || typeof value !== "object") throw new Error("invalid_chat_thread_profile");
+  const profile = value as Record<string, unknown>;
+  return Object.freeze({
+    profileId: validateProfileId(profile.profileId),
+    profileRevision: validatePositiveInteger(profile.revision, "profile_revision"),
+    profileCanonicalHash: validateCanonicalHash(profile.canonicalHash),
+  });
 }
 
 function validateCreate(request: CreateChatThreadRequest): void {

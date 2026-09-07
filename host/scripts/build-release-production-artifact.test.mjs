@@ -22,7 +22,7 @@ test("protected release gate remains fixed upstream of the no-argument entry", a
   const workflow = await readFile(workflowPath, "utf8");
   assert.match(
     workflow,
-    /node host\/scripts\/build-windows-reparse-inspector\.mjs\n\s+- run: dotnet restore integrations\/stardew\/tests\/GameBuddy\.Stardew\.Core\.Tests\/GameBuddy\.Stardew\.Core\.Tests\.csproj\n\s+- run: dotnet restore integrations\/stardew\/tests\/GameBuddy\.Stardew\.Integration\.Tests\/GameBuddy\.Stardew\.Integration\.Tests\.csproj\n\s+- run: pnpm --dir host test/,
+    /node host\/scripts\/build-windows-reparse-inspector\.mjs\n\s+- uses: actions\/setup-dotnet@v4\n\s+with:\n\s+dotnet-version: 6\.0\.x\n\s+- run: dotnet restore integrations\/stardew\/tests\/GameBuddy\.Stardew\.Core\.Tests\/GameBuddy\.Stardew\.Core\.Tests\.csproj\n\s+- run: dotnet restore integrations\/stardew\/tests\/GameBuddy\.Stardew\.Integration\.Tests\/GameBuddy\.Stardew\.Integration\.Tests\.csproj\n\s+- run: pnpm --dir host test/,
   );
 });
 

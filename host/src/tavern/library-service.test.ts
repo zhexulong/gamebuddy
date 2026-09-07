@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { canonicalHash, canonicalJson, TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import { createTavernLibraryService } from "./library-service.js";
@@ -10,8 +10,9 @@ import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import { validateTavernArtifact } from "./types.js";
 
 const hash = "a".repeat(64);
+const profileReader = { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: hash }; } };
 async function setup() {
-  const root = await mkdtemp(join(tmpdir(), "tavern-library-"));
+  const root = await canonicalTestRoot("tavern-library-");
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
   const paths = resolveTavernPaths(
     {
@@ -27,7 +28,7 @@ async function setup() {
   );
   const artifacts = new TavernArtifactStore(root);
   const threads = createChatThreadStore(root, "b".repeat(64), () => 10);
-  const service = createTavernLibraryService(paths, artifacts, threads);
+  const service = createTavernLibraryService(paths, artifacts, threads, profileReader);
   return { root, paths, artifacts, service };
 }
 async function writeSelections(root: string, paths: ReturnType<typeof resolveTavernPaths>) {

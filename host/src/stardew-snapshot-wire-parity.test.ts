@@ -20,13 +20,13 @@ const scope: Scope = {
   companionId: "companion_01",
 };
 const serializerTest =
-  "GameBuddy.Stardew.Integration.Tests.BridgeSessionPublicationTests.Hello_PublishesReadOnlyWorldMapOperationWithoutEnablingExecution";
+  "GameBuddy.Stardew.Core.Tests.BridgeProtocolSerializationTests.TrySerialize_SnapshotWireParityFixture_WritesHostWireParityFixtureWhenRequested";
 
 function runSerializer(outputPath: string): Promise<void> {
   const repoRoot = /[\\/]host$/i.test(process.cwd()) ? resolve(process.cwd(), "..") : resolve(process.cwd());
   const project = resolve(
     repoRoot,
-    "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj",
+    "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/GameBuddy.Stardew.Core.Tests.csproj",
   );
   return new Promise((resolvePromise, reject) => {
     const child = spawn(

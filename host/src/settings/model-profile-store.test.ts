@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,8 +11,14 @@ import {
   resolveModelProfileConfig,
 } from "./model-profile-store.js";
 
+async function canonicalTemporaryRoot(): Promise<string> {
+  const root = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof root !== "string" || root.length === 0) throw new Error("test_local_app_data_unavailable");
+  return realpath(root);
+}
+
 async function withStore(run: (path: string, store: ModelProfileStore) => Promise<void>): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-model-profiles-"));
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-model-profiles-"));
   try {
     await run(
       join(root, "settings", "model-profiles.json"),

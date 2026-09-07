@@ -4,13 +4,14 @@ import {
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { type AcceptedQueuedTurn, acceptMountedPlayerMessage } from "./chat-thread-store.js";
+import { type AcceptedQueuedTurn, acceptMountedPlayerMessage, type AcceptedTurnAuthoredContextPlan } from "./chat-thread-store.js";
 
 type MountedAcceptanceCommand = Readonly<{
   text: string;
   locale: string;
   idempotencyKey: string;
   expectedDraftRevision: number;
+  authoredContextPlan: AcceptedTurnAuthoredContextPlan;
 }>;
 
 /**

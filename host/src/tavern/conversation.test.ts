@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import type { ChatThreadStore } from "./chat-thread-store.js";
+import type { ChatThreadStore, ProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
 import {
   createTavernConversation,
   createTavernSemanticChatContentPort,
@@ -25,7 +25,7 @@ const state = Object.freeze({
   draft: Object.freeze({ revision: 0, text: null }),
   turnLedger: null,
   idempotency: Object.freeze([]),
-});
+}) as unknown as import("./chat-thread-store.js").ChatThreadState;
 const binding = {
   chatThreadId: "thread_01",
   companionId: "companion_01",
@@ -52,15 +52,11 @@ const selectionMethods = {
 
 test("Tavern conversation explicitly creates a blank exact-surface thread and durably orders player then response", async () => {
   const calls: string[] = [];
-  const store: ChatThreadStore = {
+  const store = {
     ...selectionMethods,
     async resumeThread() {
       calls.push("resume");
       throw new Error("must_not_resume");
-    },
-    async createThread(request) {
-      calls.push(`create:${request.opening}`);
-      return state;
     },
     async commitOpening() {
       return state;
@@ -74,7 +70,8 @@ test("Tavern conversation explicitly creates a blank exact-surface thread and du
       return state;
     },
   };
-  const conversation = await createTavernConversation(store, binding);
+  const creation: ProfileAwareChatThreadCreationCapability = { createExplicit: async (request) => { calls.push(`create:${request.opening}`); return state; } };
+  const conversation = await createTavernConversation(store, binding, creation);
   await conversation.appendPlayer({ messageId: "player_01", text: "Hello", occurredAtMs: 2 });
   await conversation.commitResponse(
     { surface: "chat", expressionId: "response_01", sessionId: "surface_01", text: "Hi", locale: "en-US" },
@@ -99,13 +96,13 @@ test("Tavern retry reads the exact durable binding and permits only a safe no-ef
     ]),
   });
   let resumeCount = 0;
-  const store: ChatThreadStore = {
+  const store = {
     ...selectionMethods,
     async resumeThread() {
       resumeCount++;
       return responseState;
     },
-    async createThread() {
+    async createExplicit() {
       return responseState;
     },
     async commitOpening() {
@@ -153,7 +150,7 @@ test("Tavern conversation fails closed for resume and append errors", async () =
     async resumeThread() {
       throw new Error("chat_thread_surface_mismatch");
     },
-    async createThread() {
+    async createExplicit() {
       throw new Error("must_not_create");
     },
     async commitOpening() {
@@ -173,7 +170,7 @@ test("Tavern conversation fails closed for resume and append errors", async () =
     async resumeThread() {
       return state;
     },
-    async createThread() {
+    async createExplicit() {
       return state;
     },
     async commitOpening() {
@@ -195,13 +192,13 @@ test("Tavern conversation fails closed for resume and append errors", async () =
 
 test("strict semantic content resume opens only the specified existing exact binding", async () => {
   const calls: string[] = [];
-  const store: ChatThreadStore = {
+  const store = {
     ...selectionMethods,
     async resumeThread(threadId, surfaceId) {
       calls.push(`resume:${threadId}:${surfaceId}`);
       return state;
     },
-    async createThread() {
+    async createExplicit() {
       calls.push("create");
       return state;
     },
@@ -228,7 +225,7 @@ test("strict semantic content resume fails closed without creating missing or mi
       missingCalls.push("resume");
       throw new Error("chat_thread_not_found");
     },
-    async createThread() {
+    async createExplicit() {
       missingCalls.push("create");
       return state;
     },
@@ -258,7 +255,7 @@ test("strict semantic content resume fails closed without creating missing or mi
         calls.push("resume");
         return state;
       },
-      async createThread() {
+      async createExplicit() {
         calls.push("create");
         return state;
       },
@@ -282,13 +279,13 @@ test("strict semantic content resume fails closed without creating missing or mi
 
 test("semantic content port returns an immutable exact receipt only after durable readback", async () => {
   const calls: string[] = [];
-  const store: ChatThreadStore = {
+  const store = {
     ...selectionMethods,
     async resumeThread(threadId, surfaceId) {
       calls.push(`resume:${threadId}:${surfaceId}`);
       return state;
     },
-    async createThread(request) {
+    async createExplicit(request: import("./chat-thread-store.js").CreateChatThreadRequest) {
       calls.push(`create:${request.chatThreadId}`);
       return state;
     },
@@ -302,7 +299,8 @@ test("semantic content port returns an immutable exact receipt only after durabl
       return state;
     },
   };
-  const port = createTavernSemanticChatContentPort(store);
+  const creation: ProfileAwareChatThreadCreationCapability = { createExplicit: async (request) => { calls.push(`create:${request.chatThreadId}`); return state; } };
+  const port = createTavernSemanticChatContentPort(store, creation);
   const opened = await port.createExplicit(binding);
   const canonicalBinding = JSON.stringify({
     chatThreadId: "thread_01",
@@ -328,7 +326,7 @@ test("semantic content port classifies exact missing and existing without confla
       missingCalls.push("resume");
       throw new Error("chat_thread_not_found");
     },
-    async createThread() {
+    async createExplicit() {
       missingCalls.push("create");
       return state;
     },
@@ -343,7 +341,7 @@ test("semantic content port classifies exact missing and existing without confla
     },
   };
   await assert.rejects(
-    () => createTavernSemanticChatContentPort(missing).resumeExact(binding),
+    () => createTavernSemanticChatContentPort(missing, { createExplicit: async () => state }).resumeExact(binding),
     (error: unknown) => error instanceof TavernExactContentError && error.code === "tavern_exact_content_not_found",
   );
   assert.deepEqual(missingCalls, ["resume"]);
@@ -355,7 +353,7 @@ test("semantic content port classifies exact missing and existing without confla
       existingCalls.push("resume");
       return state;
     },
-    async createThread() {
+    async createExplicit() {
       existingCalls.push("create");
       throw new Error("chat_thread_already_exists");
     },
@@ -370,7 +368,7 @@ test("semantic content port classifies exact missing and existing without confla
     },
   };
   await assert.rejects(
-    () => createTavernSemanticChatContentPort(existing).createExplicit(binding),
+    () => createTavernSemanticChatContentPort(existing, { createExplicit: async () => { throw new Error("chat_thread_already_exists"); } }).createExplicit(binding),
     (error: unknown) =>
       error instanceof TavernExactContentError && error.code === "tavern_exact_content_already_exists",
   );
@@ -381,7 +379,7 @@ test("semantic content port classifies exact missing and existing without confla
     async resumeThread() {
       throw new Error("storage_unavailable");
     },
-    async createThread() {
+    async createExplicit() {
       throw new Error("storage_unavailable");
     },
     async commitOpening() {
@@ -395,11 +393,11 @@ test("semantic content port classifies exact missing and existing without confla
     },
   };
   await assert.rejects(
-    () => createTavernSemanticChatContentPort(unavailable).resumeExact(binding),
+    () => createTavernSemanticChatContentPort(unavailable, { createExplicit: async () => { throw new Error("storage_unavailable"); } }).resumeExact(binding),
     /storage_unavailable/,
   );
   await assert.rejects(
-    () => createTavernSemanticChatContentPort(unavailable).createExplicit(binding),
+    () => createTavernSemanticChatContentPort(unavailable, { createExplicit: async () => { throw new Error("storage_unavailable"); } }).createExplicit(binding),
     /storage_unavailable/,
   );
 });
@@ -411,13 +409,13 @@ test("semantic content port rejects every mismatched exact binding after readbac
     { ...binding, chatSurfaceSessionId: "wrong_surface" },
   ]) {
     const calls: string[] = [];
-    const store: ChatThreadStore = {
+    const store = {
       ...selectionMethods,
       async resumeThread() {
         calls.push("resume");
         return state;
       },
-      async createThread() {
+      async createExplicit() {
         calls.push("create");
         return state;
       },
@@ -432,7 +430,7 @@ test("semantic content port rejects every mismatched exact binding after readbac
       },
     };
     await assert.rejects(
-      () => createTavernSemanticChatContentPort(store).resumeExact(record),
+      () => createTavernSemanticChatContentPort(store, { createExplicit: async () => state }).resumeExact(record),
       (error: unknown) =>
         error instanceof TavernExactContentError && error.code === "tavern_exact_content_binding_mismatch",
     );

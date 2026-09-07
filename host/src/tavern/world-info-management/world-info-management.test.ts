@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { createWorldInfoManagementRepository } from "./world-info-management.js";
 
 const request = Object.freeze({
@@ -19,7 +19,7 @@ const request = Object.freeze({
 });
 
 async function temporaryRepository() {
-  const root = await mkdtemp(join(tmpdir(), "world-info-management-"));
+  const root = await canonicalTestRoot("world-info-management-");
   return { root, repository: createWorldInfoManagementRepository(root) };
 }
 
@@ -99,7 +99,7 @@ test("managed World Info rejects unknown, executable, scoped, and control-bearin
 
 test("managed World Info refuses revision junctions and leaves an external sentinel untouched", async (t) => {
   const { root, repository } = await temporaryRepository();
-  const outside = await mkdtemp(join(tmpdir(), "world-info-management-external-"));
+  const outside = await canonicalTestRoot("world-info-management-external-");
   const sentinel = join(outside, "sentinel.json");
   try {
     await writeFile(sentinel, "sentinel", "utf8");

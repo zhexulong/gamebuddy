@@ -155,7 +155,7 @@ test("nonterminal exact receipt remains recoverable and query failure becomes du
   });
   assert.deepEqual(nonterminal, [{ requestId: "request_recovery_01", result: "admitted", state: "running" }]);
   assert.equal(journal.record("logical_recovery_01")?.state, "recovery_pending");
-  assert.equal(coordinator.uncertainDispatches().length, 1);
+  assert.equal(coordinator.uncertainDispatches().length, 0);
 
   const failedJournal = new StardewLogicalActionRecoveryJournal({ initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }] });
   const failedCoordinator = coordinatorFixture({ recoveryJournal: failedJournal });

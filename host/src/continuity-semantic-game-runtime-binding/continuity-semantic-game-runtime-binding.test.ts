@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { type HostDeploymentManifest, loadHostDeploymentManifest } from "../deployment-manifest.js";
@@ -145,7 +145,7 @@ function fixture(
 }
 
 async function manifest(): Promise<HostDeploymentManifest> {
-  const root = await mkdtemp(join(tmpdir(), "game-runtime-binding-"));
+  const root = await canonicalTestRoot("game-runtime-binding-");
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
   const path = join(root, "manifest.json");

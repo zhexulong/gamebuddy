@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
   type CreateChatThreadRequest,
   createChatThreadStore,
   createInitialChatExactContentCapability,
+  createProfileAwareChatThreadCreationCapability,
 } from "./chat-thread-store.js";
 import {
   createInitialChatExactContentPort,
@@ -40,7 +41,7 @@ function stateDigest(state: unknown): string {
 }
 
 async function capability() {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-exact-content-"));
+  const root = await canonicalTestRoot("gamebuddy-exact-content-");
   const store = createChatThreadStore(
     root,
     "a".repeat(64),
@@ -49,7 +50,9 @@ async function capability() {
       return () => now++;
     })(),
   );
-  return { root, store, capability: createInitialChatExactContentCapability(store) };
+  const reader = { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } };
+  const creation = createProfileAwareChatThreadCreationCapability(store, reader);
+  return { root, store, creation, capability: createInitialChatExactContentCapability(store, reader) };
 }
 function expectCode(code: TavernInitialChatExactContentPortError["code"]): (error: unknown) => boolean {
   return (error): boolean => error instanceof TavernInitialChatExactContentPortError && error.code === code;
@@ -81,7 +84,7 @@ test("exact resume of missing content fails closed; explicit creation reads back
 test("genuine exact capability resumes an existing thread", async () => {
   const fixture = await capability();
   try {
-    await fixture.store.createThread(request);
+    await fixture.creation.createExplicit(request);
     const receipt = await createInitialChatExactContentPort(fixture.capability).resumeExact(
       binding.chatThreadId,
       binding.companionId,
@@ -98,7 +101,7 @@ test("receipt digest covers complete durable state and changes for binding-prese
   const fixture = await capability();
   try {
     const port = createInitialChatExactContentPort(fixture.capability);
-    await fixture.store.createThread(request);
+    await fixture.creation.createExplicit(request);
     const initial = await port.resumeExact(
       binding.chatThreadId,
       binding.companionId,
@@ -148,7 +151,7 @@ test("collision does not fall back and broad not-found Error text cannot create"
   const fixture = await capability();
   try {
     const port = createInitialChatExactContentPort(fixture.capability);
-    await fixture.store.createThread(request);
+    await fixture.creation.createExplicit(request);
     assert.ok(
       isTrustedTavernExactContentReceipt(
         await port.resumeExact(
@@ -179,7 +182,7 @@ test("collision does not fall back and broad not-found Error text cannot create"
 test("malformed durable state fails closed without a receipt", async () => {
   const fixture = await capability();
   try {
-    await fixture.store.createThread(request);
+    await fixture.creation.createExplicit(request);
     const dbPath = join(fixture.root, "tavern", "v2", "continuities", "a".repeat(64), "tavern.sqlite");
     await writeFile(dbPath, "{ malformed", "utf8");
     await assert.rejects(

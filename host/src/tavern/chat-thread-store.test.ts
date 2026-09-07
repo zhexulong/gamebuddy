@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
-  type AttemptStartingTurn,
   claimMountedAttempt,
   createChatThreadStore,
+  createProfileAwareChatThreadCreationCapability,
   type GreetingSource,
-  type RunningTurn,
   transitionMountedProviderStart as rawTransitionP4MountedProviderStart,
   transitionMountedPresentation as rawTransitionP5MountedPresentation,
 } from "./chat-thread-store.js";
@@ -57,11 +56,13 @@ const source: GreetingSource = {
 };
 const opening = { messageId: "opening_01", text: "Welcome to the tavern.", source } as const;
 
+const profileReader = { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } };
 async function store(key = "a".repeat(64)) {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-");
   let time = 10;
   const s = createChatThreadStore(root, key, () => time++);
-  return { root, store: s, key };
+  const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+  return { root, store: s, creation, key };
 }
 
 function request(openingSelection: "blank" | typeof opening = opening) {
@@ -69,15 +70,18 @@ function request(openingSelection: "blank" | typeof opening = opening) {
     chatThreadId: "thread_01",
     companionId: "companion_01",
     continuityId: "continuity_01",
-    chatSurfaceSessionId: "surface_01",
-    opening: openingSelection,
+     chatSurfaceSessionId: "surface_01",
+     profileId: "profile_01",
+     profileRevision: 1,
+     profileCanonicalHash: "a".repeat(64),
+     opening: openingSelection,
   } as const;
 }
 
 test("SQLite schema and WAL pragmas are initialized on first access", async () => {
   const { root, store: s, key } = await store();
   try {
-    await s.createThread(request());
+    await creation.createExplicit(request());
     const dbPath = join(root, "tavern", "v2", "continuities", key, "tavern.sqlite");
     const db = new DatabaseSync(dbPath);
     try {
@@ -107,10 +111,10 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
 });
 
 test("greeting openings require an exact canonical hash on write and reject invalid hashes", async () => {
-  const { root, store: s } = await store();
+    const { root, store: s, creation } = await store();
   try {
     await assert.rejects(
-      s.createThread({
+      creation.createExplicit({
         chatThreadId: "thread",
         companionId: "companion",
         continuityId: "continuity",
@@ -120,7 +124,7 @@ test("greeting openings require an exact canonical hash on write and reject inva
       /invalid_greeting_source/,
     );
     await assert.rejects(
-      s.createThread({
+      creation.createExplicit({
         chatThreadId: "thread",
         companionId: "companion",
         continuityId: "continuity",
@@ -129,7 +133,7 @@ test("greeting openings require an exact canonical hash on write and reject inva
       }),
       /invalid_greeting_source/,
     );
-    const created = await s.createThread(request());
+    const created = await creation.createExplicit(request());
     assert.equal(created.thread.title, null);
     assert.deepEqual(created.thread.openingSelection, { kind: "greeting", messageId: "opening_01", source });
     assert.equal(created.messages.length, 1);
@@ -141,10 +145,10 @@ test("greeting openings require an exact canonical hash on write and reject inva
 });
 
 test("duplicate thread creation is rejected with exact error", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
-    await s.createThread(request());
-    await assert.rejects(() => s.createThread(request()), /chat_thread_already_exists/);
+    await creation.createExplicit(request());
+    await assert.rejects(() => creation.createExplicit(request()), /chat_thread_already_exists/);
   } finally {
     s.close?.();
     await rm(root, { recursive: true, force: true });
@@ -152,7 +156,7 @@ test("duplicate thread creation is rejected with exact error", async () => {
 });
 
 test("missing thread resume fails closed with not_found", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
     await assert.rejects(() => s.resumeThread("missing_01", "surface_01"), /chat_thread_not_found/);
   } finally {
@@ -162,9 +166,9 @@ test("missing thread resume fails closed with not_found", async () => {
 });
 
 test("blank opening creates empty transcript and switches to greeting atomically", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
-    const created = await s.createThread(request("blank"));
+    const created = await creation.createExplicit(request("blank"));
     assert.deepEqual(created.thread.openingSelection, { kind: "blank" });
     assert.deepEqual(created.messages, []);
 
@@ -182,9 +186,9 @@ test("blank opening creates empty transcript and switches to greeting atomically
 });
 
 test("first player message or response locks the opening", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
-    await s.createThread(request());
+    await creation.createExplicit(request());
     const player = await s.appendPlayer("thread_01", { messageId: "player_01", text: "Hello", occurredAtMs: 101 });
     assert.equal(player.thread.openingLockedAtEventId, "player_01");
     await assert.rejects(() => s.commitOpening("thread_01", "blank"), /chat_thread_opening_locked/);
@@ -205,9 +209,9 @@ test("first player message or response locks the opening", async () => {
 });
 
 test("appendPlayer and commitResponse are idempotent on identical re-submission and reject conflicts", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
-    await s.createThread(request());
+    await creation.createExplicit(request());
     const first = await s.appendPlayer("thread_01", { messageId: "player_01", text: "Hello", occurredAtMs: 101 });
     const replay = await s.appendPlayer("thread_01", { messageId: "player_01", text: "Hello", occurredAtMs: 101 });
     assert.deepEqual(replay, first);
@@ -236,9 +240,9 @@ test("appendPlayer and commitResponse are idempotent on identical re-submission 
 });
 
 test("draft save and discard update revision monotonically with CAS guard", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
-    await s.createThread(request());
+    await creation.createExplicit(request());
     const initial = await s.resumeThread("thread_01", "surface_01");
     assert.deepEqual(initial.draft, { revision: 0, text: null });
 
@@ -275,9 +279,9 @@ test("draft save and discard update revision monotonically with CAS guard", asyn
 });
 
 test("lifecycle transitions increment managementRevision monotonically with CAS guard", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
-    await s.createThread(request());
+    await creation.createExplicit(request());
     const thread1 = await s.transitionLifecycle!({
       chatThreadId: "thread_01",
       chatSurfaceSessionId: "surface_01",
@@ -332,9 +336,9 @@ test("lifecycle transitions increment managementRevision monotonically with CAS 
 });
 
 test("renameThreadTitle updates title and increments managementRevision with CAS", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
-    await s.createThread(request());
+    await creation.createExplicit(request());
     const renamed = await s.renameThreadTitle!({
       chatThreadId: "thread_01",
       chatSurfaceSessionId: "surface_01",
@@ -374,9 +378,9 @@ test("renameThreadTitle updates title and increments managementRevision with CAS
 });
 
 test("active thread selection persists singleton and detects surface mismatch", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
-    await s.createThread(request());
+    await creation.createExplicit(request());
     const selection = await s.selectActiveThread("thread_01", "surface_01");
     assert.equal(selection.chatThreadId, "thread_01");
     assert.equal(selection.chatSurfaceSessionId, "surface_01");
@@ -395,9 +399,9 @@ test("active thread selection persists singleton and detects surface mismatch", 
 });
 
 test("normalized transcript has no fixed entry ceiling", async () => {
-  const { root, store: s } = await store();
+  const { root, store: s, creation } = await store();
   try {
-    await s.createThread(request());
+    await creation.createExplicit(request());
     for (let i = 1; i <= 501; i++) {
       await s.appendPlayer("thread_01", {
         messageId: `player_${String(i).padStart(4, "0")}`,
@@ -413,12 +417,13 @@ test("normalized transcript has no fixed entry ceiling", async () => {
 });
 
 test("concurrent transactions across store instances preserve monotonic managementRevision with 0 deadlocks", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-concurrency-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-concurrency-");
   const continuityKey = "c".repeat(64);
   try {
     const store1 = createChatThreadStore(root, continuityKey, () => 100);
     const store2 = createChatThreadStore(root, continuityKey, () => 101);
-    await store1.createThread({
+    const creation1 = createProfileAwareChatThreadCreationCapability(store1, profileReader);
+    await creation1.createExplicit({
       chatThreadId: "thread_01",
       companionId: "companion_01",
       continuityId: "continuity_01",
@@ -463,14 +468,15 @@ test("concurrent transactions across store instances preserve monotonic manageme
 });
 
 test("P4 durable turn acceptance, claim, start, and presentation transitions work atomically", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p4p5-"));
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p4p5-");
   const continuityKey = createHash("sha256")
     .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
     .digest("hex");
   try {
     const t0 = Date.now();
     const s = createChatThreadStore(root, continuityKey, () => t0);
-    await s.createThread({
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit({
       chatThreadId: "thread_01",
       companionId: "companion_01",
       continuityId: "continuity_01",
@@ -492,8 +498,9 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
       text: "Hello from P4",
       locale: "en-US",
       idempotencyKey: "abcdefghijklmnopqrstuv",
-      expectedDraftRevision: 0,
-    });
+       expectedDraftRevision: 0,
+       authoredContextPlan: { threadId: "thread_01", turnId: "turn_01", continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), chatSurfaceSessionId: "surface_01", stableSources: [], stableTokenCount: 0 },
+     });
     assert.equal(accepted.status, "accepted_queued");
 
     const claimBinding = {

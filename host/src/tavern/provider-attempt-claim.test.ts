@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 
 if (process.platform !== "win32")
   throw new Error("Provider attempt claim durable attempt claim requires real Windows production mounting");
 
 const script = async (body: string) => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-p4b-"));
+  const root = await canonicalTestRoot("gamebuddy-p4b-");
   const facadeUrl = new URL("./provider-attempt-claim.js", import.meta.url).href;
   const coordinatorUrl = new URL(
     "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",

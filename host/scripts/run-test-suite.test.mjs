@@ -38,7 +38,7 @@ test("Windows dependency preparation rejects an unsafe command processor", () =>
 
 test("Windows dependency preparation requires a fixed existing Bun executable", () => {
   assert.throws(
-    () => testDependencyInvocations({ platform: "win32", comSpec: "C:\\Windows\\System32\\cmd.exe" }),
+    () => testDependencyInvocations({ platform: "win32", comSpec: "C:\\Windows\\System32\\cmd.exe", bunExecutable: "" }),
     /test_dependency_bun_executable_invalid/,
   );
   assert.throws(

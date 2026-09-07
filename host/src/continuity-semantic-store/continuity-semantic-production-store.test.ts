@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import test from "node:test";
+import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { createTestWindowsOwnerDeathVerification } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.test-support.js";
 import {
   openProductionContinuityStore,
@@ -54,7 +54,7 @@ const receipt = (permit: any, kind: "runtime_bootstrapped" | "runtime_torn_down"
 });
 
 test("Game recovery requires explicit OS-proven owner death and exact owner tuple", () => {
-  const root = mkdtempSync(`${tmpdir()}/production-game-recovery-`);
+  const root = canonicalTestRootSync("production-game-recovery-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
   try {
     const metadata = control.bootstrapFresh(bootstrap);
@@ -115,7 +115,7 @@ test("Game recovery requires explicit OS-proven owner death and exact owner tupl
 });
 
 test("Game close-pending dead-owner recovery terminalizes without a runtime teardown receipt", () => {
-  const root = mkdtempSync(`${tmpdir()}/production-game-close-pending-recovery-`);
+  const root = canonicalTestRootSync("production-game-close-pending-recovery-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
   try {
     const metadata = control.bootstrapFresh(bootstrap);
@@ -189,7 +189,7 @@ test("Game close-pending dead-owner recovery terminalizes without a runtime tear
 
 test("Chat runtime commit accepts only frozen exact canonical receipts", () => {
   const createFixture = () => {
-    const root = mkdtempSync(`${tmpdir()}/production-chat-receipt-`);
+    const root = canonicalTestRootSync("production-chat-receipt-");
     const control = openProductionContinuityStore({ runtimeRoot: root });
     const metadata = control.bootstrapFresh(bootstrap);
     const store = control.bindBootstrapContext({ bootstrap, metadata });
@@ -314,7 +314,7 @@ test("Chat runtime commit accepts only frozen exact canonical receipts", () => {
 });
 
 test("Chat runtime teardown recovery accepts only frozen exact receipts and persists its canonical readback", () => {
-  const root = mkdtempSync(`${tmpdir()}/production-chat-teardown-recovery-`);
+  const root = canonicalTestRootSync("production-chat-teardown-recovery-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
   let reopenedControl: ReturnType<typeof openProductionContinuityStore> | null = null;
   try {
@@ -437,7 +437,7 @@ test("Chat runtime teardown recovery accepts only frozen exact receipts and pers
 });
 
 test("Chat runtime and Game lifecycle use independent surface fences during concurrent materialization and recovery", () => {
-  const root = mkdtempSync(`${tmpdir()}/production-independent-surfaces-`);
+  const root = canonicalTestRootSync("production-independent-surfaces-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
   try {
     const metadata = control.bootstrapFresh(bootstrap);
@@ -530,7 +530,7 @@ test("Chat runtime and Game lifecycle use independent surface fences during conc
 });
 
 test("Chat start/materialize/commit remains usable across a Game enter and close", () => {
-  const root = mkdtempSync(`${tmpdir()}/production-game-`);
+  const root = canonicalTestRootSync("production-game-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
   try {
     const metadata = control.bootstrapFresh(bootstrap);

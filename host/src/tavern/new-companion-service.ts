@@ -3,6 +3,8 @@ import { mkdir } from "node:fs/promises";
 import {
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
+  readIdentityProfile,
+  identityProfileMetadata,
   type IdentityProfile,
   identityProfileHash,
   writeIdentityProfile,
@@ -161,6 +163,11 @@ async function provisionNewCompanionNamespace(
         resolveTavernPaths(paths, identity),
         new TavernArtifactStore(paths.root),
         threads,
+        {
+          async readExact() {
+            return identityProfileMetadata(await readIdentityProfile(paths.identityProfilePath));
+          },
+        },
       );
       const companion = await library.createNewCompanion({
         companionId: identity.companionId,

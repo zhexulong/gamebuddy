@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { createWorldInfoManagementRepository } from "../world-info-management/world-info-management.js";
 import { createManagedWorldInfoBindingResolver } from "./managed-world-info-binding.js";
 
@@ -13,7 +12,7 @@ const first = {
 };
 
 test("managed resolver binds the exact immutable revision and never re-resolves as latest", async () => {
-  const root = await mkdtemp(join(tmpdir(), "managed-world-info-binding-"));
+  const root = await canonicalTestRoot("managed-world-info-binding-");
   try {
     const repository = createWorldInfoManagementRepository(root);
     await repository.create(first);
@@ -35,7 +34,7 @@ test("managed resolver binds the exact immutable revision and never re-resolves 
 });
 
 test("bindExact stays pinned to the named revision after a later revision exists", async () => {
-  const root = await mkdtemp(join(tmpdir(), "managed-world-info-binding-exact-"));
+  const root = await canonicalTestRoot("managed-world-info-binding-exact-");
   try {
     const repository = createWorldInfoManagementRepository(root);
     await repository.create(first);
@@ -57,7 +56,7 @@ test("bindExact stays pinned to the named revision after a later revision exists
 });
 
 test("bindExact fails closed for an absent or invalid revision", async () => {
-  const root = await mkdtemp(join(tmpdir(), "managed-world-info-binding-absent-"));
+  const root = await canonicalTestRoot("managed-world-info-binding-absent-");
   try {
     const repository = createWorldInfoManagementRepository(root);
     await repository.create(first);

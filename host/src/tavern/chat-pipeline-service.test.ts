@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { composeTavernProfile, TavernBrowserValidatorsV1 } from "./browser-contract/index.js";
@@ -56,7 +55,7 @@ function forgedLease(): MountedChatRuntimeLease {
 }
 
 test("service rejects forged structural mounted leases and non-composed profiles before any durable access", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-pipeline-forged-"));
+  const root = await canonicalTestRoot("gamebuddy-pipeline-forged-");
   try {
     const forged = forgedLease();
     // The structural copy cannot carry the coordinator WeakMap brand, and a
@@ -222,7 +221,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
 }
 
 async function mounted(body: string): Promise<Record<string, unknown>> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-pipeline-service-"));
+  const root = await canonicalTestRoot("gamebuddy-pipeline-service-");
   try {
     return await runMountedChild(body, root);
   } finally {
@@ -567,7 +566,7 @@ test(
   "a fresh Host child reopens the exact terminal Chat through known-root recovery without a second provider start",
   { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "gamebuddy-pipeline-process-recovery-"));
+    const root = await canonicalTestRoot("gamebuddy-pipeline-process-recovery-");
     const key = "klmnopqrstuvwxyzaabcde";
     try {
       const first = await runMountedChild(

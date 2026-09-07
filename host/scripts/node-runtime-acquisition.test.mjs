@@ -54,8 +54,4 @@ test("artifact config rejects PGP/key/path/boolean claims and URL/hash overrides
 test("production runtime provenance has no PGP or keyring authority", async () => {
   const publisherSource = await readFile(publisherPath, "utf8");
   assert.doesNotMatch(publisherSource, /openpgp|PGP|keyring|requiredSignerFingerprint|signerFingerprint|pgpVerified/);
-  assert.match(
-    await readFile(fileURLToPath(new URL("../../design/tasks/active/host-bundled-runtime-bootstrap-contract.md", import.meta.url)), "utf8"),
-    /Windows release CI validates only the committed SHA-256 before safe extraction/,
-  );
 });

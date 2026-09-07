@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
 import { composeTavernProfile } from "../browser-contract/index.js";
@@ -72,7 +72,7 @@ function forgedLease(): MountedChatRuntimeLease {
 }
 
 test("memory service rejects forged structural mounted leases and wrong profiles before any durable access", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-memory-forged-"));
+  const root = await canonicalTestRoot("gamebuddy-memory-forged-");
   try {
     const forged = forgedLease();
     assert.throws(
@@ -199,7 +199,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
 }
 
 async function mounted(body: string): Promise<Record<string, unknown>> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-memory-service-"));
+  const root = await canonicalTestRoot("gamebuddy-memory-service-");
   try {
     return await runMountedChild(body, root);
   } finally {

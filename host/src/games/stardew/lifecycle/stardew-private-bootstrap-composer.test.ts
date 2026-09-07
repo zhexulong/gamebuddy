@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   readdir,
   rename,
   rm,
@@ -461,34 +462,32 @@ async function createAttachmentFactoryFixture(processOverrides: Readonly<{
 
 function defaultStagingDependencies(): StardewPrivateModProfileStagingTestSupportInput {
   let secretIndex = 0;
-  const artifactRoot = resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    "integrations",
-    "stardew",
-    "bin",
-    "Debug",
-    "net6.0",
-  );
+  const entries = Object.freeze([
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "Raffinert.FuzzySharp.dll",
+    "manifest.json",
+  ]);
+  let packagePromise: Promise<Readonly<{ root: string; entries: readonly string[] }>> | undefined;
   return {
-    readPackage: async () => ({
-      root: artifactRoot,
-      entries: [
-        "GameBuddy.Stardew.Core.dll",
-        "GameBuddy.Stardew.deps.json",
-        "GameBuddy.Stardew.dll",
-        "Raffinert.FuzzySharp.dll",
-        "manifest.json",
-      ],
-    }),
+    readPackage: async () => {
+      packagePromise ??= (async () => {
+        const root = await createRoot("gamebuddy-stardew-stageb-package-");
+        await Promise.all(entries.map((entry) => writeFile(join(root, entry), `fixture-${entry}`, "utf8")));
+        return Object.freeze({ root, entries });
+      })();
+      return packagePromise;
+    },
     createSecret: () => `test-provisioning-secret-${++secretIndex}-0123456789`,
     nowMs: () => 1_000,
   };
 }
 
 async function createRoot(prefix = "gamebuddy-private-bootstrap-"): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
+  const parent = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
+  if (typeof parent !== "string" || parent.length === 0) throw new Error("test_local_app_data_unavailable");
+  const root = await mkdtemp(join(await realpath(parent), prefix));
   temporaryRoots.push(root);
   return root;
 }
@@ -3597,7 +3596,7 @@ test("manifest handoff concurrent replay and cross-composition failures preserve
       signature: "",
     }, left.token)),
   );
-  await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/)
+  await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/);
   await assert.rejects(
     () => left.coordinator.confirmAndAdmit(selection, { confirmed: true }),
     /invalid_stardew_manifest_handoff_selection/,

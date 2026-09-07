@@ -76,6 +76,8 @@ export class SemanticProductionCoordinatorError extends Error {
  * provider/cancellation timeout.
  */
 export const PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS = 120_000;
+/** Fixed, bounded cold-start budget for one Host-owned Chat runtime materialization. */
+const CHAT_RUNTIME_BOOTSTRAP_MATERIALIZATION_DEADLINE_MS = 120_000;
 /** This is deliberately opaque outside this module.  Its identity, not its shape, is the capability. */
 type DialogueSagaHolder = object;
 type SagaFacts = Readonly<{
@@ -1454,7 +1456,7 @@ async function createFreshChatRuntimeAuthority(
             chatSurfaceSessionId: selected.chatSurfaceSessionId,
             runtimeBindingDigest: facts.runtimeBindingDigest,
             owner: Object.freeze({ ...facts.owner }) as ProductionChatRuntimeOwner,
-            deadlineAtMs: Date.now() + 30_000,
+            deadlineAtMs: Date.now() + CHAT_RUNTIME_BOOTSTRAP_MATERIALIZATION_DEADLINE_MS,
             // Freeze the request boundary, but keep the exact copied vector writable for
             // the store's caller-ingress descriptor contract.
             expected: { ...catalog.vector },
