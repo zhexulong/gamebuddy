@@ -1,5 +1,5 @@
 
-export type ContainmentRole = string;
+type ContainmentRole = string;
 
 export type ContainmentCorrelation = Readonly<{
   guardianInstanceId: string;
