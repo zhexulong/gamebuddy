@@ -280,7 +280,7 @@ async function createFixture(input: Readonly<{
   temporaryRoots.push(runtimeRoot);
   await publishStardewInstallationRegistration(runtimeRoot, null, {
     schema: "gamebuddy-stardew-installation-registration/v1",
-    binding: { rootLayoutVersion: 1, productInstallationId: "desktop-installation-1" },
+    binding: { rootLayoutVersion: 1 },
     revision: 1,
     state: "ready",
     locator: gameDirectoryCandidate,

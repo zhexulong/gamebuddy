@@ -41,7 +41,7 @@ const legacyActionDevelopmentProfileFields = [
 function record(overrides: Partial<StardewInstallationRegistrationRecordV1> = {}): StardewInstallationRegistrationRecordV1 {
   return {
     schema: "gamebuddy-stardew-installation-registration/v1",
-    binding: { rootLayoutVersion: 1, productInstallationId: "desktop_installation_01" },
+    binding: { rootLayoutVersion: 1 },
     revision: 1,
     state: "ready",
     locator,
@@ -123,7 +123,7 @@ test("publishes and strict-reads canonical ready and invalid records only at the
   }
 });
 
-test("strict parser rejects malformed schemas, unsafe structures, and invalid field grammar without locator leakage", async () => {
+test("strict parser rejects malformed schemas, unsafe structures, unowned productInstallationId, and invalid field grammar without locator leakage", async () => {
   const subject = await fixture();
   try {
     await mkdir(join(subject.root, "stardew-installation-registration"));
@@ -135,8 +135,8 @@ test("strict parser rejects malformed schemas, unsafe structures, and invalid fi
       { ...record(), revision: 0 },
       { ...record(), revision: 1.5 },
       { ...record(), revision: Number.MAX_SAFE_INTEGER + 1 },
-      { ...record(), binding: { rootLayoutVersion: 2, productInstallationId: "desktop_installation_01" } },
-      { ...record(), binding: { rootLayoutVersion: 1, productInstallationId: "not valid" } },
+      { ...record(), binding: { rootLayoutVersion: 2 } },
+      { ...record(), binding: { rootLayoutVersion: 1, productInstallationId: "desktop_installation_01" } },
       { ...record(), state: "invalid" },
       { ...record(), locator: "C:/Games/Stardew Valley" },
       { ...record(), locator: "C:\\Games\\..\\Stardew Valley" },

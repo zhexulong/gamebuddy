@@ -644,7 +644,7 @@ async function writeRegistrationAttemptFixture(
   await mkdir(registrationDirectory, { recursive: true });
   await writeFile(registrationPath, JSON.stringify({
     schema: "gamebuddy-stardew-installation-registration/v1",
-    binding: { rootLayoutVersion: 1, productInstallationId: "installation-1" },
+    binding: { rootLayoutVersion: 1 },
     revision: input.activeAttempt ? 2 : 1,
     state: "ready",
     locator: "C:\\StardewValley",
