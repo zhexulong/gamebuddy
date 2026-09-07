@@ -46,7 +46,7 @@ export async function runMoveSmoke(client, receipts, config) {
       before: summarizeSnapshot(fresh),
       accepted: summarizeReceipt(accepted),
       terminal: summarizeReceipt(terminal),
-      after: summarizeSnapshot(after),
+      after: { ...summarizeSnapshot(after), tile: after.tile },
     };
     attempts.push(attempt);
     if (
@@ -88,6 +88,10 @@ function adjacentCandidates(tile) {
     [1, 0],
     [0, 1],
     [-1, 0],
+    [-2, 0],
+    [2, 0],
+    [0, 2],
+    [0, -2],
   ]
     .map(([dx, dy]) => ({ x: tile.x + dx, y: tile.y + dy }))
     .filter((candidate) => candidate.x >= 0 && candidate.y >= 0);

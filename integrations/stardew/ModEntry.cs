@@ -233,6 +233,7 @@ public sealed partial class ModEntry : Mod
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
     {
+        this.ApplyWindowModeInitial();
         this.Monitor.Log($"GameBuddy health: SMAPI lifecycle hooks are available for Stardew {Game1.version} / multiplayer {StardewValley.Multiplayer.protocolVersion}.", LogLevel.Trace);
         if (!this.config.HasValidActionPolicy)
         {
@@ -2017,6 +2018,7 @@ public sealed partial class ModEntry : Mod
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
+        this.ApplyWindowModeTick();
         // This gate must precede bootstrap, binding, producer, and bridge work;
         // rejected P0b configuration is fail-closed for the entire tick path.
         if (this.provisioningConfigurationRejected)

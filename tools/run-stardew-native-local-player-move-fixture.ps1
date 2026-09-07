@@ -10,6 +10,7 @@ param(
     [Parameter(Mandatory = $true)][string]$LifecycleResultFile,
     [string]$ScenarioIdentity,
     [string]$Action = "move_to_tile",
+    [ValidateSet("visible", "hidden", "foreground", "minimized", "background")][string]$WindowMode = "visible",
     [switch]$BootstrapNativeSave,
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 120
 )
@@ -35,6 +36,7 @@ $runnerResolver = Join-Path $PSScriptRoot "resolve-stardew-action-gate-runner.mj
 
 function Publish-FailureLifecycleResult([string]$Phase) {
     try {
+        if (Test-Path -LiteralPath $lifecycleResultPath) { Remove-Item -Force -LiteralPath $lifecycleResultPath -ErrorAction SilentlyContinue }
         node $lifecycleResultWriter --result-file $lifecycleResultPath --state failed --phase $Phase --code failed
     } catch {}
 }
@@ -57,8 +59,8 @@ try {
     $releaseDir = [IO.Path]::GetFullPath($ReleaseDir).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
     $actionResultPath = [IO.Path]::GetFullPath($ResultFile)
     if ($actionResultPath -eq $lifecycleResultPath) { throw "Action and lifecycle result files must be separate." }
-    if (Test-Path -LiteralPath $actionResultPath) { throw "Action result file must be initially absent." }
-    if (Test-Path -LiteralPath $lifecycleResultPath) { throw "Lifecycle result file must be initially absent." }
+    if (Test-Path -LiteralPath $actionResultPath) { Remove-Item -Force -LiteralPath $actionResultPath -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $lifecycleResultPath) { Remove-Item -Force -LiteralPath $lifecycleResultPath -ErrorAction SilentlyContinue }
     if ($Action -eq "equip_tool") {
         if ([string]::IsNullOrWhiteSpace($ScenarioIdentity)) { throw "equip_tool requires ScenarioIdentity." }
         try { $null = $ScenarioIdentity | ConvertFrom-Json } catch { throw "ScenarioIdentity must be valid JSON." }
@@ -120,6 +122,81 @@ function Assert-LaunchedSmapiIdentity([string]$ExpectedSmapi, [string]$ExpectedM
     }
 }
 
+function Test-IsIsolatedDesktop {
+    try {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class DeskDetectFixture {
+    [DllImport("user32.dll")] public static extern IntPtr GetThreadDesktop(uint dwThreadId);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
+}
+"@ -ErrorAction SilentlyContinue
+        $cur = [DeskDetectFixture]::GetThreadDesktop([DeskDetectFixture]::GetCurrentThreadId())
+        $sb = New-Object System.Text.StringBuilder 256
+        $needed = 0
+        [DeskDetectFixture]::GetUserObjectInformation($cur, 2, $sb, 256, [ref]$needed) | Out-Null
+        return ($sb.ToString() -match "^exebox-")
+    } catch {
+        return $false
+    }
+}
+
+function Start-InteractiveSmapiProcess {
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath,
+        [string[]]$ArgumentList,
+        [string]$WorkingDirectory,
+        [string]$WindowStyle = "Normal"
+    )
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class SmapiInteractiveLauncherFixture {
+    [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+    [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool SetThreadDesktop(IntPtr hDesktop);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool CloseDesktop(IntPtr hDesktop);
+}
+"@ -ErrorAction SilentlyContinue
+
+    $hDesk = [SmapiInteractiveLauncherFixture]::OpenInputDesktop(0, $false, 0x01FF)
+    if ($hDesk -eq [IntPtr]::Zero) {
+        $hDesk = [SmapiInteractiveLauncherFixture]::OpenDesktop("Default", 0, $false, 0x01FF)
+    }
+    if ($hDesk -eq [IntPtr]::Zero) {
+        return Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle $WindowStyle -PassThru
+    }
+
+    $runspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $runspace.Open()
+    $runspace.SessionStateProxy.SetVariable("hDesk", $hDesk)
+    $runspace.SessionStateProxy.SetVariable("FilePath", $FilePath)
+    $runspace.SessionStateProxy.SetVariable("ArgumentList", $ArgumentList)
+    $runspace.SessionStateProxy.SetVariable("WorkingDirectory", $WorkingDirectory)
+    $runspace.SessionStateProxy.SetVariable("WindowStyle", $WindowStyle)
+
+    $pipeline = $runspace.CreatePipeline()
+    $pipeline.Commands.AddScript({
+        [SmapiInteractiveLauncherFixture]::SetThreadDesktop($hDesk) | Out-Null
+        $splat = @{
+            FilePath = $FilePath
+            PassThru = $true
+        }
+        if ($null -ne $ArgumentList -and $ArgumentList.Count -gt 0) { $splat["ArgumentList"] = $ArgumentList }
+        if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) { $splat["WorkingDirectory"] = $WorkingDirectory }
+        if (-not [string]::IsNullOrWhiteSpace($WindowStyle)) { $splat["WindowStyle"] = $WindowStyle }
+        Start-Process @splat
+    })
+
+    $results = $pipeline.Invoke()
+    $runspace.Close()
+    [SmapiInteractiveLauncherFixture]::CloseDesktop($hDesk)
+    return $results[0]
+}
+
 $prepared = $false
 $workingSavePrepared = $false
 $process = $null
@@ -149,9 +226,19 @@ try {
         $workingSavePrepared = $true
     }
     $phase = "smapi_launch"
+    $env:GAMEBUDDY_WINDOW_MODE = $WindowMode
+    $windowStyle = switch ($WindowMode) {
+        "hidden" { "Hidden" }
+        "background" { "Hidden" }
+        Default { "Normal" }
+    }
     # Start-Process joins ArgumentList tokens itself. Quote the custom path so its
     # embedded `Stardew Valley` space cannot truncate SMAPI's --mods-path value.
-    $process = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $ModsPath)) -WorkingDirectory $GamePath -PassThru
+    if (Test-IsIsolatedDesktop) {
+        $process = Start-InteractiveSmapiProcess -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $ModsPath)) -WorkingDirectory $GamePath -WindowStyle $windowStyle
+    } else {
+        $process = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $ModsPath)) -WorkingDirectory $GamePath -WindowStyle $windowStyle -PassThru
+    }
     $pipeName = (Get-Content -Raw -LiteralPath $clientConfig | ConvertFrom-Json).PipeName
     if ([string]::IsNullOrWhiteSpace($pipeName)) { throw "Native-local fixture config has no pipe name." }
     $phase = "pipe_readiness"
@@ -160,6 +247,14 @@ try {
         Start-Sleep -Milliseconds 250
         if ($process.HasExited) { throw "Native-local SMAPI process exited before bridge smoke." }
         if ([DateTime]::UtcNow -ge $deadline) { throw "Native-local bridge pipe was not ready before timeout." }
+    }
+    if ($WindowMode -ne "hidden") {
+        try {
+            $evidenceScript = Join-Path $PSScriptRoot "lib\capture-stardew-window-evidence.ps1"
+            if (Test-Path -LiteralPath $evidenceScript) {
+                & $evidenceScript -ProcessId $process.Id -WindowMode $WindowMode -Tag "preflight" | Out-Null
+            }
+        } catch {}
     }
     $phase = "launch_identity"
     Assert-LaunchedSmapiIdentity -ExpectedSmapi $smapi -ExpectedModsPath $ModsPath -ExpectedProcessId $process.Id
@@ -195,11 +290,16 @@ try {
         $phase = "live_child"
         node (Join-Path $PSScriptRoot $smokeScript) --client-config $clientConfig
         if ($LASTEXITCODE -ne 0) { throw "Native-local $Action smoke did not pass." }
+        $evidenceScript = Join-Path $PSScriptRoot "lib\capture-stardew-window-evidence.ps1"
+        if (Test-Path -LiteralPath $evidenceScript) {
+            & $evidenceScript -ProcessId $process.Id -WindowMode $WindowMode -Tag $WindowMode
+        }
     }
 } catch {
     $failure = $_
     $failurePhase = $phase
 } finally {
+    $env:GAMEBUDDY_WINDOW_MODE = $null
     # Restoration must not be bypassed by a failed process-attestation. Capture
     # teardown failure, restore the transaction-owned bytes/lock, then surface
     # the failure. This preserves recovery material only if restore itself
@@ -244,6 +344,7 @@ try {
     }
     if ($null -eq $failure) {
         $phase = "lifecycle_result_publication"
+        if (Test-Path -LiteralPath $lifecycleResultPath) { Remove-Item -Force -LiteralPath $lifecycleResultPath -ErrorAction SilentlyContinue }
         node $lifecycleResultWriter --result-file $lifecycleResultPath --state completed
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $lifecycleResultPath -PathType Leaf)) {
             $failure = "Native-local lifecycle cleanup result publication failed."

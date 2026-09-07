@@ -47,6 +47,7 @@ dist-portfolio/
 # Test and verification evidence outputs are local by default; committed fixtures
 # and source-realization dossiers live under fixtures/ and tools/ instead.
 /artifacts/
+/tools/artifacts/
 # Contract executables and package builds are reconstructed locally.
 /integrations/stardew/tests/bin/
 /integrations/stardew/tests/obj/

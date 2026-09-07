@@ -786,7 +786,7 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
   );
   assert.match(
     definitions,
-    /Registration\("place_crab_pot",\s*"buildings_farm_management",\s*1,\s*FarmhandActionHandlerGroup\.ResourceTools\)/,
+    /E\("place_crab_pot",\s*"buildings_farm_management",\s*FarmhandActionHandlerGroup\.ResourceTools/,
   );
   const productionRunner = await readFile(
     new URL("./run-stardew-native-local-player-place-crab-pot-smoke.mjs", import.meta.url),
