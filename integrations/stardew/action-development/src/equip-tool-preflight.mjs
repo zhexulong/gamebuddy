@@ -1,7 +1,8 @@
-import { lstat, readFile, readdir, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { constants } from "node:fs";
+import { lstat, open, readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inspectExactReleaseBundle } from "./immutable-release-bundle.mjs";
 import { assertReadyTargetProfile, parseTargetProfileText } from "./profile.mjs";
 
 const PACKAGE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -73,6 +74,123 @@ async function trustedFile(candidate) {
 async function leaseUnheld(root) {
   try { await lstat(path.join(root, LEASE_NAME)); return false; } catch (error) { if (error?.code === "ENOENT") return true; throw error; }
 }
+const BUNDLE_FILES = Object.freeze([
+  "GameBuddy.Stardew.dll",
+  "GameBuddy.Stardew.Core.dll",
+  "Raffinert.FuzzySharp.dll",
+  "manifest.json",
+  "GameBuddy.Stardew.deps.json",
+]);
+const BUNDLE_FILE_SET = new Set(BUNDLE_FILES);
+
+function bundleFail(code) {
+  throw new Error(`stardew_immutable_release_bundle_${code}`);
+}
+
+function sameFile(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function overlaps(left, right) {
+  const leftRoot = path.parse(left).root;
+  const rightRoot = path.parse(right).root;
+  const sameRoot = process.platform === "win32"
+    ? leftRoot.toLowerCase() === rightRoot.toLowerCase()
+    : leftRoot === rightRoot;
+  if (!sameRoot) return false;
+  const relative = path.relative(left, right);
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+async function trustedDirectoryWithDetails(candidate, code = "untrusted_directory") {
+  const absolute = path.resolve(candidate);
+  let current = path.parse(absolute).root;
+  try {
+    for (const segment of absolute.slice(current.length).split(path.sep).filter(Boolean)) {
+      current = path.join(current, segment);
+      const details = await lstat(current);
+      if (details.isSymbolicLink()) bundleFail(code);
+    }
+    const details = await lstat(absolute);
+    if (!details.isDirectory() || details.isSymbolicLink() || await realpath(absolute) !== absolute) bundleFail(code);
+    return Object.freeze({ absolute, details });
+  } catch (error) {
+    if (error?.message?.startsWith("stardew_immutable_release_bundle_")) throw error;
+    bundleFail(code);
+  }
+}
+
+async function exactEntries(directory, code) {
+  let entries;
+  try { entries = await readdir(directory); } catch (error) { bundleFail(code); }
+  if (entries.length !== BUNDLE_FILES.length || entries.some((entry) => !BUNDLE_FILE_SET.has(entry))) bundleFail(code);
+}
+
+async function openTrustedSource(directory, directoryDetails, name) {
+  const candidate = path.join(directory, name);
+  let before;
+  let handle;
+  try {
+    const currentDirectory = await lstat(directory);
+    if (!sameFile(currentDirectory, directoryDetails) || !currentDirectory.isDirectory() || currentDirectory.isSymbolicLink()) bundleFail("source_drift");
+    before = await lstat(candidate);
+    if (!before.isFile() || before.isSymbolicLink()) bundleFail("source_untrusted");
+    handle = await open(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat();
+    if (!opened.isFile() || !sameFile(before, opened)) bundleFail("source_drift");
+    return { candidate, handle, opened };
+  } catch (error) {
+    await handle?.close().catch(() => {});
+    if (error?.message?.startsWith("stardew_immutable_release_bundle_")) throw error;
+    bundleFail("source_untrusted");
+  }
+}
+
+async function digestTrustedBundle(directory, directoryDetails, code) {
+  await exactEntries(directory, code);
+  const hash = createHash("sha256");
+  let manifest;
+  for (const name of BUNDLE_FILES) {
+    const source = await openTrustedSource(directory, directoryDetails, name);
+    try {
+      const bytes = await source.handle.readFile();
+      if (bytes.length === 0) bundleFail(code);
+      hash.update(Buffer.from(name, "utf8"));
+      hash.update(Buffer.from([0]));
+      hash.update(bytes);
+      if (name === "manifest.json") {
+        try { manifest = JSON.parse(bytes.toString("utf8")); }
+        catch (error) { bundleFail(code); }
+      }
+      const afterHandle = await source.handle.stat();
+      const afterPath = await lstat(source.candidate);
+      if (!sameFile(source.opened, afterHandle) || !sameFile(source.opened, afterPath)
+        || source.opened.size !== afterHandle.size || source.opened.mtimeNs !== afterHandle.mtimeNs
+        || source.opened.ctimeNs !== afterHandle.ctimeNs) bundleFail(code);
+    } finally { await source.handle.close().catch(() => {}); }
+  }
+  return Object.freeze({ digest: hash.digest("hex"), manifest });
+}
+
+async function inspectReleaseSource({ releaseDir, modsPath, expectedAdapterVersion }) {
+  const source = await trustedDirectoryWithDetails(releaseDir, "source_untrusted");
+  const mods = await trustedDirectoryWithDetails(modsPath, "mods_path_untrusted");
+  const target = path.join(mods.absolute, "GameBuddy");
+  if (overlaps(source.absolute, target) || overlaps(target, source.absolute)) bundleFail("path_overlap");
+  const inspected = await digestTrustedBundle(source.absolute, source.details, "source_untrusted");
+  const manifest = inspected.manifest;
+  if (manifest?.Name !== "GameBuddy" || manifest?.UniqueID !== "zhexulong.GameBuddy"
+    || manifest?.EntryDll !== "GameBuddy.Stardew.dll" || typeof manifest?.Version !== "string"
+    || expectedAdapterVersion !== undefined && manifest.Version !== expectedAdapterVersion) bundleFail("manifest_identity_mismatch");
+  return Object.freeze({ source, mods, target, digest: inspected.digest, adapterVersion: manifest.Version, files: BUNDLE_FILES.length });
+}
+
+export async function inspectExactReleaseBundle({ releaseDir, modsPath, expectedAdapterVersion } = {}) {
+  if (![releaseDir, modsPath].every((value) => typeof value === "string" && path.isAbsolute(value) && !value.includes("\0"))) bundleFail("invalid_input");
+  const inspected = await inspectReleaseSource({ releaseDir, modsPath, expectedAdapterVersion });
+  return Object.freeze({ algorithm: "sha256", digest: inspected.digest, adapterVersion: inspected.adapterVersion, files: inspected.files });
+}
+
 export async function inspectEquipToolReleaseBundle(profile) {
   return await inspectExactReleaseBundle({
     releaseDir: profile.releaseDir,

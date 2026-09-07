@@ -15,7 +15,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     // Test-only hooks. Production composition neither sets nor exposes them.
     internal Func<Task>? BeforeFrameWriteForTesting { get; set; }
 
-    internal async Task<RuntimeSupervisorLease> StartHostAsync(InstalledGenerationSelection selection, AdmittedHostRuntime runtime, CurrentUserRootLayout layout, CancellationToken cancellationToken, Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery = null)
+    internal async Task<RuntimeSupervisorLease> StartHostAsync(InstalledGenerationSelection selection, AdmittedHostRuntime runtime, CurrentUserRootLayout layout, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(selection);
         ArgumentNullException.ThrowIfNull(runtime);
@@ -52,6 +52,8 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             if (!WindowsNative.UpdateProcThreadAttribute(attributeList, 0, (IntPtr)WindowsNative.ProcThreadAttributeHandleList, handleList, (IntPtr)(IntPtr.Size * 2), IntPtr.Zero, IntPtr.Zero)) WindowsNative.ThrowLastError("host_runtime_unavailable");
 
             runtime.VerifyStillLocked();
+            var bootstrapId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            broker = DesktopHostBootstrapBroker.Create(bootstrapId, selection, layout);
             var startup = new WindowsNative.StartupInfoEx
             {
                 StartupInfo = new WindowsNative.StartupInfo
@@ -81,23 +83,21 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             cancellationToken.ThrowIfCancellationRequested();
             runtime.VerifyStillLocked();
 
-            var bootstrapId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-            broker = DesktopHostBootstrapBroker.Create(bootstrapId, selection, startRecovery);
             var frame = BuildFrame(selection, layout, bootstrapId);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(BootstrapTimeout);
             await HostBootstrapPipeIo.WriteOneFrameAsync(parentStdinWriter, frame, timeout.Token).ConfigureAwait(false);
             parentStdinWriter.Dispose();
             parentStdinWriter = null;
+            await broker.AuthenticateHostAsync(process, timeout.Token).ConfigureAwait(false);
             var ack = await ReadOneAcknowledgementAsync(parentStdoutReader, selection, bootstrapId, timeout.Token).ConfigureAwait(false);
             if (!WindowsNative.GetExitCodeProcess(process, out _) ||
                 WindowsNative.WaitForSingleObject(process, 0) != WindowsNative.WaitTimeout) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
             parentStdoutReader.Dispose();
             parentStdoutReader = null;
 
-            await broker.AuthenticateHostAsync(process, timeout.Token).ConfigureAwait(false);
             var locks = runtime.TransferLocks();
-            var lease = new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker!);
+            var lease = new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker);
             brokerTransferred = true;
             process = null;
             return lease;
@@ -113,7 +113,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         }
         finally
         {
-            if (!brokerTransferred && broker is not null) await broker.DisposeAsync().ConfigureAwait(false);
             if (process is not null)
             {
                 if (launched)
@@ -123,6 +122,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
                 }
                 process.Dispose();
             }
+            if (!brokerTransferred && broker is not null) await broker.DisposeAsync().ConfigureAwait(false);
             if (attributeList != IntPtr.Zero)
             {
                 if (attributeListInitialized) WindowsNative.DeleteProcThreadAttributeList(attributeList);
@@ -436,34 +436,76 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     private WindowsNative.SafeProcessHandle? process;
     private AdmittedRuntimeFile? runtime;
     private AdmittedRuntimeFile? bootstrap;
+    private DesktopHostBootstrapBroker? broker;
+    private GuardianSupervisorLease? residentGuardian;
+    private readonly SemaphoreSlim guardianGate = new(1, 1);
     private int closed;
-
-    private readonly DesktopHostBootstrapBroker broker;
 
     internal RuntimeSupervisorLease(WindowsNative.SafeProcessHandle process, AdmittedRuntimeFile runtime, AdmittedRuntimeFile bootstrap, HostBootstrapResult result, DesktopHostBootstrapBroker broker)
     {
         this.process = process;
         this.runtime = runtime;
         this.bootstrap = bootstrap;
-        Result = result;
         this.broker = broker;
+        Result = result;
     }
 
     internal HostBootstrapResult Result { get; }
 
-    internal Task AttachResidentGuardianAsync(GuardianSupervisorLease guardian, CancellationToken cancellationToken) => broker.AttachResidentGuardianAsync(guardian, cancellationToken);
+    /// <summary>Attaches the Desktop-owned resident Guardian to the authenticated Host broker.</summary>
+    internal async Task AttachResidentGuardianAsync(GuardianSupervisorLease lease, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(lease);
+        cancellationToken.ThrowIfCancellationRequested();
+        await guardianGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var child = process;
+            if (Volatile.Read(ref closed) != 0 || residentGuardian is not null || child is null ||
+                !WindowsNative.GetExitCodeProcess(child, out _) || WindowsNative.WaitForSingleObject(child, 0) != WindowsNative.WaitTimeout)
+                throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+            var currentBroker = broker ?? throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+            await currentBroker.AttachResidentGuardianAsync(lease, cancellationToken).ConfigureAwait(false);
+            residentGuardian = lease;
+        }
+        finally { guardianGate.Release(); }
+    }
+
+    /// <summary>Waits for the exact admitted Host child to exit.</summary>
+    internal async Task<bool> WaitForExitAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var child = process;
+        if (child is null) return false;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await Task.Run(() => WindowsNative.WaitForSingleObject(child, 100), CancellationToken.None).ConfigureAwait(false);
+            if (result == WindowsNative.WaitTimeout) continue;
+            var exited = result == WindowsNative.WaitObject0 && WindowsNative.GetExitCodeProcess(child, out _);
+            if (exited) await CloseAsync(CancellationToken.None).ConfigureAwait(false);
+            return exited;
+        }
+    }
 
     internal async Task CloseAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await broker.CloseAsync(cancellationToken).ConfigureAwait(false);
+        var shouldTerminate = Interlocked.Exchange(ref closed, 1) == 0;
         var child = Interlocked.Exchange(ref process, null);
         if (child is not null)
         {
-            if (Interlocked.Exchange(ref closed, 1) == 0) _ = WindowsNative.TerminateProcess(child, 1);
+            if (shouldTerminate) _ = WindowsNative.TerminateProcess(child, 1);
             await Task.Run(() => _ = WindowsNative.WaitForSingleObject(child, 30_000), CancellationToken.None).ConfigureAwait(false);
             child.Dispose();
         }
+        await guardianGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await (Interlocked.Exchange(ref broker, null)?.DisposeAsync() ?? ValueTask.CompletedTask).ConfigureAwait(false);
+            await (Interlocked.Exchange(ref residentGuardian, null)?.DisposeAsync() ?? ValueTask.CompletedTask).ConfigureAwait(false);
+        }
+        finally { guardianGate.Release(); }
         Interlocked.Exchange(ref bootstrap, null)?.Dispose();
         Interlocked.Exchange(ref runtime, null)?.Dispose();
     }

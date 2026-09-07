@@ -88,10 +88,10 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.equal(prepared.presentation.admissionProvider, undefined);
     assert.equal(prepared.presentation.textPort, undefined);
     const stableContext = await prepared.materializeStableContextForPiSession("pi_session_genuine");
-    assert.equal(stableContext.continuityId, principal.continuityId);
-    assert.equal(stableContext.sessionId, "pi_session_genuine");
-    assert.notEqual(stableContext.sessionId, prepared.surfaceSessionId);
-    assert.deepEqual(stableContext.sources, []);
+    assert.equal(stableContext.scope.continuityId, principal.continuityId);
+    assert.equal(stableContext.scope.sessionId, "pi_session_genuine");
+    assert.notEqual(stableContext.scope.sessionId, prepared.surfaceSessionId);
+    assert.deepEqual(stableContext.stableSources, []);
     assert.match(stableContext.canonicalHash, /^[a-f0-9]{64}$/);
   } finally {
     await value.binding.close();
@@ -110,8 +110,8 @@ test("Chat construction regenerates the canonical hash for each actual Pi sessio
     const first = await prepared.materializeStableContextForPiSession("pi_session_one");
     const second = await prepared.materializeStableContextForPiSession("pi_session_two");
     assert.notEqual(first.canonicalHash, second.canonicalHash);
-    assert.equal(first.sessionId, "pi_session_one");
-    assert.equal(second.sessionId, "pi_session_two");
+    assert.equal(first.scope.sessionId, "pi_session_one");
+    assert.equal(second.scope.sessionId, "pi_session_two");
   } finally {
     await value.binding.close();
     await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

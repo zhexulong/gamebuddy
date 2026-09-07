@@ -32,7 +32,7 @@ type StardewPrivateBootstrapOwnerRecordBase = Readonly<{
   managedPaths: readonly string[];
 }>;
 
-export type StardewExternalPlayerHostBootstrapOwnerRecord = StardewPrivateBootstrapOwnerRecordBase & Readonly<{
+export type StardewExternalPlayerHostPhaseAOwnerOwnerRecord = StardewPrivateBootstrapOwnerRecordBase & Readonly<{
   playerHost: Readonly<{ kind: "external_unattested" }>;
 }>;
 
@@ -41,5 +41,5 @@ export type StardewOwnedPlayerHostBootstrapOwnerRecord = StardewPrivateBootstrap
 }>;
 
 export type StardewPrivateBootstrapOwnerRecord =
-  | StardewExternalPlayerHostBootstrapOwnerRecord
+  | StardewExternalPlayerHostPhaseAOwnerOwnerRecord
   | StardewOwnedPlayerHostBootstrapOwnerRecord;

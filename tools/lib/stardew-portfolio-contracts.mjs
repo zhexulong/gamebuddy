@@ -18,7 +18,6 @@ export {
   PORTFOLIO_TARGET_GAME_SHA256,
   PORTFOLIO_TARGET_SMAPI_VERSION,
   PORTFOLIO_TARGET_VERSION,
-  PORTFOLIO_TARGET_BUILD_NUMBER,
   PORTFOLIO_TOPOLOGY,
   hashPortfolioCanonicalJson,
 };
@@ -496,7 +495,7 @@ export function evaluateAuthoritativeCompletion({ receipt, postcondition }) {
   return Object.freeze({ state: "authoritatively_completed", reasonCode: "action_postcondition_verified" });
 }
 
-export function evaluatePortfolioMonitorInput({ receipt, postcondition, receiptExpectation = {} }) {
+function evaluatePortfolioMonitorInput({ receipt, postcondition, receiptExpectation = {} }) {
   if (receipt?.contractKind === "candidate_closure") return rejected("portfolio_monitor_candidate_receipt_forbidden");
   const completion = evaluateReceiptPostcondition({ receipt, postcondition, receiptExpectation });
   if (completion.state !== "ADMITTED") return rejected(completion.reasonCode, completion.details);

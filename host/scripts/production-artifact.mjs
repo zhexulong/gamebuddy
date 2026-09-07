@@ -29,7 +29,7 @@ const BUNDLED_RUNTIME = Object.freeze({
   archiveRoot: "node-v24.20.0-win-x64",
   runtimePath: "runtime/node.exe",
   nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
-  bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+  bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js",
   runtimeVersion: "v24.20.0",
   runtimePlatform: "win32",
   runtimeArch: "x64",
@@ -48,6 +48,7 @@ const REQUIRED_VERIFICATION_ROOTS = Object.freeze([
   "reference-pipeline-dialogue-web.js",
   "tavern-management-dialogue-web.js",
   "tavern/tavern-management-static-shell-composition.js",
+  "tavern/static-artifact/index.js",
 ]);
 const allVerificationRoots = (config) => [...config.entryRoots, ...config.verificationRoots];
 const declaredExternalPackage = (value) => typeof value === "string" && /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(value);
@@ -499,9 +500,17 @@ export async function reachableProductionModules({ artifactRoot, artifactFiles, 
   return reachable;
 }
 async function verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots, origins, runtimeBootstrapPath }) {
-  const reachable = await reachableProductionModules({ artifactRoot, artifactFiles, entryRoots });
+  // The fixed Desktop formal entry is private to the runtime descriptor, not a
+  // public product entry root. Verify its whole static closure alongside the
+  // configured roots so its internal helpers remain retained without creating
+  // a broad JavaScript exemption.
+  const reachable = await reachableProductionModules({
+    artifactRoot,
+    artifactFiles,
+    entryRoots: [...entryRoots, runtimeBootstrapPath],
+  });
   for (const item of artifactFiles) {
-    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION || item === RUNTIME_ADMISSION || item === runtimeBootstrapPath) continue;
+    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION || item === RUNTIME_ADMISSION) continue;
     if (origins.has(slash(item))) continue;
     if (extname(item) === ".js") {
       if (!reachable.has(item)) throw new Error(`production_module_unreachable_from_entry_roots:${item}`);
@@ -719,8 +728,15 @@ async function exactRuntimeTree(root, label) {
 
 async function copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor, source }) {
   if (source === undefined || source === null || typeof source !== "object" || JSON.stringify(source.descriptor) !== JSON.stringify(descriptor)) throw new Error("verified_bundled_runtime_input_required");
+  // The acquisition-owned closure is the source binding: validate its grammar,
+  // order, and fixed executable fact before looking at the extracted tree. The
+  // tree must then reproduce those exact facts, rather than merely presenting
+  // a self-consistent runtime directory at publication time.
+  if (!validRuntimeClosureFiles(source.files)
+    || source.files.find((entry) => entry.sourcePath === "node.exe")?.sha256 !== descriptor.nodeSha256)
+    throw new Error("verified_bundled_runtime_closure_mismatch");
   const sourceRoot = resolve(source.extractedRoot, descriptor.archiveRoot);
-  if (!inside(source.extractedRoot, sourceRoot) || JSON.stringify(await readdir(source.extractedRoot)) !== JSON.stringify([descriptor.archiveRoot]))
+  if (!inside(source.extractedRoot, sourceRoot) || JSON.stringify((await readdir(source.extractedRoot)).sort()) !== JSON.stringify([descriptor.archiveRoot]))
     throw new Error("verified_bundled_runtime_source_invalid");
   const actual = await exactRuntimeTree(sourceRoot, "verified_bundled_runtime_source");
   if (JSON.stringify(actual) !== JSON.stringify(source.files)) throw new Error("verified_bundled_runtime_closure_mismatch");
@@ -1089,6 +1105,7 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
   await ensureOutputRoot(outputRoot);
   const releaseLock = await acquirePublisherLock(outputRoot);
   const stagingRoot = resolve(outputRoot, GENERATIONS, `.staging-${generation}`); const finalRoot = resolve(outputRoot, GENERATIONS, generation); const pointerStaging = resolve(outputRoot, `.current-${generation}.json`);
+  let candidatePublished = false;
   try {
     await access(emittedRoot); await assertOutputRootLayout(outputRoot); await mkdir(resolve(outputRoot, GENERATIONS), { recursive: true });
     await rm(stagingRoot, { recursive: true, force: true }); await mkdir(stagingRoot);
@@ -1129,6 +1146,7 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
     await verifyRuntimeAdmission({ artifactRoot: stagingRoot, inventory, generation, descriptor: runtimeDescriptor });
     const runtimeAdmissionSha256 = digest(await readFile(resolve(stagingRoot, RUNTIME_ADMISSION)));
     await rename(stagingRoot, finalRoot); // immutable generation becomes visible before current changes
+    candidatePublished = true;
     // Runtime source cleanup is part of release admission, not best-effort
     // post-publication hygiene. Its successful copy and all rechecks above make
     // it safe to dispose before selecting the candidate generation.
@@ -1136,8 +1154,17 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
     await writeFile(pointerStaging, `${JSON.stringify({ schema: "gamebuddy-host-production-current/v2", generation, inventoryDigest: inventory.digest, runtimeAdmissionSha256 })}\n`);
     await rename(pointerStaging, resolve(outputRoot, POINTER));
     return { ...inventory, generation };
-  } catch (error) { await rm(stagingRoot, { recursive: true, force: true }); await rm(pointerStaging, { force: true }); throw error; }
-  finally { await releaseLock(); }
+  } catch (error) {
+    // A generation is not publishable until its raw-sidecar-bound pointer has
+    // replaced current. Remove a visible but unselected candidate when cleanup
+    // or pointer publication fails; never leave a candidate pointer behind.
+    try {
+      await rm(stagingRoot, { recursive: true, force: true });
+      await rm(pointerStaging, { force: true });
+      if (candidatePublished) await rm(finalRoot, { recursive: true, force: true });
+    } catch { throw new Error("production_candidate_cleanup_failed"); }
+    throw error;
+  } finally { await releaseLock(); }
 }
 export function assertApprovedProductionBundledRuntimeAvailable() { throw new Error("verified_bundled_runtime_input_required"); }
 export async function publishProductionArtifact({ hostRoot, emittedRoot, outputRoot }) {
@@ -1160,6 +1187,30 @@ export async function publishFixedReleaseArtifactFromVerifiedRuntime() {
     { hostRoot: fixedHostRoot, emittedRoot, outputRoot: fixedOutputRoot },
     async (stagingRoot, descriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor, source }),
     source.descriptor,
+    source.dispose,
+  );
+}
+
+/** Test-only counterpart: its source is available only through fixed composition. */
+export async function publishFixedReleaseArtifactFromVerifiedRuntimeForTest({ outputRoot }) {
+  const fixedHostRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+  if (typeof outputRoot !== "string" || outputRoot.length === 0) throw new Error("invalid_release_runtime_composition");
+  const [{ takeComposedFixedReleaseRuntimeForPublisher }, { takeComposedFixedReleaseEmittedRootForPublisher }] = await Promise.all([
+    import("./node-runtime-release-acquisition.mjs"),
+    import("./build-production-artifact.mjs"),
+  ]);
+  const source = takeComposedFixedReleaseRuntimeForPublisher();
+  if (source.testOnlyFixedReleaseComposition !== true) throw new Error("invalid_release_runtime_composition");
+  // The test acquisition supplies only archive facts. The canonical artifact's
+  // runtime layout and admission metadata remain repository-owned fixed facts.
+  const config = await readArtifactConfig(fixedHostRoot);
+  const descriptor = Object.freeze({ ...config.bundledRuntime, ...source.descriptor });
+  const testSource = Object.freeze({ ...source, descriptor });
+  const emittedRoot = takeComposedFixedReleaseEmittedRootForPublisher();
+  return await publishProductionArtifactWithRuntimeCopier(
+    { hostRoot: fixedHostRoot, emittedRoot, outputRoot: resolve(outputRoot) },
+    async (stagingRoot, admittedDescriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor: admittedDescriptor, source: testSource }),
+    descriptor,
     source.dispose,
   );
 }

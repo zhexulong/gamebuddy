@@ -60,7 +60,7 @@ const TRANSACTION_LOCK_DIRECTORY = ".stardew-fixture-profile.lock";
 const TRANSACTION_LOCK_FILE = "transaction.json";
 const TRANSACTION_LOCK_VERSION = 1;
 
-export const DEFAULT_FIXTURE_SAVE = "GameBuddyFixture_AnimalProductNative_1_6_15";
+const DEFAULT_FIXTURE_SAVE = "GameBuddyFixture_AnimalProductNative_1_6_15";
 export const FIXTURE_SCENARIOS = ALLOWED_FIXTURE_SCENARIOS;
 
 /**

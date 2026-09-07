@@ -15,7 +15,7 @@ import { classifyIngressReachableCall, classifyWorldDispatcherCall } from "./sta
 // These are source-level rule-boundary candidates, not Agent actions. They only
 // become a PRCP after the full branch predicate, target domain, native
 // lifecycle, and typed bridge equivalence have been reconstructed.
-export const PLAYER_COMMAND_BOUNDARY_CANDIDATES = Object.freeze([
+const PLAYER_COMMAND_BOUNDARY_CANDIDATES = Object.freeze([
   {
     ingressId: "world_action_interaction",
     expression: "currentLocation.CheckPetAnimal",
@@ -365,7 +365,7 @@ export const PLAYER_COMMAND_BOUNDARY_CANDIDATES = Object.freeze([
 // remains a candidate until a typed bridge proves it preserves every relevant
 // native precondition and result; it never becomes a generic `checkAction`
 // escape hatch.
-export const GAME1_PRESS_USE_TOOL_BUTTON_BRANCHES = Object.freeze([
+const GAME1_PRESS_USE_TOOL_BUTTON_BRANCHES = Object.freeze([
   {
     candidateId: "object.fragile_crafting_break_at_tool_tile",
     ingressId: "world_tool_use",
@@ -466,7 +466,7 @@ export const GAME1_PRESS_USE_TOOL_BUTTON_BRANCHES = Object.freeze([
 // still only source-derived candidates: the target/phase predicates and the
 // bridge-equivalence proof remain outstanding. This list deliberately avoids
 // treating the abstract `Tool.DoFunction` call as one command.
-export const TOOL_OVERRIDE_BRANCHES = Object.freeze([
+const TOOL_OVERRIDE_BRANCHES = Object.freeze([
   {
     candidateId: "hoe.till_diggable_tile",
     ingressId: "world_tool_use",
@@ -565,7 +565,7 @@ export const TOOL_OVERRIDE_BRANCHES = Object.freeze([
   },
 ]);
 
-export const TOOL_BEGIN_USING_BRANCHES = Object.freeze([
+const TOOL_BEGIN_USING_BRANCHES = Object.freeze([
   {
     candidateId: "fishing_rod.begin_cast_timing",
     ingressId: "world_tool_use",
@@ -584,7 +584,7 @@ export const TOOL_BEGIN_USING_BRANCHES = Object.freeze([
   },
 ]);
 
-export const TOOL_END_USING_BRANCHES = Object.freeze([
+const TOOL_END_USING_BRANCHES = Object.freeze([
   {
     candidateId: "fishing_rod.cast_on_tool_release",
     ingressId: "world_tool_release",
@@ -602,7 +602,7 @@ export const TOOL_END_USING_BRANCHES = Object.freeze([
   },
 ]);
 
-export const GAME_LOCATION_CHECK_ACTION_BRANCHES = Object.freeze([
+const GAME_LOCATION_CHECK_ACTION_BRANCHES = Object.freeze([
   // Each entry is a source-derived branch boundary below the ordinary-player
   // `tryToCheckAt -> checkAction` path. These are deliberately *not* bridge
   // routes or actions; each still needs a target domain, full lifecycle, and
@@ -804,7 +804,7 @@ export const GAME_LOCATION_CHECK_ACTION_BRANCHES = Object.freeze([
   },
 ]);
 
-export const PLAYER_INGRESS_ROOTS = Object.freeze([
+const PLAYER_INGRESS_ROOTS = Object.freeze([
   {
     ingressId: "world_action_interaction",
     inputState: "actionButtonPressed",
@@ -875,7 +875,7 @@ export const PLAYER_INGRESS_ROOTS = Object.freeze([
   },
 ]);
 
-export function methodBody(source, methodName) {
+function methodBody(source, methodName) {
   // Declaration prefixes prevent a call-site like `if (pressActionButton()) {`
   // from being mistaken for the method body when both occur in Game1.cs.
   const declaration = new RegExp(
@@ -1062,7 +1062,7 @@ const NON_CALL_IDENTIFIERS = new Set([
   "this",
 ]);
 
-export function callsFromMethodBody(body) {
+function callsFromMethodBody(body) {
   if (!body) return [];
   const calls = new Map();
   const pattern = /\b((?:[A-Za-z_]\w*\s*\.\s*)*[A-Za-z_]\w*)\s*(?:<[^;{}()\r\n]+>)?\s*\(/g;
@@ -1081,7 +1081,7 @@ export function callsFromMethodBody(body) {
  * StardewValley.GameLocation; callers must still treat dynamic overrides as
  * unresolved until their branch targets are reconstructed.
  */
-export function sourceForType(sourceIndex, typeName) {
+function sourceForType(sourceIndex, typeName) {
   if (!sourceIndex || typeof sourceIndex !== "object") return null;
   const normalize = (candidateType, value) =>
     typeof value === "string"

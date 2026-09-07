@@ -1,4 +1,4 @@
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,7 +18,7 @@ const magicContextSourceEntry = resolve(magicContextSourceRoot, "dist", "index.j
 const dialogueWebRoot = resolve(repositoryRoot, "dialogue-web");
 const browserStagingParent = resolve(dialogueWebRoot, ".build-staging");
 const emittedStaticArtifactVerifier = "tavern/static-artifact/index.js";
-const desktopRuntimeBootstrap = "desktop-runtime-bootstrap.internal.js";
+const desktopRuntimeBootstrap = "desktop-host-entry.internal.js";
 const browserIdentity = Object.freeze({
   browserContract: "tavern_browser_api/v1",
   profileId: "gamebuddy.tavern.browser.v1",
@@ -170,85 +170,92 @@ async function resolvedRegularRepositoryCommand(path, errorCode) {
   }
 }
 
-async function resolvedTrustedWindowsCommandProcessor() {
-  // SystemRoot is only an identity assertion: no environment-provided path is used.
-  if (typeof process.env.SystemRoot !== "string" || process.env.SystemRoot.toLowerCase() !== trustedWindowsRoot.toLowerCase())
-    throw new Error("browser_build_system_root_invalid");
-  const command = `${trustedWindowsRoot}\\System32\\cmd.exe`;
+async function resolvedTrustedWindowsTaskkill() {
+  const errorCode = "browser_build_taskkill_unresolvable";
+  const command = `${trustedWindowsRoot}\\System32\\taskkill.exe`;
   try {
+    if (typeof process.env.SystemRoot !== "string" || process.env.SystemRoot.toLowerCase() !== trustedWindowsRoot.toLowerCase())
+      throw new Error(errorCode);
     const state = await lstat(command);
-    if (state.isSymbolicLink() || !state.isFile()) throw new Error("browser_build_command_processor_unresolvable");
+    if (state.isSymbolicLink() || !state.isFile()) throw new Error(errorCode);
     const canonicalPath = await realpath(command);
-    if (canonicalPath.toLowerCase() !== command.toLowerCase()) throw new Error("browser_build_command_processor_unresolvable");
-    return command;
+    if (canonicalPath.toLowerCase() !== command.toLowerCase()) throw new Error(errorCode);
+    return assertCommandPath(canonicalPath, errorCode);
   } catch (error) {
-    if (error?.message === "browser_build_command_processor_unresolvable") throw error;
-    throw new Error("browser_build_command_processor_unresolvable", { cause: error });
+    if (error?.message === errorCode) throw error;
+    throw new Error(errorCode, { cause: error });
   }
 }
 
-// Quote one already-validated cmd token. Backslashes preceding a quote are doubled
-// so the resulting command line remains one argv token when cmd dispatches vite.CMD.
-function quoteWindowsCommandToken(token) {
-  if (typeof token !== "string" || token.includes("\0") || cmdMetacharacter.test(token))
-    throw new Error("invalid_browser_build_command_token");
-  return `"${token.replace(/(\\*)"/g, "$1$1\\\"").replace(/(\\+)$/g, "$1$1")}"`;
-}
-
-export async function browserBuildInvocation({ stagingRoot }) {
+export async function browserBuildInvocation({ stagingRoot, configPath }) {
   if (!isPrivateBrowserStagingRoot(stagingRoot)) throw new Error("invalid_browser_staging_root");
-  const args = ["build", "--config", "vite.config.ts", "--outDir", stagingRoot];
-  if (process.platform !== "win32") return Object.freeze({ command: "pnpm", args: Object.freeze(["exec", "vite", ...args]), cwd: dialogueWebRoot });
-  const vite = await resolvedRegularRepositoryCommand(resolve(dialogueWebRoot, "node_modules", ".bin", "vite.CMD"), "browser_build_vite_unresolvable");
-  // cmd.exe is explicit .CMD mediation; neither command is resolved through PATH.
-  const commandText = `call ${[vite, ...args].map(quoteWindowsCommandToken).join(" ")}`;
+  if (typeof configPath !== "string" || !isAbsolute(configPath) || !isContained(hostRoot, configPath))
+    throw new Error("invalid_browser_build_config");
+  const vite = await resolvedRegularRepositoryCommand(
+    resolve(dialogueWebRoot, "node_modules", "vite", "bin", "vite.js"),
+    "browser_build_vite_unresolvable",
+  );
   return Object.freeze({
-    command: await resolvedTrustedWindowsCommandProcessor(),
-    args: Object.freeze(["/d", "/s", "/c", commandText]),
+    command: process.execPath,
+    args: Object.freeze([vite, "build", "--config", configPath, "--outDir", stagingRoot]),
     cwd: dialogueWebRoot,
   });
 }
 
-function browserBuildEnvironment(inherited = process.env) {
-  const path = inherited.PATH ?? inherited.Path;
-  if (typeof path !== "string" || path.length === 0) throw new Error("browser_build_path_missing");
-  const environment = { PATH: path, LANG: "C", LC_ALL: "C" };
+export function browserBuildEnvironment(inherited = process.env) {
+  const environment = { LANG: "C", LC_ALL: "C" };
   for (const key of ["SystemRoot", "LOCALAPPDATA", "TEMP", "TMP"])
     if (typeof inherited[key] === "string" && inherited[key].length > 0) environment[key] = inherited[key];
   return environment;
 }
 
-export async function runBrowserBuild(invocation, { timeoutMs = BROWSER_BUILD_TIMEOUT_MS, spawnProcess = spawn } = {}) {
+export async function runBrowserBuild(invocation, { timeoutMs = BROWSER_BUILD_TIMEOUT_MS, spawnProcess = spawn, resolveTaskkill = resolvedTrustedWindowsTaskkill, platform = process.platform } = {}) {
   if (!invocation || typeof invocation.command !== "string" || !Array.isArray(invocation.args) || typeof invocation.cwd !== "string")
     throw new Error("invalid_browser_build_invocation");
+  const taskkill = platform === "win32" ? await resolveTaskkill() : undefined;
   let child;
-  const stdout = []; const stderr = []; let outputBytes = 0; let timedOut = false; let failure;
+  const stdout = []; const stderr = []; let outputBytes = 0; let timedOut = false; let failure; let termination;
   const terminate = () => {
-    if (child?.pid === undefined) return;
-    if (process.platform === "win32") {
-      try { spawnProcess("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, shell: false, detached: false }); }
-      catch { child.kill(); }
-    } else child.kill("SIGKILL");
+    if (termination !== undefined || child?.pid === undefined) return termination;
+    if (taskkill === undefined) {
+      child.kill("SIGKILL");
+      termination = Promise.resolve();
+      return termination;
+    }
+    termination = new Promise((resolveTermination, rejectTermination) => {
+      let killer;
+      try {
+        killer = spawnProcess(taskkill, ["/PID", String(child.pid), "/T", "/F"], {
+          stdio: "ignore", windowsHide: true, shell: false, detached: false,
+        });
+      } catch (error) { rejectTermination(new Error("browser_build_taskkill_failed", { cause: error })); return; }
+      killer.once("error", (error) => rejectTermination(new Error("browser_build_taskkill_failed", { cause: error })));
+      killer.once("close", (code, signal) => {
+        if (code === 0 && signal === null) resolveTermination();
+        else rejectTermination(new Error("browser_build_taskkill_failed"));
+      });
+    });
+    return termination;
   };
   return await new Promise((resolveRun, rejectRun) => {
     try {
       child = spawnProcess(invocation.command, invocation.args, {
         cwd: invocation.cwd, env: browserBuildEnvironment(), stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true, shell: false, detached: false,
-        windowsVerbatimArguments: process.platform === "win32",
       });
     } catch (error) { rejectRun(error); return; }
-    const deadline = setTimeout(() => { timedOut = true; terminate(); }, timeoutMs);
+    const deadline = setTimeout(() => { timedOut = true; void terminate(); }, timeoutMs);
     const capture = (target, chunk) => {
       outputBytes += Buffer.byteLength(chunk);
-      if (outputBytes > BROWSER_BUILD_OUTPUT_LIMIT_BYTES) { failure ??= new Error("browser_build_output_too_large"); terminate(); }
+      if (outputBytes > BROWSER_BUILD_OUTPUT_LIMIT_BYTES) { failure ??= new Error("browser_build_output_too_large"); void terminate(); }
       else target.push(chunk);
     };
     child.stdout.on("data", (chunk) => capture(stdout, chunk));
     child.stderr.on("data", (chunk) => capture(stderr, chunk));
-    child.once("error", (error) => { failure ??= error; });
-    child.once("close", (code, signal) => {
+    child.once("error", (error) => { failure ??= error; void terminate(); });
+    child.once("close", async (code, signal) => {
       clearTimeout(deadline);
+      try { await termination; } catch (error) { rejectRun(error); return; }
       if (failure) { rejectRun(failure); return; }
       if (timedOut) { rejectRun(new Error("browser_build_timeout")); return; }
       if (code !== 0 || signal !== null) {
@@ -262,8 +269,9 @@ export async function runBrowserBuild(invocation, { timeoutMs = BROWSER_BUILD_TI
 
 async function browserOwnedVerifier() {
   const module = await import(pathToFileURL(resolve(dialogueWebRoot, "scripts", "browser-artifact-manifest.mjs")).href);
-  if (typeof module.verifyProductionArtifactManifest !== "function") throw new Error("browser_artifact_verifier_unavailable");
-  return module.verifyProductionArtifactManifest;
+  if (typeof module.verifyProductionArtifactManifest !== "function" || typeof module.createBuildArtifactInspectionPolicy !== "function")
+    throw new Error("browser_artifact_verifier_unavailable");
+  return module;
 }
 
 async function emittedHostStaticVerifier(stagingRoot) {
@@ -299,6 +307,44 @@ async function copyVerifiedWindowsReparseInspector({ closureRoot, config }) {
   }
   await verifyWindowsReparseInspectorPair({ root: closureRoot, descriptor });
   return destinationRoot;
+}
+
+async function resolveStagedWindowsReparseInspectorAdapter(stagingRoot) {
+  const adapter = resolve(stagingRoot, "windows-reparse-inspector", "index.js");
+  try {
+    const [stagingState, adapterState, canonicalStagingRoot, canonicalAdapter] = await Promise.all([
+      lstat(stagingRoot), lstat(adapter), realpath(stagingRoot), realpath(adapter),
+    ]);
+    if (stagingState.isSymbolicLink() || !stagingState.isDirectory() || adapterState.isSymbolicLink() || !adapterState.isFile()
+      || canonicalStagingRoot !== stagingRoot || !isContained(canonicalStagingRoot, canonicalAdapter)
+      || canonicalAdapter !== adapter) throw new Error("invalid");
+    return adapter;
+  } catch { throw new Error("windows_reparse_inspector_emitted_adapter_invalid"); }
+}
+
+async function importStagedWindowsReparseInspectorAdapter(stagingRoot) {
+  const adapterPath = await resolveStagedWindowsReparseInspectorAdapter(stagingRoot);
+  const adapter = await import(pathToFileURL(adapterPath).href);
+  if (typeof adapter.createBuildWindowsReparseInspector !== "function" || typeof adapter.assertNoWindowsReparse !== "function")
+    throw new Error("windows_reparse_inspector_emitted_adapter_invalid");
+  return adapter;
+}
+
+export async function writeBrowserViteConfig({ stagingRoot }) {
+  const configPath = resolve(stagingRoot, "dialogue-web.vite.config.mjs");
+  const adapterPath = await resolveStagedWindowsReparseInspectorAdapter(stagingRoot);
+  const viteConfigPath = await resolvedRegularRepositoryCommand(resolve(dialogueWebRoot, "vite.config.ts"), "browser_build_vite_config_unresolvable");
+  const viteConfigImport = relative(dirname(configPath), viteConfigPath).split(sep).join("/");
+  if (!viteConfigImport.startsWith("../") || resolve(dirname(configPath), viteConfigImport) !== viteConfigPath || adapterPath !== resolve(dirname(configPath), "windows-reparse-inspector", "index.js"))
+    throw new Error("browser_build_vite_config_invalid");
+  await writeFile(
+    configPath,
+    `import * as reparseInspectorAdapter from "./windows-reparse-inspector/index.js";\nimport { createDialogueWebViteConfig } from ${JSON.stringify(viteConfigImport)};\nexport default createDialogueWebViteConfig({ schemaVersion: 1, kind: "gamebuddy.windows_reparse_inspector.v1", adapter: reparseInspectorAdapter });\n`,
+    "utf8",
+  );
+  const [state, canonicalConfigPath] = await Promise.all([lstat(configPath), realpath(configPath)]);
+  if (state.isSymbolicLink() || !state.isFile() || canonicalConfigPath !== configPath) throw new Error("browser_build_vite_config_invalid");
+  return configPath;
 }
 
 async function copyVerifiedBrowserTree({ browserRoot, closureRoot, descriptor, manifest }) {
@@ -375,14 +421,18 @@ async function buildComposedProductionArtifact({
     const invocation = await resolveTypeScriptInvocation({ project: "tsconfig.production.json" });
     await runChild({ ...invocation, args: [...invocation.args, "--outDir", stagingRoot] });
     await lstat(stagingRoot);
+    const browserConfigPath = await writeBrowserViteConfig({ stagingRoot });
     await mkdir(browserStagingParent, { recursive: true });
     await mkdir(browserStagingRoot);
-    const browserInvocation = await browserBuildInvocation({ stagingRoot: browserStagingRoot });
-    await onBrowserBuildInvocation?.(Object.freeze({ stagingRoot: browserStagingRoot, invocation: browserInvocation }));
+    const browserInvocation = await browserBuildInvocation({ stagingRoot: browserStagingRoot, configPath: browserConfigPath });
+    await onBrowserBuildInvocation?.(Object.freeze({ stagingRoot: browserStagingRoot, configPath: browserConfigPath, invocation: browserInvocation }));
     await runBrowserBuild(browserInvocation);
     await afterBrowserBuild?.(browserStagingRoot);
-    const verifyBrowserArtifact = await browserOwnedVerifier();
-    const browserManifest = await verifyBrowserArtifact(browserStagingRoot);
+    const browserManifestApi = await browserOwnedVerifier();
+    const postBuildInspectionPolicy = await browserManifestApi.createBuildArtifactInspectionPolicy(
+      { schemaVersion: 1, kind: "gamebuddy.windows_reparse_inspector.v1", adapter: await importStagedWindowsReparseInspectorAdapter(stagingRoot) },
+    );
+    const browserManifest = await browserManifestApi.verifyProductionArtifactManifest(browserStagingRoot, postBuildInspectionPolicy);
     const config = await readArtifactConfig(hostRoot);
     if (config.browserArtifact === undefined) throw new Error("browser_artifact_descriptor_missing");
     await retainEntrypointClosure({
@@ -438,6 +488,21 @@ export async function buildFixedReleaseProductionArtifact() {
     publish: async ({ emittedRoot }) => {
       fixedReleaseEmittedRoot = emittedRoot;
       try { return await publishFixedReleaseArtifactFromVerifiedRuntime(); }
+      finally { fixedReleaseEmittedRoot = undefined; }
+    },
+  });
+}
+
+/** Test-only fixed-release composition for a disposable canonical generation. */
+export async function buildFixedReleaseProductionArtifactForTest({ outputRoot }) {
+  const { publishFixedReleaseArtifactFromVerifiedRuntimeForTest } = await import("./production-artifact.mjs");
+  if (typeof outputRoot !== "string" || outputRoot.length === 0 || fixedReleaseEmittedRoot !== undefined)
+    throw new Error("invalid_release_runtime_composition");
+  return await buildComposedProductionArtifact({
+    outputRoot,
+    publish: async ({ emittedRoot }) => {
+      fixedReleaseEmittedRoot = emittedRoot;
+      try { return await publishFixedReleaseArtifactFromVerifiedRuntimeForTest({ outputRoot }); }
       finally { fixedReleaseEmittedRoot = undefined; }
     },
   });

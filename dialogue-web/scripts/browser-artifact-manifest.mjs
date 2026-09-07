@@ -1,48 +1,16 @@
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, posix, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { basename, isAbsolute, posix, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export const ARTIFACT_MANIFEST_FILE = "tavern-browser-artifact-manifest.json";
 export const BROWSER_CONTRACT = "tavern_browser_api/v1";
 export const PROFILE_ID = "gamebuddy.tavern.browser.v1";
 
-const sourceModulePath = fileURLToPath(import.meta.url);
-
-async function fixedEmittedPolicyAdapter() {
-  // Vite may bundle this module into dialogue-web/node_modules/.vite-temp.
-  // Anchor only to that module's own path (never cwd, PATH, env, or CLI), find
-  // the fixed Dialogue Web package ancestor, then select one exact emitted file.
-  let cursor = dirname(sourceModulePath);
-  for (let depth = 0; depth < 5; depth += 1) {
-    const candidate = resolve(cursor, "package.json");
-    try {
-      const packageState = await lstat(candidate);
-      if (packageState.isFile() && !packageState.isSymbolicLink() && JSON.parse(await readFile(candidate, "utf8"))?.name === "@gamebuddy/dialogue-web") {
-        for (const dirName of [".dist-production-emitted", "dist", "dist-test"]) {
-          const emittedRoot = resolve(cursor, "..", "host", dirName);
-          const adapter = resolve(emittedRoot, "windows-reparse-inspector", "index.js");
-          try {
-            const state = await lstat(adapter);
-            if (!state.isFile() || state.isSymbolicLink()) continue;
-            const [physicalRoot, physicalAdapter] = await Promise.all([realpath(emittedRoot), realpath(adapter)]);
-            if (!physicalAdapter.startsWith(`${physicalRoot}${sep}`)) continue;
-            return adapter;
-          } catch {
-            continue;
-          }
-        }
-        throw unavailable();
-      }
-    } catch (error) {
-      if (error?.message === "windows_reparse_inspection_unavailable") throw error;
-    }
-    const parent = dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  throw unavailable();
-}
+const WINDOWS_REPARSE_INSPECTOR_DESCRIPTOR = Object.freeze({
+  schemaVersion: 1,
+  kind: "gamebuddy.windows_reparse_inspector.v1",
+});
 const MIME_BY_EXTENSION = new Map([
   [".js", "text/javascript"], [".css", "text/css"], [".svg", "image/svg+xml"],
   [".png", "image/png"], [".webp", "image/webp"], [".woff2", "font/woff2"],
@@ -54,15 +22,22 @@ const relativePath = (root, path) => path.slice(root.length + 1).split(sep).join
 const sha256 = (contents) => createHash("sha256").update(contents).digest("hex");
 const unavailable = () => new TypeError("windows_reparse_inspection_unavailable");
 
-let policyAdapterLoader = async () => await import(pathToFileURL(await fixedEmittedPolicyAdapter()).href);
+function validatedWindowsReparseInspectorDescriptor(descriptor) {
+  if (
+    descriptor === null || typeof descriptor !== "object" || Array.isArray(descriptor)
+    || Object.keys(descriptor).length !== 3
+    || descriptor.schemaVersion !== WINDOWS_REPARSE_INSPECTOR_DESCRIPTOR.schemaVersion
+    || descriptor.kind !== WINDOWS_REPARSE_INSPECTOR_DESCRIPTOR.kind
+    || descriptor.adapter === null || typeof descriptor.adapter !== "object" || Array.isArray(descriptor.adapter)
+  ) throw unavailable();
+  return Object.freeze({ ...WINDOWS_REPARSE_INSPECTOR_DESCRIPTOR, adapter: descriptor.adapter });
+}
 
-async function createWindowsReparsePolicy(platform = process.platform, loader = policyAdapterLoader) {
+async function createWindowsReparsePolicy(descriptor, platform = process.platform) {
   if (platform !== "win32") return Object.freeze({ inspect: async () => {} });
   try {
-    const adapter = await loader();
-    if (typeof adapter?.createBuildWindowsReparseInspector !== "function" || typeof adapter?.assertNoWindowsReparse !== "function") throw unavailable();
-    // The adapter mints one opaque capability for this complete manifest
-    // operation. It is never reconstructed from a path, environment, or CLI value.
+    const { adapter } = validatedWindowsReparseInspectorDescriptor(descriptor);
+    if (typeof adapter.createBuildWindowsReparseInspector !== "function" || typeof adapter.assertNoWindowsReparse !== "function") throw unavailable();
     const capability = await adapter.createBuildWindowsReparseInspector();
     return Object.freeze({ inspect: async (path) => await adapter.assertNoWindowsReparse(capability, path) });
   } catch {
@@ -136,8 +111,8 @@ function assetMime(path) {
   return mime;
 }
 
-export async function createBuildArtifactInspectionPolicy() {
-  return await createWindowsReparsePolicy();
+export async function createBuildArtifactInspectionPolicy(windowsReparseInspector) {
+  return await createWindowsReparsePolicy(windowsReparseInspector);
 }
 
 export async function createProductionArtifactManifest(artifactRoot, policy) {
@@ -208,10 +183,5 @@ async function verifyProductionArtifactManifestWithPolicy(artifactRoot, policy) 
 }
 
 export const __testOnly = Object.freeze({
-  createWindowsReparsePolicyForTest: async (loader) => await createWindowsReparsePolicy("win32", loader),
-  setPolicyAdapterLoaderForTest(loader) {
-    const previous = policyAdapterLoader;
-    policyAdapterLoader = loader;
-    return () => { policyAdapterLoader = previous; };
-  },
+  createWindowsReparsePolicyForTest: async (descriptor) => await createWindowsReparsePolicy(descriptor, "win32"),
 });

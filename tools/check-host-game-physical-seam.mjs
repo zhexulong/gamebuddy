@@ -7,15 +7,35 @@ const requireFromHost = createRequire(resolve(dirname(fileURLToPath(import.meta.
 const ts = requireFromHost("typescript");
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
-const IGNORED_DIRECTORIES = new Set([".worktrees", "dist", "dist-test", "node_modules", "fixtures", "generated"]);
+const IGNORED_DIRECTORIES = new Set([".worktrees", "dist", "dist-test", "node_modules", "fixtures", "test-support", "test-fixtures", "__fixtures__", "fixture", "generated"]);
 const GENERIC_LAYERS = new Set(["bootstrap", "containment", "composition"]);
-const ALLOWED_STARDew_GENERIC = "containment/auth/desktop-guardian-session.internal";
+// The lifecycle may consume only these published, non-platform contracts from
+// generic layers: authenticated containment and Stardew artifact provenance.
+const ALLOWED_GENERIC_MODULES = new Set([
+  "containment/auth/desktop-guardian-session.internal",
+  "bootstrap/roots/stardew-private-mod-profile-staging",
+]);
+const STARDew_PROCESS_IMPLEMENTATIONS = "games/stardew/lifecycle/stardew-process-implementations";
+const ALLOWED_STARDew_GENERIC_IMPORTERS = new Map([
+  ["containment/auth/desktop-guardian-session.internal", new Set([
+    "games/stardew/lifecycle/stardew-private-bootstrap-composer.internal",
+    "games/stardew/lifecycle/stardew-bootstrap-guardian.private",
+  ])],
+  ["bootstrap/roots/stardew-private-mod-profile-staging", new Set([
+    "games/stardew/lifecycle/stardew-private-bootstrap-composer.internal",
+  ])],
+]);
 const RAW_STARDew_MODULES = [
   "windows-stardew-bootstrap-guardian", "windows-stardew-folder-picker",
   "windows-stale-lock-reclaimer", "windows-reparse-inspector",
 ];
 const NODE_BUILTINS = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]));
-const RAW_BUILTIN_MODULES = new Set(["node:child_process", "node:process", "node:worker_threads", "node:ffi-napi", "node:winreg"]);
+const RAW_BUILTIN_MODULES = new Set([
+  "child_process", "node:child_process", "process", "node:process",
+  "worker_threads", "node:worker_threads", "ffi-napi", "node:ffi-napi",
+  "winreg", "node:winreg",
+]);
+const APPROVED_STARDew_RAW_BUILTIN_MODULES = new Set(["node:child_process"]);
 
 function shown(path, root = repositoryRoot) { return relative(root, path).replaceAll("\\", "/"); }
 function isTest(path) { return /(?:^|[/.])[^/]*\.test(?:-support(?:-internal)?)?\.[cm]?[jt]sx?$/.test(path.replaceAll("\\", "/")); }
@@ -51,13 +71,19 @@ function resolveSource(importer, specifier, sourceRoot) {
   return { kind: "resolved", target: canonical };
 }
 function layer(path, root) { return relative(resolve(root, "host/src"), path).replaceAll("\\", "/").split("/")[0]; }
-function gamePath(path, root) { const p = relative(resolve(root, "host/src"), path).replaceAll("\\", "/"); return p === "games/stardew" || p.startsWith("games/stardew/"); }
+function gamePath(path, root) { const p = relative(resolve(root, "host/src"), path).replaceAll("\\", "/"); return p === "games" || p.startsWith("games/"); }
 function genericPath(path, root) { return GENERIC_LAYERS.has(layer(path, root)); }
-function isAllowedStardewGenericImport(target, root) { return relative(resolve(root, "host/src"), target).replaceAll("\\", "/").replace(/\.[^.]+$/, "") === ALLOWED_STARDew_GENERIC; }
+function sourcePath(path, root) { return relative(resolve(root, "host/src"), path).replaceAll("\\", "/").replace(/\.[^.]+$/, ""); }
+function isStardewLifecycleImporter(path, root) { return sourcePath(path, root).startsWith("games/stardew/lifecycle/"); }
+function isStardewProcessImplementation(path, root) { return sourcePath(path, root) === STARDew_PROCESS_IMPLEMENTATIONS; }
+function isAllowedStardewGenericImport(importer, target, root) {
+  const targetPath = sourcePath(target, root);
+  return ALLOWED_STARDew_GENERIC_IMPORTERS.get(targetPath)?.has(sourcePath(importer, root)) === true;
+}
 function violation(kind, importer, specifier, target, line, detail, root) { return { kind, importer: shown(importer, root), specifier, target: target ? shown(target, root) : null, line, detail }; }
 function scriptKind(path) { return [".js", ".jsx", ".mjs", ".cjs"].includes(extname(path)) ? ts.ScriptKind.JS : ts.ScriptKind.TS; }
 function architectureBareSpecifier(specifier) { const first = specifier.replace(/^node:/, "").split(/[\\/]/)[0]; return specifier.startsWith("/") || /^[A-Za-z]:[\\/]/.test(specifier) || specifier.startsWith("host/") || GENERIC_LAYERS.has(first) || first === "games" || RAW_STARDew_MODULES.includes(first); }
-function rawTarget(target, root) { const p = relative(resolve(root, "host/src"), target).replaceAll("\\", "/").toLowerCase(); return RAW_STARDew_MODULES.some((name) => p === name || p.startsWith(`${name}/`)) || /(?:^|\/)(?:desktop|guardian|win32|native)(?:[-_/]|$)/i.test(p); }
+function rawTarget(target, root) { const p = relative(resolve(root, "host/src"), target).replaceAll("\\", "/").toLowerCase(); return RAW_STARDew_MODULES.some((name) => p === name || p.startsWith(`${name}/`)) || /(?:^|\/)(?:desktop|guardian|windows|win32|native)(?:[-_/]|$)/i.test(p); }
 
 export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
   const actualSourceRoot = resolve(root, "host/src");
@@ -66,6 +92,14 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
   const allFiles = filesUnder(actualSourceRoot, integrity, canonicalRoot);
   const productionFiles = allFiles.filter((path) => genericPath(path, root) || gamePath(path, root));
   const violations = integrity.map(({ path, detail }) => violation("unsafe_source_path", path, null, null, 0, detail, root));
+  // Placement is checked independently of import traversal so a stale copy cannot
+  // hide merely because no inspected production module imports it.
+  for (const source of allFiles) {
+    const sourcePath = relative(actualSourceRoot, source).replaceAll("\\", "/");
+    if (sourcePath.startsWith("containment/windows/stardew-process-implementations.")) {
+      violations.push(violation("stardew_implementation_in_generic_windows", source, null, null, 0, "stardew_process_implementations_must_live_under_games_stardew_lifecycle", root));
+    }
+  }
   for (const importer of productionFiles) {
     const source = readFileSync(importer, "utf8");
     const file = ts.createSourceFile(importer, source, ts.ScriptTarget.Latest, true, scriptKind(importer));
@@ -85,7 +119,7 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
     for (const reference of references) {
       const importerIsGame = gamePath(importer, root);
       if (reference.specifier === null) { violations.push(violation("unresolved_dynamic_import", importer, null, null, reference.line, "dynamic_imports_are_not_statically_resolvable", root)); continue; }
-      if (RAW_BUILTIN_MODULES.has(reference.specifier) && importerIsGame && !relative(actualSourceRoot, importer).replaceAll("\\", "/").startsWith("games/stardew/lifecycle/")) { violations.push(violation("game_imports_desktop_raw_module", importer, reference.specifier, null, reference.line, "stardew_must_not_import_desktop_guardian_process_or_native_modules", root)); continue; }
+      if (RAW_BUILTIN_MODULES.has(reference.specifier) && importerIsGame && (!isStardewProcessImplementation(importer, root) || !APPROVED_STARDew_RAW_BUILTIN_MODULES.has(reference.specifier))) { violations.push(violation("game_imports_desktop_raw_module", importer, reference.specifier, null, reference.line, "stardew_must_not_import_desktop_guardian_process_or_native_modules", root)); continue; }
       if (!reference.specifier.startsWith(".")) {
         if (!NODE_BUILTINS.has(reference.specifier) && architectureBareSpecifier(reference.specifier)) violations.push(violation("unresolved_non_relative_import", importer, reference.specifier, null, reference.line, "non_relative_internal_architecture_edge_is_not_allowed", root));
         continue;
@@ -100,9 +134,9 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
       }
       const target = resolution.target;
       const targetIsGame = gamePath(target, root);
-      if (importerIsGame && genericPath(target, root) && !isAllowedStardewGenericImport(target, root)) violations.push(violation("game_imports_generic_layer", importer, reference.specifier, target, reference.line, "games_must_not_import_bootstrap_containment_or_composition", root));
+      if (importerIsGame && genericPath(target, root) && !isAllowedStardewGenericImport(importer, target, root)) violations.push(violation("game_imports_generic_layer", importer, reference.specifier, target, reference.line, "games_must_not_import_bootstrap_containment_or_composition", root));
       else if (genericPath(importer, root) && targetIsGame) violations.push(violation("generic_layer_imports_game", importer, reference.specifier, target, reference.line, "bootstrap_containment_and_composition_must_not_import_games", root));
-      else if (importerIsGame && !isAllowedStardewGenericImport(target, root) && rawTarget(target, root)) violations.push(violation("game_imports_desktop_raw_module", importer, reference.specifier, target, reference.line, "stardew_must_not_import_desktop_guardian_process_or_native_modules", root));
+      else if (importerIsGame && !isAllowedStardewGenericImport(importer, target, root) && rawTarget(target, root)) violations.push(violation("game_imports_desktop_raw_module", importer, reference.specifier, target, reference.line, "stardew_must_not_import_desktop_guardian_process_or_native_modules", root));
     }
   }
   violations.sort((a, b) => (a.target === null && a.kind === "game_imports_desktop_raw_module" ? -1 : 0) - (b.target === null && b.kind === "game_imports_desktop_raw_module" ? -1 : 0) || a.importer.localeCompare(b.importer) || a.line - b.line || String(a.specifier).localeCompare(String(b.specifier)));

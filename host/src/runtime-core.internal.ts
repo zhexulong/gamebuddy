@@ -257,10 +257,6 @@ export type RuntimeSession = Readonly<{
   recoverStardewExecutionReceipts?: (
     port: ExactReceiptRecoveryPort,
   ) => Promise<readonly ReceiptRecoveryOutcome[]>;
-  /** Tavern-only, session-bound publication seam. It never writes Pi messages or Magic Context storage. */
-  publishTavernStableContext?: (snapshot: unknown) => Promise<void>;
-  /** Removes the in-process session publication before Pi disposal. */
-  clearTavernStableContext?: () => Promise<void>;
   /** Removes the one-shot Tavern provider marker binding before Pi disposal. */
   clearTavernNarrativeGateMarker?: () => void;
   /**
@@ -528,7 +524,7 @@ export async function createCompanionRuntime(
   worldBook?: WorldBookBinding,
   surface?: "chat" | "game",
   internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride,
-  tavernStableContextSnapshot?: unknown,
+
   tavernNarrativeGateNonceSha256?: string,
 ): Promise<RuntimeSession> {
   return await createRuntimeWithFixedToolsCore(
@@ -544,7 +540,7 @@ export async function createCompanionRuntime(
     worldBook,
     surface,
     internalMagicContextFeatureTestOverride,
-    tavernStableContextSnapshot,
+
     tavernNarrativeGateNonceSha256,
     undefined,
     undefined,
@@ -583,9 +579,8 @@ export async function createGameCompanionRuntime(
     attachment?.disableMagicContextMemory === true
       ? PREVIEW_MAGIC_CONTEXT_DISABLED
       : undefined,
-    undefined,
-    undefined,
-    gameOperationalGate,
+       undefined,
+       gameOperationalGate,
     attachment?.hostBindingFactory ?? gameHostBindingFactory,
     attachment?.recoveryJournal === undefined
       ? {}
@@ -615,7 +610,7 @@ export async function createRuntimeWithFixedToolsCore(
   worldBook?: WorldBookBinding,
   surface?: "chat" | "game",
   internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride,
-  tavernStableContextSnapshot?: unknown,
+
   tavernNarrativeGateNonceSha256?: string,
   gameOperationalGate?: GameOperationalGateConfig,
   gameHostBindingFactory?: GameHostBindingFactory,
@@ -627,12 +622,6 @@ export async function createRuntimeWithFixedToolsCore(
   // A surface session ID identifies a persistent session; it must never be
   // used to infer the product surface because both Chat and Game have them.
   const runtimeSurface = surface ?? presentation?.surface ?? "game";
-  if (
-    tavernStableContextSnapshot !== undefined &&
-    (runtimeSurface !== "chat" || identity.continuityId === undefined)
-  ) {
-    throw new Error("tavern_stable_context_requires_chat_continuity");
-  }
   if (
     tavernNarrativeGateNonceSha256 !== undefined &&
     !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256)
@@ -1023,7 +1012,6 @@ export async function createRuntimeWithFixedToolsCore(
   // Once Pi has returned a session, every subsequent initialization step owns
   // one deterministic reverse path. In particular, publication is cleared
   // before Pi disposal so a reused session id cannot retain stale context.
-  let clearTavernStableContext: (() => Promise<void>) | undefined;
   let clearTavernNarrativeGateMarker: (() => void) | undefined;
   let reportTavernNarrativeGateRuntime: (() => void) | undefined;
   let clearGameOperationalGateMarker: (() => void) | undefined;
@@ -1100,49 +1088,6 @@ export async function createRuntimeWithFixedToolsCore(
     if (typeof piSessionId !== "string" || piSessionId.length === 0) {
       throw new Error("pi_session_binding_unavailable");
     }
-    const tavernStableContextBinding:
-      | Readonly<{ continuityId: string; sessionId: string; surface: "tavern" }>
-      | undefined =
-      runtimeSurface === "chat" && identity.continuityId !== undefined
-        ? Object.freeze({
-            continuityId: identity.continuityId,
-            sessionId: piSessionId,
-            surface: "tavern",
-          })
-        : undefined;
-    const publishTavernStableContext =
-      tavernStableContextBinding === undefined
-        ? undefined
-        : async (snapshot: unknown): Promise<void> => {
-            // The exact source-owned module is also the extension entry loaded above,
-            // so this reaches its process-local per-Pi-session registry rather than a
-            // pnpm package copy. No SQLite, raw message, or cwd-derived binding path.
-            const bridge = (await import(
-              pathToFileURL(magicContextEntry).href
-            )) as {
-              publishGameBuddyStableContextSnapshot: (
-                binding: typeof tavernStableContextBinding,
-                value: unknown,
-              ) => unknown;
-            };
-            bridge.publishGameBuddyStableContextSnapshot(
-              tavernStableContextBinding,
-              snapshot,
-            );
-          };
-    clearTavernStableContext =
-      tavernStableContextBinding === undefined
-        ? undefined
-        : async (): Promise<void> => {
-            const bridge = (await import(
-              pathToFileURL(magicContextEntry).href
-            )) as {
-              clearPublishedGameBuddyStableContext: (sessionId: string) => void;
-            };
-            bridge.clearPublishedGameBuddyStableContext(
-              tavernStableContextBinding.sessionId,
-            );
-          };
     if (tavernNarrativeGateNonceSha256 !== undefined) {
       reportTavernNarrativeGateRuntime = () => {
         if (typeof process.send !== "function" || process.connected !== true)
@@ -1205,9 +1150,6 @@ export async function createRuntimeWithFixedToolsCore(
       installTavernProviderStartObserver = (onStart) =>
         bridge.registerTavernProviderStartObserver(piSessionId, onStart);
     }
-    if (tavernStableContextSnapshot !== undefined)
-      await publishTavernStableContext!(tavernStableContextSnapshot);
-
     await writeOrVerifyRunManifest(paths, {
       schemaVersion: 1,
       identity,
@@ -1278,12 +1220,6 @@ export async function createRuntimeWithFixedToolsCore(
             recoverStardewExecutionReceipts: (port) =>
               receiptRecoverySupervisor!.recoverFromFreshBinding(port),
           }),
-      ...(publishTavernStableContext === undefined
-        ? {}
-        : { publishTavernStableContext }),
-      ...(clearTavernStableContext === undefined
-        ? {}
-        : { clearTavernStableContext }),
       ...(clearTavernNarrativeGateMarker === undefined
         ? {}
         : { clearTavernNarrativeGateMarker }),
@@ -1301,7 +1237,6 @@ export async function createRuntimeWithFixedToolsCore(
   } catch (error) {
     throw await cleanupRuntimeInitializationFailure(
       session,
-      clearTavernStableContext,
       clearTavernNarrativeGateMarker,
       clearGameOperationalGateMarker,
       error,
@@ -1337,14 +1272,12 @@ type RuntimeSessionResource = Awaited<
 
 async function cleanupRuntimeInitializationFailure(
   session: RuntimeSessionResource,
-  clearPublishedStableContext: (() => Promise<void>) | undefined,
   clearNarrativeGateMarker: (() => void) | undefined,
   clearOperationalGateMarker: (() => void) | undefined,
   primary: unknown,
 ): Promise<never> {
   const cleanupErrors: unknown[] = [];
   try {
-    await clearPublishedStableContext?.();
   } catch (error) {
     cleanupErrors.push(error);
   }

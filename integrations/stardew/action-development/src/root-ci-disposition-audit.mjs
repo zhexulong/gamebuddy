@@ -9,7 +9,7 @@ const ROOT_PORTFOLIO = path.join(REPOSITORY_ROOT, ".ci", "test-portfolio-manifes
 const PACKAGE_PORTFOLIO = path.join(PACKAGE_DIRECTORY, "portfolio.json");
 const ROOT_PACKAGE = path.join(REPOSITORY_ROOT, "package.json");
 
-const PACKAGE_WORKFLOW_COMMAND = "pnpm --dir integrations/stardew/action-development action:ci";
+const PACKAGE_WORKFLOW_COMMAND = "pnpm --dir integrations/stardew/action-development test";
 const RETIRED_WORKFLOW_COMMANDS = Object.freeze([
   "pnpm test:stardew-action-projection",
   "pnpm check:stardew-action-surface",

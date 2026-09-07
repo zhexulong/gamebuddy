@@ -30,7 +30,7 @@ export type StardewPlayerHostLaunch = (
 declare const stardewExternalPlayerHostPhaseAOwnerBrand: unique symbol;
 
 /**
- * Opaque external-host Phase-A authority. Durable owner bytes, runtime paths,
+ * Opaque external-host Player Host bootstrap reservation authority. Durable owner bytes, runtime paths,
  * and Guardian facts remain closure-private; only the existing narrow launch
  * consume and fail-closed quarantine operations are exposed.
  */
@@ -41,10 +41,10 @@ export type StardewExternalPlayerHostPhaseAOwner = Readonly<{
   quarantine(): Promise<void>;
 }>;
 
-declare const stardewOwnedPlayerHostPhaseAOwnerBrand: unique symbol;
+declare const stardewOwnedPlayerHostBootstrapBrand: unique symbol;
 
-export type StardewOwnedPlayerHostPhaseAOwner = Readonly<{
-  readonly [stardewOwnedPlayerHostPhaseAOwnerBrand]: never;
+export type StardewOwnedPlayerHostBootstrap = Readonly<{
+  readonly [stardewOwnedPlayerHostBootstrapBrand]: never;
 }>;
 
 export type StardewPrivateBootstrapComposition = Readonly<{
@@ -59,15 +59,15 @@ export type StardewPrivateBootstrapComposition = Readonly<{
     claim: StardewPlayerHostBootstrapClaim,
     aiClientReservation: StardewAiClientLaunchReservation,
   ): Promise<StardewExternalPlayerHostPhaseAOwner>;
-  reserveOwnedPlayerHostPhaseA(
+  reserveOwnedPlayerHostBootstrap(
     runtimeRoot: string,
     claim: StardewPlayerHostBootstrapClaim,
     playerHostReservation: StardewPlayerHostLaunchReservation,
     aiClientReservation: StardewAiClientLaunchReservation,
-  ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
+  ): Promise<StardewOwnedPlayerHostBootstrap>;
 }>;
 
-/** Constructs the public redacted Phase-A authority boundary. */
+/** Constructs the public redacted Player Host bootstrap reservation authority boundary. */
 export function createStardewPrivateBootstrapComposition(): StardewPrivateBootstrapComposition {
   const internalComposition = createProductionComposition();
   const composition = internalComposition.composition;
@@ -77,6 +77,6 @@ export function createStardewPrivateBootstrapComposition(): StardewPrivateBootst
     aiClientProcessOwner: composition.aiClientProcessOwner,
     createRoleLifecycleFacade: composition.createRoleLifecycleFacade,
     reserveExternalPlayerHostPhaseA: composition.reserveExternalPlayerHostPhaseA,
-    reserveOwnedPlayerHostPhaseA: composition.reserveOwnedPlayerHostPhaseA,
+    reserveOwnedPlayerHostBootstrap: composition.reserveOwnedPlayerHostBootstrap,
   });
 }

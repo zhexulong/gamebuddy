@@ -2,11 +2,11 @@ import { spawn, spawnSync } from "node:child_process";
 import {
   type StardewAiClientProcessProbeResult,
   type StardewAiClientProcessSpawnResult,
-} from "../../stardew-ai-client-process-owner.js";
+} from "../../../stardew-ai-client-process-owner.js";
 import {
   type StardewPlayerHostProcessProbeResult,
   type StardewPlayerHostProcessSpawnResult,
-} from "../../stardew-player-host-process-owner.js";
+} from "../../../stardew-player-host-process-owner.js";
 
 export function productionSpawn(
   executable: string,
@@ -54,7 +54,7 @@ export function productionPlayerHostProbe(pid: number): StardewPlayerHostProcess
   return probeWindowsProcess(pid);
 }
 
-export function probeWindowsProcess(pid: number): Readonly<{ pid: number; creationDate: string }> | null {
+function probeWindowsProcess(pid: number): Readonly<{ pid: number; creationDate: string }> | null {
   const result = spawnSync(
     "powershell.exe",
     [

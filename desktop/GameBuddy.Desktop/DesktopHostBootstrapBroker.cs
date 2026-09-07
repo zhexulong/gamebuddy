@@ -17,6 +17,9 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     private readonly string generation;
     private readonly string inventoryDigest;
     private readonly string runtimeAdmissionSha256;
+    // Retained only to bind this one-shot broker to the exact canonical layout
+    // that Desktop places in the matching bootstrap frame.
+    private readonly CurrentUserRootLayout layout;
     private readonly NamedPipeServerStream server;
     private readonly Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery;
     private GuardianSupervisorLease? guardian;
@@ -27,10 +30,12 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     private readonly HashSet<string> containedRoles = new(StringComparer.Ordinal);
     private GuardianCorrelation? correlation;
     private Task? commandLoop;
+    private readonly CancellationTokenSource sessionClosing = new();
 
-    private DesktopHostBootstrapBroker(string bootstrapId, InstalledGenerationSelection selection, Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery)
+    private DesktopHostBootstrapBroker(string bootstrapId, InstalledGenerationSelection selection, CurrentUserRootLayout layout, Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery)
     {
         this.bootstrapId = bootstrapId;
+        this.layout = layout;
         this.startRecovery = startRecovery;
         generation = selection.Generation;
         inventoryDigest = selection.InventoryDigest;
@@ -40,19 +45,22 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             MaxWireBytes, MaxWireBytes);
     }
 
-    internal static DesktopHostBootstrapBroker Create(string bootstrapId, InstalledGenerationSelection selection, Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery = null)
+    internal static DesktopHostBootstrapBroker Create(string bootstrapId, InstalledGenerationSelection selection, CurrentUserRootLayout layout, Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery = null)
     {
+        ArgumentNullException.ThrowIfNull(selection);
+        ArgumentNullException.ThrowIfNull(layout);
         if (!IsHex(bootstrapId)) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
-        return new DesktopHostBootstrapBroker(bootstrapId, selection, startRecovery);
+        return new DesktopHostBootstrapBroker(bootstrapId, selection, layout, startRecovery);
     }
 
     internal async Task AuthenticateHostAsync(WindowsNative.SafeProcessHandle child, CancellationToken cancellationToken)
     {
+        EnsureLayoutBinding();
         await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
         if (!WindowsNative.GetNamedPipeClientProcessId(server.SafePipeHandle, out var clientPid) || clientPid != WindowsNative.GetProcessId(child) ||
             !WindowsNative.ProcessIdToSessionId(clientPid, out var clientSession) || !WindowsNative.ProcessIdToSessionId(WindowsNative.GetCurrentProcessId(), out var currentSession) || clientSession != currentSession)
             throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
-        VerifySameCurrentUserSid(clientPid);
+        VerifySameCurrentUserSid(child);
         var hello = await ReadFrameAsync(cancellationToken).ConfigureAwait(false);
         if (!ExactObject(hello, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256") ||
             hello.GetProperty("schema").GetString() != "gamebuddy-desktop-guardian-session/v1" || hello.GetProperty("protocolVersion").GetInt32() != 1 || hello.GetProperty("operation").GetString() != "hello" ||
@@ -79,12 +87,15 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     {
         try
         {
+            byte? queuedCommandFirstByte = null;
             while (!closed)
             {
-                var command = await ReadFrameAsync(cancellationToken).ConfigureAwait(false);
+                var command = await ReadFrameAsync(cancellationToken, queuedCommandFirstByte).ConfigureAwait(false);
+                queuedCommandFirstByte = null;
                 if (!TryParseCommand(command, out var parsed)) throw new GuardianLaunchUnavailableException();
                 using var deadline = BindCommandDeadline(parsed, cancellationToken);
-                var commandCancellation = deadline.Token;
+                using var commandClosing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, sessionClosing.Token, deadline.Token);
+                var commandCancellation = commandClosing.Token;
                 if (parsed.Operation == "recover_attempt")
                 {
                     await RelayRecoveryAsync(parsed, commandCancellation).ConfigureAwait(false);
@@ -92,7 +103,43 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
                 }
                 ValidateTransition(parsed);
                 var native = new GuardianRelayCommand(parsed.Operation, parsed.GuardianInstanceId, parsed.GuardianEpoch, parsed.AttemptId, parsed.Role, parsed.PrivateFrame, parsed.DeadlineUnixMs);
-                var result = await guardian!.RelayResidentAsync(native, commandCancellation).ConfigureAwait(false);
+                using var relayClosing = CancellationTokenSource.CreateLinkedTokenSource(commandCancellation);
+                var relay = guardian!.RelayResidentAsync(native, commandCancellation);
+                var pipeRead = WatchForHostPipeReadAsync(relayClosing.Token);
+                if (await Task.WhenAny(relay, pipeRead).ConfigureAwait(false) == pipeRead)
+                {
+                    var firstByte = await pipeRead.ConfigureAwait(false);
+                    if (firstByte is null)
+                    {
+                        sessionClosing.Cancel();
+                        await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                        try { await relay.ConfigureAwait(false); } catch { }
+                        throw new GuardianLaunchUnavailableException();
+                    }
+                    queuedCommandFirstByte = firstByte;
+                }
+                else
+                {
+                    if (pipeRead.IsCompleted)
+                    {
+                        var firstByte = await pipeRead.ConfigureAwait(false);
+                        if (firstByte is null)
+                        {
+                            sessionClosing.Cancel();
+                            await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                            try { await relay.ConfigureAwait(false); } catch { }
+                            throw new GuardianLaunchUnavailableException();
+                        }
+                        queuedCommandFirstByte = firstByte;
+                    }
+                    else
+                    {
+                        relayClosing.Cancel();
+                        try { _ = await pipeRead.ConfigureAwait(false); } catch (OperationCanceledException) { }
+                    }
+                }
+                var result = await relay.ConfigureAwait(false);
+                if (sessionClosing.IsCancellationRequested) throw new GuardianLaunchUnavailableException();
                 parsed.ThrowIfExpired(commandCancellation);
                 AdvanceTransition(parsed);
                 parsed.ThrowIfExpired(commandCancellation);
@@ -248,10 +295,21 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         value.GetProperty("bootstrapId").GetString() == bootstrapId && value.GetProperty("generation").GetString() == generation && value.GetProperty("inventoryDigest").GetString() == inventoryDigest && value.GetProperty("runtimeAdmissionSha256").GetString() == runtimeAdmissionSha256 &&
         value.GetProperty("guardianInstanceId").GetString() == command.GuardianInstanceId && value.GetProperty("guardianEpoch").TryGetInt32(out var epoch) && epoch == command.GuardianEpoch && value.GetProperty("attemptId").GetString() == command.AttemptId && value.GetProperty("recoveryInstanceId").GetString() == command.RecoveryInstanceId;
 
-    private async Task<JsonElement> ReadFrameAsync(CancellationToken cancellationToken)
+    private async Task<byte?> WatchForHostPipeReadAsync(CancellationToken cancellationToken)
+    {
+        var byteRead = new byte[1];
+        return await server.ReadAsync(byteRead, cancellationToken).ConfigureAwait(false) == 1 ? byteRead[0] : null;
+    }
+
+    private async Task<JsonElement> ReadFrameAsync(CancellationToken cancellationToken, byte? firstByte = null)
     {
         using var bytes = new MemoryStream();
         var one = new byte[1];
+        if (firstByte is { } initial)
+        {
+            if (initial is (byte)'\r' or 0 or (byte)'\n') throw new GuardianLaunchUnavailableException();
+            bytes.WriteByte(initial);
+        }
         while (bytes.Length < MaxWireBytes)
         {
             if (await server.ReadAsync(one, cancellationToken).ConfigureAwait(false) != 1) throw new EndOfStreamException();
@@ -275,19 +333,29 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         await server.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static void VerifySameCurrentUserSid(uint clientPid)
+    private static void VerifySameCurrentUserSid(WindowsNative.SafeProcessHandle child)
     {
-        if (!WindowsNative.OpenProcess(WindowsNative.ProcessQueryLimitedInformation, false, clientPid, out var client)) throw new GuardianLaunchUnavailableException();
-        using (client)
+        if (!WindowsNative.OpenProcessToken(WindowsNative.GetCurrentProcess(), WindowsNative.TokenQuery, out var currentToken))
+            WindowsNative.ThrowLastError("host_runtime_unavailable");
+        using (currentToken)
         {
-            if (!WindowsNative.OpenProcessToken(WindowsNative.GetCurrentProcess(), WindowsNative.TokenQuery, out var currentToken) || !WindowsNative.OpenProcessToken(client, WindowsNative.TokenQuery, out var clientToken)) throw new GuardianLaunchUnavailableException();
-            using (currentToken)
-            using (clientToken)
+            if (!WindowsNative.OpenProcessToken(child, WindowsNative.TokenQuery, out var childToken))
+                WindowsNative.ThrowLastError("host_runtime_unavailable");
+            using (childToken)
             {
-                var currentSid = ReadTokenSid(currentToken);
-                var childSid = ReadTokenSid(clientToken);
-                try { if (!WindowsNative.EqualSid(currentSid, childSid)) throw new GuardianLaunchUnavailableException(); }
-                finally { Marshal.FreeHGlobal(currentSid); Marshal.FreeHGlobal(childSid); }
+                var currentSid = IntPtr.Zero;
+                var childSid = IntPtr.Zero;
+                try
+                {
+                    currentSid = ReadTokenSid(currentToken);
+                    childSid = ReadTokenSid(childToken);
+                    if (!WindowsNative.EqualSid(currentSid, childSid)) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+                }
+                finally
+                {
+                    if (currentSid != IntPtr.Zero) Marshal.FreeHGlobal(currentSid);
+                    if (childSid != IntPtr.Zero) Marshal.FreeHGlobal(childSid);
+                }
             }
         }
     }
@@ -295,26 +363,36 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     private static IntPtr ReadTokenSid(Microsoft.Win32.SafeHandles.SafeAccessTokenHandle token)
     {
         _ = WindowsNative.GetTokenInformation(token, WindowsNative.TokenUser, IntPtr.Zero, 0, out var size);
-        if (size == 0) throw new GuardianLaunchUnavailableException();
+        if (size == 0) WindowsNative.ThrowLastError("host_runtime_unavailable");
         var data = Marshal.AllocHGlobal(checked((int)size));
         try
         {
-            if (!WindowsNative.GetTokenInformation(token, WindowsNative.TokenUser, data, size, out var written) || written != size) throw new GuardianLaunchUnavailableException();
+            if (!WindowsNative.GetTokenInformation(token, WindowsNative.TokenUser, data, size, out var written) || written != size)
+                WindowsNative.ThrowLastError("host_runtime_unavailable");
             var user = Marshal.PtrToStructure<WindowsNative.TokenUserInformation>(data);
             var length = user.User.Sid == IntPtr.Zero ? 0 : WindowsNative.GetLengthSid(user.User.Sid);
-            if (length == 0) throw new GuardianLaunchUnavailableException();
+            if (length == 0) WindowsNative.ThrowLastError("host_runtime_unavailable");
             var copy = Marshal.AllocHGlobal(checked((int)length));
             var bytes = new byte[checked((int)length)];
-            Marshal.Copy(user.User.Sid, bytes, 0, bytes.Length); Marshal.Copy(bytes, 0, copy, bytes.Length);
+            Marshal.Copy(user.User.Sid, bytes, 0, bytes.Length);
+            Marshal.Copy(bytes, 0, copy, bytes.Length);
             return copy;
         }
         finally { Marshal.FreeHGlobal(data); }
+    }
+
+    private void EnsureLayoutBinding()
+    {
+        if (string.IsNullOrWhiteSpace(layout.ProgramRoot) || string.IsNullOrWhiteSpace(layout.DataRoot) ||
+            string.IsNullOrWhiteSpace(layout.OperationalRoot) || string.IsNullOrWhiteSpace(layout.PresentationRoot))
+            throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
     }
 
     internal async Task CloseAsync(CancellationToken cancellationToken)
     {
         if (closed) return;
         closed = true;
+        sessionClosing.Cancel();
         try { if (guardian is not null) await guardian.CloseControlAsync(cancellationToken).ConfigureAwait(false); } catch { }
         server.Dispose();
     }

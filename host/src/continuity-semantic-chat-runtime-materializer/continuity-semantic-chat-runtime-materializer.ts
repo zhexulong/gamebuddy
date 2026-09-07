@@ -9,7 +9,6 @@ import {
   type ChatRuntimeDisposal,
   type ChatRuntimeMaterializer,
   type MaterializedChatRuntime,
-  materializeAndPublishChatStableContext,
   materializeExactChatRuntime,
 } from "./continuity-semantic-chat-runtime-materializer.internal.js";
 
@@ -32,12 +31,12 @@ export function createHostChatRuntimeMaterializer(
     async materialize(reservation, permit): Promise<MaterializedChatRuntime> {
       return materializeExactChatRuntime(reservation, permit, async (execution) => {
         const { construction, runtime } = await createMaterializedChatRuntime(execution, permit, options);
-        const disposal = await materializeAndPublishChatStableContext(runtime, runtime.session, async () => {
-          const piSessionId = runtime.sessionManager.getSessionId();
-          if (typeof piSessionId !== "string" || piSessionId.length === 0)
-            throw new Error("pi_session_binding_unavailable");
-          return construction.materializeStableContextForPiSession(piSessionId);
-        });
+        const piSessionId = runtime.sessionManager.getSessionId();
+        if (typeof piSessionId !== "string" || piSessionId.length === 0) throw new Error("pi_session_binding_unavailable");
+        const catalog = await construction.materializeStableContextForPiSession(piSessionId);
+        const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge");
+        const capability = publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);
+        const disposal = Object.freeze({ session: runtime.session, authoredContextCapability: capability });
         return Object.freeze({
           ...disposal,
           runtimeSession: runtime,
@@ -71,7 +70,6 @@ async function createMaterializedChatRuntime(
     construction.surfaceSessionId,
     undefined,
     "chat",
-    undefined,
     undefined,
     construction.tavernNarrativeGateNonceSha256,
   );

@@ -657,7 +657,7 @@ test("same admission joins the exact activation Promise while a conflicting admi
   }
 });
 
-test("Stage-C admits internally, direct-spawns once, and projects only awaiting attestation", async () => {
+test("staged Player Host admits internally, direct-spawns once, and projects only awaiting attestation", async () => {
   await withWindowsPlatform(async () => {
     const fixture = await createFixture();
     try {
@@ -1076,7 +1076,7 @@ test("Player Host advertisement generation mismatch fails closed and quarantines
   });
 });
 
-test("Stage-C admission failure restores staged and permits a later valid retry", async () => {
+test("staged Player Host admission failure restores staged and permits a later valid retry", async () => {
   await withWindowsPlatform(async () => {
     const changed = installationChain.map((entry, index) => index === 2
       ? Object.freeze({ ...entry, fileId: "ffffffffffffffffffffffffffffffff" })
@@ -1110,7 +1110,7 @@ test("Stage-C admission failure restores staged and permits a later valid retry"
   });
 });
 
-test("Stage-C reparse admission failure is pre-launch, restores staged, and permits retry", async () => {
+test("staged Player Host reparse admission failure is pre-launch, restores staged, and permits retry", async () => {
   await withWindowsPlatform(async () => {
     const reparse = installationChain.map((entry, index) => index === 1
       ? Object.freeze({ ...entry, isReparsePoint: true })
@@ -1145,7 +1145,7 @@ test("Stage-C reparse admission failure is pre-launch, restores staged, and perm
 });
 
 for (const failure of ["spawn", "probe"] as const) {
-  test(`Stage-C ${failure} failure quarantines and permanently rejects retry`, async () => {
+  test(`staged Player Host ${failure} failure quarantines and permanently rejects retry`, async () => {
     await withWindowsPlatform(async () => {
       const fixture = await createFixture({
         playerSpawnFailure: failure === "spawn",
@@ -1174,7 +1174,7 @@ for (const failure of ["spawn", "probe"] as const) {
    });
  }
 
-test("close during Stage-C admission drains and prevents a later spawn", async () => {
+test("close during staged Player Host admission drains and prevents a later spawn", async () => {
   await withWindowsPlatform(async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

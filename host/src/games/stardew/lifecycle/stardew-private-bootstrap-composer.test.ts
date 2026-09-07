@@ -31,29 +31,29 @@ import * as productionComposer from "./stardew-private-bootstrap-composer.js";
 import type { StardewBootstrapGuardianNativePorts } from "./stardew-bootstrap-guardian.private.js";
 import type {
   StardewExternalPlayerHostPhaseAOwner,
-  StardewOwnedPlayerHostPhaseAOwner,
+  StardewOwnedPlayerHostBootstrap,
   StardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.js";
 import * as internalComposer from "./stardew-private-bootstrap-composer.internal.js";
 import * as productionCore from "./stardew-private-bootstrap-composer.core.js";
 import {
-  consumeOwnedPlayerHostPhaseAOwner,
-  stageOwnedPlayerHostPhaseB,
-  terminalizeOwnedPlayerHostPhaseAOwner,
+  consumeOwnedPlayerHostBootstrap,
+  stageOwnedPlayerHostProfile,
+  terminalizeOwnedPlayerHostBootstrap,
 } from "./stardew-private-bootstrap-composer.internal.js";
 import * as composerTestSupport from "./stardew-private-bootstrap-composer.test-support.js";
 import {
   bindStardewPrivateBootstrapOwnerTestSupport,
-  consumeStagedOwnedPlayerHostPhaseBForTesting,
+  consumeStagedOwnedPlayerHostProfileForTesting,
   createStardewPrivateBootstrapComposerTestSupport,
-  launchOwnedPlayerHostStageCForTesting,
+  launchStagedPlayerHostForTesting,
 } from "./stardew-private-bootstrap-composer.test-support.js";
 import * as composerTestSupportInternal from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import {
   consumeOwnedFarmhandBridgeConnectionForTesting,
   createOwnerTransitionsForTesting,
   createStardewPrivateBootstrapCompositionForTesting,
-  launchOwnedAiClientStageDForTesting,
+  launchMaterializedAiClientForTesting,
   materializeAiClientProfileAfterManifestAdmissionForTesting,
   type StardewPrivateModProfileStagingTestSupportInput,
 } from "./stardew-private-bootstrap-composer.test-support-internal.js";
@@ -65,7 +65,7 @@ import {
   type AdmittedStardewInstallation,
 } from "../../../stardew-installation-admission.js";
 // StardewOwnedPlayerHostStageCResult is the return type of
-// launchOwnedPlayerHostStageCForTesting, derived from the test-support import.
+// launchStagedPlayerHostForTesting, derived from the test-support import.
 
 type Assert<T extends true> = T;
 type HasExactKeys<T, TKeys extends PropertyKey> =
@@ -78,7 +78,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedAiClientStageD" | "consumeOwnedFarmhandBridgeConnection" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner" | "createStardewBootstrapGuardianOwnerFromDesktopSession"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "consumeOwnedFarmhandBridgeConnection" | "launchStagedPlayerHost" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner" | "createStardewBootstrapGuardianOwnerFromDesktopSession"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -120,7 +120,7 @@ function signedAttachmentSession(sessionToken: string, launchGeneration = "playe
   });
 }
 
-function ownerTestView(owner: StardewOwnedPlayerHostPhaseAOwner) {
+function ownerTestView(owner: StardewOwnedPlayerHostBootstrap) {
   return bindStardewPrivateBootstrapOwnerTestSupport(owner);
 }
 
@@ -219,7 +219,7 @@ async function prepareLaunchedAiClientFixture(processOverrides: Readonly<{
 }> = {}) {
   const fixture = await prepareMaterializedAiClientFixture(processOverrides);
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
-  const launch = await fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation);
+  const launch = await fixture.testCore.launchMaterializedAiClient(fixture.owner, installation);
   assert.deepEqual(launch, { status: { kind: "awaiting_ai_client_attestation" } });
   return fixture;
 }
@@ -236,17 +236,17 @@ function createStageBTestHarness(input: Readonly<{
   verifyPackage(): Promise<void>;
 }>) {
   return {
-    async bindOwnedPhaseA(owner: Parameters<typeof consumeOwnedPlayerHostPhaseAOwner>[0]): Promise<object> {
+    async bindOwnedPlayerHostBootstrap(owner: Parameters<typeof consumeOwnedPlayerHostBootstrap>[0]): Promise<object> {
       try {
-        return await consumeOwnedPlayerHostPhaseAOwner(owner, async () => {
+        return await consumeOwnedPlayerHostBootstrap(owner, async () => {
           await input.recheck("pre");
           await input.verifyPackage();
           await input.recheck("post");
-          await stageOwnedPlayerHostPhaseB(owner);
+          await stageOwnedPlayerHostProfile(owner);
           try { await input.recheck("post"); }
           catch (error) {
             try { await ownerTestView(owner).quarantine(); } catch { /* preserve reread failure */ }
-            terminalizeOwnedPlayerHostPhaseAOwner(owner);
+            terminalizeOwnedPlayerHostBootstrap(owner);
             throw error;
           }
           return Object.freeze({});
@@ -279,13 +279,13 @@ test("activation reservation atomically compensates Player Host when AI generati
   }).consume(browserSessionId);
 
   await assert.rejects(
-    internal.reserveOwnedPlayerHostPhaseAForActivation(await createRoot(), claim),
+    internal.reserveOwnedPlayerHostBootstrapForActivation(await createRoot(), claim),
     /invalid_launch_generation/,
   );
   assert.deepEqual(internal.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
   assert.deepEqual(internal.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
   await assert.rejects(
-    internal.reserveOwnedPlayerHostPhaseAForActivation(await createRoot(), claim),
+    internal.reserveOwnedPlayerHostBootstrapForActivation(await createRoot(), claim),
     /stardew_bootstrap_claim_not_available/,
   );
 });
@@ -310,7 +310,7 @@ test("normal activation fails closed without adopting or cleaning prepared regis
     }).consume(browserSessionId);
 
     await assert.rejects(
-      harness.testCore.reserveOwnedPlayerHostPhaseAForActivation(root, claim),
+      harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim),
       /stardew_bootstrap_registration_unavailable/,
       scenario.name,
     );
@@ -451,10 +451,10 @@ async function createAttachmentFactoryFixture(processOverrides: Readonly<{
   });
   const testCore = createStardewPrivateBootstrapCompositionForTesting(harness.dependencies);
   const triple = mintOwnedTriple(testCore.composition);
-  const owner = await testCore.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await testCore.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
-  await createStageBTestHarness({ recheck: async () => undefined, verifyPackage: async () => undefined }).bindOwnedPhaseA(owner);
+  await createStageBTestHarness({ recheck: async () => undefined, verifyPackage: async () => undefined }).bindOwnedPlayerHostBootstrap(owner);
   return { root, harness, testCore, owner };
 }
 
@@ -829,10 +829,10 @@ test("v4 owner quarantine is monotonic, fence-bound, preserves contained roles, 
 
 test("public composer declaration excludes guardian native record facts", async () => {
   const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "src", "games", "stardew", "lifecycle", "stardew-private-bootstrap-composer.ts"), "utf8");
-  for (const forbidden of ["StardewGuardianBinding", "StardewPrivateBootstrapOwnerRecord", "StardewExternalPlayerHostBootstrapOwnerRecord", "StardewOwnedPlayerHostBootstrapOwnerRecord", "leaseName", "playerJobName", "aiJobName", "ownerRecordRevision", "schema"]) assert.equal(source.includes(forbidden), false, forbidden);
+  for (const forbidden of ["StardewGuardianBinding", "StardewPrivateBootstrapOwnerRecord", "StardewExternalPlayerHostPhaseAOwnerOwnerRecord", "StardewOwnedPlayerHostBootstrapOwnerRecord", "leaseName", "playerJobName", "aiJobName", "ownerRecordRevision", "schema"]) assert.equal(source.includes(forbidden), false, forbidden);
 });
 
-test("production composer exports no testing or Phase-B staging entry", () => {
+test("production composer exports no testing or Player Host profile staging staging entry", () => {
   assert.deepEqual(Object.keys(productionComposer), ["createStardewPrivateBootstrapComposition"]);
   for (const forbidden of ["Testing", "testing", "Stage", "stage", "Dependencies", "dependencies"]) {
     assert.equal(Object.keys(productionComposer).some((key) => key.includes(forbidden)), false);
@@ -846,38 +846,38 @@ test("production core namespace has no injectable owner-transition testing facto
 
 test("production internal exports no testing constructor, raw owner view, or binder", () => {
   assert.deepEqual(Object.keys(internalComposer).sort(), [
-    "consumeOwnedPlayerHostPhaseAOwner",
+    "consumeOwnedPlayerHostBootstrap",
     "createStardewPrivateBootstrapComposition",
     "settleOwnedPlayerHostRegistrationAttempt",
-    "stageOwnedPlayerHostPhaseB",
-    "terminalizeOwnedPlayerHostPhaseAOwner",
+    "stageOwnedPlayerHostProfile",
+    "terminalizeOwnedPlayerHostBootstrap",
   ]);
   for (const forbidden of ["Testing", "testing", "Test", "test", "View", "view", "Bind", "bind", "Raw", "raw"]) {
     assert.equal(Object.keys(internalComposer).some((key) => key.includes(forbidden)), false);
   }
-  assert.equal(internalComposer.stageOwnedPlayerHostPhaseB.length, 1);
+  assert.equal(internalComposer.stageOwnedPlayerHostProfile.length, 1);
   assert.equal("createOwnedPlayerHostAttachmentFlow" in internalComposer, false);
   assert.equal("createOwnedPlayerHostAttachmentFlow" in productionComposer, false);
-  assert.equal("launchOwnedPlayerHostStageC" in internalComposer, false);
-  assert.equal("launchOwnedPlayerHostStageC" in productionComposer, false);
+  assert.equal("launchStagedPlayerHost" in internalComposer, false);
+  assert.equal("launchStagedPlayerHost" in productionComposer, false);
   assert.equal("materializeAiClientProfileAfterManifestAdmission" in internalComposer, false);
   assert.equal("materializeAiClientProfileAfterManifestAdmission" in productionComposer, false);
-  assert.equal("launchOwnedPlayerHostStageCForTesting" in internalComposer, false);
-  assert.equal("launchOwnedPlayerHostStageCForTesting" in productionComposer, false);
+  assert.equal("launchStagedPlayerHostForTesting" in internalComposer, false);
+  assert.equal("launchStagedPlayerHostForTesting" in productionComposer, false);
   assert.deepEqual(Object.keys(composerTestSupport).sort(), [
     "bindStardewPrivateBootstrapOwnerTestSupport",
-    "consumeStagedOwnedPlayerHostPhaseBForTesting",
+    "consumeStagedOwnedPlayerHostProfileForTesting",
     "createStardewPrivateBootstrapComposerTestSupport",
-    "launchOwnedPlayerHostStageCForTesting",
+    "launchStagedPlayerHostForTesting",
   ]);
   assert.deepEqual(Object.keys(composerTestSupportInternal).sort(), [
     "bindStardewPrivateBootstrapOwnerTestSupport",
     "consumeOwnedFarmhandBridgeConnectionForTesting",
-    "consumeStagedOwnedPlayerHostPhaseBForTesting",
+    "consumeStagedOwnedPlayerHostProfileForTesting",
     "createOwnerTransitionsForTesting",
     "createStardewPrivateBootstrapCompositionForTesting",
-    "launchOwnedAiClientStageDForTesting",
-    "launchOwnedPlayerHostStageCForTesting",
+    "launchMaterializedAiClientForTesting",
+    "launchStagedPlayerHostForTesting",
     "materializeAiClientProfileAfterManifestAdmissionForTesting",
   ]);
   assert.equal("materializeAiClientProfileAfterManifestAdmissionForTesting" in composerTestSupport, false);
@@ -907,11 +907,11 @@ test("only the production internal and dedicated test-only adapter import the co
     "aiClientProcessOwner: composition.aiClientProcessOwner",
     "createRoleLifecycleFacade: composition.createRoleLifecycleFacade",
     "reserveExternalPlayerHostPhaseA: composition.reserveExternalPlayerHostPhaseA",
-    "reserveOwnedPlayerHostPhaseA: composition.reserveOwnedPlayerHostPhaseA",
+    "reserveOwnedPlayerHostBootstrap: composition.reserveOwnedPlayerHostBootstrap",
   ]) assert.equal(publicComposerSource.includes(member), true, member);
   assert.equal(publicComposerSource.includes("...composition"), false);
   assert.equal(publicComposerSource.includes("as StardewPrivateBootstrapComposition"), false);
-  assert.equal(publicComposerSource.includes("launchOwnedPlayerHostStageC"), false);
+  assert.equal(publicComposerSource.includes("launchStagedPlayerHost"), false);
 
    assert.deepEqual(coreImporters.sort(), [
      "stardew-bootstrap-guardian.private.test.ts",
@@ -947,13 +947,13 @@ test("production internal composition exposes only the private C1 materializer w
     "createOwnedPlayerHostManifestHandoffCoordinator",
     "createStardewBootstrapGuardianOwner",
     "createStardewBootstrapGuardianOwnerFromDesktopSession",
-    "launchOwnedAiClientStageD",
-    "launchOwnedPlayerHostStageC",
+    "launchMaterializedAiClient",
+    "launchStagedPlayerHost",
     "materializeAiClientProfileAfterManifestAdmission",
     "quarantineOwnedPlayerHostOwner",
     "readAndCorrelateOwnedPlayerHostSession",
-    "reserveOwnedPlayerHostPhaseAForActivation",
-    "stageOwnedPlayerHostPhaseB",
+    "reserveOwnedPlayerHostBootstrapForActivation",
+    "stageOwnedPlayerHostProfile",
     "terminalizeOwnedPlayerHostOwner",
   ].sort());
   assert.equal(typeof internal.materializeAiClientProfileAfterManifestAdmission, "function");
@@ -964,7 +964,7 @@ test("production internal composition exposes only the private C1 materializer w
     "createRoleLifecycleFacade",
     "playerHostProcessOwner",
     "reserveExternalPlayerHostPhaseA",
-    "reserveOwnedPlayerHostPhaseA",
+    "reserveOwnedPlayerHostBootstrap",
   ]);
   assert.equal("quarantineOwnedPlayerHostOwner" in productionComposer, false);
   assert.equal("quarantineOwnedPlayerHostOwner" in internal.composition, false);
@@ -981,7 +981,7 @@ test("closed composition has exact public keys and no registrar, launch, or pers
     "createRoleLifecycleFacade",
     "playerHostProcessOwner",
     "reserveExternalPlayerHostPhaseA",
-     "reserveOwnedPlayerHostPhaseA",
+     "reserveOwnedPlayerHostBootstrap",
    ]);
   for (const forbidden of ["register", "registrar", "persist", "launch", "rawSpawn", "rawProbe"]) {
     assert.equal(forbidden in composition, false);
@@ -1086,7 +1086,7 @@ test("test-support accepts only raw OS, identity, and clock dependencies", () =>
     "createRoleLifecycleFacade",
     "playerHostProcessOwner",
     "reserveExternalPlayerHostPhaseA",
-    "reserveOwnedPlayerHostPhaseA",
+    "reserveOwnedPlayerHostBootstrap",
   ]);
 });
 
@@ -1137,14 +1137,14 @@ test("owner persistence rejects invalid or non-distinct Guardian identities befo
   }
 });
 
-test("owned Phase A binds exact nominal triple and durably rereads both manager generations", async () => {
+test("owned Player Host bootstrap reservation binds exact nominal triple and durably rereads both manager generations", async () => {
   const harness = createHarness({
     launchGenerations: ["ai-exact-generation"],
     playerHostLaunchGenerations: ["player-exact-generation"],
   });
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root,
     triple.claim,
     triple.playerHostReservation,
@@ -1175,7 +1175,7 @@ test("internal owned quarantine is exact-composition, retryable after persistenc
   const right = createStardewPrivateBootstrapCompositionForTesting(rightHarness.dependencies);
   const root = await createRoot();
   const triple = mintOwnedTriple(left.composition);
-  const owner = await left.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await left.composition.reserveOwnedPlayerHostBootstrap(
     root,
     triple.claim,
     triple.playerHostReservation,
@@ -1184,11 +1184,11 @@ test("internal owned quarantine is exact-composition, retryable after persistenc
 
   assert.throws(
     () => right.quarantineOwnedPlayerHostOwner(owner),
-    /stardew_owned_phase_a_owner_not_registered/,
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   assert.throws(
-    () => left.quarantineOwnedPlayerHostOwner(Object.freeze({}) as StardewOwnedPlayerHostPhaseAOwner),
-    /stardew_owned_phase_a_owner_not_registered/,
+    () => left.quarantineOwnedPlayerHostOwner(Object.freeze({}) as StardewOwnedPlayerHostBootstrap),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
 
   const expectedReserved = expectedOwnedRecord();
@@ -1222,7 +1222,7 @@ test("internal owned quarantine is exact-composition, retryable after persistenc
 test("owned public owner is frozen, empty, and has no record, path, quarantine, or raw launch reachability", async () => {
 const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
 
@@ -1238,23 +1238,23 @@ test("bound test support rejects forged and cross-composition owners before raw 
   const left = createHarness();
   const right = createHarness();
   const triple = mintOwnedTriple(left.composition);
-  const owner = await left.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await left.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
 
   assert.throws(
     () => bindStardewPrivateBootstrapOwnerTestSupport(Object.freeze({}) as typeof owner, left.composition),
-    /stardew_owned_phase_a_owner_not_registered/,
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   assert.throws(
     () => bindStardewPrivateBootstrapOwnerTestSupport(owner, right.composition),
-    /stardew_owned_phase_a_owner_not_registered/,
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   assert.deepEqual(left.playerHostSpawnCalls, []);
   assert.deepEqual(right.playerHostSpawnCalls, []);
 });
 
-test("owned Phase A rejects structural and cross-composition identities for all three inputs", async () => {
+test("owned Player Host bootstrap reservation rejects structural and cross-composition identities for all three inputs", async () => {
   const left = createHarness({ bootstrapIds: ["left-bootstrap"] });
   const right = createHarness({ bootstrapIds: ["right-bootstrap"] });
   const leftTriple = mintOwnedTriple(left.composition);
@@ -1264,44 +1264,44 @@ test("owned Phase A rejects structural and cross-composition identities for all 
   const structuralAi = Object.freeze({}) as StardewAiClientLaunchReservation;
 
   await assert.rejects(
-    left.composition.reserveOwnedPlayerHostPhaseA(
+    left.composition.reserveOwnedPlayerHostBootstrap(
       await createRoot(), structuralClaim, leftTriple.playerHostReservation, leftTriple.aiClientReservation,
     ),
     /stardew_bootstrap_claim_not_registered/,
   );
   await assert.rejects(
-    left.composition.reserveOwnedPlayerHostPhaseA(
+    left.composition.reserveOwnedPlayerHostBootstrap(
       await createRoot(), leftTriple.claim, structuralPlayer, leftTriple.aiClientReservation,
     ),
     /stardew_player_host_reservation_not_registered/,
   );
   await assert.rejects(
-    left.composition.reserveOwnedPlayerHostPhaseA(
+    left.composition.reserveOwnedPlayerHostBootstrap(
       await createRoot(), leftTriple.claim, leftTriple.playerHostReservation, structuralAi,
     ),
     /stardew_ai_client_reservation_not_registered/,
   );
   await assert.rejects(
-    left.composition.reserveOwnedPlayerHostPhaseA(
+    left.composition.reserveOwnedPlayerHostBootstrap(
       await createRoot(), rightTriple.claim, leftTriple.playerHostReservation, leftTriple.aiClientReservation,
     ),
     /stardew_bootstrap_claim_not_registered/,
   );
   await assert.rejects(
-    left.composition.reserveOwnedPlayerHostPhaseA(
+    left.composition.reserveOwnedPlayerHostBootstrap(
       await createRoot(), leftTriple.claim, rightTriple.playerHostReservation, leftTriple.aiClientReservation,
     ),
     /stardew_player_host_reservation_not_registered/,
   );
   await assert.rejects(
-    left.composition.reserveOwnedPlayerHostPhaseA(
+    left.composition.reserveOwnedPlayerHostBootstrap(
       await createRoot(), leftTriple.claim, leftTriple.playerHostReservation, rightTriple.aiClientReservation,
     ),
     /stardew_ai_client_reservation_not_registered/,
   );
 });
 
-test("owned Phase A returns only after durable reread and rejects malformed persisted bytes", async () => {
+test("owned Player Host bootstrap reservation returns only after durable reread and rejects malformed persisted bytes", async () => {
   const harness = createHarness();
   const root = await createRoot();
   const path = ownerPath(root);
@@ -1320,7 +1320,7 @@ test("owned Phase A returns only after durable reread and rejects malformed pers
   })));
   const triple = mintOwnedTriple(harness.composition);
   let settled = false;
-  const pending = harness.composition.reserveOwnedPlayerHostPhaseA(
+  const pending = harness.composition.reserveOwnedPlayerHostBootstrap(
     root,
     triple.claim,
     triple.playerHostReservation,
@@ -1335,14 +1335,14 @@ test("owned Phase A returns only after durable reread and rejects malformed pers
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
 
-test("owned Phase A synchronously binds exact triple so concurrent reserve has one winner", async () => {
+test("owned Player Host bootstrap reservation synchronously binds exact triple so concurrent reserve has one winner", async () => {
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
   const results = await Promise.allSettled([
-    harness.composition.reserveOwnedPlayerHostPhaseA(
+    harness.composition.reserveOwnedPlayerHostBootstrap(
       await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
     ),
-    harness.composition.reserveOwnedPlayerHostPhaseA(
+    harness.composition.reserveOwnedPlayerHostBootstrap(
       await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
     ),
   ]);
@@ -1376,7 +1376,7 @@ test("cross-topology race binds one exact AI reservation to only one durable tra
   const externalRoot = await createRoot();
 
   const results = await Promise.allSettled([
-    harness.composition.reserveOwnedPlayerHostPhaseA(
+    harness.composition.reserveOwnedPlayerHostBootstrap(
       ownedRoot,
       ownedClaim,
       playerHostReservation,
@@ -1431,7 +1431,7 @@ test("cross-topology race binds one exact AI reservation to only one durable tra
 test("owned launch consumers are independently one-shot and escaped callbacks cannot replay", async () => {
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   let escapedPlayer: import("./stardew-private-bootstrap-composer.js").StardewPlayerHostLaunch | undefined;
@@ -1463,7 +1463,7 @@ test("owned quarantine synchronously closes both launches, including reentrant c
   const harness = createHarness();
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   let releasePersistence!: () => void;
@@ -1517,7 +1517,7 @@ test("owned expiry after persistence quarantines record and revokes both roles",
   })));
 
   await assert.rejects(
-    harness.composition.reserveOwnedPlayerHostPhaseA(
+    harness.composition.reserveOwnedPlayerHostBootstrap(
       root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
     ),
     /stardew_bootstrap_claim_expired_after_persistence/,
@@ -1535,7 +1535,7 @@ test("owned expiry after persistence quarantines record and revokes both roles",
 test("owned expiry before either callback permanently revokes both roles", async () => {
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition, { expiresAtMs: 1_500 });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   harness.setNow(1_500);
@@ -1561,55 +1561,55 @@ test("owned expiry before either callback permanently revokes both roles", async
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
 
-test("owned Phase-A binding permits only one successful consumer across independent session launcher instances", async () => {
+test("owned Player Host bootstrap reservation binding permits only one successful consumer across independent session launcher instances", async () => {
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   let releaseFirst!: () => void;
   const firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; });
-  const first = consumeOwnedPlayerHostPhaseAOwner(owner, async () => {
+  const first = consumeOwnedPlayerHostBootstrap(owner, async () => {
     await firstGate;
     return "first";
   });
 
   assert.throws(
-    () => consumeOwnedPlayerHostPhaseAOwner(owner, () => "second"),
-    /stardew_owned_phase_a_owner_not_registered/,
+    () => consumeOwnedPlayerHostBootstrap(owner, () => "second"),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   releaseFirst();
   assert.equal(await first, "first");
   assert.throws(
-    () => consumeOwnedPlayerHostPhaseAOwner(owner, () => "replay"),
-    /stardew_owned_phase_a_owner_not_registered/,
+    () => consumeOwnedPlayerHostBootstrap(owner, () => "replay"),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
 });
 
-test("failed owned Phase-A binding restores its exact owner only after settlement for a complete retry", async () => {
+test("failed owned Player Host bootstrap reservation binding restores its exact owner only after settlement for a complete retry", async () => {
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   let rejectFirst!: (error: Error) => void;
-  const failed = consumeOwnedPlayerHostPhaseAOwner(owner, () => new Promise<never>((_resolve, reject) => {
+  const failed = consumeOwnedPlayerHostBootstrap(owner, () => new Promise<never>((_resolve, reject) => {
     rejectFirst = reject;
   }));
 
   assert.throws(
-    () => consumeOwnedPlayerHostPhaseAOwner(owner, () => "while-binding"),
-    /stardew_owned_phase_a_owner_not_registered/,
+    () => consumeOwnedPlayerHostBootstrap(owner, () => "while-binding"),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   rejectFirst(new Error("transient binding failure"));
   await assert.rejects(failed, /transient binding failure/);
-  assert.equal(consumeOwnedPlayerHostPhaseAOwner(owner, () => "retry"), "retry");
+  assert.equal(consumeOwnedPlayerHostBootstrap(owner, () => "retry"), "retry");
 });
 
 test("independently-created private Stage-B fixtures permit one owner binding, reject reentry, and retry only after failure settles", async () => {
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   let releasePre!: () => void;
@@ -1623,15 +1623,15 @@ test("independently-created private Stage-B fixtures permit one owner binding, r
     verifyPackage: async () => undefined,
   });
 
-  const first = firstPlanner.bindOwnedPhaseA(owner);
-  await assert.rejects(secondPlanner.bindOwnedPhaseA(owner), /stardew_private_stage_b_failed/);
+  const first = firstPlanner.bindOwnedPlayerHostBootstrap(owner);
+  await assert.rejects(secondPlanner.bindOwnedPlayerHostBootstrap(owner), /stardew_private_stage_b_failed/);
   releasePre();
   await first;
-  await assert.rejects(secondPlanner.bindOwnedPhaseA(owner), /stardew_private_stage_b_failed/);
+  await assert.rejects(secondPlanner.bindOwnedPlayerHostBootstrap(owner), /stardew_private_stage_b_failed/);
 
   const retryHarness = createHarness();
   const retryTriple = mintOwnedTriple(retryHarness.composition, { browserSessionId: "browser-retry" });
-  const retryOwner = await retryHarness.composition.reserveOwnedPlayerHostPhaseA(
+  const retryOwner = await retryHarness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), retryTriple.claim, retryTriple.playerHostReservation, retryTriple.aiClientReservation,
   );
   let rejectPre!: (error: Error) => void;
@@ -1639,28 +1639,28 @@ test("independently-created private Stage-B fixtures permit one owner binding, r
     recheck: async () => new Promise<void>((_resolve, reject) => { rejectPre = reject; }),
     verifyPackage: async () => undefined,
   });
-  const failed = failedPlanner.bindOwnedPhaseA(retryOwner);
-  await assert.rejects(secondPlanner.bindOwnedPhaseA(retryOwner), /stardew_private_stage_b_failed/);
+  const failed = failedPlanner.bindOwnedPlayerHostBootstrap(retryOwner);
+  await assert.rejects(secondPlanner.bindOwnedPlayerHostBootstrap(retryOwner), /stardew_private_stage_b_failed/);
   rejectPre(new Error("transient precheck failure"));
   await assert.rejects(failed, /stardew_private_stage_b_failed/);
-  await secondPlanner.bindOwnedPhaseA(retryOwner);
+  await secondPlanner.bindOwnedPlayerHostBootstrap(retryOwner);
 
   const postHarness = createHarness();
   const postTriple = mintOwnedTriple(postHarness.composition, { browserSessionId: "browser-post" });
-  const postOwner = await postHarness.composition.reserveOwnedPlayerHostPhaseA(
+  const postOwner = await postHarness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), postTriple.claim, postTriple.playerHostReservation, postTriple.aiClientReservation,
   );
   const rejectedPostPlanner = createStageBTestHarness({
     recheck: async (phase) => { if (phase === "post") throw new Error("post rejected"); },
     verifyPackage: async () => undefined,
   });
-  await assert.rejects(rejectedPostPlanner.bindOwnedPhaseA(postOwner), /stardew_private_stage_b_failed/);
+  await assert.rejects(rejectedPostPlanner.bindOwnedPlayerHostBootstrap(postOwner), /stardew_private_stage_b_failed/);
 });
 
 test("owned Player Host launch fresh-checks exact expiry inside its active callback", async () => {
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition, { expiresAtMs: 1_500 });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
 
@@ -1683,7 +1683,7 @@ test("owned Player Host launch fresh-checks exact expiry inside its active callb
 test("owned AI launch fresh-checks exact expiry inside its active callback", async () => {
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition, { expiresAtMs: 1_500 });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
 
@@ -1707,7 +1707,7 @@ test("owned quarantine persistence failure keeps the error primary and revokes b
   const harness = createHarness();
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   await writeFile(ownerPath(root), "{corrupt", "utf8");
@@ -1731,7 +1731,7 @@ test("owned quarantine persistence failure keeps the error primary and revokes b
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
 
-test("owned Phase A rejects a reparse-like transaction boundary without touching target", async (t) => {
+test("owned Player Host bootstrap reservation rejects a reparse-like transaction boundary without touching target", async (t) => {
   const harness = createHarness();
   const root = await createRoot();
   const outside = await createRoot("gamebuddy-owned-bootstrap-outside-");
@@ -1749,7 +1749,7 @@ test("owned Phase A rejects a reparse-like transaction boundary without touching
   const triple = mintOwnedTriple(harness.composition);
 
   await assert.rejects(
-    harness.composition.reserveOwnedPlayerHostPhaseA(
+    harness.composition.reserveOwnedPlayerHostBootstrap(
       root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
     ),
     /unsafe_path_boundary/,
@@ -1759,7 +1759,7 @@ test("owned Phase A rejects a reparse-like transaction boundary without touching
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
 
-test("owned Phase A fails closed on occupied owner path without replacing bytes", async () => {
+test("owned Player Host bootstrap reservation fails closed on occupied owner path without replacing bytes", async () => {
   const harness = createHarness();
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition);
@@ -1767,7 +1767,7 @@ test("owned Phase A fails closed on occupied owner path without replacing bytes"
   await writeFile(ownerPath(root), "foreign-owned-record", "utf8");
 
   await assert.rejects(
-    harness.composition.reserveOwnedPlayerHostPhaseA(
+    harness.composition.reserveOwnedPlayerHostBootstrap(
       root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
     ),
     /stardew_bootstrap_owner_occupied/,
@@ -2184,7 +2184,7 @@ test("expiry while waiting under an occupied lock fails closed before owner writ
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
 
-test("Phase B staging creates only the Player Host bootstrap without consuming either launch", async () => {
+test("Player Host profile staging staging creates only the Player Host bootstrap without consuming either launch", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package");
   const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
@@ -2198,7 +2198,7 @@ test("Phase B staging creates only the Player Host bootstrap without consuming e
     },
   });
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   const stageB = createStageBTestHarness({
@@ -2206,7 +2206,7 @@ test("Phase B staging creates only the Player Host bootstrap without consuming e
     verifyPackage: async () => undefined,
   });
 
-  await stageB.bindOwnedPhaseA(owner);
+  await stageB.bindOwnedPlayerHostBootstrap(owner);
   // Test support can observe only presence: the retained material stays in the
   // private owner WeakMap and is not a config-recovery or public API surface.
   assert.equal(ownerTestView(owner).hasPrivateMaterial(), true);
@@ -2278,7 +2278,7 @@ test("partial Player Host package write rolls back without AI artifacts or launc
     },
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-rollback" });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   const stageB = createStageBTestHarness({
@@ -2286,7 +2286,7 @@ test("partial Player Host package write rolls back without AI artifacts or launc
     verifyPackage: async () => undefined,
   });
 
-  await assert.rejects(stageB.bindOwnedPhaseA(owner), /stardew_private_stage_b_failed/);
+  await assert.rejects(stageB.bindOwnedPlayerHostBootstrap(owner), /stardew_private_stage_b_failed/);
   assert.equal(ownerTestView(owner).hasPrivateMaterial(), false);
   const transaction = ownerTestView(owner).transactionDirectory;
   const transactionEntries = await readdir(transaction);
@@ -2346,7 +2346,7 @@ test("second package reread holds the owner lock through rollback before quarant
     },
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-reread-failure" });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   transaction = ownerTestView(owner).transactionDirectory;
@@ -2355,7 +2355,7 @@ test("second package reread holds the owner lock through rollback before quarant
     verifyPackage: async () => undefined,
   });
 
-  const staging = stageB.bindOwnedPhaseA(owner);
+  const staging = stageB.bindOwnedPlayerHostBootstrap(owner);
   await secondRereadObserved;
   let competingLockEntered = false;
   const competingLock = withPathLock(ownerPath(root), async () => {
@@ -2393,7 +2393,7 @@ test("second package reread holds the owner lock through rollback before quarant
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
 
-test("final post recheck after actual Phase B write quarantines durable owner and terminalizes binding", async () => {
+test("final post recheck after actual Player Host profile staging write quarantines durable owner and terminalizes binding", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-final-post");
   const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
@@ -2407,7 +2407,7 @@ test("final post recheck after actual Phase B write quarantines durable owner an
     },
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-final-post" });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   let postChecks = 0;
@@ -2419,7 +2419,7 @@ test("final post recheck after actual Phase B write quarantines durable owner an
   });
 
   await assert.rejects(
-    stageB.bindOwnedPhaseA(owner),
+    stageB.bindOwnedPlayerHostBootstrap(owner),
     (error: unknown) => error instanceof Error &&
       error.message === "stardew_private_stage_b_failed" &&
       !("cause" in error),
@@ -2442,7 +2442,7 @@ test("final post recheck after actual Phase B write quarantines durable owner an
   });
   assert.equal(durable.state, "quarantined");
   assert.equal(durable.cleanupDisposition, "retry_required");
-  assert.throws(() => consumeOwnedPlayerHostPhaseAOwner(owner, () => undefined), /stardew_owned_phase_a_owner_not_registered/);
+  assert.throws(() => consumeOwnedPlayerHostBootstrap(owner, () => undefined), /stardew_owned_player_host_bootstrap_owner_not_registered/);
   assert.throws(() => ownerTestView(owner).consumePlayerHostLaunch(() => undefined), /stardew_player_host_launch_not_available/);
   assert.throws(() => ownerTestView(owner).consumeAiClientLaunch(() => undefined), /stardew_ai_client_launch_not_available/);
   assert.deepEqual(harness.playerHostSpawnCalls, []);
@@ -2455,7 +2455,7 @@ test("final post failure terminalizes owner after quarantine persistence failure
   const harness = createHarness();
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-final-post-corrupt" });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   let postChecks = 0;
@@ -2469,7 +2469,7 @@ test("final post failure terminalizes owner after quarantine persistence failure
     verifyPackage: async () => undefined,
   });
 
-  await assert.rejects(stageB.bindOwnedPhaseA(owner), /stardew_private_stage_b_failed/);
+  await assert.rejects(stageB.bindOwnedPlayerHostBootstrap(owner), /stardew_private_stage_b_failed/);
   const transaction = ownerTestView(owner).transactionDirectory;
   const config = await readFile(join(transaction, "player-host", "Mods", "GameBuddy", "config.json"), "utf8");
   assert.deepEqual((await readdir(transaction)).sort(), [OWNER_FILE, "player-host"]);
@@ -2484,7 +2484,7 @@ test("final post failure terminalizes owner after quarantine persistence failure
     kind: "launch_reserved",
     launchGeneration: "generation-1",
   });
-  assert.throws(() => consumeOwnedPlayerHostPhaseAOwner(owner, () => undefined), /stardew_owned_phase_a_owner_not_registered/);
+  assert.throws(() => consumeOwnedPlayerHostBootstrap(owner, () => undefined), /stardew_owned_player_host_bootstrap_owner_not_registered/);
   assert.throws(() => ownerTestView(owner).consumePlayerHostLaunch(() => undefined), /stardew_player_host_launch_not_available/);
   assert.throws(() => ownerTestView(owner).consumeAiClientLaunch(() => undefined), /stardew_ai_client_launch_not_available/);
   assert.deepEqual(harness.playerHostSpawnCalls, []);
@@ -2493,7 +2493,7 @@ test("final post failure terminalizes owner after quarantine persistence failure
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
 
-test("Phase B staging occupied and expiry failures quarantine the owner without launch", async () => {
+test("Player Host profile staging staging occupied and expiry failures quarantine the owner without launch", async () => {
   for (const mode of ["occupied", "expired"] as const) {
     const root = await createRoot();
     const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
@@ -2510,7 +2510,7 @@ test("Phase B staging occupied and expiry failures quarantine the owner without 
       },
     });
     const triple = mintOwnedTriple(harness.composition, { browserSessionId: `browser-${mode}` });
-    const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+    const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
       root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
     );
     if (mode === "occupied") await mkdir(join(ownerTestView(owner).transactionDirectory, "foreign"));
@@ -2519,7 +2519,7 @@ test("Phase B staging occupied and expiry failures quarantine the owner without 
       recheck: async () => undefined,
       verifyPackage: async () => undefined,
     });
-    await assert.rejects(stageB.bindOwnedPhaseA(owner));
+    await assert.rejects(stageB.bindOwnedPlayerHostBootstrap(owner));
     assert.equal(ownerTestView(owner).record.state, "quarantined");
     const transactionEntries = await readdir(ownerTestView(owner).transactionDirectory);
     assert.equal(transactionEntries.includes("ai-client"), false);
@@ -2560,7 +2560,7 @@ test("owned attachment factory rejects forged and cross-composition owners", asy
   const left = await createAttachmentFactoryFixture();
   const right = await createAttachmentFactoryFixture();
   assert.throws(
-    () => left.testCore.createOwnedPlayerHostAttachmentFlow(Object.freeze({}) as StardewOwnedPlayerHostPhaseAOwner),
+    () => left.testCore.createOwnedPlayerHostAttachmentFlow(Object.freeze({}) as StardewOwnedPlayerHostBootstrap),
     /stardew_private_launch_admission_failed/,
   );
   assert.throws(
@@ -2574,7 +2574,7 @@ test("owned attachment factory rejects forged and cross-composition owners", asy
 test("owned attachment factory rejects owners without private material or after expiry", async () => {
   const missing = await createAttachmentFactoryFixture();
   assert.throws(
-    () => missing.testCore.createOwnedPlayerHostAttachmentFlow(Object.freeze({}) as StardewOwnedPlayerHostPhaseAOwner),
+    () => missing.testCore.createOwnedPlayerHostAttachmentFlow(Object.freeze({}) as StardewOwnedPlayerHostBootstrap),
     /stardew_private_launch_admission_failed/,
   );
   const expired = await createAttachmentFactoryFixture();
@@ -2594,7 +2594,7 @@ test("owned attachment factory rejects quarantined owners", async () => {
   );
 });
 
-test("staged Phase B owner is consumed exactly once with no launch or durable mutation", async () => {
+test("staged Player Host profile staging owner is consumed exactly once with no launch or durable mutation", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-consume");
   const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
@@ -2608,23 +2608,23 @@ test("staged Phase B owner is consumed exactly once with no launch or durable mu
     },
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-consume" });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
 
   // Timing: before the binder completes, the owner is not yet consumable.
-  assert.throws(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner), /stardew_owned_phase_a_owner_not_bound/);
+  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_owner_not_bound/);
 
   await createStageBTestHarness({
     recheck: async () => undefined,
     verifyPackage: async () => undefined,
-  }).bindOwnedPhaseA(owner);
+  }).bindOwnedPlayerHostBootstrap(owner);
 
   const recordBefore = ownerTestView(owner).record;
-  assert.doesNotThrow(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner));
+  assert.doesNotThrow(() => consumeStagedOwnedPlayerHostProfileForTesting(owner));
 
   // One-shot: the same staged authority cannot be consumed again.
-  assert.throws(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner), /stardew_owned_phase_a_phase_b_not_staged/);
+  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/);
   assert.deepEqual(ownerTestView(owner).record, recordBefore);
   assert.deepEqual(harness.playerHostSpawnCalls, []);
   assert.deepEqual(harness.spawnCalls, []);
@@ -2632,7 +2632,7 @@ test("staged Phase B owner is consumed exactly once with no launch or durable mu
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 });
 
-test("staged Phase B consume is composition-bound: foreign consume rejects before side effects, own consumes once, replay drains", async () => {
+test("staged Player Host profile staging consume is composition-bound: foreign consume rejects before side effects, own consumes once, replay drains", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-composition-bound");
   const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
@@ -2647,19 +2647,19 @@ test("staged Phase B consume is composition-bound: foreign consume rejects befor
   });
   const right = createHarness();
   const triple = mintOwnedTriple(left.composition, { browserSessionId: "browser-composition-bound" });
-  const owner = await left.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await left.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   await createStageBTestHarness({
     recheck: async () => undefined,
     verifyPackage: async () => undefined,
-  }).bindOwnedPhaseA(owner);
+  }).bindOwnedPlayerHostBootstrap(owner);
 
   // Composition B's test-only bound consume is rejected by the composition
   // bind before the owner's staged marker, record, or any spawn side effect.
   assert.throws(
-    () => consumeStagedOwnedPlayerHostPhaseBForTesting(owner, right.composition),
-    /stardew_owned_phase_a_owner_not_registered/,
+    () => consumeStagedOwnedPlayerHostProfileForTesting(owner, right.composition),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   assert.equal(ownerTestView(owner).record.state, "reserved");
   assert.deepEqual(right.playerHostSpawnCalls, []);
@@ -2667,11 +2667,11 @@ test("staged Phase B consume is composition-bound: foreign consume rejects befor
 
   // The rejected foreign consume left the staged marker intact: composition A
   // then consumes the staged profile exactly once...
-  assert.doesNotThrow(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner, left.composition));
+  assert.doesNotThrow(() => consumeStagedOwnedPlayerHostProfileForTesting(owner, left.composition));
   // ...and a replay of the same staged authority is permanently drained.
   assert.throws(
-    () => consumeStagedOwnedPlayerHostPhaseBForTesting(owner, left.composition),
-    /stardew_owned_phase_a_phase_b_not_staged/,
+    () => consumeStagedOwnedPlayerHostProfileForTesting(owner, left.composition),
+    /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/,
   );
   assert.deepEqual(left.playerHostSpawnCalls, []);
   assert.deepEqual(left.spawnCalls, []);
@@ -2679,7 +2679,7 @@ test("staged Phase B consume is composition-bound: foreign consume rejects befor
   assert.deepEqual(left.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 });
 
-test("staged Phase B consumption rejects a bound owner that never staged", async () => {
+test("staged Player Host profile staging consumption rejects a bound owner that never staged", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-nonstaged");
   const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
@@ -2693,14 +2693,14 @@ test("staged Phase B consumption rejects a bound owner that never staged", async
     },
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-nonstaged" });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
-  await consumeOwnedPlayerHostPhaseAOwner(owner, async () => Object.freeze({}));
-  assert.throws(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner), /stardew_owned_phase_a_phase_b_not_staged/);
+  await consumeOwnedPlayerHostBootstrap(owner, async () => Object.freeze({}));
+  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/);
 });
 
-test("staged Phase B consumption rejects expired owners", async () => {
+test("staged Player Host profile staging consumption rejects expired owners", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-expired-consume");
   const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
@@ -2714,18 +2714,18 @@ test("staged Phase B consumption rejects expired owners", async () => {
     },
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-expired-consume" });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   await createStageBTestHarness({
     recheck: async () => undefined,
     verifyPackage: async () => undefined,
-  }).bindOwnedPhaseA(owner);
+  }).bindOwnedPlayerHostBootstrap(owner);
   harness.setNow(6_000);
-  assert.throws(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner), /stardew_owned_phase_a_owner_expired/);
+  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_owner_expired/);
 });
 
-test("staged Phase B consumption rejects quarantined owners", async () => {
+test("staged Player Host profile staging consumption rejects quarantined owners", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-quarantined-consume");
   const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
@@ -2739,25 +2739,25 @@ test("staged Phase B consumption rejects quarantined owners", async () => {
     },
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-quarantined-consume" });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   await createStageBTestHarness({
     recheck: async () => undefined,
     verifyPackage: async () => undefined,
-  }).bindOwnedPhaseA(owner);
+  }).bindOwnedPlayerHostBootstrap(owner);
   await ownerTestView(owner).quarantine();
-  assert.throws(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner), /stardew_owned_phase_a_owner_quarantined/);
+  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_owner_quarantined/);
 });
 
-test("staged Phase B consumption rejects forged and failed-staging owners", async () => {
+test("staged Player Host profile staging consumption rejects forged and failed-staging owners", async () => {
   assert.throws(
-    () => consumeStagedOwnedPlayerHostPhaseBForTesting(Object.freeze({}) as StardewOwnedPlayerHostPhaseAOwner),
-    /stardew_owned_phase_a_owner_not_registered/,
+    () => consumeStagedOwnedPlayerHostProfileForTesting(Object.freeze({}) as StardewOwnedPlayerHostBootstrap),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   assert.throws(
-    () => consumeStagedOwnedPlayerHostPhaseBForTesting(null as unknown as StardewOwnedPlayerHostPhaseAOwner),
-    /stardew_owned_phase_a_owner_not_registered/,
+    () => consumeStagedOwnedPlayerHostProfileForTesting(null as unknown as StardewOwnedPlayerHostBootstrap),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
 
   const root = await createRoot();
@@ -2775,18 +2775,18 @@ test("staged Phase B consumption rejects forged and failed-staging owners", asyn
     },
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-consume-failure" });
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   await assert.rejects(
     createStageBTestHarness({
       recheck: async () => undefined,
       verifyPackage: async () => undefined,
-    }).bindOwnedPhaseA(owner),
+    }).bindOwnedPlayerHostBootstrap(owner),
     /stardew_private_stage_b_failed/,
   );
   assert.equal(ownerTestView(owner).record.state, "quarantined");
-  assert.throws(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner), /stardew_owned_phase_a_owner_not_bound/);
+  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_owner_not_bound/);
   assert.deepEqual(harness.spawnCalls, []);
   assert.deepEqual(harness.playerHostSpawnCalls, []);
 });
@@ -2817,7 +2817,7 @@ test("symlink or reparse-like transaction boundary is rejected without touching 
 });
 
 // ---------------------------------------------------------------------------
-// Stage C: launch of the staged Player Host profile against an admitted
+// staged Player Host: launch of the staged Player Host profile against an admitted
 // installation. The closed-core primitive is reached only through the exact
 // test composition; the public and production-internal facades never export it.
 // ---------------------------------------------------------------------------
@@ -2920,19 +2920,19 @@ function stageCStaging(
 async function stageCStageB(
   harness: ReturnType<typeof createHarness>,
   root: string,
-): Promise<StardewOwnedPlayerHostPhaseAOwner> {
+): Promise<StardewOwnedPlayerHostBootstrap> {
   const triple = mintOwnedTriple(harness.composition);
-  const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
     root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
   );
   await createStageBTestHarness({
     recheck: async () => undefined,
     verifyPackage: async () => undefined,
-  }).bindOwnedPhaseA(owner);
+  }).bindOwnedPlayerHostBootstrap(owner);
   return owner;
 }
 
-test("Stage C starts exactly one direct Player Host with the admitted recipe and redacted status", async () => {
+test("staged Player Host starts exactly one direct Player Host with the admitted recipe and redacted status", async () => {
   const root = await createRoot();
   const packageSource = await createStageBPackage();
   const harness = createHarness({ staging: stageCStaging(packageSource) });
@@ -2941,9 +2941,9 @@ test("Stage C starts exactly one direct Player Host with the admitted recipe and
   const transaction = ownerTestView(owner).transactionDirectory;
   const recordBefore = ownerTestView(owner).record;
 
-  const result = await launchOwnedPlayerHostStageCForTesting(owner, installation);
+  const result = await launchStagedPlayerHostForTesting(owner, installation);
 
-  // Stage C consumes only the Player Host reservation; future closed Stage D
+  // staged Player Host consumes only the Player Host reservation; future closed materialized AI Client
   // still has its same-composition material while the AI reservation remains.
   assert.equal(ownerTestView(owner).hasPrivateMaterial(), true);
   assert.deepEqual(result, { status: { kind: "awaiting_player_host_attestation" } });
@@ -2960,8 +2960,8 @@ test("Stage C starts exactly one direct Player Host with the admitted recipe and
 
   // The staged marker drains permanently after the launch consumer runs.
   await assert.rejects(
-    launchOwnedPlayerHostStageCForTesting(owner, installation),
-    /stardew_owned_phase_a_phase_b_not_staged/,
+    launchStagedPlayerHostForTesting(owner, installation),
+    /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/,
   );
   assert.equal(harness.playerHostSpawnCalls.length, 1);
 
@@ -2970,14 +2970,14 @@ test("Stage C starts exactly one direct Player Host with the admitted recipe and
   assert.deepEqual(harness.playerHostKillCalls, [5432]);
 });
 
-test("Stage C returns only a redacted status and leaks no child, recipe, or generation", async () => {
+test("staged Player Host returns only a redacted status and leaks no child, recipe, or generation", async () => {
   const packageSource = await createStageBPackage();
   const harness = createHarness({ staging: stageCStaging(packageSource) });
   const owner = await stageCStageB(harness, await createRoot());
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
   const recordBefore = ownerTestView(owner).record;
 
-  const result = await launchOwnedPlayerHostStageCForTesting(owner, installation);
+  const result = await launchStagedPlayerHostForTesting(owner, installation);
 
   assert.deepEqual(Reflect.ownKeys(result), ["status"]);
   assert.deepEqual(Reflect.ownKeys(result.status), ["kind"]);
@@ -2991,7 +2991,7 @@ test("Stage C returns only a redacted status and leaks no child, recipe, or gene
   harness.composition.playerHostProcessOwner.stopOwnedPlayerHost();
 });
 
-test("Stage C rejects forged and cross-composition owners before any spawn", async () => {
+test("staged Player Host rejects forged and cross-composition owners before any spawn", async () => {
   const packageSource = await createStageBPackage();
   const left = createHarness({ staging: stageCStaging(packageSource) });
   const right = createHarness();
@@ -2999,16 +2999,16 @@ test("Stage C rejects forged and cross-composition owners before any spawn", asy
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
 
   await assert.rejects(
-    launchOwnedPlayerHostStageCForTesting(Object.freeze({}) as StardewOwnedPlayerHostPhaseAOwner, installation),
-    /stardew_owned_phase_a_owner_not_registered/,
+    launchStagedPlayerHostForTesting(Object.freeze({}) as StardewOwnedPlayerHostBootstrap, installation),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   await assert.rejects(
-    launchOwnedPlayerHostStageCForTesting(null as unknown as StardewOwnedPlayerHostPhaseAOwner, installation),
-    /stardew_owned_phase_a_owner_not_registered/,
+    launchStagedPlayerHostForTesting(null as unknown as StardewOwnedPlayerHostBootstrap, installation),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   await assert.rejects(
-    launchOwnedPlayerHostStageCForTesting(owner, installation, right.composition),
-    /stardew_owned_phase_a_owner_not_registered/,
+    launchStagedPlayerHostForTesting(owner, installation, right.composition),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   assert.deepEqual(left.playerHostSpawnCalls, []);
   assert.deepEqual(left.spawnCalls, []);
@@ -3017,10 +3017,10 @@ test("Stage C rejects forged and cross-composition owners before any spawn", asy
 
   // Rejection happens before the closed-core primitive: the staged marker
   // remains intact for the exact owning composition.
-  assert.doesNotThrow(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner, left.composition));
+  assert.doesNotThrow(() => consumeStagedOwnedPlayerHostProfileForTesting(owner, left.composition));
 });
 
-test("Stage C rejects unbound and never-staged owners before any spawn", async () => {
+test("staged Player Host rejects unbound and never-staged owners before any spawn", async () => {
   const packageSource = await createStageBPackage();
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
 
@@ -3028,23 +3028,23 @@ test("Stage C rejects unbound and never-staged owners before any spawn", async (
   // allows only one outstanding reservation at a time.
   const unboundHarness = createHarness({ staging: stageCStaging(packageSource) });
   const unboundTriple = mintOwnedTriple(unboundHarness.composition);
-  const unbound = await unboundHarness.composition.reserveOwnedPlayerHostPhaseA(
+  const unbound = await unboundHarness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), unboundTriple.claim, unboundTriple.playerHostReservation, unboundTriple.aiClientReservation,
   );
   await assert.rejects(
-    launchOwnedPlayerHostStageCForTesting(unbound, installation),
-    /stardew_owned_phase_a_owner_not_bound/,
+    launchStagedPlayerHostForTesting(unbound, installation),
+    /stardew_owned_player_host_bootstrap_owner_not_bound/,
   );
 
   const boundHarness = createHarness({ staging: stageCStaging(packageSource) });
   const boundTriple = mintOwnedTriple(boundHarness.composition);
-  const bound = await boundHarness.composition.reserveOwnedPlayerHostPhaseA(
+  const bound = await boundHarness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(), boundTriple.claim, boundTriple.playerHostReservation, boundTriple.aiClientReservation,
   );
-  await consumeOwnedPlayerHostPhaseAOwner(bound, async () => Object.freeze({}));
+  await consumeOwnedPlayerHostBootstrap(bound, async () => Object.freeze({}));
   await assert.rejects(
-    launchOwnedPlayerHostStageCForTesting(bound, installation),
-    /stardew_owned_phase_a_phase_b_not_staged/,
+    launchStagedPlayerHostForTesting(bound, installation),
+    /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/,
   );
 
   assert.deepEqual(unboundHarness.playerHostSpawnCalls, []);
@@ -3055,7 +3055,7 @@ test("Stage C rejects unbound and never-staged owners before any spawn", async (
   assert.deepEqual(boundHarness.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 });
 
-test("Stage C rejects expired and quarantined owners before any spawn", async () => {
+test("staged Player Host rejects expired and quarantined owners before any spawn", async () => {
   const packageSource = await createStageBPackage();
   for (const mode of ["expired", "quarantined"] as const) {
     const harness = createHarness({ staging: stageCStaging(packageSource) });
@@ -3065,8 +3065,8 @@ test("Stage C rejects expired and quarantined owners before any spawn", async ()
     else await ownerTestView(owner).quarantine();
 
     await assert.rejects(
-      launchOwnedPlayerHostStageCForTesting(owner, installation),
-      mode === "expired" ? /stardew_owned_phase_a_owner_expired/ : /stardew_owned_phase_a_owner_quarantined/,
+      launchStagedPlayerHostForTesting(owner, installation),
+      mode === "expired" ? /stardew_owned_player_host_bootstrap_owner_expired/ : /stardew_owned_player_host_bootstrap_owner_quarantined/,
     );
     assert.deepEqual(harness.playerHostSpawnCalls, []);
     assert.deepEqual(harness.spawnCalls, []);
@@ -3080,21 +3080,21 @@ test("Stage C rejects expired and quarantined owners before any spawn", async ()
   }
 });
 
-test("Stage C forged admission capability fails closed with zero spawn and keeps the staged marker", async () => {
+test("staged Player Host forged admission capability fails closed with zero spawn and keeps the staged marker", async () => {
   const packageSource = await createStageBPackage();
   const harness = createHarness({ staging: stageCStaging(packageSource) });
   const owner = await stageCStageB(harness, await createRoot());
 
   await assert.rejects(
-    launchOwnedPlayerHostStageCForTesting(owner, Object.freeze({}) as AdmittedStardewInstallation),
+    launchStagedPlayerHostForTesting(owner, Object.freeze({}) as AdmittedStardewInstallation),
     /stardew_installation_admission_failed/,
   );
   assert.deepEqual(harness.playerHostSpawnCalls, []);
   assert.deepEqual(harness.spawnCalls, []);
-  assert.doesNotThrow(() => consumeStagedOwnedPlayerHostPhaseBForTesting(owner));
+  assert.doesNotThrow(() => consumeStagedOwnedPlayerHostProfileForTesting(owner));
 });
 
-test("Stage C changed admission identity means zero spawn and restores the staged marker retryable", async () => {
+test("staged Player Host changed admission identity means zero spawn and restores the staged marker retryable", async () => {
   const root = await createRoot();
   const packageSource = await createStageBPackage();
   const harness = createHarness({ staging: stageCStaging(packageSource) });
@@ -3108,7 +3108,7 @@ test("Stage C changed admission identity means zero spawn and restores the stage
   ]);
 
   await assert.rejects(
-    launchOwnedPlayerHostStageCForTesting(owner, installation),
+    launchStagedPlayerHostForTesting(owner, installation),
     /stardew_installation_admission_failed/,
   );
   assert.deepEqual(harness.playerHostSpawnCalls, []);
@@ -3117,7 +3117,7 @@ test("Stage C changed admission identity means zero spawn and restores the stage
 
   // A complete retry of the exact launch succeeds once now that the identity
   // chain is stable: exactly one direct Player Host spawn with the exact recipe.
-  const retried = await launchOwnedPlayerHostStageCForTesting(owner, installation);
+  const retried = await launchStagedPlayerHostForTesting(owner, installation);
   assert.deepEqual(retried, { status: { kind: "awaiting_player_host_attestation" } });
   assert.deepEqual(harness.playerHostSpawnCalls, [{
     executable: admissionExecutable,
@@ -3128,14 +3128,14 @@ test("Stage C changed admission identity means zero spawn and restores the stage
   assert.deepEqual(harness.spawnCalls, []);
   assert.equal(harness.playerHostSpawnCalls.length, 1);
   await assert.rejects(
-    launchOwnedPlayerHostStageCForTesting(owner, installation),
-    /stardew_owned_phase_a_phase_b_not_staged/,
+    launchStagedPlayerHostForTesting(owner, installation),
+    /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/,
   );
   assert.equal(harness.playerHostSpawnCalls.length, 1);
   harness.composition.playerHostProcessOwner.stopOwnedPlayerHost();
 });
 
-test("Stage C spawn and probe failures keep one-shot marker drain and create no owned process", async () => {
+test("staged Player Host spawn and probe failures keep one-shot marker drain and create no owned process", async () => {
   for (const mode of ["spawn-failure", "probe-failure"] as const) {
     const packageSource = await createStageBPackage();
     const attemptedSpawns: SpawnCall[] = [];
@@ -3157,7 +3157,7 @@ test("Stage C spawn and probe failures keep one-shot marker drain and create no 
     const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
 
     await assert.rejects(
-      launchOwnedPlayerHostStageCForTesting(owner, installation),
+      launchStagedPlayerHostForTesting(owner, installation),
       mode === "spawn-failure" ? /player_host_spawn_failed/ : /player_host_probe_failed_no_process/,
     );
     assert.equal(attemptedSpawns.length, 1);
@@ -3170,8 +3170,8 @@ test("Stage C spawn and probe failures keep one-shot marker drain and create no 
       { kind: "no_owned_player_host", killed: false },
     );
     await assert.rejects(
-      launchOwnedPlayerHostStageCForTesting(owner, installation),
-      /stardew_owned_phase_a_phase_b_not_staged/,
+      launchStagedPlayerHostForTesting(owner, installation),
+      /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/,
     );
     assert.equal(attemptedSpawns.length, 1);
   }
@@ -3609,18 +3609,18 @@ test("manifest handoff concurrent replay and cross-composition failures preserve
   assert.deepEqual(right.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 });
 
-test("Stage D rejects pre-materialization and cross-composition owners without consuming AI launch", async () => {
+test("materialized AI Client rejects pre-materialization and cross-composition owners without consuming AI launch", async () => {
   const left = await prepareManifestHandoffFixture();
   const right = await prepareMaterializedAiClientFixture();
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
 
   await assert.rejects(
-    () => launchOwnedAiClientStageDForTesting(left.owner, installation),
+    () => launchMaterializedAiClientForTesting(left.owner, installation),
     /stardew_ai_client_profile_not_materialized/,
   );
   await assert.rejects(
-    () => launchOwnedAiClientStageDForTesting(right.owner, installation, left.harness.composition),
-    /stardew_owned_phase_a_owner_not_registered/,
+    () => launchMaterializedAiClientForTesting(right.owner, installation, left.harness.composition),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
   assert.deepEqual(left.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
   assert.deepEqual(right.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
@@ -3628,7 +3628,7 @@ test("Stage D rejects pre-materialization and cross-composition owners without c
   assert.deepEqual(right.harness.spawnCalls, []);
 });
 
-test("Stage D fresh installation mismatch spawns nothing and a new admission can retry", async () => {
+test("materialized AI Client fresh installation mismatch spawns nothing and a new admission can retry", async () => {
   const fixture = await prepareMaterializedAiClientFixture();
   const stale = await admitForStageC([
     admissionChain(),
@@ -3636,19 +3636,19 @@ test("Stage D fresh installation mismatch spawns nothing and a new admission can
     changedAdmissionAt(2),
   ]);
   await assert.rejects(
-    () => fixture.testCore.launchOwnedAiClientStageD(fixture.owner, stale),
+    () => fixture.testCore.launchMaterializedAiClient(fixture.owner, stale),
     /stardew_installation_admission_failed/,
   );
   assert.deepEqual(fixture.harness.spawnCalls, []);
   assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 
   const fresh = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
-  const result = await fixture.testCore.launchOwnedAiClientStageD(fixture.owner, fresh);
+  const result = await fixture.testCore.launchMaterializedAiClient(fixture.owner, fresh);
   assert.deepEqual(result, { status: { kind: "awaiting_ai_client_attestation" } });
   assert.equal(fixture.harness.spawnCalls.length, 1);
 });
 
-test("Stage D rejects Bridge config replaced during installation reread before consuming AI launch", async () => {
+test("materialized AI Client rejects Bridge config replaced during installation reread before consuming AI launch", async () => {
   const fixture = await prepareMaterializedAiClientFixture();
   const transactionDirectory = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
   const configPath = join(transactionDirectory, "ai-client", "Mods", "GameBuddy", "config.json");
@@ -3663,7 +3663,7 @@ test("Stage D rejects Bridge config replaced during installation reread before c
   const installation = await admitStardewInstallation(inspector, admissionCandidate);
 
   await assert.rejects(
-    () => fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation),
+    () => fixture.testCore.launchMaterializedAiClient(fixture.owner, installation),
     /stardew_ai_client_bridge_config_changed/,
   );
   assert.deepEqual(fixture.harness.spawnCalls, []);
@@ -3672,12 +3672,12 @@ test("Stage D rejects Bridge config replaced during installation reread before c
   });
 
   await writeFile(configPath, canonicalConfig);
-  const result = await fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation);
+  const result = await fixture.testCore.launchMaterializedAiClient(fixture.owner, installation);
   assert.deepEqual(result, { status: { kind: "awaiting_ai_client_attestation" } });
   assert.equal(fixture.harness.spawnCalls.length, 1);
 });
 
-test("Stage D rejects replaced private Bridge config before consuming AI launch authority", async () => {
+test("materialized AI Client rejects replaced private Bridge config before consuming AI launch authority", async () => {
   const fixture = await prepareMaterializedAiClientFixture();
   const transactionDirectory = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
   const configPath = join(transactionDirectory, "ai-client", "Mods", "GameBuddy", "config.json");
@@ -3685,7 +3685,7 @@ test("Stage D rejects replaced private Bridge config before consuming AI launch 
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
 
   await assert.rejects(
-    () => fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation),
+    () => fixture.testCore.launchMaterializedAiClient(fixture.owner, installation),
     /stardew_ai_client_bridge_config_changed/,
   );
   assert.deepEqual(fixture.harness.spawnCalls, []);
@@ -3694,27 +3694,27 @@ test("Stage D rejects replaced private Bridge config before consuming AI launch 
   });
 });
 
-test("Stage D spawn and probe failures consume the exact AI launch authority", async () => {
+test("materialized AI Client spawn and probe failures consume the exact AI launch authority", async () => {
   for (const mode of ["spawn", "probe"] as const) {
     const attempted: SpawnCall[] = [];
     const fixture = await prepareMaterializedAiClientFixture({
       spawn: (executable, args, options) => {
         attempted.push({ executable, args: [...args], cwd: options.cwd, environmentGeneration: options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION });
-        if (mode === "spawn") throw new Error("stage_d_spawn_failed");
+        if (mode === "spawn") throw new Error("materialized_ai_client_spawn_failed");
         return Object.freeze({ pid: 4321, kill: () => true });
       },
       probe: mode === "probe" ? (() => null) : undefined,
     });
     const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
     let failure: unknown;
-    try { await fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation); }
+    try { await fixture.testCore.launchMaterializedAiClient(fixture.owner, installation); }
     catch (error) { failure = error; }
-    assert.match(String(failure), mode === "spawn" ? /stage_d_spawn_failed/ : /probe_failed_no_process/);
+    assert.match(String(failure), mode === "spawn" ? /materialized_ai_client_spawn_failed/ : /probe_failed_no_process/);
     assert.equal(attempted.length, 1);
     assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
     const retry = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
     await assert.rejects(
-      () => fixture.testCore.launchOwnedAiClientStageD(fixture.owner, retry),
+      () => fixture.testCore.launchMaterializedAiClient(fixture.owner, retry),
       /stardew_ai_client_launch_not_available/,
     );
     assert.equal(attempted.length, 1);
@@ -3830,7 +3830,7 @@ test("private Farmhand Bridge connection rejects wrong owner, tamper, and stoppe
       },
       right.harness.composition,
     ),
-    /stardew_owned_phase_a_owner_not_registered/,
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
 
   const transactionDirectory = left.testCore.bindOwnedPlayerHostPhaseAOwner(left.owner).transactionDirectory;
@@ -3874,7 +3874,7 @@ test("connected no-live C1 composition privately provisions Bridge scope before 
     playerId: "connected-player",
     companionId,
   });
-  const owner = await testCore.composition.reserveOwnedPlayerHostPhaseA(
+  const owner = await testCore.composition.reserveOwnedPlayerHostBootstrap(
     root,
     triple.claim,
     triple.playerHostReservation,
@@ -3883,7 +3883,7 @@ test("connected no-live C1 composition privately provisions Bridge scope before 
   await createStageBTestHarness({
     recheck: async () => undefined,
     verifyPackage: async () => undefined,
-  }).bindOwnedPhaseA(owner);
+  }).bindOwnedPlayerHostBootstrap(owner);
 
   const ownerView = testCore.bindOwnedPlayerHostPhaseAOwner(owner);
   assert.deepEqual(ownerView.record.playerHost, {
@@ -3898,7 +3898,7 @@ test("connected no-live C1 composition privately provisions Bridge scope before 
   assert.deepEqual(testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
-  const launchResult = await testCore.launchOwnedPlayerHostStageC(owner, installation);
+  const launchResult = await testCore.launchStagedPlayerHost(owner, installation);
   assert.deepEqual(launchResult, { status: { kind: "awaiting_player_host_attestation" } });
   assert.equal(harness.playerHostSpawnCalls.length, 1);
   assert.equal(harness.playerHostSpawnCalls[0]?.environmentGeneration, playerHostGeneration);
@@ -3985,7 +3985,7 @@ test("connected no-live C1 composition privately provisions Bridge scope before 
   assert.deepEqual(harness.playerHostSpawnCalls[0]?.environmentGeneration, playerHostGeneration);
 
   const aiInstallation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
-  const aiLaunchResult = await testCore.launchOwnedAiClientStageD(owner, aiInstallation);
+  const aiLaunchResult = await testCore.launchMaterializedAiClient(owner, aiInstallation);
   assert.deepEqual(aiLaunchResult, { status: { kind: "awaiting_ai_client_attestation" } });
   assert.deepEqual(testCore.composition.aiClientProcessOwner.readStatus(), {
     kind: "awaiting_ai_client_attestation",

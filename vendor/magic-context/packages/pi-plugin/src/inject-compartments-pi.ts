@@ -1885,67 +1885,6 @@ interface RenderM1PiResult {
 	materializedMemoryIds: readonly number[];
 }
 
-interface StableSourceBaseline {
-	kind: string;
-	sourceId: string;
-	revision: string;
-	canonicalHash: string;
-}
-
-function decodeXmlAttribute(value: string): string {
-	return value
-		.replaceAll("&quot;", '"')
-		.replaceAll("&apos;", "'")
-		.replaceAll("&lt;", "<")
-		.replaceAll("&gt;", ">")
-		.replaceAll("&amp;", "&");
-}
-
-/** Reads only the fork-owned m[0] source marker; Host never supplies a cursor. */
-function stableSourceBaselineFromM0(m0: string): Map<string, StableSourceBaseline> {
-	const baseline = new Map<string, StableSourceBaseline>();
-	const sourcePattern = /<gamebuddy-stable-source\s+([^>]+)>/g;
-	for (const match of m0.matchAll(sourcePattern)) {
-		const attributes = new Map<string, string>();
-		for (const attribute of match[1].matchAll(/([a-z-]+)="([^"]*)"/g)) {
-			attributes.set(attribute[1], decodeXmlAttribute(attribute[2]));
-		}
-		const kind = attributes.get("kind");
-		const sourceId = attributes.get("source-id");
-		const revision = attributes.get("revision");
-		const canonicalHash = attributes.get("canonical-hash");
-		if (!kind || !sourceId || !revision || !canonicalHash) continue;
-		baseline.set(`${kind}\u0000${sourceId}`, { kind, sourceId, revision, canonicalHash });
-	}
-	return baseline;
-}
-
-function renderStableContextUpdates(
-	stableContext: Readonly<GameBuddyStableContextMaterialization> | undefined,
-	baselineM0: string | undefined,
-): string | undefined {
-	if (!stableContext || baselineM0 === undefined) return undefined;
-	const previous = stableSourceBaselineFromM0(baselineM0);
-	const current = new Map<string, Readonly<GameBuddyStableContextSourceRecord>>();
-	for (const source of stableContext.sources) current.set(`${source.kind}\u0000${source.sourceId}`, source);
-	const updates: string[] = [];
-	for (const [identity, oldSource] of previous) {
-		const next = current.get(identity);
-		if (!next) {
-			updates.push(`  <tombstone kind="${oldSource.kind}" source-id="${escapeXmlContent(oldSource.sourceId)}" old-revision="${escapeXmlContent(oldSource.revision)}" old-canonical-hash="${oldSource.canonicalHash}"/>`);
-		} else if (next.revision !== oldSource.revision || next.canonicalHash !== oldSource.canonicalHash) {
-			updates.push(`  <replacement kind="${next.kind}" source-id="${escapeXmlContent(next.sourceId)}" old-revision="${escapeXmlContent(oldSource.revision)}" old-canonical-hash="${oldSource.canonicalHash}" new-revision="${escapeXmlContent(next.revision)}" new-canonical-hash="${next.canonicalHash}" provenance="${escapeXmlContent(next.provenance)}">\n${escapeXmlContent(next.content)}\n  </replacement>`);
-		}
-	}
-	for (const [identity, source] of current) {
-		if (previous.has(identity)) continue;
-		updates.push(`  <replacement kind="${source.kind}" source-id="${escapeXmlContent(source.sourceId)}" old-revision="" old-canonical-hash="" new-revision="${escapeXmlContent(source.revision)}" new-canonical-hash="${source.canonicalHash}" provenance="${escapeXmlContent(source.provenance)}">\n${escapeXmlContent(source.content)}\n  </replacement>`);
-	}
-	return updates.length > 0
-		? `<gamebuddy-stable-context-updates cursor="${stableContext.snapshotCanonicalHash}">\n${updates.join("\n")}\n</gamebuddy-stable-context-updates>`
-		: undefined;
-}
-
 function renderM1PiWithMetadata(
 	state: PiM0M1State,
 	db: ContextDatabase,
@@ -1958,14 +1897,8 @@ function renderM1PiWithMetadata(
 	// snapshot, which would leave its raw messages in the tail too (duplication).
 	// Omitted by callers that don't advance the boundary (e.g. renderM1Pi probe).
 	compartmentsOverride?: readonly PiCompartment[],
-	stableBaselineM0?: string,
 ): RenderM1PiResult {
 	const sections: string[] = [];
-	const stableUpdates = renderStableContextUpdates(
-		state.stableContext,
-		stableBaselineM0,
-	);
-	if (stableUpdates) sections.push(stableUpdates);
 	const workspace = resolveWorkspaceRenderContextPi(state, db);
 
 	const memPath = memoryProjectPath(state);
@@ -2402,7 +2335,6 @@ function softRefreshCachedM1Pi(args: {
 			// from below, so a concurrent sibling publish can't put a compartment
 			// in m[1] while its raw messages stay in the tail.
 			args.compartmentsForNormalization,
-			decodeCachedM0(row.cached_m0_bytes) ?? "",
 		);
 		const m1Bytes = Buffer.from(rendered.text, "utf8");
 		const workspace = resolveWorkspaceRenderContextPi(args.state, args.db);

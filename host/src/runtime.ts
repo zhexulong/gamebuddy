@@ -60,10 +60,9 @@ export async function createCompanionRuntime(
   worldBook?: WorldBookBinding,
   surface?: "chat" | "game",
   internalMagicContextFeatureTestOverride?: Parameters<typeof createCompanionRuntimeInternal>[11],
-  tavernStableContextSnapshot?: unknown,
   tavernNarrativeGateNonceSha256?: string,
 ): Promise<RuntimeSession> {
-  return await createCompanionRuntimeInternal(identity, root, integration, modelConfig, actionPolicy, presentation, gameplaySubagentEnabled, initialProfile, surfaceSessionId, worldBook, surface, internalMagicContextFeatureTestOverride, tavernStableContextSnapshot, tavernNarrativeGateNonceSha256);
+  return await createCompanionRuntimeInternal(identity, root, integration, modelConfig, actionPolicy, presentation, gameplaySubagentEnabled, initialProfile, surfaceSessionId, worldBook, surface, internalMagicContextFeatureTestOverride, tavernNarrativeGateNonceSha256);
 }
 
 /** Public construction never admits fixed Pi tools. */

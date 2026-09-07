@@ -12,6 +12,9 @@ internal sealed class GuardianSupervisor : IAsyncDisposable
     // Test-only hooks; production entrypoint neither sets nor exposes them.
     internal Func<Task>? BeforeNativeCreateForTesting { get; set; }
     internal string? TestObservationPipeName { get; set; }
+    internal string? TestBarrierDirectory { get; set; }
+    internal string? TestBarrierPhase { get; set; }
+    internal TaskCompletionSource? ControlClosedForTesting { get; set; }
 
     internal async Task<GuardianSupervisorLease> StartResidentAsync(AdmittedGuardianImage image, CancellationToken cancellationToken) =>
         new(await StartGuardianAsync(image, "resident", cancellationToken).ConfigureAwait(false));
@@ -41,7 +44,7 @@ internal sealed class GuardianSupervisor : IAsyncDisposable
             CreateControlPipe(out reader, out writer);
             CreateOutputPipe(out stdoutReader, out stdoutWriter);
             privateIngress = GuardianPrivateIngress.Create(mode == "resident" ? TestObservationPipeName : null);
-            var environmentBlock = BuildGuardianEnvironment(privateIngress, mode);
+            var environmentBlock = BuildGuardianEnvironment(privateIngress, mode, TestBarrierDirectory, TestBarrierPhase);
             environment = Marshal.StringToHGlobalUni(environmentBlock);
             _ = WindowsNative.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeSize);
             attributeList = Marshal.AllocHGlobal(attributeSize);
@@ -80,7 +83,7 @@ internal sealed class GuardianSupervisor : IAsyncDisposable
             stdoutWriter.Dispose();
             stdoutWriter = null;
             VerifyCreatedProcessIdentity(createdProcess, image);
-            var resources = new GuardianProcessResources(createdProcess, writer, stdoutReader, privateIngress, image.VerifiedAbsolutePath);
+            var resources = new GuardianProcessResources(createdProcess, writer, stdoutReader, privateIngress, image.VerifiedAbsolutePath, ControlClosedForTesting);
             createdProcess = null;
             writer = null;
             stdoutReader = null;
@@ -136,7 +139,7 @@ internal sealed class GuardianSupervisor : IAsyncDisposable
         }
     }
 
-    private static string BuildGuardianEnvironment(GuardianPrivateIngress privateIngress, string mode)
+    private static string BuildGuardianEnvironment(GuardianPrivateIngress privateIngress, string mode, string? testBarrierDirectory, string? testBarrierPhase)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -147,6 +150,13 @@ internal sealed class GuardianSupervisor : IAsyncDisposable
             ["GAMEBUDDY_GUARDIAN_CONTROL_PIPE"] = privateIngress.PipeName,
             ["GAMEBUDDY_GUARDIAN_CONTROL_TOKEN"] = privateIngress.Token,
         };
+        if (testBarrierDirectory is not null || testBarrierPhase is not null)
+        {
+            if (mode != "resident" || string.IsNullOrWhiteSpace(testBarrierDirectory) || string.IsNullOrWhiteSpace(testBarrierPhase))
+                throw new GuardianLaunchUnavailableException();
+            values["GAMEBUDDY_GUARDIAN_TEST_BARRIER_DIRECTORY"] = testBarrierDirectory;
+            values["GAMEBUDDY_GUARDIAN_TEST_BARRIER_PHASE"] = testBarrierPhase;
+        }
         return string.Concat(values.OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase).Select(item => $"{item.Key}={item.Value}\0")) + "\0";
     }
 
@@ -177,7 +187,7 @@ internal sealed class GuardianSupervisor : IAsyncDisposable
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";
 }
 
-internal sealed record GuardianProcessResources(WindowsNative.SafeProcessHandle Process, SafeFileHandle ControlWriter, SafeFileHandle PublicOutput, GuardianPrivateIngress PrivateIngress, string ExecutablePath);
+internal sealed record GuardianProcessResources(WindowsNative.SafeProcessHandle Process, SafeFileHandle ControlWriter, SafeFileHandle PublicOutput, GuardianPrivateIngress PrivateIngress, string ExecutablePath, TaskCompletionSource? ControlClosedForTesting);
 
 internal sealed class GuardianSupervisorLease : IAsyncDisposable
 {
@@ -186,6 +196,7 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
     private SafeFileHandle? publicOutput;
     private readonly WindowsNative.SafeProcessHandle process;
     private readonly GuardianPrivateIngress privateIngress;
+    private readonly TaskCompletionSource? controlClosedForTesting;
     private readonly SemaphoreSlim relayGate = new(1, 1);
     private bool closed;
     private FileStream? publicInputStream;
@@ -197,6 +208,7 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
         controlWriter = resources.ControlWriter;
         publicOutput = resources.PublicOutput;
         privateIngress = resources.PrivateIngress;
+        controlClosedForTesting = resources.ControlClosedForTesting;
         ExecutablePath = resources.ExecutablePath;
     }
 
@@ -254,14 +266,25 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
             closed = true;
             Interlocked.Exchange(ref controlWriter, null)?.Dispose();
             Interlocked.Exchange(ref publicOutput, null)?.Dispose();
+            controlClosedForTesting?.TrySetResult();
         }
         return Task.CompletedTask;
     }
 
-    internal Task<GuardianSupervisorExit> WaitForExitAsync(CancellationToken cancellationToken)
+    internal Task<GuardianSupervisorExit> WaitForExitAsync(CancellationToken cancellationToken) =>
+        WaitForExitAsync(cancellationToken, 30_000);
+
+    internal async Task CloseControlAndWaitForExitAsync(CancellationToken cancellationToken)
+    {
+        await CloseControlAsync(cancellationToken).ConfigureAwait(false);
+        if (await WaitForExitAsync(cancellationToken, 30_000).ConfigureAwait(false) is GuardianSupervisorExit.Unavailable)
+            throw new GuardianLaunchUnavailableException();
+    }
+
+    private Task<GuardianSupervisorExit> WaitForExitAsync(CancellationToken cancellationToken, uint timeoutMilliseconds)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var result = WindowsNative.WaitForSingleObject(process, 30_000);
+        var result = WindowsNative.WaitForSingleObject(process, timeoutMilliseconds);
         if (result == WindowsNative.WaitTimeout) return Task.FromResult(GuardianSupervisorExit.Unavailable);
         if (result != WindowsNative.WaitObject0 || !WindowsNative.GetExitCodeProcess(process, out _)) return Task.FromResult(GuardianSupervisorExit.Unavailable);
         return Task.FromResult(closed ? GuardianSupervisorExit.ControlClosed : GuardianSupervisorExit.Unavailable);

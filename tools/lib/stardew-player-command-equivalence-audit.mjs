@@ -7,7 +7,7 @@
  * human-path guard or supplies a source-backed proof of a stricter substitute.
  */
 
-export const BRIDGE_ROUTE_AUDIT_RULES = Object.freeze([
+const BRIDGE_ROUTE_AUDIT_RULES = Object.freeze([
   {
     candidateId: "forage.pickup_spawned_object",
     implementationActionId: "pickup_forage",

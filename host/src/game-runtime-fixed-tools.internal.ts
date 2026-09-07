@@ -30,7 +30,7 @@ export async function createMaterializedGameCompanionRuntime(
     undefined, "game", attachment?.disableMagicContextMemory === true
       ? Object.freeze({ loadExtension: false, memoryEnabled: false, historianEnabled: false })
       : undefined,
-    undefined, undefined, gameOperationalGate,
+     undefined, gameOperationalGate,
     attachment?.hostBindingFactory ?? gameHostBindingFactory,
     attachment?.recoveryJournal === undefined ? {} : Object.freeze({
       recoveryJournal: attachment.recoveryJournal,

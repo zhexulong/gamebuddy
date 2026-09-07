@@ -32,6 +32,57 @@ test("passes the relocated production graph and allows the narrow Stardew contai
   assert.equal(report.violations.length, 0);
 });
 
+test("allows the Stardew lifecycle process owner and approved provenance contract", async () => {
+  await withFixture({
+    "host/src/games/stardew/lifecycle/stardew-process-implementations.ts": "import { spawn } from 'node:child_process';\nexport const owner = spawn;\n",
+    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts": [
+      "import type { DesktopGuardianSession } from '../../../containment/auth/desktop-guardian-session.internal.js';",
+      "import { createProductionStagingDependencies } from '../../../bootstrap/roots/stardew-private-mod-profile-staging.js';",
+      "export const owner = { createProductionStagingDependencies } as unknown as DesktopGuardianSession;",
+    ].join("\n"),
+    "host/src/containment/auth/desktop-guardian-session.internal.ts": "export type DesktopGuardianSession = unknown;\n",
+    "host/src/bootstrap/roots/stardew-private-mod-profile-staging.ts": "export function createProductionStagingDependencies() {}\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "passed");
+    assert.equal(report.violations.length, 0);
+  });
+});
+
+test("rejects raw builtins and staging provenance from non-owner Stardew lifecycle siblings", async () => {
+  await withFixture({
+    "host/src/games/stardew/lifecycle/other.ts": "import 'node:child_process';\nimport { createProductionStagingDependencies } from '../../../bootstrap/roots/stardew-private-mod-profile-staging.js';\n",
+    "host/src/bootstrap/roots/stardew-private-mod-profile-staging.ts": "export function createProductionStagingDependencies() {}\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.violations.filter(({ kind }) => kind === "game_imports_desktop_raw_module").length, 1);
+    assert.equal(report.violations.filter(({ kind }) => kind === "game_imports_generic_layer").length, 1);
+  });
+});
+
+test("rejects the approved provenance exception outside the Stardew lifecycle", async () => {
+  await withFixture({
+    "host/src/games/game2/owner.ts": "import { createProductionStagingDependencies } from '../../bootstrap/roots/stardew-private-mod-profile-staging.js';\n",
+    "host/src/bootstrap/roots/stardew-private-mod-profile-staging.ts": "export function createProductionStagingDependencies() {}\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.violations[0].kind, "game_imports_generic_layer");
+  });
+});
+
+test("rejects Stardew process implementations under generic Windows containment", async () => {
+  await withFixture({
+    "host/src/containment/windows/stardew-process-implementations.ts": "export const forbidden = true;\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.violations[0].kind, "stardew_implementation_in_generic_windows");
+    assert.equal(report.violations[0].detail, "stardew_process_implementations_must_live_under_games_stardew_lifecycle");
+  });
+});
+
 test("reports exact generic-to-game and Stardew raw-module violations", async () => {
   await withFixture({
     ...roots,
@@ -50,6 +101,50 @@ test("reports exact generic-to-game and Stardew raw-module violations", async ()
       { kind: "generic_layer_imports_game", importer: "host/src/containment/reverse.ts", specifier: "../games/stardew/value.js", line: 1, detail: "bootstrap_containment_and_composition_must_not_import_games" },
       { kind: "game_imports_desktop_raw_module", importer: "host/src/games/stardew/raw.ts", specifier: "../../windows-stardew-bootstrap-guardian/index.js", line: 1, detail: "stardew_must_not_import_desktop_guardian_process_or_native_modules" },
     ]);
+  });
+});
+
+test("protects arbitrary game under games/ (e.g. games/game2) with equal compliance rules", async () => {
+  await withFixture({
+    "host/src/bootstrap/entry.ts": "export { value } from '../games/game2/value.js';\n",
+    "host/src/containment/reverse.ts": "import '../games/game2/value.js';\n",
+    "host/src/composition/reverse.ts": "export * from '../games/game2/value.js';\n",
+    "host/src/games/game2/value.ts": "export const value = 2;\n",
+    "host/src/games/game2/raw.ts": "import 'child_process';\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    const kinds = report.violations.map((v) => v.kind);
+    assert.ok(kinds.includes("generic_layer_imports_game"));
+    assert.ok(kinds.includes("game_imports_desktop_raw_module"));
+    assert.equal(report.inspectedFiles.length, 5);
+  });
+});
+
+test("rejects explicit desktop, guardian, windows, and native raw path variants", async () => {
+  const variants = ["desktop", "guardian", "windows", "native"];
+  await withFixture(Object.fromEntries([
+    ...variants.map((name) => [`host/src/games/stardew/${name}.ts`, `import '../../${name}/entry.js';`]),
+    ...variants.map((name) => [`host/src/${name}/entry.ts`, "export const raw = true;\n"]),
+  ]), (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.violations.filter(({ kind }) => kind === "game_imports_desktop_raw_module").length, variants.length);
+  });
+});
+
+test("excludes test-support and fixture directories from production traversal", async () => {
+  await withFixture({
+    "host/src/games/stardew/real.ts": "export const value = 1;\n",
+    "host/src/games/stardew/test-support/ignored.ts": "import '../../bootstrap/entry.js';\n",
+    "host/src/games/stardew/test-fixtures/ignored.ts": "import '../../bootstrap/entry.js';\n",
+    "host/src/games/stardew/__fixtures__/ignored.ts": "import '../../bootstrap/entry.js';\n",
+    "host/src/games/stardew/fixture/ignored.ts": "import '../../bootstrap/entry.js';\n",
+    "host/src/games/stardew/fixtures/ignored.ts": "import '../../bootstrap/entry.js';\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "passed");
+    assert.deepEqual(report.inspectedFiles, ["host/src/games/stardew/real.ts"]);
   });
 });
 
@@ -102,9 +197,15 @@ test("fails closed for unresolved, ambiguous, escaped, and non-relative internal
 
 test("fails closed on dynamic imports and require calls in the inspected production seam", async () => {
   await withFixture({
-    "host/src/games/stardew/dynamic.ts": "export async function load(name: string) { return import(name); }\n",
+    "host/src/games/stardew/dynamic.ts": [
+      "export async function load(name: string) { return import(name); }",
+      "export function requireLoaded(name: string) { return require(name); }",
+      "export function computed(name: string) { return import('./' + name); }",
+    ].join("\n"),
   }, (root) => {
     const report = checkHostGamePhysicalSeam({ root });
-    assert.deepEqual(report.violations.map(({ importer, ...rest }) => ({ importer: importer.replace(/^.*?host\//, "host/"), ...rest })), [{ kind: "unresolved_dynamic_import", importer: "host/src/games/stardew/dynamic.ts", specifier: null, target: null, line: 1, detail: "dynamic_imports_are_not_statically_resolvable" }]);
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.violations.length, 3);
+    assert.ok(report.violations.every(({ kind, detail }) => kind === "unresolved_dynamic_import" && detail === "dynamic_imports_are_not_statically_resolvable"));
   });
 });

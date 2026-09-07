@@ -22,7 +22,7 @@ import {
   createStardewPrivateBootstrapComposition,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.js";
 import type { StardewPrivateBootstrapInternalComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
-import type { StardewOwnedPlayerHostPhaseAOwner } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
+import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import {
   createStardewOwnedFarmhandGameSessionMaterializer,
   type StardewOwnedFarmhandGameSessionMaterializer,
@@ -179,7 +179,7 @@ function createCoordinator(
   let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
   let acceptedAdmission: ComposedReferenceGameBrowserLifecycleActivationAdmission | undefined;
   let activationPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
-  let exactOwner: StardewOwnedPlayerHostPhaseAOwner | undefined;
+  let exactOwner: StardewOwnedPlayerHostBootstrap | undefined;
   let ownerQuarantined = false;
   let admittedInstallation: AdmittedStardewInstallation | undefined;
   // This lifecycle owns one not-yet-launched Player Host instance. Reconnect
@@ -218,7 +218,7 @@ function createCoordinator(
   const handoffCoordinator = internal.createOwnedPlayerHostManifestHandoffCoordinator();
   const cabinHandles = new Map<string, Readonly<{
     browserSessionId: string;
-    owner: StardewOwnedPlayerHostPhaseAOwner;
+    owner: StardewOwnedPlayerHostBootstrap;
     revision: number;
     expiresAtMs: number;
     choice: StardewManifestHandoffChoice;
@@ -297,7 +297,7 @@ function createCoordinator(
             browserSessionId,
             expiresAtMs: Math.min(expiresAtMs, Date.now() + 10 * 60_000),
           }).consume(browserSessionId);
-           return internal.reserveOwnedPlayerHostPhaseAForActivation(runtimeRoot, claim);
+           return internal.reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim);
         },
       );
       if (ownerPromise === undefined) throw new Error("stardew_lifecycle_activation_admission_invalid");
@@ -309,7 +309,7 @@ function createCoordinator(
         throw new Error("stardew_lifecycle_closing");
       }
       transition("staging");
-       await internal.stageOwnedPlayerHostPhaseB(owner);
+       await internal.stageOwnedPlayerHostProfile(owner);
        if (isClosing()) {
          await internal.quarantineOwnedPlayerHostOwner(owner);
          ownerQuarantined = true;
@@ -366,7 +366,7 @@ function createCoordinator(
     let launchCompleted = false;
     try {
       if (isClosing()) throw new Error("stardew_lifecycle_closing");
-      const result = await internal.launchOwnedPlayerHostStageC(owner, installation);
+      const result = await internal.launchStagedPlayerHost(owner, installation);
       launchCompleted = true;
       if (result.status.kind !== "awaiting_player_host_attestation")
         throw new Error("stardew_player_host_launch_terminal_projection_invalid");
@@ -545,7 +545,7 @@ function createCoordinator(
         const installation = admittedInstallation;
         if (installation === undefined) throw new Error("stardew_ai_client_launch_installation_missing");
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
-        const result = await internal.launchOwnedAiClientStageD(handle.owner, installation);
+        const result = await internal.launchMaterializedAiClient(handle.owner, installation);
         if (result.status.kind !== "awaiting_ai_client_attestation")
           throw new Error("stardew_ai_client_launch_terminal_projection_invalid");
         while (farmhandGameRuntimeFacade === undefined) {

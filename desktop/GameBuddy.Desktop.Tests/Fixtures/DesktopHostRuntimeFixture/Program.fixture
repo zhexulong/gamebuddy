@@ -1,0 +1,83 @@
+using System.IO.Pipes;
+using System.Text;
+using System.Text.Json;
+
+const string schema = "gamebuddy-desktop-host-bootstrap/v1";
+const string sessionSchema = "gamebuddy-desktop-" + "gua" + "rdian-session/v1";
+const string rootLayoutSchema = "gamebuddy-windows-root-layout/v1";
+
+var line = Console.In.ReadLine();
+if (line is null || Console.In.ReadLine() is not null) return;
+
+try
+{
+    using var document = JsonDocument.Parse(line);
+    var frame = document.RootElement;
+    if (!ExactProperties(frame, "schema", "protocolVersion", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayout") ||
+        frame.GetProperty("schema").GetString() != schema || frame.GetProperty("protocolVersion").GetInt32() != 1 ||
+        !NonEmpty(frame.GetProperty("bootstrapId")) || !NonEmpty(frame.GetProperty("generation")) || !NonEmpty(frame.GetProperty("inventoryDigest")) || !NonEmpty(frame.GetProperty("runtimeAdmissionSha256")) ||
+        !ExactProperties(frame.GetProperty("rootLayout"), "schema", "programRoot", "dataRoot", "operationalRoot", "presentationRoot") ||
+        frame.GetProperty("rootLayout").GetProperty("schema").GetString() != rootLayoutSchema)
+        return;
+
+    var binding = new
+    {
+        bootstrapId = frame.GetProperty("bootstrapId").GetString(),
+        generation = frame.GetProperty("generation").GetString(),
+        inventoryDigest = frame.GetProperty("inventoryDigest").GetString(),
+        runtimeAdmissionSha256 = frame.GetProperty("runtimeAdmissionSha256").GetString(),
+    };
+    using var session = new NamedPipeClientStream(".", $"GameBuddy.Host{"Gua" + "rdian"}.{binding.bootstrapId}", PipeDirection.InOut);
+    session.Connect(10_000);
+    using var writer = new StreamWriter(session, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+    using var reader = new StreamReader(session, new UTF8Encoding(false, true), leaveOpen: true);
+    await writer.WriteLineAsync(JsonSerializer.Serialize(new { schema = sessionSchema, protocolVersion = 1, operation = "hello", binding.bootstrapId, binding.generation, binding.inventoryDigest, binding.runtimeAdmissionSha256 }));
+    using var acknowledgement = JsonDocument.Parse(await reader.ReadLineAsync() ?? throw new InvalidOperationException());
+    var accepted = acknowledgement.RootElement;
+    if (!ExactProperties(accepted, "schema", "protocolVersion", "operation", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256") ||
+        accepted.GetProperty("schema").GetString() != sessionSchema || accepted.GetProperty("protocolVersion").GetInt32() != 1 || accepted.GetProperty("operation").GetString() != "hello" || accepted.GetProperty("status").GetString() != "accepted" ||
+        accepted.GetProperty("bootstrapId").GetString() != binding.bootstrapId || accepted.GetProperty("generation").GetString() != binding.generation || accepted.GetProperty("inventoryDigest").GetString() != binding.inventoryDigest || accepted.GetProperty("runtimeAdmissionSha256").GetString() != binding.runtimeAdmissionSha256)
+        return;
+
+    var dataRoot = frame.GetProperty("rootLayout").GetProperty("dataRoot").GetString()!;
+    var ready = Path.Combine(dataRoot, "desktop-host-runtime-fixture.ready");
+    var exit = ready + ".exit";
+    File.WriteAllText(ready, "ready", new UTF8Encoding(false));
+    while (!File.Exists(exit))
+    {
+        if (File.Exists(Path.Combine(dataRoot, "broker-eof-race.trigger")))
+        {
+            await RunEofRaceAsync(writer, reader, binding, dataRoot);
+            return;
+        }
+        await Task.Delay(10);
+    }
+}
+catch (JsonException)
+{
+}
+
+static async Task RunEofRaceAsync(StreamWriter writer, StreamReader reader, dynamic binding, string dataRoot)
+{
+    var instance = Guid.NewGuid().ToString("D");
+    var attempt = Guid.NewGuid().ToString("D");
+    var deadline = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeMilliseconds();
+    var arm = new Dictionary<string, object> { ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["revision"] = Guid.NewGuid().ToString("D"), ["leaseName"] = $"Local\\Lease-{Guid.NewGuid():N}", ["playerJobName"] = $"Local\\Player-{Guid.NewGuid():N}", ["aiJobName"] = $"Local\\Ai-{Guid.NewGuid():N}" };
+    var privateArm = Base64Url(JsonSerializer.SerializeToUtf8Bytes(arm));
+    var armCommand = new Dictionary<string, object> { ["schema"] = sessionSchema, ["protocolVersion"] = 1, ["operation"] = "arm_attempt", ["bootstrapId"] = binding.bootstrapId, ["generation"] = binding.generation, ["inventoryDigest"] = binding.inventoryDigest, ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256, ["deadlineUnixMs"] = deadline, ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["privateFrame"] = privateArm };
+    await writer.WriteLineAsync(JsonSerializer.Serialize(armCommand));
+    if (await reader.ReadLineAsync() is null) return;
+    var launch = new Dictionary<string, object> { ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["planId"] = Guid.NewGuid().ToString("D"), ["role"] = "player_host", ["deadlineUnixMs"] = deadline, ["executable"] = Environment.ProcessPath!, ["cwd"] = AppContext.BaseDirectory, ["arguments"] = Array.Empty<string>(), ["environment"] = new Dictionary<string, string> { ["PATH"] = Environment.GetEnvironmentVariable("PATH")! } };
+    var privateLaunch = Base64Url(JsonSerializer.SerializeToUtf8Bytes(launch));
+    var launchCommand = new Dictionary<string, object> { ["schema"] = sessionSchema, ["protocolVersion"] = 1, ["operation"] = "launch_role", ["bootstrapId"] = binding.bootstrapId, ["generation"] = binding.generation, ["inventoryDigest"] = binding.inventoryDigest, ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256, ["deadlineUnixMs"] = deadline, ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["role"] = "player_host", ["privateFrame"] = privateLaunch };
+    await writer.WriteLineAsync(JsonSerializer.Serialize(launchCommand));
+    File.WriteAllText(Path.Combine(dataRoot, "broker-eof-race.queued"), "queued", new UTF8Encoding(false));
+    while (!File.Exists(Path.Combine(dataRoot, "broker-eof-race.release")) && !File.Exists(Path.Combine(dataRoot, "desktop-host-runtime-fixture.ready.exit"))) await Task.Delay(5);
+    if (File.Exists(Path.Combine(dataRoot, "desktop-host-runtime-fixture.ready.exit"))) return;
+}
+
+static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+static bool NonEmpty(JsonElement value) => value.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(value.GetString());
+static bool ExactProperties(JsonElement value, params string[] names) =>
+    value.ValueKind == JsonValueKind.Object && value.EnumerateObject().Select(property => property.Name).SequenceEqual(names, StringComparer.Ordinal);

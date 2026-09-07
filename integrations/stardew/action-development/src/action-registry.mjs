@@ -3,6 +3,7 @@ import { validateActionContractEquipTool } from "./action-contract.mjs";
 import { preflightEquipTool } from "./equip-tool-preflight.mjs";
 import {
   readEquipToolLiveStatus,
+  runEquipToolLive,
   verifyEquipToolCleanup,
   verifyEquipToolReceiptEvidencePostcondition,
 } from "./equip-tool-live.mjs";
@@ -94,12 +95,16 @@ async function checkEquipTool({ actionId, dependencies } = {}) {
   return Object.freeze({ gameId: "stardew", actionId, verified: true });
 }
 
+async function runEquipToolRegistration(input = {}) {
+  return runEquipToolLive(input);
+}
+
 const equipToolActionRegistration = Object.freeze({
   actionId: "equip_tool",
   check: checkEquipTool,
   preflight: preflightEquipTool,
   status: readEquipToolLiveStatus,
-  blockedPolicy: Object.freeze({ state: "BLOCKED", reasonCode: "host_runner_not_registered" }),
+  runLive: runEquipToolRegistration,
   verifyContract: async ({ actionId, result }) => verifyContractResult(actionId, result),
   verifyReceiptEvidencePostcondition: async ({ actionId, invocation, result }) => verifyLiveResult(actionId, invocation, result),
   verifyCleanup: async ({ actionId, invocation, result }) => verifyCleanupResult(actionId, invocation, result),

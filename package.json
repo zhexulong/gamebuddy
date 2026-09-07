@@ -44,6 +44,8 @@
     "verify:stardew-action-projection-local": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-local.ps1 -Configuration Debug",
     "verify:stardew-action-projection-p2c": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-p2c.ps1 -Configuration Debug",
     "check:host-production-import-boundary": "node tools/check-host-production-import-boundary.mjs",
+    "check:host-game-physical-seam": "node tools/check-host-game-physical-seam.mjs",
+    "test:host-game-physical-seam": "node --test tools/check-host-game-physical-seam.test.mjs",
     "check:stardew-portfolio-prerequisites": "node tools/check-stardew-portfolio-prerequisites.mjs",
     "check:stardew-portfolio-p0b": "node tools/check-stardew-portfolio-p0b.mjs",
     "check:stardew-portfolio-isolation": "node tools/check-stardew-portfolio-isolation.mjs",

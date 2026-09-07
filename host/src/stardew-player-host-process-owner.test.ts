@@ -148,7 +148,7 @@ test("structural Player Host reservation lookalike is rejected by the closed joi
   harness.owner.reservePlayerHostLaunch();
 
   await assert.rejects(
-    harness.composition.reserveOwnedPlayerHostPhaseA(
+    harness.composition.reserveOwnedPlayerHostBootstrap(
       await createRoot(),
       claim,
       Object.freeze({}) as StardewPlayerHostLaunchReservation,
@@ -344,7 +344,7 @@ async function reserveOwned(harness: ReturnType<typeof createHarness>) {
   const claim = mintClaim(harness.composition);
   const playerReservation = harness.owner.reservePlayerHostLaunch();
   const aiReservation = harness.composition.aiClientProcessOwner.reserveAiClientLaunch();
-  return harness.composition.reserveOwnedPlayerHostPhaseA(
+  return harness.composition.reserveOwnedPlayerHostBootstrap(
     await createRoot(),
     claim,
     playerReservation,

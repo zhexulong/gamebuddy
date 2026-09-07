@@ -213,8 +213,8 @@ import {
 	trimPiMessagesToCachedBoundary,
 } from "./inject-compartments-pi";
 import {
-	clearPublishedGameBuddyStableContext,
-	readPublishedGameBuddyStableContext,
+	__gamebuddyClearAuthoredMaterialization,
+	__gamebuddyReadAuthoredMaterialization,
 } from "./gamebuddy-stable-context-source";
 import { publishGameOperationalGateMaterialization } from "./tavern-narrative-gate-marker";
 import { hasVisibleNoteReadCallPi } from "./note-visibility-pi";
@@ -4568,6 +4568,11 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				};
 			})()
 		: undefined;
+	// Read the process-local authored publication once and thread that exact
+	// snapshot through both the preflight and wire injection. Omitting it from
+	// state construction would let the real context handler fold stale/empty m[0]
+	// even though the publication transition was observed below.
+	const stableContext = __gamebuddyReadAuthoredMaterialization(args.sessionId);
 	// Build the fold state once and reuse it for both the preflight and the wire
 	// injection. Omitting a render-affecting field from only one of those calls can
 	// manufacture a HARD signal that the real injection immediately disproves.
@@ -4583,6 +4588,7 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 					historyBudgetTokens: args.injection.historyBudgetTokens,
 					hardSignals: piHardSignals,
 					muralEnabled: args.injection.muralEnabled === true,
+					stableContext,
 				}
 			: undefined;
 	const foldDueDecision = piM0State
@@ -5467,20 +5473,21 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 			// a HARD trigger. injectM0M1Pi now keeps cached m[0] and soft-refreshes m[1];
 			// HARD triggers (model/system/ttl/epoch/upgrade/mutation) still
 			// re-materialize inside mustMaterializePi when genuinely needed.
-			const stableContext = readPublishedGameBuddyStableContext(args.sessionId);
 			const stableHash = stableContext?.snapshotCanonicalHash ?? null;
 			const priorStableHash = publishedStableContextHashBySession.get(args.sessionId);
 			const stablePublicationChanged =
 				(stableContext !== undefined || publishedStableContextHashBySession.has(args.sessionId)) &&
 				priorStableHash !== stableHash;
 			if (stablePublicationChanged) {
-				if (stableContext === undefined) {
-					clearM0M1PiCache(
-						args.db,
-						args.sessionId,
-						"gamebuddy_stable_context_surface_transition",
-					);
-				}
+				// Authored source content is part of the stable m[0] baseline. Any
+				// publication replacement or clear must discard the cached pair before
+				// injection so the next pass rebuilds m[0] from the exact publication;
+				// it must never be represented as an m[1] delta.
+				clearM0M1PiCache(
+					args.db,
+					args.sessionId,
+					"gamebuddy_authored_context_publication_changed",
+				);
 				publishedStableContextHashBySession.set(args.sessionId, stableHash);
 			}
 			const wireInjectionResult = injectM0M1PiForRun(
@@ -6236,11 +6243,11 @@ export function clearContextHandlerSession(
 	// When the lifecycle owner has the database, invalidate the latter before
 	// dropping the former; otherwise a reused Pi session id could replay the
 	// departed Tavern source from cached m[0].
-	if (db && readPublishedGameBuddyStableContext(sessionId) !== undefined) {
+	if (db && __gamebuddyReadAuthoredMaterialization(sessionId) !== undefined) {
 		clearM0M1PiCache(db, sessionId, "gamebuddy_stable_context_session_cleared");
 	}
 	publishedStableContextHashBySession.delete(sessionId);
-	clearPublishedGameBuddyStableContext(sessionId);
+	__gamebuddyClearAuthoredMaterialization(sessionId);
 	clearPiChannel1State(sessionId);
 	lastHeuristicsTurnIdBySession.delete(sessionId);
 	lastSeenProjectIdentityBySession.delete(sessionId);

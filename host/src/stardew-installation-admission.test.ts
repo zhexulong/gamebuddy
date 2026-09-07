@@ -211,7 +211,7 @@ test("controlled-use seam rejects changed identity before callback with zero cal
 test("production source exposes no owner launch helper or raw launch input callback", async () => {
   const source = await readFile(new URL("./stardew-installation-admission.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /test-support|export function (?:read|get).*Admitted/);
-  assert.doesNotMatch(source, /StardewOwnedPlayerHostPhaseAOwner|LaunchPlayerHostInput|consumePlayerHostLaunch/);
+  assert.doesNotMatch(source, /StardewOwnedPlayerHostBootstrap|LaunchPlayerHostInput|consumePlayerHostLaunch/);
   assert.doesNotMatch(source, /launchFreshAdmittedStardewPlayerHost|executable:\s*state|cwd:\s*state/);
   assert.doesNotMatch(source, /export function launchOwnedPlayerHost/);
   assert.doesNotMatch(source, /consumeAdmittedStardewInstallation/);

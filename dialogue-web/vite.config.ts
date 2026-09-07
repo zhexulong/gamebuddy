@@ -83,27 +83,58 @@ const productionArtifactManifest = (
   },
 });
 
-export default defineConfig(async ({ command }) => {
-  const isBuild = command === "build";
-  const requestedOutputDirectory = isBuild ? privateOutputArgument() : undefined;
-  const outputDirectory = requestedOutputDirectory
-    ? await validatePrivateOutputDirectory(requestedOutputDirectory, true)
-    : normalOutputDirectory;
-  const inspectionPolicy = isBuild
-    ? await createBuildArtifactInspectionPolicy()
-    : Object.freeze({ inspect: async () => {} });
+export type WindowsReparseInspectorDescriptor = Readonly<{
+  schemaVersion: 1;
+  kind: "gamebuddy.windows_reparse_inspector.v1";
+  adapter: object;
+}>;
 
-  return {
-    root: packageRoot,
-    plugins: [
-      react(),
-      productionArtifactManifest(outputDirectory, requestedOutputDirectory !== undefined, inspectionPolicy),
-    ],
-    build: {
-      outDir: outputDirectory,
-      emptyOutDir: requestedOutputDirectory ? false : true,
-      sourcemap: false,
-      manifest: false,
-    },
-  };
-});
+function validatedWindowsReparseInspectorDescriptor(value: unknown): WindowsReparseInspectorDescriptor {
+  if (
+    value === null || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).length !== 3
+    || (value as Record<string, unknown>).schemaVersion !== 1
+    || (value as Record<string, unknown>).kind !== "gamebuddy.windows_reparse_inspector.v1"
+    || (value as Record<string, unknown>).adapter === null
+    || typeof (value as Record<string, unknown>).adapter !== "object"
+    || Array.isArray((value as Record<string, unknown>).adapter)
+  ) throw new TypeError("windows_reparse_inspection_unavailable");
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: "gamebuddy.windows_reparse_inspector.v1",
+    adapter: (value as { adapter: object }).adapter,
+  });
+}
+
+export function createDialogueWebViteConfig(windowsReparseInspector?: unknown) {
+  return defineConfig(async ({ command }) => {
+    const isBuild = command === "build";
+    const requestedOutputDirectory = isBuild ? privateOutputArgument() : undefined;
+    const outputDirectory = requestedOutputDirectory
+      ? await validatePrivateOutputDirectory(requestedOutputDirectory, true)
+      : normalOutputDirectory;
+    const inspectionPolicy = isBuild && requestedOutputDirectory !== undefined
+      ? await createBuildArtifactInspectionPolicy(
+        windowsReparseInspector === undefined && process.platform !== "win32"
+          ? undefined
+          : validatedWindowsReparseInspectorDescriptor(windowsReparseInspector),
+      )
+      : Object.freeze({ inspect: async () => {} });
+
+    return {
+      root: packageRoot,
+      plugins: [
+        react(),
+        productionArtifactManifest(outputDirectory, requestedOutputDirectory !== undefined, inspectionPolicy),
+      ],
+      build: {
+        outDir: outputDirectory,
+        emptyOutDir: requestedOutputDirectory ? false : true,
+        sourcemap: false,
+        manifest: false,
+      },
+    };
+  });
+}
+
+export default createDialogueWebViteConfig();

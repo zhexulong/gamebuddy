@@ -1,307 +1,91 @@
 import { createHash } from "node:crypto";
 
-/**
- * The only GameBuddy-to-Magic-Context stable-context boundary.
- *
- * This module intentionally accepts immutable values only. It does not expose a
- * database, message, compartment, m[0], m[1], marker, cursor, or fold API.
- * It does not write Host messages or Magic Context storage. Its materialization
- * output is an immutable m[0]-compatible stable block consumed only by the Pi
- * context handler. Publication is explicit, per Pi session, and process-local:
- * neither Host nor this boundary writes Magic Context storage or messages.
- */
-export const GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION =
-    "gamebuddy-stable-context-source/v1" as const;
+export type GameBuddyAuthoredSourceKind = "persona" | "scenario" | "dialogue_examples" | "lorebook_constant";
+export type GameBuddyChatContextScope = Readonly<{
+  continuityId: string; sessionId: string; surface: "tavern"; threadId: string;
+  profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
+}>;
+export type GameBuddyAuthoredStableSource = Readonly<{
+  sourceId: string; kind: GameBuddyAuthoredSourceKind; revision: string; canonicalHash: string;
+  content: string; budgetTokens: number; totalOrderKey: string; provenance: string;
+}>;
+export type GameBuddyAuthoredStableCatalog = Readonly<{
+  version: "gamebuddy-authored-context-catalog/v2"; scope: GameBuddyChatContextScope;
+  canonicalHash: string; stableSources: readonly GameBuddyAuthoredStableSource[];
+}>;
+export type GameBuddyAuthoredStableSourceRef = Readonly<{
+  sourceId: string; kind: GameBuddyAuthoredSourceKind; revision: string; canonicalHash: string; totalOrderKey: string;
+}>;
+export type GameBuddyAuthoredStablePlanProjection = Readonly<{
+  sourceRefs: readonly GameBuddyAuthoredStableSourceRef[]; stableTokenCount: number;
+}>;
+export type GameBuddyAuthoredContextMaterialization = Readonly<{
+  scope: GameBuddyChatContextScope; snapshotCanonicalHash: string; budgetTokens: number;
+  sources: readonly GameBuddyAuthoredStableSource[]; renderedBlock: string;
+}>;
 
-export type GameBuddyStableContextSurface = "tavern";
-export type GameBuddyStableContextSourceKind =
-    | "persona"
-    | "scenario"
-    | "dialogue_examples"
-    | "worldbook";
+export type GameBuddyStableContextSourceFailureCode = "invalid_catalog" | "binding_mismatch" | "hash_mismatch" | "unknown_source_kind" | "duplicate_effective_source";
+export class GameBuddyStableContextSourceError extends Error { constructor(readonly code: GameBuddyStableContextSourceFailureCode, message: string) { super(message); this.name = "GameBuddyStableContextSourceError"; } }
+export const GAMEBUDDY_AUTHORED_CONTEXT_CATALOG_VERSION = "gamebuddy-authored-context-catalog/v2" as const;
+const kinds = new Set<GameBuddyAuthoredSourceKind>(["persona", "scenario", "dialogue_examples", "lorebook_constant"]);
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+const canonical = (v: unknown): string => Array.isArray(v) ? `[${v.map(canonical).join(",")}]` : v && typeof v === "object" ? `{${Object.keys(v as object).sort().map(k => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(",")}}` : JSON.stringify(v);
+const fail = (c: GameBuddyStableContextSourceFailureCode, m: string): never => { throw new GameBuddyStableContextSourceError(c, m); };
+const text = (v: unknown, field: string) => typeof v === "string" && v.length > 0 ? v : fail("invalid_catalog", `${field} must be non-empty`);
+const hash = (v: unknown, field: string) => /^[a-f0-9]{64}$/.test(text(v, field)) ? v as string : fail("invalid_catalog", `${field} must be sha256`);
+const freeze = <T>(v: T): T => { if (v && typeof v === "object") { Object.freeze(v); for (const x of Object.values(v as object)) freeze(x); } return v; };
 
-export interface GameBuddyStableContextBinding {
-    continuityId: string;
-    sessionId: string;
-    surface: GameBuddyStableContextSurface;
+export function validateGameBuddyAuthoredStableCatalog(value: unknown, expected: GameBuddyChatContextScope): GameBuddyAuthoredStableCatalog {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return fail("invalid_catalog", "catalog must be an object");
+  const input = value as Record<string, unknown>;
+  if (input.version !== GAMEBUDDY_AUTHORED_CONTEXT_CATALOG_VERSION) return fail("invalid_catalog", "unsupported catalog version");
+  if (canonical(input.scope) !== canonical(expected)) return fail("binding_mismatch", "catalog scope mismatch");
+  if (!Array.isArray(input.stableSources)) return fail("invalid_catalog", "stableSources must be an array");
+  const sources = input.stableSources.map((raw) => {
+    if (!raw || typeof raw !== "object") return fail("invalid_catalog", "source must be object");
+    const r = raw as Record<string, unknown>; const kind = text(r.kind, "source.kind");
+    if (!kinds.has(kind as GameBuddyAuthoredSourceKind)) return fail("unknown_source_kind", kind);
+    const content = text(r.content, "source.content"); const contentHash = hash(r.canonicalHash, "source.canonicalHash");
+    if (contentHash !== sha(content)) return fail("hash_mismatch", "source hash mismatch");
+    if (!Number.isSafeInteger(r.budgetTokens) || (r.budgetTokens as number) <= 0) return fail("invalid_catalog", "invalid budget");
+    return freeze({ sourceId: text(r.sourceId, "source.sourceId"), kind: kind as GameBuddyAuthoredSourceKind, revision: text(r.revision, "source.revision"), canonicalHash: contentHash, content, budgetTokens: r.budgetTokens as number, totalOrderKey: text(r.totalOrderKey, "source.totalOrderKey"), provenance: text(r.provenance, "source.provenance") });
+  });
+  const ids = new Set<string>();
+  const orderKeys = new Set<string>();
+  for (const s of sources) {
+    const id = `${s.kind}\0${s.sourceId}`;
+    if (ids.has(id)) return fail("duplicate_effective_source", id);
+    ids.add(id);
+    if (!/^[0-9]{4,}$/.test(s.totalOrderKey) || orderKeys.has(s.totalOrderKey))
+      return fail("invalid_catalog", "source totalOrderKey must be unique and numeric");
+    orderKeys.add(s.totalOrderKey);
+  }
+  const body = { version: GAMEBUDDY_AUTHORED_CONTEXT_CATALOG_VERSION, scope: expected, stableSources: sources };
+  if (hash(input.canonicalHash, "catalog.canonicalHash") !== sha(canonical(body))) return fail("hash_mismatch", "catalog hash mismatch");
+  return freeze({ ...body, canonicalHash: input.canonicalHash as string });
+}
+export function materializeGameBuddyAuthoredStableCatalog(value: unknown, scope: GameBuddyChatContextScope): GameBuddyAuthoredContextMaterialization {
+  const catalog = validateGameBuddyAuthoredStableCatalog(value, scope);
+  const sources = [...catalog.stableSources].sort((a,b) => `${a.totalOrderKey}\0${a.kind}\0${a.sourceId}\0${a.revision}\0${a.canonicalHash}`.localeCompare(`${b.totalOrderKey}\0${b.kind}\0${b.sourceId}\0${b.revision}\0${b.canonicalHash}`));
+  const esc = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const renderedBlock = `<gamebuddy-authored-context version="v2" continuity-id="${esc(scope.continuityId)}" session-id="${esc(scope.sessionId)}" thread-id="${esc(scope.threadId)}" canonical-hash="${catalog.canonicalHash}">\n${sources.map(s => `<gamebuddy-authored-source kind="${s.kind}" source-id="${esc(s.sourceId)}" revision="${esc(s.revision)}" canonical-hash="${s.canonicalHash}">\n${esc(s.content)}\n</gamebuddy-authored-source>`).join("\n")}\n</gamebuddy-authored-context>`;
+  return freeze({ scope, snapshotCanonicalHash: catalog.canonicalHash, budgetTokens: sources.reduce((n,s) => n+s.budgetTokens, 0), sources, renderedBlock });
 }
 
-export interface GameBuddyStableContextSourceRecord {
-    sourceId: string;
-    kind: GameBuddyStableContextSourceKind;
-    revision: string;
-    canonicalHash: string;
-    content: string;
-    budgetTokens: number;
-    totalOrderKey: string;
-    provenance: string;
+// Process-local renderer state. Only the construction-private bridge publishes entries;
+// context-handler consumes them through this owner hook (never through the package root).
+const authoredRenderer = new Map<string, GameBuddyAuthoredContextMaterialization>();
+export function __gamebuddyReadAuthoredMaterialization(sessionId: string): GameBuddyAuthoredContextMaterialization | undefined {
+  return authoredRenderer.get(sessionId);
+}
+export function __gamebuddyReplaceAuthoredMaterialization(sessionId: string, value: GameBuddyAuthoredContextMaterialization): void {
+  authoredRenderer.set(sessionId, value);
+}
+export function __gamebuddyClearAuthoredMaterialization(sessionId: string, expected?: GameBuddyAuthoredContextMaterialization): void {
+  if (expected === undefined || authoredRenderer.get(sessionId) === expected) authoredRenderer.delete(sessionId);
 }
 
-export interface GameBuddyStableContextSnapshot extends GameBuddyStableContextBinding {
-    version: typeof GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION;
-    canonicalHash: string;
-    sources: readonly GameBuddyStableContextSourceRecord[];
-}
-
-export type GameBuddyStableContextSourceFailureCode =
-    | "adapter_unavailable"
-    | "invalid_snapshot"
-    | "binding_mismatch"
-    | "hash_mismatch"
-    | "unknown_source_kind"
-    | "duplicate_effective_source";
-
-/**
- * Immutable, renderer-ready m[0] input. This deliberately contains text only:
- * it cannot create a message, mutate m[0]/m[1], or access SQLite.
- */
-export interface GameBuddyStableContextMaterialization {
-    binding: Readonly<GameBuddyStableContextBinding>;
-    snapshotCanonicalHash: string;
-    budgetTokens: number;
-    /** Validated renderer input retained only by the Magic Context fork. */
-    sources: readonly Readonly<GameBuddyStableContextSourceRecord>[];
-    renderedBlock: string;
-}
-
-export class GameBuddyStableContextSourceError extends Error {
-    constructor(
-        readonly code: GameBuddyStableContextSourceFailureCode,
-        message: string,
-    ) {
-        super(message);
-        this.name = "GameBuddyStableContextSourceError";
-    }
-}
-
-const SOURCE_KINDS = new Set<GameBuddyStableContextSourceKind>([
-    "persona",
-    "scenario",
-    "dialogue_examples",
-    "worldbook",
-]);
-const SHA256 = /^[a-f0-9]{64}$/;
-
-function fail(code: GameBuddyStableContextSourceFailureCode, message: string): never {
-    throw new GameBuddyStableContextSourceError(code, message);
-}
-
-function requireText(value: unknown, field: string): string {
-    if (typeof value !== "string" || value.length === 0) {
-        fail("invalid_snapshot", `${field} must be a non-empty string`);
-    }
-    return value;
-}
-
-function requireHash(value: unknown, field: string): string {
-    const hash = requireText(value, field);
-    if (!SHA256.test(hash)) fail("invalid_snapshot", `${field} must be lowercase SHA-256`);
-    return hash;
-}
-
-function canonicalJson(value: unknown): string {
-    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-    if (value !== null && typeof value === "object") {
-        const record = value as Record<string, unknown>;
-        return `{${Object.keys(record)
-            .sort()
-            .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-            .join(",")}}`;
-    }
-    return JSON.stringify(value);
-}
-
-function sha256(value: string): string {
-    return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function freeze<T>(value: T): T {
-    if (value !== null && typeof value === "object") {
-        Object.freeze(value);
-        for (const child of Object.values(value as Record<string, unknown>)) freeze(child);
-    }
-    return value;
-}
-
-function parseSource(value: unknown): GameBuddyStableContextSourceRecord {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return fail("invalid_snapshot", "source must be an object");
-    }
-    const input = value as Record<string, unknown>;
-    const kind = requireText(input.kind, "source.kind");
-    if (!SOURCE_KINDS.has(kind as GameBuddyStableContextSourceKind)) {
-        return fail("unknown_source_kind", `unsupported source kind: ${kind}`);
-    }
-    const budgetTokens = input.budgetTokens;
-    if (
-        typeof budgetTokens !== "number" ||
-        !Number.isSafeInteger(budgetTokens) ||
-        budgetTokens <= 0
-    ) {
-        return fail("invalid_snapshot", "source.budgetTokens must be a positive safe integer");
-    }
-    const content = requireText(input.content, "source.content");
-    const canonicalHash = requireHash(input.canonicalHash, "source.canonicalHash");
-    if (canonicalHash !== sha256(content)) {
-        return fail("hash_mismatch", "source.canonicalHash does not match source.content");
-    }
-    return {
-        sourceId: requireText(input.sourceId, "source.sourceId"),
-        kind: kind as GameBuddyStableContextSourceKind,
-        revision: requireText(input.revision, "source.revision"),
-        canonicalHash,
-        content,
-        budgetTokens,
-        totalOrderKey: requireText(input.totalOrderKey, "source.totalOrderKey"),
-        provenance: requireText(input.provenance, "source.provenance"),
-    };
-}
-
-/** Validates and deep-freezes a Host-owned canonical artifact snapshot. */
-export function validateGameBuddyStableContextSnapshot(
-    value: unknown,
-    expectedBinding: GameBuddyStableContextBinding,
-): Readonly<GameBuddyStableContextSnapshot> {
-    const continuityId = requireText(expectedBinding.continuityId, "binding.continuityId");
-    const sessionId = requireText(expectedBinding.sessionId, "binding.sessionId");
-    if (expectedBinding.surface !== "tavern") {
-        return fail("binding_mismatch", "active binding surface is unsupported");
-    }
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return fail("invalid_snapshot", "snapshot must be an object");
-    }
-    const input = value as Record<string, unknown>;
-    if (input.version !== GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION) {
-        return fail("invalid_snapshot", "unsupported snapshot version");
-    }
-    for (const field of ["continuityId", "sessionId", "surface"] as const) {
-        if (input[field] !== expectedBinding[field]) {
-            return fail("binding_mismatch", `snapshot ${field} does not match active binding`);
-        }
-    }
-    if (!Array.isArray(input.sources)) {
-        return fail("invalid_snapshot", "snapshot.sources must be an array");
-    }
-    const sources = input.sources.map(parseSource);
-    const identities = new Set<string>();
-    for (const source of sources) {
-        const identity = `${source.kind}\u0000${source.sourceId}`;
-        if (identities.has(identity)) {
-            return fail("duplicate_effective_source", "duplicate source kind/sourceId");
-        }
-        identities.add(identity);
-    }
-    const canonicalHash = requireHash(input.canonicalHash, "snapshot.canonicalHash");
-    const hashInput = {
-        version: GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION,
-        continuityId,
-        sessionId,
-        surface: expectedBinding.surface,
-        sources,
-    };
-    if (canonicalHash !== sha256(canonicalJson(hashInput))) {
-        return fail(
-            "hash_mismatch",
-            "snapshot.canonicalHash does not match canonical snapshot content",
-        );
-    }
-    return freeze({ ...hashInput, canonicalHash, sources });
-}
-
-function escapeXmlText(value: string): string {
-    return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-function escapeXmlAttribute(value: string): string {
-    return escapeXmlText(value).replaceAll('"', "&quot;").replaceAll("'", "&apos;");
-}
-
-/**
- * Validate an untrusted Host artifact and render it into a deterministic,
- * immutable stable m[0] block. Source content is XML-escaped, never interpreted
- * as messages, scripts, HTML, or a database command.
- */
-export function materializeGameBuddyStableContextSnapshot(
-    value: unknown,
-    expectedBinding: GameBuddyStableContextBinding,
-): Readonly<GameBuddyStableContextMaterialization> {
-    const snapshot = validateGameBuddyStableContextSnapshot(value, expectedBinding);
-    const sources = [...snapshot.sources].sort((left, right) => {
-        const leftKey = `${left.totalOrderKey}\u0000${left.kind}\u0000${left.sourceId}\u0000${left.revision}\u0000${left.canonicalHash}`;
-        const rightKey = `${right.totalOrderKey}\u0000${right.kind}\u0000${right.sourceId}\u0000${right.revision}\u0000${right.canonicalHash}`;
-        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-    });
-    const renderedSources = sources.map(
-        (source) =>
-            `<gamebuddy-stable-source kind="${source.kind}" source-id="${escapeXmlAttribute(source.sourceId)}" revision="${escapeXmlAttribute(source.revision)}" canonical-hash="${source.canonicalHash}" budget-tokens="${source.budgetTokens}" total-order-key="${escapeXmlAttribute(source.totalOrderKey)}" provenance="${escapeXmlAttribute(source.provenance)}">\n${escapeXmlText(source.content)}\n</gamebuddy-stable-source>`,
-    );
-    const renderedBlock = `<gamebuddy-stable-context version="${GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION}" continuity-id="${escapeXmlAttribute(snapshot.continuityId)}" session-id="${escapeXmlAttribute(snapshot.sessionId)}" surface="${snapshot.surface}" canonical-hash="${snapshot.canonicalHash}">\n${renderedSources.join("\n")}\n</gamebuddy-stable-context>`;
-    return freeze({
-        binding: { ...expectedBinding },
-        snapshotCanonicalHash: snapshot.canonicalHash,
-        budgetTokens: sources.reduce((total, source) => total + source.budgetTokens, 0),
-        sources,
-        renderedBlock,
-    });
-}
-
-/** Controlled in-process boundary for replacing and materializing snapshots. */
-const publishedSourcesByPiSession = new Map<
-    string,
-    Readonly<GameBuddyStableContextMaterialization>
->();
-
-/**
- * Publish one verified Tavern snapshot for the exact live Pi session named by
- * its binding. Re-publishing that binding atomically replaces the effective
- * source set; an empty `sources` array is the explicit tombstone state.
- */
-export function publishGameBuddyStableContextSnapshot(
-    binding: GameBuddyStableContextBinding,
-    value: unknown,
-): Readonly<GameBuddyStableContextMaterialization> {
-    const materialization = materializeGameBuddyStableContextSnapshot(value, binding);
-    publishedSourcesByPiSession.set(binding.sessionId, materialization);
-    return materialization;
-}
-
-/**
- * Returns a materialization only for its exact live Pi session. Callers must
- * not infer a binding from cwd, project identity, or another session.
- */
-export function readPublishedGameBuddyStableContext(
-    sessionId: string,
-): Readonly<GameBuddyStableContextMaterialization> | undefined {
-    return publishedSourcesByPiSession.get(sessionId);
-}
-
-/** Remove a session-scoped publication when its Pi session is disposed. */
-export function clearPublishedGameBuddyStableContext(sessionId: string): void {
-    publishedSourcesByPiSession.delete(sessionId);
-}
-
-export class GameBuddyStableContextSource {
-    readonly materializationStatus = "available" as const;
-    #snapshot: Readonly<GameBuddyStableContextSnapshot> | undefined;
-
-    readonly binding: Readonly<GameBuddyStableContextBinding>;
-
-    constructor(binding: GameBuddyStableContextBinding) {
-        this.binding = freeze({ ...binding });
-    }
-
-    replaceSnapshot(value: unknown): void {
-        this.#snapshot = validateGameBuddyStableContextSnapshot(value, this.binding);
-    }
-
-    readSnapshot(): Readonly<GameBuddyStableContextSnapshot> {
-        if (!this.#snapshot) {
-            return fail("adapter_unavailable", "no verified stable-context snapshot is available");
-        }
-        return this.#snapshot;
-    }
-
-    materialize(): Readonly<GameBuddyStableContextMaterialization> {
-        return materializeGameBuddyStableContextSnapshot(this.readSnapshot(), this.binding);
-    }
-}
+// These aliases are type-only seams used by the existing injector; no v1 runtime
+// publication/read/clear API is retained.
+export type GameBuddyStableContextMaterialization = GameBuddyAuthoredContextMaterialization;
+export type GameBuddyStableContextSourceRecord = GameBuddyAuthoredStableSource;

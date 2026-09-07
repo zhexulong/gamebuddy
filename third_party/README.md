@@ -18,8 +18,8 @@ This is only a lockfile-bound Node inventory, not an artifact-scoped or multi-ec
 
 | Component | Locked source/version | License | Product use / removal path |
 |---|---|---|---|
-| Pi coding-agent SDK | `@earendil-works/pi-coding-agent@0.84.1` | MIT | Restricted Companion session runtime. Remove by replacing `host/src/runtime.ts` session construction. |
-| Magic Context | `@cortexkit/pi-magic-context@0.33.0` | MIT | Explicitly loaded extension only; remove by deleting the locked extension path/config in `host/src/runtime.ts`. |
+| Pi coding-agent SDK | `@earendil-works/pi-coding-agent@0.84.4` | MIT | Restricted Companion session runtime. Remove by replacing `host/src/runtime.ts` session construction. |
+| Magic Context | `@cortexkit/pi-magic-context@0.41.0-gamebuddy.1` | MIT | Explicitly loaded GameBuddy fork only; remove by deleting the locked extension path/config in `host/src/runtime.ts`. |
 | SMAPI build integration | `Pathoschild.Stardew.ModBuildConfig@4.4.0` | MIT | Build-time SMAPI Mod packaging; no Stardew binaries are distributed. |
 | Stardew Valley / SMAPI runtime | locally installed Stardew `1.6.15`, SMAPI `4.5.2` | proprietary game / SMAPI license | Required only for local Mod build and game validation; never copied into this repository. |
 | MiMo V2.5 TTS | Xiaomi HTTP/SSE API (`mimo-v2.5-tts`) | service terms | Optional Gateway adapter; disabled without local `MIMO_API_KEY`, removable without Host/Mod interface changes. |

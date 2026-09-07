@@ -17,6 +17,9 @@ internal static class Program
         var pipe = Environment.GetEnvironmentVariable("GAMEBUDDY_GUARDIAN_CONTROL_PIPE");
         var token = Environment.GetEnvironmentVariable("GAMEBUDDY_GUARDIAN_CONTROL_TOKEN");
         if ((mode is not ("resident" or "recovery")) || string.IsNullOrWhiteSpace(pipe) || string.IsNullOrWhiteSpace(token)) return Fail();
+#if GUARDIAN_TEST_HOOKS
+        if (ResidentGuardianTestHooks.TryObserveResidentEnvironmentAndWaitForEof()) return 0;
+#endif
         return mode == "recovery"
             ? await RunRecoveryAsync(pipe, token).ConfigureAwait(false)
             : await RunResidentAsync(pipe, token).ConfigureAwait(false);

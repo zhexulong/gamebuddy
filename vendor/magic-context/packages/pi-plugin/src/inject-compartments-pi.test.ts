@@ -25,14 +25,15 @@ import { COMPARTMENT_RENDER_EPOCH } from "@magic-context/core/hooks/magic-contex
 import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
 import {
 	__test,
-	injectM0M1Pi,
-	materializeM0Pi,
+		injectM0M1Pi,
+		clearM0M1PiCache,
+		materializeM0Pi,
 	materializeM0PiWithRetry,
 	mustMaterializePi,
 	renderM0Pi,
 	renderM1Pi,
 } from "./inject-compartments-pi";
-import { materializeGameBuddyStableContextSnapshot } from "./gamebuddy-stable-context-source";
+import { materializeGameBuddyAuthoredStableCatalog } from "./gamebuddy-stable-context-source";
 import { createTestDb, textOf, userMessage } from "./test-utils.test";
 
 const stableContextBinding = {
@@ -61,14 +62,19 @@ function stableContext(content: string, sources = true) {
 		totalOrderKey: "0001",
 		provenance: "test/tavern/scenario",
 	};
-	const body = {
-		version: "gamebuddy-stable-context-source/v1" as const,
+	const scope = {
 		...stableContextBinding,
-		sources: sources ? [source] : [],
+		threadId: "stable-source-thread",
+		profile: { profileId: "stable-source-profile", revision: 1, canonicalHash: "a".repeat(64) },
 	};
-	return materializeGameBuddyStableContextSnapshot(
+	const body = {
+		version: "gamebuddy-authored-context-catalog/v2" as const,
+		scope,
+		stableSources: sources ? [source] : [],
+	};
+	return materializeGameBuddyAuthoredStableCatalog(
 		{ ...body, canonicalHash: createHash("sha256").update(canonicalStableJson(body)).digest("hex") },
-		stableContextBinding,
+		scope,
 	);
 }
 
@@ -103,8 +109,8 @@ function result(toolCallId: string) {
 	};
 }
 
-describe("GameBuddy stable source m[0]/m[1] lifecycle", () => {
-	it("serializes replacement and tombstone once into m[1], then folds the final source only on HARD", () => {
+describe("GameBuddy stable source m[0] lifecycle", () => {
+	it("rebuilds replacement and tombstone changes in m[0] without an authored m[1] delta", () => {
 		const db = createTestDb();
 		try {
 			const initial = stableContext("initial premise");
@@ -117,28 +123,26 @@ describe("GameBuddy stable source m[0]/m[1] lifecycle", () => {
 			expect(textOf(initialMessages[0])).toContain("initial premise");
 
 			const replacement = stableContext("revised premise");
+			clearM0M1PiCache(db, stableContextBinding.sessionId, "test-authored-publication-replacement");
 			const replacementMessages = [user("second")];
 			injectM0M1Pi(
 				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: replacement },
 				db,
 				replacementMessages,
-				undefined,
-				true,
 			);
-			expect(textOf(replacementMessages[0])).toContain("initial premise");
-			expect(textOf(replacementMessages[1])).toContain("revised premise");
-			expect(textOf(replacementMessages[1])).toContain("old-canonical-hash");
-			expect(textOf(replacementMessages[1])).not.toContain("initial premise");
+			expect(textOf(replacementMessages[0])).not.toContain("initial premise");
+			expect(textOf(replacementMessages[0])).toContain("revised premise");
+			expect(replacementMessages.map(textOf).join("\n")).not.toContain("gamebuddy-authored-context-updates");
 
 			const tombstoneMessages = [user("third")];
+			clearM0M1PiCache(db, stableContextBinding.sessionId, "test-authored-publication-clear");
 			injectM0M1Pi(
 				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: stableContext("", false) },
 				db,
 				tombstoneMessages,
-				undefined,
-				true,
 			);
-			expect(textOf(tombstoneMessages[1])).toContain("tombstone");
+			expect(textOf(tombstoneMessages[0])).not.toContain("initial premise");
+			expect(tombstoneMessages.map(textOf).join("\n")).not.toContain("tombstone");
 
 			const hardFoldMessages = [user("fourth")];
 			injectM0M1Pi(
@@ -146,9 +150,8 @@ describe("GameBuddy stable source m[0]/m[1] lifecycle", () => {
 				db,
 				hardFoldMessages,
 			);
-			expect(textOf(hardFoldMessages[0])).toContain("gamebuddy-stable-context");
 			expect(textOf(hardFoldMessages[0])).not.toContain("initial premise");
-			expect(textOf(hardFoldMessages[1])).not.toContain("gamebuddy-stable-context-updates");
+			expect(hardFoldMessages.map(textOf).join("\n")).not.toContain("gamebuddy-authored-context-updates");
 		} finally {
 			db.close();
 		}

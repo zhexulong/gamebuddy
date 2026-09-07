@@ -32,7 +32,7 @@ type TavernCatalog = Readonly<{
 type TavernBindingScope =
   | Readonly<{ kind: "companion"; companionId: string }>
   | Readonly<{ kind: "chat"; companionId: string; continuityId: string; chatThreadId: string }>;
-export type TavernCatalogSelection = Readonly<{
+type TavernCatalogSelection = Readonly<{
   schemaVersion: 1;
   revision: number;
   scope: TavernBindingScope;
@@ -41,16 +41,20 @@ export type TavernCatalogSelection = Readonly<{
   greetingSetId?: string;
   worldBookBindingIds: readonly string[];
 }>;
-export type TavernStableContextBinding = Readonly<{ continuityId: string; sessionId: string; surface: "tavern" }>;
-export type TavernStableContextSnapshot = Readonly<{
-  version: "gamebuddy-stable-context-source/v1";
+export type TavernStableContextBinding = Readonly<{
   continuityId: string;
   sessionId: string;
   surface: "tavern";
+  threadId: string;
+  profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
+}>;
+export type TavernAuthoredContextCatalog = Readonly<{
+  version: "gamebuddy-authored-context-catalog/v2";
+  scope: TavernStableContextBinding;
   canonicalHash: string;
-  sources: readonly Readonly<{
+  stableSources: readonly Readonly<{
     sourceId: string;
-    kind: "persona" | "scenario" | "dialogue_examples" | "worldbook";
+    kind: "persona" | "scenario" | "dialogue_examples" | "lorebook_constant";
     revision: string;
     canonicalHash: string;
     content: string;
@@ -76,18 +80,19 @@ const TAVERN_STABLE_CONTEXT_MAX_TOKENS = 2_048;
  * and budget overflow reject before any model turn; absent selections produce
  * an explicit empty tombstone rather than invented sources.
  */
-export async function materializeTavernStableContext(
+export async function materializeTavernAuthoredContextCatalog(
   paths: TavernPaths,
   store: TavernArtifactStore,
   thread: ChatThread,
   binding: TavernStableContextBinding,
   worldInfoSource?: TavernWorldInfoSource,
-): Promise<TavernStableContextSnapshot> {
+): Promise<TavernAuthoredContextCatalog> {
   if (
     thread.companionId !== paths.companionId ||
     thread.continuityId !== paths.continuityId ||
     binding.continuityId !== paths.continuityId ||
-    binding.surface !== "tavern"
+    binding.surface !== "tavern" ||
+    binding.threadId !== thread.chatThreadId
   )
     throw new Error("tavern_stable_context_binding_mismatch");
   if ((thread.worldBookBinding === undefined) !== (worldInfoSource === undefined))
@@ -106,7 +111,7 @@ export async function materializeTavernStableContext(
       !selectedBindings.some((selected) => selected.kind === "scenario" && selected.sourceId === thread.scenarioId))
   )
     throw new Error("tavern_stable_context_source_binding_missing");
-  const sources: Array<TavernStableContextSnapshot["sources"][number]> = [];
+  const sources: Array<TavernAuthoredContextCatalog["stableSources"][number]> = [];
   for (const [index, selected] of selectedBindings.entries()) {
     const directory =
       selected.kind === "persona"
@@ -148,7 +153,8 @@ export async function materializeTavernStableContext(
     );
   }
   if (worldInfoSource !== undefined) {
-    const sourceId =
+    throw new Error("tavern_stable_context_world_info_not_yet_supported");
+    /* const sourceId =
       "source" in worldInfoSource.binding ? worldInfoSource.binding.publicTitle : worldInfoSource.binding.worldBookId;
     const provenance =
       "source" in worldInfoSource.binding
@@ -156,7 +162,7 @@ export async function materializeTavernStableContext(
         : `worldbook/${worldInfoSource.binding.worldBookId}/revision/${worldInfoSource.binding.revision}/canonical/${worldInfoSource.binding.canonicalHash}/provenance/${worldInfoSource.binding.provenance}`;
     sources.push(
       source(
-        "worldbook",
+        "lorebook_constant",
         sourceId,
         worldInfoSource.binding.revision,
         worldInfoSource.binding.canonicalHash,
@@ -164,25 +170,23 @@ export async function materializeTavernStableContext(
         "0004",
         provenance,
       ),
-    );
+    ); */
   }
   const budgetTokens = sources.reduce((total, item) => total + item.budgetTokens, 0);
   if (budgetTokens > TAVERN_STABLE_CONTEXT_MAX_TOKENS) throw new Error("tavern_stable_context_oversize");
   const body = {
-    version: "gamebuddy-stable-context-source/v1" as const,
-    continuityId: binding.continuityId,
-    sessionId: binding.sessionId,
-    surface: binding.surface,
-    sources,
+    version: "gamebuddy-authored-context-catalog/v2" as const,
+    scope: binding,
+    stableSources: sources,
   };
-  return Object.freeze({ ...body, canonicalHash: hash(canonicalJson(body)), sources: Object.freeze(sources) });
+  return Object.freeze({ ...body, canonicalHash: hash(canonicalJson(body)), stableSources: Object.freeze(sources) });
 }
 
-export type TavernCatalogBindingStore = Readonly<{
+type TavernCatalogBindingStore = Readonly<{
   read(scope: TavernBindingScope): Promise<TavernCatalogSelection | undefined>;
   write(selection: TavernCatalogSelection, expectedRevision: number | undefined): Promise<TavernCatalogSelection>;
 }>;
-export type TavernCatalogService = Readonly<{
+type TavernCatalogService = Readonly<{
   list(catalog: TavernCatalog): Readonly<{
     personas: readonly UserPersona[];
     scenarios: readonly Scenario[];
@@ -203,7 +207,7 @@ export type TavernCatalogService = Readonly<{
   read(scope: TavernBindingScope): Promise<TavernCatalogSelection | undefined>;
 }>;
 
-export function createTavernCatalogService(store: TavernCatalogBindingStore): TavernCatalogService {
+function createTavernCatalogService(store: TavernCatalogBindingStore): TavernCatalogService {
   return Object.freeze({
     list(catalog) {
       validateCatalog(catalog);
@@ -321,14 +325,14 @@ function isId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9._-]{1,128}$/u.test(value);
 }
 function source(
-  kind: "persona" | "scenario" | "dialogue_examples" | "worldbook",
+  kind: "persona" | "scenario" | "dialogue_examples" | "lorebook_constant",
   sourceId: string,
   revision: number,
   artifactHash: string,
   content: string,
   totalOrderKey: string,
   provenance = `tavern-artifact/${kind}/${sourceId}/revision/${revision}/canonical/${artifactHash}`,
-): TavernStableContextSnapshot["sources"][number] {
+): TavernAuthoredContextCatalog["stableSources"][number] {
   const budgetTokens = Math.ceil(content.length / 4);
   if (!validSourceContent(content) || budgetTokens <= 0) throw new Error("tavern_stable_context_invalid_source");
   return Object.freeze({

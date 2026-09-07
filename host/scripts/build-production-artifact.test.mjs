@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { browserBuildInvocation, buildProductionArtifact, retainEntrypointClosure } from "./build-production-artifact.mjs";
+import { browserBuildEnvironment, browserBuildInvocation, buildProductionArtifact, retainEntrypointClosure, runBrowserBuild, writeBrowserViteConfig } from "./build-production-artifact.mjs";
 import { assertApprovedProductionBundledRuntimeAvailable, assertCompleteProductionArtifact, resolveProductionEntry, verifyWindowsReparseInspectorPair } from "./production-artifact.mjs";
 
 const hostRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -44,30 +45,71 @@ test("closure retains the fixed desktop bootstrap without adding it to product e
   try {
     await mkdir(emittedRoot);
     await writeFile(join(emittedRoot, "main.js"), "export {};\n", "utf8");
-    await writeFile(join(emittedRoot, "desktop-runtime-bootstrap.internal.js"), "export {};\n", "utf8");
+    await writeFile(join(emittedRoot, "desktop-host-entry.internal.js"), "export {};\n", "utf8");
 
     await retainEntrypointClosure({
       emittedRoot,
       closureRoot,
-      entryRoots: ["main.js", "desktop-runtime-bootstrap.internal.js"],
+      entryRoots: ["main.js", "desktop-host-entry.internal.js"],
     });
 
-    assert.equal(await readFile(join(closureRoot, "desktop-runtime-bootstrap.internal.js"), "utf8"), "export {};\n");
+    assert.equal(await readFile(join(closureRoot, "desktop-host-entry.internal.js"), "utf8"), "export {};\n");
     const { entryRoots } = JSON.parse(await readFile(join(hostRoot, "production-artifact.config.json"), "utf8"));
-    assert.equal(entryRoots.includes("desktop-runtime-bootstrap.internal.js"), false);
+    assert.equal(entryRoots.includes("desktop-host-entry.internal.js"), false);
   } finally {
     await fixture.dispose();
   }
 });
 
-test("Windows browser build command uses only the fixed system cmd.exe and repository vite.CMD", { skip: process.platform !== "win32" }, async () => {
+test("generated browser Vite config uses only canonical relative static ESM imports", async () => {
+  const stagingRoot = join(hostRoot, `.dist-production-emitted-${"a".repeat(32)}`);
+  const adapter = join(stagingRoot, "windows-reparse-inspector", "index.js");
+  try {
+    await mkdir(join(stagingRoot, "windows-reparse-inspector"), { recursive: true });
+    await writeFile(adapter, "export async function createBuildWindowsReparseInspector() { return {}; }\nexport async function assertNoWindowsReparse() {}\n", "utf8");
+    const configPath = await writeBrowserViteConfig({ stagingRoot });
+    const config = await readFile(configPath, "utf8");
+    assert.match(config, /^import \* as reparseInspectorAdapter from "\.\/windows-reparse-inspector\/index\.js";/m);
+    assert.match(config, /^import \{ createDialogueWebViteConfig \} from "\.\.\/.*dialogue-web\/vite\.config\.ts";/m);
+    assert.match(config, /createDialogueWebViteConfig\(\{ schemaVersion: 1, kind: "gamebuddy\.windows_reparse_inspector\.v1", adapter: reparseInspectorAdapter \}\)/);
+    assert.doesNotMatch(config, /file:|pathToFileURL|import\s*\(|adapterModuleUrl|\.dist-production-emitted|dist-test/i);
+  } finally {
+    await rm(stagingRoot, { recursive: true, force: true });
+  }
+});
+
+test("browser build invokes canonical repository Vite through this Node executable without PATH", async () => {
   const stagingRoot = join(hostRoot, "..", "dialogue-web", ".build-staging", "a".repeat(32));
-  const invocation = await browserBuildInvocation({ stagingRoot });
-  assert.equal(invocation.command, "C:\\Windows\\System32\\cmd.exe");
-  assert.deepEqual(invocation.args.slice(0, 3), ["/d", "/s", "/c"]);
-  assert.match(invocation.args[3], /^call ".*dialogue-web\\node_modules\\\.bin\\vite\.CMD" "build" "--config" "vite\.config\.ts" "--outDir" ".*"$/i);
-  assert.doesNotMatch(invocation.args[3], /pnpm|APPDATA|ComSpec/i);
-  await assert.rejects(browserBuildInvocation({ stagingRoot: "E:\\build\\bad&leaf" }), /invalid_browser_staging_root/);
+  const configPath = resolve(hostRoot, ".dist-production-emitted-test", "dialogue-web.vite.config.mjs");
+  const invocation = await browserBuildInvocation({ stagingRoot, configPath });
+  assert.equal(invocation.command, process.execPath);
+  assert.equal(invocation.args[0], await realpath(resolve(hostRoot, "..", "dialogue-web", "node_modules", "vite", "bin", "vite.js")));
+  assert.doesNotMatch(invocation.args.slice(1).join(" "), /pnpm|cmd\.exe|vite\.CMD/i);
+  assert.deepEqual(Object.keys(browserBuildEnvironment({ PATH: "/hostile", Path: "/hostile2", TEMP: "tmp" })).sort(), ["LANG", "LC_ALL", "TEMP"]);
+});
+
+test("Windows browser timeout awaits exact taskkill success and rejects taskkill failure", async () => {
+  const invocation = { command: process.execPath, args: [], cwd: hostRoot };
+  for (const taskkillExit of [0, 1]) {
+    const calls = [];
+    const primary = Object.assign(new EventEmitter(), { pid: 4242, stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => assert.fail("Windows must not use child.kill") });
+    const killer = new EventEmitter();
+    const spawnProcess = (command, args, options) => {
+      calls.push({ command, args, options });
+      if (calls.length === 1) return primary;
+      setTimeout(() => killer.emit("close", taskkillExit, null), 10);
+      return killer;
+    };
+    const result = runBrowserBuild(invocation, {
+      platform: "win32", timeoutMs: 1, spawnProcess,
+      resolveTaskkill: async () => "C:\\Windows\\System32\\taskkill.exe",
+    });
+    setTimeout(() => primary.emit("close", null, "SIGTERM"), 3);
+    if (taskkillExit === 0) await assert.rejects(result, /browser_build_timeout/);
+    else await assert.rejects(result, /browser_build_taskkill_failed/);
+    assert.deepEqual({ command: calls[1].command, args: calls[1].args }, { command: "C:\\Windows\\System32\\taskkill.exe", args: ["/PID", "4242", "/T", "/F"] });
+    assert.equal(calls[0].options.windowsVerbatimArguments, undefined);
+  }
 });
 
 test("non-Windows builder fails closed before browser composition or publication while approved runtime acquisition is unavailable", { skip: process.platform === "win32" }, async () => {
@@ -102,6 +144,8 @@ test("builder composes one verified private browser subtree into the published H
         requestedBrowserStagingRoot = stagingRoot;
         assert.match(relative(join(hostRoot, "..", "dialogue-web", ".build-staging"), stagingRoot), /^[a-f0-9]{32}$/);
         assert.equal(invocation.cwd, join(hostRoot, "..", "dialogue-web"));
+        assert.match(invocation.args.join(" "), /--config/);
+        assert.doesNotMatch(invocation.args.join(" "), /(?:^|[\\/])(?:\.dist-production-emitted|dist|dist-test)(?:[\\/ ]|$)/i);
       },
       onCompositionVerified: async (value) => {
         const manifest = JSON.parse(await readFile(join(value.browserRoot, "tavern-browser-artifact-manifest.json"), "utf8"));
@@ -126,7 +170,7 @@ test("builder composes one verified private browser subtree into the published H
     for (const path of ["tavern/p4-durable-turn-acceptance.js", "tavern/p4-durable-turn-acceptance.internal.js"])
       assert.ok(complete.entries.some((entry) => entry.path === path), `${path} must be retained as a verified P4 composition module`);
     assert.ok(
-      complete.entries.some((entry) => entry.path === "desktop-runtime-bootstrap.internal.js"),
+      complete.entries.some((entry) => entry.path === "desktop-host-entry.internal.js"),
       "the fixed desktop runtime bootstrap must remain in the normal artifact closure without becoming an entryRoot",
     );
     await assert.rejects(

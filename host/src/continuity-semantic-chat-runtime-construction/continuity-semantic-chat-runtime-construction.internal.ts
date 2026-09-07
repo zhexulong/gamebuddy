@@ -5,8 +5,9 @@ import type { PresentationRuntime } from "../presentation.js";
 import type { CompanionIdentity, CompanionModelConfig } from "../runtime.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
+import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
-import { materializeTavernStableContext, type TavernStableContextSnapshot } from "../tavern/catalog-service.js";
+import { materializeTavernAuthoredContextCatalog, type TavernAuthoredContextCatalog } from "../tavern/catalog-service.js";
 import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 
@@ -23,7 +24,7 @@ export type ExactChatRuntimeConstruction = Readonly<{
   modelProfileRevision: number;
   presentation: PresentationRuntime;
   /** Construction-owned re-materialization for the actual Pi session. */
-  materializeStableContextForPiSession(piSessionId: string): Promise<TavernStableContextSnapshot>;
+  materializeStableContextForPiSession(piSessionId: string): Promise<TavernAuthoredContextCatalog>;
   tavernNarrativeGateNonceSha256?: string;
 }>;
 
@@ -70,14 +71,25 @@ export async function prepareExactChatRuntimeConstruction(
   const tavernPaths = resolveTavernPaths(paths, identity);
   const artifactStore = new TavernArtifactStore(paths.root);
   const selectedThread = state.thread;
-  const materializeStableContextForPiSession = async (piSessionId: string): Promise<TavernStableContextSnapshot> => {
+  const profileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath));
+  const materializeStableContextForPiSession = async (piSessionId: string): Promise<TavernAuthoredContextCatalog> => {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(piSessionId)) throw new Error("chat_runtime_pi_session_rejected");
     try {
-      return await materializeTavernStableContext(
+      return await materializeTavernAuthoredContextCatalog(
         tavernPaths,
         artifactStore,
         selectedThread,
-        Object.freeze({ continuityId: identity.continuityId!, sessionId: piSessionId, surface: "tavern" }),
+        Object.freeze({
+          continuityId: identity.continuityId!,
+          sessionId: piSessionId,
+          surface: "tavern",
+          threadId: selectedThread.chatThreadId,
+          profile: Object.freeze({
+            profileId: profileMetadata.profileId,
+            revision: profileMetadata.revision,
+            canonicalHash: profileMetadata.canonicalHash,
+          }),
+        }),
       );
     } catch {
       throw new Error("chat_runtime_exact_content_unavailable");

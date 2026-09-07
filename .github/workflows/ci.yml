@@ -97,7 +97,7 @@ jobs:
           global-json-file: global.json
       - run: pnpm install --frozen-lockfile
       - run: dotnet restore GameBuddy.sln --locked-mode
-      # The Stardew-owned package selects every PR-safe deterministic check.
-      # Missing licensed target artifacts remain named blocked evidence; this command
-      # cannot select target publication, live fixtures, or game mutation.
-      - run: pnpm --dir integrations/stardew/action-development action:ci
+      - run: dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests --no-restore
+      - run: dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests --no-restore
+      - run: pnpm --dir integrations/stardew/action-development test
+

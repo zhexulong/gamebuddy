@@ -1,11 +1,11 @@
 import {
   bindStardewPrivateBootstrapOwnerTestSupport,
-  consumeStagedOwnedPlayerHostPhaseBForTesting,
+  consumeStagedOwnedPlayerHostProfileForTesting,
   createStardewPrivateBootstrapCompositionForTesting,
-  launchOwnedPlayerHostStageCForTesting,
+  launchStagedPlayerHostForTesting,
 } from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import type {
-  StardewOwnedPlayerHostPhaseAOwner,
+  StardewOwnedPlayerHostBootstrap,
   StardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.js";
 import type {
@@ -56,6 +56,6 @@ export function createStardewPrivateBootstrapComposerTestSupport(
 
 export {
   bindStardewPrivateBootstrapOwnerTestSupport,
-  consumeStagedOwnedPlayerHostPhaseBForTesting,
-  launchOwnedPlayerHostStageCForTesting,
+  consumeStagedOwnedPlayerHostProfileForTesting,
+  launchStagedPlayerHostForTesting,
 };

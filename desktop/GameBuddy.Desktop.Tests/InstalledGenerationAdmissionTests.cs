@@ -21,8 +21,9 @@ public sealed class InstalledGenerationAdmissionTests
     {
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         var admission = new InstalledGenerationAdmission(generation.ProgramRoot);
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 
-        await using var image = await admission.AdmitGuardianAsync(InstalledGenerationSelection.Acquire(generation.ProgramRoot), CancellationToken.None);
+        await using var image = await admission.AdmitGuardianAsync(selection, CancellationToken.None);
 
         Assert.Equal(Path.GetFullPath(generation.GuardianExePath), image.VerifiedAbsolutePath, ignoreCase: true);
     }
@@ -35,8 +36,9 @@ public sealed class InstalledGenerationAdmissionTests
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         var admissionPath = Path.Combine(generation.GenerationRoot, "guardian-admission.json");
         await File.WriteAllTextAsync(admissionPath, contract);
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 
-        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => new InstalledGenerationAdmission(generation.ProgramRoot).AdmitGuardianAsync(InstalledGenerationSelection.Acquire(generation.ProgramRoot), CancellationToken.None));
+        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => new InstalledGenerationAdmission(generation.ProgramRoot).AdmitGuardianAsync(selection, CancellationToken.None));
     }
 
     [Fact]
@@ -50,8 +52,9 @@ public sealed class InstalledGenerationAdmissionTests
             .Replace("native/windows-stardew-bootstrap-guardian/win-x64/windows-stardew-bootstrap-guardian.manifest.json", "foreign/foreign.manifest.json", StringComparison.Ordinal)
             .Replace("GameBuddy.WindowsStardewBootstrapGuardian.exe", "ForeignGuardian.exe", StringComparison.Ordinal);
         await File.WriteAllTextAsync(admissionPath, contract);
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 
-        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => new InstalledGenerationAdmission(generation.ProgramRoot).AdmitGuardianAsync(InstalledGenerationSelection.Acquire(generation.ProgramRoot), CancellationToken.None));
+        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => new InstalledGenerationAdmission(generation.ProgramRoot).AdmitGuardianAsync(selection, CancellationToken.None));
     }
 
     [Fact]
@@ -60,8 +63,9 @@ public sealed class InstalledGenerationAdmissionTests
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         await File.WriteAllTextAsync(generation.GuardianExePath, "replacement");
         var admission = new InstalledGenerationAdmission(generation.ProgramRoot);
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 
-        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => admission.AdmitGuardianAsync(InstalledGenerationSelection.Acquire(generation.ProgramRoot), CancellationToken.None));
+        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => admission.AdmitGuardianAsync(selection, CancellationToken.None));
     }
 
     [Fact]
@@ -72,6 +76,7 @@ public sealed class InstalledGenerationAdmissionTests
         var replacement = Path.Combine(generation.LocalApplicationData, "replacement.exe");
         await File.WriteAllTextAsync(replacement, "replacement");
         var admission = new InstalledGenerationAdmission(generation.ProgramRoot);
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
         var barrierReached = false;
         admission.AfterGuardianLockBeforeHashForTesting = () =>
         {
@@ -83,7 +88,7 @@ public sealed class InstalledGenerationAdmissionTests
             AssertLockedMutationRejected(() => Directory.Move(generation.GuardianPairRoot, generation.GuardianPairRoot + ".original"));
         };
 
-        await using var image = await admission.AdmitGuardianAsync(InstalledGenerationSelection.Acquire(generation.ProgramRoot), CancellationToken.None);
+        await using var image = await admission.AdmitGuardianAsync(selection, CancellationToken.None);
         var identity = default(WindowsNative.ByHandleFileInformation);
         Assert.True(WindowsNative.GetFileInformationByHandle(image.ExecutableHandle, out identity));
         var bytes = new byte[checked((int)identity.FileSizeLow)];
@@ -102,8 +107,9 @@ public sealed class InstalledGenerationAdmissionTests
         {
             AfterGuardianLockBeforeHashForTesting = () => throw new IOException("test post-lock failure"),
         };
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 
-        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => admission.AdmitGuardianAsync(InstalledGenerationSelection.Acquire(generation.ProgramRoot), CancellationToken.None));
+        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => admission.AdmitGuardianAsync(selection, CancellationToken.None));
         File.Delete(generation.GuardianExePath);
         Assert.False(File.Exists(generation.GuardianExePath));
     }

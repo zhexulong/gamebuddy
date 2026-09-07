@@ -1,10 +1,8 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew.Core.BodyPrograms;
 
-/// <summary>Outcome of the strict, scalar-only Mod descriptor projection.</summary>
 public enum FarmhandBodyProgramCatalogProjectionStatus
 {
     Published = 1,
@@ -24,17 +22,9 @@ public sealed record FarmhandBodyProgramCatalogProjectionResult(
     public bool IsPublished => Status == FarmhandBodyProgramCatalogProjectionStatus.Published && Catalog is not null;
 }
 
-/// <summary>
-/// Projects only the unambiguous scalar subset of the Mod-owned action surface.
-/// This adapter deliberately does not project family, lifecycle, effect,
-/// postcondition, handler kind, or navigation object values.
-/// </summary>
+/// <summary>Projects the bounded offline Body Program catalog directly from Mod-owned registrations.</summary>
 public static class FarmhandBodyProgramCatalogProjection
 {
-    /// <summary>
-    /// Reads the canonical Mod publication and returns a catalog only when its
-    /// descriptor revision is a canonical non-negative decimal number.
-    /// </summary>
     public static FarmhandBodyProgramCatalogProjectionResult Create() =>
         Create(FarmhandActionSurfaceExport.CreateArtifact());
 
@@ -42,22 +32,12 @@ public static class FarmhandBodyProgramCatalogProjection
     {
         ArgumentNullException.ThrowIfNull(artifact);
         if (artifact.Schema != FarmhandActionSurfaceExport.Schema)
-        {
-            return new(
-                FarmhandBodyProgramCatalogProjectionStatus.Blocked,
-                null,
-                Freeze(new[]
-                {
-                    new FarmhandBodyProgramCatalogProjectionRejection(
-                        "<catalog>",
-                        "catalog_schema_blocked",
-                        "The descriptor artifact schema is not the canonical Mod schema.")
-                }));
-        }
+            return Blocked("catalog_schema_blocked", "The descriptor artifact schema is not the canonical Mod schema.");
+        if (artifact.CatalogRevision < 0)
+            return Blocked("catalog_revision_blocked", "The Mod-owned catalog revision must be non-negative.");
 
         List<FarmhandBodyProgramCatalogProjectionRejection> rejections = new();
         List<BodyProgramActionDescriptor> accepted = new();
-
         foreach (FarmhandActionDescriptorProjection source in artifact.Actions)
         {
             if (source.Kind == FarmhandOperationKind.ReadOnly.ToWireValue())
@@ -65,29 +45,17 @@ public static class FarmhandBodyProgramCatalogProjection
                 rejections.Add(new(source.ActionId, "read_only_not_execution", "Read-only registrations are not executable Body Programs."));
                 continue;
             }
-
             if (source.Kind != FarmhandOperationKind.Execution.ToWireValue())
             {
                 rejections.Add(new(source.ActionId, "unsupported_operation_kind", "Only execution registrations can be projected."));
                 continue;
             }
-
             if (!TryProject(source, out BodyProgramActionDescriptor? descriptor, out string? code, out string? message))
             {
                 rejections.Add(new(source.ActionId, code!, message!));
                 continue;
             }
-
             accepted.Add(descriptor!);
-        }
-
-        string revisionText = artifact.DescriptorRevision;
-        if (!long.TryParse(revisionText, NumberStyles.None, CultureInfo.InvariantCulture, out long revision)
-            || revision < 0
-            || revision.ToString(CultureInfo.InvariantCulture) != revisionText)
-        {
-            rejections.Add(new("<catalog>", "catalog_revision_blocked", "The static descriptor revision is not a canonical numeric revision."));
-            return new(FarmhandBodyProgramCatalogProjectionStatus.Blocked, null, Freeze(rejections));
         }
 
         if (accepted.Count == 0)
@@ -96,14 +64,19 @@ public static class FarmhandBodyProgramCatalogProjection
         try
         {
             return new(FarmhandBodyProgramCatalogProjectionStatus.Published,
-                new BodyProgramActionCatalog(revision, accepted), Freeze(rejections));
+                new BodyProgramActionCatalog(artifact.CatalogRevision, accepted), Freeze(rejections));
         }
         catch (ArgumentException)
         {
-            rejections.Add(new("<catalog>", "catalog_validation_failed", "The scalar projection did not form a valid Body Program catalog."));
+            rejections.Add(new("<catalog>", "catalog_validation_failed", "The Mod-owned projection did not form a valid Body Program catalog."));
             return new(FarmhandBodyProgramCatalogProjectionStatus.Blocked, null, Freeze(rejections));
         }
     }
+
+    private static FarmhandBodyProgramCatalogProjectionResult Blocked(string code, string message) => new(
+        FarmhandBodyProgramCatalogProjectionStatus.Blocked,
+        null,
+        Freeze(new[] { new FarmhandBodyProgramCatalogProjectionRejection("<catalog>", code, message) }));
 
     private static bool TryProject(
         FarmhandActionDescriptorProjection source,
@@ -115,20 +88,20 @@ public static class FarmhandBodyProgramCatalogProjection
         code = null;
         message = null;
 
-        if (source.ResourceTemplate.Keys.Count > 0)
+        if (source.Lifecycle != FarmhandActionLifecycle.Published.ToWireValue())
         {
-            code = "resource_mapping_blocked";
-            message = "Resource template keys have no unambiguous Body Program resource template mapping.";
+            code = "lifecycle_not_published";
+            message = "Only published registrations can be projected.";
             return false;
         }
 
         List<BodyProgramArgumentDescriptor> arguments = new();
         foreach ((string name, FarmhandActionArgumentSchema schema) in source.ArgumentSchema)
         {
-            if (!TryMapScalar(schema.Type, out BodyProgramArgumentKind kind))
+            if (!TryMapInput(schema.Type, out BodyProgramArgumentKind kind))
             {
                 code = "object_or_unsupported_argument";
-                message = $"Argument '{name}' is not an integer, string, or boolean scalar.";
+                message = $"Argument '{name}' has no authoritative Body Program input value contract.";
                 return false;
             }
             arguments.Add(new(name, kind));
@@ -137,26 +110,38 @@ public static class FarmhandBodyProgramCatalogProjection
         List<BodyProgramFactDescriptor> facts = new();
         foreach ((string name, string type) in source.OutputFacts)
         {
-            if (!TryMapScalar(type, out BodyProgramArgumentKind kind))
+            if (!TryMapOutput(type, out BodyProgramArgumentKind kind))
             {
                 code = "object_or_unsupported_output";
-                message = $"Output fact '{name}' is not an integer, string, or boolean scalar.";
+                message = $"Output fact '{name}' has no authoritative Body Program output value contract.";
                 return false;
             }
             facts.Add(new(name, kind));
         }
 
         List<BodyProgramResourceTemplateClaim> resources = new();
+        foreach (FarmhandActionResourceTemplateValueProjection claim in source.ResourceTemplate.Claims)
+        {
+            if (claim.Value != nameof(FarmhandResourceTemplateValue.ScopePlayer))
+            {
+                code = "resource_mapping_blocked";
+                message = $"Resource claim '{claim.Key}' has no authoritative Body Program template semantics.";
+                return false;
+            }
+            resources.Add(new(claim.Key, BodyProgramResourceTemplateValue.ScopePlayer));
+        }
+
         descriptor = new BodyProgramActionDescriptor(
             source.ActionId,
             source.IdentityVersion,
             new ReadOnlyCollection<BodyProgramArgumentDescriptor>(arguments),
             new ReadOnlyCollection<BodyProgramFactDescriptor>(facts),
-            new ReadOnlyCollection<BodyProgramResourceTemplateClaim>(resources));
+            new ReadOnlyCollection<BodyProgramResourceTemplateClaim>(resources),
+            new BodyProgramActionMetadata(source.Lifecycle, source.Kind, source.Effect, source.Postcondition.Name));
         return true;
     }
 
-    private static bool TryMapScalar(string type, out BodyProgramArgumentKind kind)
+    private static bool TryMapInput(string type, out BodyProgramArgumentKind kind)
     {
         kind = type switch
         {
@@ -167,6 +152,8 @@ public static class FarmhandBodyProgramCatalogProjection
         };
         return type is "integer" or "string" or "boolean";
     }
+
+    private static bool TryMapOutput(string type, out BodyProgramArgumentKind kind) => TryMapInput(type, out kind);
 
     private static IReadOnlyList<FarmhandBodyProgramCatalogProjectionRejection> Freeze(
         IEnumerable<FarmhandBodyProgramCatalogProjectionRejection> values) =>

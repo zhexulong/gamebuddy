@@ -1678,6 +1678,7 @@
       "required": [
         "executionId",
         "requestId",
+        "actionId",
         "state",
         "reasonCode",
         "revision",
@@ -1688,6 +1689,9 @@
           "$ref": "#/$defs/opaqueId"
         },
         "requestId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "actionId": {
           "$ref": "#/$defs/opaqueId"
         },
         "state": {
