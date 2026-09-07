@@ -22,7 +22,7 @@ import { readFile } from "node:fs/promises";
 
 export const SCHEMA_VERSION = 1;
 export const TARGET_BUILD = "1.6.15.24356";
-export const TERMINAL_STATES = Object.freeze(["passed", "blocked"]);
+const TERMINAL_STATES = Object.freeze(["passed", "blocked"]);
 export const OBSERVATION_SCOPE = "multi_hop_ordinary_warp";
 export const PASS_PREDICATE = "successful_multisource_characterization";
 export const BLOCK_PREDICATES = Object.freeze([
@@ -234,7 +234,7 @@ export function allowsMultiHopTopologyImplementation(value) {
   return validation.valid && value?.terminalStatus === "passed";
 }
 
-export function summarizeMultiSourceTransitionCharacterization(value) {
+function summarizeMultiSourceTransitionCharacterization(value) {
   const validation = validateMultiSourceTransitionCharacterization(value);
   return Object.freeze({
     artifactDigest: createHash("sha256").update(JSON.stringify(value)).digest("hex"),

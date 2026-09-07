@@ -112,8 +112,8 @@ export async function runSleepDayPreflight({ observeNative, expectedScope } = {}
   return blocked(SOURCE_BLOCKER.code, { given, sourceBlocker: SOURCE_BLOCKER });
 }
 
-export const SLEEP_DAY_PREFLIGHT_ACTION = ACTION;
-export const SLEEP_DAY_PREFLIGHT_TOPOLOGY = TOPOLOGY;
+const SLEEP_DAY_PREFLIGHT_ACTION = ACTION;
+const SLEEP_DAY_PREFLIGHT_TOPOLOGY = TOPOLOGY;
 export const SLEEP_DAY_SOURCE_BLOCKER = SOURCE_BLOCKER;
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

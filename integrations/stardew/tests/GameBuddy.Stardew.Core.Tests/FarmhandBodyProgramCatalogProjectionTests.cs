@@ -90,6 +90,16 @@ public sealed class FarmhandBodyProgramCatalogProjectionTests
             rejection.ActionId == "<catalog>" && rejection.Code == "catalog_schema_blocked");
     }
 
+    [Fact]
+    public void CurrentModSurfaceRejectsReadOnlyRegistrationsAsExecution()
+    {
+        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
+
+        result.Rejections.Should().Contain(rejection =>
+            rejection.ActionId == "inspect_world_map"
+            && rejection.Code == "read_only_not_execution");
+    }
+
     private static FarmhandActionDescriptorArtifact Artifact(long revision, params FarmhandActionDescriptorProjection[] actions) =>
         new(FarmhandActionSurfaceExport.Schema, revision, actions);
 }

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,20 @@ const ROOT_WORKFLOW = path.join(REPOSITORY_ROOT, ".github", "workflows", "ci.yml
 const ROOT_PORTFOLIO = path.join(REPOSITORY_ROOT, ".ci", "test-portfolio-manifest.v1.json");
 const PACKAGE_PORTFOLIO = path.join(PACKAGE_DIRECTORY, "portfolio.json");
 const ROOT_PACKAGE = path.join(REPOSITORY_ROOT, "package.json");
+const ACTIVE_REFERENCE_FILES = Object.freeze([
+  ".github/workflows/ci.yml",
+  "fixtures/stardew/RUNBOOK.md",
+  "tools/verify-stardew-action-projection-local.ps1",
+  "tools/verify-stardew-action-projection-p2c.ps1",
+  "integrations/stardew/action-development/ACTION_RUNBOOK.md",
+  "integrations/stardew/action-development/package.json",
+  "package.json",
+]);
+const RETIRED_STATIC_FILES = Object.freeze([
+  "tools/verify-stardew-static.mjs",
+  "tools/verify-stardew-static.test.mjs",
+  "tools/stardew-static-portfolio.v1.json",
+]);
 
 const PACKAGE_WORKFLOW_COMMAND = "pnpm --dir integrations/stardew/action-development test";
 const RETIRED_WORKFLOW_COMMANDS = Object.freeze([
@@ -22,6 +37,7 @@ const RETIRED_ROOT_SCRIPTS = Object.freeze([
   "test:stardew-action-projection",
   "test:stardew:static",
   "verify:stardew:static",
+  "test:stardew-static-portfolio-projection",
 ]);
 const RETIRED_ROOT_PORTFOLIO_ENTRY = "p7-p9-stardew-static-portfolio";
 const CANONICAL_PACKAGE_ENTRIES = Object.freeze([
@@ -47,11 +63,20 @@ function isStardewRootPortfolioEntry(entry) {
   return /\bstardew\b/i.test(JSON.stringify(entry));
 }
 
+function requireFileExists(relativePath) {
+  return existsSync(path.join(REPOSITORY_ROOT, relativePath));
+}
+
+async function readActiveReferences() {
+  return await Promise.all(ACTIVE_REFERENCE_FILES.map(async (relativePath) => [relativePath, await readFile(path.join(REPOSITORY_ROOT, relativePath), "utf8")]));
+}
+
 export async function auditRootStardewCiDisposition() {
   let workflowText;
   let rootPortfolio;
   let packagePortfolio;
   let rootPackage;
+  let activeReferences;
   try {
     [workflowText, rootPortfolio, packagePortfolio, rootPackage] = await Promise.all([
       readFile(ROOT_WORKFLOW, "utf8"),
@@ -59,6 +84,7 @@ export async function auditRootStardewCiDisposition() {
       readFile(PACKAGE_PORTFOLIO, "utf8").then(JSON.parse),
       readFile(ROOT_PACKAGE, "utf8").then(JSON.parse),
     ]);
+    activeReferences = await readActiveReferences();
   } catch {
     fail("inputs_unreadable");
   }
@@ -66,7 +92,7 @@ export async function auditRootStardewCiDisposition() {
   const workflowCommandOccurrences = occurrenceCount(workflowText, PACKAGE_WORKFLOW_COMMAND);
   if (workflowCommandOccurrences !== 1) fail("package_workflow_command_not_unique");
   for (const command of RETIRED_WORKFLOW_COMMANDS) {
-    if (workflowText.includes(command)) fail(`retired_workflow_command_present:${command}`);
+    if (activeReferences.some(([, text]) => text.includes(command))) fail(`retired_active_reference_present:${command}`);
   }
   for (const script of RETIRED_ROOT_SCRIPTS) {
     if (Object.hasOwn(rootPackage.scripts ?? {}, script)) fail(`retired_root_script_present:${script}`);
@@ -75,6 +101,11 @@ export async function auditRootStardewCiDisposition() {
     if (Object.values(rootPackage.scripts ?? {}).some((script) => typeof script === "string" && script.includes(command))) {
       fail(`retired_root_script_reference_present:${command}`);
     }
+  }
+  if (Object.hasOwn(rootPackage.scripts ?? {}, "test:stardew-static-portfolio-projection"))
+    fail("retired_static_projection_script_present");
+  for (const relativePath of RETIRED_STATIC_FILES) {
+    if (requireFileExists(relativePath)) fail(`retired_static_file_present:${relativePath}`);
   }
 
   const rootPortfolioEntries = rootPortfolio.entries;
@@ -91,8 +122,9 @@ export async function auditRootStardewCiDisposition() {
     status: "package-owned",
     workflowCommand: PACKAGE_WORKFLOW_COMMAND,
     workflowCommandOccurrences,
-    rootStardewPortfolioEntryCount: stardewRootPortfolioEntries.length,
-    packageEntries: CANONICAL_PACKAGE_ENTRIES,
+     rootStardewPortfolioEntryCount: stardewRootPortfolioEntries.length,
+     retiredStaticFileCount: RETIRED_STATIC_FILES.length,
+     packageEntries: CANONICAL_PACKAGE_ENTRIES,
     retiredRootEdges: Object.freeze([
       ...RETIRED_ROOT_SCRIPTS,
       RETIRED_ROOT_PORTFOLIO_ENTRY,

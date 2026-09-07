@@ -204,7 +204,7 @@ export function verifyM3ForageWhen({ request, given, expectedScope } = {}) {
 }
 
 /** Then verifier: static receipts cannot prove closure; currently demand the exact blocker handoff. */
-export function verifyM3ForageBlockedHandoff({ request, receipt, expectedScope } = {}) {
+function verifyM3ForageBlockedHandoff({ request, receipt, expectedScope } = {}) {
   const scope = expectedScope ?? request?.scope;
   if (
     !requestValid(request, scope) ||
@@ -242,5 +242,5 @@ export async function runM3ForagePreflight(args = {}) {
   return Object.freeze({ state: "BLOCKED", code: "m3_forage_source_semantic_edge_unestablished", given, when, then });
 }
 
-export const M3_FORAGE_PREFLIGHT_ACTION = ACTION;
-export const M3_FORAGE_PREFLIGHT_TOPOLOGY = TOPOLOGY;
+const M3_FORAGE_PREFLIGHT_ACTION = ACTION;
+const M3_FORAGE_PREFLIGHT_TOPOLOGY = TOPOLOGY;

@@ -185,7 +185,7 @@ async function inspectReleaseSource({ releaseDir, modsPath, expectedAdapterVersi
   return Object.freeze({ source, mods, target, digest: inspected.digest, adapterVersion: manifest.Version, files: BUNDLE_FILES.length });
 }
 
-export async function inspectExactReleaseBundle({ releaseDir, modsPath, expectedAdapterVersion } = {}) {
+async function inspectExactReleaseBundle({ releaseDir, modsPath, expectedAdapterVersion } = {}) {
   if (![releaseDir, modsPath].every((value) => typeof value === "string" && path.isAbsolute(value) && !value.includes("\0"))) bundleFail("invalid_input");
   const inspected = await inspectReleaseSource({ releaseDir, modsPath, expectedAdapterVersion });
   return Object.freeze({ algorithm: "sha256", digest: inspected.digest, adapterVersion: inspected.adapterVersion, files: inspected.files });

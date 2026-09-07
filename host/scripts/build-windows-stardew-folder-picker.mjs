@@ -5,16 +5,16 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
-export const hostRoot = resolve(dirname(scriptPath), "..");
-export const repositoryRoot = resolve(hostRoot, "..");
-export const projectRoot = resolve(hostRoot, "native", "windows-stardew-folder-picker");
-export const projectFile = resolve(projectRoot, "GameBuddy.WindowsStardewFolderPicker.csproj");
+const hostRoot = resolve(dirname(scriptPath), "..");
+const repositoryRoot = resolve(hostRoot, "..");
+const projectRoot = resolve(hostRoot, "native", "windows-stardew-folder-picker");
+const projectFile = resolve(projectRoot, "GameBuddy.WindowsStardewFolderPicker.csproj");
 export const outputRoot = resolve(projectRoot, ".dist", "win-x64");
 export const helperFileName = "GameBuddy.WindowsStardewFolderPicker.exe";
 export const manifestFileName = "windows-stardew-folder-picker.manifest.json";
-export const protocolVersion = 1;
-export const manifestSchemaVersion = 1;
-export const rid = "win-x64";
+const protocolVersion = 1;
+const manifestSchemaVersion = 1;
+const rid = "win-x64";
 const trustedDotnetPath = "C:\\Program Files\\dotnet\\dotnet.exe";
 const timeoutMs = 5 * 60_000;
 const outputLimitBytes = 64 * 1024;
@@ -26,7 +26,7 @@ function contained(root, value) {
 }
 
 /** Resolves only the repository policy's fixed Windows SDK host. */
-export async function resolveRepositoryDotnet() {
+async function resolveRepositoryDotnet() {
   const state = await lstat(trustedDotnetPath).catch(() => undefined);
   if (!state?.isFile() || state.isSymbolicLink() || !contained("C:\\", trustedDotnetPath)) throw new Error("windows_stardew_folder_picker_dotnet_missing");
   return trustedDotnetPath;

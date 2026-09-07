@@ -6,7 +6,7 @@
  */
 import { checkM4BreakRockSourceContract } from "./stardew-portfolio-m4-break-rock-source-contract.mjs";
 
-export const M4_BREAK_ROCK_SOURCE_BLOCKER = "m4_target_version_decompilation_correlation";
+const M4_BREAK_ROCK_SOURCE_BLOCKER = "m4_target_version_decompilation_correlation";
 export async function runM4BreakRockSourcePreflight() {
   const contract = await checkM4BreakRockSourceContract();
   return Object.freeze({

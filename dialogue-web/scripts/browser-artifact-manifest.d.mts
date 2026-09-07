@@ -21,6 +21,6 @@ export type BrowserArtifactInspectionPolicy = Readonly<{
   inspect(absolutePath: string): Promise<void>;
 }>;
 
-export function createBuildArtifactInspectionPolicy(): Promise<BrowserArtifactInspectionPolicy>;
+export function createBuildArtifactInspectionPolicy(windowsReparseInspector?: unknown): Promise<BrowserArtifactInspectionPolicy>;
 export function createProductionArtifactManifest(artifactRoot: string, policy?: BrowserArtifactInspectionPolicy): Promise<ProductionArtifactManifest>;
 export function verifyProductionArtifactManifest(artifactRoot: string, policy?: BrowserArtifactInspectionPolicy): Promise<ProductionArtifactManifest>;

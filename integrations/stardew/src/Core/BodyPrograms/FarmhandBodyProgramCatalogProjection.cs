@@ -58,6 +58,7 @@ public static class FarmhandBodyProgramCatalogProjection
             accepted.Add(descriptor!);
         }
 
+        long revision = artifact.CatalogRevision;
         if (accepted.Count == 0)
             return new(FarmhandBodyProgramCatalogProjectionStatus.Blocked, null, Freeze(rejections));
 
@@ -94,7 +95,6 @@ public static class FarmhandBodyProgramCatalogProjection
             message = "Only published registrations can be projected.";
             return false;
         }
-
         List<BodyProgramArgumentDescriptor> arguments = new();
         foreach ((string name, FarmhandActionArgumentSchema schema) in source.ArgumentSchema)
         {

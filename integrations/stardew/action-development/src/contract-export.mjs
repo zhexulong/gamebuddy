@@ -45,5 +45,3 @@ export async function readGeneratedEquipToolContract({ runExport, readArtifact }
   if (!generated.equals(artifact)) fail("artifact_drift");
   return generated;
 }
-
-export const actionDevelopmentContractExportPaths = Object.freeze({ EXPORT_PROJECT, EXPORT_DLL, EQUIP_TOOL_ARTIFACT });

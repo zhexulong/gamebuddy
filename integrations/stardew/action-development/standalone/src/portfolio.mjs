@@ -46,10 +46,11 @@ export function validateDeterministicPortfolio(input) {
       exactKeys(entry, new Set(["id", "kind"]));
       if (entry.id !== "scaffold-contract") fail("invalid_scaffold_check");
     } else if (entry?.kind === "action-surface-check") {
-      exactKeys(entry, new Set(["id", "kind"]));
-      if (entry.id !== "action-surface-check") fail("invalid_action_surface_check");
+       exactKeys(entry, new Set(["id", "kind"]));
+       if (entry.id !== "action-surface-check") fail("invalid_action_surface_check");
     } else if (entry?.kind === "action-surface-export-check") {
       exactKeys(entry, new Set(["id", "kind"]));
+      if (entry.id !== "action-surface-export-check") fail("invalid_action_surface_export_check");
       if (entry.id !== "action-surface-export-check") fail("invalid_action_surface_export_check");
     } else if (entry?.kind === "action-source-projection-check") {
       exactKeys(entry, new Set(["id", "kind"]));

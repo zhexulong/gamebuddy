@@ -343,7 +343,7 @@ async function lockedTool() {
   if (version !== TOOL_VERSION) fail("tool_version_mismatch", "Locked ilspycmd version is required.");
   return closure;
 }
-export async function targetAssembly(gamePath) {
+async function targetAssembly(gamePath) {
   if (typeof gamePath !== "string" || !gamePath) fail("game_path_required", "An explicit game path is required.");
   const gameRoot = path.resolve(gamePath),
     assemblyPath = path.join(gameRoot, "Stardew Valley.dll");
@@ -380,10 +380,10 @@ export async function targetAssembly(gamePath) {
     throw error;
   }
 }
-export async function disposeTargetAssembly(target) {
+async function disposeTargetAssembly(target) {
   if (target?.snapshotRoot) await rm(target.snapshotRoot, { recursive: true, force: true });
 }
-export async function decompile(target) {
+async function decompile(target) {
   const parent = path.resolve(process.env.TEMP || os.tmpdir());
   await assertNoReparseAncestors(parent, {
     missingCode: "decompile_tree_missing",
@@ -412,7 +412,7 @@ export async function decompile(target) {
       : Object.assign(new Error(`Fresh decompilation failed: ${error.message}`), { code: "decompile_failed" });
   }
 }
-export async function sourceState(root) {
+async function sourceState(root) {
   await assertNoReparseAncestors(root, {
     missingCode: "decompile_tree_missing",
     reparseCode: "decompile_tree_reparse_detected",

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const CHARACTERIZATION_VERSION = "stardew-navigation-p4-v5";
+const CHARACTERIZATION_VERSION = "stardew-navigation-p4-v5";
 export const P4A_TARGET_BINDING_V1 = Object.freeze({
   gameAssemblyVersion: "1.6.15.24356",
   inputDigest: "ef2f63a15e9f528cfa70dcf8602013d241503d308b8702b846578fbf76e4876a",
@@ -40,7 +40,7 @@ function editDistance(left, right) {
   }
   return previous[right.length];
 }
-export function scoreDestinationMatch(query, label) {
+function scoreDestinationMatch(query, label) {
   const q = normalizeDestinationText(query),
     l = normalizeDestinationText(label);
   return q === null || l === null ? 0 : 1 - editDistance(q, l) / Math.max(q.length, l.length);
@@ -248,7 +248,7 @@ export function deriveNavigationCharacterization(probe) {
   });
 }
 
-export const P4D_STRING_ENVELOPE_CONTRACT_V1 = Object.freeze({
+const P4D_STRING_ENVELOPE_CONTRACT_V1 = Object.freeze({
   artifactKind: "stardew_navigation_p4d_opaque_handle_characterization",
   schemaVersion: 2,
   carrier: Object.freeze({
@@ -286,7 +286,7 @@ export const P4D_STRING_ENVELOPE_CONTRACT_V1 = Object.freeze({
   nonClaim:
     "Characterization-only issuer; it grants no navigation permission, route, movement, action, production reference, or protocol.",
 });
-export function validateP4DStringEnvelope(value) {
+function validateP4DStringEnvelope(value) {
   return typeof value !== "string" || value.length < 1 || value.length > 512
     ? "ref_malformed"
     : "opaque_carrier_not_parsed";
@@ -396,7 +396,7 @@ export function createP4DCharacterizationIssuer({
   });
 }
 
-export const P4C_TELEMETRY_SCHEMA_V1 = Object.freeze({
+const P4C_TELEMETRY_SCHEMA_V1 = Object.freeze({
   artifactKind: "stardew_navigation_p4c_redacted_telemetry",
   schemaVersion: 1,
   outcomes: Object.freeze([

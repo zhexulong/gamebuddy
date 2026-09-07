@@ -3,8 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkTavernReleasePrerequisites } from "./check-tavern-release-prerequisites.mjs";
 
-export const TAVERN_LIVE_RECORD_SCHEMA_VERSION = 1;
-export const TAVERN_LIVE_GATE = "tavern_release_live_gate/v1";
+const TAVERN_LIVE_RECORD_SCHEMA_VERSION = 1;
+const TAVERN_LIVE_GATE = "tavern_release_live_gate/v1";
 
 const OUTCOMES = new Set(["pass", "fail", "blocked", "inconclusive", "not_applicable"]);
 const REASONS = new Set([

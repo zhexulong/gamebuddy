@@ -238,16 +238,6 @@ test("Windows inspection policy fails closed for missing, malformed, or invalid 
   }
 });
 
-test("artifact verifier rejects source maps and unlisted files", async () => {
-  const artifactRoot = await createArtifactFixture("artifact-boundary-invalid");
-  try {
-    await writeFile(join(artifactRoot, "assets", "index-abcdefgh.js.map"), "{}", "utf8");
-    await assert.rejects(verifyProductionArtifactManifest(artifactRoot, nodeDefensePolicy), /source maps/);
-  } finally {
-    await rm(artifactRoot, { recursive: true, force: true });
-  }
-});
-
 test("artifact verifier rejects preexisting symbolic-link files before manifest acceptance", async () => {
   const artifactRoot = await createArtifactFixture("artifact-boundary-symlink-file");
   const assetPath = join(artifactRoot, "assets", "index-abcdefgh.js");

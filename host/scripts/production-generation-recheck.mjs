@@ -73,7 +73,7 @@ export function installProductionGenerationRecheckService({ child, hostRoot, sel
   });
 }
 
-export function isProductionGenerationRecheckRequest(message) { return parseRequest(message) !== undefined; }
+function isProductionGenerationRecheckRequest(message) { return parseRequest(message) !== undefined; }
 
 function parseRequest(message) {
   if (!exactKeys(message, ["schema", "kind", "requestId", "phase"])

@@ -73,7 +73,7 @@ const OBSOLETE_RUNNER_FILENAMES = Object.freeze([
  * Explicit fixed source list of the current production sources. The producer
  * reads exactly these paths and rejects any unexplained read failure.
  */
-export const ACTION_SOURCE_PATHS = Object.freeze([
+const ACTION_SOURCE_PATHS = Object.freeze([
   {
     category: "canonical_action_surface",
     path: "integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
@@ -256,6 +256,8 @@ function parseExecutionRequestUnion(source) {
 }
 
 function parseBridgeMessageTypes(source) {
+  // This protocol list is deliberately module-private: BridgeMessage is its
+  // public boundary. Parse the literal list regardless of export visibility.
   const body = source.match(/(?:export )?const BRIDGE_MESSAGE_TYPES = \[([\s\S]*?)\] as const;/)?.[1];
   if (!body) fail("bridge_message_types_unreadable");
   const types = [...body.matchAll(/"([a-z0-9_]+)"/g)].map((entry) => entry[1]);

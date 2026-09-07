@@ -9,6 +9,7 @@ test("proves the root CI cutover to one package-owned deterministic Stardew comm
   assert.equal(report.workflowCommand, "pnpm --dir integrations/stardew/action-development test");
   assert.equal(report.workflowCommandOccurrences, 1);
   assert.equal(report.rootStardewPortfolioEntryCount, 0);
+  assert.equal(report.retiredStaticFileCount, 3);
   assert.deepEqual(report.packageEntries, [
     "equip-tool-contract-check",
     "scaffold-contract",
@@ -23,6 +24,7 @@ test("proves the root CI cutover to one package-owned deterministic Stardew comm
     "test:stardew-action-projection",
     "test:stardew:static",
     "verify:stardew:static",
+    "test:stardew-static-portfolio-projection",
     "p7-p9-stardew-static-portfolio",
   ]);
   assert.deepEqual(report.targetEvidencePolicy, {

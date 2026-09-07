@@ -115,5 +115,3 @@ export async function runEquipToolLifecycle({
     if (failures.length) fail("result_cleanup_failed");
   }
 }
-
-export { TEARDOWN_RECEIPT_GRACE_MS };
