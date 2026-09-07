@@ -538,7 +538,7 @@ async function createGuardianOwnerFixture(input: Readonly<{ registration?: boole
   if (input.registration) {
     await publishStardewInstallationRegistration(root, null, {
       schema: "gamebuddy-stardew-installation-registration/v1",
-      binding: { rootLayoutVersion: 1, productInstallationId: "desktop-installation-1" },
+      binding: { rootLayoutVersion: 1 },
       revision: 1,
       state: "ready",
       locator: "C:\\Games\\Stardew Valley",

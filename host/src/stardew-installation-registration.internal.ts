@@ -25,7 +25,6 @@ export type StardewInstallationRegistrationRecordV1 = Readonly<{
   schema: "gamebuddy-stardew-installation-registration/v1";
   binding: Readonly<{
     rootLayoutVersion: 1;
-    productInstallationId: string;
   }>;
   revision: number;
   state: "ready" | "invalid";
@@ -336,8 +335,8 @@ function validateRecord(value: unknown): StardewInstallationRegistrationRecordV1
   const record = requireExactObject(value, ["schema", "binding", "revision", "state", "locator", "activeAttempt"]);
   if (record.schema !== REGISTRATION_SCHEMA || !isPositiveSafeInteger(record.revision)) throw unavailable();
 
-  const binding = requireExactObject(record.binding, ["rootLayoutVersion", "productInstallationId"]);
-  if (binding.rootLayoutVersion !== 1 || !isOpaqueId(binding.productInstallationId)) throw unavailable();
+  const binding = requireExactObject(record.binding, ["rootLayoutVersion"]);
+  if (binding.rootLayoutVersion !== 1) throw unavailable();
 
   if (record.state !== "ready" && record.state !== "invalid") throw unavailable();
   if ((record.state === "ready" && !isCanonicalWindowsDirectory(record.locator)) || (record.state === "invalid" && record.locator !== null)) {
@@ -355,7 +354,7 @@ function validateRecord(value: unknown): StardewInstallationRegistrationRecordV1
   const locator = record.locator === null ? null : record.locator as string;
   return Object.freeze({
     schema: REGISTRATION_SCHEMA,
-    binding: Object.freeze({ rootLayoutVersion: 1, productInstallationId: binding.productInstallationId }),
+    binding: Object.freeze({ rootLayoutVersion: 1 }),
     revision: record.revision,
     state: record.state,
     locator,
@@ -369,7 +368,6 @@ function serializeRecord(record: StardewInstallationRegistrationRecordV1): strin
     schema: normalized.schema,
     binding: {
       rootLayoutVersion: normalized.binding.rootLayoutVersion,
-      productInstallationId: normalized.binding.productInstallationId,
     },
     revision: normalized.revision,
     state: normalized.state,
