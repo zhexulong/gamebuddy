@@ -12,6 +12,12 @@ public sealed class ModConfig
     public string CompanionId { get; init; } = string.Empty;
 
     /// <summary>
+    /// Presentation mode for the companion game window: "visible" (default, present on desktop without stealing focus, silent, 60Hz background loop),
+    /// or "hidden" (invisible, silent, 60Hz background loop).
+    /// </summary>
+    public string WindowMode { get; init; } = "visible";
+
+    /// <summary>
     /// Disposable one-process harness for the existing shared action runtime.
     /// It binds only the current native local Player and must never start a
     /// LAN server, Farmhand provisioner, second process, or Portfolio runtime.
