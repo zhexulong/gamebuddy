@@ -133,7 +133,13 @@ test("player turn opaque admission is one-shot, rejects reentry and close drains
       const mutationGate = new Promise(resolve => { releaseMutation = resolve; });
       const durable = acceptMountedDurableTurn(manifest, lease, admission => consumeMountedDurableAdmission(admission, async binding => {
         events.push("admitted"); await mutationGate; events.push("mutation-start");
-        const receipt = await acceptMountedPlayerMessage(binding, { text: "Hello", locale: "en-US", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0 });
+        const receipt = await acceptMountedPlayerMessage(binding, {
+          text: "Hello",
+          locale: "en-US",
+          idempotencyKey: "abcdefghijklmnopqrstuv",
+          expectedDraftRevision: 0,
+          authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 }
+        });
         events.push("receipt"); return receipt;
       }));
       await new Promise(resolve => setImmediate(resolve));
@@ -228,7 +234,7 @@ test("facade genuine mount binds root and principal before durable writes, repla
       const { identityKey } = await import(new URL("../runtime.js", facadeUrl).href);
       const store = createChatThreadStore(root, identityKey(principal));
       const readState = () => store.resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-      const initialCommand = { text: "Hello", locale: "en-US", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0 };
+       const initialCommand = { text: "Hello", locale: "en-US", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0, authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 } };
       const pristine = (state) => state.messages.length === 0 && state.draft.revision === 0 && state.draft.text === null && state.turnLedger === null && state.idempotency.length === 0;
       const wrong = [
         { ...loaded, runtimeRoot: root + "/other-root" },

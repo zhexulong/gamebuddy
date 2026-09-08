@@ -268,7 +268,11 @@ export async function runMountedProviderStart(
       );
       return { outcome: "not_started", ledger };
     }
-    const text = await scope.readAcceptedMessageText();
+     const plan = await scope.readAcceptedAuthoredContextPlan();
+     const refs = plan.stableSources.map((source) => Object.freeze({ ...source }));
+      if (typeof scope.authoredContextCapability.assertInstall !== "function") throw new Error("semantic_chat_runtime_authored_context_unavailable");
+      scope.authoredContextCapability.assertInstall(scope.facts.turnId, refs);
+     const text = await scope.readAcceptedMessageText();
     // The message read is asynchronous, so it cannot share the previous
     // linearization point. Revalidate immediately before the Host invocation.
     try {

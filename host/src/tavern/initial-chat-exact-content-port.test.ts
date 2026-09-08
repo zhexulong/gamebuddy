@@ -206,7 +206,7 @@ test("genuine stores reject proxy and spread clones without durable artifacts or
     for (const candidate of [new Proxy(fixture.store, {}), { ...fixture.store }]) {
       let rejectedResult: unknown;
       assert.throws(() => {
-        rejectedResult = createInitialChatExactContentCapability(candidate as never);
+        rejectedResult = createInitialChatExactContentCapability(candidate as never, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
       }, /untrusted_chat_thread_store/);
       await assertNoDurableThreadArtifacts(fixture.root, rejectedResult);
     }
@@ -249,7 +249,7 @@ test("fake stores, capabilities, and receipts are rejected", async () => {
     resumeExact: async () => ({ kind: "found", receipt: {} }),
     createExplicit: async () => ({ kind: "created" }),
   });
-  assert.throws(() => createInitialChatExactContentCapability(fake as never), /untrusted_chat_thread_store/);
+  assert.throws(() => createInitialChatExactContentCapability(fake as never, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } }), /untrusted_chat_thread_store/);
   assert.throws(
     () => createInitialChatExactContentPort(fake as never),
     /untrusted_initial_chat_exact_content_capability/,

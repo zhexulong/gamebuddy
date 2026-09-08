@@ -271,7 +271,10 @@ type MountedAcceptanceInput = Readonly<{
   companionId: string;
   continuityId: string;
   selectionGeneration: number;
-  authoredContextPlan?: AcceptedTurnAuthoredContextPlan;
+  authoredContextPreparation: Readonly<{
+    sourceRefs: readonly Readonly<Record<string, string>>[];
+    stableTokenCount: number;
+  }>;
   text: string;
   locale: string;
   idempotencyKey: string;
@@ -284,7 +287,10 @@ type MountedAcceptanceCommand = Readonly<{
   locale: string;
   idempotencyKey: string;
   expectedDraftRevision: number;
-  authoredContextPlan: AcceptedTurnAuthoredContextPlan;
+  authoredContextPreparation: Readonly<{
+    sourceRefs: readonly Readonly<Record<string, string>>[];
+    stableTokenCount: number;
+  }>;
 }>;
 
 export type ChatThreadState = Readonly<{
@@ -1112,15 +1118,15 @@ export function createChatThreadStore(
     request: CreateChatThreadRequest,
     profileMetadataReader: IdentityProfileMetadataReader,
   ): Promise<ChatThreadState> => {
-      validateCreate(request);
-  const profile = validateProfileMetadata(await profileMetadataReader.readExact());
-       const profileAwareRequest: ProfileAwareCreateRequest = Object.freeze({
+    validateCreate(request);
+    const profile = validateProfileMetadata(await profileMetadataReader.readExact());
+    const profileAwareRequest: ProfileAwareCreateRequest = Object.freeze({
          ...request,
          profileId: profile.profileId,
          profileRevision: profile.profileRevision,
          profileCanonicalHash: profile.profileCanonicalHash,
-      });
-      return withDb((db) => {
+    });
+    return withDb((db) => {
         const existing = db.prepare("SELECT 1 FROM tavern_threads WHERE thread_id = ?").get(profileAwareRequest.chatThreadId);
         if (existing) {
           throw new ExactThreadAlreadyExistsError();
@@ -1155,9 +1161,9 @@ export function createChatThreadStore(
         if (profileAwareRequest.worldBookBinding) writeWorldInfoBinding(db, profileAwareRequest.chatThreadId, profileAwareRequest.worldBookBinding);
         for (const message of initialMessages) insertMessage(db, profileAwareRequest.chatThreadId, message);
         db.prepare(`INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms) VALUES (?, NULL, 0, ?)`).run(profileAwareRequest.chatThreadId, timestamp);
-        return readStateFromDb(db, profileAwareRequest.chatThreadId);
-      });
-    };
+      return readStateFromDb(db, profileAwareRequest.chatThreadId);
+    });
+  };
 
   const store: ChatThreadStore = Object.freeze({
     async listThreads(): Promise<readonly ChatThread[]> {
@@ -1584,8 +1590,7 @@ export function createChatThreadStore(
           acceptedAtMs: existingRow.accepted_at_ms,
         });
       }
-      if (input.authoredContextPlan === undefined) throw new Error("chat_turn_context_plan_required");
-      validateContextPlan(input.authoredContextPlan, thread, input);
+      validateAuthoredContextPreparation(input.authoredContextPreparation);
       if (
         current.turnLedger !== null &&
         current.turnLedger.status !== "completed" &&
@@ -1615,7 +1620,7 @@ export function createChatThreadStore(
       db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?").run(
         acceptedAtMs, lockedAt, input.chatThreadId,
       );
-      if (input.authoredContextPlan !== undefined) persistContextPlan(db, input.authoredContextPlan, turnId);
+      persistContextPlan(db, createAcceptedContextPlan(thread, input, turnId), turnId);
 
       db.prepare(
         "UPDATE tavern_drafts SET revision = ?, draft_content = NULL, updated_at_ms = ? WHERE thread_id = ?",
@@ -2126,15 +2131,45 @@ function persistContextPlan(db: DatabaseSync, plan: AcceptedTurnAuthoredContextP
   for (const [ordinal, source] of plan.stableSources.entries()) db.prepare("INSERT INTO tavern_turn_context_sources (turn_id, ordinal, source_id, kind, revision, canonical_hash, total_order_key) VALUES (?, ?, ?, ?, ?, ?, ?)").run(turnId, ordinal, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey);
 }
 
-function validateContextPlan(plan: AcceptedTurnAuthoredContextPlan, thread: ChatThread, input: MountedAcceptanceInput): void {
-  if (plan.threadId !== thread.chatThreadId || !isExactId(plan.turnId) || plan.continuityId !== thread.continuityId || plan.companionId !== thread.companionId || plan.chatSurfaceSessionId !== thread.chatSurfaceSessionId || plan.playerId !== input.playerId || plan.profileId !== thread.profileId || plan.profileRevision !== thread.profileRevision || plan.profileCanonicalHash !== thread.profileCanonicalHash) throw new Error("chat_turn_context_plan_scope_mismatch");
-  if (!Number.isSafeInteger(plan.stableTokenCount) || plan.stableTokenCount < 0) throw new Error("chat_turn_context_token_mismatch");
+function createAcceptedContextPlan(thread: ChatThread, input: MountedAcceptanceInput, turnId: string): AcceptedTurnAuthoredContextPlan {
+  const preparation = input.authoredContextPreparation;
+  validateAuthoredContextPreparation(preparation);
   let previous = "";
   const seen = new Set<string>();
-  for (const source of plan.stableSources) {
-    if (!isExactId(source.sourceId) || !/^[a-f0-9]{64}$/.test(source.canonicalHash) || source.totalOrderKey <= previous || seen.has(`${source.kind}:${source.sourceId}`)) throw new Error("invalid_chat_turn_context_plan");
-    previous = source.totalOrderKey; seen.add(`${source.kind}:${source.sourceId}`);
-  }
+  const stableSources = preparation.sourceRefs.map((source) => {
+    if (!isRecord(source)) throw new Error("invalid_chat_turn_context_plan");
+    const sourceId = source.sourceId;
+    const kind = source.kind;
+    const revision = source.revision;
+    const canonicalHash = source.canonicalHash;
+    const totalOrderKey = source.totalOrderKey;
+    if (
+      !isExactId(sourceId) ||
+      (kind !== "persona" && kind !== "scenario" && kind !== "dialogue_examples" && kind !== "lorebook_constant") ||
+      typeof revision !== "string" ||
+      !/^[a-f0-9]{64}$/.test(canonicalHash) ||
+      typeof totalOrderKey !== "string" ||
+      totalOrderKey <= previous ||
+      seen.has(`${kind}:${sourceId}`)
+    )
+      throw new Error("invalid_chat_turn_context_plan");
+    previous = totalOrderKey;
+    seen.add(`${kind}:${sourceId}`);
+    return Object.freeze({ sourceId, kind, revision, canonicalHash, totalOrderKey });
+  });
+  return Object.freeze({
+    threadId: thread.chatThreadId,
+    turnId,
+    continuityId: thread.continuityId,
+    companionId: thread.companionId,
+    playerId: input.playerId,
+    profileId: thread.profileId,
+    profileRevision: thread.profileRevision,
+    profileCanonicalHash: thread.profileCanonicalHash,
+    chatSurfaceSessionId: thread.chatSurfaceSessionId,
+    stableSources: Object.freeze(stableSources),
+    stableTokenCount: preparation.stableTokenCount,
+  });
 }
 
 function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadState {
@@ -2816,6 +2851,7 @@ function validateIdempotency(value: unknown): IdempotencyRecord {
 }
 
 function validateAcceptanceInput(value: MountedAcceptanceInput): void {
+  validateAuthoredContextPreparation(value.authoredContextPreparation);
   assertId("chatThreadId", value.chatThreadId);
   assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
   assertId("playerId", value.playerId);
@@ -2831,6 +2867,17 @@ function validateAcceptanceInput(value: MountedAcceptanceInput): void {
     throw new Error("invalid_chat_message_locale");
   if (!isText(value.text)) throw new Error("invalid_chat_message_text");
   assertIdempotencyKey(value.idempotencyKey);
+}
+
+function validateAuthoredContextPreparation(value: MountedAcceptanceInput["authoredContextPreparation"]): void {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.sourceRefs) ||
+    !Number.isSafeInteger(value.stableTokenCount) ||
+    value.stableTokenCount < 0
+  )
+    throw new Error("chat_turn_context_token_mismatch");
+  if (value.sourceRefs.some((source) => !isRecord(source))) throw new Error("invalid_chat_turn_context_plan");
 }
 
 function validateAttemptClaimInput(value: MountedAttemptClaimInput): void {
@@ -3246,6 +3293,8 @@ function freezeState(state: ChatThreadState): ChatThreadState {
     messages: Object.freeze([...state.messages]),
     draft: freezeDraft(state.draft),
     turnLedger: state.turnLedger === null ? null : validateTurnLedger(state.turnLedger),
+    currentTurnContextPlan:
+      state.currentTurnContextPlan === undefined ? undefined : validateAcceptedTurnAuthoredContextPlan(state.currentTurnContextPlan),
     idempotency: Object.freeze(state.idempotency.map(validateIdempotency)),
   });
 }

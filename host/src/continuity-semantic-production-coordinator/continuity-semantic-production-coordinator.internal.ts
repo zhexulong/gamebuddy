@@ -146,6 +146,8 @@ type MountedChatRuntimeLeaseRecord = {
   readonly attemptBinding?: MountedAttemptBinding;
   /** Live materialized runtime session for the start scope; never public. */
   readonly providerRuntimeSession?: RuntimeSession;
+  /** Exact mounted authored catalog capability; never public or retained by callers. */
+  readonly authoredContextCapability?: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability;
 
   /**
    * Process-local one-shot reservation for a durable generation-one attempt.
@@ -235,6 +237,10 @@ export type ProviderInvocationScope = Readonly<{
   deadlineAtMs: number;
   /** The live materialized runtime session; only for the single prompt call. */
   runtimeSession: RuntimeSession;
+  /** Callback-scoped authored-context verifier for this exact mounted session. */
+  authoredContextCapability: Readonly<{
+    assertInstall(durableTurnId: string, refs: readonly Readonly<Record<string, string>>[]): void;
+  }>;
   /**
    * The sole store-writer port for this exact attempt's arm/not_started/running
    * transitions and provider-rejection failure. It is callback-scoped and
@@ -258,6 +264,8 @@ export type ProviderInvocationScope = Readonly<{
   ): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger>;
   /** Reads the exact durable accepted player message text for the canonical envelope. */
   readAcceptedMessageText(): Promise<string>;
+  /** Reads the exact durable reference-only authored-context plan. */
+  readAcceptedAuthoredContextPlan(): Promise<import("../tavern/chat-thread-store.js").AcceptedTurnAuthoredContextPlan>;
   /** Fresh exact durable ledger read for ordinary Stop/completion race recovery. */
   readCurrentTurnLedger(): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger>;
   /**
@@ -591,6 +599,14 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
         throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_provider_start_message_unavailable");
       return message.text;
     };
+    const readAcceptedAuthoredContextPlan = async (): Promise<import("../tavern/chat-thread-store.js").AcceptedTurnAuthoredContextPlan> => {
+      assertScopeActive();
+      const store = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
+      const state = await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId);
+      const plan = state.currentTurnContextPlan;
+      if (plan === undefined || plan.turnId !== facts.turnId) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_plan_unavailable");
+      return plan;
+    };
     const readCurrentTurnLedger = async (): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger> => {
       const store = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
       const ledger = (await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId)).turnLedger;
@@ -662,10 +678,20 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
         facts,
         deadlineAtMs,
         runtimeSession,
+        authoredContextCapability: Object.freeze({
+          assertInstall: (durableTurnId: string, refs: readonly Readonly<Record<string, string>>[]) => {
+            assertScopeActive();
+            const capability = mounted.authoredContextCapability;
+            if (capability === undefined) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+             if (typeof capability.assertInstall !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+             capability.assertInstall(durableTurnId, refs);
+          },
+        }),
         transitionStore,
         transitionPresentation,
-        readAcceptedMessageText,
-        readCurrentTurnLedger,
+         readAcceptedMessageText,
+         readAcceptedAuthoredContextPlan,
+         readCurrentTurnLedger,
         assertAdmission,
         beginActivePrompt,
         reserveNativeContentCommit,
@@ -790,8 +816,12 @@ export async function consumeMountedDurableAdmission<T>(
       continuityId: string;
       chatThreadId: string;
       chatSurfaceSessionId: string;
-      selectionGeneration: number;
-    }>,
+       selectionGeneration: number;
+       profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
+       authoredContextCapability: Readonly<{
+         prepare(transientPreflightId: string): Readonly<{ sourceRefs: readonly Readonly<Record<string, string>>[]; stableTokenCount: number }>;
+       }>;
+     }>,
   ) => Promise<T>,
 ): Promise<T> {
   const record = mountedAdmissions.get(admission);
@@ -800,6 +830,8 @@ export async function consumeMountedDurableAdmission<T>(
   record.consuming.value = true;
   try {
     const mounted = record.lease;
+    const mountedStore = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
+    const mountedThread = (await mountedStore.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId)).thread;
     return await callback(
       Object.freeze({
         runtimeRoot: mounted.runtimeRoot,
@@ -809,7 +841,16 @@ export async function consumeMountedDurableAdmission<T>(
         chatThreadId: mounted.chatThreadId,
         chatSurfaceSessionId: mounted.chatSurfaceSessionId,
         selectionGeneration: mounted.selectionGeneration,
-      }),
+        profile: Object.freeze({ profileId: mountedThread.profileId, revision: mountedThread.profileRevision, canonicalHash: mountedThread.profileCanonicalHash }),
+        authoredContextCapability: Object.freeze({
+           prepare: (transientPreflightId: string) => {
+             const capability = mounted.authoredContextCapability;
+             if (capability === undefined) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+             if (typeof capability.prepare !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+             return capability.prepare(transientPreflightId);
+           },
+         }),
+       }),
     );
   } finally {
     record.active.value = false;
@@ -1622,6 +1663,7 @@ async function createFreshChatRuntimeAuthority(
             runtimeOwner: Object.freeze({ ...record.bootstrapPermit.owner }),
           }),
           ...(runtimeSession === undefined ? {} : { providerRuntimeSession: runtimeSession }),
+          ...(record.runtime.authoredContextCapability === undefined ? {} : { authoredContextCapability: record.runtime.authoredContextCapability }),
           startedAttemptIds: new Set<string>(),
           transitionAuthority: createMountedTurnTransitionAuthority(),
           presentationEpoch: createCompanionInterruption(),

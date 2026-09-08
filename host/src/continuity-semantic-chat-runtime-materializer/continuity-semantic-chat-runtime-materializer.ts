@@ -40,6 +40,7 @@ export function createHostChatRuntimeMaterializer(
         return Object.freeze({
           ...disposal,
           runtimeSession: runtime,
+          authoredContextCapability: capability,
         });
       });
     },

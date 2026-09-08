@@ -112,7 +112,7 @@ async function prepareRunning(
     locale: "en-US",
     idempotencyKey: "abcdefghijklmnopqrstuv",
        expectedDraftRevision: 0,
-       authoredContextPlan: { threadId: "thread_01", turnId: "turn_01", continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), chatSurfaceSessionId: "surface_01", stableSources: [], stableTokenCount: 0 },
+       authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
      });
   const claimed = await claimMountedAttempt(binding);
   const attemptId = claimed.attempt.attemptId;
@@ -385,7 +385,7 @@ test("presentation fail is not reachable before the provider start observation",
       locale: "en-US",
       idempotencyKey: "abcdefghijklmnopqrstuv",
        expectedDraftRevision: 0,
-       authoredContextPlan: { threadId: "thread_01", turnId: "turn_01", continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), chatSurfaceSessionId: "surface_01", stableSources: [], stableTokenCount: 0 },
+       authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
      });
     const claimed = await claimMountedAttempt(binding);
     const attemptId = claimed.attempt.attemptId;

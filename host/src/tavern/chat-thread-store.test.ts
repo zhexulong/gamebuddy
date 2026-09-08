@@ -79,7 +79,7 @@ function request(openingSelection: "blank" | typeof opening = opening) {
 }
 
 test("SQLite schema and WAL pragmas are initialized on first access", async () => {
-  const { root, store: s, key } = await store();
+  const { root, store: s, creation, key } = await store();
   try {
     await creation.createExplicit(request());
     const dbPath = join(root, "tavern", "v2", "continuities", key, "tavern.sqlite");
@@ -498,10 +498,25 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
       text: "Hello from P4",
       locale: "en-US",
       idempotencyKey: "abcdefghijklmnopqrstuv",
-       expectedDraftRevision: 0,
-       authoredContextPlan: { threadId: "thread_01", turnId: "turn_01", continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), chatSurfaceSessionId: "surface_01", stableSources: [], stableTokenCount: 0 },
+        expectedDraftRevision: 0,
+        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
      });
     assert.equal(accepted.status, "accepted_queued");
+
+    const acceptedState = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(acceptedState.currentTurnContextPlan, {
+      threadId: "thread_01",
+      turnId: accepted.turnId,
+      continuityId: "continuity_01",
+      companionId: "companion_01",
+      playerId: "player_01",
+      profileId: "profile_01",
+      profileRevision: 1,
+      profileCanonicalHash: "a".repeat(64),
+      chatSurfaceSessionId: "surface_01",
+      stableSources: [],
+      stableTokenCount: 0,
+    });
 
     const claimBinding = {
       ...binding,
