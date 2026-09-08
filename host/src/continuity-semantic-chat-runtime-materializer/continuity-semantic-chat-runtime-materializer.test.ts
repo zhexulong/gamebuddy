@@ -144,6 +144,8 @@ test("materializes only an exact Chat permit and mints permit-exact Host lifecyc
 test("reverse disposal clears the authored-context capability before disposing Pi", async () => {
   const events: string[] = [];
   const capability = Object.freeze({
+    prepare: () => Object.freeze({ sourceRefs: Object.freeze([]), stableTokenCount: 0 }),
+    assertInstall: () => undefined,
     clear: async () => {
       events.push("clear");
     },
@@ -167,6 +169,8 @@ test("reverse disposal aggregates authored capability clear and Pi disposal fail
   await assert.rejects(
     closeMaterializedChatRuntime(Object.freeze({
       authoredContextCapability: Object.freeze({
+        prepare: () => Object.freeze({ sourceRefs: Object.freeze([]), stableTokenCount: 0 }),
+        assertInstall: () => undefined,
         clear: async () => {
           events.push("clear");
           throw clearError;
@@ -232,6 +236,8 @@ test("reverse disposal disposes and aggregates when authored capability clear fa
     closeMaterializedChatRuntime(
       Object.freeze({
         authoredContextCapability: Object.freeze({
+          prepare: () => Object.freeze({ sourceRefs: Object.freeze([]), stableTokenCount: 0 }),
+          assertInstall: () => undefined,
           clear: async () => {
             events.push("clear");
             throw clearError;
@@ -333,6 +339,8 @@ test("post-factory permit failure preserves primary and reverse cleanup failures
     await new Promise((resolve) => setTimeout(resolve, 20));
     return Object.freeze({
       authoredContextCapability: Object.freeze({
+        prepare: () => Object.freeze({ sourceRefs: Object.freeze([]), stableTokenCount: 0 }),
+        assertInstall: () => undefined,
         clear: async () => {
           throw clearError;
         },

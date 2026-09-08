@@ -61,11 +61,11 @@ test("Tavern conversation explicitly creates a blank exact-surface thread and du
     async commitOpening() {
       return state;
     },
-    async appendPlayer(_thread, message) {
+    async appendPlayer(_thread: string, message: { messageId: string }) {
       calls.push(`player:${message.messageId}`);
       return state;
     },
-    async commitResponse(_thread, message) {
+    async commitResponse(_thread: string, message: { messageId: string }) {
       calls.push(`response:${message.messageId}`);
       return state;
     },
@@ -100,9 +100,6 @@ test("Tavern retry reads the exact durable binding and permits only a safe no-ef
     ...selectionMethods,
     async resumeThread() {
       resumeCount++;
-      return responseState;
-    },
-    async createExplicit() {
       return responseState;
     },
     async commitOpening() {
@@ -150,9 +147,6 @@ test("Tavern conversation fails closed for resume and append errors", async () =
     async resumeThread() {
       throw new Error("chat_thread_surface_mismatch");
     },
-    async createExplicit() {
-      throw new Error("must_not_create");
-    },
     async commitOpening() {
       return state;
     },
@@ -168,9 +162,6 @@ test("Tavern conversation fails closed for resume and append errors", async () =
   const failingAppend: ChatThreadStore = {
     ...selectionMethods,
     async resumeThread() {
-      return state;
-    },
-    async createExplicit() {
       return state;
     },
     async commitOpening() {
@@ -194,12 +185,8 @@ test("strict semantic content resume opens only the specified existing exact bin
   const calls: string[] = [];
   const store = {
     ...selectionMethods,
-    async resumeThread(threadId, surfaceId) {
+    async resumeThread(threadId: string, surfaceId: string) {
       calls.push(`resume:${threadId}:${surfaceId}`);
-      return state;
-    },
-    async createExplicit() {
-      calls.push("create");
       return state;
     },
     async commitOpening() {
@@ -224,10 +211,6 @@ test("strict semantic content resume fails closed without creating missing or mi
     async resumeThread() {
       missingCalls.push("resume");
       throw new Error("chat_thread_not_found");
-    },
-    async createExplicit() {
-      missingCalls.push("create");
-      return state;
     },
     async commitOpening() {
       return state;
@@ -255,10 +238,6 @@ test("strict semantic content resume fails closed without creating missing or mi
         calls.push("resume");
         return state;
       },
-      async createExplicit() {
-        calls.push("create");
-        return state;
-      },
       async commitOpening() {
         return state;
       },
@@ -281,12 +260,8 @@ test("semantic content port returns an immutable exact receipt only after durabl
   const calls: string[] = [];
   const store = {
     ...selectionMethods,
-    async resumeThread(threadId, surfaceId) {
+    async resumeThread(threadId: string, surfaceId: string) {
       calls.push(`resume:${threadId}:${surfaceId}`);
-      return state;
-    },
-    async createExplicit(request: import("./chat-thread-store.js").CreateChatThreadRequest) {
-      calls.push(`create:${request.chatThreadId}`);
       return state;
     },
     async commitOpening() {
@@ -326,10 +301,6 @@ test("semantic content port classifies exact missing and existing without confla
       missingCalls.push("resume");
       throw new Error("chat_thread_not_found");
     },
-    async createExplicit() {
-      missingCalls.push("create");
-      return state;
-    },
     async commitOpening() {
       return state;
     },
@@ -353,10 +324,6 @@ test("semantic content port classifies exact missing and existing without confla
       existingCalls.push("resume");
       return state;
     },
-    async createExplicit() {
-      existingCalls.push("create");
-      throw new Error("chat_thread_already_exists");
-    },
     async commitOpening() {
       return state;
     },
@@ -377,9 +344,6 @@ test("semantic content port classifies exact missing and existing without confla
   const unavailable: ChatThreadStore = {
     ...selectionMethods,
     async resumeThread() {
-      throw new Error("storage_unavailable");
-    },
-    async createExplicit() {
       throw new Error("storage_unavailable");
     },
     async commitOpening() {
@@ -413,10 +377,6 @@ test("semantic content port rejects every mismatched exact binding after readbac
       ...selectionMethods,
       async resumeThread() {
         calls.push("resume");
-        return state;
-      },
-      async createExplicit() {
-        calls.push("create");
         return state;
       },
       async commitOpening() {

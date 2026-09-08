@@ -124,8 +124,8 @@ async function prepare(
     text: "Hello",
     locale: "en-US",
     idempotencyKey: "abcdefghijklmnopqrstuv",
-     expectedDraftRevision: 0,
-     authoredContextPlan: { threadId: "thread_01", turnId: "turn_01", continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), chatSurfaceSessionId: "surface_01", stableSources: [], stableTokenCount: 0 },
+      expectedDraftRevision: 0,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
    });
   if (target === "accepted_queued") return { store, attemptId: "" };
   const claimed = await claimMountedAttempt(binding);

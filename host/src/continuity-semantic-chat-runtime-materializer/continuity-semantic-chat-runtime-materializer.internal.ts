@@ -13,9 +13,11 @@ import type { RuntimeSession } from "../runtime.js";
 /** Minimal reverse-disposal boundary; no Pi session, runtime root, or binding leaks. */
 type ChatRuntimeStableContextLifecycle = Readonly<{}>;
 
+import type { TavernAuthoredContextRuntimeCapability } from "@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge";
+
 export type ChatRuntimeDisposal = Readonly<{
   session: Readonly<{ dispose(): void }>;
-  authoredContextCapability?: Readonly<{ clear(): Promise<void> }>;
+  authoredContextCapability?: TavernAuthoredContextRuntimeCapability;
 }>;
 
 
@@ -26,6 +28,7 @@ export type MaterializedChatRuntime = Readonly<{
    * Host production materializer and is consumed only by the coordinator.
    */
   runtimeSession?: RuntimeSession;
+  authoredContextCapability?: TavernAuthoredContextRuntimeCapability;
   /** Runtime resources only. The later coordinator owns durable terminalization and binding close. */
   close(): Promise<void>;
 }>;
@@ -33,6 +36,7 @@ export type ChatRuntimeMaterialization = ChatRuntimeDisposal &
   Readonly<{
     /** Never exposed by this module's public product; retained for production mounting only. */
     runtimeSession?: RuntimeSession;
+  authoredContextCapability?: TavernAuthoredContextRuntimeCapability;
   }>;
 export type ChatRuntimeMaterializer = Readonly<{
   /** Construction-zone-only: consumes one callback-admitted Chat binding reservation. */
@@ -96,6 +100,7 @@ function finalizeMaterializedChatRuntime(
   return Object.freeze({
     receipt,
     ...(runtime.runtimeSession === undefined ? {} : { runtimeSession: runtime.runtimeSession }),
+    ...(runtime.authoredContextCapability === undefined ? {} : { authoredContextCapability: runtime.authoredContextCapability }),
     close: () => {
       if (closePromise !== undefined) return closePromise;
       let shared!: Promise<void>;

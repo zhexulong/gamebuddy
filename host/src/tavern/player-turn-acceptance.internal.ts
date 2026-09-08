@@ -4,14 +4,14 @@ import {
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { type AcceptedQueuedTurn, acceptMountedPlayerMessage, type AcceptedTurnAuthoredContextPlan } from "./chat-thread-store.js";
+import { randomUUID } from "node:crypto";
+import { type AcceptedQueuedTurn, acceptMountedPlayerMessage } from "./chat-thread-store.js";
 
 type MountedAcceptanceCommand = Readonly<{
   text: string;
   locale: string;
   idempotencyKey: string;
   expectedDraftRevision: number;
-  authoredContextPlan: AcceptedTurnAuthoredContextPlan;
 }>;
 
 /**
@@ -24,6 +24,15 @@ export async function acceptMountedDurableTurnFromFacade(
   command: MountedAcceptanceCommand,
 ): Promise<AcceptedQueuedTurn> {
   return acceptMountedDurableTurn(manifest, lease, (admission) =>
-    consumeMountedDurableAdmission(admission, (binding) => acceptMountedPlayerMessage(binding, command)),
+    consumeMountedDurableAdmission(admission, async (binding) => {
+      const prepared = binding.authoredContextCapability.prepare(`preflight_${randomUUID().replace(/-/gu, "")}`);
+      return acceptMountedPlayerMessage(binding, {
+        ...command,
+        authoredContextPreparation: Object.freeze({
+          sourceRefs: Object.freeze(prepared.sourceRefs.map((source) => Object.freeze({ ...source }))),
+          stableTokenCount: prepared.stableTokenCount,
+        }),
+      });
+    }),
   );
 }

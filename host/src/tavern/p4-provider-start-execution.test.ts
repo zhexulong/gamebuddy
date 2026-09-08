@@ -113,6 +113,8 @@ type ScopeOverrides = Readonly<{
   assertAdmission?: () => void;
   beginActivePrompt?: () => () => void;
   readAcceptedMessageText?: () => Promise<string>;
+  readAcceptedAuthoredContextPlan?: () => Promise<Readonly<{ turnId: string; stableSources: readonly Readonly<Record<string, string>>[] }>>;
+  authoredContextCapability?: Readonly<{ assertInstall(durableTurnId: string, refs: readonly Readonly<Record<string, string>>[]): void }>;
   readCurrentTurnLedger?: () => Promise<ChatTurnLedger>;
   runtimeSession?: object;
   presentationCommitted?: () => boolean;
@@ -292,6 +294,10 @@ function createScope(overrides: ScopeOverrides = {}) {
     transitionStore,
     transitionPresentation,
     readAcceptedMessageText: overrides.readAcceptedMessageText ?? (async () => "Hello"),
+    readAcceptedAuthoredContextPlan:
+      overrides.readAcceptedAuthoredContextPlan ??
+      (async () => Object.freeze({ turnId: facts.turnId, stableSources: Object.freeze([]) })),
+    authoredContextCapability: overrides.authoredContextCapability ?? Object.freeze({ assertInstall: () => undefined }),
     assertAdmission: overrides.assertAdmission ?? (() => undefined),
     beginActivePrompt: overrides.beginActivePrompt ?? (() => () => undefined),
     readCurrentTurnLedger:
@@ -310,6 +316,64 @@ function createScope(overrides: ScopeOverrides = {}) {
   return { scope, transitions, presentationTransitions };
 }
 
+
+test("P4c installs the durable authored-context plan before its plain-text prompt", async () => {
+  const events: string[] = [];
+  let promptText: string | undefined;
+  const { scope } = createScope({
+    readAcceptedAuthoredContextPlan: async () => {
+      events.push("read-plan");
+      return Object.freeze({
+        turnId: facts.turnId,
+        stableSources: Object.freeze([Object.freeze({ sourceId: "persona_01", kind: "persona", revision: "1", canonicalHash: "a".repeat(64), totalOrderKey: "01" })]),
+      });
+    },
+    authoredContextCapability: Object.freeze({
+      assertInstall(turnId, refs) {
+        assert.equal(turnId, facts.turnId);
+        assert.equal(refs.length, 1);
+        events.push("assert-install");
+      },
+    }),
+    readAcceptedMessageText: async () => {
+      events.push("read-text");
+      return "plain player text";
+    },
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver() { return () => undefined; },
+      session: Object.freeze({
+        prompt(text: string) {
+          promptText = text;
+          events.push("prompt");
+          return Promise.resolve();
+        },
+      }),
+    }),
+  });
+
+  await runMountedProviderStart(scope);
+
+  assert.equal(promptText, "plain player text");
+  assert.deepEqual(events, ["read-plan", "assert-install", "read-text", "prompt"]);
+});
+
+test("P4c fails closed on an authored-context mismatch before prompt", async () => {
+  let promptCalls = 0;
+  const { scope } = createScope({
+    authoredContextCapability: Object.freeze({
+      assertInstall() { throw new Error("authored_context_catalog_mismatch"); },
+    }),
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver() { return () => undefined; },
+      session: Object.freeze({
+        prompt() { promptCalls += 1; return Promise.resolve(); },
+      }),
+    }),
+  });
+
+  await assert.rejects(() => runMountedProviderStart(scope), /authored_context_catalog_mismatch/);
+  assert.equal(promptCalls, 0);
+});
 
 test("P4c terminalizes an observed prompt without a durable presentation as failed", async () => {
   let observer: Observer | undefined;
