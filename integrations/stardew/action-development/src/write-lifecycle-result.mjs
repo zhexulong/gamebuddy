@@ -1,3 +1,4 @@
+import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 
@@ -37,7 +38,7 @@ async function writeLifecycleResult(resultFile, text) {
   if (!parentStat.isDirectory() || parentStat.isSymbolicLink() || await realpath(parent) !== parent) {
     throw new Error("lifecycle_result_parent_untrusted");
   }
-  const handle = await open(resultFile, "w", 0o600);
+  const handle = await open(resultFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
   try {
     await handle.writeFile(text, "utf8");
     await handle.sync();

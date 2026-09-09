@@ -37,6 +37,8 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
 
             "navigate_to_destination" => this.Navigate(request, ledger),
 
+            "face_direction" => this.executions.RequestLocalFaceDirection(request, ledger),
+
             _ => new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Blocked, "unsupported_action", ledger.CurrentRevision, null),
         };
     }

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew;
 
@@ -31,6 +32,8 @@ internal enum FarmhandCanonicalArgumentKind
     SlotTargetTile = 5,
     SlotItemTargetTile = 6,
     NavigationDestination = 7,
+    Emote = 8,
+    Direction = 9,
 }
 
 /// <summary>
@@ -48,7 +51,9 @@ internal sealed record FarmhandCanonicalRequest(
     string? ExpectedTargetId = null,
     string? DestinationKind = null,
     string? DestinationLabel = null,
-    string? DestinationReference = null)
+    string? DestinationReference = null,
+    string? Emote = null,
+    string? Direction = null)
 {
     internal static FarmhandCanonicalRequest NoArguments(string actionId) =>
         new(actionId, FarmhandCanonicalArgumentKind.None);
@@ -73,6 +78,12 @@ internal sealed record FarmhandCanonicalRequest(
 
     internal static FarmhandCanonicalRequest NavigationDestination(string actionId, string kind, string? label, string? reference) =>
         new(actionId, FarmhandCanonicalArgumentKind.NavigationDestination, DestinationKind: kind, DestinationLabel: label, DestinationReference: reference);
+
+    internal static FarmhandCanonicalRequest EmoteRequest(string actionId, string emote) =>
+        new(actionId, FarmhandCanonicalArgumentKind.Emote, Emote: emote);
+
+    internal static FarmhandCanonicalRequest DirectionRequest(string actionId, string direction) =>
+        new(actionId, FarmhandCanonicalArgumentKind.Direction, Direction: direction);
 }
 
 /// <summary>Immutable dispatch facts supplied when an action is admitted.</summary>
@@ -98,7 +109,8 @@ internal sealed record FarmhandExecutionReceipt(
     ExecutionState State,
     string ReasonCode,
     long Revision,
-    string? Evidence);
+    string? Evidence,
+    BridgeLocalObservation? Observation = null);
 
 internal enum FarmhandExecutionJournalRecordState
 {
@@ -479,7 +491,20 @@ internal sealed class FarmhandExecutionJournal
             && Enum.IsDefined(receipt.State)
             && IsValidReasonCode(receipt.ReasonCode)
             && receipt.Revision >= 0
-            && (receipt.Evidence is null || receipt.Evidence.Length <= 4096);
+            && (receipt.Evidence is null || receipt.Evidence.Length <= 4096)
+            && ValidateObservation(receipt.Observation);
+    }
+
+    private static bool ValidateObservation(BridgeLocalObservation? observation)
+    {
+        if (observation is null)
+            return true;
+        return observation.Location is { Length: >= 0 and <= 128 }
+            && observation.TileX >= 0
+            && observation.TileY >= 0
+            && observation.Facing is >= 0 and <= 3
+            && observation.InGameTime is { Length: 4 }
+            && observation.Revision >= 0;
     }
 
     private static bool ValidateCanonicalRequest(FarmhandCanonicalRequest? request)
@@ -503,6 +528,8 @@ internal sealed class FarmhandExecutionJournal
             FarmhandCanonicalArgumentKind.SlotItemTargetTile => HasTile(request) && request.Slot is >= 0 and <= 36
                 && IsValidId(request.ExpectedTargetId) && IsValidId(request.ExpectedQualifiedItemId),
             FarmhandCanonicalArgumentKind.NavigationDestination => ValidateDestination(request),
+            FarmhandCanonicalArgumentKind.Emote => ValidateEmote(request),
+            FarmhandCanonicalArgumentKind.Direction => ValidateDirection(request),
             _ => false,
         };
         return valid;
@@ -511,17 +538,19 @@ internal sealed class FarmhandExecutionJournal
     private static bool HasNoArguments(FarmhandCanonicalRequest request) =>
         request.X is null && request.Y is null && request.Slot is null
         && request.ExpectedQualifiedItemId is null && request.ExpectedTargetId is null
-        && request.DestinationKind is null && request.DestinationLabel is null && request.DestinationReference is null;
+        && request.DestinationKind is null && request.DestinationLabel is null && request.DestinationReference is null
+        && request.Emote is null && request.Direction is null;
 
     private static bool HasTile(FarmhandCanonicalRequest request) =>
         request.X is >= 0 && request.Y is >= 0
-        && request.DestinationKind is null && request.DestinationLabel is null && request.DestinationReference is null;
+        && request.DestinationKind is null && request.DestinationLabel is null && request.DestinationReference is null
+        && request.Emote is null && request.Direction is null;
 
     private static bool ValidateDestination(FarmhandCanonicalRequest request)
     {
         if (request.X is not null || request.Y is not null || request.Slot is not null
             || request.ExpectedQualifiedItemId is not null || request.ExpectedTargetId is not null
-            || request.DestinationKind is null)
+            || request.DestinationKind is null || request.Emote is not null || request.Direction is not null)
         {
             return false;
         }
@@ -533,6 +562,26 @@ internal sealed class FarmhandExecutionJournal
             "ref" => request.DestinationLabel is null && IsValidId(request.DestinationReference),
             _ => false,
         };
+    }
+
+    private static bool ValidateEmote(FarmhandCanonicalRequest request)
+    {
+        return request.Emote is not null
+            && FarmhandActionCatalog.EmoteEnum.Contains(request.Emote)
+            && request.X is null && request.Y is null && request.Slot is null
+            && request.ExpectedQualifiedItemId is null && request.ExpectedTargetId is null
+            && request.DestinationKind is null && request.DestinationLabel is null && request.DestinationReference is null
+            && request.Direction is null;
+    }
+
+    private static bool ValidateDirection(FarmhandCanonicalRequest request)
+    {
+        return request.Direction is not null
+            && FarmhandActionCatalog.DirectionEnum.Contains(request.Direction)
+            && request.X is null && request.Y is null && request.Slot is null
+            && request.ExpectedQualifiedItemId is null && request.ExpectedTargetId is null
+            && request.DestinationKind is null && request.DestinationLabel is null && request.DestinationReference is null
+            && request.Emote is null;
     }
 
     private static bool SameImmutableTuple(

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew.Core.Protocol;
 
@@ -767,7 +768,17 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 || !HasExactProperties(args, argumentProperties)
                 || (action.GetString() == "navigate_to_destination"
                     && (!args.TryGetProperty("destination", out JsonElement destination)
-                        || !IsExactNavigationDestinationSelector(destination))))
+                        || !IsExactNavigationDestinationSelector(destination)))
+                || (action.GetString() == "express_emote"
+                    && (!args.TryGetProperty("emote", out JsonElement emote)
+                        || emote.ValueKind != JsonValueKind.String
+                        || emote.GetString() is not { } emoteStr
+                        || !FarmhandActionCatalog.EmoteEnum.Contains(emoteStr, StringComparer.Ordinal)))
+                || (action.GetString() == "face_direction"
+                    && (!args.TryGetProperty("direction", out JsonElement direction)
+                        || direction.ValueKind != JsonValueKind.String
+                        || direction.GetString() is not { } directionStr
+                        || !FarmhandActionCatalog.DirectionEnum.Contains(directionStr, StringComparer.Ordinal))))
             {
                 reasonCode = "invalid_envelope";
                 return false;
@@ -907,6 +918,87 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         }
     }
 
+    public static bool TryDeserializeExecutionReceipt(
+        string json,
+        out BridgeEnvelope<BridgeReceipt>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "execution_receipt", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound receipt parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!payload.TryGetProperty("executionId", out JsonElement executionId) || executionId.ValueKind != JsonValueKind.String || !IsOpaqueId(executionId.GetString())
+                || !payload.TryGetProperty("requestId", out JsonElement requestId) || requestId.ValueKind != JsonValueKind.String || !IsOpaqueId(requestId.GetString())
+                || !payload.TryGetProperty("actionId", out JsonElement actionId) || actionId.ValueKind != JsonValueKind.String
+                || !payload.TryGetProperty("state", out JsonElement state) || state.ValueKind != JsonValueKind.String
+                || !payload.TryGetProperty("reasonCode", out JsonElement reason) || reason.ValueKind != JsonValueKind.String
+                || !payload.TryGetProperty("revision", out JsonElement revision) || !revision.TryGetInt64(out _))
+            {
+                reasonCode = "invalid_envelope";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeReceipt>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_envelope";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
+    public static bool TryDeserializeWorldFact(
+        string json,
+        out BridgeEnvelope<BridgeWorldFact>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "world_fact", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound world fact parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!payload.TryGetProperty("eventId", out JsonElement eventId) || eventId.ValueKind != JsonValueKind.String || !IsOpaqueId(eventId.GetString())
+                || !payload.TryGetProperty("sourceEventId", out JsonElement sourceEventId) || sourceEventId.ValueKind != JsonValueKind.String || !IsOpaqueId(sourceEventId.GetString())
+                || !payload.TryGetProperty("kind", out JsonElement kind) || kind.ValueKind != JsonValueKind.String
+                || !payload.TryGetProperty("observedTick", out JsonElement tick) || !tick.TryGetInt64(out _)
+                || !payload.TryGetProperty("revision", out JsonElement revision) || !revision.TryGetInt32(out _))
+            {
+                reasonCode = "invalid_envelope";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeWorldFact>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_envelope";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
     private static bool TryReadInboundPayload(
         string json,
         string expectedType,
@@ -1021,6 +1113,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" => new[] { "x", "y", "slot", "expectedTargetId" },
         "use_item" => new[] { "slot", "expectedQualifiedItemId" },
         "navigate_to_destination" => new[] { "destination" },
+        "express_emote" => new[] { "emote" },
+        "face_direction" => new[] { "direction" },
         _ => null,
     };
 }

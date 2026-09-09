@@ -49,7 +49,8 @@
         "execution_receipt",
         "error",
         "semantic_event",
-        "lifecycle"
+        "lifecycle",
+        "world_fact"
       ]
     },
     "payload": {
@@ -333,6 +334,22 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/lifecycle"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "world_fact"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/worldFact"
           }
         }
       }
@@ -1558,7 +1575,9 @@
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["clear_debris", "collect_animal_product", "feed_animal"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYTargetArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["plant_seed", "fertilize_tile"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "machine_load" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/machineLoadArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "use_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotQualifiedArgs" } } } }
+        { "if": { "required": ["action"], "properties": { "action": { "const": "use_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotQualifiedArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "express_emote" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/expressEmoteArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "face_direction" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/faceDirectionArgs" } } } }
       ],
       "properties": {
         "requestId": {
@@ -1597,7 +1616,9 @@
             "break_rock_source",
             "clear_hoedirt",
             "dig_artifact_spot",
-            "refill_watering_can"
+            "refill_watering_can",
+            "express_emote",
+            "face_direction"
           ]
         },
         "args": {
@@ -1708,6 +1729,9 @@
             "object",
             "null"
           ]
+        },
+        "observation": {
+          "$ref": "#/$defs/localObservation"
         }
       }
     },
@@ -1875,6 +1899,142 @@
         },
         "reasonCode": {
           "$ref": "#/$defs/reasonCode"
+        }
+      }
+    },
+    "expressEmoteArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "emote"
+      ],
+      "properties": {
+        "emote": {
+          "enum": [
+            "happy",
+            "sad",
+            "heart",
+            "exclamation",
+            "note",
+            "sleep",
+            "game",
+            "question",
+            "x",
+            "pause",
+            "blush",
+            "angry",
+            "yes",
+            "no",
+            "sick",
+            "laugh",
+            "surprised",
+            "hi",
+            "taunt",
+            "uh",
+            "music",
+            "jar"
+          ]
+        }
+      }
+    },
+    "faceDirectionArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "direction"
+      ],
+      "properties": {
+        "direction": {
+          "enum": [
+            "up",
+            "right",
+            "down",
+            "left"
+          ]
+        }
+      }
+    },
+    "localObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "location",
+        "tileX",
+        "tileY",
+        "facing",
+        "inGameTime",
+        "playerNearby",
+        "revision"
+      ],
+      "properties": {
+        "location": {
+          "type": "string"
+        },
+        "tileX": {
+          "type": "integer"
+        },
+        "tileY": {
+          "type": "integer"
+        },
+        "facing": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "inGameTime": {
+          "type": "string"
+        },
+        "playerNearby": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      }
+    },
+    "worldFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eventId",
+        "sourceEventId",
+        "kind",
+        "observedTick",
+        "revision"
+      ],
+      "properties": {
+        "eventId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "sourceEventId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "observedTick": {
+          "type": "integer"
+        },
+        "gameTime": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "deduplicationKey": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "payloadJson": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payload": {
+          "type": "object"
         }
       }
     }

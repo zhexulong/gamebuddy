@@ -17,7 +17,7 @@ public sealed class FarmhandActionRouterPropertyTests
         public bool TryGetExistingReceipt(string requestId, out LocalExecutionReceipt receipt) { receipt = default!; return false; }
         public void BindAction(string requestId, string actionId) { }
         public LocalExecutionReceipt Remember(LocalExecutionReceipt receipt) => receipt;
-        public LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence) => new(executionId, requestId, state, reasonCode, 1, evidence);
+        public LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null) => new(executionId, requestId, state, reasonCode, 1, evidence, Observation: observation);
         public void AddTrace(LocalExecutionReceipt receipt) { }
     }
 

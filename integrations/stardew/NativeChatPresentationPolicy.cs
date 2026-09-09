@@ -58,6 +58,6 @@ internal static class NativeChatPresentationPolicy
             && localPlayer is not null
             && hostPlayer is not null
             && localPlayer.UniqueMultiplayerID == configuredFarmhand.UniqueMultiplayerID
-            && hostPlayer.UniqueMultiplayerID != configuredFarmhand.UniqueMultiplayerID;
+            && (hostPlayer.UniqueMultiplayerID != configuredFarmhand.UniqueMultiplayerID || Game1.chatBox is not null);
     }
 }

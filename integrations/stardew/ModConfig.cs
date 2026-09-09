@@ -104,9 +104,9 @@ public sealed class ModConfig
     {
         "movement_navigation", "world_navigation", "body_tools", "transport_warps", "farming_crops", "resource_gathering", "inventory_items",
         "crafting_cooking", "machines_processing", "animals_pets", "npc_social", "shops_economy",
-        "buildings_farm_management", "quests_progression", "story_world_scripts", "festivals_minigames", "calendar_day_progression",
+        "buildings_farm_management", "quests_progression", "story_world_scripts", "festivals_minigames", "calendar_day_progression", "expression",
     }, StringComparer.Ordinal);
-    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "npc_relationship", "pet_animal" }, StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "npc_relationship", "pet_animal", "express_emote", "face_direction" }, StringComparer.Ordinal);
 
     private static string ActionFamily(string action) => action switch
     {
@@ -138,6 +138,8 @@ public sealed class ModConfig
         "clear_hoedirt" => "farming_crops",
         "dig_artifact_spot" => "resource_gathering",
         "refill_watering_can" => "farming_crops",
+        "express_emote" => "expression",
+        "face_direction" => "movement_navigation",
         _ => string.Empty,
     };
 

@@ -39,6 +39,8 @@ export const EXECUTION_STATES = [
 ] as const;
 export type ExecutionState = (typeof EXECUTION_STATES)[number];
 
+export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
+
 type ActiveExecution = Readonly<{
   executionId: string;
   requestId: string;
@@ -362,7 +364,9 @@ export type ExecutionRequest = Readonly<{
     | "chop_tree_source"
     | "break_rock_source"
     | "clear_hoedirt"
-    | "dig_artifact_spot";
+    | "dig_artifact_spot"
+    | "express_emote"
+    | "face_direction";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
@@ -438,6 +442,16 @@ export type NavigationReadResult =
       unlockState: null;
     }>;
 
+export type LocalObservation = Readonly<{
+  location: string;
+  tileX: number;
+  tileY: number;
+  facing: number;
+  inGameTime: string;
+  playerNearby: boolean;
+  revision: number;
+}>;
+
 export type ExecutionReceipt = Readonly<{
   executionId: string;
   requestId: string;
@@ -447,7 +461,22 @@ export type ExecutionReceipt = Readonly<{
   reasonCode: string;
   revision: number;
   evidence: Readonly<Record<string, unknown>> | null;
+  observation?: LocalObservation | null;
 }>;
+
+export interface WorldFactPayload {
+  readonly eventId: string;
+  readonly sourceEventId: string;
+  readonly kind: string;
+  readonly observedTick: number;
+  readonly gameTime?: string | null;
+  readonly revision: number;
+  readonly deduplicationKey?: string;
+  readonly payload?: Readonly<Record<string, unknown>> | null;
+  readonly payloadJson?: string | null;
+}
+
+export interface WorldFact extends WorldFactPayload {}
 
 /**
  * Typed cancel identity for one exact execution. The Mod rejects a missing,
@@ -552,12 +581,32 @@ type PlayerControlReceipt = Readonly<{
   status: "accepted";
 }>;
 
+export type ActionDescriptorArgument = Readonly<{
+  name: string;
+  type: string;
+  enum?: readonly string[];
+  boundedEnumValues?: readonly string[];
+}>;
+
+export type ActionRegistrationDescriptor = Readonly<{
+  arguments?: readonly ActionDescriptorArgument[];
+  argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[] }>>;
+  outputFacts?: Readonly<Record<string, string>>;
+  resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }> | string;
+  effect?: "read" | "write";
+  evidenceSchema?: string | Readonly<Record<string, unknown>>;
+  nativeBinding?: string;
+  canonicalCodec?: string;
+  postcondition?: string | Readonly<{ name: string }>;
+}>;
+
 export type ActionRegistration = Readonly<{
   actionId: string;
   familyId: string;
   identityVersion: number;
   lifecycle: "published" | "experimental";
   kind: "execution" | "read_only";
+  descriptor?: ActionRegistrationDescriptor;
 }>;
 
 /** Mod-declared registrations, ordered exactly as the Mod projected them. */
@@ -629,14 +678,15 @@ export type BridgeMessage =
   | Envelope<"program_events_result", BodyProgramEventsResult>
   | Envelope<"error", Readonly<{ reasonCode: string }>>
   | Envelope<"semantic_event", SemanticEvent>
-  | Envelope<"lifecycle", Readonly<{ state: "connected" | "disconnected" | "world_unavailable"; reasonCode: string }>>;
+  | Envelope<"lifecycle", Readonly<{ state: "connected" | "disconnected" | "world_unavailable"; reasonCode: string }>>
+  | Envelope<"world_fact", WorldFactPayload>;
 
 const BRIDGE_MESSAGE_TYPES = [
   "hello", "hello_ack", "observe_request", "navigation_read_request", "navigation_read_result", "snapshot", "catalog_update",
   "execution_request", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
   "system_notice_receipt", "companion_presentation_receipt", "player_control_receipt", "execution_receipt",
   "program_verify", "program_verify_result", "program_submit", "program_submit_result", "program_status", "program_status_result",
-  "program_events", "program_events_result", "error", "semantic_event", "lifecycle",
+  "program_events", "program_events_result", "error", "semantic_event", "lifecycle", "world_fact",
 ] as const;
 
 const SNAPSHOT_KEYS = [
@@ -718,6 +768,8 @@ const EXECUTION_ACTION_ARGUMENT_KEYS: Readonly<Record<ExecutionRequest["action"]
   break_rock_source: ["slot", "x", "y", "expectedTargetId"],
   clear_hoedirt: ["slot", "x", "y", "expectedTargetId"],
   dig_artifact_spot: ["slot", "x", "y", "expectedTargetId"],
+  express_emote: ["emote"],
+  face_direction: ["direction"],
 };
 
 export function newEnvelope<
@@ -950,6 +1002,8 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         isReasonCode(payload.reasonCode)
         ? null
         : "invalid_lifecycle";
+    case "world_fact":
+      return validateWorldFact(payload);
   }
 }
 
@@ -1070,7 +1124,9 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "chop_tree_source" &&
     value.action !== "break_rock_source" &&
     value.action !== "clear_hoedirt" &&
-    value.action !== "dig_artifact_spot"
+    value.action !== "dig_artifact_spot" &&
+    value.action !== "express_emote" &&
+    value.action !== "face_direction"
   )
     return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
@@ -1315,6 +1371,12 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       value.args.expectedQualifiedItemId.length > 128
     )
       return "invalid_item_use_target";
+  } else if (value.action === "express_emote") {
+    if (typeof value.args.emote !== "string" || value.args.emote.length === 0 || value.args.emote.length > 64)
+      return "invalid_emote";
+  } else if (value.action === "face_direction") {
+    if (typeof value.args.direction !== "string" || value.args.direction.length === 0 || value.args.direction.length > 64)
+      return "invalid_direction";
   }
   return null;
 }
@@ -1707,7 +1769,9 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "chop_tree_source" ||
       value.action === "break_rock_source" ||
       value.action === "clear_hoedirt" ||
-      value.action === "dig_artifact_spot") &&
+      value.action === "dig_artifact_spot" ||
+      value.action === "express_emote" ||
+      value.action === "face_direction") &&
     isRecord(value.args) &&
     hasExactKeys(value.args, EXECUTION_ACTION_ARGUMENT_KEYS[value.action as ExecutionRequest["action"]]) &&
     Number.isSafeInteger(value.expectedRevision) &&
@@ -1718,7 +1782,10 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
-  return hasExactKeys(value, ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"]) &&
+  const allowedKeys = "observation" in value
+    ? ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence", "observation"]
+    : ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"];
+  return hasExactKeys(value, allowedKeys) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
     typeof value.actionId === "string" &&
@@ -1727,9 +1794,104 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&
     Number.isSafeInteger(value.revision) &&
-    (value.evidence === null || isRecord(value.evidence))
+    (value.evidence === null || isRecord(value.evidence)) &&
+    (!("observation" in value) || value.observation === null || validateLocalObservation(value.observation) === null)
     ? null
     : "invalid_receipt";
+}
+
+export function validateLocalObservation(value: unknown): string | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["location", "tileX", "tileY", "facing", "inGameTime", "playerNearby", "revision"])) {
+    return "invalid_local_observation";
+  }
+  return typeof value.location === "string" &&
+    value.location.length >= 1 &&
+    value.location.length <= 256 &&
+    Number.isSafeInteger(value.tileX) &&
+    Number.isSafeInteger(value.tileY) &&
+    Number.isSafeInteger(value.facing) &&
+    (value.facing as number) >= 0 &&
+    (value.facing as number) <= 3 &&
+    typeof value.inGameTime === "string" &&
+    value.inGameTime.length <= 64 &&
+    typeof value.playerNearby === "boolean" &&
+    Number.isSafeInteger(value.revision) &&
+    (value.revision as number) >= 0
+    ? null
+    : "invalid_local_observation";
+}
+
+export function validateWorldFact(value: Record<string, unknown>): string | null {
+  const allowedKeys = [
+    "eventId",
+    "sourceEventId",
+    "kind",
+    "observedTick",
+    "gameTime",
+    "revision",
+    "deduplicationKey",
+    "payload",
+    "payloadJson",
+  ];
+  if (!hasOnlyKeys(value, allowedKeys)) return "invalid_world_fact";
+  if (
+    !("eventId" in value) ||
+    !("sourceEventId" in value) ||
+    !("kind" in value) ||
+    !("observedTick" in value) ||
+    !("revision" in value)
+  ) {
+    return "invalid_world_fact";
+  }
+  if (
+    !isOpaqueId(value.eventId) ||
+    !isOpaqueId(value.sourceEventId) ||
+    typeof value.kind !== "string" ||
+    value.kind.length === 0 ||
+    value.kind.length > 128 ||
+    !isReasonCode(value.kind) ||
+    typeof value.observedTick !== "number" ||
+    !Number.isSafeInteger(value.observedTick) ||
+    value.observedTick < 0 ||
+    typeof value.revision !== "number" ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 0
+  ) {
+    return "invalid_world_fact";
+  }
+  if (
+    value.gameTime !== undefined &&
+    value.gameTime !== null &&
+    (typeof value.gameTime !== "string" || value.gameTime.length === 0 || value.gameTime.length > 64)
+  ) {
+    return "invalid_world_fact";
+  }
+  if (value.deduplicationKey !== undefined && !isOpaqueId(value.deduplicationKey)) {
+    return "invalid_world_fact";
+  }
+  if (
+    value.payloadJson !== undefined &&
+    value.payloadJson !== null &&
+    typeof value.payloadJson !== "string"
+  ) {
+    return "invalid_world_fact";
+  }
+  if (
+    value.payload !== undefined &&
+    value.payload !== null &&
+    !isRecord(value.payload)
+  ) {
+    return "invalid_world_fact";
+  }
+  return null;
+}
+
+export function isWorldFactPayload(value: unknown): value is WorldFactPayload {
+  return isRecord(value) && validateWorldFact(value) === null;
+}
+
+export function isWorldFactMessage(value: unknown): value is Envelope<"world_fact", WorldFactPayload> {
+  return isRecord(value) && value.type === "world_fact" && isWorldFactPayload(value.payload);
 }
 
 export function validateBodyProgramCandidateRequest(value: Record<string, unknown>): string | null {
@@ -2522,15 +2684,115 @@ function validToken(value: unknown): value is string {
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length <= 128);
 }
+const KNOWN_ACTION_DESCRIPTOR_KEYS = [
+  "arguments",
+  "argumentSchema",
+  "outputFacts",
+  "resourceTemplate",
+  "effect",
+  "evidenceSchema",
+  "nativeBinding",
+  "canonicalCodec",
+  "postcondition",
+] as const;
+
+export function isValidActionDescriptor(value: unknown): value is ActionRegistrationDescriptor {
+  if (!isRecord(value)) return false;
+  if (!hasOnlyKeys(value, KNOWN_ACTION_DESCRIPTOR_KEYS)) return false;
+
+  if ("arguments" in value && value.arguments !== undefined) {
+    if (!Array.isArray(value.arguments) || value.arguments.length > 32) return false;
+    for (const arg of value.arguments) {
+      if (!isRecord(arg)) return false;
+      if (!hasOnlyKeys(arg, ["name", "type", "enum", "boundedEnumValues"])) return false;
+      if (typeof arg.name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(arg.name)) return false;
+      if (typeof arg.type !== "string" || arg.type.length === 0 || arg.type.length > 64) return false;
+      if ("enum" in arg && arg.enum !== undefined) {
+        if (!Array.isArray(arg.enum) || arg.enum.length === 0 || arg.enum.length > 128) return false;
+        if (!arg.enum.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
+      }
+      if ("boundedEnumValues" in arg && arg.boundedEnumValues !== undefined) {
+        if (!Array.isArray(arg.boundedEnumValues) || arg.boundedEnumValues.length === 0 || arg.boundedEnumValues.length > 128) return false;
+        if (!arg.boundedEnumValues.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
+      }
+    }
+  }
+
+  if ("argumentSchema" in value && value.argumentSchema !== undefined) {
+    if (!isRecord(value.argumentSchema)) return false;
+    for (const [key, prop] of Object.entries(value.argumentSchema)) {
+      if (!/^[a-z][a-z0-9_]{0,63}$/.test(key)) return false;
+      if (!isRecord(prop) || typeof prop.type !== "string") return false;
+      if ("enum" in prop && prop.enum !== undefined) {
+        if (!Array.isArray(prop.enum) || prop.enum.length === 0 || prop.enum.length > 128) return false;
+        if (!prop.enum.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
+      }
+    }
+  }
+
+  if ("outputFacts" in value && value.outputFacts !== undefined) {
+    if (!isRecord(value.outputFacts)) return false;
+    for (const [k, v] of Object.entries(value.outputFacts)) {
+      if (typeof k !== "string" || typeof v !== "string") return false;
+    }
+  }
+
+  if ("resourceTemplate" in value && value.resourceTemplate !== undefined) {
+    if (typeof value.resourceTemplate === "string") {
+      if (value.resourceTemplate.length > 128) return false;
+    } else if (isRecord(value.resourceTemplate)) {
+      if (!("claims" in value.resourceTemplate) || !Array.isArray(value.resourceTemplate.claims)) return false;
+      for (const claim of value.resourceTemplate.claims) {
+        if (!isRecord(claim) || typeof claim.key !== "string" || typeof claim.value !== "string") return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  if ("effect" in value && value.effect !== undefined) {
+    if (value.effect !== "read" && value.effect !== "write") return false;
+  }
+
+  if ("evidenceSchema" in value && value.evidenceSchema !== undefined) {
+    if (typeof value.evidenceSchema !== "string" && !isRecord(value.evidenceSchema)) return false;
+  }
+
+  if ("nativeBinding" in value && value.nativeBinding !== undefined) {
+    if (typeof value.nativeBinding !== "string" || value.nativeBinding.length === 0 || value.nativeBinding.length > 128) return false;
+  }
+
+  if ("canonicalCodec" in value && value.canonicalCodec !== undefined) {
+    if (typeof value.canonicalCodec !== "string" || value.canonicalCodec.length === 0 || value.canonicalCodec.length > 128) return false;
+  }
+
+  if ("postcondition" in value && value.postcondition !== undefined) {
+    if (typeof value.postcondition === "string") {
+      if (value.postcondition.length === 0 || value.postcondition.length > 128) return false;
+    } else if (isRecord(value.postcondition)) {
+      if (typeof value.postcondition.name !== "string" || value.postcondition.name.length === 0 || value.postcondition.name.length > 128) return false;
+    } else {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function isValidActionRegistrations(value: unknown): boolean {
   if (!Array.isArray(value) || value.length === 0 || value.length > 128) return false;
   const seen = new Set<string>();
   for (const item of value) {
-    if (!isRecord(item) || !hasExactKeys(item, ["actionId", "familyId", "identityVersion", "lifecycle", "kind"])) return false;
+    if (!isRecord(item)) return false;
+    const allowedKeys = "descriptor" in item
+      ? ["actionId", "familyId", "identityVersion", "lifecycle", "kind", "descriptor"]
+      : ["actionId", "familyId", "identityVersion", "lifecycle", "kind"];
+    if (!hasExactKeys(item, allowedKeys)) return false;
     if (!isOpaqueId(item.actionId) || !isOpaqueId(item.familyId)) return false;
     if (typeof item.identityVersion !== "number" || !Number.isSafeInteger(item.identityVersion) || item.identityVersion < 1) return false;
     if (item.lifecycle !== "published" && item.lifecycle !== "experimental") return false;
     if (item.kind !== "execution" && item.kind !== "read_only") return false;
+    if ("descriptor" in item && (item.descriptor === undefined || !isValidActionDescriptor(item.descriptor))) return false;
     if (seen.has(item.actionId)) return false;
     seen.add(item.actionId);
   }

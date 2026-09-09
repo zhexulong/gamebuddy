@@ -12,7 +12,7 @@ const sources = await Object.fromEntries(
     [
       ["farmhandActionDefinitions", "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"],
       ["bridgeSession", "integrations/stardew/BridgeSession.cs"],
-      ["executionManager", "integrations/stardew/ExecutionManager.cs"],
+      ["executionManager", "integrations/stardew/farmhandexecutioncontroller.cs"],
       ["farmhandActionRouter", "integrations/stardew/src/Core/Routing/FarmhandActionRouter.cs"],
       ["registry", "host/src/action-registry.ts"],
       ["gameTools", "host/src/game-tools.ts"],
@@ -45,8 +45,8 @@ test("promotion checker rejects a duplicate or missing source-owned projection",
   assert.ok(
     failuresFor({
       farmhandActionDefinitions: sources.farmhandActionDefinitions.replace(
-        'Registration("move_to_tile", "movement_navigation", 1, FarmhandActionHandlerGroup.Movement),',
-        'Registration("move_to_tile", "movement_navigation", 1, FarmhandActionHandlerGroup.Movement),\n        Registration("move_to_tile", "movement_navigation", 1, FarmhandActionHandlerGroup.Movement),',
+        'E("move_to_tile", "movement_navigation", FarmhandActionHandlerGroup.Movement,',
+        'E("move_to_tile", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),\n        E("move_to_tile", "movement_navigation", FarmhandActionHandlerGroup.Movement,',
       ),
     }).includes("mod_definition_duplicates"),
   );

@@ -40,6 +40,30 @@ public static class ExecutionStateWire
     };
 }
 
+public sealed record BridgeLocalObservation(
+    string Location,
+    int TileX,
+    int TileY,
+    int Facing,
+    string InGameTime,
+    bool PlayerNearby,
+    int Revision
+);
+
+public sealed record BridgeWorldFact(
+    string EventId,
+    string SourceEventId,
+    string Kind,
+    long ObservedTick,
+    string? GameTime,
+    int Revision,
+    string? PayloadJson,
+    string? DeduplicationKey = null
+);
+
+public sealed record ExpressEmoteArgs(string Emote);
+public sealed record FaceDirectionArgs(string Direction);
+
 /// <summary>
 /// Mod-owned execution evidence. <see cref="ActionId"/> is bound on the game
 /// thread before dispatch and remains with the bounded receipt record; bridge
@@ -52,7 +76,8 @@ public sealed record LocalExecutionReceipt(
     string ReasonCode,
     long Revision,
     string? Evidence,
-    string? ActionId = null
+    string? ActionId = null,
+    BridgeLocalObservation? Observation = null
 );
 
 public sealed record BridgeScope(string IntegrationId, string SaveId, string WorldId, string PlayerId, string CompanionId)
@@ -229,7 +254,8 @@ public sealed record BridgeReceipt(
     string State,
     string ReasonCode,
     long Revision,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeLocalObservation? Observation = null
 );
 
 public sealed record BridgeError(string ReasonCode);
@@ -278,6 +304,8 @@ public sealed class BridgeExecutionArgs
     public string? ExpectedQualifiedItemId { get; init; }
     public string? ExpectedTargetId { get; init; }
     public BridgeNavigationDestinationSelector? Destination { get; init; }
+    public string? Emote { get; init; }
+    public string? Direction { get; init; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }

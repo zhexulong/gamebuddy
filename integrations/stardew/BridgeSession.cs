@@ -45,6 +45,19 @@ internal sealed class BridgeSession
     private long presentationEpoch;
 
     private readonly BridgeRuntimeAttestation runtimeAttestation;
+    private LocalPipeBridge? pipeBridge;
+    private Func<long, string, bool>? outboundSink;
+
+    internal LocalPipeBridge? PipeBridge
+    {
+        get => this.pipeBridge;
+        set => this.pipeBridge = value;
+    }
+
+    internal void SetPipeBridge(LocalPipeBridge? bridge) => this.pipeBridge = bridge;
+    internal void SetOutboundSink(Func<long, string, bool>? sink) => this.outboundSink = sink;
+    internal BridgeScope Scope => this.scope;
+    internal int CurrentRevision => (int)this.executions.Revision;
 
     internal BridgeSession(
         ExecutionManager executions,
@@ -55,9 +68,11 @@ internal sealed class BridgeSession
         Func<string>? presentationLocale = null,
         Func<DerivedDestinationSet?>? navigationSetProvider = null,
         NavigationReferenceStore? navigationReferences = null,
-        BridgeRuntimeAttestation? runtimeAttestation = null)
+        BridgeRuntimeAttestation? runtimeAttestation = null,
+        LocalPipeBridge? pipeBridge = null)
     {
         this.runtimeAttestation = runtimeAttestation ?? BridgeRuntimeAttestation.Default;
+        this.pipeBridge = pipeBridge;
         this.executions = executions;
         this.actionRouter = actionRouter ?? throw new ArgumentNullException(nameof(actionRouter));
         this.scope = scope;
@@ -198,9 +213,13 @@ internal sealed class BridgeSession
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "execution_request", out reasonCode)) return false;
         BridgeExecutionRequest request = envelope!.Payload;
         if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;
-        string fingerprint = request.Action == "navigate_to_destination"
-            ? $"{request.RequestId}:{request.Action}:{request.Args.Destination?.Kind}:{request.Args.Destination?.Label}:{request.Args.Destination?.Ref}:{request.ExpectedRevision}"
-            : $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.Args.Slot}:{request.Args.ExpectedQualifiedItemId}:{request.Args.ExpectedTargetId}:{request.ExpectedRevision}";
+        string fingerprint = request.Action switch
+        {
+            "navigate_to_destination" => $"{request.RequestId}:{request.Action}:{request.Args.Destination?.Kind}:{request.Args.Destination?.Label}:{request.Args.Destination?.Ref}:{request.ExpectedRevision}",
+            "express_emote" => $"{request.RequestId}:{request.Action}:{request.Args.Emote}:{request.ExpectedRevision}",
+            "face_direction" => $"{request.RequestId}:{request.Action}:{request.Args.Direction}:{request.ExpectedRevision}",
+            _ => $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.Args.Slot}:{request.Args.ExpectedQualifiedItemId}:{request.Args.ExpectedTargetId}:{request.ExpectedRevision}"
+        };
         // Replays return a durable receipt but remain current bridge requests:
         // they must satisfy the same owner-thread, published-capability, revision,
         // and deadline gates before the ledger is consulted.
@@ -223,10 +242,10 @@ internal sealed class BridgeSession
             response = Reply("execution_receipt", envelope.CorrelationId, replayReceipt); reasonCode = "idempotent_replay"; return true;
         }
         string durableReason = "receipt_not_found";
-        if (request.Action == "navigate_to_destination"
+        if ((request.Action is "navigate_to_destination" or "express_emote" or "face_direction")
             && this.executions.TryGetDurableAdmission(request.RequestId, request.IdempotencyKey, out FarmhandExecutionJournalRecord durableAdmission, out durableReason))
         {
-            if (!MatchesDurableNavigationAdmission(request, durableAdmission))
+            if (!MatchesDurableAdmission(request, durableAdmission))
             {
                 reasonCode = "durable_execution_tuple_mismatch";
                 return false;
@@ -244,7 +263,8 @@ internal sealed class BridgeSession
                         durableReceipt.ReasonCode,
                         durableReceipt.Revision,
                         durableReceipt.Evidence,
-                        durableReceipt.ActionId),
+                        durableReceipt.ActionId,
+                        durableReceipt.Observation),
                     out BridgeReceipt recoveredReceipt,
                     durableReceipt.ActionId))
             {
@@ -255,17 +275,23 @@ internal sealed class BridgeSession
             reasonCode = "durable_replay";
             return true;
         }
-        else if (request.Action == "navigate_to_destination" && durableReason != "receipt_not_found")
+        else if ((request.Action is "navigate_to_destination" or "express_emote" or "face_direction") && durableReason != "receipt_not_found")
         {
             reasonCode = durableReason;
             return false;
         }
 
-        string? executionId = request.Action == "navigate_to_destination"
+        string? executionId = request.Action is "navigate_to_destination" or "express_emote" or "face_direction"
             ? Guid.NewGuid().ToString("N")
             : null;
-        if (executionId is not null && !this.executions.TryAdmitNavigation(request, executionId, out reasonCode))
-            return false;
+        if (executionId is not null)
+        {
+            bool admitted = request.Action == "navigate_to_destination"
+                ? this.executions.TryAdmitNavigation(request, executionId, out reasonCode)
+                : this.executions.TryAdmitCandidate(request, executionId, out reasonCode);
+            if (!admitted)
+                return false;
+        }
         // Bind immutable request/action lineage before routing because a handler
         // may synchronously publish its first receipt.
         RememberIdempotency(request.IdempotencyKey, fingerprint, request.RequestId, request.Action);
@@ -373,6 +399,60 @@ internal sealed class BridgeSession
             && TryToBridgeReceipt(receipt, out BridgeReceipt bridgeReceipt)
             && BridgeProtocol.TrySerialize(Reply("execution_receipt", receipt.RequestId, bridgeReceipt), out json, out _);
     }
+
+    internal bool TryCreateWorldFactEvent(BridgeWorldFact fact)
+    {
+        if (fact is null
+            || !BridgeProtocol.IsOpaqueId(fact.EventId)
+            || !BridgeProtocol.IsOpaqueId(fact.SourceEventId)
+            || string.IsNullOrWhiteSpace(fact.Kind)
+            || fact.ObservedTick < 0
+            || fact.Revision < 0)
+        {
+            return false;
+        }
+
+        long generation = this.authenticatedGeneration;
+        if (generation < 0)
+            return false;
+
+        if (this.pipeBridge is not null && this.pipeBridge.CurrentGeneration != generation)
+            return false;
+
+        BridgeEnvelope<BridgeWorldFact> envelope = Reply("world_fact", fact.EventId, fact);
+        if (!BridgeProtocol.TrySerialize(envelope, out string json, out _))
+            return false;
+
+        if (this.outboundSink is not null)
+            return this.outboundSink(generation, json);
+
+        if (this.pipeBridge is not null)
+            return this.pipeBridge.TryEnqueueOutbound(generation, json);
+
+        return false;
+    }
+
+    internal bool TryCreateWorldFactEvent(long generation, BridgeWorldFact fact, string correlationId, out string json)
+    {
+        json = string.Empty;
+        if (!IsAuthenticated(generation, out _)
+            || fact is null
+            || !BridgeProtocol.IsOpaqueId(correlationId)
+            || !BridgeProtocol.IsOpaqueId(fact.EventId)
+            || !BridgeProtocol.IsOpaqueId(fact.SourceEventId)
+            || string.IsNullOrWhiteSpace(fact.Kind)
+            || fact.ObservedTick < 0
+            || fact.Revision < 0)
+        {
+            return false;
+        }
+
+        BridgeEnvelope<BridgeWorldFact> envelope = Reply("world_fact", correlationId, fact);
+        return BridgeProtocol.TrySerialize(envelope, out json, out _);
+    }
+
+    internal bool TryCreateWorldFactEvent(long generation, BridgeWorldFact fact, out string json)
+        => this.TryCreateWorldFactEvent(generation, fact, fact.EventId, out json);
 
     internal bool TryCreateSemanticEvent(long generation, string kind, string correlationId, string reasonCode, out string json)
         => this.TryCreateSemanticEvent(generation, kind, correlationId, reasonCode, null, out json);
@@ -782,6 +862,16 @@ internal sealed class BridgeSession
             if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36)
             { reasonCode = "invalid_execution_request"; return false; }
         }
+        else if (request.Action == "express_emote")
+        {
+            if (string.IsNullOrWhiteSpace(request.Args.Emote) || !FarmhandActionCatalog.EmoteEnum.Contains(request.Args.Emote))
+            { reasonCode = "invalid_execution_request"; return false; }
+        }
+        else if (request.Action == "face_direction")
+        {
+            if (string.IsNullOrWhiteSpace(request.Args.Direction) || !FarmhandActionCatalog.DirectionEnum.Contains(request.Args.Direction))
+            { reasonCode = "invalid_execution_request"; return false; }
+        }
         else
         { reasonCode = "invalid_execution_request"; return false; }
         reasonCode = "accepted"; return true;
@@ -795,43 +885,56 @@ internal sealed class BridgeSession
         bool slot = args.Slot.HasValue;
         bool qualifiedItem = args.ExpectedQualifiedItemId is not null;
         bool target = args.ExpectedTargetId is not null;
+        bool destination = args.Destination is not null;
+        bool emote = args.Emote is not null;
+        bool direction = args.Direction is not null;
         if (action == "navigate_to_destination")
-            return args.Destination is not null && !x && !y && !slot && !qualifiedItem && !target;
+            return destination && !x && !y && !slot && !qualifiedItem && !target && !emote && !direction;
+        if (action == "express_emote")
+            return emote && !x && !y && !slot && !qualifiedItem && !target && !destination && !direction;
+        if (action == "face_direction")
+            return direction && !x && !y && !slot && !qualifiedItem && !target && !destination && !emote;
         return action switch
         {
-            "move_to_tile" or "travel" or "enter_exit" or "till_soil" => x && y && !slot && !qualifiedItem && !target,
-            "equip_tool" => !x && !y && slot && !qualifiedItem && !target,
-            "pickup_forage" or "pickup_item" or "harvest_crop" => x && y && !slot && qualifiedItem && target,
-            "water_crop" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" => x && y && !slot && !qualifiedItem && target,
-            "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" => x && y && slot && qualifiedItem && target,
-            "clear_debris" or "collect_animal_product" or "feed_animal" or "refill_watering_can" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" => x && y && slot && !qualifiedItem && target,
-            "use_item" => !x && !y && slot && qualifiedItem && !target,
+            "move_to_tile" or "travel" or "enter_exit" or "till_soil" => x && y && !slot && !qualifiedItem && !target && !destination && !emote && !direction,
+            "equip_tool" => !x && !y && slot && !qualifiedItem && !target && !destination && !emote && !direction,
+            "pickup_forage" or "pickup_item" or "harvest_crop" => x && y && !slot && qualifiedItem && target && !destination && !emote && !direction,
+            "water_crop" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" => x && y && !slot && !qualifiedItem && target && !destination && !emote && !direction,
+            "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" => x && y && slot && qualifiedItem && target && !destination && !emote && !direction,
+            "clear_debris" or "collect_animal_product" or "feed_animal" or "refill_watering_can" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" => x && y && slot && !qualifiedItem && target && !destination && !emote && !direction,
+            "use_item" => !x && !y && slot && qualifiedItem && !target && !destination && !emote && !direction,
             _ => false,
         };
     }
 
-    private static bool MatchesDurableNavigationAdmission(
+    private static bool MatchesDurableAdmission(
         BridgeExecutionRequest request,
         FarmhandExecutionJournalRecord durableAdmission)
     {
-        if (!string.Equals(request.Action, "navigate_to_destination", StringComparison.Ordinal)
+        if (!string.Equals(request.Action, durableAdmission.ActionId, StringComparison.Ordinal)
             || durableAdmission.Request is null
-            || !string.Equals(durableAdmission.ActionId, "navigate_to_destination", StringComparison.Ordinal)
-            || durableAdmission.Request.ArgumentKind != FarmhandCanonicalArgumentKind.NavigationDestination
-            || request.Args.Destination is null)
+            || durableAdmission.ExpectedRevision != request.ExpectedRevision
+            || durableAdmission.DeadlineMs != request.DeadlineMs)
         {
             return false;
         }
 
-        BridgeNavigationDestinationSelector destination = request.Args.Destination;
-        FarmhandCanonicalRequest expected = FarmhandCanonicalRequest.NavigationDestination(
-            "navigate_to_destination",
-            destination.Kind,
-            destination.Label,
-            destination.Ref);
-        return Equals(durableAdmission.Request, expected)
-            && durableAdmission.ExpectedRevision == request.ExpectedRevision
-            && durableAdmission.DeadlineMs == request.DeadlineMs;
+        FarmhandCanonicalRequest? expected = request.Action switch
+        {
+            "navigate_to_destination" when request.Args.Destination is not null =>
+                FarmhandCanonicalRequest.NavigationDestination(
+                    "navigate_to_destination",
+                    request.Args.Destination.Kind,
+                    request.Args.Destination.Label,
+                    request.Args.Destination.Ref),
+            "express_emote" when request.Args.Emote is not null =>
+                FarmhandCanonicalRequest.EmoteRequest("express_emote", request.Args.Emote),
+            "face_direction" when request.Args.Direction is not null =>
+                FarmhandCanonicalRequest.DirectionRequest("face_direction", request.Args.Direction),
+            _ => null,
+        };
+
+        return expected is not null && Equals(durableAdmission.Request, expected);
     }
 
     private bool IsFreshExecutionRequest(BridgeExecutionRequest request, out string reasonCode)
@@ -874,7 +977,8 @@ internal sealed class BridgeSession
             receipt.State.ToWireValue(),
             receipt.ReasonCode,
             receipt.Revision,
-            receipt.Evidence is null ? null : new Dictionary<string, string> { ["detail"] = receipt.Evidence });
+            receipt.Evidence is null ? null : new Dictionary<string, string> { ["detail"] = receipt.Evidence },
+            receipt.Observation);
         return true;
     }
 

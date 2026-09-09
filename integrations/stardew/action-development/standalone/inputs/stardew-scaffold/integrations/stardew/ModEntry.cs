@@ -3647,14 +3647,28 @@ public sealed partial class ModEntry : Mod
             || !NativeChatPresentationPolicy.IsBoundHumanRecipient(farmhand)
             || !NativeChatPresentationPolicy.IsCurrentLocale(locale))
             return false;
-        // This is the sole egress reflection: the exact static Game1 multiplayer
-        // field with the exact native type. Visibility varies by target build;
-        // identity and type are the authority boundary. Any drift fails closed.
-        FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-        if (!NativeChatPresentationPolicy.IsExactMultiplayerField(field)
-            || field!.GetValue(null) is not Multiplayer multiplayer)
-            return false;
-        multiplayer.sendChatMessage(LocalizedContentManager.CurrentLanguageCode, text, Game1.MasterPlayer.UniqueMultiplayerID);
+
+        if (Game1.IsMultiplayer && Game1.MasterPlayer.UniqueMultiplayerID != farmhand?.UniqueMultiplayerID)
+        {
+            // This is the sole egress reflection: the exact static Game1 multiplayer
+            // field with the exact native type. Visibility varies by target build;
+            // identity and type are the authority boundary. Any drift fails closed.
+            FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+            if (!NativeChatPresentationPolicy.IsExactMultiplayerField(field)
+                || field!.GetValue(null) is not Multiplayer multiplayer)
+                return false;
+            multiplayer.sendChatMessage(LocalizedContentManager.CurrentLanguageCode, text, Game1.MasterPlayer.UniqueMultiplayerID);
+            return true;
+        }
+
+        // Local or single-player fixture presentation: deliver directly to the native chat box.
+        if (Game1.chatBox is not null)
+        {
+            Game1.chatBox.receiveChatMessage(farmhand?.UniqueMultiplayerID ?? Game1.player.UniqueMultiplayerID, 0, LocalizedContentManager.CurrentLanguageCode, text);
+            return true;
+        }
+
+        Game1.showGlobalMessage(text);
         return true;
     }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle";
+export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 export type WorldFact = Readonly<{
   /** Adapter-owned source label, or Host's explicitly non-world transport label. */
   source: string;
@@ -12,6 +12,8 @@ export type WorldFact = Readonly<{
   executionId?: string;
   requestId?: string;
   sourceEventId?: string;
+  observedTick?: number;
+  gameTime?: string | null;
   payload: Readonly<Record<string, unknown>>;
   /** Bounded model-facing context; the authoritative payload stays Host-owned. */
   contextProjection?: Readonly<Record<string, unknown>>;
@@ -46,6 +48,7 @@ type NormalizedEvent = Readonly<{
   executionId?: string;
   requestId?: string;
   sourceEventId?: string;
+  observedTick?: number;
   payload?: Readonly<Record<string, unknown>>;
   input?: PlayerInput;
 }>;
@@ -54,6 +57,7 @@ const MAX_PENDING_INPUTS = 128;
 const MAX_PENDING_RECEIPTS = 128;
 const MAX_PENDING_SEMANTIC_EVENTS = 128;
 const MAX_PENDING_LIFECYCLE = 128;
+const MAX_PENDING_WORLD_FACTS = 32;
 
 export interface CompanionTurnSink {
   deliver(text: string, disposition: Exclude<DeliveryDisposition, "hold">): Promise<void>;
@@ -65,6 +69,7 @@ export class CompanionEventPump {
   readonly #receipts = new Map<string, WorldFact>();
   readonly #semanticEvents = new Map<string, WorldFact>();
   readonly #lifecycle = new Map<string, WorldFact>();
+  readonly #worldFacts = new Map<string, WorldFact>();
   readonly #inputs: PlayerInput[] = [];
   #retryBatch: PendingBatch | undefined;
   #delivering = false;
@@ -87,13 +92,17 @@ export class CompanionEventPump {
         ? this.#receipts
         : fact.kind === "semantic_event"
           ? this.#semanticEvents
-          : this.#lifecycle;
+          : fact.kind === "world_fact"
+            ? this.#worldFacts
+            : this.#lifecycle;
     const limit =
       fact.kind === "execution_receipt"
         ? MAX_PENDING_RECEIPTS
         : fact.kind === "semantic_event"
           ? MAX_PENDING_SEMANTIC_EVENTS
-          : MAX_PENDING_LIFECYCLE;
+          : fact.kind === "world_fact"
+            ? MAX_PENDING_WORLD_FACTS
+            : MAX_PENDING_LIFECYCLE;
     if (!destination.has(fact.correlationId) && destination.size >= limit) {
       throw new Error(
         fact.kind === "execution_receipt" && isTerminalExecutionFact(fact)
@@ -119,6 +128,7 @@ export class CompanionEventPump {
     this.#receipts.clear();
     this.#semanticEvents.clear();
     this.#lifecycle.clear();
+    this.#worldFacts.clear();
     this.#inputs.length = 0;
     this.#retryBatch = undefined;
   }
@@ -129,6 +139,7 @@ export class CompanionEventPump {
       this.#receipts.size +
       this.#semanticEvents.size +
       this.#lifecycle.size +
+      this.#worldFacts.size +
       this.#inputs.length +
       (this.#retryBatch === undefined ? 0 : this.#retryBatch.inputs.length + this.#retryBatch.facts.length)
     );
@@ -172,7 +183,9 @@ export class CompanionEventPump {
     this.#semanticEvents.clear();
     const lifecycle = [...this.#lifecycle.values()];
     this.#lifecycle.clear();
-    const facts = [...receipts, ...semanticEvents, ...lifecycle];
+    const worldFacts = [...this.#worldFacts.values()].sort(compareWorldFacts);
+    this.#worldFacts.clear();
+    const facts = [...receipts, ...semanticEvents, ...lifecycle, ...worldFacts];
     const triggers = facts.filter((fact) => !isHeldFact(fact));
     // takeBatch is called only when input/fact triggering is already known.
     // Hold is represented by retaining latest state in the pump, never by an
@@ -218,9 +231,12 @@ export class CompanionEventPump {
   }
 
   #hasPendingFactTrigger(): boolean {
-    return [...this.#receipts.values(), ...this.#semanticEvents.values(), ...this.#lifecycle.values()].some(
-      (fact) => !isHeldFact(fact),
-    );
+    return [
+      ...this.#receipts.values(),
+      ...this.#semanticEvents.values(),
+      ...this.#lifecycle.values(),
+      ...this.#worldFacts.values(),
+    ].some((fact) => !isHeldFact(fact));
   }
 }
 
@@ -278,6 +294,7 @@ function normalizeFact(fact: WorldFact): NormalizedEvent {
     kind: fact.kind,
     correlationId: fact.correlationId,
     revision: fact.revision,
+    ...(fact.observedTick === undefined ? {} : { observedTick: fact.observedTick }),
     ...(fact.executionId === undefined ? {} : { executionId: fact.executionId }),
     ...(fact.requestId === undefined ? {} : { requestId: fact.requestId }),
     ...(fact.sourceEventId === undefined ? {} : { sourceEventId: fact.sourceEventId }),
@@ -285,7 +302,22 @@ function normalizeFact(fact: WorldFact): NormalizedEvent {
   };
 }
 
+function compareWorldFacts(left: WorldFact, right: WorldFact): number {
+  const tickDiff = (left.observedTick ?? 0) - (right.observedTick ?? 0);
+  if (tickDiff !== 0) return tickDiff;
+  const revDiff = left.revision - right.revision;
+  if (revDiff !== 0) return revDiff;
+  return (left.eventId ?? "").localeCompare(right.eventId ?? "");
+}
+
 function compareEvents(left: NormalizedEvent, right: NormalizedEvent): number {
+  if (left.kind === "world_fact" && right.kind === "world_fact") {
+    const tickDiff = (left.observedTick ?? 0) - (right.observedTick ?? 0);
+    if (tickDiff !== 0) return tickDiff;
+    const revDiff = left.revision - right.revision;
+    if (revDiff !== 0) return revDiff;
+    return left.eventId.localeCompare(right.eventId);
+  }
   return (
     left.occurredAtMs - right.occurredAtMs ||
     left.revision - right.revision ||

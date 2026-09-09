@@ -5,17 +5,42 @@ public static class FarmhandActionLifecycleWire { public static string ToWireVal
 public enum FarmhandOperationKind { Execution, ReadOnly }
 public static class FarmhandOperationKindWire { public static string ToWireValue(this FarmhandOperationKind kind) => kind switch { FarmhandOperationKind.Execution => "execution", FarmhandOperationKind.ReadOnly => "read_only", _ => throw new ArgumentOutOfRangeException(nameof(kind)) }; }
 public enum FarmhandResourceTemplateValue { ScopePlayer = 1 }
-public sealed record FarmhandActionArgument(string Name, string Type);
+public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null);
 /// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.</summary>
 public sealed record FarmhandActionResourceTemplateClaim(string Key, FarmhandResourceTemplateValue Value);
 /// <summary>Versioned descriptor contract owned exclusively by Mod registration.</summary>
-public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition);
+public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
-public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools }
+public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression }
+public static class FarmhandActionHandlerGroupWire
+{
+    public static string ToWireValue(this FarmhandActionHandlerGroup group) => group switch
+    {
+        FarmhandActionHandlerGroup.Movement => "movement",
+        FarmhandActionHandlerGroup.Farming => "farming",
+        FarmhandActionHandlerGroup.Gathering => "gathering",
+        FarmhandActionHandlerGroup.MachinesAndAnimals => "machines_and_animals",
+        FarmhandActionHandlerGroup.ResourceTools => "resource_tools",
+        FarmhandActionHandlerGroup.Expression => "expression",
+        _ => throw new ArgumentOutOfRangeException(nameof(group)),
+    };
+}
 
 public static class FarmhandActionCatalog
 {
+    public static readonly IReadOnlyList<string> EmoteEnum = Array.AsReadOnly(new[]
+    {
+        "happy", "sad", "heart", "exclamation", "note", "sleep", "game", "question",
+        "x", "pause", "blush", "angry", "yes", "no", "sick", "laugh", "surprised",
+        "hi", "taunt", "uh", "music", "jar"
+    });
+
+    public static readonly IReadOnlyList<string> DirectionEnum = Array.AsReadOnly(new[]
+    {
+        "up", "right", "down", "left"
+    });
+
     private static readonly IReadOnlyList<FarmhandActionResourceTemplateClaim> EmbodiedActorResource = Array.AsReadOnly(new[]
     {
         new FarmhandActionResourceTemplateClaim("embodied_actor", FarmhandResourceTemplateValue.ScopePlayer),
@@ -37,6 +62,8 @@ public static class FarmhandActionCatalog
         R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"),
         E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, A(new Dictionary<string,string>{{"arrival","object"}}, null, "arrived_at_destination", ("destination","object"))),
         E("clear_debris", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.Experimental), E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental), E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental),
+        E("express_emote", "expression", FarmhandActionHandlerGroup.Expression, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("emote", "string", EmoteEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "emote_finished_or_overridden", "Farmer.doEmote"), FarmhandActionLifecycle.Experimental),
+        E("face_direction", "movement_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("direction", "string", DirectionEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "actor_facing_matches", "Farmer.faceDirection"), FarmhandActionLifecycle.Experimental),
     });
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, descriptor);

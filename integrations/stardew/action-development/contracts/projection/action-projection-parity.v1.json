@@ -948,6 +948,54 @@
         "postcondition": {
           "name": "native_action_postcondition"
         }
+      },
+      {
+        "actionId": "express_emote",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "emote": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "emote_finished_or_overridden"
+        }
+      },
+      {
+        "actionId": "face_direction",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "direction": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "actor_facing_matches"
+        }
       }
     ]
   },
@@ -991,7 +1039,9 @@
     "experimentalActionIds": [
       "clear_debris",
       "npc_relationship",
-      "pet_animal"
+      "pet_animal",
+      "express_emote",
+      "face_direction"
     ]
   },
   "protocol": {

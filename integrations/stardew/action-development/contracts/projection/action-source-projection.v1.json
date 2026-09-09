@@ -1226,6 +1226,68 @@
           }
         },
         "handlerGroup": null
+      },
+      {
+        "actionId": "express_emote",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "express_emote",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "emote": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "emote_finished_or_overridden"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "face_direction",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "face_direction",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "direction": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "actor_facing_matches"
+          }
+        },
+        "handlerGroup": null
       }
     ],
     "publishedExecutionActionIds": [
@@ -1291,7 +1353,9 @@
     "experimentalActionIds": [
       "clear_debris",
       "npc_relationship",
-      "pet_animal"
+      "pet_animal",
+      "express_emote",
+      "face_direction"
     ],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
@@ -1309,6 +1373,8 @@
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
+      "express_emote",
+      "face_direction",
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
@@ -1337,6 +1403,8 @@
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
+      "express_emote",
+      "face_direction",
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
@@ -1365,6 +1433,8 @@
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
+      "express_emote",
+      "face_direction",
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
@@ -1394,6 +1464,8 @@
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
+      "express_emote",
+      "face_direction",
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
@@ -1425,6 +1497,8 @@
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
+      "express_emote",
+      "face_direction",
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
@@ -1456,6 +1530,8 @@
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
+      "express_emote",
+      "face_direction",
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
@@ -1504,7 +1580,8 @@
       "program_events_result",
       "error",
       "semantic_event",
-      "lifecycle"
+      "lifecycle",
+      "world_fact"
     ],
     "semanticEventKinds": [
       "body_idle",
@@ -1543,7 +1620,8 @@
       "execution_receipt",
       "error",
       "semantic_event",
-      "lifecycle"
+      "lifecycle",
+      "world_fact"
     ],
     "schemaSemanticEventKinds": [
       "body_idle",
@@ -1571,6 +1649,8 @@
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
+      "express_emote",
+      "face_direction",
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
@@ -1626,6 +1706,7 @@
     ],
     "Movement": [
       "enter_exit",
+      "face_direction",
       "move_to_tile",
       "navigate_to_destination",
       "travel"
