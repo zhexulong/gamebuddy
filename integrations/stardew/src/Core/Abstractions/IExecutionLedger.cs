@@ -10,6 +10,6 @@ public interface IExecutionLedger
     /** Binds immutable Mod action identity before any handler can publish a receipt. */
     void BindAction(string requestId, string actionId);
     LocalExecutionReceipt Remember(LocalExecutionReceipt receipt);
-    LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence);
+    LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null);
     void AddTrace(LocalExecutionReceipt receipt);
 }

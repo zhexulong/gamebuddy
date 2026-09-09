@@ -1,4 +1,4 @@
-import type { ActionRegistration } from "./protocol.js";
+import { type ActionRegistration, isValidActionDescriptor } from "./protocol.js";
 
 export type ActionLifecycle = ActionRegistration["lifecycle"];
 
@@ -173,6 +173,18 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Use one equipped Axe terminal strike on a live ordinary mature one-hit tree; source transformation is the completion boundary.",
     ["tree_source", "tool"],
   ),
+  actionAdapter(
+    "express_emote",
+    "Express an emote",
+    "Express a character emote in the game world.",
+    ["character_emote"],
+  ),
+  actionAdapter(
+    "face_direction",
+    "Face a cardinal direction",
+    "Turn the Farmhand to face a cardinal direction.",
+    ["character_facing"],
+  ),
 ]) satisfies readonly StardewActionAdapter[];
 
 export type StardewActionId =
@@ -212,6 +224,8 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   clear_hoedirt: "stardew_clear_hoedirt",
   dig_artifact_spot: "stardew_dig_artifact_spot",
   chop_tree_source: "stardew_chop_tree_source",
+  express_emote: "stardew_express_emote",
+  face_direction: "stardew_face_direction",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
 /**
@@ -327,6 +341,76 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export const STARDEW_CANDIDATE_ACTION_IDS = Object.freeze([
+  "express_emote",
+  "face_direction",
+] as const);
+
+export type StardewCandidateActionId = (typeof STARDEW_CANDIDATE_ACTION_IDS)[number];
+
+export function isCandidateActionId(actionId: string): actionId is StardewCandidateActionId {
+  return (STARDEW_CANDIDATE_ACTION_IDS as readonly string[]).includes(actionId);
+}
+
+export function getDescriptorArgument(
+  descriptor: ActionRegistration["descriptor"],
+  argumentName: string,
+): { name: string; type: string; enum?: readonly string[]; boundedEnumValues?: readonly string[] } | undefined {
+  if (!descriptor) return undefined;
+  if (Array.isArray(descriptor.arguments)) {
+    const found = descriptor.arguments.find((arg) => arg.name === argumentName);
+    if (found) return found;
+  }
+  if (descriptor.argumentSchema && isRecord(descriptor.argumentSchema)) {
+    const schema = descriptor.argumentSchema[argumentName];
+    if (schema) {
+      return {
+        name: argumentName,
+        type: schema.type,
+        enum: schema.enum,
+      };
+    }
+  }
+  return undefined;
+}
+
+export function getArgumentEnum(
+  argument: { enum?: readonly string[]; boundedEnumValues?: readonly string[] } | undefined,
+): readonly string[] | undefined {
+  if (!argument) return undefined;
+  if (Array.isArray(argument.enum) && argument.enum.length > 0) return argument.enum;
+  if (Array.isArray(argument.boundedEnumValues) && argument.boundedEnumValues.length > 0) return argument.boundedEnumValues;
+  return undefined;
+}
+
+export function isCandidateDescriptorComplete(
+  actionId: string,
+  descriptor: ActionRegistration["descriptor"],
+): boolean {
+  if (!descriptor || !isValidActionDescriptor(descriptor)) return false;
+  if (actionId === "express_emote") {
+    const arg = getDescriptorArgument(descriptor, "emote");
+    if (!arg || arg.type !== "string") return false;
+    const enumVals = getArgumentEnum(arg);
+    if (!enumVals || enumVals.length === 0) return false;
+    if (descriptor.effect !== "write") return false;
+    if (!descriptor.postcondition) return false;
+    if (!descriptor.nativeBinding) return false;
+    return true;
+  }
+  if (actionId === "face_direction") {
+    const arg = getDescriptorArgument(descriptor, "direction");
+    if (!arg || arg.type !== "string") return false;
+    const enumVals = getArgumentEnum(arg);
+    if (!enumVals || enumVals.length === 0) return false;
+    if (descriptor.effect !== "write") return false;
+    if (!descriptor.postcondition) return false;
+    if (!descriptor.nativeBinding) return false;
+    return true;
+  }
+  return false;
+}
+
 /**
  * Intersect local typed-adapter availability with the authenticated Mod
  * registration catalog, fresh capabilities, and a restrictive policy. The
@@ -361,6 +445,12 @@ export function visibleActionsFromModCatalog(
     ) {
       continue;
     }
+    if (
+      isCandidateActionId(registration.actionId) &&
+      !isCandidateDescriptorComplete(registration.actionId, registration.descriptor)
+    ) {
+      continue;
+    }
     visible.push(
       Object.freeze({
         ...adapter,
@@ -368,6 +458,9 @@ export function visibleActionsFromModCatalog(
         identityVersion: registration.identityVersion,
         lifecycle: registration.lifecycle,
         kind: registration.kind,
+        ...(registration.descriptor !== undefined
+          ? { descriptor: registration.descriptor }
+          : {}),
       }),
     );
   }

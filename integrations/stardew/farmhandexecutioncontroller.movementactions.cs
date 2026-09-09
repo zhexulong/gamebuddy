@@ -4,6 +4,8 @@ using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Tools;
 using StardewValley.Characters;
+using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Navigation;
 
 namespace GameBuddy.Stardew;
@@ -286,4 +288,55 @@ internal sealed partial class ExecutionManager
         return accepted;
     }
 
+    private static readonly Dictionary<string, int> DirectionMap = new(StringComparer.Ordinal)
+    {
+        ["up"] = 0,
+        ["right"] = 1,
+        ["down"] = 2,
+        ["left"] = 3,
+    };
+
+    public LocalExecutionReceipt RequestLocalFaceDirection(BridgeExecutionRequest request, IExecutionLedger ledger)
+    {
+        if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
+            return existing;
+
+        string executionId = ledger is IDispatchExecutionLedger dispatchLedger
+            && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
+            ? boundExecutionId
+            : this.NewExecutionId(request.RequestId);
+
+        this.revision++;
+
+        if (request.Args.Direction is null || !DirectionMap.TryGetValue(request.Args.Direction, out int directionInt))
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_direction", null);
+
+        if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
+
+        if (actor.isMoving() || this.active is not null || this.activeNavigate is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "actor_moving", null);
+
+        actor.faceDirection(directionInt);
+
+        BridgeLocalObservation observation = this.CreateLocalObservation(actor);
+        if (actor.FacingDirection == directionInt)
+        {
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Succeeded,
+                "actor_facing_matches",
+                $"direction={request.Args.Direction}",
+                observation);
+        }
+
+        return this.RememberTerminal(
+            request.RequestId,
+            executionId,
+            ExecutionState.Failed,
+            "postcondition_failed",
+            $"expected={directionInt};actual={actor.FacingDirection}",
+            observation);
+    }
 }

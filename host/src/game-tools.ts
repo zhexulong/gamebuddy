@@ -3,8 +3,13 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { type Static, type TObject, Type } from "typebox";
 import {
   type ActionPolicy,
+  getArgumentEnum,
+  getDescriptorArgument,
+  isCandidateActionId,
+  isCandidateDescriptorComplete,
   STARDEW_ACTION_TOOL_NAMES,
   type StardewActionId,
+  type StardewCandidateActionId,
   searchActionsFromModCatalog,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
@@ -12,6 +17,7 @@ import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js
 import type { StardewBridgeConnection } from "./game-connection.js";
 import {
   type ActionRegistration,
+  type ActionRegistrationDescriptor,
   type ExecutionReceipt,
   type ExecutionRequest,
   validateExecutionRequest,
@@ -363,6 +369,55 @@ export function createStardewObservationTools(
     );
   }
   return tools;
+}
+
+/**
+ * Dynamically builds a restrictive TypeBox schema from an authenticated candidate action descriptor.
+ * Validates strictly with additionalProperties: false and enforces Mod-provided enums.
+ */
+export function buildCandidateToolSchema(
+  actionId: StardewCandidateActionId,
+  descriptor: ActionRegistrationDescriptor,
+): TObject {
+  if (actionId === "express_emote") {
+    const arg = getDescriptorArgument(descriptor, "emote");
+    const enumVals = getArgumentEnum(arg);
+    if (!enumVals || enumVals.length === 0) {
+      throw new Error(
+        "Invalid or incomplete descriptor for express_emote: missing emote enum",
+      );
+    }
+    const literals = enumVals.map((v) => Type.Literal(v));
+    const emoteSchema =
+      literals.length === 1 ? literals[0]! : Type.Union(literals);
+    return Type.Object(
+      {
+        emote: emoteSchema,
+      },
+      { additionalProperties: false },
+    );
+  }
+
+  if (actionId === "face_direction") {
+    const arg = getDescriptorArgument(descriptor, "direction");
+    const enumVals = getArgumentEnum(arg);
+    if (!enumVals || enumVals.length === 0) {
+      throw new Error(
+        "Invalid or incomplete descriptor for face_direction: missing direction enum",
+      );
+    }
+    const literals = enumVals.map((v) => Type.Literal(v));
+    const directionSchema =
+      literals.length === 1 ? literals[0]! : Type.Union(literals);
+    return Type.Object(
+      {
+        direction: directionSchema,
+      },
+      { additionalProperties: false },
+    );
+  }
+
+  throw new Error(`Unsupported candidate action: ${actionId}`);
 }
 
 /**
@@ -1146,6 +1201,56 @@ export function createStardewActionTools(
       }),
     );
   }
+  if (isVisible("express_emote")) {
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "express_emote",
+    );
+    if (
+      registration?.descriptor &&
+      isCandidateDescriptorComplete("express_emote", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema(
+        "express_emote",
+        registration.descriptor,
+      );
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.express_emote,
+          label: "Express Stardew Emote",
+          description:
+            "Show a native overhead emote balloon for the companion actor.",
+          parameters: schema,
+          action: "express_emote",
+          toArgs: (params) => ({ emote: params.emote }),
+        }),
+      );
+    }
+  }
+  if (isVisible("face_direction")) {
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "face_direction",
+    );
+    if (
+      registration?.descriptor &&
+      isCandidateDescriptorComplete("face_direction", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema(
+        "face_direction",
+        registration.descriptor,
+      );
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.face_direction,
+          label: "Face Stardew Direction",
+          description:
+            "Turn the companion actor to face a cardinal direction (up, right, down, left).",
+          parameters: schema,
+          action: "face_direction",
+          toArgs: (params) => ({ direction: params.direction }),
+        }),
+      );
+    }
+  }
   return tools;
 }
 async function executeGameAction(
@@ -1204,6 +1309,12 @@ async function executeBridge(
   dispatchAdmissionFactory: IntegrationDispatchAdmissionFactory,
   request: ExecutionRequest,
 ): Promise<ExecutionReceipt> {
+  if (!integration.state.connected) {
+    throw new Error("bridge_rejected:integration_not_ready");
+  }
+  if (Date.now() > request.deadlineMs) {
+    throw new Error("bridge_rejected:expired_deadline");
+  }
   /* Never retain an admission in the tool closure: STOP fences the final pre-write boundary. */
   const admission = dispatchAdmissionFactory();
   // Register the immutable tuple before the write so a lost first receipt can

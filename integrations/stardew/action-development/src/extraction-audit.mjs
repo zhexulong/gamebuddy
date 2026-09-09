@@ -20,7 +20,7 @@ async function present(file) {
 export async function auditStandaloneCoupling() {
   let packageJson;
   try { packageJson = JSON.parse(await readFile(path.join(PACKAGE_DIRECTORY, "package.json"), "utf8")); } catch { fail("package_unreadable"); }
-  const workspaceDevkit = (packageJson.dependencies?.["@gamebuddy/game-action-devkit"] ?? packageJson.devDependencies?.["@gamebuddy/game-action-devkit"]) === "workspace:*";
+  const workspaceDevkit = packageJson.dependencies?.["@gamebuddy/game-action-devkit"] === "workspace:*";
   const items = Object.freeze([
     Object.freeze({ id: "devkit-workspace-link", present: workspaceDevkit && await present(DEVKIT_PACKAGE), reason: "the production package resolves devkit through monorepo workspace:* rather than a packed dependency" }),
     Object.freeze({ id: "stardew-contract-exporter-project", present: await present(CORE_EXPORTER), reason: "equip_tool contract drift check executes this Stardew-owned exporter project outside action-development/" }),

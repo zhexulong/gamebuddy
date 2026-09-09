@@ -40,7 +40,7 @@ export type LocalStardewBridgeState = StardewBridgeConnectionState &
 /** Validated Mod-originated facts forwarded to the Host event pump. */
 export type LocalStardewBridgeFact = Extract<
   BridgeMessage,
-  { type: "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" }
+  { type: "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact" }
 >;
 /** Local transport facts never claim a Mod/world transition. */
 export type LocalStardewConnectionFact = Readonly<{ state: "disconnected"; reasonCode: string }>;
@@ -612,7 +612,8 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       (message.type === "snapshot" ||
         message.type === "execution_receipt" ||
         message.type === "semantic_event" ||
-        message.type === "lifecycle")
+        message.type === "lifecycle" ||
+        message.type === "world_fact")
     ) {
       for (const listener of this.#factListeners) listener(message);
     }

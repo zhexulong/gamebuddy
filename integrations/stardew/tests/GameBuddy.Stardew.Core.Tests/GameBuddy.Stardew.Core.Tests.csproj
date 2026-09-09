@@ -23,4 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Core\GameBuddy.Stardew.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Sensory\ISalientEventFilter.cs" Link="Sensory\ISalientEventFilter.cs" />
+  </ItemGroup>
 </Project>

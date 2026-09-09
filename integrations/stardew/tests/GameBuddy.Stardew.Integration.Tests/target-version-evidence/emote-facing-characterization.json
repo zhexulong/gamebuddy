@@ -1,0 +1,380 @@
+{
+  "schema": "gamebuddy-stardew-target-version-characterization/v1",
+  "generatedAt": "2026-09-09T00:00:00Z",
+  "target": {
+    "assemblyName": "Stardew Valley.dll",
+    "gamePath": "<redacted-game-path>",
+    "fileVersion": "1.6.15.24356",
+    "productVersion": "1.6.15, , 24356, ",
+    "assemblyVersion": "1.6.15.24356",
+    "lengthBytes": 6268416,
+    "sha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "smapi": {
+      "assemblyName": "StardewModdingAPI.dll",
+      "fileVersion": "4.5.2.0",
+      "productVersion": "4.5.2+821167e5c511bf3a2d98f604e5e838561c469219",
+      "lengthBytes": 1037824,
+      "sha256": "5e4c51bb3cd6616f5adcb804769dbb7c6872b2478fab786fb4ca00c72c7456bf"
+    }
+  },
+  "contracts": {
+    "emote": {
+      "candidateAction": "express_emote",
+      "candidateNativeBinding": "Farmer.doEmote(int whichEmote)",
+      "declaringType": "StardewValley.Farmer",
+      "baseType": "StardewValley.Character",
+      "methods": [
+        {
+          "returnType": "System.Void",
+          "parameters": [
+            {
+              "defaultValue": null,
+              "name": "whichEmote",
+              "type": "System.Int32",
+              "hasDefaultValue": false
+            }
+          ],
+          "name": "doEmote",
+          "declaringType": "StardewValley.Farmer"
+        },
+        {
+          "returnType": "System.Void",
+          "parameters": [
+            {
+              "defaultValue": null,
+              "name": "whichEmote",
+              "type": "System.Int32",
+              "hasDefaultValue": false
+            },
+            {
+              "defaultValue": null,
+              "name": "playSound",
+              "type": "System.Boolean",
+              "hasDefaultValue": false
+            },
+            {
+              "defaultValue": true,
+              "name": "nextEventCommand",
+              "type": "System.Boolean",
+              "hasDefaultValue": true
+            }
+          ],
+          "name": "doEmote",
+          "declaringType": "StardewValley.Character"
+        },
+        {
+          "returnType": "System.Void",
+          "parameters": [
+            {
+              "defaultValue": null,
+              "name": "whichEmote",
+              "type": "System.Int32",
+              "hasDefaultValue": false
+            },
+            {
+              "defaultValue": true,
+              "name": "nextEventCommand",
+              "type": "System.Boolean",
+              "hasDefaultValue": true
+            }
+          ],
+          "name": "doEmote",
+          "declaringType": "StardewValley.Character"
+        },
+        {
+          "returnType": "System.Void",
+          "parameters": [
+            {
+              "defaultValue": null,
+              "name": "whichEmote",
+              "type": "System.Int32",
+              "hasDefaultValue": false
+            },
+            {
+              "defaultValue": null,
+              "name": "emoteYOffset",
+              "type": "System.Int32",
+              "hasDefaultValue": false
+            }
+          ],
+          "name": "doEmote",
+          "declaringType": "StardewValley.Character"
+        }
+      ],
+      "busyCheck": {
+        "field": {
+          "type": "System.Boolean",
+          "isPublic": true,
+          "name": "isEmoting",
+          "declaringType": "StardewValley.Character"
+        },
+        "property": {
+          "type": "System.Boolean",
+          "canRead": true,
+          "name": "IsEmoting",
+          "declaringType": "StardewValley.Character",
+          "canWrite": true
+        },
+        "semantics": "When isEmoting is true, native doEmote transitions are blocked/no-op; candidate express_emote rejects with reasonCode emote_busy."
+      },
+      "constants": {
+        "characterConstants": {
+          "angryEmote": 12,
+          "blockedIntervalBeforeEmote": 3000,
+          "blushEmote": 60,
+          "emptyCanEmote": 4,
+          "exclamationEmote": 16,
+          "happyEmote": 32,
+          "heartEmote": 20,
+          "musicNoteEmote": 56,
+          "pauseEmote": 40,
+          "questionMarkEmote": 8,
+          "sadEmote": 28,
+          "sleepEmote": 24,
+          "videoGameEmote": 52,
+          "xEmote": 36
+        },
+        "farmerEmotes": [
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Happy",
+            "facingDirection": 2,
+            "emoteString": "happy",
+            "emoteIconIndex": 32
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Sad",
+            "facingDirection": 2,
+            "emoteString": "sad",
+            "emoteIconIndex": 28
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Heart",
+            "facingDirection": 2,
+            "emoteString": "heart",
+            "emoteIconIndex": 20
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Exclamation",
+            "facingDirection": 2,
+            "emoteString": "exclamation",
+            "emoteIconIndex": 16
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Note",
+            "facingDirection": 2,
+            "emoteString": "note",
+            "emoteIconIndex": 56
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Sleep",
+            "facingDirection": 2,
+            "emoteString": "sleep",
+            "emoteIconIndex": 24
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Game",
+            "facingDirection": 2,
+            "emoteString": "game",
+            "emoteIconIndex": 52
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Question",
+            "facingDirection": 2,
+            "emoteString": "question",
+            "emoteIconIndex": 8
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_X",
+            "facingDirection": 2,
+            "emoteString": "x",
+            "emoteIconIndex": 36
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Pause",
+            "facingDirection": 2,
+            "emoteString": "pause",
+            "emoteIconIndex": 40
+          },
+          {
+            "hidden": true,
+            "displayNameKey": "Strings\\UI:Emote_Blush",
+            "facingDirection": 2,
+            "emoteString": "blush",
+            "emoteIconIndex": 60
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Angry",
+            "facingDirection": 2,
+            "emoteString": "angry",
+            "emoteIconIndex": 12
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Yes",
+            "facingDirection": 2,
+            "emoteString": "yes",
+            "emoteIconIndex": 56
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_No",
+            "facingDirection": 2,
+            "emoteString": "no",
+            "emoteIconIndex": 36
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Sick",
+            "facingDirection": 2,
+            "emoteString": "sick",
+            "emoteIconIndex": 12
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Laugh",
+            "facingDirection": 2,
+            "emoteString": "laugh",
+            "emoteIconIndex": 56
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Surprised",
+            "facingDirection": 2,
+            "emoteString": "surprised",
+            "emoteIconIndex": 16
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Hi",
+            "facingDirection": 2,
+            "emoteString": "hi",
+            "emoteIconIndex": 56
+          },
+          {
+            "hidden": true,
+            "displayNameKey": "Strings\\UI:Emote_Taunt",
+            "facingDirection": 2,
+            "emoteString": "taunt",
+            "emoteIconIndex": 12
+          },
+          {
+            "hidden": false,
+            "displayNameKey": "Strings\\UI:Emote_Uh",
+            "facingDirection": 2,
+            "emoteString": "uh",
+            "emoteIconIndex": 40
+          },
+          {
+            "hidden": true,
+            "displayNameKey": "Strings\\UI:Emote_Music",
+            "facingDirection": 2,
+            "emoteString": "music",
+            "emoteIconIndex": 56
+          },
+          {
+            "hidden": true,
+            "displayNameKey": "Strings\\UI:Emote_Jar",
+            "facingDirection": 1,
+            "emoteString": "jar",
+            "emoteIconIndex": -1
+          }
+        ],
+        "candidateMapping": {
+          "happy": 32,
+          "sad": 28,
+          "heart": 20,
+          "exclamation": 16,
+          "note": 56,
+          "sleep": 24,
+          "game": 52,
+          "question": 8,
+          "x": 36,
+          "pause": 40,
+          "blush": 60,
+          "angry": 12,
+          "yes": 56,
+          "no": 36,
+          "sick": 12,
+          "laugh": 56,
+          "surprised": 16,
+          "hi": 56,
+          "taunt": 12,
+          "uh": 40,
+          "music": 56,
+          "jar": -1
+        }
+      }
+    },
+    "facing": {
+      "candidateAction": "face_direction",
+      "candidateNativeBinding": "Farmer.faceDirection(int direction)",
+      "declaringType": "StardewValley.Character",
+      "methods": [
+        {
+          "returnType": "System.Void",
+          "parameters": [
+            {
+              "defaultValue": null,
+              "name": "direction",
+              "type": "System.Int32",
+              "hasDefaultValue": false
+            }
+          ],
+          "name": "faceDirection",
+          "declaringType": "StardewValley.Character"
+        }
+      ],
+      "property": {
+        "type": "System.Int32",
+        "canRead": true,
+        "name": "FacingDirection",
+        "declaringType": "StardewValley.Character",
+        "canWrite": true
+      },
+      "field": {
+        "type": "StardewValley.Network.NetDirection",
+        "name": "facingDirection",
+        "declaringType": "StardewValley.Character"
+      },
+      "directions": {
+        "cardinalValues": {
+          "up": 0,
+          "right": 1,
+          "down": 2,
+          "left": 3
+        },
+        "game1Constants": {
+          "up": 0,
+          "right": 1,
+          "down": 2,
+          "left": 3
+        }
+      },
+      "movingCheck": {
+        "method": {
+          "returnType": "System.Boolean",
+          "parameters": [],
+          "name": "isMoving",
+          "declaringType": "StardewValley.Character"
+        },
+        "semantics": "Actor is considered moving when moveUp/moveDown/moveRight/moveLeft or position interpolation is active; candidate face_direction rejects with reasonCode actor_moving."
+      }
+    }
+  },
+  "liveObservation": {
+    "state": "unavailable",
+    "reason": "no_real_game_thread_harness_exists",
+    "description": "Source and API characterization only. Live native side-effect verification requires formal game-thread execution harness."
+  }
+}

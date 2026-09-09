@@ -6,6 +6,7 @@ using GameBuddy.Stardew.Core.Protocol;
 using GameBuddy.Stardew.Core.Routing;
 using GameBuddy.Stardew.Navigation;
 using GameBuddy.Stardew.Handlers;
+using GameBuddy.Stardew.Sensory;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
@@ -116,10 +117,18 @@ public sealed partial class ModEntry : Mod
     private bool nativeChatObservationInstalled;
     private bool nativeChatStopCommandRegistered;
     private static ModEntry? nativeChatIngressOwner;
+    private StardewSalientEventHooks? salientEventHooks;
+    private readonly ISalientEventFilter salientEventFilter = new SalientEventFilter();
 
     public override void Entry(IModHelper helper)
     {
         this.config = helper.ReadConfig<ModConfig>();
+        this.salientEventHooks = new StardewSalientEventHooks(
+            helper.Events,
+            this.salientEventFilter,
+            () => this.TryGetAiState(out ScreenEmbodimentState state) ? state.BridgeSession : null,
+            () => this.TryGetAiState(out ScreenEmbodimentState state) ? state.BridgeSession?.Scope : null,
+            this.Monitor);
         helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
         helper.Events.GameLoop.SaveLoaded += this.OnSaveLoaded;
         helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
@@ -1966,6 +1975,7 @@ public sealed partial class ModEntry : Mod
             : null;
         state.PlayerControlReplayGuard = state.BridgeSession is null ? null : new PlayerControlReplayGuard();
         state.LocalPipeBridge = state.BridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
+        state.BridgeSession?.SetPipeBridge(state.LocalPipeBridge);
         state.LastPublishedCatalogRevision = state.CapabilityPublication.CapabilityRevision;
         if (!scopeMatchesWorld && formalClientConfigured)
             this.Monitor.Log("GameBuddy formal attachment remains closed: manifest and local save/world/Farmhand scope do not match.", LogLevel.Warn);
@@ -1995,6 +2005,7 @@ public sealed partial class ModEntry : Mod
         MovementActionHandler movement = new(executions);
         MachineAndAnimalActionHandler machinesAndAnimals = new(executions);
         ResourceToolActionHandler resourceTools = new(executions);
+        ExpressionActionHandler expression = new(executions);
         FarmhandActionRouter router = new();
 
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
@@ -2008,6 +2019,7 @@ public sealed partial class ModEntry : Mod
                 FarmhandActionHandlerGroup.Movement => movement,
                 FarmhandActionHandlerGroup.MachinesAndAnimals => machinesAndAnimals,
                 FarmhandActionHandlerGroup.ResourceTools => resourceTools,
+                FarmhandActionHandlerGroup.Expression => expression,
                 _ => throw new InvalidOperationException("Unknown Farmhand execution action handler group."),
             };
             router.Register(registration, handler);
@@ -3303,6 +3315,7 @@ public sealed partial class ModEntry : Mod
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        this.salientEventFilter.Reset();
         // P0b reload is authorized by its frozen initial scope and derived slot,
         // never by a binding that survived a title transition.
         this.InvalidatePortfolioState("portfolio_returned_to_title");
@@ -3830,14 +3843,28 @@ public sealed partial class ModEntry : Mod
             || !NativeChatPresentationPolicy.IsBoundHumanRecipient(farmhand)
             || !NativeChatPresentationPolicy.IsCurrentLocale(locale))
             return false;
-        // This is the sole egress reflection: the exact static Game1 multiplayer
-        // field with the exact native type. Visibility varies by target build;
-        // identity and type are the authority boundary. Any drift fails closed.
-        FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-        if (!NativeChatPresentationPolicy.IsExactMultiplayerField(field)
-            || field!.GetValue(null) is not Multiplayer multiplayer)
-            return false;
-        multiplayer.sendChatMessage(LocalizedContentManager.CurrentLanguageCode, text, Game1.MasterPlayer.UniqueMultiplayerID);
+
+        if (Game1.IsMultiplayer && Game1.MasterPlayer.UniqueMultiplayerID != farmhand?.UniqueMultiplayerID)
+        {
+            // This is the sole egress reflection: the exact static Game1 multiplayer
+            // field with the exact native type. Visibility varies by target build;
+            // identity and type are the authority boundary. Any drift fails closed.
+            FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+            if (!NativeChatPresentationPolicy.IsExactMultiplayerField(field)
+                || field!.GetValue(null) is not Multiplayer multiplayer)
+                return false;
+            multiplayer.sendChatMessage(LocalizedContentManager.CurrentLanguageCode, text, Game1.MasterPlayer.UniqueMultiplayerID);
+            return true;
+        }
+
+        // Local or single-player fixture presentation: deliver directly to the native chat box.
+        if (Game1.chatBox is not null)
+        {
+            Game1.chatBox.receiveChatMessage(farmhand?.UniqueMultiplayerID ?? Game1.player.UniqueMultiplayerID, 0, LocalizedContentManager.CurrentLanguageCode, text);
+            return true;
+        }
+
+        Game1.showGlobalMessage(text);
         return true;
     }
 

@@ -84,4 +84,79 @@ public sealed class BridgeSessionPublicationTests
         using var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false));
         writer.Write(snapshotJson);
     }
+
+    [Fact]
+    public void TryCreateWorldFactEvent_EmitsTypedFactOverPipeBridge()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal)
+        {
+            "move_to_tile",
+        });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        const string token = "publication_token_0123456789abcdef";
+        var session = new BridgeSession(
+            new ExecutionManager(new DummyMonitor(), () => publication),
+            new FarmhandActionRouter(),
+            scope,
+            token,
+            () => publication,
+            () => "en-US");
+
+        var fact = new BridgeWorldFact(
+            "day_started_day_1",
+            "day_started_day_1",
+            "day_started",
+            100,
+            "0600",
+            1,
+            "{\"day\":1}",
+            "day_started_day_1");
+
+        // Unauthenticated session cannot emit
+        session.TryCreateWorldFactEvent(fact).Should().BeFalse();
+
+        // Authenticate session at generation 1
+        var hello = new BridgeEnvelope<BridgeHello>(
+            BridgeProtocol.Version,
+            "hello_01",
+            "hello_01",
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            scope,
+            "hello",
+            new BridgeHello(token));
+        session.TryAuthenticate(1, hello, out _, out string authReason).Should().BeTrue(authReason);
+
+        // Before pipe bridge or sink is set, cannot enqueue
+        session.TryCreateWorldFactEvent(fact).Should().BeFalse();
+
+        // Wire outbound sink
+        string? capturedJson = null;
+        long capturedGen = -1;
+        session.SetOutboundSink((gen, json) =>
+        {
+            capturedGen = gen;
+            capturedJson = json;
+            return true;
+        });
+
+        // Now emits successfully over outbound sink
+        session.TryCreateWorldFactEvent(fact).Should().BeTrue();
+        capturedGen.Should().Be(1);
+        capturedJson.Should().NotBeNull();
+        capturedJson.Should().Contain("\"type\":\"world_fact\"");
+        capturedJson.Should().Contain("\"kind\":\"day_started\"");
+        capturedJson.Should().Contain("\"deduplicationKey\":\"day_started_day_1\"");
+
+        // Also test the overload with generation and out json
+        session.TryCreateWorldFactEvent(1, fact, out string serializedJson).Should().BeTrue();
+        BridgeProtocol.TryDeserializeWorldFact(serializedJson, out var deserialized, out string reason).Should().BeTrue(reason);
+        deserialized!.Payload.Should().BeEquivalentTo(fact);
+
+        // Mismatched generation is rejected
+        session.TryCreateWorldFactEvent(999, fact, out _).Should().BeFalse();
+
+        // Invalid fact (null / non-opaque id) is rejected
+        var invalidFact = fact with { EventId = "" };
+        session.TryCreateWorldFactEvent(invalidFact).Should().BeFalse();
+    }
 }

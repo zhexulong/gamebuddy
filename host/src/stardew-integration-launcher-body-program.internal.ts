@@ -291,6 +291,38 @@ export function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
       return { source: "stardew_mod", kind: "semantic_event", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: message.payload.revision, executionId: message.payload.activeExecution?.executionId, payload: message.payload };
     case "lifecycle":
       return { source: "stardew_mod", kind: "lifecycle", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: 0, payload: message.payload };
+    case "world_fact": {
+      if (!message.payload.eventId || typeof message.payload.eventId !== "string") {
+        throw new Error("invalid_world_fact_event_id");
+      }
+      if (!message.payload.sourceEventId || typeof message.payload.sourceEventId !== "string") {
+        throw new Error("invalid_world_fact_source_event_id");
+      }
+      let payload: Readonly<Record<string, unknown>> = {};
+      if (message.payload.payload && typeof message.payload.payload === "object") {
+        payload = message.payload.payload as Readonly<Record<string, unknown>>;
+      } else if (typeof message.payload.payloadJson === "string") {
+        try {
+          payload = JSON.parse(message.payload.payloadJson);
+        } catch {
+          payload = {};
+        }
+      }
+      return {
+        source: "stardew_mod",
+        kind: "world_fact",
+        eventId: message.payload.eventId,
+        sourceEventId: message.payload.sourceEventId,
+        correlationId: message.payload.eventId,
+        revision: message.payload.revision,
+        observedTick: message.payload.observedTick,
+        ...(message.payload.gameTime !== undefined && message.payload.gameTime !== null
+          ? { gameTime: message.payload.gameTime }
+          : {}),
+        occurredAtMs: message.timestampMs,
+        payload,
+      };
+    }
   }
 }
 

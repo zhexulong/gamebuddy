@@ -195,6 +195,148 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return true;
     }
 
+    internal bool TryAdmitCandidate(BridgeExecutionRequest request, string executionId, out string reasonCode)
+    {
+        if (this.durabilityFailuresByRequestId.Contains(request.RequestId))
+        {
+            reasonCode = "execution_durability_quarantined";
+            return false;
+        }
+        reasonCode = "accepted";
+        if (this.executionJournal is null || this.executionScope is null)
+        {
+            reasonCode = "execution_durability_unavailable";
+            return false;
+        }
+
+        FarmhandCanonicalRequest canonicalRequest;
+        if (request.Action == "express_emote" && request.Args.Emote is not null)
+        {
+            canonicalRequest = FarmhandCanonicalRequest.EmoteRequest(request.Action, request.Args.Emote);
+        }
+        else if (request.Action == "face_direction" && request.Args.Direction is not null)
+        {
+            canonicalRequest = FarmhandCanonicalRequest.DirectionRequest(request.Action, request.Args.Direction);
+        }
+        else
+        {
+            reasonCode = "invalid_execution_request";
+            return false;
+        }
+
+        if (!this.TryBindDispatch(request.RequestId, request.Action, executionId, out reasonCode)
+            && reasonCode != "execution_identity_already_bound")
+        {
+            return false;
+        }
+
+        FarmhandExecutionAdmission admission = new(
+            this.executionScope,
+            request.RequestId,
+            request.IdempotencyKey,
+            request.Action,
+            canonicalRequest,
+            request.ExpectedRevision,
+            request.DeadlineMs,
+            executionId);
+        FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryRecordAdmission(admission);
+        if (!result.IsSuccess)
+        {
+            this.durabilityFailuresByRequestId.Add(request.RequestId);
+            reasonCode = result.Code.ToString();
+            return false;
+        }
+
+        this.durableAdmissionsByRequestId[request.RequestId] = admission;
+        reasonCode = "accepted";
+        return true;
+    }
+
+    private Func<Farmer?>? testActorResolver;
+
+    internal void SetTestActorResolver(Func<Farmer?>? resolver)
+    {
+        this.testActorResolver = resolver;
+    }
+
+    internal bool TryGetBoundActor(out Farmer? actor, out string reasonCode)
+    {
+        if (this.testActorResolver is not null)
+        {
+            actor = this.testActorResolver();
+            if (actor is null)
+            {
+                reasonCode = "world_not_ready";
+                return false;
+            }
+            if (this.executionScope is not null
+                && !string.Equals(this.executionScope.PlayerId, actor.UniqueMultiplayerID.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
+            {
+                actor = null;
+                reasonCode = "execution_scope_mismatch";
+                return false;
+            }
+            reasonCode = "accepted";
+            return true;
+        }
+
+        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
+        {
+            actor = null;
+            reasonCode = "world_not_ready";
+            return false;
+        }
+
+        actor = Game1.player;
+        if (this.executionScope is not null
+            && !string.Equals(this.executionScope.PlayerId, actor.UniqueMultiplayerID.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
+        {
+            actor = null;
+            reasonCode = "execution_scope_mismatch";
+            return false;
+        }
+
+        reasonCode = "accepted";
+        return true;
+    }
+
+    internal BridgeLocalObservation CreateLocalObservation(Farmer actor)
+    {
+        string location = actor.currentLocation?.NameOrUniqueName ?? string.Empty;
+        int tileX = actor.TilePoint.X;
+        int tileY = actor.TilePoint.Y;
+        int facing = actor.FacingDirection;
+        string inGameTime = "0600";
+        try
+        {
+            if (Game1.timeOfDay > 0)
+                inGameTime = Game1.timeOfDay.ToString("D4", CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            inGameTime = "0600";
+        }
+        bool playerNearby = false;
+        try
+        {
+            playerNearby = actor.currentLocation?.farmers.Any(other =>
+                other.UniqueMultiplayerID != actor.UniqueMultiplayerID
+                && Utility.tileWithinRadiusOfPlayer((int)other.Tile.X, (int)other.Tile.Y, 5, actor)) == true;
+        }
+        catch
+        {
+            playerNearby = false;
+        }
+        return new BridgeLocalObservation(
+            location,
+            tileX,
+            tileY,
+            facing,
+            inGameTime,
+            playerNearby,
+            (int)this.revision);
+    }
+
     internal bool TryGetDurableReceipt(string requestId, string idempotencyKey, out LocalExecutionReceipt receipt, out string reasonCode)
     {
         receipt = default!;
@@ -213,7 +355,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return false;
         }
 
-        receipt = new LocalExecutionReceipt(persisted.ExecutionId, persisted.RequestId, persisted.State, persisted.ReasonCode, persisted.Revision, persisted.Evidence, persisted.ActionId);
+        receipt = new LocalExecutionReceipt(persisted.ExecutionId, persisted.RequestId, persisted.State, persisted.ReasonCode, persisted.Revision, persisted.Evidence, persisted.ActionId, persisted.Observation);
         reasonCode = "accepted";
         return true;
     }
@@ -270,8 +412,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return receipt;
     }
 
-    LocalExecutionReceipt IExecutionLedger.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence) =>
-        this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+    LocalExecutionReceipt IExecutionLedger.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation) =>
+        this.RememberTerminal(requestId, executionId, state, reasonCode, evidence, observation);
 
     void IExecutionLedger.AddTrace(LocalExecutionReceipt receipt) => this.AddTrace(receipt);
 
@@ -2437,9 +2579,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             && !location.IsTileOccupiedBy(candidate, (CollisionMask)255, (CollisionMask)0, false);
     }
 
-    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence)
+    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null)
     {
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
+        string? boundActionId = this.actionIdsByRequestId.TryGetValue(requestId, out string? action) ? action : null;
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence, ActionId: boundActionId, Observation: observation);
         this.Remember(receipt);
         this.AddTrace(receipt);
         // Immediate native actions own no continuing controller/animation, so
@@ -2492,7 +2635,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 receipt.State,
                 receipt.ReasonCode,
                 receipt.Revision,
-                receipt.Evidence);
+                receipt.Evidence,
+                receipt.Observation);
             FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryPersistReceiptTransition(admission, durableReceipt);
             if (!result.IsSuccess)
             {
