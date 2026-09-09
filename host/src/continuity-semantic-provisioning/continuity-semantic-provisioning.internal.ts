@@ -349,6 +349,26 @@ function provision(
       requireOpen();
       return rawStore.readGameOperation(input);
     },
+    createGameSessionMetadata(input) {
+      requireOpen();
+      return rawStore.createGameSessionMetadata(input);
+    },
+    completeGameSessionBinding(input) {
+      requireOpen();
+      return rawStore.completeGameSessionBinding(input);
+    },
+    failGameSessionCreation(input) {
+      requireOpen();
+      return rawStore.failGameSessionCreation(input);
+    },
+    readGameSessionMetadata(input) {
+      requireOpen();
+      return rawStore.readGameSessionMetadata(input);
+    },
+    listResumableGameSessions() {
+      requireOpen();
+      return rawStore.listResumableGameSessions();
+    },
   });
   return Object.freeze({
     store,

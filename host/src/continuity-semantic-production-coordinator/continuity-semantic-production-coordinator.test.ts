@@ -478,10 +478,15 @@ test(
           "close",
           "commitClose",
           "commitEnter",
+          "completeGameSessionBinding",
+          "createGameSessionMetadata",
           "failClose",
           "failEnter",
+          "failGameSessionCreation",
+          "listResumableGameSessions",
           "prepareClose",
           "prepareEnter",
+          "readGameSessionMetadata",
           "recoverDeadOwner",
         ]);
         const facts = Object.freeze({
@@ -529,6 +534,104 @@ test(
         await game.close();
       }
     } finally {
+      cleanup(root);
+    }
+  },
+);
+
+test(
+  "known Game authority forwards design/105 Game session metadata operations and rejects them after close",
+  { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-known-game-metadata-");
+    let game:
+      | Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>>
+      | undefined;
+    try {
+      const manifestPath = manifest(root);
+      const deployment = await loadHostDeploymentManifest(manifestPath);
+      const chat = await internalCoordinator.createFreshSemanticProductionAuthorityFromDeploymentManifest(deployment);
+      await chat.close();
+      game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(deployment);
+      assert.deepEqual(await game.listResumableGameSessions(), []);
+      const created = await game.createGameSessionMetadata(
+        Object.freeze({
+          creationRequestId: "creation_01",
+          integrationId: "stardew",
+          continuityIdentityId: principal.continuityId,
+        }),
+      );
+      assert.equal(created.status, "pending");
+      assert.equal(created.revision, 1);
+      const idempotent = await game.createGameSessionMetadata(
+        Object.freeze({
+          creationRequestId: "creation_01",
+          integrationId: "stardew",
+          continuityIdentityId: principal.continuityId,
+        }),
+      );
+      assert.equal(idempotent.gameSessionId, created.gameSessionId);
+      assert.equal(idempotent.status, "pending");
+      const read = await game.readGameSessionMetadata(Object.freeze({ gameSessionId: created.gameSessionId }));
+      assert.deepEqual(read, created);
+      assert.equal(await game.readGameSessionMetadata(Object.freeze({ gameSessionId: "session_absent" })), null);
+      const completed = await game.completeGameSessionBinding(
+        Object.freeze({
+          creationRequestId: "creation_01",
+          gameSessionId: created.gameSessionId,
+          expectedRevision: 1,
+        }),
+      );
+      assert.equal(completed.status, "resumable");
+      assert.equal(completed.revision, 2);
+      assert.deepEqual(await game.listResumableGameSessions(), [completed]);
+      const failed = await game.createGameSessionMetadata(
+        Object.freeze({
+          creationRequestId: "creation_02",
+          integrationId: "stardew",
+          continuityIdentityId: null,
+        }),
+      );
+      await game.failGameSessionCreation(
+        Object.freeze({
+          creationRequestId: "creation_02",
+          gameSessionId: failed.gameSessionId,
+          expectedRevision: 1,
+        }),
+      );
+      assert.equal(
+        (await game.readGameSessionMetadata(Object.freeze({ gameSessionId: failed.gameSessionId })))?.status,
+        "failed",
+      );
+      assert.deepEqual(await game.listResumableGameSessions(), [completed]);
+      await assert.rejects(
+        game.completeGameSessionBinding(
+          Object.freeze({
+            creationRequestId: "creation_01",
+            gameSessionId: created.gameSessionId,
+            expectedRevision: 1,
+          }),
+        ),
+        /game_session_metadata_conflict/,
+      );
+      await game.close();
+      await assert.rejects(
+        game.createGameSessionMetadata(
+          Object.freeze({
+            creationRequestId: "creation_03",
+            integrationId: "stardew",
+            continuityIdentityId: null,
+          }),
+        ),
+        /semantic_game_authority_closed/,
+      );
+      await assert.rejects(
+        game.readGameSessionMetadata(Object.freeze({ gameSessionId: created.gameSessionId })),
+        /semantic_game_authority_closed/,
+      );
+      await assert.rejects(game.listResumableGameSessions(), /semantic_game_authority_closed/);
+    } finally {
+      await game?.close().catch(() => undefined);
       cleanup(root);
     }
   },

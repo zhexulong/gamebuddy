@@ -12,7 +12,7 @@ import {
 } from "./continuity-semantic-deadline-cancellation.internal.js";
 
 /** Production-only, fresh-only S4a substrate. It intentionally has no adoption or legacy imports. */
-export const PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION = 42;
+export const PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION = 43;
 export type ProductionPrincipal = Readonly<{ continuityId: string; companionId: string; playerId: string }>;
 export type ProductionBootstrapInput = Readonly<{
   principal: ProductionPrincipal;
@@ -328,6 +328,26 @@ export type ProductionGameRecoveryTarget = Readonly<{
   permit: ProductionGamePermit;
   readback: ProductionGameReadback;
 }>;
+/** design/105 Slice 0: owner-free durable Game session metadata; activation is a separate owner-bound surface. */
+export type ProductionGameSessionMetadata = Readonly<{
+  gameSessionId: string;
+  integrationId: string;
+  continuityIdentityId: string | null;
+  status: "pending" | "resumable" | "failed";
+  revision: number;
+}>;
+/** Create is idempotent by the store-owned creation request identity; the store mints gameSessionId. */
+export type ProductionGameSessionCreateInput = Readonly<{
+  creationRequestId: string;
+  integrationId: string;
+  continuityIdentityId: string | null;
+}>;
+/** Atomic CAS transition; completion/failure requires the exact creation request and live session revision. */
+export type ProductionGameSessionBindingInput = Readonly<{
+  creationRequestId: string;
+  gameSessionId: string;
+  expectedRevision: number;
+}>;
 
 export type ProductionSagaStore = Readonly<{
   claim(input: ProductionSagaInput): ProductionSagaReadback;
@@ -372,6 +392,12 @@ export type ProductionSagaStore = Readonly<{
   readGameOperation(
     input: Readonly<{ principal: ProductionPrincipal; operationId: string }>,
   ): ProductionGameReadback | null;
+  /** design/105 Slice 0: owner-free durable Game session metadata, independent of activations above. */
+  createGameSessionMetadata(input: ProductionGameSessionCreateInput): ProductionGameSessionMetadata;
+  completeGameSessionBinding(input: ProductionGameSessionBindingInput): ProductionGameSessionMetadata;
+  failGameSessionCreation(input: ProductionGameSessionBindingInput): ProductionGameSessionMetadata;
+  readGameSessionMetadata(input: Readonly<{ gameSessionId: string }>): ProductionGameSessionMetadata | null;
+  listResumableGameSessions(): readonly ProductionGameSessionMetadata[];
 }>;
 export type ProductionContinuityStore = Readonly<{
   bootstrapFresh(input: ProductionBootstrapInput): ProductionStoreMetadata;
@@ -395,6 +421,7 @@ const tableNames = [
   "production_game_intent",
   "production_game_lease",
   "production_game_session",
+  "production_game_session_metadata",
   "production_initial_chat_saga",
   "production_partition",
   "production_quarantine",
@@ -412,7 +439,7 @@ const indexNames = [
   "production_chat_runtime_teardown_predecessor_index",
 ] as const;
 const schema = `
-CREATE TABLE production_store_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL CHECK(schema_version=42));
+CREATE TABLE production_store_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL CHECK(schema_version=43));
 CREATE TABLE production_bootstrap (singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL REFERENCES production_store_meta(store_id), bootstrap_operation_id TEXT NOT NULL UNIQUE, continuity_id TEXT NOT NULL, companion_id TEXT NOT NULL, player_id TEXT NOT NULL, authority_generation INTEGER NOT NULL CHECK(authority_generation>=1), authority_root_identity TEXT NOT NULL);
 CREATE TABLE production_partition (singleton INTEGER PRIMARY KEY CHECK(singleton=1), continuity_id TEXT NOT NULL UNIQUE, companion_id TEXT NOT NULL, player_id TEXT NOT NULL, partition_revision INTEGER NOT NULL CHECK(partition_revision>=1), fence_epoch INTEGER NOT NULL CHECK(fence_epoch>=1), selection_revision INTEGER NOT NULL CHECK(selection_revision>=0), game_partition_revision INTEGER NOT NULL CHECK(game_partition_revision>=1), game_fence_epoch INTEGER NOT NULL CHECK(game_fence_epoch>=1));
 CREATE TABLE production_surface_session (session_id TEXT PRIMARY KEY, continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), surface TEXT NOT NULL CHECK(surface IN ('chat','game')), state TEXT NOT NULL CHECK(state IN ('suspended','active','ended','pending','recovery_required')), created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0), updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>=0));
@@ -423,6 +450,7 @@ CREATE TABLE production_chat_runtime_teardown_intent (continuity_id TEXT NOT NUL
 CREATE TABLE production_continuity_event (event_id TEXT PRIMARY KEY, continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), session_id TEXT NOT NULL REFERENCES production_surface_session(session_id), type TEXT NOT NULL CHECK(type='chat_registered'), surface TEXT NOT NULL CHECK(surface='chat'), occurred_at_ms INTEGER NOT NULL CHECK(occurred_at_ms>=0));
 CREATE TABLE production_active_selection (singleton INTEGER PRIMARY KEY CHECK(singleton=1), chat_surface_session_id TEXT NOT NULL REFERENCES production_continuity_thread(chat_surface_session_id), chat_thread_id TEXT NOT NULL, selection_revision INTEGER NOT NULL CHECK(selection_revision>=1));
 CREATE TABLE production_game_session (session_id TEXT PRIMARY KEY REFERENCES production_surface_session(session_id), continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), state TEXT NOT NULL CHECK(state IN ('pending','active','ended','recovery_required')));
+CREATE TABLE production_game_session_metadata (game_session_id TEXT PRIMARY KEY, creation_request_id TEXT NOT NULL UNIQUE, integration_id TEXT NOT NULL, continuity_identity_id TEXT REFERENCES production_partition(continuity_id), status TEXT NOT NULL CHECK(status IN ('pending','resumable','failed')), revision INTEGER NOT NULL CHECK(revision>=1), CHECK((status='pending' AND revision=1) OR (status IN ('resumable','failed') AND revision=2)));
 CREATE TABLE production_game_lease (continuity_id TEXT PRIMARY KEY REFERENCES production_partition(continuity_id), session_id TEXT NOT NULL REFERENCES production_game_session(session_id), binding_digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('owned','close_pending','recovery_required')), lease_revision INTEGER NOT NULL CHECK(lease_revision>=1), world_json TEXT NOT NULL DEFAULT '{}', owner_json TEXT NOT NULL DEFAULT '{}', fence_token TEXT NOT NULL DEFAULT '', deadline_at_ms INTEGER NOT NULL DEFAULT 0 CHECK(deadline_at_ms>=0));
 CREATE TABLE production_game_intent (continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), operation_id TEXT NOT NULL, session_id TEXT NOT NULL REFERENCES production_game_session(session_id), payload_digest TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','terminal','aborted','recovery_required')), request_id TEXT NOT NULL DEFAULT '', request_json TEXT NOT NULL DEFAULT '{}', world_json TEXT NOT NULL DEFAULT '{}', owner_json TEXT NOT NULL DEFAULT '{}', fence_token TEXT NOT NULL DEFAULT '', deadline_at_ms INTEGER NOT NULL DEFAULT 0 CHECK(deadline_at_ms>=0), prepared_vector_json TEXT NOT NULL DEFAULT '{}', committed_vector_json TEXT, receipt_json TEXT, receipt_digest TEXT, recovery_reason TEXT CHECK(recovery_reason IN ('effect_failed','receipt_invalid','deadline_expired','revision_conflict')), PRIMARY KEY(continuity_id,operation_id));
 CREATE TABLE production_continuity_command (continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), operation_id TEXT NOT NULL, command_kind TEXT NOT NULL CHECK(command_kind IN ('register_chat','verify_chat_content','select_chat','transition_chat_lifecycle')), payload_json TEXT NOT NULL, payload_digest TEXT NOT NULL, response_json TEXT NOT NULL, response_digest TEXT NOT NULL, committed_vector_json TEXT NOT NULL, PRIMARY KEY(continuity_id,operation_id));
@@ -746,6 +774,26 @@ export function openProductionContinuityStore(
         readGameOperation(input) {
           requireOpen();
           return readGameOperation(db, immutable, input);
+        },
+        createGameSessionMetadata(input) {
+          requireOpen();
+          return createGameSessionMetadata(db, immutable, input);
+        },
+        completeGameSessionBinding(input) {
+          requireOpen();
+          return transitionGameSessionMetadata(db, immutable, input, "resumable");
+        },
+        failGameSessionCreation(input) {
+          requireOpen();
+          return transitionGameSessionMetadata(db, immutable, input, "failed");
+        },
+        readGameSessionMetadata(input) {
+          requireOpen();
+          return readGameSessionMetadata(db, immutable, input);
+        },
+        listResumableGameSessions() {
+          requireOpen();
+          return listResumableGameSessions(db, immutable);
         },
       });
     },
@@ -1115,6 +1163,7 @@ function validateMaterialization(db: DatabaseSync): void {
   const games = db.prepare("SELECT * FROM production_game_session").all() as any[];
   const leases = db.prepare("SELECT * FROM production_game_lease").all() as any[];
   const _intents = db.prepare("SELECT * FROM production_game_intent").all() as any[];
+  const sessionMetadata = db.prepare("SELECT * FROM production_game_session_metadata").all() as any[];
   const chatRuntimeIntents = db.prepare("SELECT * FROM production_chat_runtime_intent").all() as any[];
   const bootstrap = db
     .prepare("SELECT continuity_id,companion_id,player_id FROM production_bootstrap WHERE singleton=1")
@@ -1144,7 +1193,19 @@ function validateMaterialization(db: DatabaseSync): void {
         !["owned", "close_pending", "recovery_required"].includes(l.state),
     ) ||
     chatRuntimeIntents.some((intent) => !validPersistedChatRuntimeIntent(db, intent, p, bootstrap)) ||
-    !validPersistedChatRuntimeTeardownIntents(db, p, bootstrap)
+    !validPersistedChatRuntimeTeardownIntents(db, p, bootstrap) ||
+    sessionMetadata.some(
+      (m) =>
+        !safeId(m.game_session_id) ||
+        !safeId(m.creation_request_id) ||
+        !safeId(m.integration_id) ||
+        (m.continuity_identity_id !== null && m.continuity_identity_id !== p?.continuity_id) ||
+        !["pending", "resumable", "failed"].includes(m.status) ||
+        !Number.isSafeInteger(m.revision) ||
+        m.revision < 1 ||
+        (m.status === "pending") !== (m.revision === 1) ||
+        ((m.status === "resumable" || m.status === "failed") !== (m.revision === 2))
+    )
   )
     throw new Error("production_store_materialization_invalid");
   const chatRuntimeState = currentChatRuntimeState(db, chatRuntimeIntents);
@@ -4278,6 +4339,120 @@ function readGameOperation(
     return row ? gameReadback(db, row) : null;
   });
 }
+function validGameSessionCreateInput(value: unknown): value is ProductionGameSessionCreateInput {
+  return (
+    exactPlainDataObject(value, ["creationRequestId", "integrationId", "continuityIdentityId"]) &&
+    safeId(value.creationRequestId) &&
+    safeId(value.integrationId) &&
+    (value.continuityIdentityId === null || safeId(value.continuityIdentityId))
+  );
+}
+function validGameSessionBindingInput(value: unknown): value is ProductionGameSessionBindingInput {
+  return (
+    exactPlainDataObject(value, ["creationRequestId", "gameSessionId", "expectedRevision"]) &&
+    safeId(value.creationRequestId) &&
+    safeId(value.gameSessionId) &&
+    Number.isSafeInteger(value.expectedRevision) &&
+    (value.expectedRevision as number) >= 1
+  );
+}
+function gameSessionMetadataReadback(db: DatabaseSync, row: any): ProductionGameSessionMetadata {
+  return Object.freeze({
+    gameSessionId: row.game_session_id,
+    integrationId: row.integration_id,
+    continuityIdentityId: row.continuity_identity_id,
+    status: row.status,
+    revision: row.revision,
+  });
+}
+/** design/105 Slice 0 create: may record a pending row before external world creation; never resumable until bound. */
+function createGameSessionMetadata(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: ProductionGameSessionCreateInput,
+): ProductionGameSessionMetadata {
+  if (!validGameSessionCreateInput(input)) throw new Error("invalid_game_session_metadata");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    if (input.continuityIdentityId !== null && input.continuityIdentityId !== bootstrap.bootstrap.principal.continuityId)
+      throw new Error("invalid_game_session_metadata");
+    const old = db
+      .prepare("SELECT * FROM production_game_session_metadata WHERE creation_request_id=?")
+      .get(input.creationRequestId) as any;
+    if (old) {
+      if (old.integration_id !== input.integrationId || old.continuity_identity_id !== input.continuityIdentityId)
+        throw new Error("game_session_creation_conflict");
+      return gameSessionMetadataReadback(db, old);
+    }
+    const gameSessionId = randomUUID().replaceAll("-", "");
+    db.prepare(
+      "INSERT INTO production_game_session_metadata(game_session_id,creation_request_id,integration_id,continuity_identity_id,status,revision) VALUES(?,?,?,?,'pending',1)",
+    ).run(gameSessionId, input.creationRequestId, input.integrationId, input.continuityIdentityId);
+    return gameSessionMetadataReadback(
+      db,
+      db.prepare("SELECT * FROM production_game_session_metadata WHERE game_session_id=?").get(gameSessionId),
+    );
+  });
+}
+/** Atomic pending-only CAS: rejects stale request identities, stale revisions, and already-transitioned rows. */
+function transitionGameSessionMetadata(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: ProductionGameSessionBindingInput,
+  target: "resumable" | "failed",
+): ProductionGameSessionMetadata {
+  if (!validGameSessionBindingInput(input)) throw new Error("invalid_game_session_metadata");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const row = db
+      .prepare("SELECT * FROM production_game_session_metadata WHERE game_session_id=?")
+      .get(input.gameSessionId) as any;
+    if (!row) throw new Error("game_session_metadata_missing");
+    if (row.creation_request_id !== input.creationRequestId || row.revision !== input.expectedRevision)
+      throw new Error("game_session_metadata_conflict");
+    const updated = db
+      .prepare(
+        "UPDATE production_game_session_metadata SET status=?,revision=revision+1 WHERE game_session_id=? AND status='pending' AND revision=? AND creation_request_id=?",
+      )
+      .run(target, input.gameSessionId, input.expectedRevision, input.creationRequestId);
+    if (updated.changes !== 1) throw new Error("game_session_metadata_conflict");
+    return gameSessionMetadataReadback(
+      db,
+      db.prepare("SELECT * FROM production_game_session_metadata WHERE game_session_id=?").get(input.gameSessionId),
+    );
+  });
+}
+function readGameSessionMetadata(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: Readonly<{ gameSessionId: string }>,
+): ProductionGameSessionMetadata | null {
+  if (!exactPlainDataObject(input, ["gameSessionId"]) || !safeId(input.gameSessionId))
+    throw new Error("invalid_game_session_metadata");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const row = db
+      .prepare("SELECT * FROM production_game_session_metadata WHERE game_session_id=?")
+      .get(input.gameSessionId) as any;
+    return row ? gameSessionMetadataReadback(db, row) : null;
+  });
+}
+function listResumableGameSessions(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+): readonly ProductionGameSessionMetadata[] {
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const rows = db
+      .prepare("SELECT * FROM production_game_session_metadata WHERE status='resumable' ORDER BY game_session_id")
+      .all() as any[];
+    return Object.freeze(rows.map((row) => gameSessionMetadataReadback(db, row)));
+  });
+}
 function strictEmpty(db: DatabaseSync): boolean {
   return [
     "production_active_selection",
@@ -4288,6 +4463,7 @@ function strictEmpty(db: DatabaseSync): boolean {
     "production_game_session",
     "production_game_lease",
     "production_game_intent",
+    "production_game_session_metadata",
     "production_continuity_command",
     "production_quarantine",
     "production_initial_chat_saga",
