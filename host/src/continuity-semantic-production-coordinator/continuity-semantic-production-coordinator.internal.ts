@@ -36,6 +36,9 @@ import type {
   ProductionGamePermit,
   ProductionGameReadback,
   ProductionGameRecoveryTarget,
+  ProductionGameSessionBindingInput,
+  ProductionGameSessionCreateInput,
+  ProductionGameSessionMetadata,
   ProductionGameTerminalReceipt,
   ProductionGameWorld,
   ProductionSagaReadback,
@@ -1168,6 +1171,12 @@ export type SemanticGameProductionAuthority = Readonly<{
   recoverDeadOwner(
     input: Readonly<{ request: "recover_dead_owner"; operationId: string }>,
   ): Promise<ProductionGameReadback>;
+  /** design/105 Slice 0: owner-free durable Game session metadata, forwarded under this authority's mutex. */
+  createGameSessionMetadata(input: ProductionGameSessionCreateInput): Promise<ProductionGameSessionMetadata>;
+  completeGameSessionBinding(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
+  failGameSessionCreation(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
+  readGameSessionMetadata(input: Readonly<{ gameSessionId: string }>): Promise<ProductionGameSessionMetadata | null>;
+  listResumableGameSessions(): Promise<readonly ProductionGameSessionMetadata[]>;
   close(): Promise<void>;
 }>;
 /** Only the S4 construction zone may supply facts drawn from its active binding execution. */
@@ -2610,6 +2619,20 @@ function createKnownGameAuthority(
         ownerDeathVerifier,
       ),
     );
+  const createGameSessionMetadata = (input: ProductionGameSessionCreateInput): Promise<ProductionGameSessionMetadata> =>
+    begin(() => locked(() => provision.store.createGameSessionMetadata(input)));
+  const completeGameSessionBinding = (
+    input: ProductionGameSessionBindingInput,
+  ): Promise<ProductionGameSessionMetadata> =>
+    begin(() => locked(() => provision.store.completeGameSessionBinding(input)));
+  const failGameSessionCreation = (input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata> =>
+    begin(() => locked(() => provision.store.failGameSessionCreation(input)));
+  const readGameSessionMetadata = (
+    input: Readonly<{ gameSessionId: string }>,
+  ): Promise<ProductionGameSessionMetadata | null> =>
+    begin(() => locked(() => provision.store.readGameSessionMetadata(input)));
+  const listResumableGameSessions = (): Promise<readonly ProductionGameSessionMetadata[]> =>
+    begin(() => locked(() => provision.store.listResumableGameSessions()));
   return Object.freeze({
     authority: "SEMANTIC" as const,
     prepareEnter,
@@ -2619,6 +2642,11 @@ function createKnownGameAuthority(
     commitClose,
     failClose,
     recoverDeadOwner,
+    createGameSessionMetadata,
+    completeGameSessionBinding,
+    failGameSessionCreation,
+    readGameSessionMetadata,
+    listResumableGameSessions,
     close: () => {
       if (closePromise !== undefined) return closePromise;
       closing = true;
