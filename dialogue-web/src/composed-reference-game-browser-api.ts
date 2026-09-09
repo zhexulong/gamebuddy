@@ -212,6 +212,17 @@ type GameDisconnectRequestV1 = Readonly<{
   expectedAttachmentGeneration: number;
 }>;
 
+export type GameResumeRequestV1 = Readonly<{
+  apiVersion: 1;
+  idempotencyKey: string;
+  expectedAttachmentGeneration: number;
+}>;
+
+export type GameResumeResultV1 = Readonly<{
+  apiVersion: 1;
+  status: "accepted" | "attached" | "unavailable";
+}>;
+
 type StardewCabinConfirmationV1 = Readonly<{
   apiVersion: 1;
   status: "manifest_admitted";
@@ -224,6 +235,7 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   launchGame(request: GameLaunchRequestV1): Promise<void>;
   stopGame(request: GameStopRequestV1): Promise<void>;
   disconnectGame(request: GameDisconnectRequestV1): Promise<void>;
+  resumeGame(request: GameResumeRequestV1): Promise<GameResumeResultV1>;
   readStardewCabins(): Promise<StardewCabinChoicesV1>;
   confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1>;
 }>;
@@ -318,6 +330,16 @@ function validateStardewCabinConfirmation(value: unknown): StardewCabinConfirmat
     throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_confirmation");
   }
   return Object.freeze({ apiVersion: 1, status: "manifest_admitted" });
+}
+
+function validateGameResumeResult(value: unknown): GameResumeResultV1 {
+  if (!isRecord(value) ||
+      !hasExactKeys(value, ["apiVersion", "status"]) ||
+      value.apiVersion !== 1 ||
+      (value.status !== "accepted" && value.status !== "attached" && value.status !== "unavailable")) {
+    throw new ComposedReferenceGameProtocolError("invalid_game_resume_result");
+  }
+  return Object.freeze({ apiVersion: 1, status: value.status });
 }
 
 function isGameProjection(value: unknown): value is GameBrowserStateV1 {
@@ -568,6 +590,25 @@ export function createComposedReferenceGameBrowserApi(
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify(request),
       });
+    },
+    async resumeGame(request: GameResumeRequestV1): Promise<GameResumeResultV1> {
+      if (
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey) ||
+        !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
+        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration"])
+      ) throw new ComposedReferenceGameProtocolError("invalid_game_resume_request");
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/resume",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify(request),
+        },
+        validateGameResumeResult,
+      );
     },
     async readStardewCabins(): Promise<StardewCabinChoicesV1> {
       return exchange(

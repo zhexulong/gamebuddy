@@ -12,7 +12,8 @@ import {
   GameLaunchCommandV1Schema,
   GameAttachCommandV1Schema,
   GameStopCommandV1Schema,
-  GameReconnectCommandV1Schema,
+  GameResumeCommandV1Schema,
+  GameResumeResultV1Schema,
   GameDisconnectCommandV1Schema,
   GamePrerequisitesSetupCommandV1Schema,
   GameBrowserStateV1Schema,
@@ -418,12 +419,42 @@ test("game.stop carries idempotency key and expected attachment generation", () 
   assert.equal(validator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1, extra: true }), false);
 });
 
-test("game.reconnect carries idempotency key and expected attachment generation", () => {
-  const validator = Compile(GameReconnectCommandV1Schema);
+test("game.resume carries idempotency key and expected attachment generation", () => {
+  const validator = Compile(GameResumeCommandV1Schema);
   assert.equal(validator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1 }), true);
   assert.equal(validator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 0 }), false);
   assert.equal(validator.Check({ apiVersion: 1, idempotencyKey }), false);
   assert.equal(validator.Check({ apiVersion: 1, expectedAttachmentGeneration: 1 }), false);
+});
+
+test("game.resume result is strict, redacted, and covers the exact frozen status vocabulary", () => {
+  const validator = Compile(GameResumeResultV1Schema);
+  const statuses = ["accepted", "attached", "unavailable"] as const;
+  for (const status of statuses) {
+    assert.equal(validator.Check({ apiVersion: 1, status }), true);
+    // The aggregate validators expose the exact same compiled schema.
+    assert.equal(GameBrowserValidatorsV1.GameResumeResultV1Schema.Check({ apiVersion: 1, status }), true);
+  }
+  // Rejects invented statuses.
+  assert.equal(validator.Check({ apiVersion: 1, status: "invented_status" }), false);
+  assert.equal(validator.Check({ apiVersion: 1 }), false);
+  assert.equal(validator.Check({ status: "accepted" }), false);
+  assert.equal(validator.Check({ apiVersion: 2, status: "accepted" }), false);
+  // Rejects extra fields: session/launch/process/token/generation/lease/digest/receipt/attestation.
+  for (const extra of [
+    "sessionId",
+    "processPath",
+    "pipeEndpoint",
+    "controlToken",
+    "launchGeneration",
+    "lease",
+    "digest",
+    "receipt",
+    "attestation",
+    "extraneous",
+  ]) {
+    assert.equal(validator.Check({ apiVersion: 1, status: "accepted", [extra]: "forbidden" }), false, extra);
+  }
 });
 
 test("game.disconnect carries idempotency key and expected attachment generation", () => {
@@ -639,7 +670,7 @@ test("Game controls are absent from an empty profile that has no Game operations
   assert.equal(profile.operationIds.includes("game.launch" as never), false);
   assert.equal(profile.operationIds.includes("game.attach" as never), false);
   assert.equal(profile.operationIds.includes("game.stop" as never), false);
-  assert.equal(profile.operationIds.includes("game.reconnect" as never), false);
+  assert.equal(profile.operationIds.includes("game.resume" as never), false);
   assert.equal(profile.operationIds.includes("game.disconnect" as never), false);
   assert.equal(profile.operationIds.includes("game.diagnostics.read" as never), false);
   assert.equal(profile.operationIds.includes("game.prerequisites.setup" as never), false);
@@ -710,7 +741,8 @@ test("GameBrowserContractV1 preserves the exact versioned aggregate schema bound
     "GamePrerequisitesReadCommandV1Schema",
     "GamePrerequisitesSetupCommandV1Schema",
     "GameProblemV1Schema",
-    "GameReconnectCommandV1Schema",
+    "GameResumeCommandV1Schema",
+    "GameResumeResultV1Schema",
     "GameStateReadCommandV1Schema",
     "GameStopCommandV1Schema",
     "StardewCabinChoicesV1Schema",

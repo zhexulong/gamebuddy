@@ -401,3 +401,93 @@ test("Game disconnect client sends the exact generation-bound command and accept
     (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_disconnect_request",
   );
 });
+
+test("Game resume client sends the exact generation-bound command and decodes strict results", async () => {
+  const key = "R".repeat(21) + "A";
+  const recorder = transport(jsonResponse(root()), jsonResponse({ apiVersion: 1, status: "accepted" }));
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await api.bootstrap(HANDLE);
+  const resumed = await api.resumeGame({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 1 });
+  assert.deepEqual(resumed, { apiVersion: 1, status: "accepted" });
+  assert.deepEqual(
+    { input: recorder.calls[1].input, method: recorder.calls[1].init.method, headers: recorder.calls[1].init.headers, body: recorder.calls[1].init.body },
+    {
+      input: "/api/composed-reference-game/v1/game/resume",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": HANDLE },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 1 }),
+    },
+  );
+  for (const invalid of [
+    { apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 0 },
+    { apiVersion: 1, idempotencyKey: `${key}x`, expectedAttachmentGeneration: 1 },
+    { apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 1, path: "C:\\Games\\Stardew Valley" },
+  ]) {
+    await assert.rejects(
+      api.resumeGame(invalid),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_resume_request",
+    );
+  }
+});
+
+test("Game resume requires an established CSRF session before any transport", async () => {
+  const recorder = transport();
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await assert.rejects(
+    api.resumeGame({ apiVersion: 1, idempotencyKey: "R".repeat(21) + "A", expectedAttachmentGeneration: 1 }),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "missing_composed_session",
+  );
+  assert.deepEqual(recorder.calls, []);
+});
+
+test("Game resume decodes every strict status and rejects malformed or additive results", async () => {
+  const key = "R".repeat(21) + "A";
+  for (const status of ["accepted", "attached", "unavailable"]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse({ apiVersion: 1, status }));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    const resumed = await api.resumeGame({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 1 });
+    assert.deepEqual(resumed, { apiVersion: 1, status });
+  }
+  for (const bad of [
+    { apiVersion: 1, status: "accepted", generation: 3 },
+    { apiVersion: 1, status: "resumed" },
+    { apiVersion: 2, status: "accepted" },
+    { apiVersion: 1, status: "attached", token: "leak" },
+  ]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse(bad));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.resumeGame({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 1 }),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_resume_result",
+    );
+  }
+});
+
+test("Game resume preserves frozen typed problem outcomes and rejects non-200 transport", async () => {
+  const key = "R".repeat(21) + "A";
+  for (const code of ["game_attachment_conflict", "game_runtime_unavailable", "idempotency_conflict", "game_operation_in_progress", "game_unavailable", "state_unavailable"]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse({ code }, 409));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.resumeGame({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 1 }),
+      (error) => error instanceof ComposedReferenceGameProblemError && error.code === code,
+    );
+  }
+  for (const response of [
+    new Response(null, { status: 204 }),
+    new Response("not-json", { status: 200 }),
+    new Response(JSON.stringify({ code: "state_unavailable", detail: "raw producer text" }), { status: 409 }),
+    new Response(JSON.stringify({ code: "foreign_server_detail" }), { status: 409 }),
+  ]) {
+    const recorder = transport(jsonResponse(root()), response);
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.resumeGame({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 1 }),
+      ComposedReferenceGameProtocolError,
+    );
+  }
+});
