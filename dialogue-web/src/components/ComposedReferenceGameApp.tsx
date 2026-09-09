@@ -21,6 +21,7 @@ import {
   createComposedReferenceGameBrowserApi,
   type ComposedReferenceGameBrowserRootV1,
   type GameBrowserStateV1,
+  type GameResumeResultV1,
   type StardewCabinChoiceV1,
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
@@ -36,6 +37,25 @@ const POLL_INTERVAL_MS = 1_000;
 const POLL_BACKOFF_MS = [1_000, 2_000, 4_000, 5_000] as const;
 const MAX_POLL_ATTEMPTS = 60;
 const TERMINAL_TURN_STATES = new Set(["completed", "cancelled", "failed"]);
+
+/**
+ * Bounded authoritative reread budget while an admitted `game.resume` is
+ * converging. `accepted`/`attached` transport results are never runtime
+ * success: the composed authoritative Game projection is the sole terminal
+ * authority. This budget fails an unconverged attempt over to the existing
+ * unavailable presentation (exact generation key preserved) instead of ever
+ * clearing in-flight early and re-enabling a duplicate Resume.
+ */
+const RESUME_REREAD_INTERVAL_MS = 500;
+const RESUME_REREAD_MAX_ATTEMPTS = 60;
+
+/**
+ * Redacted connection presentations that were attached and then dropped in a
+ * way a player may recover with the generation-bound `game.resume` command.
+ * `reconnecting` is already under backend recovery, and `stopped` is the
+ * deliberate end state after STOP, so neither is player-resumable here.
+ */
+const RESUMABLE_CONNECTION_STATUSES: ReadonlySet<string> = new Set(["failed", "disconnected"]);
 
 type ReadyView = Readonly<{
   kind: "ready";
@@ -65,6 +85,10 @@ function newIdempotencyKey(): string {
 
 function terminalTurn(turn: BrowserTurnV1 | null): boolean {
   return turn !== null && TERMINAL_TURN_STATES.has(turn.state);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 /**
@@ -100,6 +124,11 @@ export function ComposedReferenceGameApp() {
   const disconnectActiveRef = useRef(false);
   const disconnectKeysRef = useRef(new Map<number, string>());
   const [disconnectFailed, setDisconnectFailed] = useState(false);
+  const gameResumeActiveRef = useRef(false);
+  const gameResumeKeysRef = useRef(new Map<number, string>());
+  const [gameResumeActive, setGameResumeActive] = useState(false);
+  const [gameResumeFailed, setGameResumeFailed] = useState(false);
+  const [gameResumeUnavailable, setGameResumeUnavailable] = useState(false);
   const cabinIdempotencyKeysRef = useRef(new Map<string, string>());
 
   const commit = useCallback((next: ViewState): void => {
@@ -608,6 +637,122 @@ export function ComposedReferenceGameApp() {
     }
   };
 
+  /**
+   * Bounded authoritative rereads for one admitted `game.resume`. A transport
+   * `accepted`/`attached` result is never treated as runtime success; the
+   * attempt stays visibly in flight until the composed authoritative Game
+   * state converges at the same attachment generation (connected), a
+   * newer/conflicting generation supersedes the attempt, or the bounded budget
+   * expires (unavailable; the exact generation key is preserved for replay).
+   */
+  const resumeAwaitAuthoritative = async (
+    generation: number,
+    attempts: number,
+  ): Promise<"connected" | "superseded" | "unavailable"> => {
+    if (cancelledRef.current || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
+    try {
+      await reread();
+    } catch {
+      if (cancelledRef.current) return "unavailable";
+      // An inconclusive authoritative read never completes the resume; keep
+      // rereading inside the bounded budget.
+      await delay(RESUME_REREAD_INTERVAL_MS);
+      return resumeAwaitAuthoritative(generation, attempts + 1);
+    }
+    const fresh = viewRef.current;
+    if (fresh.kind !== "ready" || fresh.root.game === null) return "superseded";
+    const projection = fresh.root.game.game;
+    if (projection.attachment.generation !== generation) return "superseded";
+    if (
+      projection.attachment.status === "attached" &&
+      (projection.connectionStatus === "connected_idle" || projection.connectionStatus === "active")
+    ) return "connected";
+    await delay(RESUME_REREAD_INTERVAL_MS);
+    return resumeAwaitAuthoritative(generation, attempts + 1);
+  };
+
+  const handleGameResume = async (): Promise<void> => {
+    const current = viewRef.current;
+    const game = current.kind === "ready" ? current.root.game : null;
+    if (
+      gameResumeActiveRef.current ||
+      current.kind !== "ready" ||
+      game === null ||
+      game.game.attachment.status !== "attached" ||
+      game.game.attachment.generation < 1 ||
+      !RESUMABLE_CONNECTION_STATUSES.has(game.game.connectionStatus)
+    ) return;
+    const generation = game.game.attachment.generation;
+    const existingKey = gameResumeKeysRef.current.get(generation);
+    const idempotencyKey = existingKey ?? newIdempotencyKey();
+    gameResumeKeysRef.current.set(generation, idempotencyKey);
+    gameResumeActiveRef.current = true;
+    setGameResumeActive(true);
+    setGameResumeFailed(false);
+    setGameResumeUnavailable(false);
+    let outcome: GameResumeResultV1 | undefined;
+    try {
+      outcome = await composedApiRef.current.resumeGame({
+        apiVersion: 1,
+        idempotencyKey,
+        expectedAttachmentGeneration: generation,
+      });
+    } catch (error) {
+      let rereadSucceeded = false;
+      try {
+        await reread();
+        rereadSucceeded = true;
+      } catch { /* retain the current authoritative projection */ }
+      const fresh = viewRef.current;
+      const staleGenerationReconciled =
+        error instanceof ComposedReferenceGameProblemError &&
+        error.code === "game_attachment_conflict" &&
+        rereadSucceeded &&
+        fresh.kind === "ready" &&
+        fresh.root.game?.game.attachment.generation !== generation;
+      setGameResumeFailed(!staleGenerationReconciled);
+      gameResumeActiveRef.current = false;
+      setGameResumeActive(false);
+      return;
+    }
+    if (outcome === undefined) {
+      gameResumeActiveRef.current = false;
+      setGameResumeActive(false);
+      return;
+    }
+    if (outcome.status === "unavailable") {
+      // No side effect is known from this attempt; a single authoritative
+      // reread cannot confirm completion. The exact generation key stays so a
+      // player retry replays the same idempotent command.
+      try {
+        await reread();
+      } catch { /* retain the current authoritative projection */ }
+      const fresh = viewRef.current;
+      if (
+        fresh.kind === "ready" &&
+        fresh.root.game?.game.attachment.status === "attached" &&
+        fresh.root.game.game.attachment.generation === generation
+      ) setGameResumeUnavailable(true);
+      gameResumeActiveRef.current = false;
+      setGameResumeActive(false);
+      return;
+    }
+    // `accepted`/`attached` are transport admissions only and never runtime
+    // success. Keep the resume visibly in flight while bounded authoritative
+    // rereads converge, a newer/conflicting generation supersedes the attempt,
+    // or the bounded budget runs out (rendered as unavailable with the exact
+    // generation key preserved).
+    let convergence: "connected" | "superseded" | "unavailable";
+    try {
+      convergence = await resumeAwaitAuthoritative(generation, 1);
+    } catch {
+      convergence = "unavailable";
+    }
+    if (convergence === "unavailable") setGameResumeUnavailable(true);
+    gameResumeActiveRef.current = false;
+    setGameResumeActive(false);
+  };
+
   const handleStop = async (): Promise<void> => {
     const current = viewRef.current;
     const turn = current.kind === "ready" ? current.session.snapshot.chat?.turn : null;
@@ -649,6 +794,12 @@ export function ComposedReferenceGameApp() {
     view.root.game !== null &&
     view.root.game.game.attachment.status === "attached" &&
     view.root.game.game.attachment.generation > 0;
+  const gameResumeAvailable = view.kind === "ready" &&
+    view.root.game !== null &&
+    view.root.game.game.attachment.status === "attached" &&
+    view.root.game.game.attachment.generation > 0 &&
+    RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus);
+  const gameResumeInFlight = gameResumeActiveRef.current || gameResumeActive;
   const terminalTurnNotice = view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
     ? labels().chatStopped
     : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed" ? labels().chatFailed : null;
@@ -705,6 +856,14 @@ export function ComposedReferenceGameApp() {
                   </button>
                 )}
                 {disconnectFailed && <p role="status">{labels().gameDisconnectFailed}</p>}
+                {gameResumeAvailable && (
+                  <button type="button" disabled={gameResumeInFlight} onClick={() => void handleGameResume()}>
+                    {labels().gameResume}
+                  </button>
+                )}
+                {gameResumeActive && <p role="status">{labels().gameResumeInProgress}</p>}
+                {gameResumeFailed && <p role="status">{labels().gameResumeFailed}</p>}
+                {gameResumeUnavailable && <p role="status">{labels().gameResumeUnavailable}</p>}
                <StardewCabinHandoff
                  state={cabinView}
                  labels={labels()}
