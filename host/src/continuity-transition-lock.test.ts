@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { withContinuitySurfaceTransitionLock } from "./continuity-transition-lock.js";
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 async function createRuntimeRoot(prefix: string): Promise<string> {
-  return await mkdtemp(join(await realpath(tmpdir()), prefix));
+  return await canonicalTestRoot(prefix);
 }
 
 test.before(async () => {

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -31,6 +30,7 @@ import {
   STARDEW_INTEGRATION_LAUNCHER,
 } from "./stardew-integration-launcher.js";
 import { materializeAuthenticatedStardewLaunchPorts } from "./stardew-integration-launcher-body-program.internal.js";
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 
 const scope: Scope = Object.freeze({
   integrationId: "stardew",
@@ -44,7 +44,7 @@ const generation = "ai-generation-attestation";
 const continuityId = "continuity_attestation";
 
 async function receiptBackedBinding(launch: import("./integration-launcher.js").IntegrationLaunchHandle): Promise<GameRuntimeBinding> {
-  const root = await mkdtemp(join(tmpdir(), "stardew-s4c-admission-"));
+  const root = await canonicalTestRoot("stardew-s4c-admission-");
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
   const manifestPath = join(root, "manifest.json");

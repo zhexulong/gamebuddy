@@ -50,7 +50,6 @@ const ACCEPTANCE_BRIDGE_MODULE = "tavern/player-turn-acceptance.internal.ts";
 const CLAIM_FACADE_MODULE = "tavern/provider-attempt-claim.ts";
 const CLAIM_BRIDGE_MODULE = "tavern/provider-attempt-claim.internal.ts";
 const PROVIDER_START_MODULE = "tavern/chat-provider-start.ts";
-const PROVIDER_START_EXECUTION_MODULE = "tavern/p4-provider-start-execution.ts";
 const CHAT_THREAD_STORE_MODULE = "tavern/chat-thread-store.ts";
 const MOUNTED_TURN_TRANSITION_AUTHORITY_MODULE = "tavern/chat-thread-store.mounted-turn-transition.internal.ts";
 const ACCEPTANCE_COORDINATOR_IMPORTS = new Set(["acceptMountedDurableTurn", "consumeMountedDurableAdmission"]);
@@ -381,6 +380,134 @@ function bridgeRuntimeExports(source) {
   }
   return exports;
 }
+function isObjectMemberCall(node, objectName, propertyName, argumentCount) {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === objectName &&
+    node.expression.name.text === propertyName &&
+    node.arguments.length === argumentCount
+  );
+}
+
+function isExactPreflightId(node, file) {
+  if (!ts.isTemplateExpression(node) || node.head.text !== "preflight_" || node.templateSpans.length !== 1)
+    return false;
+  const span = node.templateSpans[0];
+  if (span.literal.text !== "" || !ts.isCallExpression(span.expression)) return false;
+  const replace = span.expression;
+  if (
+    !ts.isPropertyAccessExpression(replace.expression) ||
+    replace.expression.name.text !== "replace" ||
+    replace.arguments.length !== 2 ||
+    !ts.isCallExpression(replace.expression.expression) ||
+    !ts.isIdentifier(replace.expression.expression.expression) ||
+    replace.expression.expression.expression.text !== "randomUUID" ||
+    replace.expression.expression.arguments.length !== 0 ||
+    !ts.isRegularExpressionLiteral(replace.arguments[0]) ||
+    replace.arguments[0].getText(file) !== "/-/gu" ||
+    !ts.isStringLiteral(replace.arguments[1]) ||
+    replace.arguments[1].text !== ""
+  )
+    return false;
+  return true;
+}
+
+function isExactAuthoredContextPreparation(secondCallback, binding, file, storeName) {
+  if (
+    !ts.isBlock(secondCallback.body) ||
+    secondCallback.body.statements.length !== 2 ||
+    secondCallback.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) !== true
+  )
+    return false;
+  const [preparedStatement, returnStatement] = secondCallback.body.statements;
+  if (
+    !ts.isVariableStatement(preparedStatement) ||
+    preparedStatement.declarationList.declarations.length !== 1 ||
+    !ts.isIdentifier(preparedStatement.declarationList.declarations[0].name) ||
+    preparedStatement.declarationList.declarations[0].name.text !== "prepared" ||
+    !ts.isReturnStatement(returnStatement) ||
+    returnStatement.expression === undefined
+  )
+    return false;
+  const prepared = preparedStatement.declarationList.declarations[0];
+  if (
+    !ts.isCallExpression(prepared.initializer) ||
+    !ts.isPropertyAccessExpression(prepared.initializer.expression) ||
+    prepared.initializer.expression.name.text !== "prepare" ||
+    !ts.isPropertyAccessExpression(prepared.initializer.expression.expression) ||
+    !ts.isIdentifier(prepared.initializer.expression.expression.expression) ||
+    prepared.initializer.expression.expression.expression.text !== binding ||
+    prepared.initializer.expression.expression.name.text !== "authoredContextCapability" ||
+    prepared.initializer.arguments.length !== 1 ||
+    !isExactPreflightId(prepared.initializer.arguments[0], file)
+  )
+    return false;
+
+  const returned = returnStatement.expression;
+  if (
+    !ts.isCallExpression(returned) ||
+    !ts.isIdentifier(returned.expression) ||
+    returned.expression.text !== storeName ||
+    returned.arguments.length !== 2 ||
+    !ts.isIdentifier(returned.arguments[0]) ||
+    returned.arguments[0].text !== binding ||
+    !ts.isObjectLiteralExpression(returned.arguments[1]) ||
+    returned.arguments[1].properties.length !== 2
+  )
+    return false;
+  const [commandSpread, preparation] = returned.arguments[1].properties;
+  if (
+    !ts.isSpreadAssignment(commandSpread) ||
+    !ts.isIdentifier(commandSpread.expression) ||
+    commandSpread.expression.text !== "command" ||
+    !ts.isPropertyAssignment(preparation) ||
+    preparation.name.getText(file) !== "authoredContextPreparation" ||
+    !isObjectMemberCall(preparation.initializer, "Object", "freeze", 1) ||
+    !ts.isObjectLiteralExpression(preparation.initializer.arguments[0]) ||
+    preparation.initializer.arguments[0].properties.length !== 2
+  )
+    return false;
+  const [sourceRefs, stableTokenCount] = preparation.initializer.arguments[0].properties;
+  if (
+    !ts.isPropertyAssignment(sourceRefs) ||
+    sourceRefs.name.getText(file) !== "sourceRefs" ||
+    !isObjectMemberCall(sourceRefs.initializer, "Object", "freeze", 1) ||
+    !ts.isCallExpression(sourceRefs.initializer.arguments[0]) ||
+    !ts.isPropertyAccessExpression(sourceRefs.initializer.arguments[0].expression) ||
+    sourceRefs.initializer.arguments[0].expression.name.text !== "map" ||
+    !ts.isPropertyAccessExpression(sourceRefs.initializer.arguments[0].expression.expression) ||
+    !ts.isIdentifier(sourceRefs.initializer.arguments[0].expression.expression.expression) ||
+    sourceRefs.initializer.arguments[0].expression.expression.expression.text !== "prepared" ||
+    sourceRefs.initializer.arguments[0].expression.expression.name.text !== "sourceRefs" ||
+    sourceRefs.initializer.arguments[0].arguments.length !== 1
+  )
+    return false;
+  const mapCallback = sourceRefs.initializer.arguments[0].arguments[0];
+  if (
+    !ts.isArrowFunction(mapCallback) ||
+    mapCallback.parameters.length !== 1 ||
+    !ts.isIdentifier(mapCallback.parameters[0].name) ||
+    mapCallback.parameters[0].name.text !== "source" ||
+    !isObjectMemberCall(mapCallback.body, "Object", "freeze", 1) ||
+    !ts.isObjectLiteralExpression(mapCallback.body.arguments[0]) ||
+    mapCallback.body.arguments[0].properties.length !== 1 ||
+    !ts.isSpreadAssignment(mapCallback.body.arguments[0].properties[0]) ||
+    !ts.isIdentifier(mapCallback.body.arguments[0].properties[0].expression) ||
+    mapCallback.body.arguments[0].properties[0].expression.text !== "source"
+  )
+    return false;
+  return (
+    ts.isPropertyAssignment(stableTokenCount) &&
+    stableTokenCount.name.getText(file) === "stableTokenCount" &&
+    ts.isPropertyAccessExpression(stableTokenCount.initializer) &&
+    ts.isIdentifier(stableTokenCount.initializer.expression) &&
+    stableTokenCount.initializer.expression.text === "prepared" &&
+    stableTokenCount.initializer.name.text === "stableTokenCount"
+  );
+}
+
 function isExactBridgeImplementation(
   source,
   shape = Object.freeze({
@@ -389,6 +516,7 @@ function isExactBridgeImplementation(
     consumer: "consumeMountedDurableAdmission",
     store: "acceptMountedPlayerMessage",
     command: true,
+    acceptancePreparation: false,
   }),
 ) {
   const file = ts.createSourceFile("mounted-turn-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -433,7 +561,7 @@ function isExactBridgeImplementation(
     );
   };
   if (
-    runtimeImports.size !== 2 ||
+    runtimeImports.size !== (shape.acceptancePreparation ? 3 : 2) ||
     !hasExactRuntimeImports(
       "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
       [
@@ -447,6 +575,8 @@ function isExactBridgeImplementation(
     !hasExactRuntimeImports("./chat-thread-store.js", [
       { name: shape.storeImported ?? shape.store, local: shape.store },
     ]) ||
+    (shape.acceptancePreparation &&
+      !hasExactRuntimeImports("node:crypto", [{ name: "randomUUID", local: "randomUUID" }])) ||
     implementation === undefined ||
     implementation.name?.text !== shape.facade ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
@@ -519,16 +649,18 @@ function isExactBridgeImplementation(
       ? secondCallback.body.statements[0].expression
       : undefined
     : secondCallback.body;
-  const exactStoreCall = !!(
-    secondBody &&
-    ts.isCallExpression(secondBody) &&
-    ts.isIdentifier(secondBody.expression) &&
-    secondBody.expression.text === shape.store &&
-    secondBody.arguments.length === (shape.command ? 2 : 1) &&
-    ts.isIdentifier(secondBody.arguments[0]) &&
-    secondBody.arguments[0].text === binding &&
-    (!shape.command || (ts.isIdentifier(secondBody.arguments[1]) && secondBody.arguments[1].text === "command"))
-  );
+  const exactStoreCall = shape.acceptancePreparation
+    ? isExactAuthoredContextPreparation(secondCallback, binding, file, shape.store)
+    : !!(
+        secondBody &&
+        ts.isCallExpression(secondBody) &&
+        ts.isIdentifier(secondBody.expression) &&
+        secondBody.expression.text === shape.store &&
+        secondBody.arguments.length === (shape.command ? 2 : 1) &&
+        ts.isIdentifier(secondBody.arguments[0]) &&
+        secondBody.arguments[0].text === binding &&
+        (!shape.command || (ts.isIdentifier(secondBody.arguments[1]) && secondBody.arguments[1].text === "command"))
+      );
   if (!exactStoreCall) return false;
   if (shape.invocationConsumer === undefined) return true;
   const observer = outer.arguments[3];
@@ -1134,9 +1266,6 @@ function isClaimBridge(root, path) {
 function isProviderStart(root, path) {
   return isExactModule(root, path, PROVIDER_START_MODULE);
 }
-function isProviderStartExecution(root, path) {
-  return isExactModule(root, path, PROVIDER_START_EXECUTION_MODULE);
-}
 function isAnyMountedTurnBridge(root, path) {
   return isAcceptanceBridge(root, path) || isClaimBridge(root, path);
 }
@@ -1512,11 +1641,18 @@ export function checkHostProductionImportBoundary({
             facade: "claimMountedProviderAttemptFromFacade",
             runner: "claimMountedAttempt",
             consumer: "consumeMountedAttemptAdmission",
-             store: "claimStoreMountedAttempt",
+            store: "claimStoreMountedAttempt",
             storeImported: "claimMountedAttempt",
             command: false,
           })
-        : undefined;
+        : Object.freeze({
+            facade: "acceptMountedDurableTurnFromFacade",
+            runner: "acceptMountedDurableTurn",
+            consumer: "consumeMountedDurableAdmission",
+            store: "acceptMountedPlayerMessage",
+            command: true,
+            acceptancePreparation: true,
+          });
       const bridgeExports = bridgeRuntimeExports(source);
       if (bridgeExports.length !== 1 || bridgeExports[0]?.name !== expectedExport || bridgeExports[0]?.sensitive)
         violations.push(

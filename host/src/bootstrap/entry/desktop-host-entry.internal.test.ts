@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-
-
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
@@ -72,7 +70,7 @@ test("compiled entry rejects malformed bootstrap wire without acknowledgement", 
 
 test("Host bootstrap rejects a valid root until private Guardian session admission is available", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only bootstrap root, reparse, and current-user ownership admission");
-  const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-desktop-bootstrap-"));
+  const fixtureRoot = await canonicalTestRoot("gamebuddy-desktop-bootstrap-");
   try {
     const moduleDirectory = join(fixtureRoot, "Programs", "GameBuddy", "generation");
     const rootLayout = {
@@ -154,7 +152,7 @@ function startEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Us
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
   child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
   const stdoutEnded = new Promise<Buffer>((resolveAcknowledgement, rejectAcknowledgement) => {
-    const receive = (chunk: Buffer) => {
+    const receive = (_chunk: Buffer) => {
       const bytes = Buffer.concat(stdout);
       const newline = bytes.indexOf(10);
       if (newline < 0) return;

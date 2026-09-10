@@ -318,6 +318,7 @@ test("semantic content port classifies exact missing and existing without confla
   assert.deepEqual(missingCalls, ["resume"]);
 
   const existingCalls: string[] = [];
+  const creationCalls: string[] = [];
   const existing: ChatThreadStore = {
     ...selectionMethods,
     async resumeThread() {
@@ -335,11 +336,12 @@ test("semantic content port classifies exact missing and existing without confla
     },
   };
   await assert.rejects(
-    () => createTavernSemanticChatContentPort(existing, { createExplicit: async () => { throw new Error("chat_thread_already_exists"); } }).createExplicit(binding),
+    () => createTavernSemanticChatContentPort(existing, { createExplicit: async () => { creationCalls.push("create"); throw new Error("chat_thread_already_exists"); } }).createExplicit(binding),
     (error: unknown) =>
       error instanceof TavernExactContentError && error.code === "tavern_exact_content_already_exists",
   );
-  assert.deepEqual(existingCalls, ["create"]);
+  assert.deepEqual(existingCalls, []);
+  assert.deepEqual(creationCalls, ["create"]);
 
   const unavailable: ChatThreadStore = {
     ...selectionMethods,

@@ -82,7 +82,7 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
   const { root, store: s, creation, key } = await store();
   try {
     await creation.createExplicit(request());
-    const dbPath = join(root, "tavern", "v2", "continuities", key, "tavern.sqlite");
+    const dbPath = join(root, "tavern", "v3", "continuities", key, "tavern.sqlite");
     const db = new DatabaseSync(dbPath);
     try {
       const journalMode = (db.prepare("PRAGMA journal_mode").get() as any)?.journal_mode;
@@ -99,7 +99,7 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('tavern_threads') WHERE name IN ('metadata_json', 'opening_selection_json')").get() as any).count, 0);
 
       // Verify no 0-byte .lock files exist in continuity directory
-      const files = await readdir(join(root, "tavern", "v2", "continuities", key));
+      const files = await readdir(join(root, "tavern", "v3", "continuities", key));
       assert.equal(files.some((f) => f.endsWith(".lock")), false);
     } finally {
       db.close();

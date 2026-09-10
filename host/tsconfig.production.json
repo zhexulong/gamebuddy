@@ -19,6 +19,7 @@
     "src/tavern/chat-provider-start.ts",
     "src/tavern/reference-pipeline-static-shell-composition.ts",
     "src/tavern-management-dialogue-web.ts",
-    "src/tavern/tavern-management-static-shell-composition.ts"
+    "src/tavern/tavern-management-static-shell-composition.ts",
+    "src/magic-context-authored-context-bridge.d.ts"
   ]
 }

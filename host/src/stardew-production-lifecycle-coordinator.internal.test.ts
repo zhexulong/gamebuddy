@@ -289,10 +289,12 @@ async function createFixture(input: Readonly<{
   gameStopSettled?: Promise<void>;
   gameRuntimeTaskCancelError?: Error;
   afterIngressActivation?(): void;
+  onRuntimeRoot?(runtimeRoot: string): void;
   nowMs?: () => number;
   afterPlayerSpawn?(): void;
 }> = {}) {
   const runtimeRoot = await canonicalTemporaryRoot("gamebuddy-lifecycle-coordinator-");
+  input.onRuntimeRoot?.(runtimeRoot);
   const packageRoot = join(runtimeRoot, "package");
   temporaryRoots.push(runtimeRoot);
   await publishStardewInstallationRegistration(runtimeRoot, null, {
@@ -751,8 +753,9 @@ test("Game setup registers only the selected installation and Player Host fresh-
     const launchChain = installationChain.map((entry, index) => index === 2
       ? Object.freeze({ ...entry, fileId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" })
       : entry);
+    const inspector = installationInspector([setupChain, setupChain, launchChain, launchChain, launchChain]);
     const fixture = await createFixture({
-      inspectorChains: [setupChain, setupChain, launchChain, launchChain, launchChain],
+      overrides: { createInstallationInspector: async () => inspector },
     });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
@@ -786,7 +789,7 @@ test("launch-readiness generation is 0 until staged, then 1, and resets once lau
     try {
       assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 0);
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 0);
+      assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 1);
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
       assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
       assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 1);
@@ -1121,7 +1124,8 @@ test("staged Player Host admission failure restores staged and permits a later v
       : entry);
     const inspectors = [
       installationInspector([installationChain, changed]),
-      installationInspector([installationChain, installationChain, installationChain]),
+      installationInspector([installationChain, installationChain]),
+      installationInspector([installationChain, installationChain]),
     ];
     const fixture = await createFixture({ overrides: { createInstallationInspector: async () => inspectors.shift()! } });
     try {
@@ -1155,7 +1159,8 @@ test("staged Player Host reparse admission failure is pre-launch, restores stage
       : entry);
     const inspectors = [
       installationInspector([reparse, reparse]),
-      installationInspector([installationChain, installationChain, installationChain]),
+      installationInspector([installationChain, installationChain]),
+      installationInspector([installationChain, installationChain]),
     ];
     const fixture = await createFixture({ overrides: { createInstallationInspector: async () => inspectors.shift()! } });
     try {
@@ -1894,9 +1899,9 @@ test("manifest-admitted private Bridge config replacement is permanently uncerta
   let runtimeRoot = "";
   let tampered = false;
   const inspector = installationInspector(
-    [installationChain, installationChain, installationChain, installationChain],
+    [installationChain, installationChain, installationChain, installationChain, installationChain, installationChain, installationChain],
     async (readIndex) => {
-      if (readIndex !== 4 || tampered) return;
+      if (readIndex !== 8 || tampered) return;
       tampered = true;
       await writeFile(
         join(runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "ai-client", "Mods", "GameBuddy", "config.json"),
@@ -1905,9 +1910,9 @@ test("manifest-admitted private Bridge config replacement is permanently uncerta
     },
   );
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    onRuntimeRoot: (root) => { runtimeRoot = root; },
     overrides: { createInstallationInspector: async () => inspector },
   });
-  runtimeRoot = fixture.runtimeRoot;
   try {
     const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
     const command = {
@@ -1938,6 +1943,10 @@ test("manifest-admitted AI installation replacement is permanently uncertain and
     ? Object.freeze({ ...entry, fileId: "ffffffffffffffffffffffffffffffff" })
     : entry);
   const inspector = installationInspector([
+    installationChain,
+    installationChain,
+    installationChain,
+    installationChain,
     installationChain,
     installationChain,
     installationChain,

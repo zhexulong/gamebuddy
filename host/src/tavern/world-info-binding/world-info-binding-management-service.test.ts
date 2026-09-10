@@ -107,11 +107,13 @@ const mountPreamble = `
   const { createWorldInfoManagementRepository } = await import(repoUrl);
   const { createWorldInfoBindingManagementService } = await import(serviceUrl);
   const { createChatThreadStore } = await import(storeUrl);
-  const { identityKey } = await import(runtimeUrl);
+  const { identityKey, resolveRuntimePaths } = await import(runtimeUrl);
+  const { readOrCreateIdentityProfile } = await import(new URL("./identity-profile.js", runtimeUrl).href);
   const { composeTavernProfile } = await import(contractUrl);
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", storeUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href);
   await bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+  await readOrCreateIdentityProfile(resolveRuntimePaths(principal, root).identityProfilePath);
   const manifest = await loadHostDeploymentManifest(manifestPath);
   const repository = createWorldInfoManagementRepository(root);
   await repository.create({ publicTitle: "Pelican Town", summary: "A small valley town.", entries: [{ scope: "setting", publicTitle: "Square", summary: "Town center." }] });

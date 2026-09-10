@@ -14,7 +14,7 @@ test("compiles exact v2 Chat catalog with reference-free scope and deterministic
   const paths = resolveTavernPaths({ root } as never, identity);
   const artifacts = new TavernArtifactStore(root);
   const persona = await artifacts.write(tavernRevisionPath(join(paths.playerRoot, "personas", "persona"), 1), { schemaVersion: 1 as const, revision: 1, personaId: "persona", name: "Player" }, validateTavernArtifact);
-  const scenario = await artifacts.write(tavernRevisionPath(join(paths.companionRoot, "scenarios", "scenario"), 1), { schemaVersion: 1 as const, revision: 1, scenarioId: "scenario", text: "Quiet.", provenance: "authored" as const, owner: "chat_override" as const }, validateTavernArtifact);
+  const scenario = await artifacts.write(tavernRevisionPath(join(paths.companionRoot, "scenarios", "scenario"), 1), { schemaVersion: 1 as const, revision: 1, scenarioId: "scenario", name: "Quiet", description: "Quiet.", text: "Quiet.", provenance: "authored" as const, owner: "chat_override" as const }, validateTavernArtifact);
   const threads = createChatThreadStore(root, "continuity-key");
   const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
   const thread = await creation.createExplicit({ chatThreadId: "thread", chatSurfaceSessionId: "surface", companionId: "companion", continuityId: "continuity", personaId: "persona", scenarioId: "scenario", stableArtifactBindings: [

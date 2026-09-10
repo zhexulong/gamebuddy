@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import { bindWindowsStaleLockReclaimer, pathLockPath } from "./path-lock.js";
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 import {
   publishStardewInstallationRegistration,
   readStardewInstallationRegistration,
@@ -51,7 +51,7 @@ function record(overrides: Partial<StardewInstallationRegistrationRecordV1> = {}
 }
 
 async function fixture(): Promise<{ root: string; path: string; dispose(): Promise<void> }> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-registration-"));
+  const root = await canonicalTestRoot("gamebuddy-stardew-registration-");
   return {
     root,
     path: join(root, "stardew-installation-registration", "registration.json"),
@@ -151,7 +151,7 @@ test("strict parser rejects malformed schemas, unsafe structures, unowned produc
     }
     await writeFile(subject.path, `{"schema":"gamebuddy-stardew-installation-registration/v1","schema":"wrong"}`, "utf8");
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
-    await writeFile(subject.path, JSON.stringify({ ...record(), locator: sentinelLocator }) + "\n", "utf8");
+    await writeFile(subject.path, `${JSON.stringify({ ...record(), locator: sentinelLocator })}\n`, "utf8");
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
     await writeFile(subject.path, "x".repeat(64 * 1024 + 1), "utf8");
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
@@ -306,7 +306,9 @@ test("owner transaction rejects stale and mismatched settlement markers without 
     await assert.rejects(withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
       await storage.releaseSettledPointer(2, settlementMarker);
     }), { message: "stardew_installation_registration_unavailable" });
-    assert.equal((await readStardewInstallationRegistration(subject.root))?.revision, 2);
+    await withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
+      assert.equal((await storage.readRegistration())?.revision, 2);
+    });
   } finally {
     await subject.dispose();
   }

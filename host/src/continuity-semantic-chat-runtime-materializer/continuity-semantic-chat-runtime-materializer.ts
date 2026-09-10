@@ -3,10 +3,10 @@
  * Host-owned here; no caller can inject a runtime constructor or presentation.
  */
 
+import { publishGameBuddyAuthoredStableCatalog } from "@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge";
 import { prepareExactChatRuntimeConstruction } from "../continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 import { createCompanionRuntime, type RuntimeSession } from "../runtime.js";
 import {
-  type ChatRuntimeDisposal,
   type ChatRuntimeMaterializer,
   type MaterializedChatRuntime,
   materializeExactChatRuntime,
@@ -34,7 +34,6 @@ export function createHostChatRuntimeMaterializer(
         const piSessionId = runtime.sessionManager.getSessionId();
         if (typeof piSessionId !== "string" || piSessionId.length === 0) throw new Error("pi_session_binding_unavailable");
         const catalog = await construction.materializeStableContextForPiSession(piSessionId);
-        const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge");
         const capability = publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);
         const disposal = Object.freeze({ session: runtime.session, authoredContextCapability: capability });
         return Object.freeze({

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm, truncate, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { loadHostDeploymentManifest } from "./deployment-manifest.js";
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 
 const valid = (runtimeRoot: string) => ({
   schemaVersion: 2,
@@ -17,8 +17,7 @@ const valid = (runtimeRoot: string) => ({
 async function fixture(
   value: string | Record<string, unknown>,
 ): Promise<{ root: string; path: string; runtimeRoot: string; dispose(): Promise<void> }> {
-  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-deployment-manifest-"));
-  const runtimeRoot = join(root, "runtime");
+  const root = await canonicalTestRoot("gamebuddy-deployment-manifest-");  const runtimeRoot = join(root, "runtime");
   const path = join(root, "manifest.json");
   await mkdir(runtimeRoot);
   await writeFile(path, typeof value === "string" ? value : JSON.stringify(value), "utf8");

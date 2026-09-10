@@ -19,6 +19,8 @@ import type { GameRuntimeBinding } from "../continuity-semantic-game-runtime-bin
 import { createTestGameRuntimeMaterializer } from "../continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.js";
 import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import { DEFAULT_IDENTITY_PROFILE, writeIdentityProfile } from "../identity-profile.js";
+import { resolveRuntimePaths } from "../runtime.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
@@ -36,8 +38,9 @@ async function fixture() {
   const root = await mkdtemp(join(await realpath(parent), "s4-compose-")),
     runtimeRoot = join(root, "runtime"),
     manifestPath = join(root, "manifest.json");
-  await mkdir(runtimeRoot);
-  await writeFile(
+   await mkdir(runtimeRoot);
+   await writeIdentityProfile(resolveRuntimePaths(principal, runtimeRoot).identityProfilePath, DEFAULT_IDENTITY_PROFILE);
+   await writeFile(
     manifestPath,
     JSON.stringify({
       schemaVersion: 2,

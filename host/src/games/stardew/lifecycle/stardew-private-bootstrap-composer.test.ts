@@ -913,22 +913,17 @@ test("only the production internal and dedicated test-only adapter import the co
   assert.equal(publicComposerSource.includes("as StardewPrivateBootstrapComposition"), false);
   assert.equal(publicComposerSource.includes("launchStagedPlayerHost"), false);
 
-   assert.deepEqual(coreImporters.sort(), [
-     "stardew-bootstrap-guardian.private.test.ts",
-     "stardew-bootstrap-guardian.private.ts",
-     "stardew-owned-farmhand-game-session-materializer.internal.ts",
-     "stardew-private-bootstrap-composer.internal.ts",
-     "stardew-private-bootstrap-composer.test-support-internal.ts",
-     "stardew-private-bootstrap-composer.test.ts",
-     "stardew-production-lifecycle-coordinator.internal.ts",
-     "stardew-production-lifecycle-coordinator.test-support-internal.ts",
-   ]);
-   assert.deepEqual(testInternalImporters.sort(), [
-     "stardew-bootstrap-guardian.private.test.ts",
-     "stardew-private-bootstrap-composer.test-support.ts",
+  assert.deepEqual(coreImporters.sort(), [
+    "stardew-bootstrap-guardian.private.test.ts",
+    "stardew-bootstrap-guardian.private.ts",
+    "stardew-private-bootstrap-composer.internal.ts",
+    "stardew-private-bootstrap-composer.test-support-internal.ts",
     "stardew-private-bootstrap-composer.test.ts",
-    "stardew-production-lifecycle-coordinator.internal.test.ts",
-    "stardew-production-lifecycle-coordinator.test-support-internal.ts",
+  ]);
+  assert.deepEqual(testInternalImporters.sort(), [
+    "stardew-bootstrap-guardian.private.test.ts",
+    "stardew-private-bootstrap-composer.test-support.ts",
+    "stardew-private-bootstrap-composer.test.ts",
   ]);
    const productionCoreSource = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.core.ts"), "utf8");
    const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");

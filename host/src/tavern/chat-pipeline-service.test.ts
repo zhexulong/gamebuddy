@@ -126,8 +126,10 @@ const mountPreamble = `
   const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest, createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = coordinator;
   const { createChatPipelineService } = await import(serviceUrl);
   const { createChatThreadStore } = await import(storeUrl);
-  const { identityKey } = await import(runtimeUrl);
-  const { composeTavernProfile } = await import(contractUrl);
+  const { identityKey, resolveRuntimePaths } = await import(runtimeUrl);
+   const { DEFAULT_IDENTITY_PROFILE, writeIdentityProfile } = await import(new URL("../identity-profile.js", storeUrl).href);
+   const { dirname } = await import("node:path");
+   const { composeTavernProfile } = await import(contractUrl);
   const internal = await import(internalUrl);
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", storeUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href);
@@ -147,8 +149,11 @@ const mountPreamble = `
   let fixtureNumber = 0;
   async function fixture() {
     const fixtureRoot = root + "/fixture_" + (++fixtureNumber);
-    await mkdir(fixtureRoot, { recursive: true });
-    const fixtureManifestPath = fixtureRoot + "/manifest.json";
+     await mkdir(fixtureRoot, { recursive: true });
+     const identityProfilePath = resolveRuntimePaths(principal, fixtureRoot).identityProfilePath;
+     await mkdir(dirname(identityProfilePath), { recursive: true });
+     await writeIdentityProfile(identityProfilePath, DEFAULT_IDENTITY_PROFILE);
+     const fixtureManifestPath = fixtureRoot + "/manifest.json";
     await writeFile(fixtureManifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot: fixtureRoot, principal, bootstrapOperationId: "bootstrap_" + fixtureNumber, authorityGeneration: 1 }));
     const fixtureManifest = await loadHostDeploymentManifest(fixtureManifestPath);
     const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(fixtureManifest);

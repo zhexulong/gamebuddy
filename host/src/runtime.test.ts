@@ -1321,8 +1321,8 @@ test("Game operational marker registration is Game-only and initialization clean
     readFile(new URL("../src/runtime-core.internal.ts", import.meta.url), "utf8"),
   ]);
   const registration = core.slice(
-    core.indexOf("if (gameOperationalGate !== undefined)"),
-    core.indexOf("return {"),
+    core.lastIndexOf("if (gameOperationalGate !== undefined)"),
+    core.indexOf("if (loadMagicContextExtension)", core.lastIndexOf("if (gameOperationalGate !== undefined)")),
   );
   assert.doesNotMatch(wrapper, /registerGameOperationalGateMarker|fixedTools/);
   assert.match(registration, /registerGameOperationalGateMarker/);

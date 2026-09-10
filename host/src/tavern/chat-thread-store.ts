@@ -341,6 +341,7 @@ export type InitialChatExactContentCapability = Readonly<{
   resumeExact(chatThreadId: string, chatSurfaceSessionId: string): Promise<ChatThreadState>;
   /** Creates a new durable thread using profile metadata owned by this capability. */
   createExplicit(request: CreateChatThreadRequest): Promise<ChatThreadState>;
+  close?(): void;
 }>;
 
 export type ProfileAwareChatThreadCreationCapability = Readonly<{
@@ -748,6 +749,7 @@ export function createInitialChatExactContentCapability(
   const exactCapability: InitialChatExactContentCapability = Object.freeze({
     resumeExact: capability.resumeExact,
     createExplicit: creation.createExplicit,
+    close: store.close,
   });
   initialExactContentCapabilities.add(exactCapability);
   return exactCapability;
@@ -1145,7 +1147,7 @@ export function createChatThreadStore(
             lifecycle_status, management_revision, created_at_ms, updated_at_ms,
             opening_kind, opening_message_id, greeting_set_id, greeting_source_revision, greeting_canonical_hash,
             greeting_variant_id, greeting_profile_revision, greeting_scenario_revision, opening_locked_at_event_id
-          ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+           ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         ).run(
           profileAwareRequest.chatThreadId, profileAwareRequest.companionId, profileAwareRequest.continuityId,
           profileAwareRequest.personaId ?? null, profileAwareRequest.scenarioId ?? null, profileAwareRequest.chatSurfaceSessionId,

@@ -8,7 +8,8 @@ import {
   createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
-import { identityKey } from "../runtime.js";
+import { readOrCreateIdentityProfile } from "../identity-profile.js";
+import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import {
   createManifestDerivedInitialChatExactContentPort,
@@ -45,13 +46,15 @@ test(
   async () => {
     for (const phase of ["claimed_empty", "chat_registered", "content_verified"] as const) {
       const root = canonicalTestRootSync(`initial-chat-${phase}-`);
+      let content: InitialChatExactContentPort | undefined;
       try {
         const manifestPath = chatManifest(root);
         const manifest = await loadHostDeploymentManifest(manifestPath);
+        await readOrCreateIdentityProfile(resolveRuntimePaths(principal, manifest.runtimeRoot).identityProfilePath);
         const baseContent = createManifestDerivedInitialChatExactContentPort(manifest);
         let createCalls = 0;
         let resumeCalls = 0;
-        const content: InitialChatExactContentPort = Object.freeze({
+        content = Object.freeze({
           async createExplicit(request) {
             createCalls++;
             return baseContent.createExplicit(request);
@@ -60,6 +63,7 @@ test(
             resumeCalls++;
             return baseContent.resumeExact(threadId, companionId, continuityId, surfaceId);
           },
+          close: () => baseContent.close?.(),
         });
         const fresh = await createFreshSemanticProductionAuthorityFromDeploymentManifest(manifest);
         const claimed = await fresh.startInitialChat();
@@ -105,8 +109,10 @@ test(
           assert.equal(resumeCalls, expectedCalls[phase].resume);
         } finally {
           await reopened.close();
+          content?.close?.();
         }
       } finally {
+        content?.close?.();
         rmSync(root, { recursive: true, force: true });
       }
     }
@@ -118,10 +124,18 @@ test(
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
     const root = canonicalTestRootSync("initial-chat-content-tamper-");
+    let content: InitialChatExactContentPort | undefined;
+    let tavern: ReturnType<typeof createChatThreadStore> | undefined;
     try {
       const manifestPath = chatManifest(root);
       const manifest = await loadHostDeploymentManifest(manifestPath);
-      const content = createManifestDerivedInitialChatExactContentPort(manifest);
+      await readOrCreateIdentityProfile(resolveRuntimePaths(principal, manifest.runtimeRoot).identityProfilePath);
+      const baseContent = createManifestDerivedInitialChatExactContentPort(manifest);
+      content = Object.freeze({
+        createExplicit: baseContent.createExplicit,
+        resumeExact: baseContent.resumeExact,
+        close: () => baseContent.close?.(),
+      });
       const fresh = await createFreshSemanticProductionAuthorityFromDeploymentManifest(manifest);
       let registered: Awaited<ReturnType<typeof fresh.registerInitialChat>> | undefined;
       try {
@@ -140,7 +154,7 @@ test(
         await fresh.close();
       }
 
-      const tavern = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
+      tavern = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
       await tavern.renameThreadTitle!({
         chatThreadId: registered!.chatThreadId!,
         chatSurfaceSessionId: registered!.chatSurfaceSessionId!,
@@ -156,6 +170,8 @@ test(
         await reopened.close();
       }
     } finally {
+      tavern?.close?.();
+      content?.close?.();
       rmSync(root, { recursive: true, force: true });
     }
   },

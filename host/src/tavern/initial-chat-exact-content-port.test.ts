@@ -6,6 +6,7 @@ import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
   type CreateChatThreadRequest,
+  CHAT_THREAD_SCHEMA_VERSION,
   createChatThreadStore,
   createInitialChatExactContentCapability,
   createProfileAwareChatThreadCreationCapability,
@@ -163,7 +164,14 @@ test("collision does not fall back and broad not-found Error text cannot create"
       ),
     );
     const missing = { ...binding, chatThreadId: "missing_01" };
-    const dbPath = join(fixture.root, "tavern", "v2", "continuities", "a".repeat(64), "tavern.sqlite");
+    const dbPath = join(
+      fixture.root,
+      "tavern",
+      `v${CHAT_THREAD_SCHEMA_VERSION}`,
+      "continuities",
+      "a".repeat(64),
+      "tavern.sqlite",
+    );
     await writeFile(dbPath, "{ broken", "utf8");
     await assert.rejects(
       () =>
@@ -183,7 +191,14 @@ test("malformed durable state fails closed without a receipt", async () => {
   const fixture = await capability();
   try {
     await fixture.creation.createExplicit(request);
-    const dbPath = join(fixture.root, "tavern", "v2", "continuities", "a".repeat(64), "tavern.sqlite");
+    const dbPath = join(
+      fixture.root,
+      "tavern",
+      `v${CHAT_THREAD_SCHEMA_VERSION}`,
+      "continuities",
+      "a".repeat(64),
+      "tavern.sqlite",
+    );
     await writeFile(dbPath, "{ malformed", "utf8");
     await assert.rejects(
       () =>
@@ -271,7 +286,7 @@ test("public initial content port exposes distinct explicit creation and exact r
   const fixture = await capability();
   try {
     const port = createInitialChatExactContentPort(fixture.capability);
-    assert.deepEqual(Object.keys(port).sort(), ["createExplicit", "resumeExact"]);
+    assert.deepEqual(Object.keys(port).sort(), ["close", "createExplicit", "resumeExact"]);
     assert.equal("ensureExactContent" in port, false);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

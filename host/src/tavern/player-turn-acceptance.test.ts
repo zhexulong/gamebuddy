@@ -97,7 +97,10 @@ test("player turn opaque admission is one-shot, rejects reentry and close drains
         new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href,
       );
       bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
-      const { writeFile } = await import("node:fs/promises");
+      const { writeFile, mkdir } = await import("node:fs/promises");
+      const { dirname } = await import("node:path");
+      const { DEFAULT_IDENTITY_PROFILE, writeIdentityProfile } = await import(new URL("../identity-profile.js", storeUrl).href);
+      const { resolveRuntimePaths } = await import(new URL("../runtime.js", storeUrl).href);
       const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
       const manifestPath = root + "/manifest.json";
       await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot: root, principal, bootstrapOperationId: "bootstrap_01", authorityGeneration: 1 }));
@@ -105,8 +108,11 @@ test("player turn opaque admission is one-shot, rejects reentry and close drains
       const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest, acceptMountedDurableTurn, consumeMountedDurableAdmission } = await import(coordinatorUrl);
       const { acceptMountedPlayerMessage, createChatThreadStore } = await import(storeUrl);
       const { identityKey } = await import(new URL("../runtime.js", storeUrl).href);
-      const manifest = await loadHostDeploymentManifest(manifestPath);
-      const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
+       const manifest = await loadHostDeploymentManifest(manifestPath);
+       const identityProfilePath = resolveRuntimePaths(principal, root).identityProfilePath;
+       await mkdir(dirname(identityProfilePath), { recursive: true });
+       await writeIdentityProfile(identityProfilePath, DEFAULT_IDENTITY_PROFILE);
+       const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
       const lease = await authority.startMountedChatRuntime();
       const events = [];
       let saved; let releaseFirst;
@@ -217,11 +223,17 @@ test("facade genuine mount binds root and principal before durable writes, repla
         new URL("../windows-stale-lock-reclaimer/index.js", facadeUrl).href,
       );
       bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
-      const { writeFile } = await import("node:fs/promises");
-      const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
-      const path = root + "/manifest.json";
-      await writeFile(path, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot: root, principal, bootstrapOperationId: "bootstrap_01", authorityGeneration: 1 }));
-      const { loadHostDeploymentManifest } = await import(deploymentUrl);
+      const { writeFile, mkdir } = await import("node:fs/promises");
+       const { dirname } = await import("node:path");
+       const { DEFAULT_IDENTITY_PROFILE, writeIdentityProfile } = await import(new URL("../identity-profile.js", facadeUrl).href);
+       const { resolveRuntimePaths } = await import(new URL("../runtime.js", facadeUrl).href);
+       const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
+       const path = root + "/manifest.json";
+       await writeFile(path, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot: root, principal, bootstrapOperationId: "bootstrap_01", authorityGeneration: 1 }));
+       const identityProfilePath = resolveRuntimePaths(principal, root).identityProfilePath;
+       await mkdir(dirname(identityProfilePath), { recursive: true });
+       await writeIdentityProfile(identityProfilePath, DEFAULT_IDENTITY_PROFILE);
+       const { loadHostDeploymentManifest } = await import(deploymentUrl);
       const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = await import(coordinatorUrl);
       const internalUrl = new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", facadeUrl).href;
       const { acceptMountedDurableTurn } = await import(internalUrl);

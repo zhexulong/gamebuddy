@@ -43,11 +43,17 @@ const mountPreamble = `
     new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href,
   );
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
-  const { writeFile } = await import("node:fs/promises");
-  const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
-  const manifestPath = root + "/manifest.json";
-  await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot: root, principal, bootstrapOperationId: "bootstrap_01", authorityGeneration: 1 }));
-  const { loadHostDeploymentManifest } = await import(deploymentUrl);
+  const { mkdir, writeFile } = await import("node:fs/promises");
+   const { dirname } = await import("node:path");
+   const { DEFAULT_IDENTITY_PROFILE, writeIdentityProfile } = await import(new URL("../identity-profile.js", storeUrl).href);
+   const { resolveRuntimePaths } = await import(new URL("../runtime.js", storeUrl).href);
+   const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
+   const manifestPath = root + "/manifest.json";
+   await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot: root, principal, bootstrapOperationId: "bootstrap_01", authorityGeneration: 1 }));
+   const identityProfilePath = resolveRuntimePaths(principal, root).identityProfilePath;
+   await mkdir(dirname(identityProfilePath), { recursive: true });
+   await writeIdentityProfile(identityProfilePath, DEFAULT_IDENTITY_PROFILE);
+   const { loadHostDeploymentManifest } = await import(deploymentUrl);
   const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = await import(coordinatorUrl);
   const { createPlayerTurnAcceptor } = await import(new URL("./player-turn-acceptance.js", facadeUrl).href);
   const { createProviderAttemptClaimer } = await import(facadeUrl);

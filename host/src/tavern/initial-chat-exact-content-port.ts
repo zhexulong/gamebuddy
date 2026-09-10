@@ -50,6 +50,8 @@ export type InitialChatExactContentPort = Readonly<{
   ): Promise<TavernExactContentReceipt>;
   /** Explicit initial-thread creation, distinct from exact resume. */
   createExplicit(request: CreateChatThreadRequest): Promise<TavernExactContentReceipt>;
+  /** Closes the store owned by this unmounted content port. */
+  close?(): void;
 }>;
 
 const trustedReceipts = new WeakSet<object>();
@@ -100,6 +102,7 @@ export function createInitialChatExactContentPort(
         throw mapStoreFailure(error);
       }
     },
+    close: () => capability.close?.(),
   });
 }
 

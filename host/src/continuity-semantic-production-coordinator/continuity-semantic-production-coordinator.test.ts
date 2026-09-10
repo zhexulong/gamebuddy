@@ -17,6 +17,8 @@ import {
   type TavernExactContentReceipt,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "../identity-profile.js";
+import { resolveRuntimePaths } from "../runtime.js";
 import { createManifestDerivedInitialChatExactContentPort } from "../tavern/initial-chat-exact-content-port.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
@@ -116,6 +118,12 @@ async function releaseRetained(child: ChildProcess): Promise<void> {
 function manifest(root: string): string {
   const runtimeRoot = join(root, "runtime");
   mkdirSync(runtimeRoot);
+  const profilePath = resolveRuntimePaths(principal, runtimeRoot).identityProfilePath;
+  mkdirSync(dirname(profilePath), { recursive: true });
+  writeFileSync(
+    profilePath,
+    JSON.stringify({ ...DEFAULT_IDENTITY_PROFILE, canonicalHash: identityProfileHash(DEFAULT_IDENTITY_PROFILE) }),
+  );
   const manifestPath = join(root, "manifest.json");
   writeFileSync(
     manifestPath,

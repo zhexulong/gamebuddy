@@ -135,15 +135,22 @@ test("memory service source keeps the store, lease and coordinator authority pri
 
 const mountedPreamble = `
   const [coordinatorUrl, deploymentUrl, serviceUrl, contractUrl, manifestPath] = process.argv.slice(1);
+  const { mkdir } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  const { DEFAULT_IDENTITY_PROFILE, writeIdentityProfile } = await import(new URL("../../identity-profile.js", serviceUrl).href);
+  const { resolveRuntimePaths } = await import(new URL("../../runtime.js", serviceUrl).href);
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", coordinatorUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", coordinatorUrl).href);
   await bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
   const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = await import(coordinatorUrl);
   const { loadHostDeploymentManifest } = await import(deploymentUrl);
   const { createMemoryManagementService } = await import(serviceUrl);
-  const { composeTavernProfile } = await import(contractUrl);
-  const manifest = await loadHostDeploymentManifest(manifestPath);
-  const profile = composeTavernProfile({
+   const { composeTavernProfile } = await import(contractUrl);
+   const manifest = await loadHostDeploymentManifest(manifestPath);
+   const identityProfilePath = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot).identityProfilePath;
+   await mkdir(dirname(identityProfilePath), { recursive: true });
+   await writeIdentityProfile(identityProfilePath, DEFAULT_IDENTITY_PROFILE);
+   const profile = composeTavernProfile({
     profileId: "gamebuddy.tavern-management.memory-read",
     releaseTier: "tavern_management",
     routeIds: ["bootstrap","state.read","draft.read","draft.save","draft.discard","chat.list","chat.rename","memory.read","memory.mutate"],

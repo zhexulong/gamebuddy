@@ -238,17 +238,17 @@ test("neutral admission core is imported only by the public facade, the private 
     }
   }
   assert.deepEqual(coreImporters.sort(), [
+    "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
     "stardew-installation-admission.test.ts",
     "stardew-installation-admission.ts",
-    "stardew-private-bootstrap-composer.core.ts",
   ]);
   // The callback/raw-root/executable controlled use is declared only in the
   // neutral core and imported only by the private composer core and the
   // dedicated admission test adapter; no general production caller reaches it.
   assert.deepEqual(controlledUseInFiles.sort(), [
+    "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
     "stardew-installation-admission.core.ts",
     "stardew-installation-admission.test.ts",
-    "stardew-private-bootstrap-composer.core.ts",
   ]);
 });
 

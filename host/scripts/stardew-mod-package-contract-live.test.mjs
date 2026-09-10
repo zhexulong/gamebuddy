@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
+import { buildWindowsReparseInspector } from "./build-windows-reparse-inspector.mjs";
 
 const hostRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const emittedRoot = resolve(hostRoot, ".stardew-package-contract-live-test");
@@ -47,7 +48,13 @@ test("canonical package baseline accepts and wrong runtime version rejects", asy
     const packageRoot = resolve(root, ...contract.descriptor.destination.split("/"));
     await mkdir(packageRoot, { recursive: true });
     for (const name of contract.entries) await writeFile(resolve(packageRoot, name), name === "manifest.json" ? JSON.stringify(contract.manifestIdentity) : name === "GameBuddy.Stardew.deps.json" ? JSON.stringify(canonicalDeps()) : `fixture:${name}`);
-    const inspector = await (await import(pathToFileURL(resolve(emittedRoot, "windows-reparse-inspector", "index.js")).href)).createBuildWindowsReparseInspector();
+    const inspectorModule = await import(pathToFileURL(resolve(emittedRoot, "windows-reparse-inspector", "index.js")).href);
+    const pair = await buildWindowsReparseInspector();
+    const pairRoot = resolve(root, "native", "windows-reparse-inspector", "win-x64");
+    await mkdir(pairRoot, { recursive: true });
+    await copyFile(pair.helperPath, resolve(pairRoot, "GameBuddy.WindowsReparseInspector.exe"));
+    await copyFile(pair.manifestPath, resolve(pairRoot, "windows-reparse-inspector.manifest.json"));
+    const inspector = await inspectorModule.createPublishedWindowsReparseInspector(root);
     await module.verifyPublishedStardewModPackage(root, contract, inspector);
     const depsPath = resolve(packageRoot, "GameBuddy.Stardew.deps.json");
     const deps = JSON.parse(await readFile(depsPath, "utf8"));

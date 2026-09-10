@@ -54,7 +54,10 @@ test("authorization producer is called once and replay/forge/wrong role are reje
     authorization(new Uint8Array());
     authorization(new Uint8Array());
   }), /replay/);
-  await assert.rejects(() => runtime.launchRole("forged", launchOperation, (authorization) => (authorization as unknown as (x: unknown) => void)({}),), /forged/);
+  await assert.rejects(
+    () => runtime.launchRole("forged", launchOperation, (authorization) => authorization(undefined)),
+    /forged/,
+  );
   await assert.rejects(() => runtime.containRole("never-launched"), /not launched/);
 });
 
@@ -116,8 +119,10 @@ test("runtime source creates authorization only inside launchRole and exports no
     dirname(fileURLToPath(import.meta.url)),
     "../../../src/containment/runtime/core/contained-game-runtime.ts",
   ), "utf8");
-  const launchImplementationIndex = source.indexOf("launchRole(role, launchOperation, produceAuthorization) {");
-  const authorizationIndex = source.indexOf("const authorization =");
+  const launchImplementationIndex = source.indexOf(
+    "launchRole(role, launchOperation: RoleLaunchOperation, produceAuthorization: TypedPrivateGameAuthorizationProducer) {",
+  );
+  const authorizationIndex = source.indexOf("const authorization: InternalAuthorization =");
   const containImplementationIndex = source.indexOf("containRole(role) {");
   assert.ok(
     launchImplementationIndex >= 0 &&
@@ -159,8 +164,8 @@ test("serialized Promise.all operations never overlap native session calls", asy
     close: async () => {},
   }) satisfies DesktopGuardianSession;
   const runtime = createContainedGameRuntime(session, binding);
-  const first = runtime.launchRole("first", produce);
-  const second = runtime.launchRole("second", produce);
+  const first = runtime.launchRole("first", launchOperation, produce);
+  const second = runtime.launchRole("second", launchOperation, produce);
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(log, ["arm:1", "launch:first"]);
   releaseLaunch();

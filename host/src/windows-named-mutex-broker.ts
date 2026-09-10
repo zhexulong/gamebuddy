@@ -99,6 +99,8 @@ export class WindowsNamedMutexLease {
 
 export class WindowsNamedMutexBroker {
   private child: ChildProcessWithoutNullStreams | undefined;
+  private childReadline: ReturnType<typeof createInterface> | undefined;
+  private childClosePromise: Promise<void> | undefined;
   private readonly pending = new Map<string, Pending>();
   private readonly lateAcquireReplies = new Set<string>();
   private readonly leases = new Set<WindowsNamedMutexLease>();
@@ -197,6 +199,8 @@ export class WindowsNamedMutexBroker {
     // makes every later close observe the same terminal result without any
     // second release, reap, kill, or restart.
     if (this.failed) throw this.failed;
+    this.childReadline?.close();
+    this.childReadline = undefined;
     this.closed = true;
   }
   private async releaseLease(lease: WindowsNamedMutexLease): Promise<void> {
@@ -370,9 +374,10 @@ export class WindowsNamedMutexBroker {
       { stdio: "pipe", windowsHide: true },
     );
     this.child = child;
-    createInterface({ input: child.stdout, crlfDelay: Infinity, terminal: false }).on("line", (line) =>
-      this.handleLine(line),
-    );
+    child.unref();
+    this.childClosePromise = new Promise<void>((resolveClose) => child.once("close", () => resolveClose()));
+    this.childReadline = createInterface({ input: child.stdout, crlfDelay: Infinity, terminal: false });
+    this.childReadline.on("line", (line) => this.handleLine(line));
     this.attachChildTerminalListeners(child);
   }
   /** Only an actual process exit can acknowledge the normal close/reap path. */
@@ -474,6 +479,10 @@ export class WindowsNamedMutexBroker {
           if (!(await this.waitForExit(child, CLOSE_TIMEOUT_MS)))
             this.failed ??= new WindowsNamedMutexBrokerError("windows_named_mutex_broker_close_failed");
         }
+        if (!(await this.waitForClose(CLOSE_TIMEOUT_MS))) {
+          child.kill();
+          this.failed ??= new WindowsNamedMutexBrokerError("windows_named_mutex_broker_close_failed");
+        }
       } catch (error) {
         // Reaping is terminal once started. Never let a child API or wait
         // exception escape as an ordinary dependency failure.
@@ -490,6 +499,15 @@ export class WindowsNamedMutexBroker {
       }
     })();
   }
+  private async waitForClose(timeoutMs: number): Promise<boolean> {
+    const close = this.childClosePromise;
+    if (close === undefined) return true;
+    return await Promise.race([
+      close.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+    ]);
+  }
+
   private async waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
     if (child.exitCode !== null || child.signalCode !== null) return true;
     return new Promise<boolean>((resolve) => {

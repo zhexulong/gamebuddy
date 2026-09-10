@@ -99,6 +99,8 @@ test("management service source keeps the store, lease and coordinator authority
 const mountPreamble = `
   const [serviceUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, contractUrl, facadeUrl, root] = process.argv.slice(1);
   const { writeFile, mkdir } = await import("node:fs/promises");
+  const { DEFAULT_IDENTITY_PROFILE, writeIdentityProfile } = await import(new URL("../../identity-profile.js", serviceUrl).href);
+  const { resolveRuntimePaths } = await import(new URL("../../runtime.js", serviceUrl).href);
   const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
   const manifestPath = root + "/manifest.json";
   await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot: root, principal, bootstrapOperationId: "bootstrap_01", authorityGeneration: 1 }));
@@ -114,6 +116,7 @@ const mountPreamble = `
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href);
   await bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
   const manifest = await loadHostDeploymentManifest(manifestPath);
+  await writeIdentityProfile(resolveRuntimePaths(principal, root).identityProfilePath, DEFAULT_IDENTITY_PROFILE);
   const profile = composeTavernProfile({ profileId: "gamebuddy.tavern-management.chat-list-title", releaseTier: "tavern_management", routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename"], operationIds: ["draft.save", "draft.discard", "chat.rename"], navigationItemIds: ["chat"] });
   const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
   const lease = await authority.startMountedChatRuntime();
