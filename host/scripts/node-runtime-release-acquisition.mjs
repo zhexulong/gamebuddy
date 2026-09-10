@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, lstat, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import yauzl from "yauzl";
 
@@ -172,7 +173,7 @@ async function acquireReleaseRuntimePublisher({ descriptor, fetchRelease, afterA
 /** Fixed, no-argument production release lane. */
 export async function publishFixedReleaseProductionArtifact() {
   assertProtectedWindowsReleaseCiEnvironment();
-  const { readArtifactConfig } = await import("./production-artifact.mjs"); const { buildFixedReleaseProductionArtifact } = await import("./build-production-artifact.mjs"); const hostRoot = resolve(new URL("..", import.meta.url).pathname);
+  const { readArtifactConfig } = await import("./production-artifact.mjs"); const { buildFixedReleaseProductionArtifact } = await import("./build-production-artifact.mjs"); const hostRoot = fileURLToPath(new URL("..", import.meta.url));
   const descriptor = (await readArtifactConfig(hostRoot)).bundledRuntime;
   return acquireReleaseRuntimePublisher({ descriptor, fetchRelease: fetch }, async () => buildFixedReleaseProductionArtifact());
 }

@@ -149,6 +149,7 @@ test("production boundary modules expose no generic publisher/provider test APIs
   }
   const acquisitionSource = await readFile(fileURLToPath(new URL("./node-runtime-release-acquisition.mjs", import.meta.url)), "utf8");
   assert.doesNotMatch(acquisitionSource, /process\.execPath|test-support|fixture/);
+  assert.doesNotMatch(acquisitionSource, /new URL\("\.\.\", import\.meta\.url\)\.pathname/);
   const production = await import("./production-artifact.mjs");
   assert.equal(Object.hasOwn(production, "publishProductionArtifactFromAcquiredReleaseRuntime"), false);
   assert.equal(Object.hasOwn(await import("./node-runtime-release-acquisition.mjs"), "consumeAcquiredReleaseRuntimeForFixedReleaseBuild"), false);
