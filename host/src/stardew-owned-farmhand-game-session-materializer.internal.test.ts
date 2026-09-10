@@ -3,9 +3,9 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-
-import { createStardewOwnedFarmhandGameSessionMaterializer } from "./stardew-owned-farmhand-game-session-materializer.internal.js";
+import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
+import { createStardewOwnedFarmhandGameSessionMaterializer } from "./stardew-owned-farmhand-game-session-materializer.internal.js";
 
 const manifest: HostDeploymentManifest = Object.freeze({
   schemaVersion: 2,
@@ -23,7 +23,10 @@ const manifest: HostDeploymentManifest = Object.freeze({
 test("owned Farmhand materializer exposes only one unmounted construction operation", async () => {
   const materializerModule = await import("./stardew-owned-farmhand-game-session-materializer.internal.js");
   assert.deepEqual(Object.keys(materializerModule), ["createStardewOwnedFarmhandGameSessionMaterializer"]);
-  const materializer = createStardewOwnedFarmhandGameSessionMaterializer(manifest);
+  const materializer = createStardewOwnedFarmhandGameSessionMaterializer(
+    manifest,
+    undefined as unknown as SemanticGameProductionAuthority,
+  );
   assert.deepEqual(Object.keys(materializer), ["materialize"]);
   assert.equal(Object.isFrozen(materializer), true);
   assert.equal(materializer.materialize.length, 2);
@@ -32,21 +35,29 @@ test("owned Farmhand materializer exposes only one unmounted construction operat
   assert.equal("attach" in materializer, false);
 });
 
-test("owned Farmhand materializer preserves authenticated receipt-backed construction order", async () => {
+test("owned Farmhand materializer preserves authenticated receipt-backed construction order over the injected Game authority", async () => {
   const testDirectory = dirname(fileURLToPath(import.meta.url));
   const sourceRoot = testDirectory.endsWith("src") ? testDirectory : resolve(testDirectory, "..", "src");
-  const source = await readFile(resolve(sourceRoot, "stardew-owned-farmhand-game-session-materializer.internal.ts"), "utf8");
+  const source = await readFile(
+    resolve(sourceRoot, "stardew-owned-farmhand-game-session-materializer.internal.ts"),
+    "utf8",
+  );
   assert.match(
     source,
     /LocalStardewBridgeClient\.connectFarmhand\(\s*connection\.scope,\s*connection\.pipeName,\s*connection\.token,\s*connection\.launchGeneration,\s*deadlineMs\s*,?\s*\)/,
   );
   assert.match(source, /createStardewIntegrationLaunchHandleFromAuthenticatedBridge\(/);
   assert.match(source, /createGameRuntimeBindingFromReceiptBackedLaunch\(/);
-  assert.match(source, /createKnownSemanticGameFacadeFromReceiptBackedBinding\(manifest, binding\)/);
+  assert.match(source, /constructKnownUnmountedGameSemanticFacade\(/);
+  assert.match(source, /createHostGameRuntimeMaterializer\(\)/);
+  assert.doesNotMatch(source, /createKnownSemanticGameFacadeFromReceiptBackedBinding/);
+  assert.doesNotMatch(source, /createKnownSemanticGameProductionAuthorityFromDeploymentManifest/);
   const connectIndex = source.indexOf("const bridge = await LocalStardewBridgeClient.connectFarmhand");
-  const launchIndex = source.indexOf("const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge");
+  const launchIndex = source.indexOf(
+    "const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge",
+  );
   const bindingIndex = source.indexOf("const binding = await createGameRuntimeBindingFromReceiptBackedLaunch");
-  const facadeIndex = source.indexOf("return createKnownSemanticGameFacadeFromReceiptBackedBinding");
+  const facadeIndex = source.indexOf("return constructKnownUnmountedGameSemanticFacade(");
   assert.ok(connectIndex >= 0);
   assert.ok(launchIndex >= 0);
   assert.ok(bindingIndex >= 0);
@@ -54,6 +65,14 @@ test("owned Farmhand materializer preserves authenticated receipt-backed constru
   assert.ok(connectIndex < launchIndex);
   assert.ok(launchIndex < bindingIndex);
   assert.ok(bindingIndex < facadeIndex);
+  // Construction failure closes only the binding the materializer created.
+  assert.match(source, /await binding\.close\(\)/);
+  // Injected Game authority never appears in failure cleanup: upstream
+  // factories close their own transport/launch when they reject, and this
+  // slice re-closes only the binding it created — never game, launch, bridge.
+  assert.doesNotMatch(source, /game\.close\(/);
+  assert.doesNotMatch(source, /launch\.close\(/);
+  assert.doesNotMatch(source, /bridge\.close\(/);
   assert.doesNotMatch(source, /runEnter\s*[:=]/);
   assert.doesNotMatch(source, /activateCommittedIngress/);
   assert.doesNotMatch(source, /attachVoiceStopper/);

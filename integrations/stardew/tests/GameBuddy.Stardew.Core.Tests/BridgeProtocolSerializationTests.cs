@@ -385,6 +385,24 @@ public sealed class BridgeBodyProgramProtocolTests
         envelope.Payload.Nodes.Single().Arguments["ref"].Destination!.Ref.Should().Be("dr1_AAAAAAAAAAAAAAAAAAAAAA");
     }
 
+    [Fact]
+    public void CandidateAdapterEnforcesMaximumBodyProgramBindingsPerNode()
+    {
+        const string head = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{},\"dependsOn\":[],\"bindings\":";
+        const string tail = ",\"deadlineMs\":1000}]}";
+        string bindingMap(int count) => "{" + string.Join(",", Enumerable.Range(0, count).Select(i => $"\"k{i}\":{{\"nodeId\":\"producer\",\"factName\":\"f{i}\"}}")) + "}";
+        int maximum = BridgeProtocol.MaximumBodyProgramBindingsPerNode;
+
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + head + bindingMap(maximum) + tail + "}",
+            out BridgeEnvelope<ActionProgramCandidate>? accepted, out string acceptedReason).Should().BeTrue();
+        acceptedReason.Should().Be("accepted");
+        accepted!.Payload.Nodes.Single().Bindings.Should().HaveCount(maximum);
+
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + head + bindingMap(maximum + 1) + tail + "}",
+            out _, out string rejectedReason).Should().BeFalse();
+        rejectedReason.Should().Be("invalid_body_program_request");
+    }
+
     [Theory]
     [InlineData("{\"type\":\"destination_selector\",\"canonicalValue\":\"Town\"}")]
     [InlineData("{\"type\":\"destination_selector\",\"destinationRef\":\"dr1_AAAAAAAAAAAAAAAAAAAAAA\"}")]
@@ -738,6 +756,147 @@ public sealed class BridgeBodyProgramProtocolTests
         roundTrip.Payload.HighWater.Should().Be(11);
     }
 
+    [Fact]
+    public void TryDeserializeBodyProgramStatusRequest_ValidRequest_DeserializesCorrectly()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramStatusRequest(ResultEnvelope("program_status", "{\"programId\":\"program_1\"}"), out BridgeEnvelope<BridgeBodyProgramStatusRequest>? envelope, out string reason).Should().BeTrue();
+
+        reason.Should().Be("accepted");
+        envelope!.Payload.ProgramId.Should().Be("program_1");
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"programId\":1}")]
+    [InlineData("{\"programId\":null}")]
+    [InlineData("{\"programId\":\"\"}")]
+    [InlineData("{\"programId\":\"program_1\",\"extra\":true}")]
+    public void TryDeserializeBodyProgramStatusRequest_MalformedPayload_FailsClosed(string payload)
+    {
+        BridgeProtocol.TryDeserializeBodyProgramStatusRequest(ResultEnvelope("program_status", payload), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_request");
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(9, 16)]
+    [InlineData(11, 32)]
+    public void TryDeserializeBodyProgramEventsRequest_ValidRequest_DeserializesCorrectly(long cursor, int pageSize)
+    {
+        string payload = "{\"programId\":\"program_1\",\"cursor\":" + cursor + ",\"pageSize\":" + pageSize + "}";
+        BridgeProtocol.TryDeserializeBodyProgramEventsRequest(ResultEnvelope("program_events", payload), out BridgeEnvelope<BridgeBodyProgramEventsRequest>? envelope, out string reason).Should().BeTrue();
+
+        reason.Should().Be("accepted");
+        envelope!.Payload.ProgramId.Should().Be("program_1");
+        envelope.Payload.Cursor.Should().Be(cursor);
+        envelope.Payload.PageSize.Should().Be(pageSize);
+    }
+
+    [Theory]
+    [InlineData("{\"programId\":\"program_1\",\"cursor\":-1,\"pageSize\":1}")]
+    [InlineData("{\"programId\":\"program_1\",\"cursor\":0,\"pageSize\":0}")]
+    [InlineData("{\"programId\":\"program_1\",\"cursor\":0,\"pageSize\":33}")]
+    [InlineData("{\"programId\":\"program_1\",\"cursor\":\"0\",\"pageSize\":1}")]
+    [InlineData("{\"programId\":\"program_1\",\"cursor\":null,\"pageSize\":1}")]
+    [InlineData("{\"programId\":\"program_1\",\"cursor\":0,\"pageSize\":1,\"extra\":true}")]
+    [InlineData("{\"programId\":\"program_1\",\"cursor\":0}")]
+    [InlineData("{\"programId\":\"program_1\",\"pageSize\":1}")]
+    [InlineData("{\"cursor\":0,\"pageSize\":1}")]
+    [InlineData("{\"programId\":1,\"cursor\":0,\"pageSize\":1}")]
+    public void TryDeserializeBodyProgramEventsRequest_MalformedPayload_FailsClosed(string payload)
+    {
+        BridgeProtocol.TryDeserializeBodyProgramEventsRequest(ResultEnvelope("program_events", payload), out _, out string reason).Should().BeFalse();
+
+        reason.Should().Be("invalid_body_program_request");
+    }
+
+    [Fact]
+    public void TryDeserializeBodyProgramRequest_WrongPayloadShapeForType_FailsClosed()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramStatusRequest(ResultEnvelope("program_status", "{\"programId\":\"program_1\",\"cursor\":0,\"pageSize\":1}"), out _, out string statusReason).Should().BeFalse();
+        statusReason.Should().Be("invalid_body_program_request");
+
+        BridgeProtocol.TryDeserializeBodyProgramEventsRequest(ResultEnvelope("program_events", "{\"programId\":\"program_1\"}"), out _, out string eventsReason).Should().BeFalse();
+        eventsReason.Should().Be("invalid_body_program_request");
+    }
+
     private static string ResultEnvelope(string type, string payload) =>
         "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"" + type + "\",\"payload\":" + payload + "}";
+
+    [Fact]
+    public void TrySerialize_StatusSnapshotNodeArray_IsFrozenAtSixteen()
+    {
+        BridgeBodyProgramNodeStatus[] nodes = Enumerable.Range(0, 16)
+            .Select(index => new BridgeBodyProgramNodeStatus($"node_{index:D2}", "pending", 1, 1)).ToArray();
+        BridgeBodyProgramStatusSnapshot snapshot = new("program_1", "active", 7, 2, 11, nodes);
+
+        BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", snapshot), out _, out string reason).Should().BeTrue();
+        reason.Should().Be("accepted");
+
+        BridgeBodyProgramStatusSnapshot oversized = snapshot with
+        {
+            Nodes = nodes.Append(new BridgeBodyProgramNodeStatus("node_16", "pending", 1, 1)).ToArray(),
+        };
+        BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", oversized), out string json, out reason).Should().BeFalse();
+        json.Should().BeEmpty();
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Theory]
+    [InlineData("rejected")]
+    [InlineData("quarantined")]
+    public void TrySerialize_SubmitSnapshotForRejectedOrQuarantined_IsExplicitNull(string code)
+    {
+        var result = new BridgeBodyProgramSubmitResult(code, new BridgeBodyProgramVerification(false, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), null);
+
+        BridgeProtocol.TrySerialize(result, out string json, out string reason).Should().BeTrue();
+        reason.Should().Be("accepted");
+        using JsonDocument document = JsonDocument.Parse(json);
+        document.RootElement.GetProperty("snapshot").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public void TrySerialize_NotFoundStatusResult_SnapshotIsExplicitNull()
+    {
+        var result = new BridgeBodyProgramStatusResult("not_found", null);
+
+        BridgeProtocol.TrySerialize(result, out string json, out string reason).Should().BeTrue();
+        reason.Should().Be("accepted");
+        using JsonDocument document = JsonDocument.Parse(json);
+        document.RootElement.GetProperty("snapshot").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public void TrySerialize_EventWithNoNodeIdentity_EmitsExplicitNullNodeKeys()
+    {
+        var result = new BridgeBodyProgramEventsResult("program_1", "found",
+            new[] { new BridgeBodyProgramEvent(9, "program_1", "native_dispatch", 7, null, null) }, 9, 11);
+
+        BridgeProtocol.TrySerialize(result, out string json, out string reason).Should().BeTrue();
+        reason.Should().Be("accepted");
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement evt = document.RootElement.GetProperty("events")[0];
+        evt.EnumerateObject().Select(property => property.Name)
+            .Should().BeEquivalentTo("cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt");
+        evt.GetProperty("nodeId").ValueKind.Should().Be(JsonValueKind.Null);
+        evt.GetProperty("nodeAttempt").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public void TrySerialize_DiagnosticWithNullNodeId_EmitsExplicitNullNodeKey()
+    {
+        var verification = new BridgeBodyProgramVerification(false, 7, new[]
+        {
+            new BridgeBodyProgramDiagnostic("error", "invalid_program", null, "/", "invalid_program"),
+        });
+
+        BridgeProtocol.TrySerialize(verification, out string json, out string reason).Should().BeTrue();
+        reason.Should().Be("accepted");
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement diagnostic = document.RootElement.GetProperty("diagnostics")[0];
+        diagnostic.EnumerateObject().Select(property => property.Name)
+            .Should().BeEquivalentTo("severity", "code", "nodeId", "path", "message");
+        diagnostic.GetProperty("nodeId").ValueKind.Should().Be(JsonValueKind.Null);
+    }
 }

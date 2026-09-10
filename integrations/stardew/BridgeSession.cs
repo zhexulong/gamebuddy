@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Linq;
 using System.Text.Json;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
@@ -21,6 +22,8 @@ internal sealed class BridgeSession
     private readonly BridgeScope scope;
     private readonly string token;
     private readonly Func<FarmhandCapabilityPublication> capabilityPublicationProvider;
+    private readonly OpenBodyProgramJournalAuthority? bodyProgramAuthority;
+    private readonly string bodyProgramUnavailableReason;
     private readonly Func<string> presentationLocale;
     private readonly Func<DerivedDestinationSet?> navigationSetProvider;
     private readonly NavigationReferenceStore navigationReferences;
@@ -69,10 +72,14 @@ internal sealed class BridgeSession
         Func<DerivedDestinationSet?>? navigationSetProvider = null,
         NavigationReferenceStore? navigationReferences = null,
         BridgeRuntimeAttestation? runtimeAttestation = null,
-        LocalPipeBridge? pipeBridge = null)
+        LocalPipeBridge? pipeBridge = null,
+        OpenBodyProgramJournalAuthority? bodyProgramAuthority = null,
+        string bodyProgramUnavailableReason = "body_program_unavailable")
     {
         this.runtimeAttestation = runtimeAttestation ?? BridgeRuntimeAttestation.Default;
         this.pipeBridge = pipeBridge;
+        this.bodyProgramAuthority = bodyProgramAuthority;
+        this.bodyProgramUnavailableReason = bodyProgramUnavailableReason ?? "body_program_unavailable";
         this.executions = executions;
         this.actionRouter = actionRouter ?? throw new ArgumentNullException(nameof(actionRouter));
         this.scope = scope;
@@ -286,6 +293,11 @@ internal sealed class BridgeSession
             : null;
         if (executionId is not null)
         {
+            // Candidate admissions are durable; routing availability must be
+            // proven before one is recorded so a handler mismatch never leaves
+            // a pending admission that later replays as an unrecoverable tuple.
+            if (!this.actionRouter.CanExecute(request.Action, out reasonCode))
+                return false;
             bool admitted = request.Action == "navigate_to_destination"
                 ? this.executions.TryAdmitNavigation(request, executionId, out reasonCode)
                 : this.executions.TryAdmitCandidate(request, executionId, out reasonCode);
@@ -375,6 +387,78 @@ internal sealed class BridgeSession
         response = Reply("execution_receipt", envelope.CorrelationId, bridgeReceipt);
         reasonCode = "accepted";
         return true;
+    }
+
+    /// <summary>
+    /// Pure authenticated verification report for one Body Program candidate.
+    /// It never mutates the journal, never admits a program, and never routes
+    /// an action; actions outside the current capability publication's enabled
+    /// set are reported as diagnostics by the Mod authority.
+    /// </summary>
+    internal bool TryProgramVerify(long generation, BridgeEnvelope<ActionProgramCandidate>? envelope, out BridgeEnvelope<BridgeBodyProgramVerification>? response, out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "program_verify", out reasonCode)) return false;
+        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason; return false; }
+        BodyProgramVerificationReport report = this.bodyProgramAuthority.Verify(envelope!.Payload, this.EnabledBodyProgramActionIds());
+        response = Reply("program_verify_result", envelope.CorrelationId, ToBridgeVerification(report));
+        reasonCode = "accepted";
+        return true;
+    }
+
+    /// <summary>
+    /// Authenticated durable accept/reject of one Body Program candidate. The
+    /// Mod-owned journal authority is the only admission: success means the
+    /// canonical program was persisted before this reply, not that its nodes
+    /// have run.
+    /// </summary>
+    internal bool TryProgramSubmit(long generation, BridgeEnvelope<ActionProgramCandidate>? envelope, out BridgeEnvelope<BridgeBodyProgramSubmitResult>? response, out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "program_submit", out reasonCode)) return false;
+        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason; return false; }
+        BodyProgramSubmitResult result = this.bodyProgramAuthority.Submit(envelope!.Payload, this.EnabledBodyProgramActionIds());
+        response = Reply("program_submit_result", envelope.CorrelationId,
+            new BridgeBodyProgramSubmitResult(ToWire(result.Code), ToBridgeVerification(result.Verification), ToBridgeSnapshot(result.Snapshot)));
+        reasonCode = "accepted";
+        return true;
+    }
+
+    /// <summary>Authenticated read-only addressed snapshot from the Mod journal authority.</summary>
+    internal bool TryProgramStatus(long generation, BridgeEnvelope<BridgeBodyProgramStatusRequest>? envelope, out BridgeEnvelope<BridgeBodyProgramStatusResult>? response, out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "program_status", out reasonCode)) return false;
+        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason; return false; }
+        BodyProgramStatusResult result = this.bodyProgramAuthority.Status(envelope!.Payload.ProgramId);
+        response = Reply("program_status_result", envelope.CorrelationId,
+            new BridgeBodyProgramStatusResult(ToWire(result.Code), ToBridgeSnapshot(result.Snapshot)));
+        reasonCode = "accepted";
+        return true;
+    }
+
+    /// <summary>Authenticated read-only cursor-addressed event projection from the Mod journal authority.</summary>
+    internal bool TryProgramEvents(long generation, BridgeEnvelope<BridgeBodyProgramEventsRequest>? envelope, out BridgeEnvelope<BridgeBodyProgramEventsResult>? response, out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "program_events", out reasonCode)) return false;
+        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason; return false; }
+        BridgeBodyProgramEventsRequest request = envelope!.Payload;
+        BodyProgramEventsResult result = this.bodyProgramAuthority.Events(request.ProgramId, request.Cursor, request.PageSize);
+        response = Reply("program_events_result", envelope.CorrelationId,
+            new BridgeBodyProgramEventsResult(result.ProgramId, ToWire(result.Code), result.Events.Select(ToBridgeEvent).ToArray(), result.NextCursor, result.HighWater));
+        reasonCode = "accepted";
+        return true;
+    }
+
+    private IReadOnlySet<string> EnabledBodyProgramActionIds()
+    {
+        IReadOnlyList<string> enabled = this.capabilityPublicationProvider().EnabledActionIds;
+        return enabled is IReadOnlySet<string> set ? set : new HashSet<string>(enabled, StringComparer.Ordinal);
     }
 
     /// <summary>Publishes one complete newer availability replacement for this authenticated generation.</summary>
@@ -985,6 +1069,72 @@ internal sealed class BridgeSession
     internal bool IsAuthenticatedGeneration(long generation) => IsAuthenticated(generation, out _);
     internal BridgeEnvelope<BridgeError> CreateError(string? correlationId, string reasonCode) => Reply("error", BridgeProtocol.IsOpaqueId(correlationId) ? correlationId! : Guid.NewGuid().ToString("N"), new BridgeError(reasonCode));
     private BridgeEnvelope<TPayload> Reply<TPayload>(string type, string correlationId, TPayload payload) => new(BridgeProtocol.Version, Guid.NewGuid().ToString("N"), correlationId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), this.scope, type, payload);
+    /// <summary>
+    /// Exact one-to-one projection of Core Body Program journal facts into the
+    /// frozen Bridge models. No state is synthesized; wire tokens are the same
+    /// tokens the protocol validates.
+    /// </summary>
+    private static string ToWire(BodyProgramSubmitCode code) => code switch
+    {
+        BodyProgramSubmitCode.Accepted => "accepted",
+        BodyProgramSubmitCode.Rejected => "rejected",
+        BodyProgramSubmitCode.Idempotent => "idempotent",
+        BodyProgramSubmitCode.Conflict => "conflict",
+        BodyProgramSubmitCode.PersistenceFailure => "persistence_failure",
+        BodyProgramSubmitCode.Quarantined => "quarantined",
+        _ => "rejected",
+    };
+    private static string ToWire(BodyProgramQueryCode code) => code switch
+    {
+        BodyProgramQueryCode.Found => "found",
+        BodyProgramQueryCode.NotFound => "not_found",
+        BodyProgramQueryCode.InvalidInput => "invalid_input",
+        _ => "invalid_input",
+    };
+    private static string ToWire(BodyProgramState state) => state switch
+    {
+        BodyProgramState.Active => "active",
+        BodyProgramState.Succeeded => "succeeded",
+        BodyProgramState.Failed => "failed",
+        BodyProgramState.Cancelled => "cancelled",
+        BodyProgramState.RecoveryRequired => "recovery_required",
+        BodyProgramState.Quarantined => "quarantined",
+        _ => "recovery_required",
+    };
+    private static string ToWire(BodyProgramNodeState state) => state switch
+    {
+        BodyProgramNodeState.Pending => "pending",
+        BodyProgramNodeState.AwaitingHostAdmission => "awaiting_host_admission",
+        BodyProgramNodeState.HostAdmitted => "host_admitted",
+        BodyProgramNodeState.Running => "running",
+        BodyProgramNodeState.Succeeded => "succeeded",
+        BodyProgramNodeState.Failed => "failed",
+        BodyProgramNodeState.Cancelled => "cancelled",
+        BodyProgramNodeState.RecoveryRequired => "recovery_required",
+        BodyProgramNodeState.Rejected => "rejected",
+        _ => "recovery_required",
+    };
+    private static BridgeBodyProgramVerification ToBridgeVerification(BodyProgramVerificationReport report) => new(
+        report.Accepted,
+        report.CatalogRevision,
+        report.Diagnostics.Select(diagnostic => new BridgeBodyProgramDiagnostic(
+            "error",
+            diagnostic.Code,
+            diagnostic.NodeId is not null && BridgeProtocol.IsOpaqueId(diagnostic.NodeId) ? diagnostic.NodeId : null,
+            diagnostic.Path,
+            diagnostic.Message)).ToArray());
+    private static BridgeBodyProgramStatusSnapshot? ToBridgeSnapshot(BodyProgramStatusSnapshot? snapshot) => snapshot is null
+        ? null
+        : new BridgeBodyProgramStatusSnapshot(
+            snapshot.ProgramId,
+            ToWire(snapshot.State),
+            snapshot.CatalogRevision,
+            snapshot.StopEpoch,
+            snapshot.EventHighWater,
+            snapshot.Nodes.Select(node => new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt)).ToArray());
+    private static BridgeBodyProgramEvent ToBridgeEvent(BodyProgramJournalEvent @event) => new(
+        @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt);
+
     private static bool FixedEquals(string? left, string right) => CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(left ?? string.Empty), System.Text.Encoding.UTF8.GetBytes(right));
 }
 

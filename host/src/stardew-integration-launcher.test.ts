@@ -7,7 +7,11 @@ import { TERMINAL_EXECUTION_STATES } from "./execution-correlation-ledger.js";
 import type { MoveCapableIntegration } from "./game-tools.js";
 import type { ExecutionWake } from "./integration-launcher.js";
 import type { BridgeMessage, ExecutionState, Scope } from "./protocol.js";
-import { parseStardewLauncherConfig, STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
+import {
+  getAuthenticatedStardewPresentationPortForPreview,
+  parseStardewLauncherConfig,
+  STARDEW_INTEGRATION_LAUNCHER,
+} from "./stardew-integration-launcher.js";
 
 const base = { pipeName: "gamebuddy_fixture", bridgeToken: "a".repeat(32) };
 const scope: Scope = {
@@ -123,6 +127,12 @@ test("Stardew launcher freezes the execution gate and publishes an invalidated w
     assert.deepEqual(await wake, { kind: "invalidated", reasonCode: "reason_invalidated" });
     assert.ok(launch.connection.executionGate);
     assert.equal(launch.connection.executionGate.executable, false);
+    // Native invalidation also closes the launcher-owned preview projection:
+    // the record behind it reports closed immediately, not merely non-executable.
+    assert.throws(
+      () => getAuthenticatedStardewPresentationPortForPreview(launch),
+      /authenticated_stardew_presentation_port_required/,
+    );
     const connection = launch.connection as MoveCapableIntegration;
     await assert.rejects(
       () =>

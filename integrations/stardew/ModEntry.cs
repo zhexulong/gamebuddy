@@ -1,5 +1,6 @@
 using System.Reflection;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
@@ -1963,6 +1964,85 @@ public sealed partial class ModEntry : Mod
         if (runtimeAttestation is null)
             this.Monitor.Log($"GameBuddy bridge runtime attestation unavailable: {attestationReasonCode}.", LogLevel.Warn);
 
+        // Body Program production authority: catalog projection, scope-fixed
+        // journal store, opened journal authority, and controller are composed
+        // on the owner's game thread only when the bridge scope binds and the
+        // session exists. Any projection/store/open failure leaves them null
+        // and the program routes fail closed with a reason code; a memory-only
+        // authority is never created.
+        FarmhandBodyProgramCatalogProjectionResult bodyProgramCatalogProjection;
+        try
+        {
+            bodyProgramCatalogProjection = FarmhandBodyProgramCatalogProjection.Create();
+        }
+        catch
+        {
+            bodyProgramCatalogProjection = new FarmhandBodyProgramCatalogProjectionResult(FarmhandBodyProgramCatalogProjectionStatus.Blocked, null, Array.Empty<FarmhandBodyProgramCatalogProjectionRejection>());
+        }
+        BodyProgramActionCatalog? bodyProgramCatalog = bodyProgramCatalogProjection.IsPublished ? bodyProgramCatalogProjection.Catalog : null;
+        IBodyProgramJournalStore? bodyProgramJournalStore = null;
+        OpenBodyProgramJournalAuthority? bodyProgramAuthority = null;
+        FarmhandBodyProgramController? farmhandBodyProgramController = null;
+        string bodyProgramUnavailableReason = "body_program_unavailable";
+        if (bridgeConfigValid && scopeMatchesWorld && runtimeAttestation is not null)
+        {
+            if (bodyProgramCatalog is null)
+            {
+                bodyProgramUnavailableReason = "body_program_catalog_blocked";
+                this.Monitor.Log("GameBuddy body program catalog projection blocked; program routes fail closed with body_program_catalog_blocked.", LogLevel.Warn);
+            }
+            else
+            {
+                try
+                {
+                    bodyProgramJournalStore = new WindowsBodyProgramJournalStore(GetBodyProgramJournalRoot(), executionScope);
+                }
+                catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException or UnauthorizedAccessException or IOException)
+                {
+                    bodyProgramUnavailableReason = "body_program_store_unavailable";
+                    this.Monitor.Log($"GameBuddy body program journal store unavailable ({exception.GetType().Name}); program routes fail closed with body_program_store_unavailable.", LogLevel.Warn);
+                }
+                if (bodyProgramJournalStore is not null)
+                {
+                    try
+                    {
+                        bodyProgramAuthority = OpenBodyProgramJournalAuthority.Open(
+                            bodyProgramJournalStore,
+                            bodyProgramCatalog,
+                            executionScope,
+                            () => GetBodyProgramPolicyIdentity(state.CapabilityPublication!),
+                            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    }
+                    catch (ArgumentException)
+                    {
+                        bodyProgramAuthority = null;
+                    }
+                    if (bodyProgramAuthority is null)
+                    {
+                        bodyProgramUnavailableReason = "body_program_journal_unavailable";
+                        this.Monitor.Log("GameBuddy body program journal open rejected scope/policy identity; program routes fail closed with body_program_journal_unavailable.", LogLevel.Warn);
+                    }
+                    else if (bodyProgramAuthority.OpenStatus is BodyProgramJournalOpenStatus.Corrupt or BodyProgramJournalOpenStatus.PersistenceReadFailed or BodyProgramJournalOpenStatus.PersistenceWriteFailed)
+                    {
+                        BodyProgramJournalOpenStatus failedStatus = bodyProgramAuthority.OpenStatus;
+                        bodyProgramAuthority = null;
+                        bodyProgramUnavailableReason = "body_program_journal_unavailable";
+                        this.Monitor.Log($"GameBuddy body program journal unavailable ({failedStatus}); program routes fail closed with body_program_journal_unavailable.", LogLevel.Warn);
+                    }
+                    else
+                    {
+                        farmhandBodyProgramController = new FarmhandBodyProgramController(bodyProgramAuthority);
+                        this.Monitor.Log("GameBuddy body program journal opened for this scope; program_verify/submit/status/events routes are live.", LogLevel.Info);
+                    }
+                }
+            }
+        }
+        state.BodyProgramCatalog = bodyProgramCatalog;
+        state.BodyProgramJournalStore = bodyProgramJournalStore;
+        state.BodyProgramAuthority = bodyProgramAuthority;
+        state.BodyProgramController = farmhandBodyProgramController;
+        state.BodyProgramUnavailableReason = bodyProgramUnavailableReason;
+
         state.BridgeSession = bridgeConfigValid && scopeMatchesWorld && runtimeAttestation is not null
             ? new BridgeSession(
                 state.Executions,
@@ -1971,7 +2051,9 @@ public sealed partial class ModEntry : Mod
                 this.config.BridgeToken,
                 () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
                 navigationSetProvider: () => DerivedDestinationSet.TryCreateCurrent("stardew", out DerivedDestinationSet? set, out _) ? set : null,
-                runtimeAttestation: runtimeAttestation)
+                runtimeAttestation: runtimeAttestation,
+                bodyProgramAuthority: bodyProgramAuthority,
+                bodyProgramUnavailableReason: bodyProgramUnavailableReason)
             : null;
         state.PlayerControlReplayGuard = state.BridgeSession is null ? null : new PlayerControlReplayGuard();
         state.LocalPipeBridge = state.BridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
@@ -2113,6 +2195,12 @@ public sealed partial class ModEntry : Mod
         this.ObserveTerminalReceiptDeliveries(state);
         this.DrainLocalPipeBridge(state);
         state.Executions?.Update();
+        // The Body Program successor pump is a pure game-thread continuation
+        // owner: it auto-starts dependency-free sources and exact successors and
+        // parks when no authenticated admission/native seams are wired, so it
+        // never waits for Host IPC or invents a challenge/grant while the
+        // transport bridge route is still absent.
+        state.BodyProgramController?.Update();
         this.PublishPendingStopObservation(state);
     }
 
@@ -3482,6 +3570,10 @@ public sealed partial class ModEntry : Mod
                     "execution_request" => this.HandleExecute(state, inbound.Generation, inbound.Json),
                     "cancel_request" => this.HandleCancel(state, inbound.Generation, inbound.Json),
                     "execution_receipt_query" => this.HandleExecutionReceiptQuery(state, inbound.Generation, inbound.Json, correlationId),
+                    "program_verify" => this.HandleProgramVerify(state, inbound.Generation, inbound.Json, correlationId),
+                    "program_submit" => this.HandleProgramSubmit(state, inbound.Generation, inbound.Json, correlationId),
+                    "program_status" => this.HandleProgramStatus(state, inbound.Generation, inbound.Json, correlationId),
+                    "program_events" => this.HandleProgramEvents(state, inbound.Generation, inbound.Json, correlationId),
                     "companion_presentation_request" => this.HandleCompanionPresentation(state, inbound.Generation, inbound.Json),
                     "system_notice_request" => this.HandleSystemNotice(state, inbound.Generation, inbound.Json),
                     "player_control_receipt" => this.HandlePlayerControlReceipt(state, inbound.Generation, inbound.Json, correlationId),
@@ -3812,6 +3904,38 @@ public sealed partial class ModEntry : Mod
             (BridgeEnvelope<BridgeExecutionReceiptQuery> r, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryQueryExecutionReceipt(generation, r, out response, out reason), out _);
     }
 
+    private string? HandleProgramVerify(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeBodyProgramVerifyRequest(json, out BridgeEnvelope<ActionProgramCandidate>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<ActionProgramCandidate, BridgeBodyProgramVerification>(state, request,
+            (BridgeEnvelope<ActionProgramCandidate> r, out BridgeEnvelope<BridgeBodyProgramVerification>? response, out string reason) => state.BridgeSession!.TryProgramVerify(generation, r, out response, out reason), out _);
+    }
+
+    private string? HandleProgramSubmit(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(json, out BridgeEnvelope<ActionProgramCandidate>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<ActionProgramCandidate, BridgeBodyProgramSubmitResult>(state, request,
+            (BridgeEnvelope<ActionProgramCandidate> r, out BridgeEnvelope<BridgeBodyProgramSubmitResult>? response, out string reason) => state.BridgeSession!.TryProgramSubmit(generation, r, out response, out reason), out _);
+    }
+
+    private string? HandleProgramStatus(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeBodyProgramStatusRequest(json, out BridgeEnvelope<BridgeBodyProgramStatusRequest>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<BridgeBodyProgramStatusRequest, BridgeBodyProgramStatusResult>(state, request,
+            (BridgeEnvelope<BridgeBodyProgramStatusRequest> r, out BridgeEnvelope<BridgeBodyProgramStatusResult>? response, out string reason) => state.BridgeSession!.TryProgramStatus(generation, r, out response, out reason), out _);
+    }
+
+    private string? HandleProgramEvents(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeBodyProgramEventsRequest(json, out BridgeEnvelope<BridgeBodyProgramEventsRequest>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<BridgeBodyProgramEventsRequest, BridgeBodyProgramEventsResult>(state, request,
+            (BridgeEnvelope<BridgeBodyProgramEventsRequest> r, out BridgeEnvelope<BridgeBodyProgramEventsResult>? response, out string reason) => state.BridgeSession!.TryProgramEvents(generation, r, out response, out reason), out _);
+    }
+
     private string? HandleCompanionPresentation(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeCompanionPresentationRequest, BridgeCompanionPresentationReceipt>(state,
         BridgeProtocol.TryDeserializeInbound(json, "companion_presentation_request", out BridgeEnvelope<BridgeCompanionPresentationRequest>? request, out _, "expressionId", "sourceEventId", "text", "locale", "expectedRevision", "presentationEpoch") ? request : null,
         (BridgeEnvelope<BridgeCompanionPresentationRequest> request, out BridgeEnvelope<BridgeCompanionPresentationReceipt>? response, out string reason) =>
@@ -3980,6 +4104,24 @@ public sealed partial class ModEntry : Mod
 
     private ScreenEmbodimentState GetEmbodimentState() => this.config.FarmhandProvisioner?.Enable == true ? this.formalState : this.screenStates.Value;
 
+    /// <summary>
+    /// Documented SMAPI per-user Stardew data root for the scope-fixed
+    /// BodyProgramJournal store. A missing or non-canonical root makes the store
+    /// constructor fail closed in the caller; no reflection or guessed path is ever used.
+    /// </summary>
+    private static string GetBodyProgramJournalRoot() => StardewModdingAPI.Constants.SavesPath;
+
+    /// <summary>
+    /// Mod-minted opaque policy identity bound to this exact live capability
+    /// publication. The journal authority observes it on the owner thread, so
+    /// any capability/policy change quarantines stale submissions.
+    /// </summary>
+    private static BodyProgramPolicyIdentity GetBodyProgramPolicyIdentity(FarmhandCapabilityPublication publication)
+    {
+        ArgumentNullException.ThrowIfNull(publication);
+        return new BodyProgramPolicyIdentity(publication.PolicyIdentity.Value, publication.CapabilityRevision);
+    }
+
     private void ClearState(ScreenEmbodimentState state, string reasonCode)
     {
         state.Executions?.InvalidateForLifecycle(reasonCode);
@@ -3989,6 +4131,11 @@ public sealed partial class ModEntry : Mod
         state.BridgeSession = null;
         state.PlayerControlReplayGuard = null;
         state.Executions = null;
+        state.BodyProgramController = null;
+        state.BodyProgramAuthority = null;
+        state.BodyProgramJournalStore = null;
+        state.BodyProgramCatalog = null;
+        state.BodyProgramUnavailableReason = null;
     }
 
     private static bool TryFindNativeLocalAnimalProductApproach(StardewValley.AnimalHouse house, FarmAnimal animal, out Vector2 standingTile)
@@ -4061,6 +4208,11 @@ public sealed partial class ModEntry : Mod
         internal BridgeSession? BridgeSession { get; set; }
         internal LocalPipeBridge? LocalPipeBridge { get; set; }
         internal PlayerControlReplayGuard? PlayerControlReplayGuard { get; set; }
+        internal BodyProgramActionCatalog? BodyProgramCatalog { get; set; }
+        internal IBodyProgramJournalStore? BodyProgramJournalStore { get; set; }
+        internal OpenBodyProgramJournalAuthority? BodyProgramAuthority { get; set; }
+        internal FarmhandBodyProgramController? BodyProgramController { get; set; }
+        internal string? BodyProgramUnavailableReason { get; set; }
         internal long StopObservationEpoch { get; set; }
         internal BridgeStopObservation? PendingStopObservation { get; set; }
         internal long LastBridgeGeneration { get; set; }

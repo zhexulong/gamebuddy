@@ -7,6 +7,16 @@ export type StardewAiClientProcessStatus =
   | { readonly kind: "awaiting_ai_client_attestation" }
   | { readonly kind: "ai_client_stopped" };
 
+export type AiClientOwnedProcessGeneration = Readonly<{
+  /** Opaque launch generation; never an OS handle, PID, path, or identity secret. */
+  readonly launchGeneration: string;
+}> | null;
+
+export type ReadOwnedAiClientGenerationResult = Readonly<{
+  /** Only the generation of the single currently owned AI process, or null when none is owned. */
+  readonly ownedGeneration: AiClientOwnedProcessGeneration;
+}>;
+
 export type LaunchAiClientInput = Readonly<{
   executable: string;
   args: readonly string[];
@@ -36,6 +46,11 @@ export type StardewAiClientLaunchReservation = Readonly<{
 
 export type StardewAiClientProcessOwner = Readonly<{
   readStatus(): StardewAiClientProcessStatus;
+  /**
+   * Read-only opaque generation of the single currently owned AI process, or
+   * null when no AI process is owned. Never includes a PID, path, or handle.
+   */
+  readOwnedAiClientGeneration(): ReadOwnedAiClientGenerationResult;
   reserveAiClientLaunch(): StardewAiClientLaunchReservation;
   stopOwnedAiClient(): StopOwnedAiClientResult;
 }>;

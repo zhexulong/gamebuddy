@@ -711,6 +711,73 @@ public sealed class BodyProgramAuthorityTests
         running.ExecutionBinding.Should().BeNull();
         reopened.Snapshot.Programs.Single().Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.RecoveryRequired);
     }
+    [Fact]
+    public void SuccessorChallengeMaterializesDeclaredBindingFromExactProducingAttempt()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge first = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = Grant(first);
+        grant = authority.TryConsumeHostGrant(grant).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+        authority.TryComplete(grant, TerminalSuccess(grant, Fact(grant))).IsSuccess.Should().BeTrue();
+
+        NodeAdmissionChallenge second = authority.TryCreateAdmissionChallenge("program").Value!;
+
+        second.NodeId.Should().Be("second");
+        // tile is bound to first.arrival; the challenge must carry the producing
+        // attempt's persisted fact value (7), never the candidate literal (8).
+        second.CanonicalArguments["tile"].CanonicalValue.Should().Be("7");
+    }
+
+    [Fact]
+    public void SuccessorGrantMustEchoMaterializedArgumentsBeforeConsumeDispatchAndComplete()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge first = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = Grant(first);
+        grant = authority.TryConsumeHostGrant(grant).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+        authority.TryComplete(grant, TerminalSuccess(grant, Fact(grant))).IsSuccess.Should().BeTrue();
+        NodeAdmissionChallenge second = authority.TryCreateAdmissionChallenge("program").Value!;
+
+        HostAdmissionGrant forged = Grant(second) with { CanonicalArguments = CanonicalMap("tile", 8) };
+        authority.TryConsumeHostGrant(forged).Code.Should().Be(BodyProgramControllerResultCode.GrantMismatch);
+
+        HostAdmissionGrant real = authority.TryConsumeHostGrant(Grant(second)).Value!;
+        real.CanonicalArguments["tile"].CanonicalValue.Should().Be("7");
+        authority.TryBeginNativeDispatch(real, Execution(real)).IsSuccess.Should().BeTrue();
+        authority.TryComplete(real, new BodyProgramTerminalResult(Execution(real), BodyProgramNodeOutcome.Succeeded, Array.Empty<RuntimeFact>(), "receipt-2", "evidence-2", "postcondition-2")).IsSuccess.Should().BeTrue();
+
+        BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
+        status.State.Should().Be(BodyProgramState.Succeeded);
+        status.Nodes.Should().OnlyContain(node => node.State == BodyProgramNodeState.Succeeded);
+        BodyProgramEventsResult events = authority.Events("program", 0, 32);
+        events.Events.Select(@event => @event.NodeId).Where(node => node is not null).Distinct().Should().BeEquivalentTo(new[] { "first", "second" }, options => options.WithStrictOrdering());
+        events.Events.Should().Contain(@event => @event.Kind == "admission_challenge" && @event.NodeId == "second" && @event.NodeAttempt == 1);
+    }
+
+    [Fact]
+    public void ReopenRejectsPersistedSuccessorFactWithWrongProducingAttemptOrProgram()
+    {
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store);
+        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge first = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = Grant(first);
+        grant = authority.TryConsumeHostGrant(grant).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+        authority.TryComplete(grant, TerminalSuccess(grant, Fact(grant))).IsSuccess.Should().BeTrue();
+        string valid = store.Value!;
+
+        store.Set(valid.Replace("\"nodeAttempt\":1,\"factName\":\"arrival\"", "\"nodeAttempt\":2,\"factName\":\"arrival\"", StringComparison.Ordinal));
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+
+        store.Set(valid.Replace("\"programId\":\"program\",\"nodeId\":\"first\",\"nodeAttempt\":1,\"factName\":\"arrival\"", "\"programId\":\"other\",\"nodeId\":\"first\",\"nodeAttempt\":1,\"factName\":\"arrival\"", StringComparison.Ordinal));
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+    }
+
     private static BodyProgramActionCatalog ArrivalCatalog() => new(7, new[]
     {
         new BodyProgramActionDescriptor("move_to_tile", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramFactDescriptor("arrival", BodyProgramArgumentKind.DestinationArrival) }, new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),

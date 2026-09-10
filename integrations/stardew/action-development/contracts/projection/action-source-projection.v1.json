@@ -457,7 +457,9 @@
               "type": "string"
             }
           },
-          "outputFacts": {},
+          "outputFacts": {
+            "machine_target_id": "string"
+          },
           "resourceTemplate": {
             "claims": [
               {
@@ -466,7 +468,7 @@
               }
             ]
           },
-          "effect": "write",
+          "effect": "read",
           "postcondition": {
             "name": "native_action_postcondition"
           }

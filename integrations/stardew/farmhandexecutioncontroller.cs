@@ -337,6 +337,23 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             (int)this.revision);
     }
 
+    /// <summary>
+    /// Observation is optional terminal metadata. A native actor whose display
+    /// surfaces are momentarily unready must never turn a candidate terminal
+    /// into an escaped exception, so a failed observation probe degrades to null.
+    /// </summary>
+    private BridgeLocalObservation? TryCreateLocalObservation(Farmer actor)
+    {
+        try
+        {
+            return this.CreateLocalObservation(actor);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     internal bool TryGetDurableReceipt(string requestId, string idempotencyKey, out LocalExecutionReceipt receipt, out string reasonCode)
     {
         receipt = default!;

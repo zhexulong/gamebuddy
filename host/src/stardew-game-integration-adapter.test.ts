@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { StardewBridgeConnection } from "./game-connection.js";
+import type { GameConnection } from "./game-connection.js";
 import type { ExecutionReceipt } from "./protocol.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
@@ -1367,52 +1367,33 @@ test("dig_artifact_spot completion evidence is strict and source-only", () => {
     false,
   );
 });
-const adapterPreservationScope = {
-  integrationId: "stardew",
-  saveId: "save_adapter_preservation_01",
-  worldId: "world_adapter_preservation_01",
-  playerId: "player_adapter_preservation_01",
-  companionId: "companion_adapter_preservation_01",
-} as const;
-
 /**
- * Exact validated Mod-derived bridge state for a fresh snapshot plus a
- * succeeded receipt. Mirroring the production LocalStardewBridgeClient, the
- * snapshot carries the same catalog revision and enabled action IDs as the
- * connection catalog, so the capabilities fact is current.
+ * A structural copy of the adapter connection surface without any
+ * authenticated-launch mint. Production exact authentication registers only
+ * the one frozen wrapper returned by the launch producer; every entry point
+ * that reads identity/scope/state/status/tools/cancel must fail closed on
+ * copies, forged wrappers, and caller-supplied state.
  */
-function adapterPreservationConnection(
-  overrides: Partial<StardewBridgeConnection["state"]> = {},
-): StardewBridgeConnection {
-  const state: StardewBridgeConnection["state"] = {
-    connected: true,
-    sessionId: "session_adapter_preservation_01",
-    capabilities: TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId),
-    catalogRegistrations: TEST_MOD_REGISTRATIONS,
-    catalogRevision: 42,
-    enabledActionIds: TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId),
-    snapshot: {
-      revision: 9,
-      location: "Farm",
-      tile: { x: 1, y: 2 },
-      stamina: 100,
-      health: 100,
-      actionable: true,
-      capabilities: TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId),
-      catalogRevision: 42,
-      enabledActionIds: TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId),
-      presentationLocale: "en-US",
-      activeExecution: null,
-    },
-    latestReceipt: null,
-    latestReasonCode: null,
-    ...overrides,
-  };
-  return {
-    scope: adapterPreservationScope,
+function unauthenticatedStructuralConnection(
+  scope: Readonly<{ integrationId: string }> = {
+    integrationId: "stardew",
+  },
+): GameConnection {
+  return Object.freeze({
+    scope: Object.freeze(scope),
     module: STARDEW_GAME_INTEGRATION_ADAPTER,
-    state,
-  };
+    state: Object.freeze({
+      connected: true,
+      sessionId: "session_structural_01",
+      capabilities: [],
+      catalogRevision: 1,
+      enabledActionIds: [],
+      snapshot: null,
+      latestReceipt: null,
+      latestReasonCode: null,
+    }),
+    executionGate: Object.freeze({ executable: true }),
+  });
 }
 
 function succeededWaterCropReceipt(): ExecutionReceipt {
@@ -1430,82 +1411,11 @@ function succeededWaterCropReceipt(): ExecutionReceipt {
   };
 }
 
-test("readState preserves the succeeded Mod receipt identity, revision, and evidence byte-for-byte", () => {
+test("completion predicate is decided only by catalog source semantics, never bare succeeded state", () => {
   const receipt = succeededWaterCropReceipt();
-  const view = STARDEW_GAME_INTEGRATION_ADAPTER.readState(
-    adapterPreservationConnection({
-      latestReceipt: receipt,
-      latestReasonCode: "crop_watered",
-    }),
-  );
-  assert.notEqual(view.latestReceipt, null);
-  assert.equal(view.latestReceipt?.actionId, receipt.actionId);
-  assert.equal(view.latestReceipt?.requestId, receipt.requestId);
-  assert.equal(view.latestReceipt?.executionId, receipt.executionId);
-  assert.equal(view.latestReceipt?.state, receipt.state);
-  assert.equal(view.latestReceipt?.reasonCode, receipt.reasonCode);
-  // The Mod revision is preserved exactly; the adapter never renumbers it.
-  assert.equal(view.latestReceipt?.revision, receipt.revision);
-  assert.equal(view.latestReceipt?.revision, 7);
-  // Evidence passes through untouched; the adapter neither repairs nor infers it.
-  assert.deepEqual(view.latestReceipt?.evidence, receipt.evidence);
-  assert.equal(
-    view.latestReceipt?.evidence?.detail,
-    "location=Farm;target=crop_abcdef0123456789;tile=38,18;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true",
-  );
-});
-
-test("readState keeps Mod catalog capabilityRevision independent from snapshot revision", () => {
-  const view = STARDEW_GAME_INTEGRATION_ADAPTER.readState(
-    adapterPreservationConnection(),
-  );
-  assert.equal(view.capabilityRevision, 42);
-  assert.deepEqual(
-    view.enabledActionIds,
-    TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId),
-  );
-  assert.equal(view.snapshotRevision, 9);
-  assert.notEqual(view.capabilityRevision, view.snapshotRevision);
-  // The two revisions come from distinct Mod facts: the catalog publication
-  // and the world snapshot observation.
-  assert.equal(view.capabilityRevision, 42);
-  assert.equal(view.snapshotRevision, 9);
-
-  // A missing world snapshot leaves snapshotRevision absent without erasing
-  // the catalog capability revision.
-  const noSnapshot = STARDEW_GAME_INTEGRATION_ADAPTER.readState(
-    adapterPreservationConnection({ snapshot: null }),
-  );
-  assert.equal(noSnapshot.capabilityRevision, 42);
-  assert.equal(noSnapshot.snapshotRevision, null);
-
-  // An absent catalog publication leaves capabilityRevision absent without
-  // inventing one from the snapshot.
-  const noCatalog = STARDEW_GAME_INTEGRATION_ADAPTER.readState(
-    adapterPreservationConnection({ catalogRevision: undefined }),
-  );
-  assert.equal(noCatalog.capabilityRevision, null);
-  assert.deepEqual(
-    noCatalog.enabledActionIds,
-    TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId),
-  );
-  assert.equal(noCatalog.snapshotRevision, 9);
-
-  const noEnabledActions = STARDEW_GAME_INTEGRATION_ADAPTER.readState(
-    adapterPreservationConnection({ enabledActionIds: undefined }),
-  );
-  assert.equal("enabledActionIds" in noEnabledActions, false);
-});
-
-test("readState completion predicate is decided only by catalog source semantics, never snapshot or bare succeeded state", () => {
-  const receipt = succeededWaterCropReceipt();
-  const connection = adapterPreservationConnection({
-    latestReceipt: receipt,
-    latestReasonCode: "crop_watered",
-  });
-  const view = STARDEW_GAME_INTEGRATION_ADAPTER.readState(connection);
-  // The projected receipt is the unchanged Mod receipt, so the completion
-  // predicate answers from the catalog's per-action evidence semantics.
+  // The succeeded Mod receipt completes only its own catalog action through
+  // the exact per-action evidence parser. A bare succeeded state, another
+  // action, an unknown action, or absent Mod evidence never completes.
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
       receipt.actionId,
@@ -1517,8 +1427,6 @@ test("readState completion predicate is decided only by catalog source semantics
     ),
     true,
   );
-  // Completion is action-specific: this succeeded water_crop receipt never
-  // completes a different catalog action, even about a fresh snapshot.
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
       "plant_seed",
@@ -1530,7 +1438,6 @@ test("readState completion predicate is decided only by catalog source semantics
     ),
     false,
   );
-  // An unknown action fails closed for the same succeeded receipt.
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
       "not_a_published_action",
@@ -1542,123 +1449,89 @@ test("readState completion predicate is decided only by catalog source semantics
     ),
     false,
   );
-
-  // Absent evidence never becomes completion: a succeeded state plus a fresh
-  // snapshot/catalog cannot substitute for the Mod evidence fact.
-  const absentEvidence: ExecutionReceipt = { ...receipt, evidence: null };
-  const absentView = STARDEW_GAME_INTEGRATION_ADAPTER.readState(
-    adapterPreservationConnection({
-      latestReceipt: absentEvidence,
-      latestReasonCode: "crop_watered",
-    }),
-  );
-  assert.deepEqual(absentView.latestReceipt?.evidence, null);
-  assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      absentEvidence.actionId,
-      {
-        state: absentEvidence.state,
-        reasonCode: absentEvidence.reasonCode,
-        evidence: absentEvidence.evidence,
-      },
-    ),
-    false,
-  );
-
-  // A stale/mismatched snapshot (observation predates the current catalog
-  // publication) preserves the receipt but still cannot manufacture
-  // completion from the bare succeeded state.
-  const stale = adapterPreservationConnection({
-    latestReceipt: absentEvidence,
-    latestReasonCode: "crop_watered",
-    catalogRevision: 43,
-    snapshot: {
-      ...adapterPreservationConnection().state.snapshot!,
-      catalogRevision: 42,
-    },
-  });
-  const staleView = STARDEW_GAME_INTEGRATION_ADAPTER.readState(stale);
-  assert.equal(staleView.capabilityRevision, 43);
-  assert.equal(staleView.snapshotRevision, 9);
-  assert.deepEqual(staleView.latestReceipt?.evidence, null);
-  assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      absentEvidence.actionId,
-      {
-        state: absentEvidence.state,
-        reasonCode: absentEvidence.reasonCode,
-        evidence: absentEvidence.evidence,
-      },
-    ),
-    false,
-  );
-  // The stale snapshot never downgrades a genuinely completed receipt either:
-  // the Mod evidence fact is preserved and still completes.
-  const staleWithValidReceipt = adapterPreservationConnection({
-    latestReceipt: receipt,
-    latestReasonCode: "crop_watered",
-    catalogRevision: 43,
-    snapshot: {
-      ...adapterPreservationConnection().state.snapshot!,
-      catalogRevision: 42,
-    },
-  });
-  const staleValidView =
-    STARDEW_GAME_INTEGRATION_ADAPTER.readState(staleWithValidReceipt);
-  assert.deepEqual(staleValidView.latestReceipt?.evidence, receipt.evidence);
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
       receipt.actionId,
       {
         state: receipt.state,
         reasonCode: receipt.reasonCode,
-        evidence:
-          staleValidView.latestReceipt?.evidence ??
-          ({ detail: "" } as const),
-      },
-    ),
-    true,
-  );
-});
-
-test("readState never synthesizes a receipt or completion from the Mod snapshot active execution", () => {
-  const activeExecution = {
-    executionId: "exec_active_01",
-    requestId: "req_active_01",
-    action: "move_to_tile",
-    state: "accepted" as const,
-    reasonCode: "started",
-    evidence: null,
-  };
-  const view = STARDEW_GAME_INTEGRATION_ADAPTER.readState(
-    adapterPreservationConnection({
-      latestReceipt: null,
-      latestReasonCode: null,
-      snapshot: {
-        ...adapterPreservationConnection().state.snapshot!,
-        activeExecution,
-      },
-    }),
-  );
-  // The in-flight snapshot fact must not be projected as a terminal receipt.
-  assert.equal(view.latestReceipt, null);
-  // The active execution identity is projected from the snapshot, untouched.
-  assert.deepEqual(view.activeExecution, {
-    actionId: activeExecution.action,
-    requestId: activeExecution.requestId,
-    executionId: activeExecution.executionId,
-    state: activeExecution.state,
-  });
-  // And it cannot become an authoritative completion on its own.
-  assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      activeExecution.action,
-      {
-        state: activeExecution.state,
-        reasonCode: activeExecution.reasonCode,
-        evidence: activeExecution.evidence,
+        evidence: null,
       },
     ),
     false,
   );
+});
+
+test("exact authentication rejects structural copies and forged scopes that no launch minted", () => {
+  const structural = unauthenticatedStructuralConnection();
+  // A forged integration scope is still a distinct, unregistered wrapper:
+  // exact authentication is a prerequisite for any identity/state read, so a
+  // copied object can never reach the adapter's scope grammar checks.
+  const forgedScope = unauthenticatedStructuralConnection({
+    integrationId: "test-arcade",
+  });
+  // A caller-supplied state copy of the same structural surface is also an
+  // unauthenticated object even when every observed field looks current.
+  const forgedStateCopy = Object.freeze({
+    ...structural,
+    state: Object.freeze({
+      connected: true,
+      sessionId: "session_forged_01",
+      capabilities: [],
+      catalogRevision: 99,
+      enabledActionIds: [],
+      snapshot: null,
+      latestReceipt: null,
+      latestReasonCode: null,
+    }),
+  });
+  for (const fake of [structural, forgedScope, forgedStateCopy]) {
+    assert.throws(
+      () => STARDEW_GAME_INTEGRATION_ADAPTER.readState(fake),
+      /stardew_connection_not_authenticated_or_not_live/,
+    );
+    assert.throws(
+      () => STARDEW_GAME_INTEGRATION_ADAPTER.actorId(fake),
+      /stardew_connection_not_authenticated_or_not_live/,
+    );
+    assert.throws(
+      () => STARDEW_GAME_INTEGRATION_ADAPTER.worldScope(fake),
+      /stardew_connection_not_authenticated_or_not_live/,
+    );
+    assert.throws(
+      () =>
+        STARDEW_GAME_INTEGRATION_ADAPTER.assertIdentityBinding(fake, {
+          companionId: "companion_structural_01",
+          saveId: "save_structural_01",
+          worldId: "world_structural_01",
+        }),
+      /stardew_connection_not_authenticated_or_not_live/,
+    );
+    assert.throws(
+      () => STARDEW_GAME_INTEGRATION_ADAPTER.status(fake),
+      /stardew_connection_not_authenticated_or_not_live/,
+    );
+    assert.throws(
+      () => STARDEW_GAME_INTEGRATION_ADAPTER.createToolSet({ connection: fake }),
+      /stardew_connection_not_authenticated_or_not_live/,
+    );
+    assert.throws(
+      () =>
+        STARDEW_GAME_INTEGRATION_ADAPTER.cancelExecution(
+          fake,
+          "request_structural_01",
+          "execution_structural_01",
+          "cancelled",
+        ),
+      /stardew_connection_not_authenticated_or_not_live/,
+    );
+  }
+  // Descriptor, tool-name mapping, and cancellation-tool identification stay
+  // structural and never open an authenticated data path.
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.descriptor.integrationId, "stardew");
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionIdForToolName("stardew_move_to_tile"),
+    "move_to_tile",
+  );
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.isCancellationTool("stardew_cancel"), false);
 });

@@ -100,6 +100,28 @@ public sealed class FarmhandBodyProgramCatalogProjectionTests
             && rejection.Code == "read_only_not_execution");
     }
 
+    [Fact]
+    public void FrozenMachineInspectProjectsMachineTargetIdStringOutputFactAsReadAction()
+    {
+        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
+
+        result.IsPublished.Should().BeTrue();
+        result.Catalog!.TryGetAction("machine_inspect", out BodyProgramActionDescriptor? inspect).Should().BeTrue();
+        inspect!.OutputFacts.Should().ContainSingle().Which.Should().Be(new BodyProgramFactDescriptor("machine_target_id", BodyProgramArgumentKind.String));
+        inspect.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("expectedTargetId", BodyProgramArgumentKind.String));
+        inspect.Metadata.Should().Be(new BodyProgramActionMetadata("published", "execution", "read", "native_action_postcondition"));
+    }
+
+    [Fact]
+    public void FrozenMachineLoadProjectsBindableExpectedTargetIdStringArgument()
+    {
+        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
+
+        result.Catalog!.TryGetAction("machine_load", out BodyProgramActionDescriptor? load).Should().BeTrue();
+        load!.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("expectedTargetId", BodyProgramArgumentKind.String));
+        load.OutputFacts.Should().BeEmpty();
+    }
+
     private static FarmhandActionDescriptorArtifact Artifact(long revision, params FarmhandActionDescriptorProjection[] actions) =>
         new(FarmhandActionSurfaceExport.Schema, revision, actions);
 }

@@ -102,9 +102,15 @@ public sealed class OpenBodyProgramJournalAuthority
         if (node is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible);
         VerifiedBodyProgramNode descriptor = program.Program.Nodes.Single(item => item.NodeId == node.NodeId);
         if (descriptor.DeadlineMs < this.nowMs()) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.DeadlineExpired);
+        // A successor declares typed fact bindings; the challenge is only minted
+        // after the exact producing attempt's RuntimeFacts are proven from the
+        // durable journal and the bound canonical arguments are materialized from
+        // them. A declared binding that cannot be resolved fails closed here.
+        IReadOnlyDictionary<string, BodyProgramCanonicalValue>? materialized = MaterializedArguments(program, descriptor);
+        if (materialized is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible);
         BodyProgramJournalNode changed = node with { State = BodyProgramNodeState.AwaitingHostAdmission, NodeAttempt = node.NodeAttempt + 1, AdmissionAttempt = node.AdmissionAttempt + 1, GrantId = null };
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, ReplaceNode(program, changed)), program.Program.ProgramId, "admission_challenge", changed.NodeId, changed.NodeAttempt))) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.PersistenceWriteFailed);
-        return BodyProgramControllerResult.Success(Challenge(program, changed, descriptor, policy));
+        return BodyProgramControllerResult.Success(Challenge(program, changed, descriptor, policy, materialized));
     }
 
     public BodyProgramControllerResult<HostAdmissionGrant> TryConsumeHostGrant(HostAdmissionGrant grant)
@@ -160,7 +166,7 @@ public sealed class OpenBodyProgramJournalAuthority
         if (node is null || descriptor is null || descriptor.DeadlineMs < this.nowMs()) { failure = descriptor is not null && descriptor.DeadlineMs < this.nowMs() ? BodyProgramControllerResultCode.DeadlineExpired : failure; return false; }
         if (node.State != expected || node.NodeAttempt != grant.NodeAttempt || node.AdmissionAttempt != grant.AdmissionAttempt || grant.StopEpoch != program.StopEpoch
             || grant.CatalogRevision != program.Program.CatalogRevision || grant.CatalogRevision != this.catalog.Revision || grant.ActionId != descriptor.ActionId || grant.DeadlineMs != descriptor.DeadlineMs
-            || !BodyProgramCanonical.CanonicalMapsEqual(grant.CanonicalArguments, descriptor.CanonicalArguments) || !BodyProgramCanonical.StringMapsEqual(grant.DerivedResourceClaims, descriptor.DerivedResourceClaims)
+            || !CanonicalArgumentsMatch(grant, program, descriptor) || !BodyProgramCanonical.StringMapsEqual(grant.DerivedResourceClaims, descriptor.DerivedResourceClaims)
             || !DescriptorMatchesLive(descriptor)) return false;
         failure = BodyProgramControllerResultCode.Succeeded;
         return true;
@@ -168,6 +174,43 @@ public sealed class OpenBodyProgramJournalAuthority
 
     private static bool MatchesNode(NodeExecutionBinding? execution, BodyProgramJournalProgram program, BodyProgramJournalNode node) => BodyProgramValidation.IsValidExecutionBinding(execution)
         && execution!.ProgramId == program.Program.ProgramId && execution.NodeId == node.NodeId && execution.NodeAttempt == node.NodeAttempt;
+
+    /// <summary>
+    /// Produces the canonical argument map a successor actually runs with: every
+    /// declared binding is replaced by the exact producing attempt's persisted
+    /// RuntimeFact value from this same program's journal. Source nodes without
+    /// bindings return their verified literal map unchanged. Returns null when a
+    /// declared binding cannot be proven from the exact producing attempt, so
+    /// every gate that consumes, dispatches, or completes a grant fails closed.
+    /// </summary>
+    private static IReadOnlyDictionary<string, BodyProgramCanonicalValue>? MaterializedArguments(BodyProgramJournalProgram program, VerifiedBodyProgramNode descriptor)
+    {
+        if (descriptor.Bindings.Count == 0) return descriptor.CanonicalArguments;
+        Dictionary<string, BodyProgramCanonicalValue> materialized = new(descriptor.CanonicalArguments, StringComparer.Ordinal);
+        foreach ((string argument, ActionProgramBinding binding) in descriptor.Bindings)
+        {
+            BodyProgramJournalNode? producer = program.Nodes.SingleOrDefault(item => item.NodeId == binding.ProducerNodeId);
+            RuntimeFact? fact = producer is { State: BodyProgramNodeState.Succeeded }
+                ? program.Facts.SingleOrDefault(item => item.NodeId == binding.ProducerNodeId && item.NodeAttempt == producer.NodeAttempt && item.FactName == binding.FactName)
+                : null;
+            if (fact is null || fact.ProgramId != program.Program.ProgramId || fact.Values is not { Count: 1 }
+                || !fact.Values.TryGetValue(binding.FactName, out BodyProgramCanonicalValue? value)
+                || !descriptor.CanonicalArguments.TryGetValue(argument, out BodyProgramCanonicalValue? declared)
+                || !BodyProgramValidation.IsValidCanonicalValue(value, declared.Kind)) return null;
+            materialized[argument] = value;
+        }
+        return BodyProgramValidation.FreezeMap(materialized);
+    }
+
+    private bool CanonicalArgumentsMatch(HostAdmissionGrant grant, BodyProgramJournalProgram program, VerifiedBodyProgramNode descriptor)
+    {
+        // The grant must echo exactly the canonical arguments the challenge
+        // carried. For a bound successor those are the materialized producing-fact
+        // values, so the recheck derives them fresh from the durable journal at
+        // consume, dispatch, and completion instead of trusting the literal map.
+        IReadOnlyDictionary<string, BodyProgramCanonicalValue>? materialized = MaterializedArguments(program, descriptor);
+        return materialized is not null && BodyProgramCanonical.CanonicalMapsEqual(grant.CanonicalArguments, materialized);
+    }
     private bool DescriptorMatchesLive(VerifiedBodyProgramNode node) => this.catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action)
         && BodyProgramVerifier.ArgumentsMatch(node.CanonicalArguments, action!) && BodyProgramVerifier.ResourceClaimsMatch(node.DerivedResourceClaims, action!, this.scope);
     private bool IsMutable => this.OpenStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened;
@@ -199,7 +242,7 @@ public sealed class OpenBodyProgramJournalAuthority
         return action.OutputFacts.All(output => names.Contains(output.Name));
     }
     private BodyProgramStatusSnapshot SnapshotFor(BodyProgramJournalProgram program) => new(program.Program.ProgramId, program.State, program.Program.CatalogRevision, program.StopEpoch, this.state.EventHighWater, Array.AsReadOnly(program.Nodes.ToArray()));
-    private static NodeAdmissionChallenge Challenge(BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor, BodyProgramPolicyIdentity policy) => new(program.Program.ProgramId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt, program.StopEpoch, program.Program.CatalogRevision, policy, descriptor.ActionId, descriptor.CanonicalArguments, descriptor.DerivedResourceClaims, descriptor.DeadlineMs);
+    private static NodeAdmissionChallenge Challenge(BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor, BodyProgramPolicyIdentity policy, IReadOnlyDictionary<string, BodyProgramCanonicalValue> materialized) => new(program.Program.ProgramId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt, program.StopEpoch, program.Program.CatalogRevision, policy, descriptor.ActionId, materialized, descriptor.DerivedResourceClaims, descriptor.DeadlineMs);
     private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected;
     private static BodyProgramVerificationReport Rejected(string code, string? node, string path) => new(false, 0, null, new[] { new BodyProgramDiagnostic(BodyProgramDiagnosticSeverity.Error, code, node, path, code) });
     private static ActionProgramCandidate ToCandidate(VerifiedBodyProgram program) => new(program.ProgramId, program.Nodes.Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, node.CanonicalArguments.ToDictionary(pair => pair.Key, pair => BodyProgramValidation.ToRuntimeValue(pair.Value), StringComparer.Ordinal), node.DependsOn, node.Bindings, node.DeadlineMs)).ToArray());

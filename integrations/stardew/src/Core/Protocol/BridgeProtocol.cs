@@ -15,6 +15,13 @@ public static class BridgeProtocol
     public const int Version = 1;
     public const int MaximumMessageBytes = 16 * 1024;
 
+    /// <summary>
+    /// Frozen per-node wire binding-map bound on the inbound Body program candidate,
+    /// aligned with the existing Core verifier bound of 4 (BodyProgramValidation does not
+    /// expose it, so this protocol-level constant is the single source on the wire path).
+    /// </summary>
+    public const int MaximumBodyProgramBindingsPerNode = 4;
+
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -254,6 +261,92 @@ public static class BridgeProtocol
     public static bool TryDeserializeBodyProgramSubmitRequest(string json, out BridgeEnvelope<ActionProgramCandidate>? envelope, out string reasonCode) =>
         TryDeserializeBodyProgramCandidateRequest(json, "program_submit", out envelope, out reasonCode);
 
+    public static bool TryDeserializeBodyProgramStatusRequest(
+        string json,
+        out BridgeEnvelope<BridgeBodyProgramStatusRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "program_status", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound body program status parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!HasExactProperties(payload, "programId")
+                || !payload.TryGetProperty("programId", out JsonElement programId)
+                || programId.ValueKind != JsonValueKind.String
+                || !IsOpaqueId(programId.GetString()))
+            {
+                reasonCode = "invalid_body_program_request";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeBodyProgramStatusRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_envelope";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
+    public static bool TryDeserializeBodyProgramEventsRequest(
+        string json,
+        out BridgeEnvelope<BridgeBodyProgramEventsRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "program_events", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound body program events parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!HasExactProperties(payload, "programId", "cursor", "pageSize")
+                || !payload.TryGetProperty("programId", out JsonElement programId)
+                || programId.ValueKind != JsonValueKind.String
+                || !IsOpaqueId(programId.GetString())
+                || !payload.TryGetProperty("cursor", out JsonElement cursor)
+                || cursor.ValueKind != JsonValueKind.Number
+                || !cursor.TryGetInt64(out long cursorValue)
+                || cursorValue < 0
+                || !payload.TryGetProperty("pageSize", out JsonElement pageSize)
+                || pageSize.ValueKind != JsonValueKind.Number
+                || !pageSize.TryGetInt32(out int pageSizeValue)
+                || pageSizeValue is < 1 or > 32)
+            {
+                reasonCode = "invalid_body_program_request";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeBodyProgramEventsRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_envelope";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
     public static bool TryDeserializeBodyProgramVerificationResult(
         string json,
         out BridgeEnvelope<BridgeBodyProgramVerification>? envelope,
@@ -428,7 +521,7 @@ public static class BridgeProtocol
             && node.Arguments is not null && node.Arguments.Count <= 32
             && node.Arguments.All(argument => IsValidBodyProgramRuntimeArgument(argument.Key, argument.Value))
             && node.DependsOn is not null && node.DependsOn.Count <= 8 && node.DependsOn.All(BodyProgramValidation.IsIdentifier)
-            && node.Bindings is not null && node.Bindings.Count <= 4
+            && node.Bindings is not null && node.Bindings.Count <= MaximumBodyProgramBindingsPerNode
             && node.Bindings.All(binding => BodyProgramValidation.IsIdentifier(binding.Key)
                 && binding.Value is not null && BodyProgramValidation.IsIdentifier(binding.Value.NodeId) && BodyProgramValidation.IsIdentifier(binding.Value.FactName)));
 
@@ -516,6 +609,7 @@ public static class BridgeProtocol
         && IsJavaScriptSafeInteger(snapshot.StopEpoch)
         && IsJavaScriptSafeInteger(snapshot.EventHighWater)
         && snapshot.Nodes is not null
+        && snapshot.Nodes.Count <= BodyProgramValidation.MaximumNodes
         && snapshot.Nodes.All(IsValidBodyProgramNodeStatus);
 
     private static bool IsValidBodyProgramDiagnostic(BridgeBodyProgramDiagnostic? diagnostic) => diagnostic is not null
@@ -732,7 +826,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     private static bool TryReadBodyProgramBindings(JsonElement value, out IReadOnlyDictionary<string, ActionProgramBinding>? bindings)
     {
         bindings = null;
-        if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false;
+        if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > MaximumBodyProgramBindingsPerNode) return false;
         Dictionary<string, ActionProgramBinding> result = new(StringComparer.Ordinal);
         foreach (JsonProperty property in value.EnumerateObject())
         {

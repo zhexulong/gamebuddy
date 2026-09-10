@@ -1780,8 +1780,10 @@ test("body-program wire messages require exact bounded payloads", () => {
     validateBridgeMessage(
       newEnvelope("program_events_result", scope, {
         programId: "program_01",
+        code: "found",
         nextCursor: 1,
-        events: [{ cursor: 1, kind: "accepted", catalogRevision: 1 }],
+        highWater: 1,
+        events: [{ cursor: 1, programId: "program_01", kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }],
       }, "program_events_01", now),
       scope,
       now,
@@ -1792,12 +1794,275 @@ test("body-program wire messages require exact bounded payloads", () => {
     validateBridgeMessage(
       newEnvelope("program_events_result", scope, {
         programId: "program_01",
+        code: "found",
         nextCursor: 1,
-        events: [{ cursor: -1, kind: "accepted", catalogRevision: 1 }],
+        highWater: 1,
+        events: [{ cursor: -1, programId: "program_01", kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }],
       }, "program_events_02", now),
       scope,
       now,
     ),
+    "invalid_body_program_result",
+  );
+});
+
+test("body-program candidate supports only the C# typed destination_selector representation", () => {
+  const nodesFor = (destination: unknown) => ({
+    programId: "program_01",
+    nodes: [
+      {
+        nodeId: "node_01",
+        actionId: "navigate_to_destination",
+        arguments: { destination },
+        dependsOn: [],
+        bindings: {},
+        deadlineMs: now + 60_000,
+      },
+    ],
+  });
+  const label = nodesFor({ type: "destination_selector", destination: { kind: "label", label: "Town" } });
+  const ref = nodesFor({
+    type: "destination_selector",
+    destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" },
+  });
+  for (const payload of [label, ref])
+    assert.equal(validateBridgeMessage(newEnvelope("program_verify", scope, payload, "selector_ok", now), scope, now), null);
+
+  for (const destination of [
+    { type: "destination_selector", destination: { kind: "label", label: "" } },
+    { type: "destination_selector", destination: { kind: "label", label: " Town" } },
+    { type: "destination_selector", destination: { kind: "label", label: "Town " } },
+    { type: "destination_selector", destination: { kind: "ref", ref: "bad_ref" } },
+    { type: "destination_selector", destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAA!" } },
+    { type: "destination_selector", destination: { kind: "label", label: "Town", extra: true } },
+    { type: "destination_selector", destination: { kind: "label" } },
+    { type: "destination_selector", canonicalValue: "Town" },
+    { type: "destination_selector", destination: { kind: "gps", x: 1, y: 1 } },
+    { type: "destination_selector" },
+    { type: "integer", destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" } },
+    { type: "string", canonicalValue: null },
+    { type: "destination_selector", destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAA" } },
+  ])
+    assert.equal(
+      validateBridgeMessage(newEnvelope("program_verify", scope, nodesFor(destination), "selector_bad", now), scope, now),
+      "invalid_body_program_request",
+      JSON.stringify(destination),
+    );
+});
+
+test("body-program candidate rejects more than 4 bindings per node, matching the C# wire and verifier bound", () => {
+  const bindingsFor = (count: number) => {
+    const bindings: Record<string, { nodeId: string; factName: string }> = {};
+    for (let index = 0; index < count; index++) {
+      bindings[`k${index}`] = { nodeId: "producer", factName: `f${index}` };
+    }
+    return bindings;
+  };
+  const candidate = (bindings: Record<string, { nodeId: string; factName: string }>) => ({
+    programId: "program_01",
+    nodes: [
+      {
+        nodeId: "node_01",
+        actionId: "navigate_to_destination",
+        arguments: {},
+        dependsOn: [],
+        bindings,
+        deadlineMs: now + 60_000,
+      },
+    ],
+  });
+
+  assert.equal(
+    validateBridgeMessage(newEnvelope("program_verify", scope, candidate(bindingsFor(4)), "binding_4_ok", now), scope, now),
+    null,
+  );
+  assert.equal(
+    validateBridgeMessage(newEnvelope("program_verify", scope, candidate(bindingsFor(5)), "binding_5_bad", now), scope, now),
+    "invalid_body_program_request",
+  );
+});
+
+test("body-program events result accepts an empty page above the event high-water", () => {
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope(
+        "program_events_result",
+        scope,
+        { programId: "program_01", code: "found", events: [], nextCursor: 100, highWater: 50 },
+        "program_events_empty_above",
+        now,
+      ),
+      scope,
+      now,
+    ),
+    null,
+  );
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope(
+        "program_events_result",
+        scope,
+        { programId: "program_01", code: "found", events: [], nextCursor: 0, highWater: 0 },
+        "program_events_empty_at",
+        now,
+      ),
+      scope,
+      now,
+    ),
+    null,
+  );
+});
+
+test("body-program verify result admits the C# 64-diagnostic bound", () => {
+  const diagnostics = Array.from({ length: 64 }, (_, index) => ({
+    severity: "error",
+    code: "diagnostic",
+    nodeId: null,
+    path: `$.nodes[${index}]`,
+    message: `problem ${index}`,
+  }));
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope(
+        "program_verify_result",
+        scope,
+        { accepted: false, catalogRevision: 1, diagnostics: [...diagnostics, { severity: "error", code: "diagnostic", nodeId: null, path: "node", message: "x" }] },
+        "verify_65",
+        now,
+      ),
+      scope,
+      now,
+    ),
+    "invalid_body_program_result",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope("program_verify_result", scope, { accepted: false, catalogRevision: 1, diagnostics }, "verify_64", now),
+      scope,
+      now,
+    ),
+    null,
+  );
+});
+
+test("body-program destination selector labels enforce NFC canonicalization like C# IsPlayerText", () => {
+  const candidate = (label: string) => ({
+    programId: "program_01",
+    nodes: [
+      {
+        nodeId: "node_01",
+        actionId: "navigate_to_destination",
+        arguments: { destination: { type: "destination_selector", destination: { kind: "label", label } } },
+        dependsOn: [],
+        bindings: {},
+        deadlineMs: now + 60_000,
+      },
+    ],
+  });
+  // Already-canonicalized precomposed NFC label is exchangeable, exactly as C# ReadPlayerText admits it.
+  assert.equal(
+    validateBridgeMessage(newEnvelope("program_verify", scope, candidate("Caf\u00e9"), "selector_nfc", now), scope, now),
+    null,
+  );
+  // Decomposed FormD label is not NFC-canonical, so the C# ingress rejects it; the Host must fail closed too.
+  assert.equal(
+    validateBridgeMessage(newEnvelope("program_verify", scope, candidate("Cafe\u0301"), "selector_decomposed", now), scope, now),
+    "invalid_body_program_request",
+  );
+});
+
+test("body-program status snapshot node arrays freeze at the C# MaximumNodes bound of 16", () => {
+  const snapshot = (count: number) => ({
+    programId: "program_01",
+    state: "active",
+    catalogRevision: 1,
+    stopEpoch: 0,
+    eventHighWater: 0,
+    nodes: Array.from({ length: count }, (_, index) => ({
+      nodeId: `node_${index.toString().padStart(2, "0")}`,
+      state: "pending",
+      nodeAttempt: 1,
+      admissionAttempt: 1,
+    })),
+  });
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(16) }, "status_16", now),
+      scope,
+      now,
+    ),
+    null,
+  );
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(17) }, "status_17", now),
+      scope,
+      now,
+    ),
+    "invalid_body_program_result",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope(
+        "program_submit_result",
+        scope,
+        { code: "accepted", verification: { accepted: true, catalogRevision: 1, diagnostics: [] }, snapshot: snapshot(17) },
+        "submit_17",
+        now,
+      ),
+      scope,
+      now,
+    ),
+    "invalid_body_program_result",
+  );
+});
+
+test("body-program node attempt counters align to the C# Int32 wire fields", () => {
+  const snapshot = (nodeAttempt: number, admissionAttempt: number) => ({
+    programId: "program_01",
+    state: "active",
+    catalogRevision: 1,
+    stopEpoch: 0,
+    eventHighWater: 0,
+    nodes: [{ nodeId: "node_01", state: "running", nodeAttempt, admissionAttempt }],
+  });
+  const eventResult = (nodeAttempt: number | null) => ({
+    programId: "program_01",
+    code: "found",
+    nextCursor: 1,
+    highWater: 1,
+    events: [{ cursor: 1, programId: "program_01", kind: "native_dispatch", catalogRevision: 1, nodeId: null, nodeAttempt }],
+  });
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(2_147_483_647, 2_147_483_647) }, "int32_max_status", now),
+      scope,
+      now,
+    ),
+    null,
+  );
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(2_147_483_648, 1) }, "int32_over_node_status", now),
+      scope,
+      now,
+    ),
+    "invalid_body_program_result",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(1, 2_147_483_648) }, "int32_over_admission_status", now),
+      scope,
+      now,
+    ),
+    "invalid_body_program_result",
+  );
+  assert.equal(
+    validateBridgeMessage(newEnvelope("program_events_result", scope, eventResult(2_147_483_647), "int32_max_event", now), scope, now),
+    null,
+  );
+  assert.equal(
+    validateBridgeMessage(newEnvelope("program_events_result", scope, eventResult(2_147_483_648), "int32_over_event", now), scope, now),
     "invalid_body_program_result",
   );
 });

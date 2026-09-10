@@ -26,7 +26,7 @@ test("the Mod-owned family and lifecycle constrain local typed adapters", () => 
     {
       actionId: "move_to_tile",
       familyId: "Mod_declared_family",
-      identityVersion: 9,
+      identityVersion: 1,
       lifecycle: "published" as const, kind: "execution" as const,
     },
     {
@@ -40,8 +40,34 @@ test("the Mod-owned family and lifecycle constrain local typed adapters", () => 
   const visible = visibleActionsFromModCatalog(catalog, capabilities);
   assert.deepEqual(visible.map((entry) => entry.actionId), ["move_to_tile"]);
   assert.equal(visible[0]?.familyId, "Mod_declared_family");
-  assert.equal(visible[0]?.identityVersion, 9);
+  assert.equal(visible[0]?.identityVersion, 1);
   assert.deepEqual(searchActionsFromModCatalog(catalog, capabilities, "body_tools"), []);
+});
+
+test("visible action adapters reject Mod registrations with an unsupported identityVersion", () => {
+  const capabilities = ["move_to_tile"];
+  const supported = {
+    actionId: "move_to_tile",
+    familyId: "movement_navigation",
+    identityVersion: 1,
+    lifecycle: "published" as const, kind: "execution" as const,
+  };
+  const unsupported = {
+    actionId: "move_to_tile",
+    familyId: "movement_navigation",
+    identityVersion: 2,
+    lifecycle: "published" as const, kind: "execution" as const,
+  };
+
+  // An unsupported identity version is dropped even when family/lifecycle/capability
+  // all admit it; the Host adapter can only execute the identity versions it knows.
+  assert.deepEqual(visibleActionsFromModCatalog([unsupported], capabilities), []);
+  assert.deepEqual(searchActionsFromModCatalog([unsupported], capabilities, "move_to_tile"), []);
+
+  // The same action at a supported identityVersion remains visible.
+  const visible = visibleActionsFromModCatalog([supported, unsupported], capabilities);
+  assert.deepEqual(visible.map((entry) => entry.actionId), ["move_to_tile"]);
+  assert.equal(visible[0]?.identityVersion, 1);
 });
 
 test("policy only subtracts from the current Mod catalog", () => {
