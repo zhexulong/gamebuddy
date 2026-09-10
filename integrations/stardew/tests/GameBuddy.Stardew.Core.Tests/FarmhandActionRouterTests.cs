@@ -57,6 +57,12 @@ public sealed class FarmhandActionRouterTests
         }
     }
 
+    private sealed class ThrowingActionHandler : IFarmhandActionHandler
+    {
+        public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger) =>
+            throw new InvalidOperationException("handler failed");
+    }
+
     [Fact]
     public void TryRoute_NavigateToDestination_DispatchesToExecutionHandler_NoPrimitive()
     {
@@ -113,6 +119,26 @@ public sealed class FarmhandActionRouterTests
     }
 
     [Fact]
+    public void TryRoute_WhenHandlerThrows_ReturnsUncertainTerminalReceipt()
+    {
+        var router = new FarmhandActionRouter();
+        router.Register(TestRegistration("till_soil"), new ThrowingActionHandler());
+        var ledger = new StubLedger();
+        var request = new BridgeExecutionRequest("req_handler_throw", "idemp_handler_throw", "till_soil", new BridgeExecutionArgs(), 1, 5000);
+
+        bool routed = router.TryRoute(request, ledger, "exec_handler_throw", out LocalExecutionReceipt receipt, out string reasonCode);
+
+        routed.Should().BeTrue();
+        reasonCode.Should().Be("handler_exception");
+        receipt.State.Should().Be(ExecutionState.Uncertain);
+        receipt.ReasonCode.Should().Be("handler_exception");
+        receipt.ExecutionId.Should().Be("exec_handler_throw");
+        receipt.Evidence.Should().Be("handler_exception=InvalidOperationException;never_retry=true");
+        ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt persisted).Should().BeTrue();
+        persisted.Should().BeSameAs(receipt);
+    }
+
+    [Fact]
     public void TryRoute_WithUnregisteredAction_FailsClosed()
     {
         var router = new FarmhandActionRouter();
@@ -156,6 +182,30 @@ public sealed class FarmhandActionRouterTests
         replayed.Should().BeFalse();
         reasonCode.Should().Be("execution_identity_conflict");
         ledger.BoundExecutionId.Should().Be("exec_first");
+    }
+
+    [Fact]
+    public void CanExecute_WithRegisteredAction_Accepts()
+    {
+        var router = new FarmhandActionRouter();
+        router.Register(TestRegistration("till_soil"), new StubActionHandler());
+
+        bool available = router.CanExecute("till_soil", out string reasonCode);
+
+        available.Should().BeTrue();
+        reasonCode.Should().Be("accepted");
+    }
+
+    [Fact]
+    public void CanExecute_WithUnregisteredAction_FailsClosed()
+    {
+        var router = new FarmhandActionRouter();
+        router.Register(TestRegistration("till_soil"), new StubActionHandler());
+
+        bool available = router.CanExecute("unknown_action", out string reasonCode);
+
+        available.Should().BeFalse();
+        reasonCode.Should().Be("action_not_available");
     }
 
     [Fact]

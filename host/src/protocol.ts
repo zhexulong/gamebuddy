@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 const PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 16 * 1024;
+/** World-fact JSON is bounded below the frame limit so conversion never accepts an unbounded raw blob. */
+export const MAX_WORLD_FACT_PAYLOAD_JSON_BYTES = 8 * 1024;
 export const MAX_EVENTS_PER_WINDOW = 32;
 export const EVENT_WINDOW_MS = 1_000;
 
@@ -617,7 +619,15 @@ type ActionCatalog = Readonly<{
   entries: readonly ActionRegistration[];
 }>;
 
-type BodyProgramRuntimeValue = Readonly<{ type: string; canonicalValue: string }>;
+/** Typed destination selector accepted by the C# Body Program wire contract. */
+type BodyProgramDestinationSelector = Readonly<
+  | { kind: "label"; label: string }
+  | { kind: "ref"; ref: string }
+>;
+/** Exact Host runtime value. Scalar kinds retain canonicalValue; destination_selector retains its typed object payload. */
+type BodyProgramRuntimeValue =
+  | Readonly<{ type: "integer" | "string" | "boolean"; canonicalValue: string }>
+  | Readonly<{ type: "destination_selector"; destination: BodyProgramDestinationSelector }>;
 type BodyProgramFactReference = Readonly<{ nodeId: string; factName: string }>;
 type BodyProgramNode = Readonly<{
   nodeId: string;
@@ -627,16 +637,63 @@ type BodyProgramNode = Readonly<{
   bindings: Readonly<Record<string, BodyProgramFactReference>>;
   deadlineMs: number;
 }>;
+/** Frozen maximum Body Program node count, shared with C# BodyProgramValidation.MaximumNodes. */
+const MAX_BODY_PROGRAM_NODES = 16;
+/** Frozen per-node binding-map bound, aligned with the existing C# Core verifier bound of 4. */
+export const MAX_BODY_PROGRAM_BINDINGS_PER_NODE = 4;
 export type BodyProgramCandidateRequest = Readonly<{ programId: string; nodes: readonly BodyProgramNode[] }>;
 export type BodyProgramStatusRequest = Readonly<{ programId: string }>;
 export type BodyProgramEventsRequest = Readonly<{ programId: string; cursor: number; pageSize: number }>;
-export type BodyProgramCommandResult = Readonly<{ programId: string; status: string; diagnostics: readonly string[] }>;
-export type BodyProgramStatusResult = Readonly<{ programId: string; status: string; catalogRevision: number }>;
-type BodyProgramEvent = Readonly<{ cursor: number; kind: string; catalogRevision: number }>;
+type BodyProgramDiagnostic = Readonly<{
+  severity: string;
+  code: string;
+  nodeId: string | null;
+  path: string;
+  message: string;
+}>;
+type BodyProgramVerification = Readonly<{
+  accepted: boolean;
+  catalogRevision: number;
+  diagnostics: readonly BodyProgramDiagnostic[];
+}>;
+type BodyProgramNodeStatus = Readonly<{
+  nodeId: string;
+  state: string;
+  nodeAttempt: number;
+  admissionAttempt: number;
+}>;
+type BodyProgramStatusSnapshot = Readonly<{
+  programId: string;
+  state: string;
+  catalogRevision: number;
+  stopEpoch: number;
+  eventHighWater: number;
+  nodes: readonly BodyProgramNodeStatus[];
+}>;
+export type BodyProgramVerifyResult = BodyProgramVerification;
+export type BodyProgramSubmitResult = Readonly<{
+  code: "accepted" | "rejected" | "idempotent" | "conflict" | "persistence_failure" | "quarantined";
+  verification: BodyProgramVerification;
+  snapshot: BodyProgramStatusSnapshot | null;
+}>;
+export type BodyProgramStatusResult = Readonly<{
+  code: "found" | "not_found" | "invalid_input";
+  snapshot: BodyProgramStatusSnapshot | null;
+}>;
+type BodyProgramEvent = Readonly<{
+  cursor: number;
+  programId: string;
+  kind: string;
+  catalogRevision: number;
+  nodeId: string | null;
+  nodeAttempt: number | null;
+}>;
 export type BodyProgramEventsResult = Readonly<{
   programId: string;
-  nextCursor: number;
+  code: "found" | "not_found" | "invalid_input";
   events: readonly BodyProgramEvent[];
+  nextCursor: number;
+  highWater: number;
 }>;
 
 export type BridgeMessage =
@@ -669,9 +726,9 @@ export type BridgeMessage =
   | Envelope<"player_control_receipt", PlayerControlReceipt>
   | Envelope<"execution_receipt", ExecutionReceipt>
   | Envelope<"program_verify", BodyProgramCandidateRequest>
-  | Envelope<"program_verify_result", BodyProgramCommandResult>
+  | Envelope<"program_verify_result", BodyProgramVerifyResult>
   | Envelope<"program_submit", BodyProgramCandidateRequest>
-  | Envelope<"program_submit_result", BodyProgramCommandResult>
+  | Envelope<"program_submit_result", BodyProgramSubmitResult>
   | Envelope<"program_status", BodyProgramStatusRequest>
   | Envelope<"program_status_result", BodyProgramStatusResult>
   | Envelope<"program_events", BodyProgramEventsRequest>
@@ -980,8 +1037,9 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
     case "program_submit":
       return validateBodyProgramCandidateRequest(payload);
     case "program_verify_result":
+      return validateBodyProgramVerifyResult(payload);
     case "program_submit_result":
-      return validateBodyProgramCommandResult(payload);
+      return validateBodyProgramSubmitResult(payload);
     case "program_status":
       return hasExactKeys(payload, ["programId"]) && isOpaqueId(payload.programId) ? null : "invalid_body_program_request";
     case "program_status_result":
@@ -1869,19 +1927,23 @@ export function validateWorldFact(value: Record<string, unknown>): string | null
   if (value.deduplicationKey !== undefined && !isOpaqueId(value.deduplicationKey)) {
     return "invalid_world_fact";
   }
-  if (
-    value.payloadJson !== undefined &&
-    value.payloadJson !== null &&
-    typeof value.payloadJson !== "string"
-  ) {
-    return "invalid_world_fact";
-  }
-  if (
-    value.payload !== undefined &&
-    value.payload !== null &&
-    !isRecord(value.payload)
-  ) {
-    return "invalid_world_fact";
+  const hasPayload = value.payload !== undefined && value.payload !== null;
+  const hasPayloadJson = value.payloadJson !== undefined && value.payloadJson !== null;
+  if (hasPayload === hasPayloadJson) return "invalid_world_fact";
+  if (hasPayload && !isRecord(value.payload)) return "invalid_world_fact";
+  if (hasPayloadJson) {
+    if (
+      typeof value.payloadJson !== "string" ||
+      Buffer.byteLength(value.payloadJson, "utf8") > MAX_WORLD_FACT_PAYLOAD_JSON_BYTES
+    )
+      return "invalid_world_fact";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value.payloadJson);
+    } catch {
+      return "invalid_world_fact";
+    }
+    if (!isRecord(parsed)) return "invalid_world_fact";
   }
   return null;
 }
@@ -1895,7 +1957,7 @@ export function isWorldFactMessage(value: unknown): value is Envelope<"world_fac
 }
 
 export function validateBodyProgramCandidateRequest(value: Record<string, unknown>): string | null {
-  if (!hasExactKeys(value, ["programId", "nodes"]) || !isOpaqueId(value.programId) || !Array.isArray(value.nodes) || value.nodes.length < 1 || value.nodes.length > 16)
+  if (!hasExactKeys(value, ["programId", "nodes"]) || !isOpaqueId(value.programId) || !Array.isArray(value.nodes) || value.nodes.length < 1 || value.nodes.length > MAX_BODY_PROGRAM_NODES)
     return "invalid_body_program_request";
   return value.nodes.every(isBodyProgramNode) ? null : "invalid_body_program_request";
 }
@@ -1904,35 +1966,128 @@ function isBodyProgramNode(value: unknown): boolean {
   if (!isRecord(value) || !hasExactKeys(value, ["nodeId", "actionId", "arguments", "dependsOn", "bindings", "deadlineMs"]) ||
     !isOpaqueId(value.nodeId) || !isOpaqueId(value.actionId) || !isRecord(value.arguments) || !hasUniqueKeys(value.arguments) ||
     !Array.isArray(value.dependsOn) || value.dependsOn.length > 8 || !value.dependsOn.every(isOpaqueId) ||
-    !isRecord(value.bindings) || !hasUniqueKeys(value.bindings) || !Number.isSafeInteger(value.deadlineMs) || (value.deadlineMs as number) <= 0)
+    !isRecord(value.bindings) || !hasUniqueKeys(value.bindings) || Object.keys(value.bindings).length > MAX_BODY_PROGRAM_BINDINGS_PER_NODE ||
+    !Number.isSafeInteger(value.deadlineMs) || (value.deadlineMs as number) <= 0)
     return false;
   return Object.entries(value.arguments).every(([name, argument]) => isOpaqueId(name) && isBodyProgramRuntimeValue(argument)) &&
     Object.entries(value.bindings).every(([name, binding]) => isOpaqueId(name) && isBodyProgramFactReference(binding));
 }
 function isBodyProgramRuntimeValue(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["type", "canonicalValue"]) && typeof value.type === "string" && value.type.length >= 1 && value.type.length <= 64 &&
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "destination_selector")
+    return hasExactKeys(value, ["type", "destination"]) && isBodyProgramDestinationSelector(value.destination);
+  return (value.type === "integer" || value.type === "string" || value.type === "boolean") &&
+    hasExactKeys(value, ["type", "canonicalValue"]) &&
     typeof value.canonicalValue === "string" && value.canonicalValue.length <= 512;
+}
+/** Mirrors the C# IsValidBodyProgramSelector: scalar labels are trimmed, run ids are canonical 26-char navigation refs. */
+function isBodyProgramDestinationSelector(value: unknown): value is BodyProgramDestinationSelector {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "label")
+    return hasExactKeys(value, ["kind", "label"]) && isBodyProgramSelectorLabel(value.label);
+  if (value.kind === "ref")
+    return hasExactKeys(value, ["kind", "ref"]) &&
+      typeof value.ref === "string" && /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref);
+  return false;
+}
+function isBodyProgramSelectorLabel(value: unknown): value is string {
+  // Mirrors the C# ReadPlayerText FormC gate: only already-canonicalized NFC labels are exchangeable.
+  return typeof value === "string" && value.length >= 1 && value.length <= 128 &&
+    value === value.trim() && value.trim().length > 0 && value.normalize("NFC") === value;
 }
 function isBodyProgramFactReference(value: unknown): boolean {
   return isRecord(value) && hasExactKeys(value, ["nodeId", "factName"]) && isOpaqueId(value.nodeId) && isOpaqueId(value.factName);
 }
-export function validateBodyProgramCommandResult(value: Record<string, unknown>): string | null {
-  return hasExactKeys(value, ["programId", "status", "diagnostics"]) && isOpaqueId(value.programId) && isReasonCode(value.status) &&
-    Array.isArray(value.diagnostics) && value.diagnostics.length <= 64 && value.diagnostics.every(isReasonCode)
+export function validateBodyProgramVerifyResult(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["accepted", "catalogRevision", "diagnostics"]) &&
+    typeof value.accepted === "boolean" &&
+    isNonNegativeSafeInteger(value.catalogRevision) &&
+    Array.isArray(value.diagnostics) && value.diagnostics.length <= 64 && value.diagnostics.every(isBodyProgramDiagnostic)
     ? null : "invalid_body_program_result";
+}
+export function validateBodyProgramSubmitResult(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["code", "verification", "snapshot"]) ||
+    !isBodyProgramSubmitCode(value.code) ||
+    validateBodyProgramVerifyResult(value.verification as Record<string, unknown>) !== null)
+    return "invalid_body_program_result";
+  const code = value.code;
+  const verification = value.verification as Readonly<{ accepted: boolean }>;
+  const snapshot = value.snapshot;
+  if (code === "accepted" || code === "idempotent" || code === "conflict") {
+    if (!verification.accepted || !isBodyProgramStatusSnapshot(snapshot)) return "invalid_body_program_result";
+  } else if (code === "rejected" || code === "quarantined") {
+    if (verification.accepted || !(snapshot === null)) return "invalid_body_program_result";
+  } else if (code === "persistence_failure") {
+    if (!verification.accepted || !(snapshot === null)) return "invalid_body_program_result";
+  }
+  return null;
 }
 export function validateBodyProgramStatusResult(value: Record<string, unknown>): string | null {
-  return hasExactKeys(value, ["programId", "status", "catalogRevision"]) && isOpaqueId(value.programId) && isReasonCode(value.status) && isNonNegativeSafeInteger(value.catalogRevision)
-    ? null : "invalid_body_program_result";
+  if (!hasExactKeys(value, ["code", "snapshot"]) || !isBodyProgramQueryCode(value.code)) return "invalid_body_program_result";
+  return value.code === "found"
+    ? (isBodyProgramStatusSnapshot(value.snapshot) ? null : "invalid_body_program_result")
+    : (value.snapshot === null ? null : "invalid_body_program_result");
 }
 export function validateBodyProgramEventsResult(value: Record<string, unknown>): string | null {
-  return hasExactKeys(value, ["programId", "nextCursor", "events"]) && isOpaqueId(value.programId) && isNonNegativeSafeInteger(value.nextCursor) &&
-    Array.isArray(value.events) && value.events.length <= 32 && value.events.every(isBodyProgramEvent)
+  if (!hasExactKeys(value, ["programId", "code", "events", "nextCursor", "highWater"]) ||
+    !isOpaqueId(value.programId) || !isBodyProgramQueryCode(value.code) ||
+    !Array.isArray(value.events) || value.events.length > 32 ||
+    !isNonNegativeSafeInteger(value.nextCursor) || !isNonNegativeSafeInteger(value.highWater) ||
+    (value.code !== "found" && value.events.length !== 0))
+    return "invalid_body_program_result";
+  return value.events.every(isBodyProgramEvent) &&
+    value.events.every((event) => event.programId === value.programId && event.cursor <= (value.highWater as number)) &&
+    (value.events.length === 0 || hasExactPageContinuation(value.events as unknown[], value.nextCursor as number))
     ? null : "invalid_body_program_result";
 }
+function hasExactPageContinuation(events: readonly unknown[], nextCursor: number): boolean {
+  if (events.length === 0) return true;
+  for (let index = 1; index < events.length; index += 1) {
+    const prior = (events[index - 1] as BodyProgramEvent).cursor;
+    const current = (events[index] as BodyProgramEvent).cursor;
+    if (current <= prior) return false;
+  }
+  return nextCursor === (events[events.length - 1] as BodyProgramEvent).cursor;
+}
 function isBodyProgramEvent(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["cursor", "kind", "catalogRevision"]) && isNonNegativeSafeInteger(value.cursor) &&
-    isReasonCode(value.kind) && isNonNegativeSafeInteger(value.catalogRevision);
+  return isRecord(value) && hasExactKeys(value, ["cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt"]) &&
+    isNonNegativeSafeInteger(value.cursor) && isOpaqueId(value.programId) && isReasonCode(value.kind) &&
+    isNonNegativeSafeInteger(value.catalogRevision) &&
+    (value.nodeId === null || isOpaqueId(value.nodeId)) &&
+    (value.nodeAttempt === null || isNonNegativeInt32(value.nodeAttempt));
+}
+function isBodyProgramSubmitCode(value: unknown): boolean {
+  return value === "accepted" || value === "rejected" || value === "idempotent" || value === "conflict" ||
+    value === "persistence_failure" || value === "quarantined";
+}
+function isBodyProgramQueryCode(value: unknown): boolean {
+  return value === "found" || value === "not_found" || value === "invalid_input";
+}
+function isBodyProgramDiagnostic(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["severity", "code", "nodeId", "path", "message"]) &&
+    value.severity === "error" && isReasonCode(value.code) &&
+    (value.nodeId === null || isOpaqueId(value.nodeId)) &&
+    typeof value.path === "string" && typeof value.message === "string";
+}
+function isBodyProgramStatusSnapshot(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["programId", "state", "catalogRevision", "stopEpoch", "eventHighWater", "nodes"]) &&
+    isOpaqueId(value.programId) && isBodyProgramState(value.state) &&
+    isNonNegativeSafeInteger(value.catalogRevision) && isNonNegativeSafeInteger(value.stopEpoch) &&
+    isNonNegativeSafeInteger(value.eventHighWater) && Array.isArray(value.nodes) && value.nodes.length <= MAX_BODY_PROGRAM_NODES &&
+    value.nodes.every(isBodyProgramNodeStatus);
+}
+function isBodyProgramNodeStatus(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["nodeId", "state", "nodeAttempt", "admissionAttempt"]) &&
+    isOpaqueId(value.nodeId) && isBodyProgramNodeState(value.state) &&
+    isNonNegativeInt32(value.nodeAttempt) && isNonNegativeInt32(value.admissionAttempt);
+}
+function isBodyProgramState(value: unknown): boolean {
+  return value === "active" || value === "succeeded" || value === "failed" || value === "cancelled" ||
+    value === "recovery_required" || value === "quarantined";
+}
+function isBodyProgramNodeState(value: unknown): boolean {
+  return value === "pending" || value === "awaiting_host_admission" || value === "host_admitted" || value === "running" ||
+    value === "succeeded" || value === "failed" || value === "cancelled" || value === "recovery_required" || value === "rejected";
 }
 function hasUniqueKeys(value: Record<string, unknown>): boolean {
   return Object.keys(value).length <= 32;
@@ -2800,6 +2955,10 @@ function isValidActionRegistrations(value: unknown): boolean {
 }
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+/** C# attempt counters are Int32 wire fields; the Host must not admit Int64-backed counters it cannot exchange. */
+function isNonNegativeInt32(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 2_147_483_647;
 }
 function isUniqueOpaqueIdArray(value: unknown): value is readonly string[] {
   return isStringArray(value) && value.every(isOpaqueId) && new Set(value).size === value.length;

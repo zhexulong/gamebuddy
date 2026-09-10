@@ -103,15 +103,19 @@ export class CompanionEventPump {
           : fact.kind === "world_fact"
             ? MAX_PENDING_WORLD_FACTS
             : MAX_PENDING_LIFECYCLE;
-    if (!destination.has(fact.correlationId) && destination.size >= limit) {
+    // Stable world-fact identity is the Mod eventId; correlationId is only a
+    // transport-scoped routing label. Same eventId/different correlationId is
+    // one fact, while distinct eventIds never collapse.
+    const key = fact.kind === "world_fact" ? worldFactKey(fact) : fact.correlationId;
+    if (!destination.has(key) && destination.size >= limit) {
       throw new Error(
         fact.kind === "execution_receipt" && isTerminalExecutionFact(fact)
           ? "event_pump_terminal_overflow"
           : "event_pump_event_overflow",
       );
     }
-    const previous = destination.get(fact.correlationId);
-    if (previous === undefined || fact.revision >= previous.revision) destination.set(fact.correlationId, frozen);
+    const previous = destination.get(key);
+    if (previous === undefined || fact.revision >= previous.revision) destination.set(key, frozen);
   }
 
   public enqueuePlayerInput(input: PlayerInput): void {
@@ -272,6 +276,11 @@ function isTerminalExecutionFact(fact: WorldFact): boolean {
 
 function factEventId(fact: WorldFact): string {
   return fact.eventId ?? `${fact.source}:${fact.kind}:${fact.correlationId}:${fact.revision}`;
+}
+
+/** World-fact deduplication key: the stable Mod eventId, else its correlationId. */
+function worldFactKey(fact: WorldFact): string {
+  return fact.eventId ?? fact.correlationId;
 }
 
 function normalizeInput(input: PlayerInput): NormalizedEvent {

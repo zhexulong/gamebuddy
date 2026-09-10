@@ -291,7 +291,7 @@ test("desktop session adapter relays only a Guardian-private deferred launch pla
   const plan = Uint8Array.from([1, 2, 3, 4]);
   const owner = createStardewBootstrapGuardianOwner(
     binding,
-    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000, {
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000, 2_000, {
       async create(actualBinding, target) {
         assert.equal(actualBinding, binding);
         assert.equal(target, "playerHost");
@@ -333,7 +333,7 @@ test("desktop session adapter stays unavailable without a private launch-plan au
   });
   const owner = createStardewBootstrapGuardianOwner(
     binding,
-    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000),
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000, 2_000),
   );
   await assert.rejects(owner.launchPlayerHost(), /owner_transition_unavailable/);
   await owner.arm();
@@ -360,7 +360,7 @@ test("desktop session adapter rejects an acknowledgement outside its exact attem
   });
   const owner = createStardewBootstrapGuardianOwner(
     binding,
-    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000),
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, Date.now() + 60_000, 2_000),
   );
 
   await assert.rejects(owner.arm(), /session_ack_mismatch/);

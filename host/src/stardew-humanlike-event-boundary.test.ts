@@ -4,6 +4,7 @@ import { CompanionEventPump } from "./event-pump.js";
 import {
   type BridgeMessage,
   type Envelope,
+  MAX_WORLD_FACT_PAYLOAD_JSON_BYTES,
   newEnvelope,
   type Scope,
   validateBridgeMessage,
@@ -94,6 +95,55 @@ test("protocol validator rejects malformed world_fact messages", () => {
   assert.equal(validateBridgeMessage(extraProps, scope, baseTimestampMs), "invalid_world_fact");
 });
 
+test("world_fact boundary requires exactly one payload representation", () => {
+  // Neither the structured object nor the JSON string representation is present.
+  const missingBoth = createWorldFactMessage({ payload: undefined, payloadJson: undefined });
+  assert.equal(validateBridgeMessage(missingBoth, scope, baseTimestampMs), "invalid_world_fact");
+
+  // Both representations are present; only one bounded shape may cross the boundary.
+  const bothPresent = createWorldFactMessage({ payload: { day: 1 }, payloadJson: JSON.stringify({ day: 1 }) });
+  assert.equal(validateBridgeMessage(bothPresent, scope, baseTimestampMs), "invalid_world_fact");
+
+  // The JSON string representation must parse into an object, never an array or scalar.
+  const malformedJson = createWorldFactMessage({ payload: undefined, payloadJson: "{not json" });
+  assert.equal(validateBridgeMessage(malformedJson, scope, baseTimestampMs), "invalid_world_fact");
+
+  const arrayJson = createWorldFactMessage({ payload: undefined, payloadJson: JSON.stringify([1, 2, 3]) });
+  assert.equal(validateBridgeMessage(arrayJson, scope, baseTimestampMs), "invalid_world_fact");
+
+  const scalarJson = createWorldFactMessage({ payload: undefined, payloadJson: JSON.stringify("day") });
+  assert.equal(validateBridgeMessage(scalarJson, scope, baseTimestampMs), "invalid_world_fact");
+
+  // The structured object representation must be a plain record, never an array.
+  const arrayPayload = createWorldFactMessage({ payload: [1, 2, 3] as never });
+  assert.equal(validateBridgeMessage(arrayPayload, scope, baseTimestampMs), "invalid_world_fact");
+
+  // A single parsed object via either representation is accepted.
+  assert.equal(validateBridgeMessage(createWorldFactMessage(), scope, baseTimestampMs), null);
+  const jsonOnly = createWorldFactMessage({ payload: undefined, payloadJson: JSON.stringify({ day: 5 }) });
+  assert.equal(validateBridgeMessage(jsonOnly, scope, baseTimestampMs), null);
+  assert.equal(isWorldFactMessage(jsonOnly), true);
+});
+
+test("world_fact JSON payload representation is bounded below the frame limit", () => {
+  const objectEnvelopeBytes = Buffer.byteLength(JSON.stringify({ padding: "" }), "utf8");
+  const atBound = createWorldFactMessage({
+    payload: undefined,
+    payloadJson: JSON.stringify({ padding: "x".repeat(MAX_WORLD_FACT_PAYLOAD_JSON_BYTES - objectEnvelopeBytes) }),
+  });
+  assert.equal(
+    Buffer.byteLength((atBound.payload as Record<string, unknown>).payloadJson as string, "utf8"),
+    MAX_WORLD_FACT_PAYLOAD_JSON_BYTES,
+  );
+  assert.equal(validateBridgeMessage(atBound, scope, baseTimestampMs), null);
+
+  const overBound = createWorldFactMessage({
+    payload: undefined,
+    payloadJson: JSON.stringify({ padding: "x".repeat(MAX_WORLD_FACT_PAYLOAD_JSON_BYTES - objectEnvelopeBytes + 1) }),
+  });
+  assert.equal(validateBridgeMessage(overBound, scope, baseTimestampMs), "invalid_world_fact");
+});
+
 test("toWorldFact preserves stable Mod event ID and properties without replacing with bridge messageId", () => {
   const message = createWorldFactMessage({
     eventId: "time_milestone_day_2_1200",
@@ -176,6 +226,50 @@ test("toWorldFact fails closed on missing eventId or sourceEventId", () => {
       } as never),
     /invalid_world_fact_source_event_id/,
   );
+});
+
+test("event pump keeps one world fact per stable eventId even when the transport correlationId changes", async () => {
+  const pump = new CompanionEventPump();
+  const eventId = "time_milestone_day_1_0600";
+
+  // First transport frame carries correlationId from the old pipe generation.
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId,
+    sourceEventId: eventId,
+    correlationId: "transport_a",
+    observedTick: 100,
+    revision: 1,
+    payload: { milestone: "0600" },
+  });
+  // Reconnect rewrites the transport correlationId, but the Mod eventId is the stable identity.
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId,
+    sourceEventId: eventId,
+    correlationId: "transport_b",
+    observedTick: 100,
+    revision: 2,
+    payload: { milestone: "0600", updated: true },
+  });
+  assert.equal(pump.pendingCount, 1);
+
+  const delivered: Array<{ text: string }> = [];
+  await pump.flush({
+    async deliver(text) {
+      delivered.push({ text });
+    },
+  });
+  const batch = JSON.parse(delivered[0]?.text ?? "{}") as {
+    worldFacts: Array<{ eventId: string; revision: number }>;
+    events: Array<{ eventId: string; revision: number }>;
+  };
+  assert.equal(batch.worldFacts.length, 1);
+  assert.equal(batch.worldFacts[0]?.eventId, eventId);
+  assert.equal(batch.worldFacts[0]?.revision, 2);
+  assert.deepEqual(batch.events.map((entry) => entry.eventId), [eventId]);
 });
 
 test("event pump preserves stable event ID across repeated frames and reconnects", () => {

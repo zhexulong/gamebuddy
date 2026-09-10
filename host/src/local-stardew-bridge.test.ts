@@ -31,6 +31,28 @@ async function close(server: Server): Promise<void> {
   );
 }
 
+/** A validated world_fact frame for inbound fact-listener coverage. */
+function worldFactFrame(eventId: string): Buffer {
+  return frame({
+    protocolVersion: 1,
+    messageId: eventId,
+    correlationId: eventId,
+    timestampMs: Date.now(),
+    scope,
+    type: "world_fact",
+    payload: {
+      eventId,
+      sourceEventId: eventId,
+      kind: "day_started",
+      observedTick: 100,
+      gameTime: "0600",
+      revision: 1,
+      deduplicationKey: eventId,
+      payload: { day: 1 },
+    },
+  });
+}
+
 test("local Stardew bridge keeps the newest snapshot revision from a delayed response", async () => {
   const pipeName = `gamebuddy_phase2_monotonic_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
@@ -122,6 +144,88 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
     assert.equal(client.state.snapshot?.revision, 8);
     assert.equal(client.state.catalogRevision, 1);
     assert.deepEqual(client.state.enabledActionIds, []);
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+test("local Stardew bridge never returns a solicited snapshot that fails admission", async () => {
+  const pipeName = `gamebuddy_observe_stale_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type === "hello") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "observe_stale_hello",
+              type: "hello_ack",
+              payload: {
+                sessionId: "session_01",
+                capabilities: [],
+                catalogRevision: 1,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
+        } else if (request.type === "observe_request") {
+          // The snapshot claims a catalogRevision this generation never published,
+          // so admission must reject it and observe() must never resolve it.
+          socket.write(
+            frame({
+              ...request,
+              messageId: "observe_stale_snapshot",
+              type: "snapshot",
+              payload: {
+                revision: 1,
+                location: "Farm",
+                tile: { x: 0, y: 0 },
+                stamina: 100,
+                health: 100,
+                actionable: true,
+                capabilities: [],
+                catalogRevision: 2,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                activeExecution: null,
+              },
+            }),
+          );
+        }
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    await assert.rejects(client.observe(), /observe_snapshot_not_admitted/);
+    // The stale payload was never admitted and never surfaced, so the bridge stays usable.
+    assert.equal(client.state.snapshot, null);
+    assert.equal(client.state.connected, true);
     client.close();
   } finally {
     peer?.destroy();
@@ -1027,7 +1131,7 @@ test("body program closes the named pipe for a wrong correlated programId", asyn
       ...request,
       messageId: "body_program_wrong_program",
       type: "program_events_result",
-      payload: { programId: "foreign_program", nextCursor: 1, events: [{ cursor: 1, kind: "accepted", catalogRevision: 1 }] },
+      payload: { programId: "foreign_program", code: "found", nextCursor: 1, highWater: 1, events: [{ cursor: 1, programId: "foreign_program", kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }] },
     }));
   }, async (client) => {
     const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
@@ -1050,10 +1154,12 @@ test("body program closes the named pipe when events exceed the requested page s
       type: "program_events_result",
       payload: {
         programId: request.payload.programId,
+        code: "found",
         nextCursor: 2,
+        highWater: 2,
         events: [
-          { cursor: 1, kind: "accepted", catalogRevision: 1 },
-          { cursor: 2, kind: "running", catalogRevision: 1 },
+          { cursor: 1, programId: request.payload.programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null },
+          { cursor: 2, programId: request.payload.programId, kind: "running", catalogRevision: 1, nodeId: null, nodeAttempt: null },
         ],
       },
     }));
@@ -1063,6 +1169,49 @@ test("body program closes the named pipe when events exceed the requested page s
     );
     await assert.rejects(
       client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
+      /body_program_protocol_invalid/,
+    );
+    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+    assert.equal(client.state.connected, false);
+  });
+});
+
+test("body program accepts a legitimate empty events page above the event high-water", async () => {
+  await withBodyProgramBridge("empty_page_above_highwater", (socket, request) => {
+    socket.write(frame({
+      ...request,
+      messageId: "body_program_empty_page",
+      type: "program_events_result",
+      payload: { programId: request.payload.programId, code: "found", events: [], nextCursor: request.payload.cursor, highWater: request.payload.cursor - 5 },
+    }));
+  }, async (client) => {
+    const result = await client.programEvents({ programId: "program_01", cursor: 100, pageSize: 32 });
+    assert.deepEqual(result, { programId: "program_01", code: "found", events: [], nextCursor: 100, highWater: 95 });
+    assert.equal(client.state.connected, true);
+    client.close();
+  });
+});
+
+test("body program still closes for a non-empty page whose high-water is below the requested cursor", async () => {
+  await withBodyProgramBridge("nonempty_below_highwater", (socket, request) => {
+    socket.write(frame({
+      ...request,
+      messageId: "body_program_nonempty_below",
+      type: "program_events_result",
+      payload: {
+        programId: request.payload.programId,
+        code: "found",
+        nextCursor: 101,
+        highWater: 100,
+        events: [{ cursor: 101, programId: request.payload.programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }],
+      },
+    }));
+  }, async (client) => {
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    await assert.rejects(
+      client.programEvents({ programId: "program_01", cursor: 100, pageSize: 1 }),
       /body_program_protocol_invalid/,
     );
     assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
@@ -1097,11 +1246,14 @@ test("body program requests forward exact authenticated messages and retain mode
           type: "program_verify" | "program_submit" | "program_status" | "program_events";
           payload: Readonly<{ programId: string; cursor?: number }>;
         }>;
+        const nextCursor = (bodyProgramRequest.payload.cursor ?? 0) + 1;
         const payload = bodyProgramRequest.type === "program_status"
-          ? { programId: bodyProgramRequest.payload.programId, status: "accepted", catalogRevision: 1 }
+          ? { code: "found", snapshot: { programId: bodyProgramRequest.payload.programId, state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } }
           : bodyProgramRequest.type === "program_events"
-            ? { programId: bodyProgramRequest.payload.programId, nextCursor: (bodyProgramRequest.payload.cursor ?? 0) + 1, events: [{ cursor: (bodyProgramRequest.payload.cursor ?? 0) + 1, kind: "accepted", catalogRevision: 1 }] }
-            : { programId: bodyProgramRequest.payload.programId, status: "rejected", diagnostics: ["program_id_conflict"] };
+            ? { programId: bodyProgramRequest.payload.programId, code: "found", nextCursor, highWater: nextCursor, events: [{ cursor: nextCursor, programId: bodyProgramRequest.payload.programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }] }
+            : bodyProgramRequest.type === "program_verify"
+              ? { accepted: true, catalogRevision: 1, diagnostics: [] }
+              : { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [] }, snapshot: null };
         const type = request.type === "program_verify" ? "program_verify_result" : request.type === "program_submit" ? "program_submit_result" : request.type === "program_status" ? "program_status_result" : "program_events_result";
         socket.write(frame({ ...request, messageId: `body_program_${type}`, type, payload }));
       }
@@ -1111,14 +1263,229 @@ test("body program requests forward exact authenticated messages and retain mode
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
     const candidate = { programId: "program_01", nodes: [{ nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: Date.now() + 10_000 }] } as const;
-    assert.equal((await client.programVerify(candidate)).status, "rejected");
-    assert.equal((await client.programSubmit(candidate)).status, "rejected");
-    assert.equal((await client.programStatus({ programId: "program_01" })).catalogRevision, 1);
+    assert.equal((await client.programVerify(candidate)).accepted, true);
+    assert.equal((await client.programSubmit(candidate)).code, "rejected");
+    assert.equal((await client.programStatus({ programId: "program_01" })).snapshot?.catalogRevision, 1);
     assert.equal((await client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 })).nextCursor, 1);
     assert.deepEqual(requests.slice(1).map((request) => request.type), ["program_verify", "program_submit", "program_status", "program_events"]);
     for (const request of requests.slice(1)) assert.deepEqual(request.scope, scope);
     client.close();
     await assert.rejects(client.programStatus({ programId: "program_01" }), /bridge_not_authenticated/);
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+test("local Stardew bridge fails closed when a fact listener throws event_pump_event_overflow", async () => {
+  const pipeName = `gamebuddy_listener_overflow_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let sendInbound: (() => void) | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type !== "hello") continue;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_hello_listener_overflow",
+            type: "hello_ack",
+            payload: {
+              sessionId: "session_listener_overflow",
+              capabilities: [],
+              catalogRevision: 1,
+              enabledActionIds: [],
+              presentationLocale: "en-US",
+              registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+              runtimeRole: "native_local_fixture",
+              launchGeneration: null,
+            },
+          }),
+        );
+        // Both frames in one buffer: the follow-up frame is parsed by the
+        // transport in the same data event after the first one fails closed,
+        // so the generation guard must drop it before any listener.
+        sendInbound = () =>
+          socket.write(Buffer.concat([worldFactFrame("fact_overflow_01"), worldFactFrame("fact_overflow_02")]));
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    let listenerInvocations = 0;
+    client.onFact(() => {
+      listenerInvocations++;
+      throw new Error("event_pump_event_overflow");
+    });
+    assert.ok(sendInbound !== undefined);
+    sendInbound();
+    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "event_pump_event_overflow" });
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
+    assert.equal(listenerInvocations, 1);
+    assert.equal(client.state.connected, false);
+    assert.equal(client.state.authenticated, false);
+    assert.equal(client.state.latestReasonCode, "event_pump_event_overflow");
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+test("local Stardew bridge maps an arbitrary fact listener exception to fact_listener_failed", async () => {
+  const pipeName = `gamebuddy_listener_failed_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let sendInbound: (() => void) | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type !== "hello") continue;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_hello_listener_failed",
+            type: "hello_ack",
+            payload: {
+              sessionId: "session_listener_failed",
+              capabilities: [],
+              catalogRevision: 1,
+              enabledActionIds: [],
+              presentationLocale: "en-US",
+              registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+              runtimeRole: "native_local_fixture",
+              launchGeneration: null,
+            },
+          }),
+        );
+        sendInbound = () => socket.write(worldFactFrame("fact_failed_01"));
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    let throwingInvocations = 0;
+    let laterListenerInvocations = 0;
+    client.onFact(() => {
+      throwingInvocations++;
+      throw new Error("arbitrary listener failure");
+    });
+    client.onFact(() => laterListenerInvocations++);
+    assert.ok(sendInbound !== undefined);
+    sendInbound();
+    // The exception never escaped receive(): the run stays alive, the thrower
+    // ran once, and dispatch aborted before the later listener saw the fact.
+    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "fact_listener_failed" });
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
+    assert.equal(throwingInvocations, 1);
+    assert.equal(laterListenerInvocations, 0);
+    assert.equal(client.state.connected, false);
+    assert.equal(client.state.latestReasonCode, "fact_listener_failed");
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+test("a pending observe rejects through the normal close path when a fact listener fails", async () => {
+  const pipeName = `gamebuddy_listener_pending_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type === "hello") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_hello_listener_pending",
+              type: "hello_ack",
+              payload: {
+                sessionId: "session_listener_pending",
+                capabilities: [],
+                catalogRevision: 1,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
+        } else if (request.type === "observe_request") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_snapshot_listener_pending",
+              type: "snapshot",
+              payload: {
+                revision: 1,
+                location: "Farm",
+                tile: { x: 0, y: 0 },
+                stamina: 100,
+                health: 100,
+                actionable: true,
+                capabilities: [],
+                catalogRevision: 1,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                activeExecution: null,
+              },
+            }),
+          );
+        }
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    client.onFact(() => {
+      throw new Error("arbitrary listener failure");
+    });
+    // The admitted snapshot would satisfy the pending observe, but the thrown
+    // listener rejects it through the standard close cleanup instead of
+    // resolving it or leaking it to the bridge_response_timeout.
+    const observe = client.observe();
+    await assert.rejects(observe, /bridge_disconnected:fact_listener_failed/);
+    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "fact_listener_failed" });
+    assert.equal(client.state.connected, false);
+    assert.equal(client.state.snapshot, null);
   } finally {
     peer?.destroy();
     await close(server);

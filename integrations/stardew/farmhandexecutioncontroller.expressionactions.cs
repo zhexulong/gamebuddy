@@ -31,7 +31,6 @@ internal sealed partial class ExecutionManager
         ["taunt"] = 12,
         ["uh"] = 40,
         ["music"] = 56,
-        ["jar"] = -1,
     };
 
     public LocalExecutionReceipt RequestLocalExpressEmote(BridgeExecutionRequest request, IExecutionLedger ledger)
@@ -59,18 +58,31 @@ internal sealed partial class ExecutionManager
         {
             actor.doEmote(emoteIndex);
         }
-        catch (Exception) when (this.testActorResolver is not null)
+        catch (Exception nativeException)
         {
-            // In offline test runs, native sound bank and display context are uninitialized.
+            // A failed native dispatch must still produce the one durable
+            // terminal receipt for this exact execution; it must never escape
+            // while a durable admission is pending.
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Uncertain,
+                "emote_native_exception",
+                $"emote={request.Args.Emote};native_dispatched=false;native_exception={nativeException.GetType().Name}",
+                this.TryCreateLocalObservation(actor));
         }
 
-        BridgeLocalObservation observation = this.CreateLocalObservation(actor);
+        // The emote animation's completion boundary cannot be proven at dispatch
+        // time, so the descriptor postcondition (emote_finished_or_overridden)
+        // cannot be established synchronously. Fail closed with the durable
+        // uncertain terminal instead of claiming a Succeeded that was never
+        // observed through an action-specific postcondition.
         return this.RememberTerminal(
             request.RequestId,
             executionId,
-            ExecutionState.Succeeded,
-            "emote_finished_or_overridden",
-            $"emote={request.Args.Emote}",
-            observation);
+            ExecutionState.Uncertain,
+            "emote_postcondition_unavailable",
+            $"emote={request.Args.Emote};native_dispatched=true",
+            this.TryCreateLocalObservation(actor));
     }
 }

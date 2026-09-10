@@ -4,6 +4,7 @@ import { platform } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
   type LaunchAiClientInput,
+  type ReadOwnedAiClientGenerationResult,
   type StardewAiClientLaunchReservation,
   type StardewAiClientProcessOwner,
   type StardewAiClientProcessProbe,
@@ -2494,7 +2495,11 @@ type OwnedAiClient = {
 
 type OwnedProcessState =
   | { readonly kind: "idle" }
-  | { readonly kind: "awaiting_ai_client_attestation"; readonly owned: OwnedAiClient }
+  | {
+      readonly kind: "awaiting_ai_client_attestation";
+      readonly owned: OwnedAiClient;
+      readonly launchGeneration: string;
+    }
   | { readonly kind: "ai_client_stopped" };
 
 type OwnedPlayerHost = {
@@ -2696,6 +2701,7 @@ function createAiClientProcessOwner(
         pid,
         creationDate: probeResult.creationDate,
       },
+      launchGeneration,
     };
     return Object.freeze({
       status: { kind: "awaiting_ai_client_attestation" } as const,
@@ -2706,6 +2712,14 @@ function createAiClientProcessOwner(
     readStatus(): StardewAiClientProcessStatus {
       if (reservation !== null) return { kind: "ai_client_launch_pending" };
       return { kind: state.kind };
+    },
+    readOwnedAiClientGeneration(): ReadOwnedAiClientGenerationResult {
+      // Only a launched (owned) AI process has an opaque generation; a
+      // pending-but-unlaunched reservation and an idle owner expose null.
+      if (state.kind !== "awaiting_ai_client_attestation") {
+        return Object.freeze({ ownedGeneration: null });
+      }
+      return Object.freeze({ ownedGeneration: Object.freeze({ launchGeneration: state.launchGeneration }) });
     },
     reserveAiClientLaunch(): StardewAiClientLaunchReservation {
       if (reservation !== null || state.kind === "awaiting_ai_client_attestation")

@@ -15,14 +15,31 @@
 
 ---
 
-## 2. Execution Discipline
+## 2. Execution Discipline and Operational SOP
 
-1. **Session Setup:** Connect the companion using the official coordinator and local bridge pipe. Verify that the AI Farmhand is bound to the target cabin and registered with `BridgeScope.PlayerId`.
-2. **Single Mutation Mutex:** Mod `ExecutionManager` enforces that the embodied actor executes at most one active native mutation at any time. If multiple tools are invoked in one turn, the Host must serialize them sequentially (waiting for terminal `succeeded` receipt before dispatching the next).
-3. **Structured Audit Retention:** Every live run must generate two audit artifacts:
-   - `tools/stardew-companion-live-run.log.json`: Machine-readable structured log recording run metadata, player stimuli, companion speech bubbles, action requests (`{requestId, idempotencyKey}`), and terminal receipts with attached observations.
-   - `tools/stardew-companion-live-run-report.md`: Human-readable markdown report detailing scenario pass/fail criteria, evidence IDs, and qualitative review notes.
-4. **Zero-Tolerance for Presentation Discipline Failures:** If an assistant turn completes without calling `companion_text` or if internal thinking/tool JSON leaks into chat bubbles, the run is marked as `presentation_discipline_failure`.
+For full task-generic operating procedures, environment preflights, and failure taxonomy, see [`fixtures/stardew/RUNBOOK.md`](../fixtures/stardew/RUNBOOK.md) (`## Native humanlike companion live observation and verification SOP`).
+
+1. **Operational Topologies & Commands:**
+   - **Mode A (Automated Driver):** `node tools/start-smapi-and-run-live.mjs` (spawns SMAPI, bounds pipe wait to 90s, runs scenario, leaves window open 15s for visual observation, cleans up).
+   - **Mode B (Attached Driver):** `node tools/run-stardew-companion-live-coop-01.mjs` (attaches directly to already running game with save loaded).
+2. **Session Setup & Concurrency Mutex:**
+   - Connect using the official coordinator and local bridge pipe. Verify the AI Farmhand is bound to the target cabin and registered with `BridgeScope.PlayerId`.
+   - Mod `ExecutionManager` enforces that the embodied actor executes at most one active native mutation at any time. If multiple tools are invoked in one turn, the Host must serialize them sequentially (waiting for terminal `succeeded` receipt before dispatching the next).
+3. **Generic Visual Observability Discipline:**
+   - **Delta Observability Principle:** Visual verification is valid only if the post-action physical state visibly contrasts with the actor's immediate pre-action state. When asserting a target state identical to the resting state, introduce contrastive intermediate transitions.
+   - **Animation Settling Window:** Actions with sprite animations, emote balloons, or tool wielding require a 2.0–2.5s settling pause before subsequent actions or teardown.
+4. **Structured Audit Retention & Git Hygiene:**
+   - Live runs generate two local diagnostic files: `tools/stardew-companion-live-run.log.json` and `tools/stardew-companion-live-run-report.md`.
+   - **CRITICAL HYGIENE:** These files are ephemeral local audit logs only and **must NEVER be committed to the repository**.
+5. **Zero-Tolerance for Presentation Discipline Failures:**
+   - If an assistant turn completes without calling `companion_text` or if internal thinking/tool JSON leaks into chat bubbles, the run is marked as `presentation_discipline_failure`.
+
+### 2.1 Specific Operational Caveats (现场核验注意点)
+
+- **Bed Spawn Facing Delta:** The player spawns in bed facing `Down`. Directly dispatching `face_direction: down` produces 0 pixel change; verify against a contrasting cardinal direction first (e.g. `left` towards the room) before asserting facing.
+- **Default Active Tool Slot Delta:** Character defaults to `Slot 0`. Dispatching `equip_tool: slot 0` causes no toolbar movement; verify with a contrasting slot (e.g. Slot 1 then Slot 0) to observe selection changes.
+- **Emote Animation Busy Mutex:** `Farmer.doEmote` runs for ~2 seconds. Dispatching another emote while `isEmoting` is true results in `rejected/emote_busy`. Allow ≥ 2.5s between emote dispatches.
+- **Chat Presentation Readiness:** Ensure the game world has fully faded in and `Game1.chatBox` is instantiated before dispatching dialogue presentation requests.
 
 ---
 

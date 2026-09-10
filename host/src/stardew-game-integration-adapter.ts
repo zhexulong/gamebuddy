@@ -8,8 +8,7 @@ import {
   createStardewActionTools,
   createStardewObservationTools,
 } from "./game-tools.js";
-import {
-  createIntegrationActionCatalog,
+import { createIntegrationActionCatalog,
   DEFAULT_INTEGRATION_ACTION_POLICY,
   type GameIntegrationAdapter,
   type IntegrationActionPolicy,
@@ -22,10 +21,13 @@ import {
 } from "./game-integration-adapter.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import {
+  assertAuthenticatedStardewConnection,
+} from "./stardew-integration-launcher-body-program.internal.js";
+import {
   createStardewKnowledgeTools,
   type KnowledgeBundle,
 } from "./knowledge.js";
-import type { ExecutionReceipt, Scope } from "./protocol.js";
+import type { ExecutionReceipt } from "./protocol.js";
 
 const STARDew_ACTION_ENTRIES = STARDEW_ACTION_ADAPTERS.map(({ actionId }) => ({
   actionId,
@@ -51,18 +53,17 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
     parsePolicy: (value: unknown): IntegrationActionPolicy =>
       parseActionPolicy(value),
     actorId: (connection) => {
-      const scope = (connection as StardewBridgeConnection).scope;
-      if (!sameScope(scope, connection.scope) || !/^[A-Za-z0-9_-]{1,128}$/.test(scope.playerId))
+      const authenticated = assertAuthenticatedStardewConnection(connection);
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(authenticated.scope.playerId))
         throw new Error("integration_identity_mismatch");
-      return scope.playerId;
+      return authenticated.scope.playerId;
     },
     assertIdentityBinding: (
       connection,
       identity: IntegrationIdentityBinding,
     ) => {
-      const scope = (connection as StardewBridgeConnection).scope;
+      const scope = assertAuthenticatedStardewConnection(connection).scope;
       if (
-        !sameScope(scope, connection.scope) ||
         scope.companionId !== identity.companionId ||
         identity.saveId === undefined ||
         identity.worldId === undefined ||
@@ -73,9 +74,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       }
     },
     worldScope: (connection) => {
-      const scope = (connection as StardewBridgeConnection).scope;
-      if (!sameScope(scope, connection.scope))
-        throw new Error("integration_scope_mismatch");
+      const scope = assertAuthenticatedStardewConnection(connection).scope;
       return Object.freeze({
         integrationId: scope.integrationId,
         saveId: scope.saveId,
@@ -90,9 +89,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       dispatchAdmissionFactory,
     }: IntegrationToolContext) => {
       const mountedPolicy = (policy ?? DEFAULT_ACTION_POLICY) as ActionPolicy;
-      const integration = connection as StardewBridgeConnection;
-      if (!sameScope(integration.scope, connection.scope))
-        throw new Error("integration_scope_mismatch");
+      const integration = assertAuthenticatedStardewConnection(connection);
       // Executable tools require the launcher-owned liveness fence. A missing
       // or revoked gate is never a legacy admission path; observations remain
       // available because they do not dispatch gameplay operations.
@@ -132,7 +129,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
         : null,
     }),
     status: (connection): IntegrationStatusDetails => {
-      const state = (connection as StardewBridgeConnection).state;
+      const state = assertAuthenticatedStardewConnection(connection).state;
       return {
         connected: state.connected,
         capabilities: [...state.capabilities],
@@ -142,9 +139,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       };
     },
     readState: (connection): IntegrationStateView => {
-      const integration = connection as StardewBridgeConnection;
-      if (!sameScope(integration.scope, connection.scope))
-        throw new Error("integration_scope_mismatch");
+      const integration = assertAuthenticatedStardewConnection(connection);
       const state = integration.state;
       return {
         connected: state.connected,
@@ -172,15 +167,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       };
     },
     cancelExecution: (connection, requestId, executionId, reasonCode) => {
-      const integration = connection as StardewBridgeConnection & {
-        cancel?: (
-          requestId: string,
-          executionId: string,
-          reasonCode: string,
-        ) => unknown;
-      };
-      if (!sameScope(integration.scope, connection.scope))
-        return "integration_scope_mismatch";
+      const integration = assertAuthenticatedStardewConnection(connection);
       if (typeof integration.cancel !== "function")
         return "integration_cancel_unavailable";
       return integration.cancel(requestId, executionId, reasonCode);
@@ -1501,13 +1488,6 @@ function isKnowledgeBundle(value: unknown): value is KnowledgeBundle {
     value !== null &&
     (value as { bundleVersion?: unknown }).bundleVersion === 1
   );
-}
-
-function sameScope(
-  left: Scope,
-  right: Readonly<{ integrationId: string }>,
-): boolean {
-  return left.integrationId === right.integrationId;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

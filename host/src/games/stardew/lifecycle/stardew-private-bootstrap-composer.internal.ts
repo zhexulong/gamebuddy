@@ -40,6 +40,7 @@ export function createStardewPrivateBootstrapComposition(): StardewPrivateBootst
     owner: StardewOwnedPlayerHostBootstrap,
     session: DesktopGuardianSession,
     deadlineUnixMs: number,
+    operationWaitBudgetMs: number,
   ): StardewBootstrapGuardianOwner;
 }> {
   const core = createStardewPrivateBootstrapProductionCore({
@@ -53,11 +54,11 @@ export function createStardewPrivateBootstrapComposition(): StardewPrivateBootst
     ...core,
     createStardewBootstrapGuardianOwner: (owner, native) =>
       createStardewBootstrapGuardianOwner(createStardewBootstrapGuardianOwnerBinding(owner), native),
-    createStardewBootstrapGuardianOwnerFromDesktopSession: (owner, session, deadlineUnixMs) => {
+    createStardewBootstrapGuardianOwnerFromDesktopSession: (owner, session, deadlineUnixMs, operationWaitBudgetMs) => {
       const binding = createStardewBootstrapGuardianOwnerBinding(owner);
       return createStardewBootstrapGuardianOwner(
         binding,
-        createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, deadlineUnixMs),
+        createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, deadlineUnixMs, operationWaitBudgetMs),
       );
     },
   });

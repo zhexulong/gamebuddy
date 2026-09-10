@@ -31,6 +31,29 @@ public sealed class FarmhandActionRouter
 
     public bool IsOnOwnerThread => Environment.CurrentManagedThreadId == this.ownerManagedThreadId;
 
+    /// <summary>
+    /// Fails closed when the dispatch table cannot serve an execution request
+    /// for the action. It is consulted before a durable admission is recorded
+    /// so a handler/availability mismatch can never leave a pending admission.
+    /// It checks only dispatch-table availability; capability publication,
+    /// revision, and deadline gates remain bridge-owned.
+    /// </summary>
+    public bool CanExecute(string actionId, out string reasonCode)
+    {
+        if (!this.IsOnOwnerThread)
+        {
+            reasonCode = "game_thread_required";
+            return false;
+        }
+        if (!this.handlers.ContainsKey(actionId))
+        {
+            reasonCode = "action_not_available";
+            return false;
+        }
+        reasonCode = "accepted";
+        return true;
+    }
+
     public bool TryRoute(
         BridgeExecutionRequest request,
         IExecutionLedger ledger,
@@ -101,8 +124,26 @@ public sealed class FarmhandActionRouter
             ledger.BindAction(request.RequestId, request.Action);
         }
 
-        receipt = handler.Execute(request, ledger);
-        reasonCode = "accepted";
-        return true;
+        try
+        {
+            receipt = handler.Execute(request, ledger);
+            reasonCode = "accepted";
+            return true;
+        }
+        catch (Exception exception)
+        {
+            // A handler is the native-action boundary. If it escapes after the
+            // caller has durably admitted the request, the side effect may be
+            // unknown and the execution must not be left pending or retried.
+            string terminalExecutionId = executionId ?? Guid.NewGuid().ToString("N");
+            receipt = ledger.RememberTerminal(
+                request.RequestId,
+                terminalExecutionId,
+                ExecutionState.Uncertain,
+                "handler_exception",
+                $"handler_exception={exception.GetType().Name};never_retry=true");
+            reasonCode = "handler_exception";
+            return true;
+        }
     }
 }

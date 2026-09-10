@@ -137,4 +137,25 @@ public sealed class FarmhandActionSurfaceExportTests
         actions.Should().Contain(action => action.ActionId == "inspect_world_map");
         actions.Should().Contain(action => action.ActionId == "clear_debris");
     }
+
+    [Fact]
+    public void FrozenMachineInspectDeclaresMachineTargetIdStringOutputFactWithReadEffect()
+    {
+        FarmhandActionDescriptorProjection inspect = FarmhandActionSurfacePublication.Actions
+            .Single(action => action.ActionId == "machine_inspect");
+
+        inspect.OutputFacts.Should().Equal(new Dictionary<string, string> { ["machine_target_id"] = "string" });
+        inspect.Effect.Should().Be("read");
+        inspect.ArgumentSchema["expectedTargetId"].Type.Should().Be("string");
+    }
+
+    [Fact]
+    public void FrozenMachineLoadKeepsBindableExpectedTargetIdStringArgument()
+    {
+        FarmhandActionDescriptorProjection load = FarmhandActionSurfacePublication.Actions
+            .Single(action => action.ActionId == "machine_load");
+
+        load.ArgumentSchema["expectedTargetId"].Type.Should().Be("string");
+        load.OutputFacts.Should().BeEmpty();
+    }
 }

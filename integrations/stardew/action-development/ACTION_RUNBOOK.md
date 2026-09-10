@@ -16,8 +16,8 @@ explicitly selected:
 pnpm --dir integrations/stardew/action-development test
 pnpm --dir integrations/stardew/action-development action:inventory
 pnpm --dir integrations/stardew/action-development action:check
-  pnpm --dir integrations/stardew/action-development action:ci
-  pnpm --dir integrations/stardew/action-development check:bridge-ledger
+pnpm --dir integrations/stardew/action-development action:ci
+pnpm --dir integrations/stardew/action-development check:bridge-ledger
 pnpm --dir integrations/stardew/action-development action:extraction-rehearsal
 pnpm --dir integrations/stardew/action-development action:publish-release-bundle -- --source <absolute-source-dir> --destination <absolute-destination-dir>
 ```
@@ -32,7 +32,7 @@ it does not publish an action capability.
 
 ## Current control-live status
 
-`equip_tool` remains published, but its Action Development Platform control route is
+`equip_tool` remains published, but its legacy Action Development Platform control route is
 currently **BLOCKED** with `host_runner_not_registered`. Do not supply a target
 profile, invoke `action:preflight`, or invoke `action:run-live` as a way to launch
 or mutate a target.
@@ -42,9 +42,9 @@ wiring. It is not a product installation authority and cannot create, seed, or
 bypass the Host-private installation registration. The replacement control route
 will be profile-free: bounded control intent enters the same private lifecycle core
 as the browser flow, which consumes a previously ready registration and performs
-request-local admission. No replacement command exists until the coordinator-owned
-runner, fixture boundary, registration/containment prerequisites, and route cutover
-are implemented and accepted.
+request-local admission.
+
+For active live in-game verification of embodied companion actions, presentation, and sensory facts, follow the repository's unified SOP in [`fixtures/stardew/RUNBOOK.md`](../../../fixtures/stardew/RUNBOOK.md) (`## Native humanlike companion live observation and verification SOP`) using `node tools/start-smapi-and-run-live.mjs` or `node tools/run-stardew-companion-live-coop-01.mjs`.
 
 `action:check`, `action:inventory`, `action:ci`, and extraction rehearsal remain
 deterministic/offline package commands. They do not prove a target is ready or

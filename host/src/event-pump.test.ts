@@ -259,6 +259,59 @@ test("event pump clear revokes an in-flight rejected delivery without retrying i
   assert.equal(deliveries, 2);
 });
 
+test("event pump clear revokes an in-flight rejected fact delivery and preserves only the new generation", async () => {
+  const pump = new CompanionEventPump();
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: "stale_event",
+    correlationId: "stale_delivery",
+    revision: 1,
+    observedTick: 10,
+    payload: { value: "stale" },
+  });
+
+  let rejectDelivery: ((reason?: unknown) => void) | undefined;
+  let deliveries = 0;
+  const inFlight = pump.flush({
+    async deliver() {
+      deliveries++;
+      await new Promise<void>((_resolve, reject) => {
+        rejectDelivery = reject;
+      });
+    },
+  });
+  await Promise.resolve();
+
+  pump.clear();
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: "fresh_event",
+    correlationId: "fresh_delivery",
+    revision: 2,
+    observedTick: 11,
+    payload: { value: "fresh" },
+  });
+  rejectDelivery?.(new Error("sink_down"));
+  await assert.rejects(() => inFlight, /sink_down/);
+
+  const delivered: string[] = [];
+  await pump.flush({
+    async deliver(text) {
+      deliveries++;
+      delivered.push(text);
+    },
+  });
+
+  assert.equal(deliveries, 2);
+  const batch = JSON.parse(delivered[0] ?? "{}") as {
+    worldFacts: Array<{ eventId: string; payload: { value: string } }>;
+  };
+  assert.deepEqual(batch.worldFacts.map((fact) => [fact.eventId, fact.payload.value]), [["fresh_event", "fresh"]]);
+  assert.equal(pump.pendingCount, 0);
+});
+
 test("event pump holds every nonterminal progress receipt state", async () => {
   for (const state of ["accepted", "running", "meaningful_progress"]) {
     const pump = new CompanionEventPump();

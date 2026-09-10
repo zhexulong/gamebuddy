@@ -9,6 +9,8 @@ export type StardewActionAdapter = Readonly<{
   description: string;
   targetKinds: readonly string[];
   requiredCapability: string;
+  /** Identity versions understood by this concrete Host adapter. */
+  supportedIdentityVersions: readonly number[];
 }>;
 
 /**
@@ -437,6 +439,7 @@ export function visibleActionsFromModCatalog(
     const adapter = adapters.get(registration.actionId);
     if (
       adapter === undefined ||
+      !adapter.supportedIdentityVersions.includes(registration.identityVersion) ||
       registration.lifecycle !== "published" ||
       registration.kind !== "execution" ||
       !live.has(adapter.requiredCapability) ||
@@ -499,5 +502,6 @@ function actionAdapter<const TActionId extends string>(
     description,
     targetKinds: Object.freeze([...targetKinds]),
     requiredCapability: actionId,
+    supportedIdentityVersions: Object.freeze([1]),
   });
 }

@@ -314,12 +314,28 @@ internal sealed partial class ExecutionManager
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
-        if (actor.isMoving() || this.active is not null || this.activeNavigate is not null || this.controller.HasActiveExecution)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "actor_moving", null);
+        try
+        {
+            if (actor.isMoving() || this.active is not null || this.activeNavigate is not null || this.controller.HasActiveExecution)
+                return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "actor_moving", null);
 
-        actor.faceDirection(directionInt);
+            actor.faceDirection(directionInt);
+        }
+        catch (Exception nativeException)
+        {
+            // A failed native dispatch must still produce the one durable
+            // terminal receipt for this exact execution; it must never escape
+            // while a durable admission is pending.
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Uncertain,
+                "face_direction_native_exception",
+                $"direction={request.Args.Direction};native_dispatched=false;native_exception={nativeException.GetType().Name}",
+                this.TryCreateLocalObservation(actor));
+        }
 
-        BridgeLocalObservation observation = this.CreateLocalObservation(actor);
+        BridgeLocalObservation? observation = this.TryCreateLocalObservation(actor);
         if (actor.FacingDirection == directionInt)
         {
             return this.RememberTerminal(

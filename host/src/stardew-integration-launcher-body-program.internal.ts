@@ -10,6 +10,7 @@ import {
 } from "./integration-launcher.js";
 import type { ExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";
 import { LocalStardewBridgeClient, type LocalStardewBridgeFact } from "./local-stardew-bridge.js";
+import type { GameConnection, StardewBridgeConnection } from "./game-connection.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { createStableGameRuntimeBindingIdentity } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import type { GameRuntimeBindingExecution } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
@@ -20,17 +21,73 @@ import {
 import type { FarmhandPresentationBridge } from "./farmhand-companion-presentation.js";
 import type {
   BodyProgramCandidateRequest,
-  BodyProgramCommandResult,
   BodyProgramEventsRequest,
   BodyProgramEventsResult,
   BodyProgramStatusRequest,
   BodyProgramStatusResult,
+  BodyProgramSubmitResult,
+  BodyProgramVerifyResult,
 } from "./protocol.js";
+
+/** Liveness check carried by one exact authenticated connection association. */
+type StardewConnectionAuthentication = Readonly<{
+  isLive(): boolean;
+}>;
+
+/**
+ * Exact authenticated Stardew connection registry, launcher-owned and never
+ * exported as a registrar. Only the authenticated launch construction mints
+ * one association for the precise frozen wrapper it returns; the Stardew
+ * adapter asserts association plus current liveness through
+ * {@link assertAuthenticatedStardewConnection} before reading any
+ * identity/scope/state/status/tools/cancel. Structural copies, forged
+ * wrappers, and caller-supplied state are distinct objects absent from this
+ * map, so every adapter entry point rejects them.
+ */
+const authenticatedStardewConnections = new WeakMap<
+  object,
+  StardewConnectionAuthentication
+>();
+
+/**
+ * Construction-private authenticated association. The authenticated Stardew
+ * launch production registers exactly its one real connection once; adapter
+ * entry points assert liveness through
+ * {@link assertAuthenticatedStardewConnection}. Deliberately not exported:
+ * no production or test module may mint an association outside the exact
+ * launch construction.
+ */
+function registerAuthenticatedStardewConnection(
+  connection: StardewBridgeConnection,
+  isLive: () => boolean,
+): void {
+  if (authenticatedStardewConnections.has(connection))
+    throw new Error("duplicate_authenticated_stardew_connection");
+  authenticatedStardewConnections.set(connection, { isLive });
+}
+
+/**
+ * Adapter-owned authority gate, exported only as the narrow assertion the
+ * Stardew adapter consumes. The connection must be the exact wrapper that an
+ * authenticated launch registered, and it must still be live (not revoked or
+ * bridge-closed). Structural copies, caller-state, and self-comparison never
+ * appear in the association map and reject before any data is read.
+ */
+export function assertAuthenticatedStardewConnection(
+  connection: GameConnection,
+): StardewBridgeConnection {
+  const authentication = authenticatedStardewConnections.get(connection);
+  if (authentication === undefined || !authentication.isLive())
+    throw new Error(
+      "stardew_connection_not_authenticated_or_not_live",
+    );
+  return connection as StardewBridgeConnection;
+}
 
 /** Private authenticated Farmhand Body Program transport, never carried by a launch handle. */
 export type StardewAuthenticatedBodyProgramPort = Readonly<{
-  verify(request: BodyProgramCandidateRequest): Promise<BodyProgramCommandResult>;
-  submit(request: BodyProgramCandidateRequest): Promise<BodyProgramCommandResult>;
+  verify(request: BodyProgramCandidateRequest): Promise<BodyProgramVerifyResult>;
+  submit(request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult>;
   status(request: BodyProgramStatusRequest): Promise<BodyProgramStatusResult>;
   events(request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult>;
 }>;
@@ -82,6 +139,11 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
   const local = options;
   const executionGate = { executable: true };
   let closed = false;
+  // Liveness: an invalidated receipt closes the launcher-owned record used by
+  // preview/materializer immediately, while the native pipe stays open (no
+  // replay, retry, or transport close). The invalidated wake, gate freeze, and
+  // rejection behavior are preserved.
+  let invalidated = false;
   const bootstrapFacts: WorldFact[] = [];
   const bufferedFacts: Array<readonly [WorldFact, LocalStardewBridgeFact]> = [];
   const bufferedLifecycle: IntegrationLifecycleEvent[] = [];
@@ -131,6 +193,7 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
       const receipt = fact.payload;
       if (receipt.state === "invalidated") {
         executionGate.executable = false;
+        invalidated = true;
         publishWake(Object.freeze({ kind: "invalidated", reasonCode: receipt.reasonCode }));
       } else if (isTerminalExecutionState(receipt.state))
         publishWake(Object.freeze({
@@ -182,7 +245,7 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
         return () => executionWakeListeners.delete(listener);
       },
     });
-    const connection = Object.freeze({
+    const connection: StardewBridgeConnection = Object.freeze({
       scope,
       module: STARDEW_GAME_INTEGRATION_ADAPTER,
       get state() { return bridge.state; },
@@ -198,6 +261,13 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
       cancel: (requestId: string, executionId: string, reasonCode: string) =>
         executionGate.executable ? bridge.cancel(requestId, executionId, reasonCode) : Promise.reject(new Error("integration_not_ready")),
     });
+    // Mint exactly one authenticated association for the exact frozen wrapper
+    // returned by this launch handle. The adapter refuses any structural copy,
+    // forged wrapper, or caller state because only this exact object is bound.
+    registerAuthenticatedStardewConnection(
+      connection,
+      () => executionGate.executable === true && bridge.state.connected,
+    );
     const receiptRecovery: ExactReceiptRecoveryPort | undefined = identity.continuityId === undefined
       ? undefined
       : Object.freeze({
@@ -239,8 +309,8 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     });
     const bodyProgram = bridge.hasExactFarmhandRuntimeAttestation
       ? Object.freeze({
-          verify: (request: BodyProgramCandidateRequest): Promise<BodyProgramCommandResult> => bridge.programVerify(request),
-          submit: (request: BodyProgramCandidateRequest): Promise<BodyProgramCommandResult> => bridge.programSubmit(request),
+          verify: (request: BodyProgramCandidateRequest): Promise<BodyProgramVerifyResult> => bridge.programVerify(request),
+          submit: (request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult> => bridge.programSubmit(request),
           status: (request: BodyProgramStatusRequest): Promise<BodyProgramStatusResult> => bridge.programStatus(request),
           events: (request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult> => bridge.programEvents(request),
         })
@@ -249,7 +319,7 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
       connection,
       presentation,
       ...(bodyProgram === undefined ? {} : { bodyProgram }),
-      isClosed: () => closed || !bridge.state.connected,
+      isClosed: () => closed || invalidated || !bridge.state.connected,
     }));
     return handle;
   } catch (error) {
@@ -298,15 +368,23 @@ export function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
       if (!message.payload.sourceEventId || typeof message.payload.sourceEventId !== "string") {
         throw new Error("invalid_world_fact_source_event_id");
       }
-      let payload: Readonly<Record<string, unknown>> = {};
-      if (message.payload.payload && typeof message.payload.payload === "object") {
+      let payload: Readonly<Record<string, unknown>>;
+      if (message.payload.payload !== undefined && message.payload.payload !== null) {
+        if (typeof message.payload.payload !== "object" || Array.isArray(message.payload.payload))
+          throw new Error("invalid_world_fact_payload");
         payload = message.payload.payload as Readonly<Record<string, unknown>>;
       } else if (typeof message.payload.payloadJson === "string") {
+        let parsed: unknown;
         try {
-          payload = JSON.parse(message.payload.payloadJson);
+          parsed = JSON.parse(message.payload.payloadJson);
         } catch {
-          payload = {};
+          throw new Error("invalid_world_fact_payload_json");
         }
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+          throw new Error("invalid_world_fact_payload_json");
+        payload = parsed as Readonly<Record<string, unknown>>;
+      } else {
+        throw new Error("invalid_world_fact_payload");
       }
       return {
         source: "stardew_mod",

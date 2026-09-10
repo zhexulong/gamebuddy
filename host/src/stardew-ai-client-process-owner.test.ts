@@ -93,6 +93,7 @@ test("AI process owner exposes only the redacted reserve/read/stop API", () => {
   const { owner } = createHarness();
 
   assert.deepEqual(Object.keys(owner).sort(), [
+    "readOwnedAiClientGeneration",
     "readStatus",
     "reserveAiClientLaunch",
     "stopOwnedAiClient",
@@ -102,6 +103,30 @@ test("AI process owner exposes only the redacted reserve/read/stop API", () => {
   assert.equal("register" in owner, false);
   assert.equal("persist" in owner, false);
   assert.deepEqual(owner.readStatus(), { kind: "idle" });
+  assert.deepEqual(owner.readOwnedAiClientGeneration(), { ownedGeneration: null });
+});
+
+test("AI process owner exposes the single owned generation only after launch and clears it on stop", async () => {
+  const harness = createHarness();
+  assert.deepEqual(harness.owner.readOwnedAiClientGeneration(), { ownedGeneration: null });
+  harness.owner.reserveAiClientLaunch();
+  // A pending-but-unlaunched reservation owns no process yet.
+  assert.deepEqual(harness.owner.readOwnedAiClientGeneration(), { ownedGeneration: null });
+  const phaseOwner = await reserveFresh(harness);
+  assert.deepEqual(harness.owner.readOwnedAiClientGeneration(), { ownedGeneration: null });
+  phaseOwner.consumeAiClientLaunch((launch) => launch({ executable: EXE, args: ["start"] }));
+  assert.deepEqual(harness.owner.readOwnedAiClientGeneration(), {
+    ownedGeneration: { launchGeneration: "generation-1" },
+  });
+  assert.deepEqual(harness.owner.stopOwnedAiClient(), { kind: "terminated", killed: true });
+  assert.deepEqual(harness.owner.readOwnedAiClientGeneration(), { ownedGeneration: null });
+  // A second generation after stop is a completely fresh identity.
+  harness.owner.reserveAiClientLaunch();
+  const second = await reserveFresh(harness);
+  second.consumeAiClientLaunch((launch) => launch({ executable: EXE, args: ["restart"] }));
+  assert.deepEqual(harness.owner.readOwnedAiClientGeneration(), {
+    ownedGeneration: { launchGeneration: "generation-2" },
+  });
 });
 
 test("reservation is a frozen empty nominal object and only one may be pending", () => {

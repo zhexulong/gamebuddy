@@ -6,11 +6,12 @@ import { NamedPipeTransport } from "./named-pipe.js";
 import {
   type ActionRegistration,
   type BodyProgramCandidateRequest,
-  type BodyProgramCommandResult,
   type BodyProgramEventsRequest,
   type BodyProgramEventsResult,
   type BodyProgramStatusRequest,
   type BodyProgramStatusResult,
+  type BodyProgramSubmitResult,
+  type BodyProgramVerifyResult,
   type BridgeMessage,
   type CancelIdentity,
   type CompanionPresentationRequest,
@@ -244,7 +245,11 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     const response = await this.request("observe_request", {});
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "snapshot") throw new Error("unexpected_observe_response");
-    this.acceptSnapshot(response.payload);
+    // `receive()` admits the solicited snapshot before resolving this request.
+    // A snapshot that fails admission (publication-stale or unauthorized) is
+    // fail-closed and never resolved here; only an admitted current world is
+    // returned to the caller. Do not admit it a second time: that second pass
+    // would reject the same revision as stale and break every normal observe.
     return response.payload;
   }
 
@@ -270,7 +275,16 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       const generation = this.#catalogRefreshGeneration;
       const targetRevision = this.#catalogRevision;
       if (targetRevision === undefined) throw new Error("catalog_revision_unavailable");
-      const snapshot = await this.observe();
+      let snapshot: Snapshot;
+      try {
+        snapshot = await this.observe();
+      } catch {
+        // observe() rejects a stale solicited snapshot fail-closed. Never fall
+        // through to an un-admitted payload: only a current-generation response
+        // may resolve the refresh, so retry the current generation.
+        if (!this.transport.connected || !this.#authenticated) throw new Error("bridge_not_authenticated");
+        continue;
+      }
       if (!this.transport.connected || !this.#authenticated) throw new Error("bridge_not_authenticated");
       if (generation !== this.#catalogRefreshGeneration || targetRevision !== this.#catalogRevision) continue;
       if (snapshot.catalogRevision !== targetRevision) throw new Error("catalog_refresh_stale_snapshot");
@@ -354,20 +368,21 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     return response.payload;
   }
 
-  public async programVerify(request: BodyProgramCandidateRequest): Promise<BodyProgramCommandResult> {
+  public async programVerify(request: BodyProgramCandidateRequest): Promise<BodyProgramVerifyResult> {
     this.requireAuthenticated();
     const response = await this.request("program_verify", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
-    if (response.type !== "program_verify_result" || response.payload.programId !== request.programId)
+    if (response.type !== "program_verify_result")
       return this.rejectBodyProgramProtocol();
     return response.payload;
   }
 
-  public async programSubmit(request: BodyProgramCandidateRequest): Promise<BodyProgramCommandResult> {
+  public async programSubmit(request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult> {
     this.requireAuthenticated();
     const response = await this.request("program_submit", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
-    if (response.type !== "program_submit_result" || response.payload.programId !== request.programId)
+    if (response.type !== "program_submit_result" ||
+      (response.payload.snapshot !== null && response.payload.snapshot.programId !== request.programId))
       return this.rejectBodyProgramProtocol();
     return response.payload;
   }
@@ -376,7 +391,8 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     this.requireAuthenticated();
     const response = await this.request("program_status", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
-    if (response.type !== "program_status_result" || response.payload.programId !== request.programId)
+    if (response.type !== "program_status_result" ||
+      (response.payload.snapshot !== null && response.payload.snapshot.programId !== request.programId))
       return this.rejectBodyProgramProtocol();
     return response.payload;
   }
@@ -391,11 +407,14 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     if (
       result.events.length > request.pageSize ||
       result.nextCursor < request.cursor ||
-      result.events.some((event, index) => event.cursor <= request.cursor || event.cursor > result.nextCursor ||
+      result.events.some((event, index) => event.programId !== request.programId ||
+        event.cursor <= request.cursor || event.cursor > result.nextCursor ||
+        event.cursor > result.highWater ||
         (index > 0 && event.cursor <= result.events[index - 1]!.cursor)) ||
       (result.events.length === 0
         ? result.nextCursor !== request.cursor
-        : result.nextCursor !== result.events[result.events.length - 1]!.cursor)
+        : (result.highWater < request.cursor ||
+          result.nextCursor !== result.events[result.events.length - 1]!.cursor))
     )
       return this.rejectBodyProgramProtocol();
     return result;
@@ -479,6 +498,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   }
 
   private receive(json: string): void {
+    // A transport that already closed this generation must never accept a
+    // later inbound frame, including one buffered in the same pipe chunk.
+    if (!this.transport.connected) return;
     let message: BridgeMessage;
     try {
       message = parseStrictBridgeJson(json) as BridgeMessage;
@@ -546,6 +568,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       pending?.type === "execution_receipt_query" && message.type === "execution_receipt";
     const isSolicitedNavigationResponse =
       pending?.type === "navigation_read_request" && message.type === "navigation_read_result";
+    let snapshotAdmitted = true;
     if (message.type === "navigation_read_result" && !isSolicitedNavigationResponse) {
       this.transport.close("unexpected_navigation_read_result");
       return;
@@ -600,8 +623,12 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.#snapshot = null;
       void this.refreshAfterCatalogUpdate().catch(() => undefined);
     } else if (message.type === "snapshot") {
-      this.acceptSnapshot(message.payload);
-      this.#initialSnapshotReceived = true;
+      // A delayed or publication-stale snapshot is still the response to its
+      // exact observe correlation. Never let a stale payload replace the last
+      // admitted state or tear down the bridge; a solicited one is rejected
+      // fail-closed below so its caller can only chase the current generation.
+      snapshotAdmitted = this.acceptSnapshot(message.payload);
+      if (snapshotAdmitted) this.#initialSnapshotReceived = true;
     } else if (message.type === "execution_receipt" && !isSolicitedReceiptQueryResponse) {
       this.#latestReceipt = message.payload;
     } else if (message.type === "semantic_event" || message.type === "lifecycle" || message.type === "error") {
@@ -609,33 +636,54 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     }
     if (
       !isSolicitedReceiptQueryResponse &&
-      (message.type === "snapshot" ||
+      ((message.type === "snapshot" && snapshotAdmitted) ||
         message.type === "execution_receipt" ||
         message.type === "semantic_event" ||
         message.type === "lifecycle" ||
         message.type === "world_fact")
     ) {
-      for (const listener of this.#factListeners) listener(message);
+      try {
+        for (const listener of this.#factListeners) listener(message);
+      } catch (error) {
+        // A downstream fact listener (e.g. the CompanionEventPump) is not part
+        // of the authenticated transport and cannot keep the bridge
+        // authenticated after failure. Fail closed on a bounded reason through
+        // the existing close/state cleanup path: pending requests are rejected
+        // by onClose and no later inbound fact is accepted on this generation.
+        const reasonCode =
+          error instanceof Error && error.message === "event_pump_event_overflow"
+            ? "event_pump_event_overflow"
+            : "fact_listener_failed";
+        this.transport.close(reasonCode);
+        return;
+      }
     }
     if (pending !== undefined) {
       this.#pending.delete(message.correlationId);
       clearTimeout(pending.timer);
-      pending.resolve(message);
+      if (message.type === "snapshot" && !snapshotAdmitted) {
+        // A solicited observe whose snapshot failed admission is fail-closed:
+        // it must never surface an un-admitted projection to the caller.
+        pending.reject(new Error("observe_snapshot_not_admitted"));
+      } else {
+        pending.resolve(message);
+      }
     }
   }
 
-  private acceptSnapshot(snapshot: Snapshot): void {
+  private acceptSnapshot(snapshot: Snapshot): boolean {
     if (
       snapshot.catalogRevision !== this.#catalogRevision ||
       !sameActionIds(snapshot.enabledActionIds, this.#enabledActionIds ?? []) ||
       (this.#snapshot !== null && snapshot.revision <= this.#snapshot.revision)
     )
-      return;
+      return false;
     this.#snapshot = Object.freeze({
       ...snapshot,
       capabilities: Object.freeze([...snapshot.capabilities]),
       enabledActionIds: Object.freeze([...snapshot.enabledActionIds]),
     });
+    return true;
   }
 
   private requireAuthenticated(): void {

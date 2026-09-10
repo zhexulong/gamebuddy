@@ -44,6 +44,8 @@ The entry validates the entire config before bridge I/O; connects through `STARD
 
 ## Native ordinary-chat and `/stop` live observation (read-only)
 
+> **Note:** For full-featured embodied companion live verification (including micro-actions `face_direction`, `express_emote`, `equip_tool`, chat presentation, and sensory facts), follow the comprehensive [`## Native humanlike companion live observation and verification SOP`](#native-humanlike-companion-live-observation-and-verification-sop) below.
+
 The Farmhand companion preview may observe the already-implemented native ordinary
 chat and bare `/stop` ingress without adding a control port or injecting UI/input.
 Start only the official production Host, AI Farmhand, Mod bridge and the existing
@@ -65,6 +67,92 @@ observation and the already-settled old-epoch ledger, Pi, worker, presentation, 
 voice cancellation fence; this is a state proof, not a timed quiet-window inference.
 If either exact proof is absent or mismatched, the runner remains `blocked`. Do not
 hand-write, edit, or treat a fixture artifact as live evidence.
+
+## Native humanlike companion live observation and verification SOP
+
+This SOP defines the task-generic procedure for live in-game verification of embodied companion micro-actions (`face_direction`, `express_emote`, `equip_tool`), conversation presentation (`companion_presentation_request` via `Game1.chatBox`), and sensory bridge ingress (`world_fact`: `day_started`, `time_milestone`). It governs any companion action verification run while treating scenario-specific parameters as parameterized inputs.
+
+### 1. Preflight and offline parity gate
+
+Before launching the game or initiating a live run, operators must verify environment baselines and run offline regression gates:
+
+- **Target version baseline:** Stardew Valley `1.6.15.24356`, SMAPI `4.5.2`.
+- **Mod assembly deployment:** Mod DLLs must be compiled in Release and deployed to the active target installation:
+  ```powershell
+  dotnet build integrations/stardew/GameBuddy.Stardew.sln -c Release
+  # Ensure GameBuddy.dll and dependencies are present in:
+  # <StardewValleyPath>\Mods\GameBuddy\
+  ```
+- **Save fixture isolation:** Use an isolated, event-free fixture save (such as `GameBuddyFixtureArtifact_446066223`, SaveId `446066223`, PlayerId `-897170067170526186`). Never execute live action gates on a personal or production save.
+- **Offline test suite execution:**
+  ```bash
+  # C# Core and Integration suites
+  dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/ --nologo
+  dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ --nologo
+
+  # Action-development package tests and source projection parity
+  pnpm --dir integrations/stardew/action-development test
+  node integrations/stardew/action-development/src/action-source-projection-check.mjs
+
+  # Host TypeScript typecheck
+  pnpm --filter @gamebuddy/companion-host typecheck
+  ```
+
+### 2. Execution topologies and attachment modes
+
+Live verification supports two operational modes:
+
+- **Mode A: Automated driver (recommended for continuous regression):**
+  Spawns SMAPI, bounds wait time for the Named Pipe connection (up to 90s for save loading), runs the automated action sequence, keeps the window open for human inspection (15s), and cleans up processes cleanly:
+  ```bash
+  node tools/start-smapi-and-run-live.mjs
+  ```
+- **Mode B: Attached driver (recommended for interactive hot debugging):**
+  When Stardew/SMAPI is already running with the target save loaded and player in-world, attach directly over the configured Named Pipe (`GB-PIPE-M2-E2E` or Mod `config.json`):
+  ```bash
+  node tools/run-stardew-companion-live-coop-01.mjs
+  ```
+- **Concurrency discipline:** The Mod `ExecutionManager` enforces that the embodied actor executes at most one active native mutation at any time on the game thread. Multi-action sequences must be executed serially with unique `{requestId, idempotencyKey}` pairs, waiting for terminal `succeeded` before dispatching the next.
+
+### 3. Generic visual observability principles
+
+To ensure human-in-the-loop and camera-based evaluation produces trustworthy evidence, all companion action verifications must follow two generic observability rules:
+
+- **Delta Observability Principle (状态差量可辨识性原则):**
+  A visual verification is valid only if the post-action physical state visibly contrasts with the actor's immediate pre-action state. If a target action's requested state is identical to the actor's current resting state (e.g. asking to face down when already facing down, or equipping slot 0 when slot 0 is already active), the test sequence must establish a contrastive delta (e.g. transitioning through an intermediate distinct state) before asserting visual completion.
+- **Animation Settling Window (动画落定与稳定观察窗口):**
+  Actions with native sprite animations, emote balloons, or tool-wielding effects require engine settling time. After receiving the bridge's `succeeded` receipt, drivers and human observers must pause for an observation settling window (typically 2.0–2.5 seconds) before triggering subsequent actions or exiting, ensuring the visual transition is captured and settled.
+- **Observation fact verification:**
+  Terminal receipts must carry an attached `BridgeLocalObservation` (capturing `location`, `tile`, `facing`, `inGameTime`, `playerNearby`, and `revision`). Operators must confirm that the receipt observation matches the live game reality.
+
+### 4. Specific operational caveats (现场核验注意点)
+
+These caveats address specific engine constraints and edge cases encountered during live in-game verification:
+
+1. **Initial spawn facing in bed:**
+   When a save is loaded, the player character spawns in bed facing `Down` (`facing: 2`). Direct verification of `face_direction: down` produces 0 pixel delta.
+   *Guideline:* Always verify facing against a contrasting direction (e.g. turn `left` towards the open bedroom first, observe the 90° rotation, then turn `down`), or verify after stepping out of the bed.
+2. **Default active tool slot:**
+   The player's toolbar defaults to `Slot 0` (typically Axe). Direct dispatch of `equip_tool: slot 0` causes no sprite swap or toolbar highlight transition.
+   *Guideline:* Verify tool equipping by selecting a slot different from `CurrentToolIndex` (e.g. switch to Slot 1 Pickaxe first, then switch to Slot 0 Axe) to confirm observable toolbar cursor movement.
+3. **Emote animation busy mutex:**
+   `Farmer.doEmote` executes a native balloon animation lasting ~2 seconds. Dispatching a new emote while `actor.isEmoting == true` is rejected by the Mod guard with `rejected/emote_busy`.
+   *Guideline:* Allow ≥ 2.5 seconds between successive emote dispatches to let the previous animation conclude and the actor return to a non-emoting state.
+4. **ChatBox presentation readiness:**
+   Companion speech is routed to `Game1.chatBox` via `NativeChatPresentationPolicy`. In single-player host test topologies (where Host == Farmhand), ensure the game has fully completed the save load fade-in and the chatBox is active before dispatching speech bubbles, avoiding unhandled drops.
+
+### 5. Failure taxonomy and diagnostic reason codes
+
+- `missing_client_config`: The runner could not locate `Mods/GameBuddy/config.json` or equivalent client configuration.
+- `pipe_connect_timeout`: The game did not start within the timeout budget, the Mod failed to load, or the save was not loaded to open the pipe listener.
+- `scope_mismatch`: The active player's UniqueMultiplayerID does not match the configured `BridgeScope.PlayerId`.
+- `rejected/emote_busy`: Emote requested while a previous emote is still animating.
+- `rejected/actor_moving`: Facing direction requested while the actor is walking or under pathfinding control.
+- `rejected/tool_index_out_of_range`: Requested slot is outside the valid inventory bounds (`0..11` or `0..35`).
+
+### 6. Artifact retention and Git hygiene
+
+Live verification generates local diagnostic logs (`tools/*.log.json` and `tools/*.report.md`) for operator inspection. **These files are ephemeral debug artifacts and must NEVER be committed to git.** Production evidence consists only of reproducible gate exit codes, redacted receipts, and stable documentation.
 
 ## Farmhand promotion standard (Farmhand lane only)
 
@@ -464,7 +552,7 @@ Watering Can charge `-1`, and a fresh `cropTargets` transition of exactly
 They remain shared action mechanics, not Portfolio capability rows or Farmhand
 evidence.
 
-## Farmhand lane inputs
+## Farmhand promotion lane phases
 
 The following promotion phases apply only to
 `native_ai_farmhand_multiplayer`. Native-local validation follows the SOP above

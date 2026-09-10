@@ -91,9 +91,10 @@ export function createStardewBootstrapGuardianNativePortsFromDesktopSession(
   binding: StardewBootstrapGuardianOwnerBinding,
   session: DesktopGuardianSession,
   deadlineUnixMs: number,
+  operationWaitBudgetMs: number,
   deferredLaunchPlan?: StardewBootstrapGuardianDeferredLaunchPlanPort,
 ): StardewBootstrapGuardianNativePorts {
-  if (!Number.isSafeInteger(deadlineUnixMs) || deadlineUnixMs <= Date.now()) throw new Error("stardew_bootstrap_guardian_session_unavailable");
+  if (!Number.isSafeInteger(deadlineUnixMs) || deadlineUnixMs <= Date.now() || !Number.isSafeInteger(operationWaitBudgetMs) || operationWaitBudgetMs < 1 || operationWaitBudgetMs > 300_000) throw new Error("stardew_bootstrap_guardian_session_unavailable");
   const arm = readStardewBootstrapGuardianNativeArmFrame(binding);
   const correlation = Object.freeze({ guardianInstanceId: arm.guardianInstanceId, guardianEpoch: arm.guardianEpoch, attemptId: arm.attemptId });
   const role = (value: GuardianRole): "player_host" | "ai_client" => value === "playerHost" ? "player_host" : "ai_client";
@@ -106,7 +107,7 @@ export function createStardewBootstrapGuardianNativePortsFromDesktopSession(
       controlledClose: Object.freeze({
       async arm() {
         const body = Buffer.from(JSON.stringify({ guardianInstanceId: arm.guardianInstanceId, guardianEpoch: arm.guardianEpoch, attemptId: arm.attemptId, revision: arm.revision, leaseName: arm.leaseName, playerJobName: arm.playerJobName, aiJobName: arm.aiJobName }), "utf8");
-        const ack = await session.arm({ ...correlation, deadlineUnixMs, privateFrame: body });
+        const ack = await session.arm({ ...correlation, operationWaitBudgetMs, privateFrame: body });
         expect(ack, "arm_attempt");
       },
       async launchRole(ownerBinding: StardewBootstrapGuardianOwnerBinding, target: GuardianRole) {
@@ -118,7 +119,7 @@ export function createStardewBootstrapGuardianNativePortsFromDesktopSession(
         expect(ack, "launch_role", expectedRole);
       },
       async drainRole(_ownerBinding: StardewBootstrapGuardianOwnerBinding, target: GuardianRole) {
-        const ack = await session.contain({ ...correlation, deadlineUnixMs, attemptId: arm.attemptId, role: role(target) });
+        const ack = await session.contain({ ...correlation, operationWaitBudgetMs, attemptId: arm.attemptId, role: role(target) });
         expect(ack, "contain_role", role(target));
       },
       async releaseAndExit() { await session.close(); },

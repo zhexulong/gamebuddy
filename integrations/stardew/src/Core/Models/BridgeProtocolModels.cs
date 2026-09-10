@@ -379,7 +379,7 @@ public sealed record BridgeBodyProgramBinding(string NodeId, string FactName);
 public sealed record BridgeBodyProgramDiagnostic(
     string Severity,
     string Code,
-    string? NodeId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NodeId,
     string Path,
     string Message
 );
@@ -434,6 +434,12 @@ public sealed record BridgeBodyProgramEventsResult(
     long NextCursor,
     long HighWater
 );
+
+/// <summary>Inbound Body Program status query. Carries only the program identity.</summary>
+public sealed record BridgeBodyProgramStatusRequest(string ProgramId);
+
+/// <summary>Inbound Body Program events page query. Cursor must be non-negative; page size is bounded 1..32.</summary>
+public sealed record BridgeBodyProgramEventsRequest(string ProgramId, long Cursor, int PageSize);
 
 public sealed record BridgeNavigationReadResult(
     string Status,

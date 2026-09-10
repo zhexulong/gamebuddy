@@ -42,7 +42,7 @@ import type {
   StardewCabinConfirmResultV1,
 } from "./game-browser-contract/index.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
-import type { StopOwnedPlayerHostResult } from "./stardew-player-host-process-owner.js";
+import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import {
   createStardewRoleLifecycleFacade,
   type StardewRoleLifecycleReader,
@@ -140,10 +140,6 @@ function successfulAiStop(result: StopOwnedAiClientResult): boolean {
   return result.kind === "no_owned_ai_client" || result.kind === "already_stopped" || result.kind === "terminated";
 }
 
-function successfulPlayerStop(result: StopOwnedPlayerHostResult): boolean {
-  return result.kind === "no_owned_player_host" || result.kind === "already_stopped" || result.kind === "terminated";
-}
-
 function isTransientFarmhandBridgeConnectError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as NodeJS.ErrnoException).code;
@@ -213,7 +209,6 @@ function createCoordinator(
     promise: Promise<StardewPrivateActivationSnapshot>;
   }>>();
   let aiStopped = false;
-  let playerStopped = false;
   let closePromise: Promise<void> | undefined;
   const handoffCoordinator = internal.createOwnedPlayerHostManifestHandoffCoordinator();
   const cabinHandles = new Map<string, Readonly<{
@@ -241,14 +236,14 @@ function createCoordinator(
     },
   });
   const launchReadinessReader: StardewGameSurfaceLaunchReadinessReader = Object.freeze({
-      readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView {
-        if (launchTerminal) return Object.freeze({ generation: 0, status: "failed" });
-        if (exactOwner !== undefined && activationState === "staged") {
-          return Object.freeze({ generation: expectedPlayerHostInstanceGeneration, status: "ready" });
-        }
-        return Object.freeze({ generation: 0, status: "none" });
-      },
-    });
+    readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView {
+      if (launchTerminal) return Object.freeze({ generation: 0, status: "failed" });
+      if (exactOwner !== undefined && activationState === "staged") {
+        return Object.freeze({ generation: expectedPlayerHostInstanceGeneration, status: "ready" });
+      }
+      return Object.freeze({ generation: 0, status: "none" });
+    },
+  });
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
       if (activationState === "awaiting_player_host_attestation" && !playerHostAttestationCorrelated)
@@ -802,10 +797,6 @@ function createCoordinator(
         try { aiStopped = successfulAiStop(composition.aiClientProcessOwner.stopOwnedAiClient()); } catch { /* retry */ }
         if (!aiStopped) incomplete = true;
       }
-      if (!playerStopped) {
-        try { playerStopped = successfulPlayerStop(composition.playerHostProcessOwner.stopOwnedPlayerHost()); } catch { /* retry */ }
-        if (!playerStopped) incomplete = true;
-      }
     }
     if (incomplete) throw new StardewProductionLifecycleCloseError();
     attachmentGeneration = 0;
@@ -850,9 +841,10 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
 export function createStardewProductionLifecycleCoordinator(
   manifest: HostDeploymentManifest,
   folderPicker: WindowsStardewFolderPickerCapability,
+  game: SemanticGameProductionAuthority,
 ): StardewProductionLifecycleCoordinator {
   const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
-  const materializer = createStardewOwnedFarmhandGameSessionMaterializer(manifest);
+  const materializer = createStardewOwnedFarmhandGameSessionMaterializer(manifest, game);
   return createCoordinator(
     manifest,
     createStardewPrivateBootstrapComposition(),

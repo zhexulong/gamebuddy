@@ -29,6 +29,7 @@ import {
   type StardewLifecycleCoordinatorTestingOverrides,
 } from "./stardew-production-lifecycle-coordinator.test-support-internal.js";
 import { createStardewProductionLifecycleCoordinator } from "./stardew-production-lifecycle-coordinator.internal.js";
+import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import { createTestWindowsReparseInspector } from "./windows-reparse-inspector/index.test-support.js";
@@ -176,6 +177,40 @@ function installationInspector(
       })}\n`);
       child.stderr.end();
       queueMicrotask(() => child.emit("close", 0, null));
+    })());
+    return child as unknown as ChildProcess;
+  });
+}
+
+function sequencedInstallationInspector(
+  sequences: readonly (readonly (readonly WindowsPathObjectIdentity[])[])[],
+  beforeResponse?: (sequenceIndex: number, readIndex: number) => Promise<void>,
+) {
+  let sequenceIndex = 0;
+  let readIndex = 0;
+  let current: readonly (readonly WindowsPathObjectIdentity[])[] | undefined;
+  return createTestWindowsReparseInspector(() => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+    });
+    child.stdin.on("data", () => void (async () => {
+      current ??= sequences[sequenceIndex++] ?? [];
+      const currentSequenceIndex = sequenceIndex;
+      const currentReadIndex = readIndex + 1;
+      if (beforeResponse !== undefined) await beforeResponse(currentSequenceIndex, currentReadIndex);
+      const chain = current[readIndex++] ?? current.at(-1) ?? installationChain;
+      child.stdout.end(`${JSON.stringify({
+        schemaVersion: 2,
+        operation: "inspect_path_chain_v2",
+        status: "ok",
+        components: chain,
+      })}\n`);
+      child.stderr.end();
+      queueMicrotask(() => child.emit("close", 0, null));
+      if (readIndex >= current.length) {
+        current = undefined;
+        readIndex = 0;
+      }
     })());
     return child as unknown as ChildProcess;
   });
@@ -751,8 +786,12 @@ test("Game setup registers only the selected installation and Player Host fresh-
     const launchChain = installationChain.map((entry, index) => index === 2
       ? Object.freeze({ ...entry, fileId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" })
       : entry);
+    const inspector = sequencedInstallationInspector([
+      [setupChain, setupChain],
+      [launchChain, launchChain, launchChain],
+    ]);
     const fixture = await createFixture({
-      inspectorChains: [setupChain, setupChain, launchChain, launchChain, launchChain],
+      overrides: { createInstallationInspector: async () => inspector },
     });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
@@ -780,13 +819,13 @@ test("Game setup registers only the selected installation and Player Host fresh-
   });
 });
 
-test("launch-readiness generation is 0 until staged, then 1, and resets once launch starts", async () => {
+test("launch-readiness generation is 0 before activation, then 1 while staged, and resets once launch starts", async () => {
   await withWindowsPlatform(async () => {
     const fixture = await createFixture();
     try {
       assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 0);
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 0);
+      assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 1);
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
       assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
       assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 1);
@@ -1119,11 +1158,11 @@ test("staged Player Host admission failure restores staged and permits a later v
     const changed = installationChain.map((entry, index) => index === 2
       ? Object.freeze({ ...entry, fileId: "ffffffffffffffffffffffffffffffff" })
       : entry);
-    const inspectors = [
-      installationInspector([installationChain, changed]),
-      installationInspector([installationChain, installationChain, installationChain]),
-    ];
-    const fixture = await createFixture({ overrides: { createInstallationInspector: async () => inspectors.shift()! } });
+    const inspector = sequencedInstallationInspector([
+      [installationChain, changed],
+      [installationChain, installationChain, installationChain],
+    ]);
+    const fixture = await createFixture({ overrides: { createInstallationInspector: async () => inspector } });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await assert.rejects(
@@ -1153,11 +1192,11 @@ test("staged Player Host reparse admission failure is pre-launch, restores stage
     const reparse = installationChain.map((entry, index) => index === 1
       ? Object.freeze({ ...entry, isReparsePoint: true })
       : entry);
-    const inspectors = [
-      installationInspector([reparse, reparse]),
-      installationInspector([installationChain, installationChain, installationChain]),
-    ];
-    const fixture = await createFixture({ overrides: { createInstallationInspector: async () => inspectors.shift()! } });
+    const inspector = sequencedInstallationInspector([
+      [reparse, reparse],
+      [installationChain, installationChain, installationChain],
+    ]);
+    const fixture = await createFixture({ overrides: { createInstallationInspector: async () => inspector } });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await assert.rejects(
@@ -1233,18 +1272,18 @@ test("close during staged Player Host admission drains and prevents a later spaw
   });
 });
 
-test("close after successful spawn stops only the exact Player Host and projects stopped", async () => {
+test("ordinary close preserves the Player Host and never invokes its explicit stop", async () => {
   await withWindowsPlatform(async () => {
     const fixture = await createFixture();
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
       await fixture.coordinator.close();
-      assert.deepEqual(fixture.playerKillCalls, [4102]);
+      assert.deepEqual(fixture.playerKillCalls, []);
       assert.deepEqual(fixture.aiKillCalls, []);
       assert.equal(fixture.playerSpawnCalls.length, 1);
       assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
-        state: "stopped", ownership: "gamebuddy_direct_spawn",
+        state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
       });
     } finally {
       await fixture.coordinator.close();
@@ -1253,21 +1292,21 @@ test("close after successful spawn stops only the exact Player Host and projects
   });
 });
 
-test("close after spawn preserves exact-child retry and never respawns", async () => {
+test("ordinary close does not retry or terminate the Player Host", async () => {
   await withWindowsPlatform(async () => {
     const fixture = await createFixture({ playerKillResults: [false, true] });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
-      await assert.rejects(fixture.coordinator.close(), /stardew_lifecycle_close_incomplete/);
-      assert.deepEqual(fixture.playerKillCalls, [4102]);
+      await fixture.coordinator.close();
+      assert.deepEqual(fixture.playerKillCalls, []);
       assert.equal(fixture.playerSpawnCalls.length, 1);
       await fixture.coordinator.close();
-      assert.deepEqual(fixture.playerKillCalls, [4102, 4102]);
+      assert.deepEqual(fixture.playerKillCalls, []);
       assert.deepEqual(fixture.aiKillCalls, []);
       assert.equal(fixture.playerSpawnCalls.length, 1);
       assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
-        state: "stopped", ownership: "gamebuddy_direct_spawn",
+        state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
       });
     } finally {
       await fixture.coordinator.close();
@@ -1346,9 +1385,9 @@ test("aggregate close attempts every role and retry skips successful cleanup pro
   });
   try {
     await assert.rejects(fixture.coordinator.close(), /stardew_lifecycle_close_incomplete/);
-    assert.deepEqual({ brokerAttempts, aiAttempts, playerAttempts }, { brokerAttempts: 1, aiAttempts: 1, playerAttempts: 1 });
+    assert.deepEqual({ brokerAttempts, aiAttempts, playerAttempts }, { brokerAttempts: 1, aiAttempts: 1, playerAttempts: 0 });
     await fixture.coordinator.close();
-    assert.deepEqual({ brokerAttempts, aiAttempts, playerAttempts }, { brokerAttempts: 2, aiAttempts: 2, playerAttempts: 1 });
+    assert.deepEqual({ brokerAttempts, aiAttempts, playerAttempts }, { brokerAttempts: 2, aiAttempts: 2, playerAttempts: 0 });
     assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "closed");
   } finally {
     await fixture.coordinator.close();
@@ -1367,7 +1406,7 @@ test("production lifecycle construction is fail-closed off Windows", async () =>
   });
   if (process.platform !== "win32") {
     await assert.rejects(
-      () => Promise.resolve(createStardewProductionLifecycleCoordinator(manifest, () => null)),
+      () => Promise.resolve(createStardewProductionLifecycleCoordinator(manifest, () => null, undefined as unknown as SemanticGameProductionAuthority)),
       /stardew_private_bootstrap_composition_requires_windows/,
     );
   }
@@ -1479,8 +1518,8 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     await fixture.coordinator.close();
     assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
     assert.deepEqual(fixture.aiKillCalls, [4101]);
-    assert.deepEqual(fixture.playerKillCalls, [4102]);
-    assert.deepEqual(fixture.lifecycleOrder, ["bridge", "ai", "player"]);
+    assert.deepEqual(fixture.playerKillCalls, []);
+    assert.deepEqual(fixture.lifecycleOrder, ["bridge", "ai"]);
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
       status: "none", generation: 0, connectionStatus: "none",
     });
@@ -1893,10 +1932,14 @@ test("manifest-admitted AI materialization failure is permanently uncertain and 
 test("manifest-admitted private Bridge config replacement is permanently uncertain and quarantines without AI spawn", async () => {
   let runtimeRoot = "";
   let tampered = false;
-  const inspector = installationInspector(
-    [installationChain, installationChain, installationChain, installationChain],
-    async (readIndex) => {
-      if (readIndex !== 4 || tampered) return;
+  const inspector = sequencedInstallationInspector(
+    [
+      [installationChain, installationChain],
+      [installationChain, installationChain, installationChain],
+      [installationChain, installationChain, installationChain],
+    ],
+    async (sequenceIndex, readIndex) => {
+      if (sequenceIndex !== 3 || readIndex !== 3 || tampered) return;
       tampered = true;
       await writeFile(
         join(runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "ai-client", "Mods", "GameBuddy", "config.json"),
@@ -1937,11 +1980,10 @@ test("manifest-admitted AI installation replacement is permanently uncertain and
   const changed = installationChain.map((entry, index) => index === 2
     ? Object.freeze({ ...entry, fileId: "ffffffffffffffffffffffffffffffff" })
     : entry);
-  const inspector = installationInspector([
-    installationChain,
-    installationChain,
-    installationChain,
-    changed,
+  const inspector = sequencedInstallationInspector([
+    [installationChain, installationChain],
+    [installationChain, installationChain, installationChain],
+    [installationChain, installationChain, changed],
   ]);
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: { createInstallationInspector: async () => inspector },
@@ -2031,7 +2073,7 @@ test("close drains manifest-admitted AI materialization before quarantine and pr
     await close;
     assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "closed");
     assert.deepEqual(fixture.spawnCalls, []);
-    assert.deepEqual(fixture.playerKillCalls, [4102]);
+    assert.deepEqual(fixture.playerKillCalls, []);
   } finally {
     releasePackageRead();
     await fixture.coordinator.close();
@@ -2119,7 +2161,7 @@ test("Game disconnect and outer close share one pending attachment teardown", as
     await Promise.all([stop, disconnect, close]);
     assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
     assert.deepEqual(fixture.aiKillCalls, [4101]);
-    assert.deepEqual(fixture.playerKillCalls, [4102]);
+    assert.deepEqual(fixture.playerKillCalls, []);
   } finally {
     stopGate.resolve();
     await fixture.coordinator.close();
