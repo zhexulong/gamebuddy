@@ -115,6 +115,12 @@ for (const name of ["../outside", "/rooted", "C:/drive", "\\\\unc", "node-v24.20
     await assert.rejects(acquire(root, bytes), /runtime_zip_(?:entry_forbidden|root_invalid)/);
   }));
 }
+test("accepts official directory entries without extracting them", async () => withRoot(async (root) => {
+  const rootName = "node-v24.20.0-win-x64";
+  const node = Buffer.from("node");
+  const bytes = zip([{ name: `${rootName}/`, content: Buffer.alloc(0), attrs: 0x10 }, { name: `${rootName}/node.exe`, content: node }]);
+  await acquire(root, bytes, descriptor(bytes, node));
+}));
 test("rejects duplicate paths, links, encryption, unsupported compression metadata, and missing node", async () => withRoot(async (root) => {
   for (const entries of [
     [{ name: "node-v24.20.0-win-x64/node.exe", content: Buffer.from("node") }, { name: "node-v24.20.0-win-x64/NODE.EXE" }],
@@ -126,9 +132,9 @@ test("rejects duplicate paths, links, encryption, unsupported compression metada
 }));
 test("enforces entry-count and per-entry/expanded byte limits before extraction", async () => withRoot(async (root) => {
   const rootName = "node-v24.20.0-win-x64";
-  const count = zip([{ name: `${rootName}/node.exe`, content: Buffer.from("node") }, ...Array.from({ length: 2_000 }, (_, index) => ({ name: `${rootName}/f${index}` }))]);
+  const count = zip([{ name: `${rootName}/node.exe`, content: Buffer.from("node") }, ...Array.from({ length: 4_096 }, (_, index) => ({ name: `${rootName}/f${index}` }))]);
   await assert.rejects(acquire(root, count), /runtime_zip_entry_count_limit/);
-  const perEntry = zip([{ name: `${rootName}/node.exe`, content: Buffer.from("node"), declaredSize: 32 * 1024 * 1024 + 1 }]);
+  const perEntry = zip([{ name: `${rootName}/node.exe`, content: Buffer.from("node"), declaredSize: 128 * 1024 * 1024 + 1 }]);
   await assert.rejects(acquire(root, perEntry), /runtime_zip_entry_size_limit/);
   const expanded = zip([{ name: `${rootName}/node.exe`, content: Buffer.from("node"), declaredSize: 32 * 1024 * 1024 }, ...Array.from({ length: 8 }, (_, index) => ({ name: `${rootName}/f${index}`, declaredSize: 32 * 1024 * 1024 }))]);
   await assert.rejects(acquire(root, expanded), /runtime_zip_expanded_size_limit/);

@@ -6,8 +6,8 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import yauzl from "yauzl";
 
 const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024;
-const MAX_ENTRIES = 2_000;
-const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
+const MAX_ENTRIES = 4_096;
+const MAX_ENTRY_BYTES = 128 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
 import { createWindowsReleaseBootstrapScratch } from "./windows-release-bootstrap-scratch.internal.mjs";
@@ -22,18 +22,25 @@ const exactDescriptor = (value) => value !== null && typeof value === "object" &
   && typeof value.archiveRoot === "string" && /^[A-Za-z0-9._-]+$/.test(value.archiveRoot)
   && typeof value.nodeSha256 === "string" && /^[a-f0-9]{64}$/.test(value.nodeSha256);
 
-function rejectName(name, root) {
-  if (typeof name !== "string" || !name || name.includes("\0") || name.includes("\\") || name.startsWith("/") || name.startsWith("\\\\") || /^[A-Za-z]:/.test(name) || name.endsWith("/") || name.includes(":")) throw new Error("runtime_zip_entry_forbidden");
-  const pieces = name.split("/");
+function rejectName(name, root, { directory = false } = {}) {
+  if (typeof name !== "string" || !name || name.includes("\0") || name.includes("\\") || name.startsWith("/") || name.startsWith("\\\\") || /^[A-Za-z]:/.test(name) || name.includes(":")) throw new Error("runtime_zip_entry_forbidden");
+  if (directory ? !name.endsWith("/") : name.endsWith("/")) throw new Error("runtime_zip_entry_forbidden");
+  const normalized = directory ? name.slice(0, -1) : name;
+  const pieces = normalized.split("/");
   if (pieces.some((piece) => !piece || piece === "." || piece === ".." || /[. ]$/.test(piece) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(piece))) throw new Error("runtime_zip_entry_forbidden");
-  if (pieces[0] !== root || pieces.length < 2) throw new Error("runtime_zip_root_invalid");
-  return pieces.slice(1).join("/");
+  if (pieces[0] !== root || (!directory && pieces.length < 2) || (directory && pieces.length < 1)) throw new Error("runtime_zip_root_invalid");
+  return pieces.length === 1 ? "" : pieces.slice(1).join("/");
+}
+function isDirectoryEntry(entry) {
+  const unixType = (entry.externalFileAttributes >>> 16) & 0o170000;
+  const dosDirectory = (entry.externalFileAttributes & 0x10) !== 0;
+  return entry.fileName.endsWith("/") && !entry.encrypted && entry.compressionMethod === 0 && entry.uncompressedSize === 0 && (dosDirectory || unixType === 0o040000);
 }
 function isRegularEntry(entry) { const unixType = (entry.externalFileAttributes >>> 16) & 0o170000; const dosDirectory = (entry.externalFileAttributes & 0x10) !== 0; return !entry.encrypted && (entry.compressionMethod === 0 || entry.compressionMethod === 8) && !dosDirectory && (unixType === 0 || unixType === 0o100000); }
 function openZip(bytes) { return new Promise((resolveOpen, reject) => yauzl.fromBuffer(bytes, { lazyEntries: true, strictFileNames: true, validateEntrySizes: true, autoClose: false }, (error, zip) => error ? reject(error) : resolveOpen(zip))); }
 async function preflight(zip, descriptor) {
-  const entries = []; const seenRaw = new Set(); const seenFolded = new Set(); let total = 0;
-  try { await new Promise((resolveEntries, reject) => { zip.on("error", reject); zip.on("entry", (entry) => { try { if (entries.length >= MAX_ENTRIES) throw new Error("runtime_zip_entry_count_limit"); if (!isRegularEntry(entry)) throw new Error("runtime_zip_entry_forbidden"); if (entry.uncompressedSize > MAX_ENTRY_BYTES) throw new Error("runtime_zip_entry_size_limit"); const path = rejectName(entry.fileName, descriptor.archiveRoot); const folded = path.toLocaleLowerCase("en-US"); if (seenRaw.has(path) || seenFolded.has(folded)) throw new Error("runtime_zip_duplicate_destination"); seenRaw.add(path); seenFolded.add(folded); total += entry.uncompressedSize; if (total > MAX_TOTAL_BYTES) throw new Error("runtime_zip_expanded_size_limit"); entries.push({ entry, path }); zip.readEntry(); } catch (error) { reject(error); } }); zip.on("end", resolveEntries); zip.readEntry(); }); } catch (error) { throw new Error(error?.message?.startsWith("runtime_zip_") ? error.message : "runtime_zip_entry_forbidden"); }
+  const entries = []; const seenRaw = new Set(); const seenFolded = new Set(); let total = 0; let entryCount = 0;
+  try { await new Promise((resolveEntries, reject) => { zip.on("error", reject); zip.on("entry", (entry) => { try { if (entryCount >= MAX_ENTRIES) throw new Error("runtime_zip_entry_count_limit"); entryCount += 1; const directory = isDirectoryEntry(entry); if (!directory && !isRegularEntry(entry)) throw new Error("runtime_zip_entry_forbidden"); if (entry.uncompressedSize > MAX_ENTRY_BYTES) throw new Error("runtime_zip_entry_size_limit"); const path = rejectName(entry.fileName, descriptor.archiveRoot, { directory }); const folded = path.toLocaleLowerCase("en-US"); if (seenRaw.has(path) || seenFolded.has(folded)) throw new Error("runtime_zip_duplicate_destination"); seenRaw.add(path); seenFolded.add(folded); total += entry.uncompressedSize; if (total > MAX_TOTAL_BYTES) throw new Error("runtime_zip_expanded_size_limit"); if (!directory) entries.push({ entry, path }); zip.readEntry(); } catch (error) { reject(error); } }); zip.on("end", resolveEntries); zip.readEntry(); }); } catch (error) { throw new Error(error?.message?.startsWith("runtime_zip_") ? error.message : "runtime_zip_entry_forbidden"); }
   if (!entries.some(({ path }) => path === "node.exe")) throw new Error("runtime_zip_node_missing"); return entries;
 }
 async function streamEntry(zip, entry) { return new Promise((resolveStream, reject) => zip.openReadStream(entry, (error, stream) => error ? reject(error) : resolveStream(stream))); }
