@@ -13,7 +13,9 @@ import {
 export type { WindowsRuntimeOwnerIdentityPort } from "./continuity-semantic-game-runtime-binding.windows-owner-identity.internal.js";
 
 const execFileAsync = promisify(execFile);
-const QUERY_TIMEOUT_MS = 5_000;
+// Windows CIM/PowerShell startup can cold-start slowly on protected runners;
+// keep the OS proof fail-closed while allowing one bounded provider query.
+const QUERY_TIMEOUT_MS = 15_000;
 const MAX_QUERY_OUTPUT_BYTES = 256;
 const OWNER_PROOF_LINE = /^([1-9][0-9]{0,9})\|([1-9][0-9]{0,19})\r?\n$/;
 
