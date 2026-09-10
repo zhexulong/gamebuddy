@@ -9,16 +9,17 @@ import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "@gamebuddy/game-actio
 import { assertHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const pnpmCli = process.platform === "win32"
-  ? resolve(process.env.APPDATA ?? resolve(process.env.USERPROFILE ?? hostRoot, "AppData", "Roaming"), "npm", "node_modules", "pnpm", "bin", "pnpm.cjs")
-  : undefined;
-
 
 async function runScript(name) {
+  const invocation = process.platform === "win32"
+    ? {
+        command: process.env.ComSpec ?? "cmd.exe",
+        args: ["/d", "/s", "/c", `call pnpm.cmd run ${name}`],
+      }
+    : { command: "pnpm", args: ["run", name] };
   try {
     return await runBoundedChild({
-      command: pnpmCli ? process.execPath : "pnpm",
-      args: pnpmCli ? [pnpmCli, "run", name] : ["run", name],
+      ...invocation,
       cwd: hostRoot,
       timeoutMs: DEFAULT_SUITE_TIMEOUT_MS,
       spawnOptions: { env: { ...process.env, GAMEBUDDY_HOST_TEST_COMPILED_ONLY: "1" } },
