@@ -324,7 +324,8 @@ async function resolveStagedWindowsReparseInspectorAdapter(stagingRoot) {
 async function importStagedWindowsReparseInspectorAdapter(stagingRoot) {
   const adapterPath = await resolveStagedWindowsReparseInspectorAdapter(stagingRoot);
   const adapter = await import(pathToFileURL(adapterPath).href);
-  if (typeof adapter.createBuildWindowsReparseInspector !== "function" || typeof adapter.assertNoWindowsReparse !== "function")
+  const boundary = adapter?.BUILD_ARTIFACT_REPARSE_INSPECTION;
+  if (typeof boundary?.create !== "function" || typeof boundary?.assertNoReparse !== "function")
     throw new Error("windows_reparse_inspector_emitted_adapter_invalid");
   return adapter;
 }

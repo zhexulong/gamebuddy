@@ -127,7 +127,8 @@ async function loadBuildInspectorAdapter(emittedRoot) {
   // at host/native/windows-reparse-inspector/.dist/win-x64 and mints its opaque
   // build capability after its own manifest/hash verification.
   const adapter = await import(pathToFileURL(resolve(emittedRoot, "windows-reparse-inspector", "index.js")).href);
-  if (typeof adapter.createBuildWindowsReparseInspector !== "function" || typeof adapter.inspectWindowsReparse !== "function" || typeof adapter.assertNoWindowsReparse !== "function")
+  const boundary = adapter?.BUILD_ARTIFACT_REPARSE_INSPECTION;
+  if (typeof boundary?.create !== "function" || typeof adapter.inspectWindowsReparse !== "function" || typeof boundary?.assertNoReparse !== "function")
     throw new Error("build_inspector_adapter_unavailable");
   return adapter;
 }
@@ -173,7 +174,7 @@ async function loadConsumers(emittedRoot) {
 async function verifyConsumers(artifact, consumers, inspector, inspectorAdapter) {
   // Do not call the browser factory: it resolves the mutable global emitted root.
   // This exact policy preserves the shared opaque capability from the fresh adapter.
-  const browserPolicy = Object.freeze({ inspect: async (path) => await inspectorAdapter.assertNoWindowsReparse(inspector, path) });
+  const browserPolicy = Object.freeze({ inspect: async (path) => await inspectorAdapter.BUILD_ARTIFACT_REPARSE_INSPECTION.assertNoReparse(inspector, path) });
   const browserAccepted = await consumers.browser.verifyProductionArtifactManifest(artifact, browserPolicy).then(() => true, () => false);
   const staticAccepted = await consumers.staticArtifact.verifyTavernStaticArtifact(artifact, {
     browserContract: "tavern_browser_api/v1", profileId: "gamebuddy.tavern.browser.v1",
@@ -245,7 +246,7 @@ export async function runWindowsReparseLiveGate() {
   try {
     await compileCurrentSource(emittedRoot);
     const inspectorAdapter = await loadBuildInspectorAdapter(emittedRoot);
-    const inspector = await inspectorAdapter.createBuildWindowsReparseInspector();
+    const inspector = await inspectorAdapter.BUILD_ARTIFACT_REPARSE_INSPECTION.create();
     const regular = resolve(root, "regular.txt");
     await writeFile(regular, "regular", "utf8");
     result.probes.regular = (await inspectorAdapter.inspectWindowsReparse(inspector, regular)) === "regular" ? "passed" : "blocked";

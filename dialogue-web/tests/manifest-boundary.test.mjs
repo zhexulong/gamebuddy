@@ -27,8 +27,10 @@ const readWorkspaceLockfile = async () => readFile(lockfilePath, "utf8");
 const opaqueStagingLeaf = () => randomBytes(16).toString("hex");
 const nodeDefensePolicy = Object.freeze({ inspect: async () => {} });
 const validInspectorAdapter = Object.freeze({
-  createBuildWindowsReparseInspector: async () => Object.freeze({}),
-  assertNoWindowsReparse: async () => {},
+  BUILD_ARTIFACT_REPARSE_INSPECTION: Object.freeze({
+    create: async () => Object.freeze({}),
+    assertNoReparse: async () => {},
+  }),
 });
 const validInspectorDescriptor = Object.freeze({
   schemaVersion: 1,
@@ -178,10 +180,12 @@ test("Windows inspection policy accepts an explicit trusted adapter descriptor a
       schemaVersion: 1,
       kind: "gamebuddy.windows_reparse_inspector.v1",
       adapter: {
-        async createBuildWindowsReparseInspector() { constructions += 1; return capability; },
-        async assertNoWindowsReparse(receivedCapability, path) {
-          assert.strictEqual(receivedCapability, capability, "every inspection must receive the minted opaque capability");
-          calls.push(path);
+        BUILD_ARTIFACT_REPARSE_INSPECTION: {
+          async create() { constructions += 1; return capability; },
+          async assertNoReparse(receivedCapability, path) {
+            assert.strictEqual(receivedCapability, capability, "every inspection must receive the minted opaque capability");
+            calls.push(path);
+          },
         },
       },
     });
@@ -228,8 +232,10 @@ test("Windows inspection policy fails closed for missing, malformed, or invalid 
       schemaVersion: 1,
       kind: "gamebuddy.windows_reparse_inspector.v1",
       adapter: {
-        createBuildWindowsReparseInspector: async () => Object.freeze({}),
-        assertNoWindowsReparse: async () => { throw new Error("invalid helper protocol"); },
+        BUILD_ARTIFACT_REPARSE_INSPECTION: {
+          create: async () => Object.freeze({}),
+          assertNoReparse: async () => { throw new Error("invalid helper protocol"); },
+        },
       },
     });
     await assert.rejects(verifyProductionArtifactManifest(artifactRoot, policy), /invalid helper protocol/);

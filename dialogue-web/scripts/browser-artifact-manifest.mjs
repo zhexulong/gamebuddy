@@ -37,9 +37,10 @@ async function createWindowsReparsePolicy(descriptor, platform = process.platfor
   if (platform !== "win32") return Object.freeze({ inspect: async () => {} });
   try {
     const { adapter } = validatedWindowsReparseInspectorDescriptor(descriptor);
-    if (typeof adapter.createBuildWindowsReparseInspector !== "function" || typeof adapter.assertNoWindowsReparse !== "function") throw unavailable();
-    const capability = await adapter.createBuildWindowsReparseInspector();
-    return Object.freeze({ inspect: async (path) => await adapter.assertNoWindowsReparse(capability, path) });
+    const boundary = adapter?.BUILD_ARTIFACT_REPARSE_INSPECTION;
+    if (typeof boundary?.create !== "function" || typeof boundary?.assertNoReparse !== "function") throw unavailable();
+    const capability = await boundary.create();
+    return Object.freeze({ inspect: async (path) => await boundary.assertNoReparse(capability, path) });
   } catch {
     throw unavailable();
   }
