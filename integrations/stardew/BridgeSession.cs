@@ -27,8 +27,16 @@ internal sealed class BridgeSession
     private readonly Func<string> presentationLocale;
     private readonly Func<DerivedDestinationSet?> navigationSetProvider;
     private readonly NavigationReferenceStore navigationReferences;
+    private readonly Func<SceneObservationInput?> sceneObservationProvider;
+    private readonly SceneObservationStore sceneObservations = new();
+    private readonly SceneObservationProjection sceneObservationProjection;
     private readonly string navigationRuntimeInstanceId = Guid.NewGuid().ToString("N");
     private long navigationObservationSequence;
+    private long sceneObservationSequence;
+    private long sceneMovementSequence;
+    private string? sceneLocationName;
+    private int sceneActorTileX;
+    private int sceneActorTileY;
     private readonly Dictionary<string, IdempotentExecution> idempotency = new(StringComparer.Ordinal);
     private readonly Queue<string> idempotencyOrder = new();
     // Presentation receipts cannot be evicted or cleared on re-authentication:
@@ -74,7 +82,8 @@ internal sealed class BridgeSession
         BridgeRuntimeAttestation? runtimeAttestation = null,
         LocalPipeBridge? pipeBridge = null,
         OpenBodyProgramJournalAuthority? bodyProgramAuthority = null,
-        string bodyProgramUnavailableReason = "body_program_unavailable")
+        string bodyProgramUnavailableReason = "body_program_unavailable",
+        Func<SceneObservationInput?>? sceneObservationProvider = null)
     {
         this.runtimeAttestation = runtimeAttestation ?? BridgeRuntimeAttestation.Default;
         this.pipeBridge = pipeBridge;
@@ -88,6 +97,8 @@ internal sealed class BridgeSession
         this.presentationLocale = presentationLocale ?? NativeChatPresentationPolicy.CurrentBcp47Locale;
         this.navigationSetProvider = navigationSetProvider ?? (() => null);
         this.navigationReferences = navigationReferences ?? new NavigationReferenceStore();
+        this.sceneObservationProvider = sceneObservationProvider ?? (() => null);
+        this.sceneObservationProjection = new SceneObservationProjection(this.sceneObservations);
         this.executions.SetNavigationRuntimeFactory(() => new NavigationRuntimeSnapshot(
             this.navigationReferences,
             this.navigationRuntimeInstanceId,
@@ -137,6 +148,83 @@ internal sealed class BridgeSession
         reasonCode = "accepted";
         return true;
     }
+
+    /// <summary>
+    /// Authenticated read-only scene projection. The provider copies live native
+    /// facts on the game thread; this method owns only observation identity and
+    /// opaque reference lifetime and never routes an execution.
+    /// </summary>
+    internal bool TryObserveScene(
+        long generation,
+        BridgeEnvelope<ObserveSceneRequestPayload>? envelope,
+        out BridgeEnvelope<ObserveSceneResultPayload>? response,
+        out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "observe_scene_request", out reasonCode)) return false;
+        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+
+        SceneObservationInput? input;
+        try
+        {
+            input = this.sceneObservationProvider();
+        }
+        catch
+        {
+            reasonCode = "scene_observation_unavailable";
+            return false;
+        }
+        if (input is null || !input.IsValid)
+        {
+            reasonCode = "scene_observation_unavailable";
+            return false;
+        }
+
+        string locationName = input.CurrentRegion;
+        bool moved = this.sceneLocationName is not null
+            && (!string.Equals(this.sceneLocationName, locationName, StringComparison.Ordinal)
+                || this.sceneActorTileX != input.ActorTileX
+                || this.sceneActorTileY != input.ActorTileY);
+        if (moved)
+            this.sceneMovementSequence++;
+        if (moved || this.sceneLocationName is null)
+            this.sceneObservations.InvalidateForMove(this.navigationRuntimeInstanceId, this.scope, locationName, this.sceneMovementSequence);
+        this.sceneLocationName = locationName;
+        this.sceneActorTileX = input.ActorTileX;
+        this.sceneActorTileY = input.ActorTileY;
+
+        SceneObservationContext context = new(
+            this.navigationRuntimeInstanceId,
+            this.scope,
+            locationName,
+            this.sceneMovementSequence,
+            ++this.sceneObservationSequence);
+        SceneObservationProjectionResult projection = this.sceneObservationProjection.Observe(context, input, envelope!.Payload.Radius);
+        if (!projection.IsValid)
+        {
+            reasonCode = projection.TruncatedReason ?? "scene_observation_invalid";
+            return false;
+        }
+
+        ObserveSceneResultPayload payload = new(
+            projection.CurrentLocation,
+            projection.CurrentRegion,
+            projection.Affordances.Select(affordance => new ObserveSceneAffordancePayload(
+                affordance.Ref,
+                affordance.Kind,
+                affordance.Name,
+                affordance.Distance,
+                affordance.Direction,
+                affordance.ActionHint)).ToArray(),
+            projection.Summary,
+            projection.IsPartial,
+            projection.TruncatedReason);
+        response = Reply("observe_scene_result", envelope.CorrelationId, payload);
+        reasonCode = "accepted";
+        return true;
+    }
+
+    internal void ClearSceneForWorldUnload() => this.sceneObservations.Close();
 
     internal bool TryNavigationRead(long generation, BridgeEnvelope<BridgeNavigationReadRequest>? envelope, out BridgeEnvelope<BridgeNavigationReadResult>? response, out string reasonCode)
     {
