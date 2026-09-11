@@ -18,7 +18,7 @@ internal sealed record NavigationOrdinaryWarpLegs(
 /// </summary>
 internal sealed record NavigationOrdinaryWarpTopology(
     string CurrentSourceIdentity,
-    IReadOnlyList<NavigationOrdinaryWarpLegs> Sources);
+    IReadOnlyList<NavigationOrdinaryWarpLegs>? Sources);
 
 /// <summary>
 /// The single exclusive planner outcome. It exposes exactly one private next
@@ -69,10 +69,13 @@ internal sealed class NavigationRoutePlanner
     /// source keys, door/empty/invalid edges and missing endpoints fail closed.
     /// </summary>
     internal NavigationRoutePlanResult Plan(
-        NavigationOrdinaryWarpTopology topology,
+        NavigationOrdinaryWarpTopology? topology,
         string currentSourceIdentity,
         NavigationDestinationBinding destination)
     {
+        if (topology is null || topology.Sources is null)
+            return NavigationRoutePlanResult.Terminal("route_topology_invalid");
+
         string destinationIdentity = destination.CanonicalDestinationIdentity;
         if (string.IsNullOrEmpty(destinationIdentity))
             return NavigationRoutePlanResult.Terminal("destination_identity_invalid");
@@ -83,9 +86,9 @@ internal sealed class NavigationRoutePlanner
 
         // Index sources and reject invalid/duplicate source keys fail closed.
         var sources = new Dictionary<string, NavigationOrdinaryWarpLegs>(StringComparer.Ordinal);
-        foreach (NavigationOrdinaryWarpLegs source in topology.Sources)
+        foreach (NavigationOrdinaryWarpLegs? source in topology.Sources)
         {
-            if (string.IsNullOrEmpty(source.SourceId))
+            if (source is null || string.IsNullOrEmpty(source.SourceId) || source.OutgoingOrdinaryLegs is null)
                 return NavigationRoutePlanResult.Terminal("route_topology_invalid");
             if (!sources.TryAdd(source.SourceId, source))
                 return NavigationRoutePlanResult.Terminal("route_topology_invalid");
@@ -96,15 +99,20 @@ internal sealed class NavigationRoutePlanner
 
         // Ordinary doors and malformed edges are rejected, never silently
         // accepted. Missing endpoints fail closed before any traversal.
-        foreach (NavigationOrdinaryWarpLegs source in topology.Sources)
-        foreach (NavigationTransitionLeg leg in source.OutgoingOrdinaryLegs)
+        foreach (NavigationOrdinaryWarpLegs? source in topology.Sources)
         {
-            if (leg.IsDoor)
+            if (source is null)
+                return NavigationRoutePlanResult.Terminal("route_topology_invalid");
+
+            foreach (NavigationTransitionLeg? leg in source.OutgoingOrdinaryLegs)
+        {
+            if (leg is null || leg.IsDoor)
                 return NavigationRoutePlanResult.Terminal("route_topology_invalid");
             if (string.IsNullOrEmpty(leg.TargetLocation))
                 return NavigationRoutePlanResult.Terminal("route_topology_invalid");
             if (!sources.ContainsKey(leg.TargetLocation))
                 return NavigationRoutePlanResult.Terminal("route_topology_invalid");
+            }
         }
 
         if (topologySource == destinationIdentity)
