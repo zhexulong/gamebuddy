@@ -485,6 +485,7 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "chat_management_revision_conflict") return { status: 409, code: "draft_conflict" };
   if (message === "world_info_binding_conflict" || message === "world_info_binding_locked")
     return { status: 409, code: "state_reconciliation_required" };
+  if (message === "context_unavailable") return { status: 503, code: "runtime_unavailable" };
   if (
     message === "world_info_binding_service_unavailable" ||
     message === "world_info_binding_service_closed"
@@ -518,6 +519,7 @@ function toWorldInfoStateV1(value: ManagedWorldInfoStateV1): WorldInfoStateV1 {
       title: item.title,
       summary: item.summary,
       selected: item.selected,
+      pending: item.pending,
     })),
   };
 }

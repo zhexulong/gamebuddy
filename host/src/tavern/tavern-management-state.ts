@@ -210,6 +210,7 @@ async function v1WorldInfo(worldInfoService: WorldInfoBindingManagementService):
         title: item.title,
         summary: item.summary,
         selected: item.selected,
+        pending: item.pending,
       })),
     };
   } catch {

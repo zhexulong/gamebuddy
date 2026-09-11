@@ -3,6 +3,7 @@ import {
   createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
   type MountedChatRuntimeLease,
   type SemanticChatRuntimeMountOptions,
+  type SemanticChatRuntimeProductionAuthority,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { ProductionChatRuntimeReadback } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
@@ -50,4 +51,16 @@ export async function createKnownUnmountedChatSemanticFacade(
   return createUnmountedChatSemanticFacade(
     await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest, options),
   );
+}
+
+/**
+ * Wraps an already-constructed shared-composition Chat runtime authority into
+ * the same deployment-path facade surface used by standalone Chat composition.
+ * The caller retains the shared owner (Game projection + owner close); this
+ * facade's `close` only tears down the Chat runtime projection.
+ */
+export async function createChatSemanticFacadeFromSharedAuthority(
+  authority: SemanticChatRuntimeProductionAuthority,
+): Promise<ConstructedUnmountedChatSemanticFacade> {
+  return createUnmountedChatSemanticFacade(authority);
 }

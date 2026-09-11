@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { identityProfileMetadata, readIdentityProfile } from "../identity-profile.js";
+import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import {
   type ChatThreadState,
@@ -70,7 +70,7 @@ export function createManifestDerivedInitialChatExactContentPort(
   const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
   const profileMetadataReader: IdentityProfileMetadataReader = Object.freeze({
     async readExact() {
-      const profile = await readIdentityProfile(resolveRuntimePaths(manifest.principal, manifest.runtimeRoot).identityProfilePath);
+      const profile = await readOrCreateIdentityProfile(resolveRuntimePaths(manifest.principal, manifest.runtimeRoot).identityProfilePath);
       return identityProfileMetadata(profile);
     },
   });

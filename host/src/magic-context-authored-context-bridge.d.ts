@@ -1,11 +1,10 @@
 declare module "@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge" {
+  import type { GameBuddyAuthoredStablePlanProjection, GameBuddyAuthoredStableSourceRef, GameBuddyChatContextScope } from "@cortexkit/pi-magic-context/internal/gamebuddy-stable-context-source";
   export type TavernAuthoredContextRuntimeCapability = Readonly<{
-    prepare(transientPreflightId: string): Readonly<{ sourceRefs: readonly Readonly<Record<string, string>>[]; stableTokenCount: number }>;
-    assertInstall(durableTurnId: string, refs: readonly Readonly<Record<string, string>>[]): void;
+    prepare(transientPreflightId: string): GameBuddyAuthoredStablePlanProjection;
+    assertInstall(durableTurnId: string, refs: readonly GameBuddyAuthoredStableSourceRef[]): void;
     clear(): Promise<void>;
   }>;
-  export function publishGameBuddyAuthoredStableCatalog(scope: Readonly<{
-    continuityId: string; sessionId: string; surface: "tavern"; threadId: string;
-    profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
-  }>, catalog: unknown): TavernAuthoredContextRuntimeCapability;
+  export function publishGameBuddyAuthoredStableCatalog(scope: GameBuddyChatContextScope, catalog: unknown): TavernAuthoredContextRuntimeCapability;
+  export function replaceGameBuddyAuthoredStableCatalog(currentCapability: TavernAuthoredContextRuntimeCapability, scope: GameBuddyChatContextScope, catalog: unknown): TavernAuthoredContextRuntimeCapability;
 }

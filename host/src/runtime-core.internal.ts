@@ -54,6 +54,10 @@ import {
   StardewExecutionRecoverySupervisor,
 } from "./stardew-execution-recovery-supervisor.js";
 import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
+import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
+import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/continuity-semantic-production-store.js";
+import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
+import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 
 export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
   pi: "0.84.4",
@@ -492,6 +496,66 @@ export type GameHostBindingFactory = (
 ) => PresentationRuntime | undefined;
 
 /** Construction-owned attachment for a bounded Game runtime surface. */
+export type ChatRuntimeConstructionProduct = Readonly<{
+  runtime: RuntimeSession;
+  authoredContextCapability: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability;
+  refreshAuthoredContext: (currentCapability: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability) => Promise<import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability>;
+  clearTavernNarrativeGateMarker?: () => void;
+}>;
+
+/** Construction-private Chat handoff; publication is owned by this internal layer. */
+export async function createChatRuntimeConstructionInternal(
+  execution: ChatRuntimeBindingExecution,
+  permit: ProductionChatRuntimePermit,
+  options: Readonly<{ tavernNarrativeGateNonceSha256?: string }> = {},
+): Promise<ChatRuntimeConstructionProduct> {
+  const construction = await prepareExactChatRuntimeConstruction(execution, permit, options);
+  const runtime = await createCompanionRuntime(
+    construction.identity,
+    construction.runtimeRoot,
+    undefined,
+    construction.modelConfig,
+    undefined,
+    construction.presentation,
+    false,
+    undefined,
+    construction.surfaceSessionId,
+    undefined,
+    "chat",
+    undefined,
+    construction.tavernNarrativeGateNonceSha256,
+  );
+  try {
+    const piSessionId = runtime.sessionManager.getSessionId();
+    if (typeof piSessionId !== "string" || piSessionId.length === 0)
+      throw new Error("pi_session_binding_unavailable");
+    const catalog: TavernAuthoredContextCatalog = await construction.materializeStableContextForPiSession(piSessionId);
+    const { publishGameBuddyAuthoredStableCatalog, replaceGameBuddyAuthoredStableCatalog } = await import(
+      "@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge"
+    );
+    const authoredContextCapability = publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);
+    const refreshAuthoredContext = async (currentCapability: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability) => {
+      const freshCatalog = await construction.materializeDesiredStableContextForPiSession(piSessionId);
+      return replaceGameBuddyAuthoredStableCatalog(currentCapability, freshCatalog.scope, freshCatalog);
+    };
+    return Object.freeze({
+      runtime,
+      authoredContextCapability,
+      refreshAuthoredContext,
+      ...(runtime.clearTavernNarrativeGateMarker === undefined
+        ? {}
+        : { clearTavernNarrativeGateMarker: runtime.clearTavernNarrativeGateMarker }),
+    });
+  } catch (error) {
+    try {
+      runtime.clearTavernNarrativeGateMarker?.();
+    } finally {
+      runtime.session.dispose();
+    }
+    throw error;
+  }
+}
+
 export type GameCompanionRuntimeAttachment = Readonly<{
   /** Production-only durable Stardew recovery composition, supplied by the materializer. */
   recoveryJournal?: import("./stardew-logical-action-recovery-journal.js").StardewLogicalActionRecoveryJournal;
@@ -934,7 +998,7 @@ export async function createRuntimeWithFixedToolsCore(
     worldBook === undefined
       ? []
       : createWorldBookTools(worldBook, worldBookScope ?? undefined);
-  const gameplaySubagent = gameplaySubagentEnabled
+  const gameplaySubagent = gameplaySubagentEnabled && runtimeSurface === "game"
     ? integration !== undefined && modelConfig !== undefined
       ? new GameplayTaskSubagent(
           paths,

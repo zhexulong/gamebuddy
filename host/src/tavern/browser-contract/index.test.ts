@@ -872,3 +872,125 @@ test("every route freezes the exact security, binding, and success policy matrix
     },
   });
 });
+test("world-info DTO projects a bounded opaque pending state without raw durable facts", () => {
+  // The WorldInfoStateV1 projection has no apiVersion member: the route
+  // success schema is a strict term and rejects any extra field, including
+  // a spurious apiVersion the browser could attach.
+  const state = {
+    state: "pending",
+    revision: handle,
+    items: [
+      {
+        handle,
+        title: "Pelican Town",
+        summary: "The revised town facts.",
+        selected: false,
+        pending: true,
+      },
+    ],
+  };
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(state), true);
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, apiVersion: 1 }), false);
+  // selected and pending are both required item fields; a raw selected item is
+  // only expressible with an explicit pending boolean.
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
+      ...state,
+      items: [{ handle, title: "Pelican Town", summary: null, selected: true }],
+    }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
+      ...state,
+      items: [{ handle, title: "Pelican Town", summary: null, selected: true, pending: false }],
+    }),
+    true,
+  );
+  // Raw durable facts (public title in the opaque revision handle, canonical
+  // hash, source id, storage revision) are never expressible in the projection.
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, revision: "Pelican Town" }), false);
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
+      ...state,
+      items: [{ ...state.items[0], canonicalHash: "a".repeat(64) }],
+    }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
+      ...state,
+      items: [{ ...state.items[0], source: "managed_world_info" }],
+    }),
+    false,
+  );
+  // Opaque handles use the canonical unpadded base64url form, not raw titles
+  // and never raw numeric revisions/timestamps.
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
+      ...state,
+      items: [{ ...state.items[0], handle: "Pelican Town" }],
+    }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
+      ...state,
+      items: [{ ...state.items[0], handle: "1234567890" }],
+    }),
+    false,
+  );
+  // Extra fields are rejected; the union of states is closed.
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
+      ...state,
+      items: [{ ...state.items[0], extra: true }],
+    }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, state: "locked" }),
+    false,
+  );
+  // "unavailable" is a member of the closed union; only invented states are
+  // rejected. The browser can never itself produce a state string.
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, state: "unavailable", items: [] }),
+    true,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, state: "invented" }),
+    false,
+  );
+  // Title length and summary bounds are enforced.
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
+      ...state,
+      items: [{ ...state.items[0], title: "" }],
+    }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
+      ...state,
+      items: [{ ...state.items[0], summary: "x".repeat(513) }],
+    }),
+    false,
+  );
+  const unavailable = { state: "unavailable", revision: handle, items: [] };
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(unavailable), true);
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...unavailable, revision: "raw" }), false);
+});
+
+test("world-info bind command is a strict opaque revision-scoped union", () => {
+  const bind = { apiVersion: 1, selectionGeneration: 1, expectedRevision: handle, sourceHandle: handle };
+  const unbind = { apiVersion: 1, selectionGeneration: 1, expectedRevision: handle, sourceHandle: null };
+  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check(bind), true);
+  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check(unbind), true);
+  // Raw title or numeric/storage revision is never expressible.
+  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, expectedRevision: "Pelican Town" }), false);
+  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: "Pelican Town" }), false);
+  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, extra: true }), false);
+  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, selectionGeneration: 0 }), false);
+  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: handle + "=" }), false);
+});

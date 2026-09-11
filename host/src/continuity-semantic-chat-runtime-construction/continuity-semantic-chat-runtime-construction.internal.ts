@@ -7,7 +7,12 @@ import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
-import { materializeTavernAuthoredContextCatalog, type TavernAuthoredContextCatalog } from "../tavern/catalog-service.js";
+import {
+  materializeTavernAuthoredStableCatalog,
+  type TavernAuthoredContextCatalog,
+} from "../tavern/catalog-service.js";
+import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
+import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 
@@ -23,8 +28,10 @@ export type ExactChatRuntimeConstruction = Readonly<{
   modelConfig: CompanionModelConfig;
   modelProfileRevision: number;
   presentation: PresentationRuntime;
-  /** Construction-owned re-materialization for the actual Pi session. */
+  /** Construction-owned materialization for the currently applied Chat catalog. */
   materializeStableContextForPiSession(piSessionId: string): Promise<TavernAuthoredContextCatalog>;
+  /** Construction-private desired-state rebuild used only after terminal settlement. */
+  materializeDesiredStableContextForPiSession(piSessionId: string): Promise<TavernAuthoredContextCatalog>;
   tavernNarrativeGateNonceSha256?: string;
 }>;
 
@@ -63,38 +70,91 @@ export async function prepareExactChatRuntimeConstruction(
     state.thread.lifecycleStatus !== "active"
   )
     throw new Error("chat_runtime_exact_content_unavailable");
-  // A stable WorldBook binding names metadata but this construction boundary
-  // does not yet own its immutable body/revision resolver. Reject it rather
-  // than silently drop it, select latest content, or let a consumer inject a
-  // WorldBook. Managed bindings are covered by the same rule.
-  if (state.thread.worldBookBinding !== undefined) throw new Error("chat_runtime_exact_content_unavailable");
   const tavernPaths = resolveTavernPaths(paths, identity);
   const artifactStore = new TavernArtifactStore(paths.root);
+  const managedWorldInfoResolver = createManagedWorldInfoBindingResolver(
+    createWorldInfoManagementRepository(execution.runtimeRoot),
+  );
   const selectedThread = state.thread;
-  const profileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath));
-  const materializeStableContextForPiSession = async (piSessionId: string): Promise<TavernAuthoredContextCatalog> => {
+  let profileMetadata;
+  try {
+    profileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath));
+  } catch {
+    throw new Error("chat_runtime_exact_content_unavailable");
+  }
+  if (
+    selectedThread.profileId !== profileMetadata.profileId ||
+    selectedThread.profileRevision !== profileMetadata.revision ||
+    selectedThread.profileCanonicalHash !== profileMetadata.canonicalHash
+  )
+    throw new Error("chat_runtime_exact_content_unavailable");
+  const materializeContextForPiSession = async (
+    piSessionId: string,
+    mode: "mounted" | "desired",
+  ) => {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(piSessionId)) throw new Error("chat_runtime_pi_session_rejected");
     try {
-      return await materializeTavernAuthoredContextCatalog(
+      const freshState = await threads.resumeThread(permit.chatThreadId, permit.chatSurfaceSessionId);
+      if (
+        freshState.thread.chatThreadId !== selectedThread.chatThreadId ||
+        freshState.thread.chatSurfaceSessionId !== permit.chatSurfaceSessionId ||
+        freshState.thread.companionId !== identity.companionId ||
+        freshState.thread.continuityId !== identity.continuityId ||
+        freshState.thread.lifecycleStatus !== "active"
+      )
+        throw new Error("chat_runtime_exact_content_unavailable");
+      const freshProfileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath));
+      if (
+        freshState.thread.profileId !== freshProfileMetadata.profileId ||
+        freshState.thread.profileRevision !== freshProfileMetadata.revision ||
+        freshState.thread.profileCanonicalHash !== freshProfileMetadata.canonicalHash
+      )
+        throw new Error("chat_runtime_exact_content_unavailable");
+      const desiredBinding = freshState.thread.worldBookBinding;
+      const effectiveBinding =
+        mode === "desired" || sameWorldInfoBinding(desiredBinding, freshState.thread.appliedWorldBookBinding)
+          ? desiredBinding
+          : freshState.thread.appliedWorldBookBinding;
+      const materializationThread =
+        sameWorldInfoBinding(effectiveBinding, desiredBinding) &&
+        sameWorldInfoBinding(effectiveBinding, freshState.thread.appliedWorldBookBinding)
+          ? freshState.thread
+          : Object.freeze({
+              ...freshState.thread,
+              ...(effectiveBinding === undefined ? { worldBookBinding: undefined } : { worldBookBinding: effectiveBinding }),
+            });
+      return await materializeTavernAuthoredStableCatalog(
         tavernPaths,
         artifactStore,
-        selectedThread,
+        materializationThread,
         Object.freeze({
           continuityId: identity.continuityId!,
           sessionId: piSessionId,
           surface: "tavern",
-          threadId: selectedThread.chatThreadId,
+          threadId: freshState.thread.chatThreadId,
           profile: Object.freeze({
-            profileId: profileMetadata.profileId,
-            revision: profileMetadata.revision,
-            canonicalHash: profileMetadata.canonicalHash,
+            profileId: freshProfileMetadata.profileId,
+            revision: freshProfileMetadata.revision,
+            canonicalHash: freshProfileMetadata.canonicalHash,
           }),
         }),
+        effectiveBinding === undefined
+          ? undefined
+          : "source" in effectiveBinding
+            ? await managedWorldInfoResolver.resolve(effectiveBinding)
+            : (() => {
+                throw new Error("chat_runtime_exact_content_unavailable");
+              })(),
       );
     } catch {
       throw new Error("chat_runtime_exact_content_unavailable");
     }
   };
+  const materializeStableContextForPiSession = (piSessionId: string) =>
+    materializeContextForPiSession(piSessionId, "mounted");
+  const materializeDesiredStableContextForPiSession = (piSessionId: string) =>
+    materializeContextForPiSession(piSessionId, "desired");
+
   const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
   const modelConfig = resolveModelProfileConfig(modelProfile);
   if (modelConfig === null) throw new Error("chat_runtime_model_configuration_unavailable");
@@ -110,10 +170,23 @@ export async function prepareExactChatRuntimeConstruction(
       sessionId: permit.chatSurfaceSessionId,
     }),
     materializeStableContextForPiSession,
+    materializeDesiredStableContextForPiSession,
     ...(options.tavernNarrativeGateNonceSha256 === undefined
       ? {}
       : { tavernNarrativeGateNonceSha256: options.tavernNarrativeGateNonceSha256 }),
   });
+}
+
+function sameWorldInfoBinding(
+  left: import("../tavern/chat-thread-store.js").TavernStableWorldInfoBinding | undefined,
+  right: import("../tavern/chat-thread-store.js").TavernStableWorldInfoBinding | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  if ("source" in left && "source" in right)
+    return left.publicTitle === right.publicTitle && left.revision === right.revision && left.canonicalHash === right.canonicalHash;
+  if (!("source" in left) && !("source" in right))
+    return left.worldBookId === right.worldBookId && left.revision === right.revision && left.canonicalHash === right.canonicalHash && left.provenance === right.provenance;
+  return false;
 }
 
 function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: ProductionChatRuntimePermit): void {

@@ -27,13 +27,14 @@ import { createManagedWorldInfoBindingResolver } from "./managed-world-info-bind
  * browser can never decode them into a durable fact.
  */
 export type WorldInfoStateV1 = Readonly<{
-  state: "none" | "selected" | "locked" | "unavailable";
+  state: "none" | "selected" | "pending" | "unavailable";
   revision: string;
   items: readonly Readonly<{
     handle: string;
     title: string;
     summary: string | null;
     selected: boolean;
+    pending: boolean;
   }>[];
 }>;
 /**
@@ -154,9 +155,7 @@ export function createWorldInfoBindingManagementService(
       assertLeaseAfterDurableRead();
       assertProjectionCurrent(projection);
       validateThread(state);
-      // A nonempty transcript locks the binding regardless of stale/revision
-      // variance: the browser must read authoritative state and see the lock.
-      if (state.messages.length !== 0) throw locked();
+      // Desired binding may change while a turn runs; the coordinator applies it only after settlement.
       // The opaque revision handle is unexpired only while both the durable
       // updatedAtMs and the current binding fingerprint equal the mapped
       // values; otherwise the browser acts on a superseded projection.
@@ -230,11 +229,12 @@ export function createWorldInfoBindingManagementService(
       if (isLeaseUnavailable(error)) throw error;
       projections = null;
     }
-    const locked = state.messages.length !== 0;
-    const worldBookBinding = state.thread.worldBookBinding;
+    const pending = !sameBinding(state.thread.worldBookBinding, state.thread.appliedWorldBookBinding);
     const selectedBinding =
-      worldBookBinding !== undefined && "source" in worldBookBinding && worldBookBinding.source === "managed_world_info"
-        ? worldBookBinding
+      state.thread.appliedWorldBookBinding !== undefined &&
+      "source" in state.thread.appliedWorldBookBinding &&
+      state.thread.appliedWorldBookBinding.source === "managed_world_info"
+        ? state.thread.appliedWorldBookBinding
         : null;
     const fingerprint = fingerprintFor(state.thread.worldBookBinding);
     const revision = mintHandle(new Set());
@@ -259,6 +259,7 @@ export function createWorldInfoBindingManagementService(
             title: projection.publicTitle,
             summary: summarize(projection.summary),
             selected,
+            pending: pending,
           }),
         );
       }
@@ -271,7 +272,7 @@ export function createWorldInfoBindingManagementService(
             items: Object.freeze([]),
           })
         : Object.freeze({
-            state: locked ? ("locked" as const) : selectedCount > 0 ? ("selected" as const) : ("none" as const),
+            state: pending ? ("pending" as const) : selectedCount > 0 ? ("selected" as const) : ("none" as const),
             revision,
             items: Object.freeze(items),
           });
@@ -335,6 +336,13 @@ export function createWorldInfoBindingManagementService(
   }
 }
 
+function sameBinding(a: TavernStableWorldInfoBinding | undefined, b: TavernStableWorldInfoBinding | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if ("source" in a && "source" in b) return a.publicTitle === b.publicTitle && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
+  if (!("source" in a) && !("source" in b)) return a.worldBookId === b.worldBookId && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
+  return false;
+}
+
 function fingerprintFor(binding: TavernStableWorldInfoBinding | undefined): string {
   if (binding === undefined) return "none";
   if ("source" in binding) {
@@ -372,6 +380,7 @@ function rethrowMutationError(error: unknown): Error {
   if (isLeaseUnavailable(error)) return error;
   if (error.message === "world_info_binding_conflict") return conflict();
   if (error.message === "world_info_binding_locked") return locked();
+  if (error.message === "context_unavailable") return unavailable();
   if (error.message === "world_info_binding_service_unavailable") return unavailable();
   if (error.message === "chat_thread_revision_conflict" || error.message === "chat_thread_scope_mismatch")
     return conflict();

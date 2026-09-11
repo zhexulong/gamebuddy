@@ -3,8 +3,7 @@
  * Host-owned here; no caller can inject a runtime constructor or presentation.
  */
 
-import { prepareExactChatRuntimeConstruction } from "../continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
-import { createCompanionRuntime, type RuntimeSession } from "../runtime.js";
+import { createChatRuntimeConstructionInternal } from "../runtime-core.internal.js";
 import {
   type ChatRuntimeDisposal,
   type ChatRuntimeMaterializer,
@@ -30,49 +29,32 @@ export function createHostChatRuntimeMaterializer(
   return Object.freeze({
     async materialize(reservation, permit): Promise<MaterializedChatRuntime> {
       return materializeExactChatRuntime(reservation, permit, async (execution) => {
-        const { construction, runtime } = await createMaterializedChatRuntime(execution, permit, options);
-        const piSessionId = runtime.sessionManager.getSessionId();
-        if (typeof piSessionId !== "string" || piSessionId.length === 0) throw new Error("pi_session_binding_unavailable");
-        const catalog = await construction.materializeStableContextForPiSession(piSessionId);
-        const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge");
-        const capability = publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);
-        const disposal = Object.freeze({ session: runtime.session, authoredContextCapability: capability });
+        const { runtime, authoredContextCapability: capability, refreshAuthoredContext } = await createChatRuntimeConstructionInternal(execution, permit, options);
+        let currentCapability = capability;
+        const clearAuthoredContext = async (): Promise<void> => {
+          await currentCapability.clear();
+        };
+        const refresh = async (current: typeof capability): Promise<typeof capability> => {
+          if (current !== currentCapability) throw new Error("gamebuddy_authored_context_replacement_rejected");
+          const next = await refreshAuthoredContext(current);
+          currentCapability = next;
+          return next;
+        };
+        const disposal = Object.freeze({
+          session: runtime.session,
+          authoredContextCapability: capability,
+          clearAuthoredContext,
+          ...(runtime.clearTavernNarrativeGateMarker === undefined
+            ? {}
+            : { clearTavernNarrativeGateMarker: runtime.clearTavernNarrativeGateMarker }),
+        });
         return Object.freeze({
           ...disposal,
           runtimeSession: runtime,
           authoredContextCapability: capability,
+          refreshAuthoredContext: refresh,
         });
       });
     },
   });
-}
-
-type MaterializedChatRuntimeResult = Readonly<{
-  construction: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>>;
-  runtime: RuntimeSession;
-}>;
-
-/** Private typed positional adapter constrains createCompanionRuntime drift. */
-async function createMaterializedChatRuntime(
-  execution: Parameters<typeof prepareExactChatRuntimeConstruction>[0],
-  permit: Parameters<typeof prepareExactChatRuntimeConstruction>[1],
-  options: HostChatRuntimeMaterializerOptions,
-): Promise<MaterializedChatRuntimeResult> {
-  const construction = await prepareExactChatRuntimeConstruction(execution, permit, options);
-  const runtime = await createCompanionRuntime(
-    construction.identity,
-    construction.runtimeRoot,
-    undefined,
-    construction.modelConfig,
-    undefined,
-    construction.presentation,
-    false,
-    undefined,
-    construction.surfaceSessionId,
-    undefined,
-    "chat",
-    undefined,
-    construction.tavernNarrativeGateNonceSha256,
-  );
-  return Object.freeze({ construction, runtime });
 }
