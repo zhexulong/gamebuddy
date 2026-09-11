@@ -11,13 +11,13 @@ import type {
 import type { RuntimeSession } from "../runtime.js";
 
 /** Minimal reverse-disposal boundary; no Pi session, runtime root, or binding leaks. */
-type ChatRuntimeStableContextLifecycle = Readonly<{}>;
-
 import type { TavernAuthoredContextRuntimeCapability } from "@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge";
-
 export type ChatRuntimeDisposal = Readonly<{
   session: Readonly<{ dispose(): void }>;
   authoredContextCapability?: TavernAuthoredContextRuntimeCapability;
+  /** Clears the currently installed capability after a private replacement. */
+  clearAuthoredContext?: () => Promise<void>;
+  clearTavernNarrativeGateMarker?: () => void;
 }>;
 
 
@@ -29,6 +29,7 @@ export type MaterializedChatRuntime = Readonly<{
    */
   runtimeSession?: RuntimeSession;
   authoredContextCapability?: TavernAuthoredContextRuntimeCapability;
+  refreshAuthoredContext?: (currentCapability: TavernAuthoredContextRuntimeCapability) => Promise<TavernAuthoredContextRuntimeCapability>;
   /** Runtime resources only. The later coordinator owns durable terminalization and binding close. */
   close(): Promise<void>;
 }>;
@@ -36,7 +37,10 @@ export type ChatRuntimeMaterialization = ChatRuntimeDisposal &
   Readonly<{
     /** Never exposed by this module's public product; retained for production mounting only. */
     runtimeSession?: RuntimeSession;
-  authoredContextCapability?: TavernAuthoredContextRuntimeCapability;
+    /** Construction-private replacement handoff; never exposed by RuntimeSession. */
+    refreshAuthoredContext?: (
+      currentCapability: TavernAuthoredContextRuntimeCapability,
+    ) => Promise<TavernAuthoredContextRuntimeCapability>;
   }>;
 export type ChatRuntimeMaterializer = Readonly<{
   /** Construction-zone-only: consumes one callback-admitted Chat binding reservation. */
@@ -101,6 +105,7 @@ function finalizeMaterializedChatRuntime(
     receipt,
     ...(runtime.runtimeSession === undefined ? {} : { runtimeSession: runtime.runtimeSession }),
     ...(runtime.authoredContextCapability === undefined ? {} : { authoredContextCapability: runtime.authoredContextCapability }),
+    ...(runtime.refreshAuthoredContext === undefined ? {} : { refreshAuthoredContext: runtime.refreshAuthoredContext }),
     close: () => {
       if (closePromise !== undefined) return closePromise;
       let shared!: Promise<void>;
@@ -139,7 +144,15 @@ function mintChatRuntimeReceipt(permit: ProductionChatRuntimePermit): Production
 /** Reverse close of resources acquired by one Chat runtime factory. */
 export async function closeMaterializedChatRuntime(runtime: ChatRuntimeDisposal): Promise<void> {
   const errors: unknown[] = [];
-  try { await runtime.authoredContextCapability?.clear(); } catch (error) { errors.push(error); }
+  try {
+    if (runtime.clearAuthoredContext !== undefined) await runtime.clearAuthoredContext();
+    else await runtime.authoredContextCapability?.clear();
+  } catch (error) { errors.push(error); }
+  try {
+    runtime.clearTavernNarrativeGateMarker?.();
+  } catch (error) {
+    errors.push(error);
+  }
   try {
     runtime.session.dispose();
   } catch (error) {

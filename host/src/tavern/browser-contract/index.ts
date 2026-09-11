@@ -216,7 +216,7 @@ const NavigationItem = strictObject({
 const WorldInfoBindingState = Type.Union([
   Type.Literal("none"),
   Type.Literal("selected"),
-  Type.Literal("locked"),
+  Type.Literal("pending"),
   Type.Literal("unavailable"),
 ]);
 /**
@@ -233,6 +233,7 @@ export const WorldInfoStateV1Schema = strictObject({
       title: Type.String({ minLength: 1, maxLength: 256 }),
       summary: Type.Union([Type.String({ maxLength: 512 }), Type.Null()]),
       selected: Type.Boolean(),
+      pending: Type.Boolean(),
     }),
     { maxItems: 100 },
   ),

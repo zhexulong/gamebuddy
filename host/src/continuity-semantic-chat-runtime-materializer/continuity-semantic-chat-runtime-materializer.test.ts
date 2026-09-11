@@ -99,11 +99,12 @@ test("Chat materializer source graph has the sole production Chat runtime owner 
     join(folder, "continuity-semantic-chat-runtime-materializer.internal.ts"),
     "utf8",
   );
-  assert.equal((publicSource.match(/createCompanionRuntime\s*\(/g) ?? []).length, 1);
+  assert.equal(publicSource.includes("createCompanionRuntime"), false);
   assert.equal(publicSource.includes("factory:") || publicSource.includes("factory("), false);
   assert.equal(internalSource.includes("createCompanionRuntime"), false);
-  assert.equal(publicSource.includes("tavernStableContextSnapshot"), false);
-  assert.equal(publicSource.includes("gameOperationalGateNonceSha256"), false);
+   assert.equal(publicSource.includes("tavernStableContextSnapshot"), false);
+   assert.equal(publicSource.includes("publishGameBuddyAuthoredStableCatalog"), false);
+   assert.equal(publicSource.includes("gameOperationalGateNonceSha256"), false);
   assert.equal(publicSource.includes("clearGameOperationalGateMarker"), false);
   assert.match(publicSource, /tavernNarrativeGateNonceSha256/);
   assert.equal(internalSource.includes("clearGameOperationalGateMarker"), false);

@@ -47,6 +47,7 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { identityKey, type RuntimeSession } from "../runtime.js";
 import type { CreateChatThreadRequest } from "../tavern/chat-thread-store.js";
 import {
+  acknowledgeMountedWorldInfoBinding,
   createChatThreadStore,
   transitionMountedProviderStart,
   transitionMountedPresentation,
@@ -150,7 +151,9 @@ type MountedChatRuntimeLeaseRecord = {
   /** Live materialized runtime session for the start scope; never public. */
   readonly providerRuntimeSession?: RuntimeSession;
   /** Exact mounted authored catalog capability; never public or retained by callers. */
-  readonly authoredContextCapability?: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability;
+  authoredContextCapability?: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability;
+  refreshAuthoredContext?: (currentCapability: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability) => Promise<import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability>;
+  authoredContextRefreshPromise?: Promise<void>;
 
   /**
    * Process-local one-shot reservation for a durable generation-one attempt.
@@ -395,6 +398,8 @@ export async function acceptMountedDurableTurn(
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
   return record.begin(async () => {
     if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
+    await ensureCurrentAuthoredContext(manifest, record);
+    if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
     const active = { value: true };
     const consuming = { value: false };
     const admission = Object.freeze({}) as MountedAdmission;
@@ -405,6 +410,92 @@ export async function acceptMountedDurableTurn(
       active.value = false;
     }
   });
+}
+
+/** Refreshes desired authored context only after exact terminal settlement. */
+async function ensureCurrentAuthoredContext(
+  manifest: HostDeploymentManifest,
+  record: MountedChatRuntimeLeaseRecord,
+): Promise<void> {
+  const inFlight = record.authoredContextRefreshPromise;
+  if (inFlight !== undefined) {
+    await inFlight;
+    if (!record.active) throw new SemanticProductionCoordinatorError("context_unavailable");
+    return;
+  }
+
+  const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
+  let refreshPromise!: Promise<void>;
+  refreshPromise = (async () => {
+    const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
+    if (!record.active) throw new SemanticProductionCoordinatorError("context_unavailable");
+    if (sameBindingForCoordinator(state.thread.worldBookBinding, state.thread.appliedWorldBookBinding)) return;
+    if (
+      (state.turnLedger !== null && !isTerminalTurnStatusForCoordinator(state.turnLedger.status)) ||
+      record.activePrompt !== undefined
+    )
+      throw new SemanticProductionCoordinatorError("context_unavailable");
+
+    const refresh = record.refreshAuthoredContext;
+    const current = record.authoredContextCapability;
+    if (refresh === undefined || current === undefined)
+      throw new SemanticProductionCoordinatorError("context_unavailable");
+    const next = await refresh(current);
+    // The private bridge invalidates `current` as part of replacement. Retain
+    // the replacement immediately so any failed post-replacement fence or
+    // retry can never use the stale capability.
+    record.authoredContextCapability = next;
+    if (!record.active) throw new SemanticProductionCoordinatorError("context_unavailable");
+    const after = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
+    if (
+      (after.turnLedger !== null && !isTerminalTurnStatusForCoordinator(after.turnLedger.status)) ||
+      record.activePrompt !== undefined
+    )
+      throw new SemanticProductionCoordinatorError("context_unavailable");
+    if (!record.active) throw new SemanticProductionCoordinatorError("context_unavailable");
+    // The desired binding must remain unchanged across the replacement.
+    if (!sameBindingForCoordinator(after.thread.worldBookBinding, state.thread.worldBookBinding))
+      throw new SemanticProductionCoordinatorError("context_unavailable");
+    const operationAuthority = record.transitionAuthority.mintOperation();
+    try {
+      await acknowledgeMountedWorldInfoBinding({
+        authority: record.transitionAuthority.authority,
+        operationAuthority: operationAuthority.authority,
+        runtimeRoot: record.runtimeRoot,
+        playerId: record.principal.playerId,
+        companionId: manifest.principal.companionId,
+        continuityId: manifest.principal.continuityId,
+        chatThreadId: record.chatThreadId,
+        chatSurfaceSessionId: record.chatSurfaceSessionId,
+        binding: after.thread.worldBookBinding,
+        expectedOldAppliedBinding: state.thread.appliedWorldBookBinding,
+      });
+    } finally {
+      operationAuthority.revoke();
+    }
+    if (!record.active) throw new SemanticProductionCoordinatorError("context_unavailable");
+  })();
+  record.authoredContextRefreshPromise = refreshPromise;
+  try {
+    await refreshPromise;
+  } finally {
+    if (record.authoredContextRefreshPromise === refreshPromise)
+      record.authoredContextRefreshPromise = undefined;
+  }
+}
+
+function isTerminalTurnStatusForCoordinator(status: string): boolean {
+  return status === "completed" || status === "cancelled" || status === "failed";
+}
+
+function sameBindingForCoordinator(a: unknown, b: unknown): boolean {
+  if (a === undefined || a === null || b === undefined || b === null) return (a === undefined || a === null) && (b === undefined || b === null);
+  if (typeof a !== "object" || typeof b !== "object") return false;
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  if (left.source === "managed_world_info" || right.source === "managed_world_info")
+    return left.source === "managed_world_info" && right.source === "managed_world_info" && left.publicTitle === right.publicTitle && left.revision === right.revision && left.canonicalHash === right.canonicalHash;
+  return left.worldBookId === right.worldBookId && left.revision === right.revision && left.canonicalHash === right.canonicalHash && left.provenance === right.provenance;
 }
 
 /** Tavern-private consumption seam; callers cannot observe a lease record. */
@@ -1154,6 +1245,21 @@ export type SemanticProductionAuthority = Readonly<{
   close(): Promise<void>;
 }>;
 
+/**
+ * One shared-unless-owner primitive: both the mounted Chat runtime authority
+ * and the Game authority are constructed over the same provision and the same
+ * Windows root mutex/broker. The owner exposes only the existing narrow
+ * Chat/Game authority surfaces plus its own idempotent close; it never
+ * delegates a provision, store, mutex or raw broker. Either projection's close
+ * drains/rejects only its own operations; the shared provision and
+ * mutex/broker close solely through the owner close.
+ */
+export type SharedSemanticProductionAuthority = Readonly<{
+  chat: SemanticChatRuntimeProductionAuthority;
+  game: SemanticGameProductionAuthority;
+  close(): Promise<void>;
+}>;
+
 /** Construction-zone-only S4d Game authority. It never exposes a store, mutex, or provision. */
 export type SemanticGameProductionAuthority = Readonly<{
   authority: "SEMANTIC";
@@ -1411,6 +1517,153 @@ export async function createKnownSemanticGameProductionAuthorityFromDeploymentMa
   }
 }
 
+/**
+ * Shared Chat/Game semantic authority factory. The manifest is the sole
+ * deployment selection boundary; both projections share one provision and one
+ * Windows root mutex/broker. The Chat side is the real mounted Chat runtime
+ * authority (`startMountedChatRuntime`), constructed over the same provision,
+ * the shared store projection, and its own runtime binding. `fresh` provisions
+ * the root and initializes the initial Chat exactly like the standalone fresh
+ * Chat constructor; `known` reuses the standalone known-root successor wiring
+ * (`reselectTerminalChatRuntimeSuccessor`). Projection close never closes the
+ * shared provision/mutex; only the returned owner close drains the Game
+ * projection, the Chat runtime projection, and then the single provision and
+ * mutex/broker in that order.
+ */
+export async function createSharedSemanticProductionAuthorityFromDeploymentManifest(
+  manifest: HostDeploymentManifest,
+  mode: "fresh" | "known",
+  options: SemanticChatRuntimeMountOptions = {},
+): Promise<SharedSemanticProductionAuthority> {
+  const input: FreshContinuityProvisionOptions = Object.freeze({
+    runtimeCwd: manifest.runtimeRoot,
+    principal: Object.freeze({ ...manifest.principal }),
+    bootstrapOperationId: manifest.bootstrapOperationId,
+    authorityGeneration: manifest.authorityGeneration,
+  });
+  const broker = new WindowsNamedMutexBroker();
+  const mutex = createWindowsAuthorityRootMutex(broker);
+  let provision: FreshContinuityProvision | undefined;
+  let semantic: SemanticProductionAuthority | undefined;
+  let binding: Awaited<ReturnType<typeof createChatRuntimeBinding>> | undefined;
+  let chat: SemanticChatRuntimeProductionAuthority | undefined;
+  let game: SemanticGameProductionAuthority | undefined;
+  try {
+    const admission = createCanonicalProductionAuthorityAdmission(input.runtimeCwd);
+    provision = await openProvisionWithAdmission(
+      () =>
+        mode === "fresh"
+          ? provisionFreshProductionContinuityFromCanonicalAdmission(input, admission)
+          : openKnownProductionContinuityFromCanonicalAdmission(input, admission),
+      admission.authorityRootIdentity,
+      mutex,
+    );
+    // Shared projections intentionally do not close the provision/mutex: an
+    // explicit shared-ownership close flag suppresses those in each helper.
+    semantic = create(provision, mutex, undefined, true);
+    game = createKnownGameAuthority(provision, mutex, undefined, createWindowsOwnerDeathVerifier(), true);
+    if (mode === "fresh") {
+      await semantic.initializeInitialChat(createManifestDerivedInitialChatExactContentPort(manifest));
+      binding = await createChatRuntimeBinding(manifest);
+    } else {
+      // Known Chat is mounted as the terminal successor exactly like the
+      // standalone known Chat runtime constructor; it never adopts a live Chat.
+      binding = await createChatRuntimeBinding(manifest);
+      await semantic.reselectTerminalChatRuntimeSuccessor();
+    }
+    // The real mounted runtime projection shares the provision/mutex/broker;
+    // its own close tears down the runtime and closes its Chat binding and
+    // drain-only store projection, leaving shared resources for the owner.
+    chat = await createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options, true);
+    binding = undefined;
+    return createSharedSemanticProductionAuthorityOwner(chat, game, provision, mutex, broker);
+  } catch (error) {
+    try {
+      await binding?.close();
+    } catch {
+      /* preserve construction failure */
+    }
+    try {
+      await chat?.close();
+    } catch {
+      /* preserve construction failure */
+    }
+    try {
+      await semantic?.close();
+    } catch {
+      /* preserve construction failure */
+    }
+    try {
+      await game?.close();
+    } catch {
+      /* preserve construction failure */
+    }
+    provision?.close();
+    await closeOwnedMutex(mutex, broker).catch(() => undefined);
+    throw error;
+  }
+}
+
+function createSharedSemanticProductionAuthorityOwner(
+  chat: SemanticChatRuntimeProductionAuthority,
+  game: SemanticGameProductionAuthority,
+  provision: FreshContinuityProvision,
+  mutex: WindowsAuthorityRootMutex,
+  broker: WindowsNamedMutexBroker,
+): SharedSemanticProductionAuthority {
+  let closePromise: Promise<void> | undefined;
+  let chatClosed = false;
+  let gameClosed = false;
+  let provisionClosed = false;
+  let mutexClosed = false;
+  let brokerClosed = false;
+  let terminalError: unknown;
+  return Object.freeze({
+    chat,
+    game,
+    close: () => {
+      if (closePromise !== undefined) return closePromise;
+      const attempt = (async () => {
+        // Drain both projections first. A projection closed earlier is closed
+        // again here safely because its own close is memoized. Game is closed
+        // before Chat so a live Game runtime (whose close refuses by design)
+        // leaves Chat open and usable while the owner close stays retryable.
+        if (!gameClosed) {
+          await game.close();
+          gameClosed = true;
+        }
+        if (!chatClosed) {
+          await chat.close();
+          chatClosed = true;
+        }
+        // Only the owner closes the one shared provision and mutex/broker.
+        if (!provisionClosed) {
+          provision.close();
+          provisionClosed = true;
+        }
+        if (!mutexClosed) {
+          await mutex.close();
+          mutexClosed = true;
+        }
+        if (!brokerClosed) {
+          try {
+            await broker.close();
+          } catch (error) {
+            if (isTerminalBrokerCloseError(error)) terminalError = error;
+            throw error;
+          }
+          brokerClosed = true;
+        }
+      })();
+      closePromise = attempt;
+      void attempt.catch((error) => {
+        if (terminalError === undefined && !isTerminalBrokerCloseError(error)) closePromise = undefined;
+      });
+      return attempt;
+    },
+  });
+}
+
 async function createFreshChatRuntimeAuthority(
   provision: FreshContinuityProvision,
   semantic: SemanticProductionAuthority,
@@ -1418,6 +1671,7 @@ async function createFreshChatRuntimeAuthority(
   mutex: WindowsAuthorityRootMutex,
   broker: WindowsNamedMutexBroker,
   options: SemanticChatRuntimeMountOptions,
+  sharedOwnerClose = false,
 ): Promise<SemanticChatRuntimeProductionAuthority> {
   let pending = 0;
   let closing = false;
@@ -1673,6 +1927,7 @@ async function createFreshChatRuntimeAuthority(
           }),
           ...(runtimeSession === undefined ? {} : { providerRuntimeSession: runtimeSession }),
           ...(record.runtime.authoredContextCapability === undefined ? {} : { authoredContextCapability: record.runtime.authoredContextCapability }),
+          ...(record.runtime.refreshAuthoredContext === undefined ? {} : { refreshAuthoredContext: record.runtime.refreshAuthoredContext }),
           startedAttemptIds: new Set<string>(),
           transitionAuthority: createMountedTurnTransitionAuthority(),
           presentationEpoch: createCompanionInterruption(),
@@ -1751,6 +2006,9 @@ async function createFreshChatRuntimeAuthority(
             throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_not_terminal");
           liveByBootstrapOperation.delete(record.bootstrapPermit.operationId);
         }
+        // In a shared composition the mutex and broker stay open for the owner's
+        // retryable close, but the Chat binding and the drain-only store semantic
+        // projection are Chat-owned and must be closed by this projection.
         if (!bindingClosed) {
           await binding.close();
           bindingClosed = true;
@@ -1759,18 +2017,20 @@ async function createFreshChatRuntimeAuthority(
           await semantic.close();
           semanticClosed = true;
         }
-        if (!mutexClosed) {
-          await mutex.close();
-          mutexClosed = true;
-        }
-        if (!brokerClosed) {
-          try {
-            await broker.close();
-          } catch (error) {
-            if (isTerminalBrokerCloseError(error)) terminalError = error;
-            throw error;
+        if (!sharedOwnerClose) {
+          if (!mutexClosed) {
+            await mutex.close();
+            mutexClosed = true;
           }
-          brokerClosed = true;
+          if (!brokerClosed) {
+            try {
+              await broker.close();
+            } catch (error) {
+              if (isTerminalBrokerCloseError(error)) terminalError = error;
+              throw error;
+            }
+            brokerClosed = true;
+          }
         }
         closed = true;
       })();
@@ -2013,6 +2273,7 @@ function create(
   provision: FreshContinuityProvision,
   mutex: WindowsAuthorityRootMutex,
   closeDependencies?: () => Promise<void>,
+  shared = false,
 ): SemanticProductionAuthority {
   const holder = createDialogueSagaHolder(provision);
   const branded = brand(holder);
@@ -2320,11 +2581,11 @@ function create(
       closing = true;
       const attempt = (async () => {
         await waitForDrain();
-        if (!provisionClosed) {
+        if (!shared && !provisionClosed) {
           provision.close();
           provisionClosed = true;
         }
-        if (!dependenciesClosed && closeDependencies) {
+        if (!shared && !dependenciesClosed && closeDependencies) {
           try {
             await closeDependencies();
           } catch (error) {
@@ -2413,8 +2674,9 @@ function create(
 function createKnownGameAuthority(
   provision: FreshContinuityProvision,
   mutex: WindowsAuthorityRootMutex,
-  closeDependencies: () => Promise<void>,
+  closeDependencies: (() => Promise<void>) | undefined,
   ownerDeathVerifier: WindowsOwnerDeathVerifier,
+  shared = false,
 ): SemanticGameProductionAuthority {
   let closing = false;
   let closed = false;
@@ -2653,11 +2915,11 @@ function createKnownGameAuthority(
       const attempt = (async () => {
         await waitForDrain();
         if (liveCount !== 0) throw new SemanticProductionCoordinatorError("semantic_game_live_runtime_requires_close");
-        if (!provisionClosed) {
+        if (!shared && !provisionClosed) {
           provision.close();
           provisionClosed = true;
         }
-        if (!dependenciesClosed) {
+        if (!shared && !dependenciesClosed && closeDependencies) {
           try {
             await closeDependencies();
           } catch (error) {

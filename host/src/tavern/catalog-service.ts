@@ -80,6 +80,16 @@ const TAVERN_STABLE_CONTEXT_MAX_TOKENS = 2_048;
  * and budget overflow reject before any model turn; absent selections produce
  * an explicit empty tombstone rather than invented sources.
  */
+export async function materializeTavernAuthoredStableCatalog(
+  paths: TavernPaths,
+  store: TavernArtifactStore,
+  thread: ChatThread,
+  binding: TavernStableContextBinding,
+  worldInfoSource?: TavernWorldInfoSource,
+): Promise<TavernAuthoredContextCatalog> {
+  return materializeTavernAuthoredContextCatalog(paths, store, thread, binding, worldInfoSource);
+}
+
 export async function materializeTavernAuthoredContextCatalog(
   paths: TavernPaths,
   store: TavernArtifactStore,
@@ -92,7 +102,10 @@ export async function materializeTavernAuthoredContextCatalog(
     thread.continuityId !== paths.continuityId ||
     binding.continuityId !== paths.continuityId ||
     binding.surface !== "tavern" ||
-    binding.threadId !== thread.chatThreadId
+    binding.threadId !== thread.chatThreadId ||
+    binding.profile.profileId !== thread.profileId ||
+    binding.profile.revision !== thread.profileRevision ||
+    binding.profile.canonicalHash !== thread.profileCanonicalHash
   )
     throw new Error("tavern_stable_context_binding_mismatch");
   if ((thread.worldBookBinding === undefined) !== (worldInfoSource === undefined))
@@ -100,7 +113,9 @@ export async function materializeTavernAuthoredContextCatalog(
   if (
     worldInfoSource !== undefined &&
     (!sameWorldInfoBinding(thread.worldBookBinding!, worldInfoSource.binding) ||
-      !validSourceContent(worldInfoContent(worldInfoSource)))
+      !validSourceContent(worldInfoContent(worldInfoSource)) ||
+      ("source" in worldInfoSource.binding &&
+        hash(worldInfoContent(worldInfoSource)) !== worldInfoSource.binding.canonicalHash))
   )
     throw new Error("tavern_stable_context_worldbook_binding_mismatch");
   const selectedBindings = thread.stableArtifactBindings ?? [];
@@ -153,9 +168,10 @@ export async function materializeTavernAuthoredContextCatalog(
     );
   }
   if (worldInfoSource !== undefined) {
-    throw new Error("tavern_stable_context_world_info_not_yet_supported");
-    /* const sourceId =
-      "source" in worldInfoSource.binding ? worldInfoSource.binding.publicTitle : worldInfoSource.binding.worldBookId;
+    const sourceId =
+      "source" in worldInfoSource.binding
+        ? managedWorldInfoSourceId(worldInfoSource.binding)
+        : worldInfoSource.binding.worldBookId;
     const provenance =
       "source" in worldInfoSource.binding
         ? `managed-world-info/${worldInfoSource.binding.publicTitle}/revision/${worldInfoSource.binding.revision}/canonical/${worldInfoSource.binding.canonicalHash}`
@@ -167,10 +183,10 @@ export async function materializeTavernAuthoredContextCatalog(
         worldInfoSource.binding.revision,
         worldInfoSource.binding.canonicalHash,
         worldInfoContent(worldInfoSource),
-        "0004",
+        String(sources.length + 1).padStart(4, "0"),
         provenance,
       ),
-    ); */
+    );
   }
   const budgetTokens = sources.reduce((total, item) => total + item.budgetTokens, 0);
   if (budgetTokens > TAVERN_STABLE_CONTEXT_MAX_TOKENS) throw new Error("tavern_stable_context_oversize");
@@ -363,6 +379,12 @@ function sameWorldInfoBinding(left: TavernStableWorldInfoBinding, right: TavernS
     left.canonicalHash === right.canonicalHash &&
     left.provenance === right.provenance
   );
+}
+function managedWorldInfoSourceId(binding: TavernStableManagedWorldInfoBinding): string {
+  return `managed_world_info_${createHash("sha256")
+    .update(`${binding.publicTitle}\u001f${binding.revision}\u001f${binding.canonicalHash}`, "utf8")
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 function worldInfoContent(source: TavernWorldInfoSource): string {
   return "content" in source ? source.content : source.alwaysOnPremise;

@@ -133,6 +133,7 @@ const worldInfoState: WorldInfoStateV1 = {
       title: "Pelican Town",
       summary: "The valley hub.",
       selected: false,
+      pending: false,
     },
   ],
 };

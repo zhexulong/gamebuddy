@@ -264,6 +264,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
+    "createSharedSemanticProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
     "orchestrateExplicitGameRecovery",
     "startMountedAttempt",
@@ -457,6 +458,42 @@ test(
       );
     } finally {
       cleanup(selectedRoot);
+    }
+  },
+);
+
+test(
+  "shared semantic production authority factory exposes a Chat runtime projection and Game authority with an idempotent owner close",
+  { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-shared-authority-");
+    let shared:
+      | Awaited<ReturnType<typeof internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest>>
+      | undefined;
+    try {
+      const manifestPath = manifest(root);
+      const deployment = await loadHostDeploymentManifest(manifestPath);
+      shared = await internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(deployment, "fresh");
+      assert.deepEqual(Object.keys(shared).sort(), ["chat", "close", "game"]);
+      assert.deepEqual(Object.keys(shared.chat).sort(), ["authority", "close", "startChatRuntime", "startMountedChatRuntime"]);
+      assert.equal(Object.keys(shared.chat).includes("readChatCatalog"), false);
+      // Closing the Game projection must never close the shared Chat projection
+      // or its provision/mutex/broker; the Chat runtime authority stays open and
+      // can be closed on its own while leaving shared resources for the owner.
+      await shared.game.close();
+      await assert.rejects(shared.game.listResumableGameSessions(), /semantic_game_authority_closed/);
+      await shared.chat.close();
+      await assert.rejects(shared.chat.startMountedChatRuntime(), /semantic_chat_runtime_authority_closed/);
+      const firstClose = shared.close(),
+        secondClose = shared.close();
+      assert.strictEqual(firstClose, secondClose);
+      await firstClose;
+      await assert.rejects(shared.chat.startMountedChatRuntime(), /semantic_chat_runtime_authority_closed/);
+      await assert.rejects(shared.game.listResumableGameSessions(), /semantic_game_authority_closed/);
+      await shared.close();
+    } finally {
+      await shared?.close().catch(() => undefined);
+      cleanup(root);
     }
   },
 );

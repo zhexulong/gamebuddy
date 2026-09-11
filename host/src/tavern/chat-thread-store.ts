@@ -71,7 +71,10 @@ export type ChatThread = Readonly<{
   scenarioId?: string;
   /** Exact immutable source records; no source may be resolved as latest. */
   stableArtifactBindings?: readonly TavernStableArtifactBinding[];
+  /** Desired exact World Info revision; edits never rewrite accepted plans. */
   worldBookBinding?: TavernStableWorldInfoBinding;
+  /** Exact revision known to be published on the mounted Chat catalog. */
+  appliedWorldBookBinding?: TavernStableWorldInfoBinding;
   /** Exact continuity-ledger Chat session this thread is attached to. */
   chatSurfaceSessionId: string;
   createdAtMs: number;
@@ -407,7 +410,7 @@ export type ChatThreadStore = Readonly<{
       cancelledAtMs: number;
     }>,
   ): Promise<ChatThreadState>;
-  /** Exact pristine-thread only WorldBook binding mutation with optimistic revision guard. */
+  /** Desired WorldBook binding mutation with optimistic revision guard. */
   setWorldBookBinding?(
     input: Readonly<{
       chatThreadId: string;
@@ -462,7 +465,8 @@ export type ChatThreadStore = Readonly<{
 type IdempotencyRecord = Readonly<{ key: string; fingerprint: string; result: AcceptedQueuedTurn }>;
 
 const genuineChatThreadStores = new WeakSet<object>();
-const acceptanceByStore = new WeakMap<object, (input: MountedAcceptanceInput) => Promise<AcceptedQueuedTurn>>();
+  const storeRouteKey = (root: string, continuityKey: string): string => `${root}\u001f${continuityKey}`;
+const acceptanceByRoute = new Map<string, (input: MountedAcceptanceInput) => Promise<AcceptedQueuedTurn>>();
 type MountedAttemptClaimInput = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
@@ -473,10 +477,7 @@ type MountedAttemptClaimInput = Readonly<{
   runtimeBindingDigest: string;
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
 }>;
-const attemptClaimByStore = new WeakMap<
-  object,
-  (input: MountedAttemptClaimInput) => Promise<AttemptStartingTurn>
->();
+const attemptClaimByRoute = new Map<string, (input: MountedAttemptClaimInput) => Promise<AttemptStartingTurn>>();
 
 /** P4c's three frozen store transitions: arm, local pre-invocation not_started, running. */
 export type ProviderStartTransition =
@@ -528,10 +529,21 @@ type MountedPresentationInput = Readonly<{
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
   attemptId: string;
 }>;
-const presentationByStore = new WeakMap<
-  object,
+const presentationByRoute = new Map<
+  string,
   (input: MountedPresentationInput, command: PresentationTransition) => Promise<ChatTurnLedger>
 >();
+type MountedWorldInfoApplyInput = Readonly<{
+  authority: MountedTurnTransitionAuthority;
+  operationAuthority: MountedTurnTransitionOperationAuthority;
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+  companionId: string;
+  continuityId: string;
+  binding?: TavernStableWorldInfoBinding;
+  expectedOldAppliedBinding?: TavernStableWorldInfoBinding;
+}>;
+const worldInfoApplyByRoute = new Map<string, (input: MountedWorldInfoApplyInput) => Promise<ChatThreadState>>();
 type MountedProviderStartInput = Readonly<{
   authority: MountedTurnTransitionAuthority;
   operationAuthority: MountedTurnTransitionOperationAuthority;
@@ -545,8 +557,8 @@ type MountedProviderStartInput = Readonly<{
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
   attemptId: string;
 }>;
-const providerStartByStore = new WeakMap<
-  object,
+const providerStartByRoute = new Map<
+  string,
   (
     input: MountedProviderStartInput,
     command: ProviderStartTransition,
@@ -570,17 +582,13 @@ export async function acceptMountedPlayerMessage(
   }>,
   command: MountedAcceptanceCommand,
 ): Promise<AcceptedQueuedTurn> {
-  const store = createChatThreadStore(
+  const route = storeRouteKey(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const accept = acceptanceByStore.get(store);
+  const accept = acceptanceByRoute.get(route);
   if (accept === undefined) throw new Error("p4_acceptance_port_unavailable");
-  try {
-    return await accept(Object.freeze({ ...binding, ...command }));
-  } finally {
-    store.close?.();
-  }
+  return await accept(Object.freeze({ ...binding, ...command }));
 }
 
 /**
@@ -600,17 +608,13 @@ export async function claimMountedAttempt(
     runtimeOwner: AttemptClaimV1["runtimeOwner"];
   }>,
 ): Promise<AttemptStartingTurn> {
-  const store = createChatThreadStore(
+  const route = storeRouteKey(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const claim = attemptClaimByStore.get(store);
+  const claim = attemptClaimByRoute.get(route);
   if (claim === undefined) throw new Error("p4_attempt_claim_port_unavailable");
-  try {
-    return await claim(Object.freeze({ ...binding }));
-  } finally {
-    store.close?.();
-  }
+  return await claim(Object.freeze({ ...binding }));
 }
 
 /**
@@ -637,17 +641,13 @@ export async function transitionMountedProviderStart(
 ): Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn> {
   assertMountedTurnTransitionAuthority(binding.authority);
   assertMountedTurnTransitionOperationAuthority(binding.operationAuthority);
-  const store = createChatThreadStore(
+  const route = storeRouteKey(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const transition = providerStartByStore.get(store);
+  const transition = providerStartByRoute.get(route);
   if (transition === undefined) throw new Error("p4_provider_start_port_unavailable");
-  try {
-    return await transition(Object.freeze({ ...binding }), validateProviderStartTransition(command));
-  } finally {
-    store.close?.();
-  }
+  return await transition(Object.freeze({ ...binding }), validateProviderStartTransition(command));
 }
 
 /**
@@ -674,17 +674,39 @@ export async function transitionMountedPresentation(
 ): Promise<ChatTurnLedger> {
   assertMountedTurnTransitionAuthority(binding.authority);
   assertMountedTurnTransitionOperationAuthority(binding.operationAuthority);
-  const store = createChatThreadStore(
+  const route = storeRouteKey(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const transition = presentationByStore.get(store);
+  const transition = presentationByRoute.get(route);
   if (transition === undefined) throw new Error("p5_presentation_port_unavailable");
-  try {
-    return await transition(asMountedPresentationInput(binding), validatePresentationTransition(command));
-  } finally {
-    store.close?.();
-  }
+  return await transition(asMountedPresentationInput(binding), validatePresentationTransition(command));
+}
+
+/** Coordinator-branded applied-binding acknowledgement; ordinary store callers cannot invoke it. */
+export async function acknowledgeMountedWorldInfoBinding(
+  binding: Readonly<{
+    authority: MountedTurnTransitionAuthority;
+    operationAuthority: MountedTurnTransitionOperationAuthority;
+    runtimeRoot: string;
+    playerId: string;
+    companionId: string;
+    continuityId: string;
+    chatThreadId: string;
+    chatSurfaceSessionId: string;
+    binding?: TavernStableWorldInfoBinding;
+    expectedOldAppliedBinding?: TavernStableWorldInfoBinding;
+  }>,
+): Promise<ChatThreadState> {
+  assertMountedTurnTransitionAuthority(binding.authority);
+  assertMountedTurnTransitionOperationAuthority(binding.operationAuthority);
+  const route = storeRouteKey(
+    binding.runtimeRoot,
+    identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
+  );
+  const acknowledge = worldInfoApplyByRoute.get(route);
+  if (acknowledge === undefined) throw new Error("world_info_apply_port_unavailable");
+  return await acknowledge(Object.freeze({ ...binding }));
 }
 
 function asMountedPresentationInput(
@@ -895,15 +917,46 @@ function initSchema(db: DatabaseSync): void {
       source TEXT NOT NULL CHECK(source IN ('world_book', 'managed_world_info')),
       world_book_id TEXT,
       public_title TEXT,
-      revision INTEGER NOT NULL CHECK(revision > 0),
-      canonical_hash TEXT NOT NULL,
+      revision INTEGER CHECK(revision IS NULL OR revision > 0),
+      canonical_hash TEXT,
       provenance TEXT,
+      applied_revision INTEGER CHECK(applied_revision IS NULL OR applied_revision > 0),
+      applied_canonical_hash TEXT,
+      applied_public_title TEXT,
+      applied_world_book_id TEXT,
       CHECK(
-        (source = 'world_book' AND world_book_id IS NOT NULL AND public_title IS NULL
-          AND provenance IN ('authored', 'st-card-import', 'reviewed-import'))
-        OR
-        (source = 'managed_world_info' AND world_book_id IS NULL AND public_title IS NOT NULL
-          AND provenance IS NULL)
+        (
+          (
+            source = 'world_book'
+            AND public_title IS NULL
+            AND provenance IN ('authored', 'st-card-import', 'reviewed-import')
+            AND (world_book_id IS NOT NULL OR applied_world_book_id IS NOT NULL)
+          )
+          OR
+          (
+            source = 'managed_world_info'
+            AND world_book_id IS NULL
+            AND provenance IS NULL
+            AND (public_title IS NOT NULL OR applied_public_title IS NOT NULL)
+          )
+        )
+        AND ((revision IS NOT NULL AND canonical_hash IS NOT NULL) OR (revision IS NULL AND canonical_hash IS NULL))
+        AND (
+          (
+            applied_revision IS NULL
+            AND applied_canonical_hash IS NULL
+            AND applied_public_title IS NULL
+            AND applied_world_book_id IS NULL
+          )
+          OR (
+            applied_revision IS NOT NULL
+            AND applied_canonical_hash IS NOT NULL
+            AND (
+              (source = 'managed_world_info' AND applied_public_title IS NOT NULL AND applied_world_book_id IS NULL)
+              OR (source = 'world_book' AND applied_public_title IS NULL AND applied_world_book_id IS NOT NULL)
+            )
+          )
+        )
       )
     );
 
@@ -1145,7 +1198,7 @@ export function createChatThreadStore(
             lifecycle_status, management_revision, created_at_ms, updated_at_ms,
             opening_kind, opening_message_id, greeting_set_id, greeting_source_revision, greeting_canonical_hash,
             greeting_variant_id, greeting_profile_revision, greeting_scenario_revision, opening_locked_at_event_id
-          ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+          ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         ).run(
           profileAwareRequest.chatThreadId, profileAwareRequest.companionId, profileAwareRequest.continuityId,
           profileAwareRequest.personaId ?? null, profileAwareRequest.scenarioId ?? null, profileAwareRequest.chatSurfaceSessionId,
@@ -1158,7 +1211,7 @@ export function createChatThreadStore(
         for (const binding of profileAwareRequest.stableArtifactBindings ?? [])
           db.prepare(`INSERT INTO tavern_thread_stable_artifact_bindings (thread_id, kind, source_id, revision, canonical_hash) VALUES (?, ?, ?, ?, ?)`)
             .run(profileAwareRequest.chatThreadId, binding.kind, binding.sourceId, binding.revision, binding.canonicalHash);
-        if (profileAwareRequest.worldBookBinding) writeWorldInfoBinding(db, profileAwareRequest.chatThreadId, profileAwareRequest.worldBookBinding);
+        if (profileAwareRequest.worldBookBinding) writeWorldInfoBinding(db, profileAwareRequest.chatThreadId, profileAwareRequest.worldBookBinding, profileAwareRequest.worldBookBinding);
         for (const message of initialMessages) insertMessage(db, profileAwareRequest.chatThreadId, message);
         db.prepare(`INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms) VALUES (?, NULL, 0, ?)`).run(profileAwareRequest.chatThreadId, timestamp);
       return readStateFromDb(db, profileAwareRequest.chatThreadId);
@@ -1419,10 +1472,10 @@ export function createChatThreadStore(
           throw new Error("chat_thread_scope_mismatch");
         if (current.thread.updatedAtMs !== input.expectedUpdatedAtMs)
           throw new Error("chat_thread_revision_conflict");
-        if (current.messages.length !== 0) throw new Error("chat_thread_worldbook_locked");
-
         const updatedAt = now();
-        writeWorldInfoBinding(db, input.chatThreadId, input.binding ? freezeStableWorldBookBinding(input.binding) : undefined);
+        // Binding edits are desired-state mutations. An applied catalog is retained
+        // until the coordinator acknowledges replacement, including pending unbind.
+        writeWorldInfoBinding(db, input.chatThreadId, input.binding ? freezeStableWorldBookBinding(input.binding) : undefined, current.thread.appliedWorldBookBinding);
         db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(updatedAt, input.chatThreadId);
 
         return readStateFromDb(db, input.chatThreadId);
@@ -1557,10 +1610,12 @@ export function createChatThreadStore(
   initialExactContentCapabilities.add(initialCapability);
   initialExactContentCapabilityByStore.set(store, initialCapability);
   createProfileAwareByStore.set(store, createProfileAware);
-  acceptanceByStore.set(store, acceptMounted);
-  attemptClaimByStore.set(store, claimMountedAttempt);
-  providerStartByStore.set(store, transitionMountedProviderStart);
-  presentationByStore.set(store, transitionMountedPresentation);
+  const route = storeRouteKey(root, continuityKey);
+  acceptanceByRoute.set(route, acceptMounted);
+  attemptClaimByRoute.set(route, claimMountedAttempt);
+  providerStartByRoute.set(route, transitionMountedProviderStart);
+  presentationByRoute.set(route, transitionMountedPresentation);
+  worldInfoApplyByRoute.set(route, acknowledgeWorldInfoBinding);
   return store;
 
   async function acceptMounted(input: MountedAcceptanceInput): Promise<AcceptedQueuedTurn> {
@@ -1591,6 +1646,7 @@ export function createChatThreadStore(
         });
       }
       validateAuthoredContextPreparation(input.authoredContextPreparation);
+      if (!sameBinding(thread.worldBookBinding, thread.appliedWorldBookBinding)) throw new Error("context_unavailable");
       if (
         current.turnLedger !== null &&
         current.turnLedger.status !== "completed" &&
@@ -1675,6 +1731,37 @@ export function createChatThreadStore(
       )
         throw new Error("chat_attempt_claim_readback_mismatch");
       return readBack.turnLedger;
+    });
+  }
+
+  async function acknowledgeWorldInfoBinding(input: MountedWorldInfoApplyInput): Promise<ChatThreadState> {
+    validateWorldInfoApplyInput(input);
+    return withDb((db) => {
+      assertMountedTurnTransitionAuthority(input.authority);
+      assertMountedTurnTransitionOperationAuthority(input.operationAuthority);
+      const current = readStateFromDb(db, input.chatThreadId);
+      const thread = current.thread;
+      if (
+        thread.chatSurfaceSessionId !== input.chatSurfaceSessionId ||
+        thread.companionId !== input.companionId ||
+        thread.continuityId !== input.continuityId
+      )
+        throw new Error("chat_thread_scope_mismatch");
+      if (current.turnLedger !== null && !isTerminalTurnStatus(current.turnLedger.status))
+        throw new Error("context_unavailable");
+      if (
+        !sameBinding(thread.worldBookBinding, input.binding) ||
+        !sameBinding(thread.appliedWorldBookBinding, input.expectedOldAppliedBinding)
+      )
+        throw new Error("chat_thread_worldbook_applied_conflict");
+      writeWorldInfoBinding(db, input.chatThreadId, thread.worldBookBinding, input.binding);
+      const readBack = readStateFromDb(db, input.chatThreadId);
+      if (
+        !sameBinding(readBack.thread.worldBookBinding, input.binding) ||
+        !sameBinding(readBack.thread.appliedWorldBookBinding, input.binding)
+      )
+        throw new Error("chat_thread_worldbook_applied_readback_mismatch");
+      return readBack;
     });
   }
 
@@ -1919,14 +2006,17 @@ function rowToThread(db: DatabaseSync, row: any): ChatThread {
     kind: binding.kind, sourceId: binding.source_id, revision: binding.revision, canonicalHash: binding.canonical_hash,
   })));
   const world = db.prepare("SELECT * FROM tavern_thread_world_info_bindings WHERE thread_id = ?").get(row.thread_id) as any;
-  const worldBookBinding: TavernStableWorldInfoBinding | undefined = !world ? undefined : world.source === "managed_world_info"
+  const worldBookBinding: TavernStableWorldInfoBinding | undefined = !world || world.revision == null ? undefined : world.source === "managed_world_info"
     ? freezeStableWorldBookBinding({ source: "managed_world_info", publicTitle: world.public_title, revision: world.revision, canonicalHash: world.canonical_hash })
     : freezeStableWorldBookBinding({ worldBookId: world.world_book_id, revision: world.revision, canonicalHash: world.canonical_hash, provenance: world.provenance });
+  const appliedWorldBookBinding: TavernStableWorldInfoBinding | undefined = !world || world.applied_revision == null ? undefined : world.source === "managed_world_info"
+    ? freezeStableWorldBookBinding({ source: "managed_world_info", publicTitle: world.applied_public_title, revision: world.applied_revision, canonicalHash: world.applied_canonical_hash })
+    : freezeStableWorldBookBinding({ worldBookId: world.applied_world_book_id, revision: world.applied_revision, canonicalHash: world.applied_canonical_hash, provenance: world.provenance });
   return freezeThread({
     schemaVersion: CHAT_THREAD_SCHEMA_VERSION, chatThreadId: row.thread_id, companionId: row.companion_id,
     continuityId: row.continuity_id, profileId: validateProfileId(row.profile_id), profileRevision: validatePositiveInteger(row.profile_revision, "profile_revision"), profileCanonicalHash: validateCanonicalHash(row.profile_canonical_hash), ...(row.persona_id ? { personaId: row.persona_id } : {}),
     ...(row.scenario_id ? { scenarioId: row.scenario_id } : {}), stableArtifactBindings,
-    ...(worldBookBinding ? { worldBookBinding } : {}), chatSurfaceSessionId: row.chat_surface_session_id,
+    ...(worldBookBinding ? { worldBookBinding } : {}), ...(appliedWorldBookBinding ? { appliedWorldBookBinding } : {}), chatSurfaceSessionId: row.chat_surface_session_id,
     createdAtMs: row.created_at_ms, updatedAtMs: row.updated_at_ms, openingSelection,
     title: validateStoredThreadTitle(row.title), lifecycleStatus: validateLifecycleStatus(row.lifecycle_status),
     managementRevision: validateManagementRevision(row.management_revision),
@@ -1997,11 +2087,22 @@ function replaceOpeningMessage(db: DatabaseSync, threadId: string, message: Chat
   if (message) insertMessage(db, threadId, message);
 }
 
-function writeWorldInfoBinding(db: DatabaseSync, threadId: string, binding: TavernStableWorldInfoBinding | undefined): void {
+function writeWorldInfoBinding(db: DatabaseSync, threadId: string, binding: TavernStableWorldInfoBinding | undefined, applied: TavernStableWorldInfoBinding | undefined): void {
   db.prepare("DELETE FROM tavern_thread_world_info_bindings WHERE thread_id = ?").run(threadId);
-  if (!binding) return;
-  if ("source" in binding) db.prepare("INSERT INTO tavern_thread_world_info_bindings (thread_id, source, public_title, revision, canonical_hash) VALUES (?, 'managed_world_info', ?, ?, ?)").run(threadId, binding.publicTitle, binding.revision, binding.canonicalHash);
-  else db.prepare("INSERT INTO tavern_thread_world_info_bindings (thread_id, source, world_book_id, revision, canonical_hash, provenance) VALUES (?, 'world_book', ?, ?, ?, ?)").run(threadId, binding.worldBookId, binding.revision, binding.canonicalHash, binding.provenance);
+  if (binding === undefined && applied === undefined) return;
+  // Desired and applied must share a source family; mixed-family replacement is
+  // not a valid projection and is rejected before SQLite mutation.
+  const shape = binding ?? applied!;
+  if ((binding && applied) && (('source' in binding) !== ('source' in applied))) throw new Error("world_info_binding_mismatch");
+  if ("source" in shape) {
+    const desired = binding && "source" in binding ? binding : undefined;
+    const appliedManaged = applied && "source" in applied ? applied : undefined;
+    db.prepare("INSERT INTO tavern_thread_world_info_bindings (thread_id, source, public_title, revision, canonical_hash, applied_public_title, applied_revision, applied_canonical_hash) VALUES (?, 'managed_world_info', ?, ?, ?, ?, ?, ?)").run(threadId, desired?.publicTitle ?? null, desired?.revision ?? null, desired?.canonicalHash ?? null, appliedManaged?.publicTitle ?? null, appliedManaged?.revision ?? null, appliedManaged?.canonicalHash ?? null);
+  } else {
+    const desired = binding && !("source" in binding) ? binding : undefined;
+    const appliedWorld = applied && !("source" in applied) ? applied : undefined;
+    db.prepare("INSERT INTO tavern_thread_world_info_bindings (thread_id, source, world_book_id, revision, canonical_hash, provenance, applied_world_book_id, applied_revision, applied_canonical_hash) VALUES (?, 'world_book', ?, ?, ?, ?, ?, ?, ?)").run(threadId, desired?.worldBookId ?? null, desired?.revision ?? null, desired?.canonicalHash ?? null, desired?.provenance ?? appliedWorld?.provenance ?? null, appliedWorld?.worldBookId ?? null, appliedWorld?.revision ?? null, appliedWorld?.canonicalHash ?? null);
+  }
 }
 
 function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger): void {
@@ -3317,6 +3418,11 @@ function freezeThread(thread: ChatThread): ChatThread {
       : {
           worldBookBinding: freezeStableWorldBookBinding(thread.worldBookBinding),
         }),
+    ...(thread.appliedWorldBookBinding === undefined
+      ? {}
+      : {
+          appliedWorldBookBinding: freezeStableWorldBookBinding(thread.appliedWorldBookBinding),
+        }),
     openingSelection:
       thread.openingSelection.kind === "blank"
         ? Object.freeze({ kind: "blank" })
@@ -3350,6 +3456,28 @@ function freezeStableArtifactBindings(values: unknown): readonly TavernStableArt
   if (new Set(bindings.map((value) => value.kind)).size !== bindings.length)
     throw new Error("invalid_tavern_stable_binding");
   return Object.freeze(bindings);
+}
+
+function isTerminalTurnStatus(status: ChatTurnLedger["status"]): boolean {
+  return status === "completed" || status === "cancelled" || status === "failed";
+}
+
+function validateWorldInfoApplyInput(input: MountedWorldInfoApplyInput): void {
+  assertId("chatThreadId", input.chatThreadId);
+  assertId("chatSurfaceSessionId", input.chatSurfaceSessionId);
+  assertId("companionId", input.companionId);
+  assertId("continuityId", input.continuityId);
+  if (input.binding !== undefined) freezeStableWorldBookBinding(input.binding);
+  if (input.expectedOldAppliedBinding !== undefined) freezeStableWorldBookBinding(input.expectedOldAppliedBinding);
+}
+
+function sameBinding(a: TavernStableWorldInfoBinding | undefined, b: TavernStableWorldInfoBinding | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if ("source" in a && "source" in b)
+    return a.publicTitle === b.publicTitle && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
+  if (!("source" in a) && !("source" in b))
+    return a.worldBookId === b.worldBookId && a.revision === b.revision && a.canonicalHash === b.canonicalHash && a.provenance === b.provenance;
+  return false;
 }
 
 function freezeStableWorldBookBinding(value: unknown): TavernStableWorldInfoBinding {

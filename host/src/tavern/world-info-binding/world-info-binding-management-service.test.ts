@@ -112,6 +112,18 @@ const mountPreamble = `
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", storeUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href);
   await bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+  const { acknowledgeMountedWorldInfoBinding } = await import(storeUrl);
+  const { createMountedTurnTransitionAuthority } = await import(new URL("./chat-thread-store.mounted-turn-transition.internal.js", storeUrl).href);
+  const applyMounted = async (binding, expectedOldAppliedBinding) => {
+    const transition = createMountedTurnTransitionAuthority();
+    const operation = transition.mintOperation();
+    try {
+      return await acknowledgeMountedWorldInfoBinding({ authority: transition.authority, operationAuthority: operation.authority, runtimeRoot: root, playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01", chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId, binding, expectedOldAppliedBinding });
+    } finally {
+      operation.revoke();
+      transition.revoke();
+    }
+  };
   const manifest = await loadHostDeploymentManifest(manifestPath);
   const repository = createWorldInfoManagementRepository(root);
   await repository.create({ publicTitle: "Pelican Town", summary: "A small valley town.", entries: [{ scope: "setting", publicTitle: "Square", summary: "Town center." }] });
@@ -175,8 +187,12 @@ test("mounted binding service binds and unbinds the exact immutable revision wit
     const first = await service.read();
     const initialItem = first.items[0];
     const bind = await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: initialItem.handle });
-    const selectedItem = bind.items.find((item) => item.selected === true);
+    const selectedItem = bind.items.find((item) => item.pending === true);
+    // Only the coordinator adapter may mint applied state. Establish the
+    // applied revision through the acknowledged world-info binding seam so
+    // the browser lifecycle under test observes desired != applied.
     const durable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    await applyMounted(durable.thread.worldBookBinding, undefined);
     const staleBind = await code(() => service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: initialItem.handle }));
     const afterBindRead = await service.read();
     const unbind = await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: afterBindRead.revision, sourceHandle: null });
@@ -188,6 +204,7 @@ test("mounted binding service binds and unbinds the exact immutable revision wit
       bind,
       selectedItem,
       durableBinding: durable.thread.worldBookBinding,
+      appliedBinding: durableAfterUnbind.thread.appliedWorldBookBinding,
       staleBind,
       afterBindRead,
       unbind,
@@ -217,21 +234,27 @@ test("mounted binding service binds and unbinds the exact immutable revision wit
   assert.equal(initialItem.selected, false);
 
   const bind = results.bind as { state: string; revision: string; items: ReadonlyArray<Record<string, unknown>> };
-  assert.equal(bind.state, "selected");
-  assert.equal(bind.items.filter((item) => item.selected === true).length, 1);
-  const selectedItem = results.selectedItem as { handle: string; title: string; selected: boolean };
+  assert.equal(bind.state, "pending");
+  assert.equal(bind.items.filter((item) => item.selected === true).length, 0);
+  assert.equal(bind.items.filter((item) => item.pending === true).length, 1);
+  const selectedItem = results.selectedItem as { handle: string; title: string; selected: boolean; pending: boolean };
   assert.equal(selectedItem.title, "Pelican Town");
-  assert.equal(selectedItem.selected, true);
+  assert.equal(selectedItem.selected, false);
+  assert.equal(selectedItem.pending, true);
   const durableBinding = results.durableBinding as { source: string; publicTitle: string; revision: number };
   assert.equal(durableBinding.source, "managed_world_info");
-  assert.equal(durableBinding.publicTitle, "Pelican Town");
   assert.equal(durableBinding.revision, 1);
   // The old opaque revision handle is now superseded (updatedAtMs changed).
   assert.equal((results.staleBind as { error: string }).error, "world_info_binding_conflict");
-  const unbind = results.unbind as { state: string };
-  assert.equal(unbind.state, "none");
+  const unbind = results.unbind as { state: string; items: ReadonlyArray<{ pending: boolean }> };
+  assert.equal(unbind.state, "pending");
+  assert.equal(unbind.items.filter((item) => item.pending).length, 1);
   assert.equal(results.durableAfterUnbindBinding, undefined);
-  assert.equal((results.afterUnbindRead as { state: string }).state, "none");
+  const appliedAfterUnbind = results.appliedBinding as { source: string; publicTitle: string; revision: number } | undefined;
+  assert.ok(appliedAfterUnbind);
+  assert.equal(appliedAfterUnbind.source, "managed_world_info");
+  assert.equal(appliedAfterUnbind.revision, 1);
+  assert.equal((results.afterUnbindRead as { state: string }).state, "pending");
   const durable = JSON.stringify({
     first: results.first,
     bind: results.bind,
@@ -241,36 +264,44 @@ test("mounted binding service binds and unbinds the exact immutable revision wit
   for (const raw of (results.protective as { rawIds: string[] }).rawIds)
     assert.equal(durable.includes(raw), false, `raw durable identity leaked: ${raw}`);
   // The durable binding canonical hash must never reach the browser projection.
-  const durableHash = (results.durableBinding as { canonicalHash?: string }).canonicalHash;
+  const durableHash = (results.durableBinding as { canonicalHash?: string } | undefined)?.canonicalHash;
   if (durableHash !== undefined)
     assert.equal(durable.includes(durableHash), false, "durable binding hash leaked into browser projection");
 });
 
-test("mounted binding service locks after a durable message and keeps the binding intact", async () => {
+test("mounted binding service reports pending after changing World Info behind a durable transcript", async () => {
   const results = await mounted(`
     const first = await service.read();
     const item = first.items[0];
     const bind = await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: item.handle });
     await store().appendPlayer(lease.chatThreadId, { messageId: "msg_0001", text: "A durable player note.", occurredAtMs: Date.now() });
     const lockedRead = await service.read();
+    // The pending desired binding is retained behind the transcript; the
+    // coordinator establishes applied only through the acknowledged seam.
+    const boundDurable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    await applyMounted(boundDurable.thread.worldBookBinding, undefined);
     const lockedUnbind = await code(() => service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: lockedRead.revision, sourceHandle: null }));
     const durableAfterLock = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
     process.stdout.write(JSON.stringify({
       lockedRead,
       lockedUnbind,
       durableAfterLockMessages: durableAfterLock.messages.length,
-      durableAfterLockBinding: durableAfterLock.thread.worldBookBinding,
+       durableAfterLockBinding: durableAfterLock.thread.worldBookBinding,
+       durableAfterLockAppliedBinding: durableAfterLock.thread.appliedWorldBookBinding,
     }));
     await service.close();
     await lease.close();
     await authority.close();
   `);
-  assert.equal((results.lockedRead as { state: string }).state, "locked");
-  assert.equal((results.lockedUnbind as { error: string }).error, "world_info_binding_locked");
+  assert.equal((results.lockedRead as { state: string }).state, "pending");
+  assert.equal((results.lockedUnbind as { ok: boolean }).ok, true);
   assert.equal(results.durableAfterLockMessages, 1);
-  const binding = results.durableAfterLockBinding as { source: string; publicTitle: string; revision: number };
-  assert.equal(binding.source, "managed_world_info");
-  assert.equal(binding.revision, 1);
+  const binding = results.durableAfterLockBinding as { source: string; publicTitle: string; revision: number } | undefined;
+  assert.equal(binding, undefined);
+  const applied = results.durableAfterLockAppliedBinding as { source: string; publicTitle: string; revision: number } | undefined;
+  assert.ok(applied);
+  assert.equal(applied.source, "managed_world_info");
+  assert.equal(applied.revision, 1);
 });
 
 test("binding service source keeps store, resolver, lease and coordinator authority private", async () => {
@@ -320,9 +351,10 @@ test("mounted binding service scopes source handles to the exact current project
   assert.equal((results.staleRevision as { error: string }).error, "world_info_binding_conflict");
   // Old source handle combined with the newer revision conflicts.
   assert.equal((results.staleHandleOnNewRevision as { error: string }).error, "world_info_binding_conflict");
-  const fresh = results.fresh as { state: string; items: ReadonlyArray<{ selected: boolean }> };
-  assert.equal(fresh.state, "selected");
-  assert.equal(fresh.items.filter((item) => item.selected).length, 1);
+  const fresh = results.fresh as { state: string; items: ReadonlyArray<{ selected: boolean; pending: boolean }> };
+  assert.equal(fresh.state, "pending");
+  assert.equal(fresh.items.filter((item) => item.selected).length, 0);
+  assert.equal(fresh.items.filter((item) => item.pending).length, 2);
   const durableBinding = results.durableBinding as { publicTitle: string; revision: number };
   assert.equal(durableBinding.publicTitle, "Pelican Town");
   assert.equal(durableBinding.revision, 1);
@@ -434,6 +466,10 @@ test("mounted binding service propagates lease teardown observed during exact se
     await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: first.items[0].handle });
     const durableBefore = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
     const durableHasBinding = durableBefore.thread.worldBookBinding !== undefined;
+    // Only the coordinator adapter may mint applied state. Establish the
+    // applied revision so the read's exact-selection path resolves against
+    // retained history instead of short-circuiting on an absent applied.
+    await applyMounted(durableBefore.thread.worldBookBinding, undefined);
     let resolveEntered;
     let resolveRelease;
     const historyEntered = new Promise((resolve) => { resolveEntered = resolve; });

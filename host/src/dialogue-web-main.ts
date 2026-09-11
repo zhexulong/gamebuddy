@@ -2,9 +2,14 @@ import { randomBytes } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  createChatSemanticFacadeFromSharedAuthority,
   createFreshUnmountedChatSemanticFacade,
   createKnownUnmountedChatSemanticFacade,
+  type ConstructedUnmountedChatSemanticFacade,
 } from "./continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.js";
+import {
+  createSharedSemanticProductionAuthorityFromDeploymentManifest,
+} from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import { type HostDeploymentManifest, loadHostDeploymentManifest } from "./deployment-manifest.js";
 import { parseDialogueLaunchMode } from "./dialogue-launch-mode.js";
 import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
@@ -100,17 +105,29 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
   const profile = composeReferenceGameBrowserProfile({ tavernProfile, gameProfile });
   const bootstrapToken = randomBytes(32).toString("base64url");
   const eventStream = createChatEventStream();
-  const facade =
-    mode === "known"
-      ? await createKnownUnmountedChatSemanticFacade(manifest)
-      : await createFreshUnmountedChatSemanticFacade(manifest);
   const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
-  const folderPicker = await createPublishedWindowsStardewFolderPicker(hostArtifactRoot);
-  const lifecycleCoordinator = createStardewProductionLifecycleCoordinator(manifest, folderPicker);
-  let lease: Awaited<ReturnType<typeof facade.startMountedChatRuntime>> | undefined;
+  let shared: Awaited<ReturnType<typeof createSharedSemanticProductionAuthorityFromDeploymentManifest>> | undefined;
+  let facade: ConstructedUnmountedChatSemanticFacade | undefined;
+  let lifecycleCoordinator: ReturnType<typeof createStardewProductionLifecycleCoordinator> | undefined;
+  let lease: Awaited<ReturnType<ConstructedUnmountedChatSemanticFacade["startMountedChatRuntime"]>> | undefined;
   let pipelineService: ReturnType<typeof createChatPipelineService> | undefined;
   let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>> | undefined;
   try {
+    // The reference-game profile shares one semantic SQLite authority (one
+    // provision and one root mutex/broker) between the mounted Chat runtime and
+    // the Stardew Game authority. The lifecycle coordinator consumes the same
+    // Game projection; neither Chat nor Stardew constructs a second authority,
+    // and the materializer consumes the injected Game projection directly.
+    // Every construction step is inside this try so a failure at any point
+    // drains only what already succeeded: the shared owner, then the Chat
+    // facade, then the lifecycle coordinator, in the existing close order.
+    shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest, mode);
+    facade = await createChatSemanticFacadeFromSharedAuthority(shared.chat);
+    const folderPicker = await createPublishedWindowsStardewFolderPicker(hostArtifactRoot);
+    // Construction failure must not leak Chat/Game resources. The shared owner
+    // is created before the lifecycle so a Stardew construction failure still
+    // lets the Chat runtime and shared owner drain below.
+    lifecycleCoordinator = createStardewProductionLifecycleCoordinator(manifest, folderPicker, shared.game);
     lease = await facade.startMountedChatRuntime();
     const referenceStateFacade = await createReferencePipelineStateFacade(manifest, lease, tavernProfile, eventStream);
     pipelineService = createChatPipelineService({ manifest, lease, profile: tavernProfile, eventStream });
@@ -136,13 +153,31 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
     process.stdout.write(`GameBuddy Reference Game is ready at ${server.launchUrl}\n`);
     await waitForSignal();
   } finally {
+    let failure: unknown;
     try {
-      await closeReferencePipelineRuntime({ server, pipelineService, lease, facade });
-    } finally {
-      // The Game mount/process owner closes its lifecycle coordinator. Chat's
-      // lease/runtime close above deliberately has no ownership of this reader.
-      await lifecycleCoordinator.close();
+      // Chat runtime (lease/runtime authority) closes first. The facade drains
+      // its mounted Chat runtime projection even when the lease never started;
+      // without a facade no Chat-lane resource was constructed.
+      if (facade !== undefined) {
+        await closeReferencePipelineRuntime({ server, pipelineService, lease, facade });
+      }
+    } catch (error) {
+      failure ??= error;
     }
+    try {
+      // The Game mount/process owner closes its lifecycle coordinator.
+      await lifecycleCoordinator?.close();
+    } catch (error) {
+      failure ??= error;
+    }
+    try {
+      // The shared owner closes the Game projection, Chat projection, then the
+      // single provision and mutex/broker, in retryable/idempotent order.
+      await shared?.close();
+    } catch (error) {
+      failure ??= error;
+    }
+    if (failure !== undefined) throw failure;
   }
 }
 

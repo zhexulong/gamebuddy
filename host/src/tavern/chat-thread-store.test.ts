@@ -12,6 +12,8 @@ import {
   type GreetingSource,
   transitionMountedProviderStart as rawTransitionP4MountedProviderStart,
   transitionMountedPresentation as rawTransitionP5MountedPresentation,
+  acknowledgeMountedWorldInfoBinding,
+  type TavernStableManagedWorldInfoBinding,
 } from "./chat-thread-store.js";
 import { createMountedTurnTransitionAuthority } from "./chat-thread-store.mounted-turn-transition.internal.js";
 
@@ -82,7 +84,7 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
   const { root, store: s, creation, key } = await store();
   try {
     await creation.createExplicit(request());
-    const dbPath = join(root, "tavern", "v2", "continuities", key, "tavern.sqlite");
+    const dbPath = join(root, "tavern", "v3", "continuities", key, "tavern.sqlite");
     const db = new DatabaseSync(dbPath);
     try {
       const journalMode = (db.prepare("PRAGMA journal_mode").get() as any)?.journal_mode;
@@ -99,7 +101,7 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('tavern_threads') WHERE name IN ('metadata_json', 'opening_selection_json')").get() as any).count, 0);
 
       // Verify no 0-byte .lock files exist in continuity directory
-      const files = await readdir(join(root, "tavern", "v2", "continuities", key));
+      const files = await readdir(join(root, "tavern", "v3", "continuities", key));
       assert.equal(files.some((f) => f.endsWith(".lock")), false);
     } finally {
       db.close();
@@ -463,6 +465,59 @@ test("concurrent transactions across store instances preserve monotonic manageme
     store1.close?.();
     store2.close?.();
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("World Info desired edits preserve applied revision, pending unbind is durable, and stale acceptance is blocked", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-world-info-lifecycle-");
+  const key = createHash("sha256").update(["player_01", "companion_01", "continuity_01"].join("\u001f")).digest("hex");
+  const revision1: TavernStableManagedWorldInfoBinding = Object.freeze({ source: "managed_world_info", publicTitle: "Pelican Town", revision: 1, canonicalHash: "a".repeat(64) });
+  const revision2: TavernStableManagedWorldInfoBinding = Object.freeze({ source: "managed_world_info", publicTitle: "Pelican Town", revision: 2, canonicalHash: "b".repeat(64) });
+  try {
+    const s = createChatThreadStore(root, key);
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit({ chatThreadId: "thread_01", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_01", worldBookBinding: revision1, opening: "blank" });
+    let state = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(state.thread.worldBookBinding, revision1);
+    assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
+    state = await s.appendPlayer("thread_01", { messageId: "player_01", text: "active turn", occurredAtMs: Date.now() });
+    state = await s.setWorldBookBinding!({ chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: state.thread.updatedAtMs, binding: revision2 });
+    assert.deepEqual(state.thread.worldBookBinding, revision2);
+    assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
+    await assert.rejects(
+      () => import("./chat-thread-store.js").then(({ acceptMountedPlayerMessage }) => acceptMountedPlayerMessage({ runtimeRoot: root, playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01", chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", selectionGeneration: 1 }, { text: "blocked", locale: "en", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0, authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 } })),
+      /context_unavailable/,
+    );
+    state = await s.setWorldBookBinding!({ chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: state.thread.updatedAtMs, binding: undefined });
+    assert.equal(state.thread.worldBookBinding, undefined);
+    assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
+    s.close?.();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("coordinator-branded World Info acknowledgement applies only the exact desired binding after terminal settlement", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-world-info-ack-");
+  const key = createHash("sha256").update(["player_01", "companion_01", "continuity_01"].join("\u001f")).digest("hex");
+  const revision1: TavernStableManagedWorldInfoBinding = Object.freeze({ source: "managed_world_info", publicTitle: "Pelican Town", revision: 1, canonicalHash: "a".repeat(64) });
+  const revision2: TavernStableManagedWorldInfoBinding = Object.freeze({ source: "managed_world_info", publicTitle: "Pelican Town", revision: 2, canonicalHash: "b".repeat(64) });
+  const authority = createMountedTurnTransitionAuthority();
+  const operation = authority.mintOperation();
+  try {
+    const s = createChatThreadStore(root, key);
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit({ chatThreadId: "thread_01", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_01", worldBookBinding: revision1, opening: "blank" });
+    let state = await s.resumeThread("thread_01", "surface_01");
+    await s.setWorldBookBinding!({ chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: state.thread.updatedAtMs, binding: revision2 });
+    state = await acknowledgeMountedWorldInfoBinding({ authority: authority.authority, operationAuthority: operation.authority, runtimeRoot: root, playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01", chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", binding: revision2, expectedOldAppliedBinding: revision1 });
+    assert.deepEqual(state.thread.appliedWorldBookBinding, revision2);
+    await assert.rejects(() => acknowledgeMountedWorldInfoBinding({ authority: authority.authority, operationAuthority: operation.authority, runtimeRoot: root, playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01", chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", binding: revision1, expectedOldAppliedBinding: revision1 }), /chat_thread_worldbook_applied_conflict/);
+    s.close?.();
+  } finally {
+    operation.revoke();
+    authority.revoke();
     await rm(root, { recursive: true, force: true });
   }
 });
