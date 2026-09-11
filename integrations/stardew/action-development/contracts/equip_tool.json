@@ -1,5 +1,5 @@
 {
-  "schema": "gamebuddy-action-development-contract/v1",
+  "schema": "gamebuddy-action-development-contract/v2",
   "gameId": "stardew",
   "actionId": "equip_tool",
   "familyId": "body_tools",
@@ -8,19 +8,32 @@
   "kind": "execution",
   "args": {
     "requiredProperties": [
-      "slot"
+      "tool"
     ],
-    "slotMinimum": 0,
-    "slotMaximum": 36
+    "toolAllowedValues": [
+      "axe",
+      "pickaxe",
+      "hoe",
+      "watering_can",
+      "fishing_rod",
+      "weapon",
+      "scythe",
+      "shears",
+      "milk_pail",
+      "pan"
+    ]
   },
   "terminal": {
     "acceptableStates": [
       "succeeded",
       "uncertain"
     ],
-    "successReasonCode": "tool_selected",
+    "successReasonCodes": [
+      "tool_equipped",
+      "already_equipped"
+    ],
     "evidenceFields": [
-      "slot",
+      "tool",
       "before",
       "expected",
       "after"

@@ -11,7 +11,7 @@ public sealed class FarmhandActionDevelopmentContractTests
     {
         ActionDevelopmentContract contract = FarmhandActionDevelopmentContract.DeriveContract("equip_tool");
 
-        contract.Schema.Should().Be("gamebuddy-action-development-contract/v1");
+        contract.Schema.Should().Be("gamebuddy-action-development-contract/v2");
         contract.GameId.Should().Be("stardew");
         contract.ActionId.Should().Be("equip_tool");
         contract.FamilyId.Should().Be("body_tools");
@@ -21,13 +21,24 @@ public sealed class FarmhandActionDevelopmentContractTests
     }
 
     [Fact]
-    public void EquipToolContract_DerivesExactWireArgsFromBridgeProtocol()
+    public void EquipToolContract_DerivesExactSemanticArgs()
     {
         ActionDevelopmentContract contract = FarmhandActionDevelopmentContract.DeriveContract("equip_tool");
 
-        contract.Args.RequiredProperties.Should().Equal(new[] { "slot" });
-        contract.Args.SlotMinimum.Should().Be(0);
-        contract.Args.SlotMaximum.Should().Be(36);
+        contract.Args.RequiredProperties.Should().Equal(new[] { "tool" });
+        contract.Args.ToolAllowedValues.Should().Equal(new[]
+        {
+            "axe",
+            "pickaxe",
+            "hoe",
+            "watering_can",
+            "fishing_rod",
+            "weapon",
+            "scythe",
+            "shears",
+            "milk_pail",
+            "pan",
+        });
     }
 
     [Fact]
@@ -36,8 +47,8 @@ public sealed class FarmhandActionDevelopmentContractTests
         ActionDevelopmentContract contract = FarmhandActionDevelopmentContract.DeriveContract("equip_tool");
 
         contract.Terminal.AcceptableStates.Should().Equal(new[] { "succeeded", "uncertain" });
-        contract.Terminal.SuccessReasonCode.Should().Be("tool_selected");
-        contract.Terminal.EvidenceFields.Should().Equal(new[] { "slot", "before", "expected", "after" });
+        contract.Terminal.SuccessReasonCodes.Should().Equal(new[] { "tool_equipped", "already_equipped" });
+        contract.Terminal.EvidenceFields.Should().Equal(new[] { "tool", "before", "expected", "after" });
         contract.Terminal.EvidenceRelation.Should().Be("after_equals_expected");
     }
 
@@ -47,9 +58,11 @@ public sealed class FarmhandActionDevelopmentContractTests
         ActionDevelopmentContract contract = FarmhandActionDevelopmentContract.DeriveContract("equip_tool");
         string json = FarmhandActionDevelopmentContract.SerializeToJson(contract);
 
-        json.Should().Contain("\"schema\": \"gamebuddy-action-development-contract/v1\"");
+        json.Should().Contain("\"schema\": \"gamebuddy-action-development-contract/v2\"");
         json.Should().Contain("\"actionId\": \"equip_tool\"");
-        json.Should().Contain("\"successReasonCode\": \"tool_selected\"");
+        json.Should().Contain("\"successReasonCodes\": [");
+        json.Should().Contain("\"tool_equipped\"");
+        json.Should().Contain("\"already_equipped\"");
         json.Should().Contain("\"after_equals_expected\"");
 
         var deserialized = System.Text.Json.JsonSerializer.Deserialize<ActionDevelopmentContract>(json,
