@@ -14,13 +14,17 @@ test("static equip_tool descriptor is frozen development metadata only", () => {
   assert.equal(validateEquipToolStaticDescriptor(descriptor).actionId, "equip_tool");
   assert.equal(brief.gameId, "stardew");
   assert.equal(brief.actionId, "equip_tool");
+  assert.equal(brief.schema, "gamebuddy-action-work-brief/v2");
+  assert.equal(brief.contractVersion, 2);
   assert.equal(brief.effect, "mutation");
   assert.match(brief.claimScope, /grants no runtime, catalog, fixture, bridge, or live-mutation capability/);
 });
 
 test("static equip_tool descriptor rejects contract drift", () => {
   assert.throws(() => validateEquipToolStaticDescriptor({ ...descriptor, developmentOnly: false }), /scope/);
-  assert.throws(() => validateEquipToolStaticDescriptor({ ...descriptor, target: { ...descriptor.target, maximum: 37 } }), /target/);
+  assert.throws(() => validateEquipToolStaticDescriptor({ ...descriptor, target: { ...descriptor.target, allowedValues: ["axe"] } }), /target/);
   assert.throws(() => validateEquipToolStaticDescriptor({ ...descriptor, terminal: { ...descriptor.terminal, evidenceFields: ["slot", "before", "after", "expected"] } }), /terminal/);
+  assert.throws(() => validateEquipToolStaticDescriptor({ ...descriptor, target: { ...descriptor.target, maximum: 36 } }), /target_shape/);
+  assert.throws(() => validateEquipToolStaticDescriptor({ ...descriptor, terminal: { ...descriptor.terminal, reasonCode: "tool_selected" } }), /terminal_shape/);
   assert.throws(() => validateEquipToolStaticDescriptor({ ...descriptor, extra: true }), /shape/);
 });

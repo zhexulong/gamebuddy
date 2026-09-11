@@ -1,5 +1,5 @@
 {
-  "schema": "gamebuddy-stardew-static-action-descriptor/v1",
+  "schema": "gamebuddy-stardew-static-action-descriptor/v2",
   "developmentOnly": true,
   "gameId": "stardew",
   "actionId": "equip_tool",
@@ -7,16 +7,29 @@
   "familyId": "body_tools",
   "effect": "mutation",
   "target": {
-    "kind": "inventory_slot",
-    "property": "slot",
-    "type": "integer",
-    "minimum": 0,
-    "maximum": 36
+    "kind": "semantic_selector",
+    "property": "tool",
+    "type": "string",
+    "allowedValues": [
+      "axe",
+      "pickaxe",
+      "hoe",
+      "watering_can",
+      "fishing_rod",
+      "weapon",
+      "scythe",
+      "shears",
+      "milk_pail",
+      "pan"
+    ]
   },
   "terminal": {
     "state": "succeeded",
-    "reasonCode": "tool_selected",
-    "evidenceFields": ["slot", "before", "expected", "after"],
+    "successReasonCodes": [
+      "tool_equipped",
+      "already_equipped"
+    ],
+    "evidenceFields": ["tool", "before", "expected", "after"],
     "requiredRelation": "after_equals_expected"
   }
 }

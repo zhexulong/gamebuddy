@@ -30,7 +30,10 @@ test("validates the checked-in equip_tool contract", () => {
   const validated = validateActionContractEquipTool(contract);
   assert.equal(validated.actionId, "equip_tool");
   assert.equal(validated.familyId, "body_tools");
-  assert.equal(validated.terminal.successReasonCode, "tool_selected");
+  assert.deepEqual(validated.args.requiredProperties, ["tool"]);
+  assert.deepEqual(validated.args.toolAllowedValues, ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan"]);
+  assert.deepEqual(validated.terminal.successReasonCodes, ["tool_equipped", "already_equipped"]);
+  assert.deepEqual(validated.terminal.evidenceFields, ["tool", "before", "expected", "after"]);
   assert.ok(Object.isFrozen(validated));
 });
 
@@ -46,8 +49,9 @@ test("rejects wrong schema, game ID, unknown top-level keys, and identity drift"
 
 test("rejects invalid args and terminal shapes", () => {
   assert.throws(() => validateActionDevelopmentContract({ ...contract, args: { ...contract.args, requiredProperties: [] } }), /invalid_required_properties/);
-  assert.throws(() => validateActionDevelopmentContract({ ...contract, args: { ...contract.args, slotMinimum: -1 } }), /invalid_slot_minimum/);
-  assert.throws(() => validateActionDevelopmentContract({ ...contract, args: { ...contract.args, slotMinimum: 10, slotMaximum: 5 } }), /invalid_slot_range/);
+  assert.throws(() => validateActionDevelopmentContract({ ...contract, args: { ...contract.args, toolAllowedValues: [] } }), /invalid_tool_allowed_values/);
+  assert.throws(() => validateActionDevelopmentContract({ ...contract, args: { ...contract.args, slotMinimum: 0 } }), /invalid_args_shape/);
   assert.throws(() => validateActionDevelopmentContract({ ...contract, terminal: { ...contract.terminal, evidenceFields: [] } }), /invalid_evidence_fields/);
-  assert.throws(() => validateActionDevelopmentContract({ ...contract, terminal: { ...contract.terminal, successReasonCode: "" } }), /invalid_success_reason_code/);
+  assert.throws(() => validateActionDevelopmentContract({ ...contract, terminal: { ...contract.terminal, successReasonCodes: [] } }), /invalid_success_reason_codes/);
+  assert.throws(() => validateActionDevelopmentContract({ ...contract, terminal: { ...contract.terminal, successReasonCode: "tool_selected" } }), /invalid_terminal_shape/);
 });

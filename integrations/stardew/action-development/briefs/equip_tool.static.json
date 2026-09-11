@@ -1,8 +1,8 @@
 {
-  "schema": "gamebuddy-action-work-brief/v1",
+  "schema": "gamebuddy-action-work-brief/v2",
   "gameId": "stardew",
   "actionId": "equip_tool",
-  "contractVersion": 1,
+  "contractVersion": 2,
   "status": "frozen",
   "effect": "mutation",
   "claimScope": "Static development brief only: it validates the package-local descriptor mechanics for equip_tool and grants no runtime, catalog, fixture, bridge, or live-mutation capability.",
