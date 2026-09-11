@@ -182,15 +182,18 @@ internal sealed class AcceptedNavigationExecution
         }
 
         // Label selectors must be provably unique in the current generation.
-        NavigationDestination? match = set.SearchDestinations.FirstOrDefault(
-            destination => StringComparer.Ordinal.Equals(destination.CanonicalLabel, selector.Label));
-        if (match is null)
+        NavigationDestination[] matches = set.SearchDestinations
+            .Where(destination => StringComparer.Ordinal.Equals(destination.CanonicalLabel, selector.Label)
+                || (destination.ExplicitAliases is not null
+                    && destination.ExplicitAliases.Contains(selector.Label, StringComparer.Ordinal)))
+            .GroupBy(destination => destination.CanonicalIdentity, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+        if (matches.Length == 0)
             return new NavigationDestinationResolution(null, null, selector.Label, "destination_selector_invalid");
-        int matches = set.SearchDestinations.Count(destination =>
-            destination.CanonicalLabel == selector.Label
-            || (destination.ExplicitAliases is not null && destination.ExplicitAliases.Contains(selector.Label, StringComparer.Ordinal)));
-        if (matches != 1)
+        if (matches.Length != 1)
             return new NavigationDestinationResolution(null, null, selector.Label, "destination_selector_ambiguous");
+        NavigationDestination match = matches[0];
         return new NavigationDestinationResolution(
             null,
             new NavigationDestinationBinding("stardew", match.CanonicalIdentity, context.SourceGeneration, context.ObservationSequence),
