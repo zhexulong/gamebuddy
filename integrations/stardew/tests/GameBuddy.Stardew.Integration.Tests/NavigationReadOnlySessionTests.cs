@@ -11,6 +11,89 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class NavigationReadOnlySessionTests
 {
     [Fact]
+    public void ObserveScene_RequiresAuthenticationAndOwnerThread_AndProjectsLiveFactsWithoutReceipt()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
+        var session = new BridgeSession(
+            executions,
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            sceneObservationProvider: () => new SceneObservationInput(
+                "Farm",
+                10,
+                10,
+                new[] { new SceneAffordanceSource(SceneAffordanceKind.Chest, "Chest", "chest_01", "Farm", 11, 10, "inspect") }),
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+        BridgeEnvelope<ObserveSceneRequestPayload> request = new(
+            BridgeProtocol.Version,
+            "scene_request_01",
+            "scene_correlation_01",
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            scope,
+            "observe_scene_request",
+            new ObserveSceneRequestPayload());
+
+        session.TryObserveScene(1, request, out _, out string reason).Should().BeFalse();
+        reason.Should().Be("unauthenticated");
+        Authenticate(session, scope);
+
+        session.TryObserveScene(1, request, out BridgeEnvelope<ObserveSceneResultPayload>? response, out reason)
+            .Should().BeTrue(reason);
+        response!.Type.Should().Be("observe_scene_result");
+        response.Payload.CurrentLocation.Should().Be("Farm");
+        response.Payload.Affordances.Should().ContainSingle().Which.Name.Should().Be("Chest");
+        response.Payload.Affordances.Single().Ref.Should().StartWith("sr1_");
+        executions.TryGetReceipt("scene_request_01", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ObserveScene_RejectsWrongGenerationAndOffThreadWithoutCallingProvider()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
+        int providerCalls = 0;
+        var session = new BridgeSession(
+            executions,
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            sceneObservationProvider: () =>
+            {
+                providerCalls++;
+                return new SceneObservationInput("Farm", 10, 10, Array.Empty<SceneAffordanceSource>());
+            },
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+        Authenticate(session, scope);
+        BridgeEnvelope<ObserveSceneRequestPayload> request = new(
+            BridgeProtocol.Version,
+            "scene_request_02",
+            "scene_correlation_02",
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            scope,
+            "observe_scene_request",
+            new ObserveSceneRequestPayload());
+
+        session.TryObserveScene(2, request, out _, out string reason).Should().BeFalse();
+        reason.Should().Be("unauthenticated");
+        (bool Accepted, string Reason) offThread = await Task.Run(() =>
+        {
+            bool accepted = session.TryObserveScene(1, request, out _, out string offThreadReason);
+            return (accepted, offThreadReason);
+        });
+        offThread.Accepted.Should().BeFalse();
+        offThread.Reason.Should().Be("game_thread_required");
+        providerCalls.Should().Be(0);
+    }
+
+    [Fact]
     public void NavigationRead_RequiresLiveReadOnlyPublication_AndNeverCreatesAnExecutionReceipt()
     {
         FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "inspect_world_map" });

@@ -2052,6 +2052,7 @@ public sealed partial class ModEntry : Mod
                 () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
                 navigationSetProvider: () => DerivedDestinationSet.TryCreateCurrent("stardew", out DerivedDestinationSet? set, out _) ? set : null,
                 runtimeAttestation: runtimeAttestation,
+                sceneObservationProvider: this.TryCreateSceneObservationInput,
                 bodyProgramAuthority: bodyProgramAuthority,
                 bodyProgramUnavailableReason: bodyProgramUnavailableReason)
             : null;
@@ -3559,6 +3560,8 @@ public sealed partial class ModEntry : Mod
                 string? requestType = typeElement.GetString();
                 if (requestType == "observe_request")
                     this.MonitorNativeChatIngress("navigation_observe_dequeued");
+                if (requestType == "observe_scene_request")
+                    this.MonitorNativeChatIngress("scene_observe_dequeued");
                 if (requestType == "execution_request")
                     this.MonitorNativeChatIngress("navigation_execution_dequeued");
 
@@ -3566,6 +3569,7 @@ public sealed partial class ModEntry : Mod
                 {
                     "hello" => this.HandleHello(state, inbound.Generation, inbound.Json),
                     "observe_request" => this.HandleObserve(state, inbound.Generation, inbound.Json),
+                    "observe_scene_request" => this.HandleObserveScene(state, inbound.Generation, inbound.Json, correlationId),
                     "navigation_read_request" => this.HandleNavigationRead(state, inbound.Generation, inbound.Json, correlationId),
                     "execution_request" => this.HandleExecute(state, inbound.Generation, inbound.Json),
                     "cancel_request" => this.HandleCancel(state, inbound.Generation, inbound.Json),
@@ -3584,6 +3588,8 @@ public sealed partial class ModEntry : Mod
                 {
                     if (requestType == "observe_request")
                         this.MonitorNativeChatIngress("navigation_observe_response_missing");
+                    if (requestType == "observe_scene_request")
+                        this.MonitorNativeChatIngress("scene_observe_response_missing");
                     if (requestType == "execution_request")
                         this.MonitorNativeChatIngress("navigation_execution_response_missing");
                     continue;
@@ -3602,6 +3608,16 @@ public sealed partial class ModEntry : Mod
                     {
                         this.MonitorNativeChatIngress("navigation_observe_response_enqueue_failed");
                     }
+                    continue;
+                }
+
+                if (requestType == "observe_scene_request")
+                {
+                    this.MonitorNativeChatIngress("scene_observe_response_created");
+                    if (!state.LocalPipeBridge.TryEnqueueOutbound(inbound.Generation, response))
+                        this.MonitorNativeChatIngress("scene_observe_response_enqueue_failed");
+                    else
+                        this.MonitorNativeChatIngress("scene_observe_response_queued");
                     continue;
                 }
 
@@ -3873,6 +3889,14 @@ public sealed partial class ModEntry : Mod
         BridgeProtocol.TryDeserializeInbound(json, "observe_request", out BridgeEnvelope<BridgeObserveRequest>? request, out _) ? request : null,
         (BridgeEnvelope<BridgeObserveRequest> request, out BridgeEnvelope<BridgeSnapshot>? response, out string reason) => state.BridgeSession!.TryObserve(generation, request, out response, out reason), out _);
 
+    private string? HandleObserveScene(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeObserveSceneRequest(json, out BridgeEnvelope<ObserveSceneRequestPayload>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<ObserveSceneRequestPayload, ObserveSceneResultPayload>(state, request,
+            (BridgeEnvelope<ObserveSceneRequestPayload> r, out BridgeEnvelope<ObserveSceneResultPayload>? response, out string reason) => state.BridgeSession!.TryObserveScene(generation, r, out response, out reason), out _);
+    }
+
     private string? HandleNavigationRead(ScreenEmbodimentState state, long generation, string json, string? correlationId)
     {
         if (!BridgeProtocol.TryDeserializeNavigationReadRequest(json, out BridgeEnvelope<BridgeNavigationReadRequest>? request, out string parseReason) || request is null)
@@ -4004,6 +4028,50 @@ public sealed partial class ModEntry : Mod
         if (!handler(request, out BridgeEnvelope<TResponse>? response, out reasonCode) || response is null)
             return this.SerializeError(state, request.CorrelationId, reasonCode);
         return BridgeProtocol.TrySerialize(response, out string json, out _) ? json : this.SerializeError(state, request.CorrelationId, "response_serialization_failed");
+    }
+
+    private SceneObservationInput? TryCreateSceneObservationInput()
+    {
+        if (!Context.IsWorldReady || Game1.player is not Farmer player || player.currentLocation is not GameLocation location
+            || string.IsNullOrWhiteSpace(location.NameOrUniqueName))
+            return null;
+
+        List<SceneAffordanceSource> candidates = new();
+        foreach ((Vector2 tile, StardewValley.Object item) in location.objects.Pairs)
+        {
+            if (!SceneObservationScope.IsBoundedText(item.Name, 128)
+                || !SceneObservationScope.IsBoundedText(item.QualifiedItemId, 128))
+                continue;
+            SceneAffordanceKind kind = item.isForage() ? SceneAffordanceKind.Forage
+                : item.GetMachineData() is not null ? SceneAffordanceKind.Machine
+                : item is StardewValley.Objects.Chest ? SceneAffordanceKind.Chest
+                : SceneAffordanceKind.Chest;
+            candidates.Add(new SceneAffordanceSource(kind, item.Name, item.QualifiedItemId, location.NameOrUniqueName,
+                (int)tile.X, (int)tile.Y, item.isForage() ? "pickup_forage" : null));
+        }
+        foreach (StardewValley.NPC npc in location.characters)
+        {
+            if (!SceneObservationScope.IsBoundedText(npc.Name, 128))
+                continue;
+            candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Npc, npc.Name, npc.Name, location.NameOrUniqueName,
+                (int)npc.Tile.X, (int)npc.Tile.Y, "npc_relationship"));
+        }
+        foreach ((Vector2 tile, var feature) in location.terrainFeatures.Pairs)
+        {
+            if (feature is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
+                && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value))
+            {
+                candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Crop, "Crop", dirt.crop.indexOfHarvest.Value,
+                    location.NameOrUniqueName, (int)tile.X, (int)tile.Y, "harvest_crop"));
+            }
+        }
+        foreach (Warp warp in location.warps)
+        {
+            if (!warp.npcOnly.Value && !string.IsNullOrWhiteSpace(warp.TargetName))
+                candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Door, warp.TargetName, $"{warp.TargetName}:{warp.X}:{warp.Y}",
+                    location.NameOrUniqueName, warp.X, warp.Y, "enter_exit"));
+        }
+        return new SceneObservationInput(location.NameOrUniqueName, (int)player.Tile.X, (int)player.Tile.Y, candidates);
     }
 
     private bool TryGetAiState(out ScreenEmbodimentState state)
