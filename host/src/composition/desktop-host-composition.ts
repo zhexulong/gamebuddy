@@ -74,9 +74,8 @@ function createStardewBootstrapGuardianOwnerFromDesktopSession(
   );
 }
 
+/** Generic desktop composition surface; game-specific Guardian seams stay closure-private. */
 export type DesktopPrivateHostComposition = Readonly<{
-  /** Composition-private Stardew handoff; not part of any browser/public facade. */
-  readonly stardewBootstrapGuardianOwnerFactory: StardewBootstrapGuardianOwnerFactory;
   close(): Promise<void>;
 }>;
 
@@ -90,23 +89,39 @@ export function createDesktopPrivateHostComposition(
   session: DesktopGuardianSession,
 ): DesktopPrivateHostComposition {
   let retainedRootLayoutCapability: DesktopRootLayoutCapability | undefined = rootLayoutCapability;
+  let sessionCloseStarted = false;
   let sessionClosePromise: Promise<void> | undefined;
   let compositionClosePromise: Promise<void> | undefined;
+  // Keep the Stardew adapter in this composition-private closure. The generic
+  // facade below intentionally projects lifecycle only; no game-specific
+  // factory crosses this boundary.
   const stardewBootstrapGuardianOwnerFactory: StardewBootstrapGuardianOwnerFactory = Object.freeze({
     create: (owner, deadlineUnixMs, operationWaitBudgetMs) =>
       createStardewBootstrapGuardianOwnerFromDesktopSession(owner, session, deadlineUnixMs, operationWaitBudgetMs),
   });
   return Object.freeze({
-    stardewBootstrapGuardianOwnerFactory,
     close: () => compositionClosePromise ??= (async () => {
-      // Keep the capability captured until the session has fully closed; the
-      // capability is intentionally not projected through this facade.
+      // Keep the capabilities and private adapter captured until the session
+      // has fully closed; neither is projected through this facade.
       void retainedRootLayoutCapability;
+      void stardewBootstrapGuardianOwnerFactory;
       try {
-        await (sessionClosePromise ??= session.close());
+        await closeSessionOnce();
       } finally {
         retainedRootLayoutCapability = undefined;
       }
     })(),
   });
+
+  function closeSessionOnce(): Promise<void> {
+    if (!sessionCloseStarted) {
+      sessionCloseStarted = true;
+      try {
+        sessionClosePromise = Promise.resolve(session.close());
+      } catch (error) {
+        sessionClosePromise = Promise.reject(error);
+      }
+    }
+    return sessionClosePromise!;
+  }
 }

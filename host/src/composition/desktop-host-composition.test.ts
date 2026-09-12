@@ -14,13 +14,27 @@ import {
 
 const rootLayoutCapability = Object.freeze({}) as DesktopRootLayoutCapability;
 
-test("desktop composition exposes only the typed invocation factory and keeps platform transport private", async () => {
+type Assert<T extends true> = T;
+type HasExactKeys<T, TKeys extends PropertyKey> =
+  Exclude<keyof T, TKeys> extends never
+    ? Exclude<TKeys, keyof T> extends never
+      ? true
+      : false
+    : false;
+type _DesktopPrivateHostCompositionHasOnlyLifecycle = Assert<
+  HasExactKeys<DesktopPrivateHostComposition, "close">
+>;
+
+test("desktop composition keeps the Stardew Guardian adapter in a private closure", async () => {
   const sourcePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts");
   const source = await readFile(sourcePath, "utf8");
+  assert.match(source, /type StardewBootstrapGuardianOwnerFactory =/);
+  assert.match(source, /const stardewBootstrapGuardianOwnerFactory: StardewBootstrapGuardianOwnerFactory =/);
   assert.match(source, /createStardewBootstrapGuardianOwnerFromDesktopSession\(owner, session, deadlineUnixMs, operationWaitBudgetMs\)/);
-  assert.match(source, /create:\s*\(owner, deadlineUnixMs, operationWaitBudgetMs\)/);
-  assert.doesNotMatch(source, /DesktopGuardianSession[^\n]*StardewBootstrapGuardianOwnerFactory/);
-  assert.doesNotMatch(source, /stardewBootstrapGuardianOwnerFactory[^\n]*(pipe|token|pid|path)/i);
+  assert.match(source, /facade below intentionally projects lifecycle only/i);
+  assert.doesNotMatch(source, /export\s+(?:type|interface)\s+StardewBootstrapGuardianOwnerFactory/);
+  assert.doesNotMatch(source, /readonly\s+stardewBootstrapGuardianOwnerFactory/);
+  assert.match(source, /return Object\.freeze\(\{\s*close:/s);
 
   let closeCalls = 0;
   const session = Object.freeze({
@@ -30,18 +44,12 @@ test("desktop composition exposes only the typed invocation factory and keeps pl
     close: async () => { closeCalls += 1; },
   });
   const composition = createDesktopPrivateHostComposition(rootLayoutCapability, session);
-  const factory = composition.stardewBootstrapGuardianOwnerFactory;
 
-  assert.deepEqual(Object.keys(composition), ["stardewBootstrapGuardianOwnerFactory", "close"]);
-  assert.deepEqual(Object.keys(factory), ["create"]);
-  assert.equal("session" in factory, false);
-  assert.equal("pipeName" in factory, false);
-  assert.equal("token" in factory, false);
-  assert.equal("pid" in factory, false);
-  assert.equal("path" in factory, false);
-  assert.equal(factory.create.length, 3);
+  assert.deepEqual(Object.keys(composition), ["close"]);
+  assert.deepEqual(Reflect.ownKeys(composition), ["close"]);
+  assert.equal("stardewBootstrapGuardianOwnerFactory" in composition, false);
   const typedComposition: DesktopPrivateHostComposition = composition;
-  assert.equal(typeof typedComposition.stardewBootstrapGuardianOwnerFactory.create, "function");
+  assert.equal(typeof typedComposition.close, "function");
   await Promise.all([composition.close(), composition.close()]);
   assert.equal(closeCalls, 1);
 });
@@ -92,15 +100,11 @@ test("desktop composition retains the typed root capability and closes the authe
   });
   const composition = createDesktopPrivateHostComposition(rootLayoutCapability, session);
 
-  assert.deepEqual(Object.keys(composition), ["stardewBootstrapGuardianOwnerFactory", "close"]);
-  assert.deepEqual(Object.keys(composition.stardewBootstrapGuardianOwnerFactory), ["create"]);
-  assert.equal("session" in composition.stardewBootstrapGuardianOwnerFactory, false);
-  assert.equal("pipeName" in composition.stardewBootstrapGuardianOwnerFactory, false);
-  assert.equal("token" in composition.stardewBootstrapGuardianOwnerFactory, false);
-  assert.equal("pid" in composition.stardewBootstrapGuardianOwnerFactory, false);
-  assert.equal("path" in composition.stardewBootstrapGuardianOwnerFactory, false);
+  assert.deepEqual(Object.keys(composition), ["close"]);
+  assert.deepEqual(Reflect.ownKeys(composition), ["close"]);
+  assert.equal("stardewBootstrapGuardianOwnerFactory" in composition, false);
   const typedComposition: DesktopPrivateHostComposition = composition;
-  assert.equal(typeof typedComposition.stardewBootstrapGuardianOwnerFactory.create, "function");
+  assert.equal(typeof typedComposition.close, "function");
   await Promise.all([composition.close(), composition.close()]);
   assert.equal(closeCalls, 1);
 });
