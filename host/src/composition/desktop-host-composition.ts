@@ -14,6 +14,46 @@ type StardewBootstrapGuardianOwnerFactory = Readonly<{
   ): StardewBootstrapGuardianOwner;
 }>;
 
+/**
+ * Narrow lifecycle contract shared by composition-owned children. The child
+ * object itself never crosses the composition facade; only its close outcome
+ * is observed by the owner.
+ */
+export type HostChildLifecycle = Readonly<{
+  close(): Promise<void>;
+}>;
+
+export type HostChildLifecycleAggregation = HostChildLifecycle;
+
+/**
+ * Aggregates composition children in registration order and closes them in
+ * reverse order. The returned promise is stable, so concurrent or repeated
+ * close requests invoke every child at most once. All children are attempted
+ * after a failure; the first reverse-order failure is propagated unchanged.
+ */
+export function createHostChildLifecycleAggregation(
+  children: readonly HostChildLifecycle[],
+): HostChildLifecycleAggregation {
+  const uniqueChildren = [...new Set(children)];
+  let closePromise: Promise<void> | undefined;
+
+  return Object.freeze({
+    close: () => closePromise ??= closeChildren(uniqueChildren),
+  });
+}
+
+async function closeChildren(children: readonly HostChildLifecycle[]): Promise<void> {
+  let firstFailure: { readonly error: unknown } | undefined;
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    try {
+      await children[index]!.close();
+    } catch (error) {
+      firstFailure ??= { error };
+    }
+  }
+  if (firstFailure !== undefined) throw firstFailure.error;
+}
+
 declare const desktopRootLayoutCapabilityBrand: unique symbol;
 /** Opaque capability minted only after bootstrap root/layout validation. */
 export type DesktopRootLayoutCapability = object & {
