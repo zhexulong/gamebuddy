@@ -8,6 +8,7 @@ const REPOSITORY_DIRECTORY = path.resolve(PACKAGE_DIRECTORY, "../../..");
 const EXPORT_PROJECT = path.join(REPOSITORY_DIRECTORY, "integrations", "stardew", "tests", "ActionDevelopmentContractExport", "ActionDevelopmentContractExport.csproj");
 const EXPORT_DLL = path.join(REPOSITORY_DIRECTORY, "integrations", "stardew", "tests", "ActionDevelopmentContractExport", "bin", "Debug", "net6.0", "GameBuddy.Stardew.ActionDevelopmentContractExport.dll");
 const EQUIP_TOOL_ARTIFACT = path.join(PACKAGE_DIRECTORY, "contracts", "equip_tool.json");
+const PICKUP_FORAGE_ARTIFACT = path.join(PACKAGE_DIRECTORY, "contracts", "pickup_forage.json");
 const MAX_OUTPUT_BYTES = 64 * 1024;
 
 function fail(code) {
@@ -32,6 +33,18 @@ function run(command, args) {
       code === 0 && !signal ? resolve(result) : reject(new Error(`stardew_action_contract_export_failed:${code ?? "none"}:${signal ?? "none"}:${result.stderr.toString("utf8")}`));
     });
   });
+}
+
+export async function readGeneratedPickupForageContract({ runExport, readArtifact } = {}) {
+  const exportContract = runExport ?? (async () => {
+    await run("dotnet", ["build", EXPORT_PROJECT, "--nologo"]);
+    return (await run("dotnet", [EXPORT_DLL, "pickup_forage"])).stdout;
+  });
+  const readCheckedArtifact = readArtifact ?? (() => readFile(PICKUP_FORAGE_ARTIFACT));
+  const [generated, artifact] = await Promise.all([exportContract(), readCheckedArtifact()]);
+  if (!Buffer.isBuffer(generated) || !Buffer.isBuffer(artifact)) fail("artifact_unreadable");
+  if (!generated.equals(artifact)) fail("artifact_drift");
+  return generated;
 }
 
 export async function readGeneratedEquipToolContract({ runExport, readArtifact } = {}) {
