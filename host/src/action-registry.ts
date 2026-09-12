@@ -196,6 +196,23 @@ export type StardewActionId =
 export type VisibleStardewAction = StardewActionAdapter & ActionRegistration;
 
 /**
+ * The Mod must explicitly opt this action into ObservationBinding/v1. A Host
+ * schema cannot add that capability when the authenticated registration omits it.
+ */
+export function acceptsObservationBindingV1(
+  registration: ActionRegistration,
+): boolean {
+  const sceneTarget = registration.descriptor?.sceneTarget;
+  return registration.actionId === "pickup_forage" &&
+    sceneTarget?.type === "ObservationBinding" &&
+    sceneTarget.version === 1 &&
+    sceneTarget.required === true &&
+    sceneTarget.requiredProperties.length === 2 &&
+    sceneTarget.requiredProperties[0] === "observationId" &&
+    sceneTarget.requiredProperties[1] === "ref";
+}
+
+/**
  * Tool construction remains action-specific, but this closed projection forces
  * every Mod-published identity for which this build has an adapter to have one Host tool adapter name.
  */
@@ -444,7 +461,8 @@ export function visibleActionsFromModCatalog(
       registration.kind !== "execution" ||
       !live.has(adapter.requiredCapability) ||
       deniedActions.has(registration.actionId) ||
-      deniedFamilies.has(registration.familyId)
+      deniedFamilies.has(registration.familyId) ||
+      (registration.actionId === "pickup_forage" && !acceptsObservationBindingV1(registration))
     ) {
       continue;
     }

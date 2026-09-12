@@ -626,21 +626,29 @@ export function createStardewActionTools(
             minLength: 1,
             maxLength: 128,
           }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-        }),
-        action: "pickup_forage",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-          expectedTargetId: params.expectedTargetId,
-        }),
+           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+           sceneTarget: Type.Object(
+             {
+               observationId: Type.String({ minLength: 1, maxLength: 128 }),
+               ref: Type.String({ pattern: "^sr1_[A-Za-z0-9_-]{16}$" }),
+             },
+             { additionalProperties: false },
+           ),
+           requestId: Type.Optional(
+             Type.String({ minLength: 1, maxLength: 128 }),
+           ),
+           idempotencyKey: Type.Optional(
+             Type.String({ minLength: 1, maxLength: 128 }),
+           ),
+         }, { additionalProperties: false }),
+         action: "pickup_forage",
+         toArgs: (params) => ({
+           x: params.x,
+           y: params.y,
+           expectedQualifiedItemId: params.expectedQualifiedItemId,
+           expectedTargetId: params.expectedTargetId,
+           sceneTarget: params.sceneTarget,
+         }),
       }),
     );
   }

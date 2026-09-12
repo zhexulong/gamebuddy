@@ -17,6 +17,7 @@ import {
   type CompanionPresentationRequest,
   diagnoseBridgeMessage,
   type ExecutionReceipt,
+  type FarmhandPolicyIdentity,
   type ExecutionReceiptQuery,
   type ExecutionRequest,
   type NavigationReadRequest,
@@ -34,10 +35,11 @@ import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-ada
 import { parseStrictBridgeJson } from "./strict-bridge-json.js";
 
 export type LocalStardewBridgeState = StardewBridgeConnectionState &
-  Readonly<{
-    authenticated: boolean;
+    Readonly<{
+      authenticated: boolean;
     /** Current authenticated Mod availability publication for this bridge generation. */
     catalogRevision?: number;
+    policyIdentity?: FarmhandPolicyIdentity;
     enabledActionIds?: readonly string[];
   }>;
 /** Validated Mod-originated facts forwarded to the Host event pump. */
@@ -96,6 +98,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   #catalogRegistrations: readonly ActionRegistration[] = [];
   #snapshot: Snapshot | null = null;
   #catalogRevision: number | undefined;
+  #policyIdentity: FarmhandPolicyIdentity | undefined;
   #enabledActionIds: readonly string[] | undefined;
   #catalogRefresh: Promise<Snapshot> | undefined;
   #catalogRefreshGeneration = 0;
@@ -136,6 +139,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.#capabilities = Object.freeze([]);
       this.#catalogRegistrations = Object.freeze([]);
       this.#catalogRevision = undefined;
+      this.#policyIdentity = undefined;
       this.#enabledActionIds = undefined;
       this.#catalogRefresh = undefined;
       this.#catalogRefreshGeneration++;
@@ -231,6 +235,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       capabilities: this.#capabilities,
       catalogRegistrations: this.#catalogRegistrations,
       ...(this.#catalogRevision === undefined ? {} : { catalogRevision: this.#catalogRevision }),
+      ...(this.#policyIdentity === undefined ? {} : { policyIdentity: this.#policyIdentity }),
       ...(this.#enabledActionIds === undefined ? {} : { enabledActionIds: this.#enabledActionIds }),
       snapshot: this.#snapshot,
       latestReceipt: this.#latestReceipt,
@@ -480,6 +485,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     const response = await this.request("hello", { token: this.token }, deadlineMs);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "hello_ack") throw new Error("unexpected_hello_response");
+    if (response.payload.policyIdentity === undefined) throw new Error("invalid_policy_identity");
     if (
       this.expectedRuntimeAttestation !== undefined &&
       (response.payload.runtimeRole !== this.expectedRuntimeAttestation.runtimeRole ||
@@ -492,6 +498,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     this.#capabilities = Object.freeze([...response.payload.capabilities]);
     this.#catalogRegistrations = Object.freeze([...response.payload.registrations]);
     this.#catalogRevision = response.payload.catalogRevision;
+    this.#policyIdentity = Object.freeze({ ...response.payload.policyIdentity });
     this.#enabledActionIds = Object.freeze([...response.payload.enabledActionIds]);
   }
 
@@ -624,15 +631,24 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       return;
     }
     if (message.type === "hello_ack") {
+      if (message.payload.policyIdentity === undefined) {
+        this.transport.close("invalid_hello_ack");
+        return;
+      }
       this.#snapshot = null;
       this.#initialSnapshotReceived = false;
       this.#latestReceipt = null;
       this.#catalogRevision = message.payload.catalogRevision;
+      this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
       this.#enabledActionIds = Object.freeze([...message.payload.enabledActionIds]);
       this.#capabilities = Object.freeze([...message.payload.capabilities]);
       this.#catalogRegistrations = Object.freeze([...message.payload.registrations]);
       this.#latestReasonCode = null;
     } else if (message.type === "catalog_update") {
+      if (message.payload.policyIdentity === undefined) {
+        this.transport.close("invalid_catalog_update");
+        return;
+      }
       const registeredIds = new Set(
         this.#catalogRegistrations
           .filter((registration) => registration.kind === "execution")
@@ -640,6 +656,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       );
       if (
         this.#catalogRevision === undefined ||
+        this.#policyIdentity === undefined ||
         message.payload.catalogRevision <= this.#catalogRevision ||
         message.payload.enabledActionIds.some((actionId) => !registeredIds.has(actionId))
       ) {
@@ -647,6 +664,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         return;
       }
       this.#catalogRevision = message.payload.catalogRevision;
+      this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
       this.#enabledActionIds = Object.freeze([...message.payload.enabledActionIds]);
       this.#catalogRefreshGeneration++;
       // Catalog availability is immutable per publication. Do not rewrite an
