@@ -27,7 +27,7 @@ internal sealed partial class ExecutionManager
             return existing;
 
         this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
+        string executionId = this.NewExecutionId(requestId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
@@ -72,11 +72,8 @@ internal sealed partial class ExecutionManager
         bool inventoryChanged = afterCount > beforeCount;
         ExecutionState state = actionHandled && removed && inventoryChanged ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "forage_picked_up" : "forage_postcondition_unavailable";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
-            $"location={specification.Location};target={targetX},{targetY};item={expectedQualifiedItemId};removed={removed};inventory_before={beforeCount};inventory_after={afterCount}");
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        return receipt;
+        string evidence = $"location={specification.Location};tile={targetX},{targetY};item={expectedQualifiedItemId};removed={removed};inventory_before={beforeCount};inventory_after={afterCount}";
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     /// <summary>
