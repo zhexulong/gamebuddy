@@ -89,7 +89,7 @@ public sealed class NavigationReadOnlySessionTests
     }
 
     [Fact]
-    public void ObserveScene_CanResumeAfterBridgeLifecycleClearWithFreshReference()
+    public void ObserveScene_RejectsPriorReferenceAfterReconnectAndAcceptsOnlyFreshObservation()
     {
         FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
         var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
@@ -114,9 +114,48 @@ public sealed class NavigationReadOnlySessionTests
 
         session.ClearSceneForBridgeLifecycle();
 
+        session.TryResolveSceneTarget(new ObservationBindingV1(first!.Payload.ObservationId, firstReference), out _, out reason)
+            .Should().BeFalse();
+        reason.Should().Be("observation_binding_stale");
+
         session.TryObserveScene(1, SceneRequest(scope, "scene_lifecycle_request_02"), out BridgeEnvelope<ObserveSceneResultPayload>? second, out reason)
             .Should().BeTrue(reason);
         second!.Payload.Affordances.Single().Ref.Should().NotBe(firstReference);
+        second.Payload.ObservationId.Should().NotBe(first.Payload.ObservationId);
+    }
+
+    [Fact]
+    public void ObserveScene_ReauthenticatesNewGenerationBeforeFreshObservation()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        var session = new BridgeSession(
+            new ExecutionManager(new DummyMonitor(), () => publication),
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            sceneObservationProvider: () => new SceneObservationInput(
+                "Farm",
+                10,
+                10,
+                new[] { new SceneAffordanceSource(SceneAffordanceKind.Chest, "Chest", "chest_01", "Farm", 11, 10, "inspect") }),
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+        Authenticate(session, scope);
+        session.TryObserveScene(1, SceneRequest(scope, "scene_generation_request_01"), out BridgeEnvelope<ObserveSceneResultPayload>? first, out string reason)
+            .Should().BeTrue(reason);
+        ObservationBindingV1 oldBinding = new(first!.Payload.ObservationId, first.Payload.Affordances.Single().Ref);
+
+        session.TryAuthenticate(2, new BridgeEnvelope<BridgeHello>(
+            BridgeProtocol.Version, "navigation_hello_02", "navigation_hello_02", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "hello",
+            new BridgeHello("navigation_token_0123456789abcdef")), out _, out reason).Should().BeTrue(reason);
+        session.TryResolveSceneTarget(oldBinding, out _, out reason).Should().BeFalse();
+        reason.Should().Be("observation_binding_stale");
+        session.TryObserveScene(2, SceneRequest(scope, "scene_generation_request_02"), out BridgeEnvelope<ObserveSceneResultPayload>? second, out reason)
+            .Should().BeTrue(reason);
+        second!.Payload.ObservationId.Should().NotBe(first.Payload.ObservationId);
+        second.Payload.Affordances.Single().Ref.Should().NotBe(oldBinding.Ref);
     }
 
     [Fact]
@@ -151,6 +190,10 @@ public sealed class NavigationReadOnlySessionTests
 
         session.TryObserveScene(2, request, out _, out string reason).Should().BeFalse();
         reason.Should().Be("unauthenticated");
+        session.ClearSceneForWorldUnload();
+        session.TryObserveScene(1, request, out _, out reason).Should().BeFalse();
+        reason.Should().Be("scene_observation_invalid");
+        providerCalls.Should().Be(1);
         (bool Accepted, string Reason) offThread = await Task.Run(() =>
         {
             bool accepted = session.TryObserveScene(1, request, out _, out string offThreadReason);
@@ -158,7 +201,7 @@ public sealed class NavigationReadOnlySessionTests
         });
         offThread.Accepted.Should().BeFalse();
         offThread.Reason.Should().Be("game_thread_required");
-        providerCalls.Should().Be(0);
+        providerCalls.Should().Be(1);
     }
 
     [Fact]

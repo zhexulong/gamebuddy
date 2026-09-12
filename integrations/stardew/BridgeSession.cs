@@ -33,12 +33,13 @@ internal sealed class BridgeSession
     private readonly Func<DerivedDestinationSet?> navigationSetProvider;
     private readonly NavigationReferenceStore navigationReferences;
     private readonly Func<SceneObservationInput?> sceneObservationProvider;
-    private readonly SceneObservationStore sceneObservations = new();
-    private readonly SceneObservationProjection sceneObservationProjection;
+    private SceneObservationStore sceneObservations = new();
+    private SceneObservationProjection sceneObservationProjection;
     private readonly string navigationRuntimeInstanceId = Guid.NewGuid().ToString("N");
     private long navigationObservationSequence;
     private long sceneObservationSequence;
     private long sceneMovementSequence;
+    private long sceneObservationGeneration = -1;
     private string? sceneObservationId;
     private string? sceneLocationName;
     private int sceneActorTileX;
@@ -122,6 +123,8 @@ internal sealed class BridgeSession
         if (this.authenticatedGeneration == generation) { reasonCode = "already_authenticated"; return false; }
         if (!TryCurrentPresentationLocale(out string locale))
         { reasonCode = "invalid_presentation_locale"; return false; }
+        if (this.authenticatedGeneration != -1 && this.authenticatedGeneration != generation)
+            this.ClearSceneForBridgeLifecycle();
         this.authenticatedGeneration = generation;
         this.pendingPlayerControls.Clear();
         FarmhandCapabilityPublication publication = this.capabilityPublicationProvider();
@@ -198,11 +201,13 @@ internal sealed class BridgeSession
         }
         catch
         {
+            this.ClearSceneForBridgeLifecycle();
             reasonCode = "scene_observation_unavailable";
             return false;
         }
         if (input is null || !input.IsValid)
         {
+            this.ClearSceneForBridgeLifecycle();
             reasonCode = "scene_observation_unavailable";
             return false;
         }
@@ -235,8 +240,9 @@ internal sealed class BridgeSession
 
          // The observation store minted this identity with the active context;
          // never derive it from the transport envelope/message identity.
-         this.sceneObservationId = projection.ObservationId;
-         ObserveSceneResultPayload payload = new(
+          this.sceneObservationId = projection.ObservationId;
+          this.sceneObservationGeneration = generation;
+          ObserveSceneResultPayload payload = new(
              projection.ObservationId,
              projection.CurrentLocation,
             projection.CurrentRegion,
@@ -280,7 +286,9 @@ internal sealed class BridgeSession
         }
 
         SceneObservationContext? active = this.sceneObservations.ActiveObservation;
-        if (active is null || !string.Equals(requested.ObservationId, this.sceneObservationId, StringComparison.Ordinal))
+        if (active is null
+            || this.sceneObservationGeneration != this.authenticatedGeneration
+            || !string.Equals(requested.ObservationId, this.sceneObservationId, StringComparison.Ordinal))
         {
             reasonCode = "observation_binding_stale";
             return false;
@@ -293,11 +301,13 @@ internal sealed class BridgeSession
         }
         catch
         {
+            this.ClearSceneForBridgeLifecycle();
             reasonCode = "observation_binding_target_unavailable";
             return false;
         }
         if (current is null || !current.IsValid)
         {
+            this.ClearSceneForBridgeLifecycle();
             reasonCode = "observation_binding_target_unavailable";
             return false;
         }
@@ -345,6 +355,10 @@ internal sealed class BridgeSession
     internal void ClearSceneForWorldUnload()
     {
         this.sceneObservationId = null;
+        this.sceneObservationGeneration = -1;
+        this.sceneLocationName = null;
+        this.sceneActorTileX = 0;
+        this.sceneActorTileY = 0;
         this.sceneObservations.Close();
     }
 
@@ -355,15 +369,15 @@ internal sealed class BridgeSession
     /// </summary>
     internal void ClearSceneForBridgeLifecycle()
     {
-        this.sceneObservations.InvalidateForMove(
-            this.navigationRuntimeInstanceId,
-            this.scope,
-            this.sceneLocationName ?? "bridge_lifecycle",
-            ++this.sceneMovementSequence);
+        this.sceneObservations.Close();
+        this.sceneObservations = new SceneObservationStore();
+        this.sceneObservationProjection = new SceneObservationProjection(this.sceneObservations);
         this.sceneObservationId = null;
+        this.sceneObservationGeneration = -1;
         this.sceneLocationName = null;
         this.sceneActorTileX = 0;
         this.sceneActorTileY = 0;
+        this.sceneMovementSequence++;
     }
 
     internal bool TryNavigationRead(long generation, BridgeEnvelope<BridgeNavigationReadRequest>? envelope, out BridgeEnvelope<BridgeNavigationReadResult>? response, out string reasonCode)
