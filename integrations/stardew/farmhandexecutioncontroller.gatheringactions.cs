@@ -74,7 +74,7 @@ internal sealed partial class ExecutionManager
         bool inventoryChangedExactlyOnce = afterCount == beforeCount + 1;
         ExecutionState state = actionHandled && removed && inventoryChangedExactlyOnce ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "forage_picked_up" : "forage_postcondition_unavailable";
-        string evidence = $"location={specification.Location};tile={targetX},{targetY};item={expectedQualifiedItemId};removed={removed};inventory_before={beforeCount};inventory_after={afterCount}";
+        string evidence = $"location={specification.Location};targetIdentity={specification.TargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};removed={removed};inventory_before={beforeCount};inventory_after={afterCount}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 

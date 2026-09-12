@@ -33,6 +33,7 @@
     ],
     "evidenceFields": [
       "location",
+      "targetIdentity",
       "tile",
       "item",
       "removed",

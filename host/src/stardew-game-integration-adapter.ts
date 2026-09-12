@@ -888,12 +888,9 @@ function parseWarpDestination(
 function hasPickupForageCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
-  // The current pickup_forage evidence contract binds the observed tile, item,
-  // removal marker, and inventory relation. It has no target-identity field or
-  // request context from which Host could derive one, so identity matching stays
-  // a required Mod/evidence-contract change rather than an inferred check.
   const expectedKeys = [
     "location",
+    "targetIdentity",
     "tile",
     "item",
     "removed",
@@ -909,6 +906,7 @@ function hasPickupForageCompletionEvidence(detail: string): boolean {
   const after = integerEvidenceValue(evidence.inventory_after);
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
+    hasOpaqueIdEvidenceValue(evidence.targetIdentity) &&
     hasTileEvidenceValue(evidence.tile) &&
     hasOpaqueEvidenceValue(evidence.item) &&
     evidence.removed === "true" &&
@@ -917,7 +915,6 @@ function hasPickupForageCompletionEvidence(detail: string): boolean {
     after === before + 1
   );
 }
-
 function hasPickupItemCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;

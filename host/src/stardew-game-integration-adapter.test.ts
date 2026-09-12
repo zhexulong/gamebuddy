@@ -5,6 +5,35 @@ import type { ExecutionReceipt } from "./protocol.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
+test("pickup_forage completion requires targetIdentity evidence", () => {
+  const receipt = {
+    state: "succeeded",
+    reasonCode: "forage_picked_up",
+    evidence: {
+      detail:
+        "location=Farm;targetIdentity=forage_01;tile=3,4;item=(O)398;removed=true;inventory_before=0;inventory_after=1",
+    },
+  } as const;
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("pickup_forage", receipt),
+    true,
+  );
+  for (const malformed of [
+    receipt.evidence.detail.replace("targetIdentity=forage_01;", ""),
+    receipt.evidence.detail.replace("targetIdentity=forage_01", "targetIdentity=none"),
+    `${receipt.evidence.detail};targetIdentity=forage_01`,
+  ]) {
+    assert.equal(
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("pickup_forage", {
+        ...receipt,
+        evidence: { detail: malformed },
+      }),
+      false,
+      malformed,
+    );
+  }
+});
+
 test("every locally adapted Mod action has an explicit fail-closed completion rule", () => {
   for (const action of TEST_MOD_REGISTRATIONS)
     assert.equal(
