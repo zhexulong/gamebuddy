@@ -220,7 +220,8 @@ internal sealed class BridgeSession
          // never derive it from the transport envelope/message identity.
          this.sceneObservationId = projection.ObservationId;
          ObserveSceneResultPayload payload = new(
-            projection.CurrentLocation,
+             projection.ObservationId,
+             projection.CurrentLocation,
             projection.CurrentRegion,
             projection.Affordances.Select(affordance => new ObserveSceneAffordancePayload(
                 affordance.Ref,

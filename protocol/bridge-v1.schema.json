@@ -551,8 +551,12 @@
     "observeSceneResult": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason"],
+      "required": ["observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason"],
       "properties": {
+        "observationId": {
+          "type": "string",
+          "pattern": "^so1_[A-Za-z0-9_-]{22}$"
+        },
         "currentLocation": {
           "type": "string",
           "minLength": 1,
