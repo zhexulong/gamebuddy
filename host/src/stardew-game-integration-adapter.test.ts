@@ -673,9 +673,9 @@ test("travel and enter_exit completion evidence require the exact warped destina
   );
 });
 
-test("pickup_forage completion evidence requires the native removal and inventory gain", () => {
+test("pickup_forage completion evidence requires the contract tile, item, removal, and exact inventory delta", () => {
   const valid =
-    "location=Forest;target=12,9;item=(O)16;removed=true;inventory_before=0;inventory_after=1";
+    "location=Forest;tile=12,9;item=(O)16;removed=true;inventory_before=0;inventory_after=1";
   const receipt = {
     state: "succeeded",
     reasonCode: "forage_picked_up",
@@ -694,9 +694,11 @@ test("pickup_forage completion evidence requires the native removal and inventor
       "inventory_before=0;inventory_after=1",
       "inventory_before=1;inventory_after=1",
     ),
+    valid.replace("inventory_after=1", "inventory_after=2"),
     valid.replace("item=(O)16", "item=none"),
-    valid.replace("target=12,9", "target=12,1001"),
+    valid.replace("tile=12,9", "tile=12,1001"),
     valid.replace("location=Forest", "location=false"),
+    `${valid};target=forage_target_01`,
     `${valid};inventory_after=2`,
     `${valid};unknown=value`,
   ])

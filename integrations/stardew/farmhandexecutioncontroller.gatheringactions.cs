@@ -71,8 +71,8 @@ internal sealed partial class ExecutionManager
         bool actionHandled = Game1.tryToCheckAt(tile, Game1.player);
         int afterCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         bool removed = !location.objects.ContainsKey(tile);
-        bool inventoryChanged = afterCount > beforeCount;
-        ExecutionState state = actionHandled && removed && inventoryChanged ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+        bool inventoryChangedExactlyOnce = afterCount == beforeCount + 1;
+        ExecutionState state = actionHandled && removed && inventoryChangedExactlyOnce ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "forage_picked_up" : "forage_postcondition_unavailable";
         string evidence = $"location={specification.Location};tile={targetX},{targetY};item={expectedQualifiedItemId};removed={removed};inventory_before={beforeCount};inventory_after={afterCount}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
