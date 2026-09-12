@@ -88,6 +88,7 @@ public sealed class SceneObservationTests
 
         SceneObservationProjectionResult result = projection.Observe(context, input);
         var payload = new ObserveSceneResultPayload(
+            result.ObservationId,
             result.CurrentLocation,
             result.CurrentRegion,
             result.Affordances.Select(affordance => new ObserveSceneAffordancePayload(

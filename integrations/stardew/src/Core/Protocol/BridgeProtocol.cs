@@ -1165,7 +1165,9 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     private static bool TryReadObserveSceneResult(JsonElement payload, out ObserveSceneResultPayload? result)
     {
         result = null;
-        if (!HasExactProperties(payload, "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason")
+        if (!HasExactProperties(payload, "observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason")
+            || !ReadOpaqueString(payload.GetProperty("observationId"), out string? observationId)
+            || !IsValidObservationId(observationId)
             || !ReadSceneText(payload.GetProperty("currentLocation"), 128, out string? currentLocation)
             || !ReadSceneText(payload.GetProperty("currentRegion"), 128, out string? currentRegion)
             || !ReadSceneText(payload.GetProperty("summary"), 512, out string? summary)
@@ -1203,6 +1205,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         }
 
         result = new ObserveSceneResultPayload(
+            observationId!,
             currentLocation!,
             currentRegion!,
             Array.AsReadOnly(affordances.ToArray()),
@@ -1305,7 +1308,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && request.Radius is >= 0 and <= 30;
 
     private static bool IsValidObserveSceneResult(ObserveSceneResultPayload? result) => result is not null
-        && IsValidSceneText(result.CurrentLocation, 128)
+        && IsValidObservationId(result.ObservationId)
+         && IsValidSceneText(result.CurrentLocation, 128)
         && IsValidSceneText(result.CurrentRegion, 128)
         && IsValidSceneText(result.Summary, 512)
         && result.Affordances is { Count: <= 20 }
@@ -1324,6 +1328,13 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     private static bool IsValidSceneText(string? value, int maximumLength) => value is { Length: >= 1 }
         && value.Length <= maximumLength
         && !value.Any(char.IsControl);
+
+    private static bool IsValidObservationId(string? value) => value is not null
+        && value.StartsWith("so1_", StringComparison.Ordinal)
+        && value.Length == 26
+        && value[4..].All(character =>
+            (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z')
+            || (character >= '0' && character <= '9') || character is '-' or '_');
 
     private static bool IsValidSceneReference(string? value)
     {

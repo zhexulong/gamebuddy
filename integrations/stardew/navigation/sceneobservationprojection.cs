@@ -151,6 +151,7 @@ internal sealed class SceneObservationProjection
     private static int MeasurePayload(SceneObservationProjectionResult result)
     {
         ObserveSceneResultPayload payload = new(
+            result.ObservationId,
             result.CurrentLocation,
             result.CurrentRegion,
             result.Affordances.Select(affordance => new ObserveSceneAffordancePayload(

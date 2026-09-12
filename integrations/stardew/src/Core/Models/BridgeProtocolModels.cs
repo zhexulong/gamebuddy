@@ -130,6 +130,9 @@ public sealed record FarmhandActionRegistrationWire(
     string Kind
 );
 
+/// <summary>Exact Mod-owned capability publication identity projected on authenticated bridge availability messages.</summary>
+public sealed record FarmhandPolicyIdentityWire(string Value, long CapabilityRevision);
+
 public sealed record BridgeWarp(
     int SourceX,
     int SourceY,
@@ -361,6 +364,7 @@ public sealed record ObserveSceneAffordancePayload(
 );
 
 public sealed record ObserveSceneResultPayload(
+    string ObservationId,
     string CurrentLocation,
     string CurrentRegion,
     IReadOnlyList<ObserveSceneAffordancePayload> Affordances,

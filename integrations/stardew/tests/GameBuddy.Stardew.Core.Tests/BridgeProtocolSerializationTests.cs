@@ -628,6 +628,7 @@ public sealed class BridgeProtocolSerializationTests
     public void ObserveSceneResult_RoundTripsExactNullableWireShape()
     {
         var result = new ObserveSceneResultPayload(
+            "so1_AAAAAAAAAAAAAAAAAAAAAA",
             "Farm",
             "outdoor",
             new[]
@@ -645,7 +646,7 @@ public sealed class BridgeProtocolSerializationTests
         using (JsonDocument document = JsonDocument.Parse(json))
         {
             document.RootElement.GetProperty("payload").EnumerateObject().Select(property => property.Name)
-                .Should().BeEquivalentTo("currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason");
+                .Should().BeEquivalentTo("observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason");
             document.RootElement.GetProperty("payload").GetProperty("affordances")[0].EnumerateObject().Select(property => property.Name)
                 .Should().BeEquivalentTo("ref", "kind", "name", "distance", "direction", "actionHint");
             document.RootElement.GetProperty("payload").GetProperty("affordances")[0].GetProperty("actionHint").ValueKind.Should().Be(JsonValueKind.Null);
@@ -662,7 +663,7 @@ public sealed class BridgeProtocolSerializationTests
     [InlineData("payload_limit")]
     public void ObserveSceneResult_PartialResultRequiresTruncationReason(string truncatedReason)
     {
-        var result = new ObserveSceneResultPayload("Farm", "outdoor", Array.Empty<ObserveSceneAffordancePayload>(), "Scene was truncated.", true, truncatedReason);
+        var result = new ObserveSceneResultPayload("so1_AAAAAAAAAAAAAAAAAAAAAA", "Farm", "outdoor", Array.Empty<ObserveSceneAffordancePayload>(), "Scene was truncated.", true, truncatedReason);
         var envelope = new BridgeEnvelope<ObserveSceneResultPayload>(1, "msg_1", "corr_1", 1000L, SampleScope, "observe_scene_result", result);
 
         BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue();
@@ -674,11 +675,12 @@ public sealed class BridgeProtocolSerializationTests
     }
 
     [Theory]
-    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":\"payload_limit\"}")]
-    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[],\"summary\":\"ok\",\"partial\":true,\"truncatedReason\":null}")]
-    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"unknown\",\"name\":\"thing\",\"distance\":1,\"direction\":\"East\",\"actionHint\":null}],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
-    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"npc\",\"name\":\"thing\",\"distance\":1,\"direction\":\"Northeast\",\"actionHint\":null}],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
-    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"npc\",\"name\":\"thing\",\"distance\":1,\"direction\":\"East\",\"actionHint\":null},{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"chest\",\"name\":\"other\",\"distance\":2,\"direction\":\"West\",\"actionHint\":null}],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
+    [InlineData("{\"observationId\":\"so1_AAAAAAAAAAAAAAAAAAAAAA\",\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":\"payload_limit\"}")]
+    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
+    [InlineData("{\"observationId\":\"so1_AAAAAAAAAAAAAAAAAAAAAA\",\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[],\"summary\":\"ok\",\"partial\":true,\"truncatedReason\":null}")]
+    [InlineData("{\"observationId\":\"so1_AAAAAAAAAAAAAAAAAAAAAA\",\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"unknown\",\"name\":\"thing\",\"distance\":1,\"direction\":\"East\",\"actionHint\":null}],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
+    [InlineData("{\"observationId\":\"so1_AAAAAAAAAAAAAAAAAAAAAA\",\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"npc\",\"name\":\"thing\",\"distance\":1,\"direction\":\"Northeast\",\"actionHint\":null}],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
+    [InlineData("{\"observationId\":\"so1_AAAAAAAAAAAAAAAAAAAAAA\",\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"npc\",\"name\":\"thing\",\"distance\":1,\"direction\":\"East\",\"actionHint\":null},{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"chest\",\"name\":\"other\",\"distance\":2,\"direction\":\"West\",\"actionHint\":null}],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
     public void TryDeserializeObserveSceneResult_RejectsInvalidUnionAndAffordancePayloads(string payload)
     {
         BridgeProtocol.TryDeserializeObserveSceneResult(SceneEnvelope("observe_scene_result", payload), out var envelope, out string reasonCode).Should().BeFalse();
@@ -690,7 +692,7 @@ public sealed class BridgeProtocolSerializationTests
     [Fact]
     public void TrySerializeObserveSceneResult_RejectsInvalidDirectPayload()
     {
-        var invalid = new ObserveSceneResultPayload("Farm", "outdoor", Array.Empty<ObserveSceneAffordancePayload>(), "ok", false, "payload_limit");
+        var invalid = new ObserveSceneResultPayload("so1_AAAAAAAAAAAAAAAAAAAAAA", "Farm", "outdoor", Array.Empty<ObserveSceneAffordancePayload>(), "ok", false, "payload_limit");
 
         BridgeProtocol.TrySerialize(invalid, out string json, out string reasonCode).Should().BeFalse();
 
