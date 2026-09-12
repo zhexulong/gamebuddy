@@ -1,0 +1,44 @@
+{
+  "schema": "gamebuddy-action-development-contract/v2",
+  "gameId": "stardew",
+  "actionId": "pickup_forage",
+  "familyId": "resource_gathering",
+  "identityVersion": 1,
+  "lifecycle": "published",
+  "kind": "execution",
+  "args": {
+    "requiredProperties": [
+      "x",
+      "y",
+      "expectedQualifiedItemId",
+      "expectedTargetId"
+    ],
+    "sceneTarget": {
+      "type": "ObservationBinding",
+      "version": 1,
+      "required": true,
+      "requiredProperties": [
+        "observationId",
+        "ref"
+      ]
+    }
+  },
+  "terminal": {
+    "acceptableStates": [
+      "succeeded",
+      "uncertain"
+    ],
+    "successReasonCodes": [
+      "forage_picked_up"
+    ],
+    "evidenceFields": [
+      "location",
+      "tile",
+      "item",
+      "removed",
+      "inventory_before",
+      "inventory_after"
+    ],
+    "evidenceRelation": "inventory_after_equals_inventory_before_plus_removed"
+  }
+}

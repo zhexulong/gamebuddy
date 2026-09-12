@@ -26,7 +26,15 @@ public sealed record ActionDevelopmentContract(
 
 public sealed record ActionDevelopmentContractArgs(
     string[] RequiredProperties,
-    IReadOnlyList<string> ToolAllowedValues
+    IReadOnlyList<string>? ToolAllowedValues,
+    ActionDevelopmentContractSceneTarget? SceneTarget = null
+);
+
+public sealed record ActionDevelopmentContractSceneTarget(
+    string Type,
+    int Version,
+    bool Required,
+    string[] RequiredProperties
 );
 
 public sealed record ActionDevelopmentContractTerminal(
@@ -66,6 +74,12 @@ public static class FarmhandActionDevelopmentContract
         Array.AsReadOnly(new[] { "tool_equipped", "already_equipped" });
     private static readonly ReadOnlyCollection<string> EquipToolEvidenceFields =
         Array.AsReadOnly(new[] { "tool", "before", "expected", "after" });
+    private static readonly ReadOnlyCollection<string> PickupForageRequiredProperties =
+        Array.AsReadOnly(new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" });
+    private static readonly ReadOnlyCollection<string> PickupForageSuccessReasonCodes =
+        Array.AsReadOnly(new[] { "forage_picked_up" });
+    private static readonly ReadOnlyCollection<string> PickupForageEvidenceFields =
+        Array.AsReadOnly(new[] { "location", "tile", "item", "removed", "inventory_before", "inventory_after" });
 
     public static ActionDevelopmentContract DeriveContract(string actionId)
     {
@@ -95,6 +109,14 @@ public static class FarmhandActionDevelopmentContract
     private static ActionDevelopmentContractArgs DeriveArgs(string actionId) => actionId switch
     {
         "equip_tool" => new ActionDevelopmentContractArgs(new[] { "tool" }, EquipToolAllowedValues),
+        "pickup_forage" => new ActionDevelopmentContractArgs(
+            PickupForageRequiredProperties.ToArray(),
+            null,
+            new ActionDevelopmentContractSceneTarget(
+                "ObservationBinding",
+                1,
+                true,
+                new[] { "observationId", "ref" })),
         _ => throw new KeyNotFoundException($"Action {actionId} has no semantic argument contract."),
     };
 
@@ -108,6 +130,11 @@ public static class FarmhandActionDevelopmentContract
             EquipToolSuccessReasonCodes,
             EquipToolEvidenceFields,
             "after_equals_expected"),
+        "pickup_forage" => new ActionDevelopmentContractTerminal(
+            Array.AsReadOnly(new[] { "succeeded", "uncertain" }),
+            PickupForageSuccessReasonCodes,
+            PickupForageEvidenceFields,
+            "inventory_after_equals_inventory_before_plus_removed"),
         _ => throw new KeyNotFoundException($"Action {actionId} has no terminal evidence contract."),
     };
 

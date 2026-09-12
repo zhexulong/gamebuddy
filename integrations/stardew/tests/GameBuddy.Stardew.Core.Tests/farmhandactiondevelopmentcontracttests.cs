@@ -7,6 +7,18 @@ namespace GameBuddy.Stardew.Core.Tests;
 public sealed class FarmhandActionDevelopmentContractTests
 {
     [Fact]
+    public void PickupForageContract_DerivesSceneTargetAndExistingArgs()
+    {
+        ActionDevelopmentContract contract = FarmhandActionDevelopmentContract.DeriveContract("pickup_forage");
+
+        contract.Args.RequiredProperties.Should().Equal(new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" });
+        contract.Args.ToolAllowedValues.Should().BeNull();
+        contract.Args.SceneTarget.Should().BeEquivalentTo(new ActionDevelopmentContractSceneTarget("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
+        contract.Terminal.SuccessReasonCodes.Should().Equal(new[] { "forage_picked_up" });
+        contract.Terminal.EvidenceFields.Should().Equal(new[] { "location", "tile", "item", "removed", "inventory_before", "inventory_after" });
+    }
+
+    [Fact]
     public void EquipToolContract_DerivesExactIdentityFromCatalog()
     {
         ActionDevelopmentContract contract = FarmhandActionDevelopmentContract.DeriveContract("equip_tool");

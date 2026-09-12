@@ -18,3 +18,18 @@ export function validateEquipToolStaticDescriptor(descriptor) {
   if (descriptor.terminal.state !== "succeeded" || JSON.stringify(descriptor.terminal.successReasonCodes) !== JSON.stringify(["tool_equipped", "already_equipped"]) || descriptor.terminal.requiredRelation !== "after_equals_expected" || !Array.isArray(fields) || fields.length !== 4 || new Set(fields).size !== 4 || fields.join(",") !== "tool,before,expected,after") fail("terminal");
   return Object.freeze(descriptor);
 }
+
+
+export function validatePickupForageStaticDescriptor(descriptor) {
+  const keys = new Set(["schema", "developmentOnly", "gameId", "actionId", "identityVersion", "familyId", "effect", "target", "arguments", "terminal"]);
+  exact(descriptor, keys, "shape");
+  if (descriptor.schema !== "gamebuddy-stardew-static-action-descriptor/v2" || descriptor.developmentOnly !== true) fail("scope");
+  if (descriptor.gameId !== "stardew" || descriptor.actionId !== "pickup_forage" || descriptor.identityVersion !== 1 || descriptor.familyId !== "resource_gathering" || descriptor.effect !== "mutation") fail("identity");
+  exact(descriptor.target, new Set(["kind", "property", "type", "required", "requiredProperties"]), "target_shape");
+  if (descriptor.target.kind !== "semantic_selector" || descriptor.target.property !== "sceneTarget" || descriptor.target.type !== "ObservationBinding/v1" || descriptor.target.required !== true || JSON.stringify(descriptor.target.requiredProperties) !== JSON.stringify(["observationId", "ref"])) fail("target");
+  exact(descriptor.arguments, new Set(["requiredProperties"]), "arguments_shape");
+  if (JSON.stringify(descriptor.arguments.requiredProperties) !== JSON.stringify(["x", "y", "expectedQualifiedItemId", "expectedTargetId"])) fail("arguments");
+  exact(descriptor.terminal, TERMINAL_KEYS, "terminal_shape");
+  if (descriptor.terminal.state !== "succeeded" || JSON.stringify(descriptor.terminal.successReasonCodes) !== JSON.stringify(["forage_picked_up"]) || descriptor.terminal.requiredRelation !== "inventory_after_equals_inventory_before_plus_removed" || JSON.stringify(descriptor.terminal.evidenceFields) !== JSON.stringify(["location", "tile", "item", "removed", "inventory_before", "inventory_after"])) fail("terminal");
+  return Object.freeze(descriptor);
+}

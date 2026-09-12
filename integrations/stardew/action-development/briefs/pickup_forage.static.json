@@ -1,0 +1,16 @@
+{
+  "schema": "gamebuddy-action-work-brief/v2",
+  "gameId": "stardew",
+  "actionId": "pickup_forage",
+  "contractVersion": 2,
+  "status": "frozen",
+  "effect": "mutation",
+  "claimScope": "Static development brief only: it validates package-local pickup_forage contract and descriptor mechanics and grants no runtime, catalog, fixture, bridge, or live-mutation capability.",
+  "ownedPaths": [
+    "integrations/stardew/action-development/briefs/pickup_forage.static.json",
+    "integrations/stardew/action-development/descriptors/pickup_forage.static.json",
+    "integrations/stardew/action-development/contracts/pickup_forage.json"
+  ],
+  "sharedHubs": [],
+  "checks": ["pnpm --dir integrations/stardew/action-development test"]
+}
