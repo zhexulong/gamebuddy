@@ -12,6 +12,138 @@ public sealed class BridgeProtocolSerializationTests
 {
     private static readonly BridgeScope SampleScope = new("stardew", "save_1", "world_1", "player_1", "companion_1");
 
+    private static NodeAdmissionChallenge AdmissionChallenge() => new("program_1", "node_1", 1, 2, 3, 4,
+        new("mod:policy/v1", 5), "navigate_to_destination",
+        new Dictionary<string, BodyProgramCanonicalValue>
+        {
+            ["destination"] = new(BodyProgramArgumentKind.DestinationSelector, null, new("label", "Town", null)),
+            ["count"] = new(BodyProgramArgumentKind.Integer, "9223372036854775807"),
+            ["enabled"] = new(BodyProgramArgumentKind.Boolean, "true"),
+            ["text"] = new(BodyProgramArgumentKind.String, ""),
+        }, new Dictionary<string, string> { ["actor"] = "player_1" }, 5000);
+
+    private static BridgeEnvelope<BodyNodeAdmissionChallengeWire> AdmissionEnvelope() =>
+        new(1, "message_1", "correlation_1", 1000, SampleScope, "body_node_admission_challenge", BridgeProtocol.ProjectBodyNodeAdmissionChallenge(AdmissionChallenge()));
+
+    [Fact]
+    public void AdmissionChallenge_ProjectsDestinationAndRoundTripsCore()
+    {
+        BridgeProtocol.TrySerialize(AdmissionEnvelope(), out string json, out _).Should().BeTrue();
+        json.Should().Contain("\"destination\":{\"kind\":\"label\"").And.NotContain("\"selector\"");
+        BridgeProtocol.TryDeserializeBodyNodeAdmissionChallenge(json, out var parsed, out _).Should().BeTrue();
+        parsed!.Payload.Should().BeEquivalentTo(AdmissionChallenge());
+        BridgeProtocol.TrySerialize(BridgeProtocol.ProjectBodyNodeAdmissionChallenge(parsed.Payload), out _, out _).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AdmissionGrant_PreservesOpaqueStringsAndRequiredNullableBinding(bool consumed)
+    {
+        var challenge = AdmissionChallenge();
+        var binding = consumed ? new NodeExecutionBinding("program_1", "node_1", 1, "request_1", "key_1", "execution_1") : null;
+        var grant = new HostAdmissionGrant(challenge.ProgramId, challenge.NodeId, 1, 2, 3, 4, challenge.PolicyIdentity,
+            challenge.ActionId, challenge.CanonicalArguments, challenge.DerivedResourceClaims, 5000, "grant_1", "attachment:epoch/7", "host:policy/9", binding);
+        var wire = BridgeProtocol.ProjectBodyNodeAdmissionGrant(grant);
+        var envelope = new BridgeEnvelope<BodyNodeAdmissionGrantWire>(1, "message_1", "correlation_1", 1000, SampleScope, "body_node_admission_grant", wire);
+        BridgeProtocol.TrySerialize(envelope, out string json, out _).Should().BeTrue();
+        json.Should().Contain("\"executionBinding\":");
+        BridgeProtocol.TryDeserializeBodyNodeAdmissionGrant(json, out var parsed, out _).Should().BeTrue();
+        parsed!.Payload.Should().BeEquivalentTo(grant);
+        BridgeProtocol.TrySerialize(wire, out _, out _).Should().BeTrue();
+        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!;
+        foreach (string key in new[] { "executionBinding", "attachmentGeneration", "policyRevision", "grantId" })
+        {
+            var invalid = System.Text.Json.Nodes.JsonNode.Parse(json)!;
+            invalid["payload"]!.AsObject().Remove(key);
+            BridgeProtocol.TryDeserializeBodyNodeAdmissionGrant(invalid.ToJsonString(), out _, out _).Should().BeFalse();
+        }
+        foreach (string replacement in new[] { "0", "null", "\"\"" })
+        {
+            var invalid = System.Text.Json.Nodes.JsonNode.Parse(json)!;
+            invalid["payload"]!["attachmentGeneration"] = System.Text.Json.Nodes.JsonNode.Parse(replacement);
+            BridgeProtocol.TryDeserializeBodyNodeAdmissionGrant(invalid.ToJsonString(), out _, out _).Should().BeFalse();
+        }
+        foreach (string malformed in new[] { "{}", "{\"programId\":\"other\",\"nodeId\":\"node_1\",\"nodeAttempt\":1,\"requestId\":\"request_1\",\"idempotencyKey\":\"key_1\",\"executionId\":\"execution_1\"}" })
+        {
+            root["payload"]!["executionBinding"] = System.Text.Json.Nodes.JsonNode.Parse(malformed);
+            BridgeProtocol.TryDeserializeBodyNodeAdmissionGrant(root.ToJsonString(), out _, out _).Should().BeFalse();
+        }
+    }
+
+    [Theory]
+    [InlineData("count", "01")]
+    [InlineData("count", "-0")]
+    [InlineData("count", "9223372036854775808")]
+    [InlineData("count", "1.0")]
+    [InlineData("enabled", "True")]
+    [InlineData("enabled", "0")]
+    public void AdmissionChallenge_RejectsNoncanonicalScalars(string key, string value)
+    {
+        var wire = AdmissionEnvelope().Payload;
+        var args = wire.CanonicalBoundArgs.ToDictionary(pair => pair.Key, pair => pair.Value);
+        args[key] = args[key] with { CanonicalValue = value };
+        wire = wire with { CanonicalBoundArgs = args };
+        BridgeProtocol.TrySerialize(wire, out _, out _).Should().BeFalse();
+        var envelope = AdmissionEnvelope() with { Payload = wire };
+        BridgeProtocol.TryDeserializeBodyNodeAdmissionChallenge(JsonSerializer.Serialize(envelope, BridgeProtocol.JsonOptions), out _, out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AdmissionChallenge_RejectsWrongKeysNumbersNullsAndEnvelope()
+    {
+        string json = JsonSerializer.Serialize(AdmissionEnvelope(), BridgeProtocol.JsonOptions);
+        foreach (string key in new[] { "programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "catalogRevision", "policyIdentity", "actionId", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs" })
+        {
+            var root = System.Text.Json.Nodes.JsonNode.Parse(json)!;
+            root["payload"]!.AsObject().Remove(key);
+            BridgeProtocol.TryDeserializeBodyNodeAdmissionChallenge(root.ToJsonString(), out _, out _).Should().BeFalse();
+            root["payload"]![key] = null;
+            BridgeProtocol.TryDeserializeBodyNodeAdmissionChallenge(root.ToJsonString(), out _, out _).Should().BeFalse();
+        }
+        foreach (string invalid in new[] {
+            json.Replace("\"destination\":{", "\"selector\":{"),
+            json.Replace("\"stopEpoch\":3", "\"stopEpoch\":9007199254740992"),
+            json.Replace("\"nodeAttempt\":1", "\"nodeAttempt\":1.5"),
+            json.Replace("\"deadlineMs\":5000", "\"deadlineMs\":0"),
+            json.Replace("\"capabilityRevision\":5", "\"capabilityRevision\":-1"),
+            json.Replace("\"kind\":\"label\"", "\"extra\":0,\"kind\":\"label\""),
+            json.Replace("\"programId\":", "\"extra\":0,\"programId\":"),
+            json.Replace("body_node_admission_challenge", "body_node_admission_grant"),
+            json.Replace("\"saveId\":\"save_1\"", "\"saveId\":\"bad id\""),
+            json.Replace("\"timestampMs\":1000", "\"timestampMs\":9007199254740992") })
+            BridgeProtocol.TryDeserializeBodyNodeAdmissionChallenge(invalid, out _, out _).Should().BeFalse();
+        BridgeProtocol.TrySerialize(AdmissionEnvelope() with { Type = "wrong" }, out _, out _).Should().BeFalse();
+        BridgeProtocol.TrySerialize(AdmissionEnvelope() with { Scope = SampleScope with { SaveId = "bad id" } }, out _, out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AdmissionChallenge_ValidatesSelectorsPolicyAndMapBounds()
+    {
+        var wire = AdmissionEnvelope().Payload;
+        foreach (var selector in new[] { new BodyNodeAdmissionSelectorWire("label", " "), new("label", "e\u0301"), new("label", new string('x', 129)), new("ref", Ref: "opaque"), new("ref", Ref: "dr1_AAAAAAAAAAAAAAAAAAAAAB"), new("label", "Town", "dr1_AAAAAAAAAAAAAAAAAAAAAA") })
+            BridgeProtocol.TrySerialize(wire with { CanonicalBoundArgs = new Dictionary<string, BodyNodeAdmissionCanonicalValueWire> { ["target"] = new("destination_selector", Destination: selector) } }, out _, out _).Should().BeFalse();
+        var validRef = wire with { CanonicalBoundArgs = new Dictionary<string, BodyNodeAdmissionCanonicalValueWire> { ["target"] = new("destination_selector", Destination: new("ref", Ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA")) } };
+        BridgeProtocol.TrySerialize(AdmissionEnvelope() with { Payload = validRef }, out string json, out _).Should().BeTrue();
+        BridgeProtocol.TryDeserializeBodyNodeAdmissionChallenge(json, out var parsed, out _).Should().BeTrue();
+        parsed!.Payload.CanonicalArguments["target"].Destination!.Ref.Should().Be("dr1_AAAAAAAAAAAAAAAAAAAAAA");
+        BridgeProtocol.TrySerialize(wire with { PolicyIdentity = new("", 1) }, out _, out _).Should().BeFalse();
+        BridgeProtocol.TrySerialize(wire with { PolicyIdentity = new("policy", 9007199254740992) }, out _, out _).Should().BeFalse();
+        BridgeProtocol.TrySerialize(wire with { CanonicalBoundArgs = Enumerable.Range(0, 33).ToDictionary(i => "arg_" + i, _ => new BodyNodeAdmissionCanonicalValueWire("string", "")) }, out _, out _).Should().BeFalse();
+        BridgeProtocol.TrySerialize(wire with { DerivedResourceClaims = Enumerable.Range(0, 17).ToDictionary(i => "claim_" + i, _ => "actor") }, out _, out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AdmissionChallenge_RejectsOversizedFrame()
+    {
+        var wire = AdmissionEnvelope().Payload with { CanonicalBoundArgs = Enumerable.Range(0, 32).ToDictionary(i => "arg_" + i, _ => new BodyNodeAdmissionCanonicalValueWire("string", new string('x', 512))) };
+        var envelope = AdmissionEnvelope() with { Payload = wire };
+        BridgeProtocol.TrySerialize(envelope, out _, out string reason).Should().BeFalse();
+        reason.Should().Be("message_too_large");
+        BridgeProtocol.TryDeserializeBodyNodeAdmissionChallenge(JsonSerializer.Serialize(envelope, BridgeProtocol.JsonOptions), out _, out reason).Should().BeFalse();
+        reason.Should().Be("message_too_large");
+    }
+
     [Fact]
     public void TryDeserializeExecutionRequest_ValidPayload_DeserializesCorrectly()
     {
@@ -366,6 +498,191 @@ public sealed class BridgeProtocolSerializationTests
         reasonCode.Should().Be("invalid_navigation_read_request");
         envelope.Should().BeNull();
     }
+
+    [Fact]
+    public void ObservationBindingV1_RoundTripsExactKeysAndOpaqueValues()
+    {
+        var binding = new ObservationBindingV1("observation_1", "sr1_AAAAAAAAAAAAAAAA");
+
+        BridgeProtocol.TrySerialize(binding, out string json, out string serializeReason).Should().BeTrue();
+        serializeReason.Should().Be("accepted");
+        using (JsonDocument document = JsonDocument.Parse(json))
+        {
+            document.RootElement.EnumerateObject().Select(property => property.Name)
+                .Should().BeEquivalentTo("observationId", "ref");
+            document.RootElement.GetProperty("observationId").GetString().Should().Be(binding.ObservationId);
+            document.RootElement.GetProperty("ref").GetString().Should().Be(binding.Ref);
+        }
+
+        BridgeProtocol.TryDeserializeObservationBindingV1(json, out ObservationBindingV1? parsed, out string deserializeReason).Should().BeTrue();
+        deserializeReason.Should().Be("accepted");
+        parsed.Should().BeEquivalentTo(binding);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"observationId\":\"observation_1\"}")]
+    [InlineData("{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\"}")]
+    [InlineData("{\"observationId\":\"observation_1\",\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"npc\"}")]
+    [InlineData("{\"ObservationId\":\"observation_1\",\"ref\":\"sr1_AAAAAAAAAAAAAAAA\"}")]
+    [InlineData("{\"observationId\":null,\"ref\":\"sr1_AAAAAAAAAAAAAAAA\"}")]
+    [InlineData("{\"observationId\":\"observation_1\",\"ref\":17}")]
+    [InlineData("{\"observationId\":\"bad id\",\"ref\":\"sr1_AAAAAAAAAAAAAAAA\"}")]
+    [InlineData("{\"observationId\":\"observation_1\",\"ref\":\"\"}")]
+    public void TryDeserializeObservationBindingV1_RejectsNonExactOrNonOpaquePayload(string json)
+    {
+        BridgeProtocol.TryDeserializeObservationBindingV1(json, out ObservationBindingV1? binding, out string reasonCode).Should().BeFalse();
+
+        reasonCode.Should().Be("observation_binding_malformed");
+        binding.Should().BeNull();
+    }
+
+    [Fact]
+    public void ObservationBindingV1_RejectsInvalidDirectValuesAndOversizedOpaqueStrings()
+    {
+        var invalidValues = new[]
+        {
+            new ObservationBindingV1("", "ref_1"),
+            new ObservationBindingV1("observation_1", ""),
+            new ObservationBindingV1("bad id", "ref_1"),
+            new ObservationBindingV1(new string('o', 129), "ref_1"),
+            new ObservationBindingV1("observation_1", new string('r', 129)),
+        };
+
+        foreach (ObservationBindingV1 invalid in invalidValues)
+        {
+            BridgeProtocol.TrySerialize(invalid, out string json, out string reasonCode).Should().BeFalse();
+            json.Should().BeEmpty();
+            reasonCode.Should().Be("observation_binding_malformed");
+        }
+    }
+
+    [Fact]
+    public void TryDeserializeObservationBindingV1_RejectsMalformedJsonAndOversizedFrame()
+    {
+        BridgeProtocol.TryDeserializeObservationBindingV1("{", out _, out string malformedReason).Should().BeFalse();
+        malformedReason.Should().Be("observation_binding_malformed");
+
+        string tooLong = "{\"observationId\":\"" + new string('o', 129) + "\",\"ref\":\"ref_1\"}";
+        BridgeProtocol.TryDeserializeObservationBindingV1(tooLong, out _, out string tooLongReason).Should().BeFalse();
+        tooLongReason.Should().Be("observation_binding_malformed");
+
+        string oversized = "{\"observationId\":\"" + new string('o', 128) + "\",\"ref\":\"" + new string('r', 128) + "\"}";
+        BridgeProtocol.TryDeserializeObservationBindingV1(oversized + new string(' ', BridgeProtocol.MaximumMessageBytes), out _, out string oversizedReason).Should().BeFalse();
+        oversizedReason.Should().Be("message_too_large");
+    }
+
+    [Fact]
+    public void TryDeserializeObserveSceneRequest_EmptyPayloadUsesDefaultRadius()
+    {
+        BridgeProtocol.TryDeserializeObserveSceneRequest(SceneEnvelope("observe_scene_request", "{}"), out var envelope, out string reasonCode).Should().BeTrue();
+
+        reasonCode.Should().Be("accepted");
+        envelope!.Payload.Radius.Should().Be(ObserveSceneRequestPayload.DefaultRadius);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(30)]
+    public void TryDeserializeObserveSceneRequest_AcceptsInclusiveRadiusBounds(int radius)
+    {
+        BridgeProtocol.TryDeserializeObserveSceneRequest(SceneEnvelope("observe_scene_request", "{\"radius\":" + radius + "}"), out var envelope, out string reasonCode).Should().BeTrue();
+
+        reasonCode.Should().Be("accepted");
+        envelope!.Payload.Radius.Should().Be(radius);
+    }
+
+    [Theory]
+    [InlineData("{\"radius\":-1}")]
+    [InlineData("{\"radius\":31}")]
+    [InlineData("{\"radius\":1.5}")]
+    [InlineData("{\"radius\":null}")]
+    [InlineData("{\"radius\":15,\"extra\":true}")]
+    [InlineData("{\"extra\":true}")]
+    public void TryDeserializeObserveSceneRequest_RejectsMalformedPayload(string payload)
+    {
+        BridgeProtocol.TryDeserializeObserveSceneRequest(SceneEnvelope("observe_scene_request", payload), out var envelope, out string reasonCode).Should().BeFalse();
+
+        reasonCode.Should().Be("invalid_observe_scene_request");
+        envelope.Should().BeNull();
+    }
+
+    [Fact]
+    public void ObserveSceneResult_RoundTripsExactNullableWireShape()
+    {
+        var result = new ObserveSceneResultPayload(
+            "Farm",
+            "outdoor",
+            new[]
+            {
+                new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "npc", "Robin", 2, "East", null),
+                new ObserveSceneAffordancePayload("sr1_AQEBAQEBAQEBAQEB", "chest", "Storage Chest", 0, "CurrentTile", "inspect"),
+            },
+            "Robin and a storage chest are nearby.",
+            false,
+            null);
+        var envelope = new BridgeEnvelope<ObserveSceneResultPayload>(1, "msg_1", "corr_1", 1000L, SampleScope, "observe_scene_result", result);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue();
+        serializeReason.Should().Be("accepted");
+        using (JsonDocument document = JsonDocument.Parse(json))
+        {
+            document.RootElement.GetProperty("payload").EnumerateObject().Select(property => property.Name)
+                .Should().BeEquivalentTo("currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason");
+            document.RootElement.GetProperty("payload").GetProperty("affordances")[0].EnumerateObject().Select(property => property.Name)
+                .Should().BeEquivalentTo("ref", "kind", "name", "distance", "direction", "actionHint");
+            document.RootElement.GetProperty("payload").GetProperty("affordances")[0].GetProperty("actionHint").ValueKind.Should().Be(JsonValueKind.Null);
+            document.RootElement.GetProperty("payload").GetProperty("truncatedReason").ValueKind.Should().Be(JsonValueKind.Null);
+        }
+
+        BridgeProtocol.TryDeserializeObserveSceneResult(json, out var parsed, out string deserializeReason).Should().BeTrue();
+        deserializeReason.Should().Be("accepted");
+        parsed!.Payload.Should().BeEquivalentTo(result);
+    }
+
+    [Theory]
+    [InlineData("maximum_affordances")]
+    [InlineData("payload_limit")]
+    public void ObserveSceneResult_PartialResultRequiresTruncationReason(string truncatedReason)
+    {
+        var result = new ObserveSceneResultPayload("Farm", "outdoor", Array.Empty<ObserveSceneAffordancePayload>(), "Scene was truncated.", true, truncatedReason);
+        var envelope = new BridgeEnvelope<ObserveSceneResultPayload>(1, "msg_1", "corr_1", 1000L, SampleScope, "observe_scene_result", result);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue();
+        serializeReason.Should().Be("accepted");
+        BridgeProtocol.TryDeserializeObserveSceneResult(json, out var parsed, out string deserializeReason).Should().BeTrue();
+        deserializeReason.Should().Be("accepted");
+        parsed!.Payload.Partial.Should().BeTrue();
+        parsed.Payload.TruncatedReason.Should().Be(truncatedReason);
+    }
+
+    [Theory]
+    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":\"payload_limit\"}")]
+    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[],\"summary\":\"ok\",\"partial\":true,\"truncatedReason\":null}")]
+    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"unknown\",\"name\":\"thing\",\"distance\":1,\"direction\":\"East\",\"actionHint\":null}],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
+    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"npc\",\"name\":\"thing\",\"distance\":1,\"direction\":\"Northeast\",\"actionHint\":null}],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
+    [InlineData("{\"currentLocation\":\"Farm\",\"currentRegion\":\"outdoor\",\"affordances\":[{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"npc\",\"name\":\"thing\",\"distance\":1,\"direction\":\"East\",\"actionHint\":null},{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"chest\",\"name\":\"other\",\"distance\":2,\"direction\":\"West\",\"actionHint\":null}],\"summary\":\"ok\",\"partial\":false,\"truncatedReason\":null}")]
+    public void TryDeserializeObserveSceneResult_RejectsInvalidUnionAndAffordancePayloads(string payload)
+    {
+        BridgeProtocol.TryDeserializeObserveSceneResult(SceneEnvelope("observe_scene_result", payload), out var envelope, out string reasonCode).Should().BeFalse();
+
+        reasonCode.Should().Be("invalid_observe_scene_result");
+        envelope.Should().BeNull();
+    }
+
+    [Fact]
+    public void TrySerializeObserveSceneResult_RejectsInvalidDirectPayload()
+    {
+        var invalid = new ObserveSceneResultPayload("Farm", "outdoor", Array.Empty<ObserveSceneAffordancePayload>(), "ok", false, "payload_limit");
+
+        BridgeProtocol.TrySerialize(invalid, out string json, out string reasonCode).Should().BeFalse();
+
+        json.Should().BeEmpty();
+        reasonCode.Should().Be("invalid_observe_scene_result");
+    }
+
+    private static string SceneEnvelope(string type, string payload) =>
+        "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"" + type + "\",\"payload\":" + payload + "}";
 }
 
 

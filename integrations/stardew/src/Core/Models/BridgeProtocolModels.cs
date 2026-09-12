@@ -99,6 +99,25 @@ public sealed record BridgeEnvelope<TPayload>(
     TPayload Payload
 );
 
+/// <summary>Wire projections only; Core BodyProgram records remain the authority model.</summary>
+public sealed record BodyNodeAdmissionPolicyIdentityWire(string Value, long CapabilityRevision);
+public sealed record BodyNodeAdmissionSelectorWire(string Kind, string? Label = null, string? Ref = null);
+public sealed record BodyNodeAdmissionCanonicalValueWire(string Type, string? CanonicalValue = null, BodyNodeAdmissionSelectorWire? Destination = null);
+public sealed record BodyNodeAdmissionExecutionBindingWire(string ProgramId, string NodeId, int NodeAttempt, string RequestId, string IdempotencyKey, string ExecutionId);
+
+ public sealed record BodyNodeAdmissionChallengeWire(
+     string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt, long StopEpoch,
+     long CatalogRevision, BodyNodeAdmissionPolicyIdentityWire PolicyIdentity, string ActionId,
+     IReadOnlyDictionary<string, BodyNodeAdmissionCanonicalValueWire> CanonicalBoundArgs,
+     IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs);
+
+ public sealed record BodyNodeAdmissionGrantWire(
+     string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt, long StopEpoch,
+     long CatalogRevision, BodyNodeAdmissionPolicyIdentityWire PolicyIdentity, string ActionId,
+     IReadOnlyDictionary<string, BodyNodeAdmissionCanonicalValueWire> CanonicalBoundArgs,
+     IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs,
+     string GrantId, string AttachmentGeneration, string PolicyRevision, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BodyNodeAdmissionExecutionBindingWire? ExecutionBinding = null);
+
 public sealed record BridgeTile(float X, float Y);
 /// <summary>Deterministic Mod-declared action identity projected on hello_ack.
 /// Reflects FarmhandActionCatalog.Registrations exactly; the Host treats this as
@@ -321,6 +340,33 @@ public sealed record BridgeExecutionRequest(
 );
 
 public sealed record BridgeExecutionReceiptQuery(string RequestId, string IdempotencyKey);
+
+/// <summary>A read-only scene observation request. Radius defaults to 15 when omitted on the wire.</summary>
+public sealed record ObserveSceneRequestPayload(int Radius = 15)
+{
+    public const int DefaultRadius = 15;
+}
+
+/// <summary>Short-lived exact target binding produced by a scene observation.</summary>
+public sealed record ObservationBindingV1(string ObservationId, string Ref);
+
+public sealed record ObserveSceneAffordancePayload(
+    string Ref,
+    string Kind,
+    string Name,
+    int Distance,
+    string Direction,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ActionHint = null
+);
+
+public sealed record ObserveSceneResultPayload(
+    string CurrentLocation,
+    string CurrentRegion,
+    IReadOnlyList<ObserveSceneAffordancePayload> Affordances,
+    string Summary,
+    bool Partial,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? TruncatedReason
+);
 
 /// <summary>A read-only Navigation request for map inspection or destination search.</summary>
 public sealed record BridgeNavigationReadRequest(string Operation, BridgeNavigationReadArgs Args);
