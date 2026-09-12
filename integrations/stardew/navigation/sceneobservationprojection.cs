@@ -36,8 +36,10 @@ internal sealed class SceneObservationProjection
         if (!StringComparer.Ordinal.Equals(context.LocationName, input.CurrentRegion)
             && string.IsNullOrWhiteSpace(context.LocationName))
             return Invalid(context, "scene_observation_invalid");
-        if (!this.references.TryBeginObservation(context, out string beginReason))
+        if (!this.references.TryBeginObservation(context, out SceneObservationContext? activeContext, out string beginReason)
+            || activeContext is null)
             return Invalid(context, beginReason);
+        context = activeContext;
 
         var ranked = input.Candidates
             .Where(candidate => candidate.IsValid
@@ -122,6 +124,7 @@ internal sealed class SceneObservationProjection
             ? $"Nothing actionable is visible in {context.LocationName}."
             : $"{affordances.Count} actionable {(affordances.Count == 1 ? "object" : "objects")} visible in {context.LocationName}.";
         var result = new SceneObservationProjectionResult(
+            context.ObservationId!,
             context.LocationName,
             context.ScopeIdentity.LocationName,
             affordances,
@@ -135,6 +138,7 @@ internal sealed class SceneObservationProjection
 
     private static SceneObservationProjectionResult Invalid(SceneObservationContext context, string reason) =>
         new(
+            context.ObservationId ?? string.Empty,
             context.LocationName,
             context.ScopeIdentity.LocationName,
             Array.Empty<SceneAffordanceProjection>(),
@@ -175,6 +179,7 @@ internal sealed class SceneObservationProjection
 }
 
 internal sealed record SceneObservationProjectionResult(
+    string ObservationId,
     string CurrentLocation,
     string CurrentRegion,
     IReadOnlyList<SceneAffordanceProjection> Affordances,

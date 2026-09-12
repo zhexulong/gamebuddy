@@ -33,6 +33,8 @@ public sealed class SceneObservationTests
         SceneObservationProjectionResult result = projection.Observe(context, input, radius: 15);
 
         result.IsValid.Should().BeTrue();
+        result.ObservationId.Should().StartWith("so1_");
+        result.Observation.ObservationId.Should().Be(result.ObservationId);
         result.Affordances.Select(affordance => affordance.Name)
             .Should().Equal("Chest", "Mature crop", "Robin");
         result.Affordances.Select(affordance => affordance.Distance)
@@ -108,6 +110,22 @@ public sealed class SceneObservationTests
     }
 
     [Fact]
+    public void Observe_MintsDistinctObservationIdentityForEachFreshObservation()
+    {
+        var store = new SceneObservationStore();
+        var projection = new SceneObservationProjection(store);
+        SceneObservationInput input = new("Farm", 10, 10, Array.Empty<SceneAffordanceSource>());
+
+        SceneObservationProjectionResult first = projection.Observe(Context(observationSequence: 1), input);
+        SceneObservationProjectionResult second = projection.Observe(Context(observationSequence: 2), input);
+
+        first.ObservationId.Should().StartWith("so1_");
+        second.ObservationId.Should().StartWith("so1_");
+        second.ObservationId.Should().NotBe(first.ObservationId);
+        second.Observation.ObservationId.Should().Be(second.ObservationId);
+    }
+
+    [Fact]
     public void Ref_IsInvalidatedByNewObservationMoveCloseAndContextMismatch()
     {
         var store = new SceneObservationStore();
@@ -116,12 +134,12 @@ public sealed class SceneObservationTests
         SceneObservationProjectionResult firstResult = new SceneObservationProjection(store).Observe(first, input);
         string reference = firstResult.Affordances.Single().Ref;
 
-        store.TryResolve(reference, first, out SceneAffordanceBinding? binding, out string reasonCode).Should().BeTrue(reasonCode);
+        store.TryResolve(reference, firstResult.Observation, out SceneAffordanceBinding? binding, out string reasonCode).Should().BeTrue(reasonCode);
         binding!.OpaqueEntityIdentity.Should().Be("npc_robin");
 
         SceneObservationContext second = Context(observationSequence: 2);
         new SceneObservationProjection(store).Observe(second, input);
-        store.TryResolve(reference, first, out _, out reasonCode).Should().BeFalse();
+        store.TryResolve(reference, firstResult.Observation, out _, out reasonCode).Should().BeFalse();
         reasonCode.Should().Be("scene_ref_stale");
 
         store.InvalidateForMove("runtime_01", Scope, "Mountain", movementSequence: 1);
@@ -163,7 +181,7 @@ public sealed class SceneObservationTests
 
         invalid.IsValid.Should().BeFalse();
         invalid.TruncatedReason.Should().Be("scene_observation_invalid");
-        store.TryResolve(reference, context, out _, out string reasonCode).Should().BeTrue(reasonCode);
+        store.TryResolve(reference, initial.Observation, out _, out string reasonCode).Should().BeTrue(reasonCode);
     }
 
     private static SceneObservationContext Context(long observationSequence) =>

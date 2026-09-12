@@ -55,7 +55,8 @@ internal sealed record SceneObservationContext(
     BridgeScope Scope,
     string LocationName,
     long MovementSequence,
-    long ObservationSequence)
+    long ObservationSequence,
+    string? ObservationId = null)
 {
     internal SceneObservationScope ScopeIdentity => new(
         this.RuntimeInstanceId,
