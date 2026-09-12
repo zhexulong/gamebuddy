@@ -43,6 +43,29 @@ public static class BridgeProtocol
             reasonCode = "invalid_navigation_read_result";
             return false;
         }
+        bool validObserveScene = value switch
+        {
+            ObserveSceneRequestPayload request => IsValidObserveSceneRequest(request),
+            BridgeEnvelope<ObserveSceneRequestPayload> envelope => IsValidObserveSceneRequestEnvelope(envelope),
+            ObserveSceneResultPayload result => IsValidObserveSceneResult(result),
+            BridgeEnvelope<ObserveSceneResultPayload> envelope => IsValidObserveSceneResultEnvelope(envelope),
+            _ => true,
+        };
+        if (!validObserveScene)
+        {
+            json = string.Empty;
+            reasonCode = value is ObserveSceneResultPayload or BridgeEnvelope<ObserveSceneResultPayload>
+                ? "invalid_observe_scene_result"
+                : "invalid_observe_scene_request";
+            return false;
+        }
+        if ((value is ObservationBindingV1 binding && !IsValidObservationBinding(binding))
+            || (value is null && typeof(T) == typeof(ObservationBindingV1)))
+        {
+            json = string.Empty;
+            reasonCode = "observation_binding_malformed";
+            return false;
+        }
         if (!IsValidBodyProgramOutboundResult(value))
         {
             json = string.Empty;
@@ -59,6 +82,20 @@ public static class BridgeProtocol
                 return false;
             }
 
+            bool validAdmission = value switch
+            {
+                BodyNodeAdmissionChallengeWire => IsValidAdmissionPayload(JsonSerializer.SerializeToElement(value, JsonOptions), false, out _),
+                BodyNodeAdmissionGrantWire => IsValidAdmissionPayload(JsonSerializer.SerializeToElement(value, JsonOptions), true, out _),
+                BridgeEnvelope<BodyNodeAdmissionChallengeWire> => TryDeserializeBodyNodeAdmissionChallenge(json, out _, out _),
+                BridgeEnvelope<BodyNodeAdmissionGrantWire> => TryDeserializeBodyNodeAdmissionGrant(json, out _, out _),
+                _ => true,
+            };
+            if (!validAdmission)
+            {
+                json = string.Empty;
+                reasonCode = "invalid_body_node_admission";
+                return false;
+            }
             reasonCode = "accepted";
             return true;
         }
@@ -68,6 +105,126 @@ public static class BridgeProtocol
             reasonCode = "message_not_serializable";
             return false;
         }
+    }
+
+    public static BodyNodeAdmissionChallengeWire ProjectBodyNodeAdmissionChallenge(NodeAdmissionChallenge value) =>
+        new(value.ProgramId, value.NodeId, value.NodeAttempt, value.AdmissionAttempt, value.StopEpoch, value.CatalogRevision,
+            new(value.PolicyIdentity.Value, value.PolicyIdentity.CapabilityRevision), value.ActionId,
+            value.CanonicalArguments.ToDictionary(pair => pair.Key, pair => ProjectAdmissionCanonical(pair.Value)),
+            value.DerivedResourceClaims, value.DeadlineMs);
+
+    public static BodyNodeAdmissionGrantWire ProjectBodyNodeAdmissionGrant(HostAdmissionGrant value) =>
+        new(value.ProgramId, value.NodeId, value.NodeAttempt, value.AdmissionAttempt, value.StopEpoch, value.CatalogRevision,
+            new(value.PolicyIdentity.Value, value.PolicyIdentity.CapabilityRevision), value.ActionId,
+            value.CanonicalArguments.ToDictionary(pair => pair.Key, pair => ProjectAdmissionCanonical(pair.Value)),
+            value.DerivedResourceClaims, value.DeadlineMs, value.GrantId,
+            value.AttachmentGeneration, value.PolicyRevision,
+            value.ExecutionBinding is null ? null : new(value.ExecutionBinding.ProgramId, value.ExecutionBinding.NodeId,
+                value.ExecutionBinding.NodeAttempt, value.ExecutionBinding.RequestId, value.ExecutionBinding.IdempotencyKey, value.ExecutionBinding.ExecutionId));
+
+    private static BodyNodeAdmissionCanonicalValueWire ProjectAdmissionCanonical(BodyProgramCanonicalValue value) =>
+        new(value.Kind switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.Boolean => "boolean", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.DestinationSelector => "destination_selector", _ => throw new ArgumentOutOfRangeException(nameof(value)) }, value.CanonicalValue,
+            value.Destination is null ? null : new(value.Destination.Kind, value.Destination.Label, value.Destination.Ref));
+
+    public static bool TryDeserializeBodyNodeAdmissionChallenge(string json, out BridgeEnvelope<NodeAdmissionChallenge>? envelope, out string reasonCode) =>
+        TryDeserializeAdmission(json, false, out envelope, out reasonCode);
+
+    public static bool TryDeserializeBodyNodeAdmissionGrant(string json, out BridgeEnvelope<HostAdmissionGrant>? envelope, out string reasonCode) =>
+        TryDeserializeAdmission(json, true, out envelope, out reasonCode);
+
+    private static bool TryDeserializeAdmission<T>(string json, bool grant, out BridgeEnvelope<T>? envelope, out string reasonCode)
+    {
+        envelope = null;
+        reasonCode = "message_too_large";
+        if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumMessageBytes) return false;
+        string type = grant ? "body_node_admission_grant" : "body_node_admission_challenge";
+        if (!TryReadInboundPayload(json, type, out JsonDocument? document, out JsonElement payload, out reasonCode)) return false;
+        using (document)
+        {
+            if (!IsValidAdmissionPayload(payload, grant, out object? core))
+            {
+                reasonCode = "invalid_body_node_admission";
+                return false;
+            }
+            JsonElement root = document!.RootElement;
+            TryReadScope(root.GetProperty("scope"), out BridgeScope? scope);
+            envelope = new(Version, root.GetProperty("messageId").GetString()!, root.GetProperty("correlationId").GetString()!,
+                root.GetProperty("timestampMs").GetInt64(), scope!, type, (T)core!);
+            return true;
+        }
+    }
+
+    private static bool IsValidAdmissionPayload(JsonElement payload, bool grant, out object? core)
+    {
+        core = null;
+        string[] keys = { "programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "catalogRevision", "policyIdentity", "actionId", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs" };
+        if (!HasExactProperties(payload, grant ? keys.Concat(new[] { "grantId", "attachmentGeneration", "policyRevision", "executionBinding" }).ToArray() : keys)
+            || !ReadOpaqueString(payload.GetProperty("programId"), out string? programId)
+            || !ReadOpaqueString(payload.GetProperty("nodeId"), out string? nodeId)
+            || !ReadOpaqueString(payload.GetProperty("actionId"), out string? actionId)
+            || !ReadAdmissionAttempt(payload.GetProperty("nodeAttempt"), out int nodeAttempt)
+            || !ReadAdmissionAttempt(payload.GetProperty("admissionAttempt"), out int admissionAttempt)
+            || !ReadAdmissionRevision(payload.GetProperty("stopEpoch"), out long stopEpoch)
+            || !ReadAdmissionRevision(payload.GetProperty("catalogRevision"), out long catalogRevision)
+            || !ReadAdmissionRevision(payload.GetProperty("deadlineMs"), out long deadlineMs) || deadlineMs == 0
+            || !TryReadRuntimeArguments(payload.GetProperty("canonicalBoundArgs"), out var arguments)) return false;
+        JsonElement policy = payload.GetProperty("policyIdentity");
+        if (!HasExactProperties(policy, "value", "capabilityRevision") || !ReadAdmissionOpaque(policy.GetProperty("value"), out string? policyValue)
+            || !ReadAdmissionRevision(policy.GetProperty("capabilityRevision"), out long capabilityRevision)) return false;
+        Dictionary<string, BodyProgramCanonicalValue> canonical = new(StringComparer.Ordinal);
+        foreach (var pair in arguments!)
+        {
+            BodyProgramArgumentKind kind = pair.Value.Type switch { "integer" => BodyProgramArgumentKind.Integer, "boolean" => BodyProgramArgumentKind.Boolean, "string" => BodyProgramArgumentKind.String, _ => BodyProgramArgumentKind.DestinationSelector };
+            if (!BodyProgramValidation.TryDecodeRuntimeValue(pair.Value, kind, out var value)) return false;
+            canonical.Add(pair.Key, value!);
+        }
+        JsonElement claims = payload.GetProperty("derivedResourceClaims");
+        if (claims.ValueKind != JsonValueKind.Object || claims.EnumerateObject().Count() > 16) return false;
+        Dictionary<string, string> resources = new(StringComparer.Ordinal);
+        foreach (var pair in claims.EnumerateObject())
+            if (!IsOpaqueId(pair.Name) || !ReadOpaqueString(pair.Value, out string? claim) || !resources.TryAdd(pair.Name, claim!)) return false;
+        var identity = new BodyProgramPolicyIdentity(policyValue!, capabilityRevision);
+        if (!grant)
+        {
+            core = new NodeAdmissionChallenge(programId!, nodeId!, nodeAttempt, admissionAttempt, stopEpoch, catalogRevision, identity, actionId!, canonical, resources, deadlineMs);
+            return true;
+        }
+        if (!ReadOpaqueString(payload.GetProperty("grantId"), out string? grantId)
+            || !ReadAdmissionOpaque(payload.GetProperty("attachmentGeneration"), out string? attachment)
+            || !ReadAdmissionOpaque(payload.GetProperty("policyRevision"), out string? revision)) return false;
+        JsonElement binding = payload.GetProperty("executionBinding");
+        NodeExecutionBinding? execution = null;
+        if (binding.ValueKind != JsonValueKind.Null)
+        {
+            if (!HasExactProperties(binding, "programId", "nodeId", "nodeAttempt", "requestId", "idempotencyKey", "executionId")
+                || !ReadOpaqueString(binding.GetProperty("programId"), out string? bindingProgram) || bindingProgram != programId
+                || !ReadOpaqueString(binding.GetProperty("nodeId"), out string? bindingNode) || bindingNode != nodeId
+                || !ReadAdmissionAttempt(binding.GetProperty("nodeAttempt"), out int bindingAttempt) || bindingAttempt != nodeAttempt
+                || !ReadOpaqueString(binding.GetProperty("requestId"), out string? requestId)
+                || !ReadOpaqueString(binding.GetProperty("idempotencyKey"), out string? idempotencyKey)
+                || !ReadOpaqueString(binding.GetProperty("executionId"), out string? executionId)) return false;
+            execution = new(bindingProgram!, bindingNode!, bindingAttempt, requestId!, idempotencyKey!, executionId!);
+        }
+        core = new HostAdmissionGrant(programId!, nodeId!, nodeAttempt, admissionAttempt, stopEpoch, catalogRevision, identity, actionId!, canonical, resources, deadlineMs, grantId!, attachment!, revision!, execution);
+        return true;
+    }
+
+    private static bool ReadAdmissionAttempt(JsonElement value, out int attempt)
+    {
+        attempt = 0;
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out attempt) && attempt > 0;
+    }
+
+    private static bool ReadAdmissionRevision(JsonElement value, out long revision)
+    {
+        revision = 0;
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out revision) && revision >= 0 && IsJavaScriptSafeInteger(revision);
+    }
+
+    private static bool ReadAdmissionOpaque(JsonElement value, out string? text)
+    {
+        text = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return BodyProgramValidation.IsOpaquePolicyValue(text);
     }
 
     public static bool IsOpaqueId(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.All(character =>
@@ -895,6 +1052,298 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             }
         }
     }
+
+    public static bool TryDeserializeObservationBindingV1(
+        string json,
+        out ObservationBindingV1? binding,
+        out string reasonCode)
+    {
+        binding = null;
+        if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumMessageBytes)
+        {
+            reasonCode = "message_too_large";
+            return false;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (!TryReadObservationBinding(document.RootElement, out binding))
+            {
+                reasonCode = "observation_binding_malformed";
+                return false;
+            }
+
+            reasonCode = "accepted";
+            return true;
+        }
+        catch (JsonException)
+        {
+            reasonCode = "observation_binding_malformed";
+            return false;
+        }
+    }
+
+    public static bool TryDeserializeObserveSceneRequest(
+        string json,
+        out BridgeEnvelope<ObserveSceneRequestPayload>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "observe_scene_request", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        using (document!)
+        {
+            if (!TryReadObserveSceneRequest(payload, out int radius))
+            {
+                reasonCode = "invalid_observe_scene_request";
+                return false;
+            }
+
+            JsonElement root = document!.RootElement;
+            envelope = new BridgeEnvelope<ObserveSceneRequestPayload>(
+                Version,
+                root.GetProperty("messageId").GetString()!,
+                root.GetProperty("correlationId").GetString()!,
+                root.GetProperty("timestampMs").GetInt64(),
+                ReadScope(root.GetProperty("scope")),
+                "observe_scene_request",
+                new ObserveSceneRequestPayload(radius));
+            reasonCode = "accepted";
+            return true;
+        }
+    }
+
+    public static bool TryDeserializeObserveSceneResult(
+        string json,
+        out BridgeEnvelope<ObserveSceneResultPayload>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "observe_scene_result", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        using (document!)
+        {
+            if (!TryReadObserveSceneResult(payload, out ObserveSceneResultPayload? result) || result is null)
+            {
+                reasonCode = "invalid_observe_scene_result";
+                return false;
+            }
+
+            JsonElement root = document!.RootElement;
+            envelope = new BridgeEnvelope<ObserveSceneResultPayload>(
+                Version,
+                root.GetProperty("messageId").GetString()!,
+                root.GetProperty("correlationId").GetString()!,
+                root.GetProperty("timestampMs").GetInt64(),
+                ReadScope(root.GetProperty("scope")),
+                "observe_scene_result",
+                result);
+            reasonCode = "accepted";
+            return true;
+        }
+    }
+
+    private static bool TryReadObserveSceneRequest(JsonElement payload, out int radius)
+    {
+        radius = ObserveSceneRequestPayload.DefaultRadius;
+        if (HasExactProperties(payload))
+            return true;
+        if (!HasExactProperties(payload, "radius")
+            || !payload.TryGetProperty("radius", out JsonElement radiusValue)
+            || radiusValue.ValueKind != JsonValueKind.Number
+            || !radiusValue.TryGetInt32(out radius))
+            return false;
+        return radius is >= 0 and <= 30;
+    }
+
+    private static bool TryReadObserveSceneResult(JsonElement payload, out ObserveSceneResultPayload? result)
+    {
+        result = null;
+        if (!HasExactProperties(payload, "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason")
+            || !ReadSceneText(payload.GetProperty("currentLocation"), 128, out string? currentLocation)
+            || !ReadSceneText(payload.GetProperty("currentRegion"), 128, out string? currentRegion)
+            || !ReadSceneText(payload.GetProperty("summary"), 512, out string? summary)
+            || payload.GetProperty("affordances").ValueKind != JsonValueKind.Array
+            || payload.GetProperty("affordances").GetArrayLength() > 20
+            || !TryReadSceneBoolean(payload.GetProperty("partial"), out bool partial))
+            return false;
+
+        JsonElement truncatedReason = payload.GetProperty("truncatedReason");
+        string? parsedTruncatedReason = null;
+        if (!partial)
+        {
+            if (truncatedReason.ValueKind != JsonValueKind.Null)
+                return false;
+        }
+        else if (truncatedReason.ValueKind != JsonValueKind.String
+            || truncatedReason.GetString() is not ("maximum_affordances" or "payload_limit"))
+        {
+            return false;
+        }
+        else
+        {
+            parsedTruncatedReason = truncatedReason.GetString();
+        }
+
+        List<ObserveSceneAffordancePayload> affordances = new();
+        HashSet<string> references = new(StringComparer.Ordinal);
+        foreach (JsonElement affordance in payload.GetProperty("affordances").EnumerateArray())
+        {
+            if (!TryReadObserveSceneAffordance(affordance, out ObserveSceneAffordancePayload? parsedAffordance)
+                || parsedAffordance is null
+                || !references.Add(parsedAffordance.Ref))
+                return false;
+            affordances.Add(parsedAffordance);
+        }
+
+        result = new ObserveSceneResultPayload(
+            currentLocation!,
+            currentRegion!,
+            Array.AsReadOnly(affordances.ToArray()),
+            summary!,
+            partial,
+            parsedTruncatedReason);
+        return true;
+    }
+
+    private static bool TryReadObserveSceneAffordance(JsonElement value, out ObserveSceneAffordancePayload? affordance)
+    {
+        affordance = null;
+        if (!HasExactProperties(value, "ref", "kind", "name", "distance", "direction", "actionHint")
+            || !ReadSceneReference(value.GetProperty("ref"), out string? reference)
+            || !ReadSceneText(value.GetProperty("name"), 128, out string? name)
+            || !value.GetProperty("distance").TryGetInt32(out int distance)
+            || distance is < 0 or > 30
+            || !TryReadSceneOptionalText(value.GetProperty("actionHint"), 160, out string? actionHint)
+            || value.GetProperty("kind").ValueKind != JsonValueKind.String
+            || value.GetProperty("kind").GetString() is not ("npc" or "chest" or "crop" or "forage" or "door" or "machine")
+            || value.GetProperty("direction").ValueKind != JsonValueKind.String
+            || value.GetProperty("direction").GetString() is not ("North" or "South" or "East" or "West" or "CurrentTile"))
+            return false;
+
+        affordance = new ObserveSceneAffordancePayload(
+            reference!,
+            value.GetProperty("kind").GetString()!,
+            name!,
+            distance,
+            value.GetProperty("direction").GetString()!,
+            actionHint);
+        return true;
+    }
+
+    private static bool TryReadSceneBoolean(JsonElement value, out bool result)
+    {
+        result = false;
+        if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            return false;
+        result = value.GetBoolean();
+        return true;
+    }
+
+    private static bool TryReadSceneOptionalText(JsonElement value, int maximumLength, out string? text)
+    {
+        text = null;
+        if (value.ValueKind == JsonValueKind.Null)
+            return true;
+        if (value.ValueKind != JsonValueKind.String)
+            return false;
+        text = value.GetString();
+        return text is not null
+            && text.Length <= maximumLength
+            && !text.Any(char.IsControl);
+    }
+
+    private static bool ReadSceneText(JsonElement value, int maximumLength, out string? text)
+    {
+        text = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return text is { Length: >= 1 }
+            && text.Length <= maximumLength
+            && !text.Any(char.IsControl);
+    }
+
+    private static bool ReadSceneReference(JsonElement value, out string? reference)
+    {
+        reference = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        if (reference is null || !reference.StartsWith("sr1_", StringComparison.Ordinal) || reference.Length != 20)
+            return false;
+
+        string encoded = reference[4..];
+        if (encoded.Any(character => !((character >= 'A' && character <= 'Z')
+            || (character >= 'a' && character <= 'z')
+            || (character >= '0' && character <= '9')
+            || character is '-' or '_')))
+            return false;
+
+        Span<byte> bytes = stackalloc byte[12];
+        return Convert.TryFromBase64String(encoded.Replace('-', '+').Replace('_', '/'), bytes, out int written)
+            && written == bytes.Length;
+    }
+
+    private static bool IsValidObservationBinding(ObservationBindingV1? binding) => binding is not null
+        && IsOpaqueId(binding.ObservationId)
+        && IsOpaqueId(binding.Ref);
+
+    private static bool TryReadObservationBinding(JsonElement value, out ObservationBindingV1? binding)
+    {
+        binding = null;
+        if (!HasExactProperties(value, "observationId", "ref")
+            || !ReadOpaqueString(value.GetProperty("observationId"), out string? observationId)
+            || !ReadOpaqueString(value.GetProperty("ref"), out string? reference))
+            return false;
+
+        binding = new ObservationBindingV1(observationId!, reference!);
+        return true;
+    }
+
+    private static bool IsValidObserveSceneRequest(ObserveSceneRequestPayload? request) => request is not null
+        && request.Radius is >= 0 and <= 30;
+
+    private static bool IsValidObserveSceneResult(ObserveSceneResultPayload? result) => result is not null
+        && IsValidSceneText(result.CurrentLocation, 128)
+        && IsValidSceneText(result.CurrentRegion, 128)
+        && IsValidSceneText(result.Summary, 512)
+        && result.Affordances is { Count: <= 20 }
+        && result.Affordances.DistinctBy(affordance => affordance.Ref, StringComparer.Ordinal).Count() == result.Affordances.Count
+        && result.Affordances.All(IsValidObserveSceneAffordance)
+        && (!result.Partial ? result.TruncatedReason is null : result.TruncatedReason is "maximum_affordances" or "payload_limit");
+
+    private static bool IsValidObserveSceneAffordance(ObserveSceneAffordancePayload? affordance) => affordance is not null
+        && IsValidSceneReference(affordance.Ref)
+        && affordance.Kind is "npc" or "chest" or "crop" or "forage" or "door" or "machine"
+        && IsValidSceneText(affordance.Name, 128)
+        && affordance.Distance is >= 0 and <= 30
+        && affordance.Direction is "North" or "South" or "East" or "West" or "CurrentTile"
+        && (affordance.ActionHint is null || affordance.ActionHint.Length <= 160 && !affordance.ActionHint.Any(char.IsControl));
+
+    private static bool IsValidSceneText(string? value, int maximumLength) => value is { Length: >= 1 }
+        && value.Length <= maximumLength
+        && !value.Any(char.IsControl);
+
+    private static bool IsValidSceneReference(string? value)
+    {
+        if (value is null || !value.StartsWith("sr1_", StringComparison.Ordinal) || value.Length != 20)
+            return false;
+        string encoded = value[4..];
+        if (encoded.Any(character => !((character >= 'A' && character <= 'Z')
+            || (character >= 'a' && character <= 'z')
+            || (character >= '0' && character <= '9')
+            || character is '-' or '_')))
+            return false;
+        Span<byte> bytes = stackalloc byte[12];
+        return Convert.TryFromBase64String(encoded.Replace('-', '+').Replace('_', '/'), bytes, out int written)
+            && written == bytes.Length;
+    }
+
+    private static bool IsValidObserveSceneRequestEnvelope(BridgeEnvelope<ObserveSceneRequestPayload>? envelope) => envelope is not null
+        && IsValidEnvelope(envelope.ProtocolVersion, envelope.MessageId, envelope.CorrelationId, envelope.TimestampMs, envelope.Scope, envelope.Type, "observe_scene_request")
+        && IsValidObserveSceneRequest(envelope.Payload);
+
+    private static bool IsValidObserveSceneResultEnvelope(BridgeEnvelope<ObserveSceneResultPayload>? envelope) => envelope is not null
+        && IsValidEnvelope(envelope.ProtocolVersion, envelope.MessageId, envelope.CorrelationId, envelope.TimestampMs, envelope.Scope, envelope.Type, "observe_scene_result")
+        && IsValidObserveSceneResult(envelope.Payload);
 
     public static bool TryDeserializeNavigationReadRequest(
         string json,
