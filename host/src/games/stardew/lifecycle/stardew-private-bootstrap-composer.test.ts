@@ -79,7 +79,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "consumeOwnedFarmhandBridgeConnection" | "launchStagedPlayerHost" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner" | "createStardewBootstrapGuardianOwnerFromDesktopSession"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "consumeOwnedFarmhandBridgeConnection" | "launchStagedPlayerHost" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -946,7 +946,6 @@ test("production internal composition exposes only the private C1 materializer w
     "createOwnedPlayerHostAttachmentFlow",
     "createOwnedPlayerHostManifestHandoffCoordinator",
     "createStardewBootstrapGuardianOwner",
-    "createStardewBootstrapGuardianOwnerFromDesktopSession",
     "launchMaterializedAiClient",
     "launchStagedPlayerHost",
     "materializeAiClientProfileAfterManifestAdmission",
