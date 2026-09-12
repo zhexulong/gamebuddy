@@ -6,6 +6,7 @@ export {
   CLEANUP_TIMEOUT_MS,
   DEFAULT_SUITE_TIMEOUT_MS,
   runBoundedChild,
+  runOneShotControlChild,
 } from "./process-supervisor.mjs";
 export {
   cleanupAtomicDirectory,
