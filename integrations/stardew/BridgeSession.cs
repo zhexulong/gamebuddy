@@ -11,6 +11,11 @@ using Microsoft.Xna.Framework;
 
 namespace GameBuddy.Stardew;
 
+internal delegate bool SceneTargetResolver(
+    ObservationBindingV1? requested,
+    out SceneAffordanceBinding? binding,
+    out string reasonCode);
+
 /// <summary>Transport-neutral, SMAPI-game-thread-only authenticated session.</summary>
 internal sealed class BridgeSession
 {
@@ -34,6 +39,7 @@ internal sealed class BridgeSession
     private long navigationObservationSequence;
     private long sceneObservationSequence;
     private long sceneMovementSequence;
+    private string? sceneObservationId;
     private string? sceneLocationName;
     private int sceneActorTileX;
     private int sceneActorTileY;
@@ -99,6 +105,7 @@ internal sealed class BridgeSession
         this.navigationReferences = navigationReferences ?? new NavigationReferenceStore();
         this.sceneObservationProvider = sceneObservationProvider ?? (() => null);
         this.sceneObservationProjection = new SceneObservationProjection(this.sceneObservations);
+        this.executions.SetSceneTargetResolver(this.TryResolveSceneTarget);
         this.executions.SetNavigationRuntimeFactory(() => new NavigationRuntimeSnapshot(
             this.navigationReferences,
             this.navigationRuntimeInstanceId,
@@ -222,11 +229,95 @@ internal sealed class BridgeSession
             projection.IsPartial,
             projection.TruncatedReason);
         response = Reply("observe_scene_result", envelope.CorrelationId, payload);
+        this.sceneObservationId = response.MessageId;
         reasonCode = "accepted";
         return true;
     }
 
-    internal void ClearSceneForWorldUnload() => this.sceneObservations.Close();
+    /// <summary>
+    /// Resolves a typed scene binding only on the game thread. The binding is
+    /// observation-local; the caller must still compare its copied target facts
+    /// with the live native object before invoking an action.
+    /// </summary>
+    internal bool TryResolveSceneTarget(
+        ObservationBindingV1? requested,
+        out SceneAffordanceBinding? binding,
+        out string reasonCode)
+    {
+        binding = null;
+        if (!this.actionRouter.IsOnOwnerThread)
+        {
+            reasonCode = "game_thread_required";
+            return false;
+        }
+        if (requested is null
+            || !BridgeProtocol.IsOpaqueId(requested.ObservationId)
+            || !BridgeProtocol.IsOpaqueId(requested.Ref))
+        {
+            reasonCode = "scene_ref_invalid";
+            return false;
+        }
+
+        SceneObservationContext? active = this.sceneObservations.ActiveObservation;
+        if (active is null || !string.Equals(requested.ObservationId, this.sceneObservationId, StringComparison.Ordinal))
+        {
+            reasonCode = "scene_ref_stale";
+            return false;
+        }
+
+        SceneObservationInput? current;
+        try
+        {
+            current = this.sceneObservationProvider();
+        }
+        catch
+        {
+            reasonCode = "scene_observation_unavailable";
+            return false;
+        }
+        if (current is null || !current.IsValid)
+        {
+            reasonCode = "scene_observation_unavailable";
+            return false;
+        }
+
+        bool locationChanged = !string.Equals(current.CurrentRegion, active.LocationName, StringComparison.Ordinal);
+        bool actorMoved = this.sceneLocationName is not null
+            && (this.sceneActorTileX != current.ActorTileX || this.sceneActorTileY != current.ActorTileY);
+        if (locationChanged || actorMoved)
+        {
+            this.sceneMovementSequence = Math.Max(this.sceneMovementSequence + 1, active.MovementSequence + 1);
+            this.sceneLocationName = current.CurrentRegion;
+            this.sceneActorTileX = current.ActorTileX;
+            this.sceneActorTileY = current.ActorTileY;
+            this.sceneObservations.InvalidateForMove(
+                this.navigationRuntimeInstanceId,
+                this.scope,
+                current.CurrentRegion,
+                this.sceneMovementSequence);
+            this.sceneObservationId = null;
+            reasonCode = locationChanged ? "scene_location_changed" : "scene_ref_stale";
+            return false;
+        }
+
+        if (!this.sceneObservations.TryResolve(requested.Ref, active, out binding, out reasonCode))
+            return false;
+        if (binding is null || binding.Kind != SceneAffordanceKind.Forage)
+        {
+            binding = null;
+            reasonCode = "scene_target_kind_mismatch";
+            return false;
+        }
+
+        reasonCode = "accepted";
+        return true;
+    }
+
+    internal void ClearSceneForWorldUnload()
+    {
+        this.sceneObservationId = null;
+        this.sceneObservations.Close();
+    }
 
     /// <summary>
     /// Invalidates opaque scene refs at a bridge lifecycle boundary without
@@ -240,6 +331,7 @@ internal sealed class BridgeSession
             this.scope,
             this.sceneLocationName ?? "bridge_lifecycle",
             ++this.sceneMovementSequence);
+        this.sceneObservationId = null;
         this.sceneLocationName = null;
         this.sceneActorTileX = 0;
         this.sceneActorTileY = 0;
@@ -332,7 +424,7 @@ internal sealed class BridgeSession
             "navigate_to_destination" => $"{request.RequestId}:{request.Action}:{request.Args.Destination?.Kind}:{request.Args.Destination?.Label}:{request.Args.Destination?.Ref}:{request.ExpectedRevision}",
             "express_emote" => $"{request.RequestId}:{request.Action}:{request.Args.Emote}:{request.ExpectedRevision}",
             "face_direction" => $"{request.RequestId}:{request.Action}:{request.Args.Direction}:{request.ExpectedRevision}",
-            _ => $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.Args.Slot}:{request.Args.ExpectedQualifiedItemId}:{request.Args.ExpectedTargetId}:{request.ExpectedRevision}"
+            _ => $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.Args.Slot}:{request.Args.ExpectedQualifiedItemId}:{request.Args.ExpectedTargetId}:{request.Args.SceneTarget?.ObservationId}:{request.Args.SceneTarget?.Ref}:{request.ExpectedRevision}"
         };
         // Replays return a durable receipt but remain current bridge requests:
         // they must satisfy the same owner-thread, published-capability, revision,
@@ -985,7 +1077,8 @@ internal sealed class BridgeSession
         }
         else if (request.Action is "pickup_forage" or "pickup_item")
         {
-            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 } || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
+            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 } || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId)
+                || (request.Action == "pickup_forage" && !IsValidSceneTarget(request.Args.SceneTarget)))
             { reasonCode = "invalid_execution_request"; return false; }
         }
         else if (request.Action is "water_crop" or "harvest_crop")
@@ -1079,24 +1172,30 @@ internal sealed class BridgeSession
         bool destination = args.Destination is not null;
         bool emote = args.Emote is not null;
         bool direction = args.Direction is not null;
+        bool sceneTarget = args.SceneTarget is not null;
         if (action == "navigate_to_destination")
-            return destination && !x && !y && !slot && !qualifiedItem && !target && !emote && !direction;
+            return destination && !x && !y && !slot && !qualifiedItem && !target && !sceneTarget && !emote && !direction;
         if (action == "express_emote")
-            return emote && !x && !y && !slot && !qualifiedItem && !target && !destination && !direction;
+            return emote && !x && !y && !slot && !qualifiedItem && !target && !sceneTarget && !destination && !direction;
         if (action == "face_direction")
-            return direction && !x && !y && !slot && !qualifiedItem && !target && !destination && !emote;
+            return direction && !x && !y && !slot && !qualifiedItem && !target && !sceneTarget && !destination && !emote;
         return action switch
         {
-            "move_to_tile" or "travel" or "enter_exit" or "till_soil" => x && y && !slot && !qualifiedItem && !target && !destination && !emote && !direction,
-            "equip_tool" => !x && !y && slot && !qualifiedItem && !target && !destination && !emote && !direction,
-            "pickup_forage" or "pickup_item" or "harvest_crop" => x && y && !slot && qualifiedItem && target && !destination && !emote && !direction,
-            "water_crop" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" => x && y && !slot && !qualifiedItem && target && !destination && !emote && !direction,
-            "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" => x && y && slot && qualifiedItem && target && !destination && !emote && !direction,
-            "clear_debris" or "collect_animal_product" or "feed_animal" or "refill_watering_can" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" => x && y && slot && !qualifiedItem && target && !destination && !emote && !direction,
-            "use_item" => !x && !y && slot && qualifiedItem && !target && !destination && !emote && !direction,
+            "move_to_tile" or "travel" or "enter_exit" or "till_soil" => x && y && !slot && !qualifiedItem && !target && !sceneTarget && !destination && !emote && !direction,
+            "equip_tool" => !x && !y && slot && !qualifiedItem && !target && !sceneTarget && !destination && !emote && !direction,
+            "pickup_forage" => x && y && !slot && qualifiedItem && target && sceneTarget && !destination && !emote && !direction,
+            "pickup_item" or "harvest_crop" => x && y && !slot && qualifiedItem && target && !sceneTarget && !destination && !emote && !direction,
+            "water_crop" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" => x && y && !slot && !qualifiedItem && target && !sceneTarget && !destination && !emote && !direction,
+            "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" => x && y && slot && qualifiedItem && target && !sceneTarget && !destination && !emote && !direction,
+            "clear_debris" or "collect_animal_product" or "feed_animal" or "refill_watering_can" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" => x && y && slot && !qualifiedItem && target && !sceneTarget && !destination && !emote && !direction,
+            "use_item" => !x && !y && slot && qualifiedItem && !target && !sceneTarget && !destination && !emote && !direction,
             _ => false,
         };
     }
+
+    private static bool IsValidSceneTarget(ObservationBindingV1? target) => target is not null
+        && BridgeProtocol.IsOpaqueId(target.ObservationId)
+        && BridgeProtocol.IsOpaqueId(target.Ref);
 
     private static bool MatchesDurableAdmission(
         BridgeExecutionRequest request,

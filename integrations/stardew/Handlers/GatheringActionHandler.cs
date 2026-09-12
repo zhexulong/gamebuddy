@@ -22,6 +22,7 @@ internal sealed class GatheringActionHandler : IFarmhandActionHandler
                 (int)(request.Args.Y ?? 0),
                 request.Args.ExpectedQualifiedItemId ?? string.Empty,
                 request.Args.ExpectedTargetId ?? string.Empty,
+                request.Args.SceneTarget,
                 request.DeadlineMs),
 
             "pickup_item" => this.executions.RequestLocalPickupItem(
