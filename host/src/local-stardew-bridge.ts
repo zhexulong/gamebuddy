@@ -325,7 +325,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       state.catalogRevision === state.snapshot.catalogRevision &&
       state.capabilities.includes(actionId) && state.snapshot.capabilities.includes(actionId) &&
       (state.catalogRegistrations ?? []).some((registration) => registration.actionId === actionId &&
-        registration.familyId === "world_navigation" && registration.identityVersion === 1 &&
+        registration.familyId === "world_perception" && registration.identityVersion === 1 &&
         registration.lifecycle === "published" && registration.kind === "read_only");
   }
 
@@ -657,7 +657,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       if (
         this.#catalogRevision === undefined ||
         this.#policyIdentity === undefined ||
-        message.payload.catalogRevision <= this.#catalogRevision ||
+        message.payload.catalogRevision !== this.#catalogRevision ||
+        message.payload.policyIdentity.capabilityRevision <= this.#policyIdentity.capabilityRevision ||
+        message.payload.policyIdentity.value === this.#policyIdentity.value ||
         message.payload.enabledActionIds.some((actionId) => !registeredIds.has(actionId))
       ) {
         this.transport.close("invalid_catalog_update_authority");
