@@ -145,6 +145,23 @@ public sealed class BridgeProtocolSerializationTests
     }
 
     [Fact]
+    public void PickupForageExecutionRequest_RequiresTypedSceneTargetAndRoundTripsIt()
+    {
+        var request = new BridgeExecutionRequest("req_forage", "idemp_forage", "pickup_forage",
+            new BridgeExecutionArgs { X = 12, Y = 34, ExpectedQualifiedItemId = "(O)16", ExpectedTargetId = "forage_target", SceneTarget = new ObservationBindingV1("observation_1", "forage_target") }, 1, 5000);
+        var envelope = new BridgeEnvelope<BridgeExecutionRequest>(1, "msg_forage", "corr_forage", 1000L, SampleScope, "execution_request", request);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue(serializeReason);
+        BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? parsed, out string deserializeReason).Should().BeTrue(deserializeReason);
+        parsed!.Payload.Args.SceneTarget.Should().BeEquivalentTo(request.Args.SceneTarget);
+
+        var missing = System.Text.Json.Nodes.JsonNode.Parse(json)!;
+        missing["payload"]!["args"]!.AsObject().Remove("sceneTarget");
+        BridgeProtocol.TryDeserializeExecutionRequest(missing.ToJsonString(), out _, out string missingReason).Should().BeFalse();
+        missingReason.Should().Be("invalid_envelope");
+    }
+
+    [Fact]
     public void TryDeserializeExecutionRequest_ValidPayload_DeserializesCorrectly()
     {
         var request = new BridgeExecutionRequest("req_100", "idemp_100", "till_soil", new BridgeExecutionArgs { X = 12f, Y = 34f }, 1, 5000);

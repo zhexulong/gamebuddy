@@ -1017,10 +1017,13 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 || !payload.TryGetProperty("args", out JsonElement args)
                 || ExecutionArgumentProperties(action.GetString()) is not { } argumentProperties
                 || !HasExactProperties(args, argumentProperties)
-                || (action.GetString() == "navigate_to_destination"
-                    && (!args.TryGetProperty("destination", out JsonElement destination)
-                        || !IsExactNavigationDestinationSelector(destination)))
-                || (action.GetString() == "express_emote"
+                 || (action.GetString() == "pickup_forage"
+                     && (!args.TryGetProperty("sceneTarget", out JsonElement sceneTarget)
+                         || !TryReadObservationBinding(sceneTarget, out _)))
+                 || (action.GetString() == "navigate_to_destination"
+                     && (!args.TryGetProperty("destination", out JsonElement destination)
+                         || !IsExactNavigationDestinationSelector(destination)))
+                 || (action.GetString() == "express_emote"
                     && (!args.TryGetProperty("emote", out JsonElement emote)
                         || emote.ValueKind != JsonValueKind.String
                         || emote.GetString() is not { } emoteStr
@@ -1649,7 +1652,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     {
         "move_to_tile" or "enter_exit" or "travel" or "till_soil" => new[] { "x", "y" },
         "equip_tool" => new[] { "slot" },
-        "pickup_forage" or "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
+        "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
+        "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
         "water_crop" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" => new[] { "x", "y", "expectedTargetId" },
         "refill_watering_can" => new[] { "x", "y", "slot", "expectedTargetId" },
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
