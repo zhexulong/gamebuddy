@@ -1,4 +1,6 @@
 using System.Globalization;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Navigation;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -11,8 +13,15 @@ namespace GameBuddy.Stardew;
 // FarmhandExecutionController game-thread ledger, receipt store, snapshot, and cancel state.
 internal sealed partial class ExecutionManager
 {
+    private SceneTargetResolver? sceneTargetResolver;
+
+    internal void SetSceneTargetResolver(SceneTargetResolver resolver)
+    {
+        this.sceneTargetResolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
+    }
+
     /// <summary>Published native forage pickup. The native location action owns inventory and object removal.</summary>
-    public LocalExecutionReceipt RequestLocalPickupForage(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalPickupForage(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, ObservationBindingV1? sceneTarget, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
             return existing;
@@ -22,6 +31,10 @@ internal sealed partial class ExecutionManager
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        SceneAffordanceBinding? binding = null;
+        string sceneReason = "scene_ref_invalid";
+        if (this.sceneTargetResolver is null || !this.sceneTargetResolver(sceneTarget, out binding, out sceneReason))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, sceneReason, null);
         if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
@@ -33,9 +46,15 @@ internal sealed partial class ExecutionManager
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? forage) || !forage.isForage())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_not_available", $"target={targetX},{targetY}");
-        if (!string.Equals(forage.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
+        if (binding is null
+            || !string.Equals(binding.LocationName, location.NameOrUniqueName, StringComparison.Ordinal)
+            || binding.TileX != targetX
+            || binding.TileY != targetY
+            || !location.objects.TryGetValue(tile, out StardewValley.Object? forage)
+            || !forage.isForage())
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_changed", $"target={targetX},{targetY}");
+        if (!string.Equals(binding.OpaqueEntityIdentity, forage.QualifiedItemId, StringComparison.Ordinal)
+            || !string.Equals(forage.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
             || !string.Equals(BuildForageTargetId(location, targetX, targetY, forage), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_changed", $"target={targetX},{targetY}");
         if (!Game1.player.couldInventoryAcceptThisItem(forage))
