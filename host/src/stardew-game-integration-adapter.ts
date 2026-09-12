@@ -147,6 +147,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
         capabilities: [...state.capabilities],
         ...(state.enabledActionIds === undefined ? {} : { enabledActionIds: [...state.enabledActionIds] }),
         capabilityRevision: state.catalogRevision ?? null,
+        policyIdentity: state.policyIdentity ?? null,
         registrations: [...(state.catalogRegistrations ?? [])],
         snapshotRevision: state.snapshot?.revision ?? null,
         activeExecution:
