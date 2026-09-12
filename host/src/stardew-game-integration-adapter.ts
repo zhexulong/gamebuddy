@@ -146,7 +146,8 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
         sessionId: state.sessionId,
         capabilities: [...state.capabilities],
         ...(state.enabledActionIds === undefined ? {} : { enabledActionIds: [...state.enabledActionIds] }),
-        capabilityRevision: state.catalogRevision ?? null,
+        catalogRevision: state.catalogRevision ?? null,
+        capabilityRevision: state.policyIdentity?.capabilityRevision ?? null,
         policyIdentity: state.policyIdentity ?? null,
         registrations: [...(state.catalogRegistrations ?? [])],
         snapshotRevision: state.snapshot?.revision ?? null,
@@ -887,9 +888,13 @@ function parseWarpDestination(
 function hasPickupForageCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
+  // The current pickup_forage evidence contract binds the observed tile, item,
+  // removal marker, and inventory relation. It has no target-identity field or
+  // request context from which Host could derive one, so identity matching stays
+  // a required Mod/evidence-contract change rather than an inferred check.
   const expectedKeys = [
     "location",
-    "target",
+    "tile",
     "item",
     "removed",
     "inventory_before",
@@ -904,12 +909,12 @@ function hasPickupForageCompletionEvidence(detail: string): boolean {
   const after = integerEvidenceValue(evidence.inventory_after);
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
-    hasTileEvidenceValue(evidence.target) &&
+    hasTileEvidenceValue(evidence.tile) &&
     hasOpaqueEvidenceValue(evidence.item) &&
     evidence.removed === "true" &&
     before !== null &&
     after !== null &&
-    after > before
+    after === before + 1
   );
 }
 
