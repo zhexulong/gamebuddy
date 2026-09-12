@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   createDesktopPrivateHostComposition,
+  createHostChildLifecycleAggregation,
   type DesktopPrivateHostComposition,
   type DesktopRootLayoutCapability,
+  type HostChildLifecycle,
 } from "./desktop-host-composition.js";
 
 const rootLayoutCapability = Object.freeze({}) as DesktopRootLayoutCapability;
@@ -42,6 +44,42 @@ test("desktop composition exposes only the typed invocation factory and keeps pl
   assert.equal(typeof typedComposition.stardewBootstrapGuardianOwnerFactory.create, "function");
   await Promise.all([composition.close(), composition.close()]);
   assert.equal(closeCalls, 1);
+});
+
+test("host child lifecycle aggregation closes children in reverse order exactly once", async () => {
+  const calls: string[] = [];
+  const children: HostChildLifecycle[] = [
+    { close: async () => { calls.push("first"); } },
+    { close: async () => { calls.push("second"); } },
+    { close: async () => { calls.push("third"); } },
+  ];
+  const aggregation = createHostChildLifecycleAggregation(children);
+  const firstClose = aggregation.close();
+  const secondClose = aggregation.close();
+
+  assert.equal(firstClose, secondClose);
+  await Promise.all([firstClose, secondClose, aggregation.close()]);
+  assert.deepEqual(calls, ["third", "second", "first"]);
+});
+
+test("host child lifecycle aggregation deduplicates a child and propagates the first reverse-order failure after attempting every child", async () => {
+  const calls: string[] = [];
+  const firstFailure = new Error("third_close_failed");
+  const secondFailure = new Error("second_close_failed");
+  const repeatedChild: HostChildLifecycle = {
+    close: async () => { calls.push("repeated"); },
+  };
+  const aggregation = createHostChildLifecycleAggregation([
+    repeatedChild,
+    { close: async () => { calls.push("second"); throw secondFailure; } },
+    { close: async () => { calls.push("third"); throw firstFailure; } },
+    repeatedChild,
+  ]);
+
+  const closePromise = aggregation.close();
+  await assert.rejects(closePromise, (error: unknown) => error === firstFailure);
+  assert.deepEqual(calls, ["third", "second", "repeated"]);
+  assert.equal(aggregation.close(), closePromise);
 });
 
 test("desktop composition retains the typed root capability and closes the authenticated session once", async () => {
