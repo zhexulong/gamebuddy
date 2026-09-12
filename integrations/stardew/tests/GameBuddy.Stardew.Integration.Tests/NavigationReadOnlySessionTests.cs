@@ -13,7 +13,7 @@ public sealed class NavigationReadOnlySessionTests
     [Fact]
     public void ObserveScene_RequiresAuthenticationAndOwnerThread_AndProjectsLiveFactsWithoutReceipt()
     {
-        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
         var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
         var executions = new ExecutionManager(new DummyMonitor(), () => publication);
         var session = new BridgeSession(
@@ -52,9 +52,77 @@ public sealed class NavigationReadOnlySessionTests
     }
 
     [Fact]
-    public async Task ObserveScene_RejectsWrongGenerationAndOffThreadWithoutCallingProvider()
+    public void ObserveScene_RejectsWhenPublicationIsAbsentOrRevokedWithoutCallingProvider()
     {
         FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
+        int providerCalls = 0;
+        var session = new BridgeSession(
+            executions,
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            sceneObservationProvider: () =>
+            {
+                providerCalls++;
+                return new SceneObservationInput("Farm", 10, 10, Array.Empty<SceneAffordanceSource>());
+            },
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+        Authenticate(session, scope);
+        BridgeEnvelope<ObserveSceneRequestPayload> request = SceneRequest(scope, "scene_capability_request_01");
+
+        session.TryObserveScene(1, request, out _, out string reason).Should().BeFalse();
+        reason.Should().Be("operation_not_available");
+        providerCalls.Should().Be(0);
+
+        publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
+        session.TryObserveScene(1, request, out _, out reason).Should().BeTrue(reason);
+        providerCalls.Should().Be(1);
+
+        publication = publication.WithEnabledActions(new HashSet<string>(StringComparer.Ordinal));
+        session.TryObserveScene(1, request, out _, out reason).Should().BeFalse();
+        reason.Should().Be("operation_not_available");
+        providerCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public void ObserveScene_CanResumeAfterBridgeLifecycleClearWithFreshReference()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        var session = new BridgeSession(
+            new ExecutionManager(new DummyMonitor(), () => publication),
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            sceneObservationProvider: () => new SceneObservationInput(
+                "Farm",
+                10,
+                10,
+                new[] { new SceneAffordanceSource(SceneAffordanceKind.Chest, "Chest", "chest_01", "Farm", 11, 10, "inspect") }),
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+        Authenticate(session, scope);
+
+        session.TryObserveScene(1, SceneRequest(scope, "scene_lifecycle_request_01"), out BridgeEnvelope<ObserveSceneResultPayload>? first, out string reason)
+            .Should().BeTrue(reason);
+        string firstReference = first!.Payload.Affordances.Single().Ref;
+
+        session.ClearSceneForBridgeLifecycle();
+
+        session.TryObserveScene(1, SceneRequest(scope, "scene_lifecycle_request_02"), out BridgeEnvelope<ObserveSceneResultPayload>? second, out reason)
+            .Should().BeTrue(reason);
+        second!.Payload.Affordances.Single().Ref.Should().NotBe(firstReference);
+    }
+
+    [Fact]
+    public async Task ObserveScene_RejectsWrongGenerationAndOffThreadWithoutCallingProvider()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
         var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
         var executions = new ExecutionManager(new DummyMonitor(), () => publication);
         int providerCalls = 0;
@@ -262,6 +330,15 @@ public sealed class NavigationReadOnlySessionTests
         session.TryNavigationRead(2, Request(scope), out _, out string reason).Should().BeFalse();
         reason.Should().Be("unauthenticated");
     }
+
+    private static BridgeEnvelope<ObserveSceneRequestPayload> SceneRequest(BridgeScope scope, string requestId) => new(
+        BridgeProtocol.Version,
+        requestId,
+        requestId + "_correlation",
+        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        scope,
+        "observe_scene_request",
+        new ObserveSceneRequestPayload());
 
     private static void Authenticate(BridgeSession session, BridgeScope scope)
     {

@@ -3520,7 +3520,7 @@ public sealed partial class ModEntry : Mod
 
     private void ObserveBridgeGeneration(ScreenEmbodimentState state)
     {
-        if (state.LocalPipeBridge is null || state.Executions is null)
+        if (state.LocalPipeBridge is null || state.BridgeSession is null || state.Executions is null)
             return;
 
         if (state.LocalPipeBridge.TryConsumeWorkerTerminal(out PipeWorkerTerminal terminal))
@@ -3529,6 +3529,13 @@ public sealed partial class ModEntry : Mod
                 : "ai_player_control_pipe_writer_ended");
 
         long generation = state.LocalPipeBridge.CurrentGeneration;
+        if (state.LastBridgeGeneration != generation)
+        {
+            // Scene refs are bound to the authenticated bridge generation. Clear
+            // them on disconnect, reconnect, and any generation replacement so a
+            // stale ref can never cross a transport lifecycle boundary.
+            state.BridgeSession.ClearSceneForBridgeLifecycle();
+        }
         if (state.LastBridgeGeneration != 0 && generation == 0)
         {
             // A named-pipe disconnect is a local safety event. Do not wait for
@@ -4194,6 +4201,7 @@ public sealed partial class ModEntry : Mod
     {
         state.Executions?.InvalidateForLifecycle(reasonCode);
         state.BridgeSession?.ClearNavigationForWorldUnload();
+        state.BridgeSession?.ClearSceneForWorldUnload();
         state.LocalPipeBridge?.Dispose();
         state.LocalPipeBridge = null;
         state.BridgeSession = null;

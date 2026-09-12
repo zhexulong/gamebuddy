@@ -163,6 +163,8 @@ internal sealed class BridgeSession
         response = null;
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "observe_scene_request", out reasonCode)) return false;
         if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+        if (!this.capabilityPublicationProvider().CapabilitySet.AllowsReadOperation("observe_scene"))
+        { reasonCode = "operation_not_available"; return false; }
 
         SceneObservationInput? input;
         try
@@ -225,6 +227,23 @@ internal sealed class BridgeSession
     }
 
     internal void ClearSceneForWorldUnload() => this.sceneObservations.Close();
+
+    /// <summary>
+    /// Invalidates opaque scene refs at a bridge lifecycle boundary without
+    /// closing the observation store. A reconnect on the same loaded world may
+    /// observe again, but it must never reuse refs from another generation.
+    /// </summary>
+    internal void ClearSceneForBridgeLifecycle()
+    {
+        this.sceneObservations.InvalidateForMove(
+            this.navigationRuntimeInstanceId,
+            this.scope,
+            this.sceneLocationName ?? "bridge_lifecycle",
+            ++this.sceneMovementSequence);
+        this.sceneLocationName = null;
+        this.sceneActorTileX = 0;
+        this.sceneActorTileY = 0;
+    }
 
     internal bool TryNavigationRead(long generation, BridgeEnvelope<BridgeNavigationReadRequest>? envelope, out BridgeEnvelope<BridgeNavigationReadResult>? response, out string reasonCode)
     {
