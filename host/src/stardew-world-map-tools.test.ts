@@ -68,7 +68,7 @@ test("observe-scene tool mounts only from a fresh Mod read-only capability and r
     state: {
       ...fixture.state,
       capabilities: ["observe_scene"],
-      catalogRegistrations: [{ actionId: "observe_scene", familyId: "world_navigation", identityVersion: 1, lifecycle: "published" as const, kind: "read_only" as const }],
+      catalogRegistrations: [{ actionId: "observe_scene", familyId: "world_perception", identityVersion: 1, lifecycle: "published" as const, kind: "read_only" as const }],
       snapshot: { ...fixture.state.snapshot!, capabilities: ["observe_scene"] },
     },
     observeScene: async () => {

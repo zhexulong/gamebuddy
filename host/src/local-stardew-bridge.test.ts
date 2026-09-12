@@ -70,7 +70,7 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
         if (request.type === "hello") {
           socket.write(frame({ ...request, messageId: "scene_hello", type: "hello_ack", payload: {
             sessionId: "scene_session", capabilities: ["observe_scene"], catalogRevision: 1, enabledActionIds: [],
-            presentationLocale: "en-US", registrations: [{ actionId: "observe_scene", familyId: "world_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" }],
+            presentationLocale: "en-US", registrations: [{ actionId: "observe_scene", familyId: "world_perception", identityVersion: 1, lifecycle: "published", kind: "read_only" }],
             runtimeRole: "native_local_fixture", launchGeneration: null,
           }}));
           socket.write(frame({ ...request, messageId: "scene_snapshot", type: "snapshot", correlationId: "scene_snapshot", payload: {

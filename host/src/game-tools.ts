@@ -290,11 +290,11 @@ export function createStardewObservationTools(
       state.catalogRevision === snapshot.catalogRevision &&
       state.capabilities.includes("observe_scene") && snapshot.capabilities.includes("observe_scene") &&
       (state.catalogRegistrations ?? []).some((registration) =>
-        registration.actionId === "observe_scene" && registration.familyId === "world_navigation" &&
+        registration.actionId === "observe_scene" && registration.familyId === "world_perception" &&
         registration.identityVersion === 1 && registration.lifecycle === "published" && registration.kind === "read_only") &&
       typeof (integration as { observeScene?: unknown }).observeScene === "function" &&
       !new Set(policy?.deniedActions ?? []).has("observe_scene") &&
-      !new Set(policy?.deniedFamilies ?? []).has("world_navigation");
+      !new Set(policy?.deniedFamilies ?? []).has("world_perception");
   };
 
   const tools: Array<ReturnType<typeof defineTool>> = [
