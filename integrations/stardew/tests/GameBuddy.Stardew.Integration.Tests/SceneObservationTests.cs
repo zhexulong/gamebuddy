@@ -2,7 +2,9 @@ using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
+using GameBuddy.Stardew.Core.Routing;
 using GameBuddy.Stardew.Navigation;
 using Xunit;
 
@@ -170,6 +172,48 @@ public sealed class SceneObservationTests
     }
 
     [Fact]
+    public void SceneTargetResolver_UsesTypedBindingFailureCodes()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
+        SceneObservationInput? input = new("Farm", 10, 10, new[] { Candidate(SceneAffordanceKind.Chest, "Chest", "chest_01", 10, 10) });
+        var session = new BridgeSession(
+            new ExecutionManager(new DummyMonitor(), () => publication),
+            new FarmhandActionRouter(),
+            Scope,
+            "scene_binding_token_0123456789abcdef",
+            () => publication,
+            sceneObservationProvider: () => input);
+
+        session.TryResolveSceneTarget(new ObservationBindingV1(string.Empty, "malformed ref"), out _, out string reasonCode)
+            .Should().BeFalse();
+        reasonCode.Should().Be("observation_binding_malformed");
+
+        BridgeEnvelope<ObserveSceneRequestPayload> request = new(
+            BridgeProtocol.Version,
+            "scene_binding_request_01",
+            "scene_binding_correlation_01",
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Scope,
+            "observe_scene_request",
+            new ObserveSceneRequestPayload());
+        Authenticate(session, Scope);
+        session.TryObserveScene(1, request, out BridgeEnvelope<ObserveSceneResultPayload>? response, out reasonCode)
+            .Should().BeTrue(reasonCode);
+        ObservationBindingV1 chestBinding = new(response!.Payload.ObservationId, response.Payload.Affordances.Single().Ref);
+
+        session.TryResolveSceneTarget(chestBinding, out _, out reasonCode).Should().BeFalse();
+        reasonCode.Should().Be("observation_binding_precondition_failed");
+
+        input = null;
+        session.TryResolveSceneTarget(chestBinding, out _, out reasonCode).Should().BeFalse();
+        reasonCode.Should().Be("observation_binding_target_unavailable");
+
+        session.ClearSceneForBridgeLifecycle();
+        session.TryResolveSceneTarget(chestBinding, out _, out reasonCode).Should().BeFalse();
+        reasonCode.Should().Be("observation_binding_stale");
+    }
+
+    [Fact]
     public void Observe_RejectsInvalidRadiusWithoutChangingExistingObservation()
     {
         var store = new SceneObservationStore();
@@ -183,6 +227,22 @@ public sealed class SceneObservationTests
         invalid.IsValid.Should().BeFalse();
         invalid.TruncatedReason.Should().Be("scene_observation_invalid");
         store.TryResolve(reference, initial.Observation, out _, out string reasonCode).Should().BeTrue(reasonCode);
+    }
+
+    private static void Authenticate(BridgeSession session, BridgeScope scope)
+    {
+        session.TryAuthenticate(
+            1,
+            new BridgeEnvelope<BridgeHello>(
+                BridgeProtocol.Version,
+                "scene_binding_hello",
+                "scene_binding_hello",
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                scope,
+                "hello",
+                new BridgeHello("scene_binding_token_0123456789abcdef")),
+            out _,
+            out string reasonCode).Should().BeTrue(reasonCode);
     }
 
     private static SceneObservationContext Context(long observationSequence) =>

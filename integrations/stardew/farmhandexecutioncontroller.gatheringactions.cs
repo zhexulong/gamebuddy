@@ -33,7 +33,9 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
         SceneAffordanceBinding? binding = null;
         string sceneReason = "scene_ref_invalid";
-        if (this.sceneTargetResolver is null || !this.sceneTargetResolver(sceneTarget, out binding, out sceneReason))
+        if (this.sceneTargetResolver is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_precondition_failed", null);
+        if (!this.sceneTargetResolver(sceneTarget, out binding, out sceneReason))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, sceneReason, null);
         if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
@@ -42,7 +44,7 @@ internal sealed partial class ExecutionManager
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
         if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_target_out_of_range", $"target={targetX},{targetY}");
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -52,11 +54,11 @@ internal sealed partial class ExecutionManager
             || binding.TileY != targetY
             || !location.objects.TryGetValue(tile, out StardewValley.Object? forage)
             || !forage.isForage())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_changed", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_target_unavailable", $"target={targetX},{targetY}");
         if (!string.Equals(binding.OpaqueEntityIdentity, forage.QualifiedItemId, StringComparison.Ordinal)
             || !string.Equals(forage.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
             || !string.Equals(BuildForageTargetId(location, targetX, targetY, forage), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_changed", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_target_unavailable", $"target={targetX},{targetY}");
         if (!Game1.player.couldInventoryAcceptThisItem(forage))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={targetX},{targetY}");
 
