@@ -49,6 +49,33 @@ public sealed class FarmhandActionSurfaceExportTests
     }
 
     [Fact]
+    public void ObserveSceneIsPublishedAsModOwnedReadOnlyRegistration()
+    {
+        FarmhandActionRegistration observe = FarmhandActionCatalog.Registrations.Single(registration => registration.ActionId == "observe_scene");
+
+        observe.FamilyId.Should().Be("world_perception");
+        observe.IdentityVersion.Should().Be(1);
+        observe.Lifecycle.Should().Be(FarmhandActionLifecycle.Published);
+        observe.Kind.Should().Be(FarmhandOperationKind.ReadOnly);
+        observe.HandlerGroup.Should().BeNull();
+        observe.Descriptor.Should().BeEquivalentTo(new FarmhandActionDescriptor(
+            Array.Empty<FarmhandActionArgument>(),
+            new Dictionary<string, string>(),
+            Array.Empty<FarmhandActionResourceTemplateClaim>(),
+            "read",
+            "observation_complete"));
+    }
+
+    [Fact]
+    public void PickupForageDeclaresRequiredObservationBindingV1SceneTarget()
+    {
+        FarmhandActionRegistration pickup = FarmhandActionCatalog.Registrations.Single(registration => registration.ActionId == "pickup_forage");
+
+        pickup.Descriptor!.SceneTarget.Should().BeEquivalentTo(new FarmhandActionObservationBindingDescriptor(
+            "ObservationBinding", 1, true, new[] { "observationId", "ref" }));
+    }
+
+    [Fact]
     public void SerializeToJson_IsCanonicalAndDeterministic()
     {
         string first = FarmhandActionSurfaceExport.SerializeToJson();
