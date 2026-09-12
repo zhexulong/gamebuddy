@@ -122,12 +122,28 @@ public sealed record BridgeTile(float X, float Y);
 /// <summary>Deterministic Mod-declared action identity projected on hello_ack.
 /// Reflects FarmhandActionCatalog.Registrations exactly; the Host treats this as
 /// the registration authority and rejects unknown extra action IDs.</summary>
+public sealed record FarmhandActionArgumentWire(string Name, string Type, IReadOnlyList<string>? Enum = null);
+public sealed record FarmhandActionResourceTemplateClaimWire(string Key, string Value);
+public sealed record FarmhandActionResourceTemplateWire(IReadOnlyList<FarmhandActionResourceTemplateClaimWire> Claims);
+public sealed record FarmhandActionPostconditionWire(string Name);
+public sealed record FarmhandActionObservationBindingDescriptorWire(string Type, int Version, bool Required, IReadOnlyList<string> RequiredProperties);
+public sealed record FarmhandActionDescriptorWire(
+    IReadOnlyList<FarmhandActionArgumentWire> Arguments,
+    IReadOnlyDictionary<string, string> OutputFacts,
+    FarmhandActionResourceTemplateWire ResourceTemplate,
+    string Effect,
+    FarmhandActionPostconditionWire Postcondition,
+    string? NativeBinding = null,
+    FarmhandActionObservationBindingDescriptorWire? SceneTarget = null
+);
+
 public sealed record FarmhandActionRegistrationWire(
     string ActionId,
     string FamilyId,
     int IdentityVersion,
     string Lifecycle,
-    string Kind
+    string Kind,
+    FarmhandActionDescriptorWire? Descriptor = null
 );
 
 /// <summary>Exact Mod-owned capability publication identity projected on authenticated bridge availability messages.</summary>

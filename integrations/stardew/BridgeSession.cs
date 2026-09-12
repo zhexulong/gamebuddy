@@ -133,12 +133,29 @@ internal sealed class BridgeSession
              new FarmhandPolicyIdentityWire(publication.PolicyIdentity.Value, publication.CapabilityRevision),
              capabilitySet.EnabledActionIds,
             locale,
-            FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(
-                registration.ActionId,
-                registration.FamilyId,
-                registration.IdentityVersion,
-                registration.Lifecycle.ToWireValue(),
-                registration.Kind.ToWireValue())).ToArray(),
+             FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(
+                 registration.ActionId,
+                 registration.FamilyId,
+                 registration.IdentityVersion,
+                 registration.Lifecycle.ToWireValue(),
+                 registration.Kind.ToWireValue(),
+                 registration.Descriptor is { } descriptor
+                     ? new FarmhandActionDescriptorWire(
+                         descriptor.Arguments.Select(argument => new FarmhandActionArgumentWire(argument.Name, argument.Type, argument.Enum)).ToArray(),
+                         new Dictionary<string, string>(descriptor.OutputFacts, StringComparer.Ordinal),
+                         new FarmhandActionResourceTemplateWire(descriptor.ResourceTemplate.Select(claim =>
+                             new FarmhandActionResourceTemplateClaimWire(claim.Key, claim.Value.ToString())).ToArray()),
+                         descriptor.Effect,
+                         new FarmhandActionPostconditionWire(descriptor.Postcondition),
+                         descriptor.NativeBinding,
+                         descriptor.SceneTarget is { } sceneTarget
+                             ? new FarmhandActionObservationBindingDescriptorWire(
+                                 sceneTarget.Type,
+                                 sceneTarget.Version,
+                                 sceneTarget.Required,
+                                 sceneTarget.RequiredProperties)
+                             : null)
+                     : null)).ToArray(),
             this.runtimeAttestation.RuntimeRole,
             this.runtimeAttestation.LaunchGeneration));
         reasonCode = "accepted";

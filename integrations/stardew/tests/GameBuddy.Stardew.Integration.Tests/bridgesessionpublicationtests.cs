@@ -42,12 +42,40 @@ public sealed class BridgeSessionPublicationTests
         BridgeHelloAck payload = acknowledgement!.Payload;
         payload.Capabilities.Should().Contain("inspect_world_map");
         payload.EnabledActionIds.Should().Equal("move_to_tile");
-        payload.Registrations.Should().ContainSingle(registration => registration.ActionId == "inspect_world_map")
-            .Which.Kind.Should().Be("read_only");
-        payload.RuntimeRole.Should().Be("unattested");
+        payload.CatalogRevision.Should().Be(FarmhandActionSurfacePublication.CatalogRevision);
+        payload.PolicyIdentity.Value.Should().Be(publication.PolicyIdentity.Value);
+        payload.PolicyIdentity.CapabilityRevision.Should().Be(publication.CapabilityRevision);
+        payload.PolicyIdentity.CapabilityRevision.Should().BePositive();
+         payload.Registrations.Should().ContainSingle(registration => registration.ActionId == "inspect_world_map")
+             .Which.Kind.Should().Be("read_only");
+         FarmhandActionRegistrationWire pickupForage = payload.Registrations.Single(registration => registration.ActionId == "pickup_forage");
+         pickupForage.Descriptor.Should().NotBeNull();
+         pickupForage.Descriptor!.Arguments.Select(argument => argument.Name)
+             .Should().Equal("x", "y", "expectedQualifiedItemId", "expectedTargetId");
+         pickupForage.Descriptor.SceneTarget.Should().BeEquivalentTo(
+             new FarmhandActionObservationBindingDescriptorWire("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
+         pickupForage.Descriptor.Effect.Should().Be("write");
+         pickupForage.Descriptor.Postcondition.Name.Should().Be("native_action_postcondition");
+         payload.RuntimeRole.Should().Be("unattested");
         payload.LaunchGeneration.Should().BeNull();
 
-        BridgeProtocol.TrySerialize(acknowledgement, out string json, out string serializationReason)
+        FarmhandCapabilityPublication successor = publication.WithEnabledActions(new HashSet<string>(StringComparer.Ordinal));
+        successor.Should().NotBeSameAs(publication);
+        successor.CapabilitySet.AdvertisedCapabilityIds.Should().NotContain("move_to_tile");
+        successor.CapabilityRevision.Should().BeGreaterThan(publication.CapabilityRevision);
+        successor.PolicyIdentity.Value.Should().NotBe(publication.PolicyIdentity.Value);
+        publication = successor;
+        session.TryCreateCatalogUpdate(1, 1, "catalog_publication_02", out string catalogUpdateJson)
+            .Should().BeTrue();
+        using (JsonDocument catalogUpdateDocument = JsonDocument.Parse(catalogUpdateJson))
+        {
+            JsonElement updatePayload = catalogUpdateDocument.RootElement.GetProperty("payload");
+            updatePayload.GetProperty("catalogRevision").GetInt64().Should().Be(FarmhandActionSurfacePublication.CatalogRevision);
+            updatePayload.GetProperty("policyIdentity").GetProperty("capabilityRevision").GetInt64().Should().Be(successor.CapabilityRevision);
+            updatePayload.GetProperty("policyIdentity").GetProperty("value").GetString().Should().Be(successor.PolicyIdentity.Value);
+        }
+
+         BridgeProtocol.TrySerialize(acknowledgement, out string json, out string serializationReason)
             .Should().BeTrue(serializationReason);
         using JsonDocument document = JsonDocument.Parse(json);
         JsonElement serializedPayload = document.RootElement.GetProperty("payload");
@@ -55,6 +83,7 @@ public sealed class BridgeSessionPublicationTests
             "sessionId",
             "capabilities",
             "catalogRevision",
+            "policyIdentity",
             "enabledActionIds",
             "presentationLocale",
             "registrations",
