@@ -129,7 +129,7 @@ internal sealed class BridgeSession
         acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(
             Guid.NewGuid().ToString("N"),
              capabilitySet.AdvertisedCapabilityIds,
-             publication.CapabilityRevision,
+             FarmhandActionSurfacePublication.CatalogRevision,
              new FarmhandPolicyIdentityWire(publication.PolicyIdentity.Value, publication.CapabilityRevision),
              capabilitySet.EnabledActionIds,
             locale,
@@ -258,14 +258,14 @@ internal sealed class BridgeSession
             || !BridgeProtocol.IsOpaqueId(requested.ObservationId)
             || !BridgeProtocol.IsOpaqueId(requested.Ref))
         {
-            reasonCode = "scene_ref_invalid";
+            reasonCode = "observation_binding_malformed";
             return false;
         }
 
         SceneObservationContext? active = this.sceneObservations.ActiveObservation;
         if (active is null || !string.Equals(requested.ObservationId, this.sceneObservationId, StringComparison.Ordinal))
         {
-            reasonCode = "scene_ref_stale";
+            reasonCode = "observation_binding_stale";
             return false;
         }
 
@@ -276,12 +276,12 @@ internal sealed class BridgeSession
         }
         catch
         {
-            reasonCode = "scene_observation_unavailable";
+            reasonCode = "observation_binding_target_unavailable";
             return false;
         }
         if (current is null || !current.IsValid)
         {
-            reasonCode = "scene_observation_unavailable";
+            reasonCode = "observation_binding_target_unavailable";
             return false;
         }
 
@@ -300,16 +300,24 @@ internal sealed class BridgeSession
                 current.CurrentRegion,
                 this.sceneMovementSequence);
             this.sceneObservationId = null;
-            reasonCode = locationChanged ? "scene_location_changed" : "scene_ref_stale";
+            reasonCode = "observation_binding_stale";
             return false;
         }
 
-        if (!this.sceneObservations.TryResolve(requested.Ref, active, out binding, out reasonCode))
+        if (!this.sceneObservations.TryResolve(requested.Ref, active, out binding, out string storeReason))
+        {
+            reasonCode = storeReason switch
+            {
+                "scene_ref_invalid" => "observation_binding_malformed",
+                "scene_ref_stale" => "observation_binding_stale",
+                _ => "observation_binding_target_unavailable",
+            };
             return false;
+        }
         if (binding is null || binding.Kind != SceneAffordanceKind.Forage)
         {
             binding = null;
-            reasonCode = "scene_target_kind_mismatch";
+            reasonCode = "observation_binding_precondition_failed";
             return false;
         }
 
@@ -674,8 +682,8 @@ internal sealed class BridgeSession
             || !BridgeProtocol.IsOpaqueId(correlationId))
             return false;
         return BridgeProtocol.TrySerialize(Reply("catalog_update", correlationId,
-             new BridgeCatalogUpdate(publication.CapabilityRevision,
-                 new FarmhandPolicyIdentityWire(publication.PolicyIdentity.Value, publication.CapabilityRevision),
+              new BridgeCatalogUpdate(FarmhandActionSurfacePublication.CatalogRevision,
+                  new FarmhandPolicyIdentityWire(publication.PolicyIdentity.Value, publication.CapabilityRevision),
                  publication.EnabledActionIds)), out json, out _);
     }
 
@@ -1074,7 +1082,11 @@ internal sealed class BridgeSession
     }
     private static bool IsStructurallyValidExecutionRequest(BridgeExecutionRequest? request, out string reasonCode)
     {
-        if (request is null || !BridgeProtocol.IsOpaqueId(request.RequestId) || !BridgeProtocol.IsOpaqueId(request.IdempotencyKey) || request.Args is null || !HasExactArgumentShape(request.Action, request.Args))
+        if (request is null || !BridgeProtocol.IsOpaqueId(request.RequestId) || !BridgeProtocol.IsOpaqueId(request.IdempotencyKey) || request.Args is null)
+        { reasonCode = "invalid_execution_request"; return false; }
+        if (request.Action == "pickup_forage" && !IsValidSceneTarget(request.Args.SceneTarget))
+        { reasonCode = "observation_binding_malformed"; return false; }
+        if (!HasExactArgumentShape(request.Action, request.Args))
         { reasonCode = "invalid_execution_request"; return false; }
         if (request.Action is "move_to_tile" or "enter_exit" or "travel" or "till_soil")
         {
@@ -1083,9 +1095,8 @@ internal sealed class BridgeSession
         }
         else if (request.Action is "pickup_forage" or "pickup_item")
         {
-            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 } || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId)
-                || (request.Action == "pickup_forage" && !IsValidSceneTarget(request.Args.SceneTarget)))
-            { reasonCode = "invalid_execution_request"; return false; }
+            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 } || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
+             { reasonCode = "invalid_execution_request"; return false; }
         }
         else if (request.Action is "water_crop" or "harvest_crop")
         {
