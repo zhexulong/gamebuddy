@@ -10,6 +10,7 @@ namespace GameBuddy.Stardew.Navigation;
 /// </summary>
 internal sealed class SceneObservationStore
 {
+    private const int RandomObservationIdBytes = 16;
     private const int RandomHandleBytes = 12;
     private readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
     private SceneObservationContext? activeObservation;
@@ -55,13 +56,26 @@ internal sealed class SceneObservationStore
 
     internal bool TryBeginObservation(
         SceneObservationContext context,
+        out SceneObservationContext? activeContext,
         out string reasonCode)
     {
+        activeContext = null;
         reasonCode = "scene_observation_invalid";
         if (this.closed || !context.ScopeIdentity.IsValid || context.ObservationSequence <= 0)
             return false;
 
-        this.activeObservation = context;
+        string observationId;
+        Span<byte> bytes = stackalloc byte[RandomObservationIdBytes];
+        do
+        {
+            RandomNumberGenerator.Fill(bytes);
+            observationId = "so1_" + Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+        while (this.activeObservation is not null
+            && StringComparer.Ordinal.Equals(this.activeObservation.ObservationId, observationId));
+
+        activeContext = context with { ObservationId = observationId };
+        this.activeObservation = activeContext;
         this.entries.Clear();
         reasonCode = "accepted";
         return true;

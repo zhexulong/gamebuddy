@@ -128,9 +128,10 @@ internal sealed class BridgeSession
         FarmhandCapabilitySet capabilitySet = publication.CapabilitySet;
         acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(
             Guid.NewGuid().ToString("N"),
-            capabilitySet.AdvertisedCapabilityIds,
-            publication.CapabilityRevision,
-            capabilitySet.EnabledActionIds,
+             capabilitySet.AdvertisedCapabilityIds,
+             publication.CapabilityRevision,
+             new FarmhandPolicyIdentityWire(publication.PolicyIdentity.Value, publication.CapabilityRevision),
+             capabilitySet.EnabledActionIds,
             locale,
             FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(
                 registration.ActionId,
@@ -209,13 +210,16 @@ internal sealed class BridgeSession
             this.sceneMovementSequence,
             ++this.sceneObservationSequence);
         SceneObservationProjectionResult projection = this.sceneObservationProjection.Observe(context, input, envelope!.Payload.Radius);
-        if (!projection.IsValid)
-        {
-            reasonCode = projection.TruncatedReason ?? "scene_observation_invalid";
-            return false;
-        }
+         if (!projection.IsValid)
+         {
+             reasonCode = projection.TruncatedReason ?? "scene_observation_invalid";
+             return false;
+         }
 
-        ObserveSceneResultPayload payload = new(
+         // The observation store minted this identity with the active context;
+         // never derive it from the transport envelope/message identity.
+         this.sceneObservationId = projection.ObservationId;
+         ObserveSceneResultPayload payload = new(
             projection.CurrentLocation,
             projection.CurrentRegion,
             projection.Affordances.Select(affordance => new ObserveSceneAffordancePayload(
@@ -228,9 +232,8 @@ internal sealed class BridgeSession
             projection.Summary,
             projection.IsPartial,
             projection.TruncatedReason);
-        response = Reply("observe_scene_result", envelope.CorrelationId, payload);
-        this.sceneObservationId = response.MessageId;
-        reasonCode = "accepted";
+         response = Reply("observe_scene_result", envelope.CorrelationId, payload);
+         reasonCode = "accepted";
         return true;
     }
 
@@ -670,7 +673,9 @@ internal sealed class BridgeSession
             || !BridgeProtocol.IsOpaqueId(correlationId))
             return false;
         return BridgeProtocol.TrySerialize(Reply("catalog_update", correlationId,
-            new BridgeCatalogUpdate(publication.CapabilityRevision, publication.EnabledActionIds)), out json, out _);
+             new BridgeCatalogUpdate(publication.CapabilityRevision,
+                 new FarmhandPolicyIdentityWire(publication.PolicyIdentity.Value, publication.CapabilityRevision),
+                 publication.EnabledActionIds)), out json, out _);
     }
 
     internal long CurrentCatalogRevision => this.capabilityPublicationProvider().CapabilityRevision;
@@ -1348,8 +1353,8 @@ internal sealed record IdempotentExecution(string Fingerprint, string RequestId,
 internal sealed record IdempotentPresentation(string Fingerprint, BridgeCompanionPresentationReceipt? Receipt, string ReasonCode);
 internal sealed record IdempotentSystemNotice(string Fingerprint, BridgeSystemNoticeReceipt? Receipt, string ReasonCode);
 internal sealed record BridgeHello(string Token);
-internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, long CatalogRevision, IReadOnlyList<string> EnabledActionIds, string PresentationLocale, IReadOnlyList<FarmhandActionRegistrationWire> Registrations, string RuntimeRole, [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)] string? LaunchGeneration);
-internal sealed record BridgeCatalogUpdate(long CatalogRevision, IReadOnlyList<string> EnabledActionIds);
+internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, long CatalogRevision, FarmhandPolicyIdentityWire PolicyIdentity, IReadOnlyList<string> EnabledActionIds, string PresentationLocale, IReadOnlyList<FarmhandActionRegistrationWire> Registrations, string RuntimeRole, [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)] string? LaunchGeneration);
+internal sealed record BridgeCatalogUpdate(long CatalogRevision, FarmhandPolicyIdentityWire PolicyIdentity, IReadOnlyList<string> EnabledActionIds);
 internal sealed record BridgeObserveRequest();
 internal sealed record BridgeCancelRequest(string RequestId, string ExecutionId, string CancelId, long CancelEpoch, string ReasonCode);
 /// <summary>Last accepted cancel identity bound to one exact request/execution.</summary>
