@@ -21,6 +21,8 @@ import {
   type ExecutionRequest,
   type NavigationReadRequest,
   type NavigationReadResult,
+  type ObserveSceneRequest,
+  type ObserveSceneResult,
   newEnvelope,
   nextCancelIdentity,
   type Scope,
@@ -71,6 +73,7 @@ type OutboundRequestType =
   | "hello"
   | "observe_request"
   | "navigation_read_request"
+  | "observe_scene_request"
   | "execution_request"
   | "execution_receipt_query"
   | "cancel_request"
@@ -298,6 +301,27 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "navigation_read_result") throw new Error("unexpected_navigation_read_response");
     return response.payload;
+  }
+
+  /** Read the Mod-advertised scene projection; this route cannot dispatch or create a receipt. */
+  public async observeScene(request: ObserveSceneRequest = {}): Promise<ObserveSceneResult> {
+    this.requireAuthenticated();
+    if (!this.hasPublishedReadOnlyCapability("observe_scene"))
+      throw new Error("bridge_capability_not_ready");
+    const response = await this.request("observe_scene_request", request as Record<string, unknown>);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "observe_scene_result") throw new Error("unexpected_observe_scene_response");
+    return response.payload;
+  }
+
+  private hasPublishedReadOnlyCapability(actionId: string): boolean {
+    const state = this.state;
+    return state.connected && state.snapshot !== null &&
+      state.catalogRevision === state.snapshot.catalogRevision &&
+      state.capabilities.includes(actionId) && state.snapshot.capabilities.includes(actionId) &&
+      (state.catalogRegistrations ?? []).some((registration) => registration.actionId === actionId &&
+        registration.familyId === "world_navigation" && registration.identityVersion === 1 &&
+        registration.lifecycle === "published" && registration.kind === "read_only");
   }
 
   public async execute(request: ExecutionRequest): Promise<NonNullable<LocalStardewBridgeState["latestReceipt"]>> {
@@ -529,8 +553,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       fault !== null ||
       message.type === "hello" ||
       message.type === "observe_request" ||
-      message.type === "navigation_read_request" ||
-      message.type === "execution_request" ||
+       message.type === "navigation_read_request" ||
+       message.type === "observe_scene_request" ||
+       message.type === "execution_request" ||
       message.type === "execution_receipt_query" ||
       message.type === "cancel_request" ||
       message.type === "companion_presentation_request" ||
@@ -568,11 +593,17 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       pending?.type === "execution_receipt_query" && message.type === "execution_receipt";
     const isSolicitedNavigationResponse =
       pending?.type === "navigation_read_request" && message.type === "navigation_read_result";
+    const isSolicitedObserveSceneResponse =
+      pending?.type === "observe_scene_request" && message.type === "observe_scene_result";
     let snapshotAdmitted = true;
-    if (message.type === "navigation_read_result" && !isSolicitedNavigationResponse) {
-      this.transport.close("unexpected_navigation_read_result");
-      return;
-    }
+     if (message.type === "navigation_read_result" && !isSolicitedNavigationResponse) {
+       this.transport.close("unexpected_navigation_read_result");
+       return;
+     }
+     if (message.type === "observe_scene_result" && !isSolicitedObserveSceneResponse) {
+       this.transport.close("unexpected_observe_scene_result");
+       return;
+     }
     if (isBodyProgramResponse(message.type) && (pending === undefined || !isBodyProgramRequest(pending.type))) {
       this.transport.close("body_program_protocol_invalid");
       return;
@@ -713,9 +744,11 @@ function isExpectedResponse(requestType: OutboundRequestType, responseType: Brid
       return responseType === "hello_ack";
     case "observe_request":
       return responseType === "snapshot";
-    case "navigation_read_request":
-      return responseType === "navigation_read_result";
-    case "execution_request":
+     case "navigation_read_request":
+       return responseType === "navigation_read_result";
+     case "observe_scene_request":
+       return responseType === "observe_scene_result";
+     case "execution_request":
     case "execution_receipt_query":
     case "cancel_request":
       return responseType === "execution_receipt";

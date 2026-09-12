@@ -5,6 +5,8 @@ import type {
   ExecutionReceipt,
   NavigationReadRequest,
   NavigationReadResult,
+  ObserveSceneRequest,
+  ObserveSceneResult,
   Scope as StardewScope,
   Snapshot,
 } from "./protocol.js";
@@ -74,4 +76,6 @@ export interface StardewBridgeConnection extends GameConnection {
   readonly cancel?: (...args: any[]) => any;
   /** Mod-owned read-only Navigation discovery; never a game action. */
   readonly navigationRead?: (request: NavigationReadRequest) => Promise<NavigationReadResult>;
+  /** Mod-owned read-only live scene observation; scene refs never authorize mutation. */
+  readonly observeScene?: (request: ObserveSceneRequest) => Promise<ObserveSceneResult>;
 }

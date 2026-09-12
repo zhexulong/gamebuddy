@@ -20,6 +20,7 @@ import {
   type ActionRegistrationDescriptor,
   type ExecutionReceipt,
   type ExecutionRequest,
+  isValidObserveSceneResult,
   validateExecutionRequest,
 } from "./protocol.js";
 
@@ -282,6 +283,19 @@ export function createStardewObservationTools(
     content: [{ type: "text" as const, text: JSON.stringify(result) }],
     details: { result },
   });
+  const sceneCapabilityReady = (): boolean => {
+    const state = integration.state;
+    const snapshot = state.snapshot;
+    return state.connected && snapshot !== null &&
+      state.catalogRevision === snapshot.catalogRevision &&
+      state.capabilities.includes("observe_scene") && snapshot.capabilities.includes("observe_scene") &&
+      (state.catalogRegistrations ?? []).some((registration) =>
+        registration.actionId === "observe_scene" && registration.familyId === "world_navigation" &&
+        registration.identityVersion === 1 && registration.lifecycle === "published" && registration.kind === "read_only") &&
+      typeof (integration as { observeScene?: unknown }).observeScene === "function" &&
+      !new Set(policy?.deniedActions ?? []).has("observe_scene") &&
+      !new Set(policy?.deniedFamilies ?? []).has("world_navigation");
+  };
 
   const tools: Array<ReturnType<typeof defineTool>> = [
     observe,
@@ -289,6 +303,24 @@ export function createStardewObservationTools(
     catalog,
     search,
   ];
+  if (sceneCapabilityReady()) {
+    tools.push(
+      defineTool({
+        name: "stardew_observe_scene",
+        label: "Observe Stardew Scene",
+        description: "Read the Mod-advertised live Stardew scene projection. Scene references are observational only and never authorize mutation.",
+        parameters: Type.Object({}, { additionalProperties: false }),
+        execute: async (_toolCallId, params) => {
+          if (!requireStrictObject(params) || Object.keys(params).length !== 0)
+            throw new Error("invalid_tool_parameters");
+          if (!sceneCapabilityReady()) throw new Error("bridge_capability_not_ready");
+          const result = await (integration as StardewBridgeConnection & { observeScene: (request: {}) => Promise<unknown> }).observeScene({});
+          if (!isValidObserveSceneResult(result)) throw new Error("invalid_observe_scene_result");
+          return navigationResult(result);
+        },
+      }),
+    );
+  }
   if (navigationCapabilityReady("inspect_world_map")) {
     tools.push(
       defineTool({

@@ -15,6 +15,24 @@ export type Scope = Readonly<{
   companionId: string;
 }>;
 
+export type BodyCanonicalValue = Readonly<
+  | { type: "integer" | "string" | "boolean"; canonicalValue: string }
+  | { type: "destination_selector"; destination: Readonly<{ kind: "label"; label: string } | { kind: "ref"; ref: string }> }
+>;
+export type BodyPolicyIdentity = Readonly<{ value: string; capabilityRevision: number }>;
+export type BodyExecutionBinding = Readonly<{ programId: string; nodeId: string; nodeAttempt: number; requestId: string; idempotencyKey: string; executionId: string }>;
+export type BodyNodeAdmissionChallenge = Readonly<{
+  programId: string; nodeId: string; nodeAttempt: number; admissionAttempt: number;
+  stopEpoch: number; catalogRevision: number; policyIdentity: BodyPolicyIdentity; actionId: string;
+  canonicalBoundArgs: Readonly<Record<string, BodyCanonicalValue>>;
+  derivedResourceClaims: Readonly<Record<string, string>>; deadlineMs: number;
+}>;
+export type BodyNodeAdmissionGrant = BodyNodeAdmissionChallenge & Readonly<{
+  grantId: string; attachmentGeneration: string; policyRevision: string;
+  executionBinding: BodyExecutionBinding | null;
+}>;
+
+
 export type Envelope<TType extends string, TPayload> = Readonly<{
   protocolVersion: number;
   messageId: string;
@@ -392,6 +410,28 @@ export type NavigationReadRequest =
   | Readonly<{ operation: "inspect_world_map"; args: Readonly<{ cursor: string }> }>
   | Readonly<{ operation: "find_destination"; args: Readonly<{ query: string }> }>;
 
+/** Typed, read-only scene observation request. The Mod applies the default radius when omitted. */
+export type ObserveSceneRequest = Readonly<{ radius?: number }>;
+
+export type ObserveSceneAffordance = Readonly<{
+  ref: string;
+  kind: "npc" | "chest" | "crop" | "forage" | "door" | "machine";
+  name: string;
+  distance: number;
+  direction: "North" | "South" | "East" | "West" | "CurrentTile";
+  actionHint: string | null;
+}>;
+
+/** Bounded, factual scene projection. Scene refs are opaque observation labels, not mutation authority. */
+export type ObserveSceneResult = Readonly<{
+  currentLocation: string;
+  currentRegion: string;
+  affordances: readonly ObserveSceneAffordance[];
+  summary: string;
+  partial: boolean;
+  truncatedReason: "maximum_affordances" | "payload_limit" | null;
+}>;
+
 type NavigationWorldMapEntry = Readonly<{
   label: string;
   contextLabel: string | null;
@@ -714,9 +754,13 @@ export type BridgeMessage =
   | Envelope<"observe_request", Readonly<Record<string, never>>>
   | Envelope<"navigation_read_request", NavigationReadRequest>
   | Envelope<"navigation_read_result", NavigationReadResult>
+  | Envelope<"observe_scene_request", ObserveSceneRequest>
+  | Envelope<"observe_scene_result", ObserveSceneResult>
   | Envelope<"snapshot", Snapshot>
   | Envelope<"catalog_update", Readonly<{ catalogRevision: number; enabledActionIds: readonly string[] }>>
   | Envelope<"execution_request", ExecutionRequest>
+  | Envelope<"body_node_admission_challenge", BodyNodeAdmissionChallenge>
+  | Envelope<"body_node_admission_grant", BodyNodeAdmissionGrant>
   | Envelope<"execution_receipt_query", ExecutionReceiptQuery>
   | Envelope<"cancel_request", CancelRequestPayload>
   | Envelope<"companion_presentation_request", CompanionPresentationRequest>
@@ -739,8 +783,8 @@ export type BridgeMessage =
   | Envelope<"world_fact", WorldFactPayload>;
 
 const BRIDGE_MESSAGE_TYPES = [
-  "hello", "hello_ack", "observe_request", "navigation_read_request", "navigation_read_result", "snapshot", "catalog_update",
-  "execution_request", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
+  "hello", "hello_ack", "observe_request", "navigation_read_request", "navigation_read_result", "observe_scene_request", "observe_scene_result", "snapshot", "catalog_update",
+  "execution_request", "body_node_admission_challenge", "body_node_admission_grant", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
   "system_notice_receipt", "companion_presentation_receipt", "player_control_receipt", "execution_receipt",
   "program_verify", "program_verify_result", "program_submit", "program_submit_result", "program_status", "program_status_result",
   "program_events", "program_events_result", "error", "semantic_event", "lifecycle", "world_fact",
@@ -909,6 +953,9 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
   if (envelopeError !== null) return envelopeError;
   const message = value as BridgeMessage;
   const payload = message.payload as Record<string, unknown>;
+  if (message.type === "body_node_admission_challenge" || message.type === "body_node_admission_grant") {
+    try { serializeBounded(message); } catch (error) { return error instanceof Error ? error.message : "message_not_serializable"; }
+  }
   switch (message.type) {
     case "hello":
       return hasExactKeys(payload, ["token"]) && validToken(payload.token) ? null : "invalid_hello_token";
@@ -938,6 +985,10 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
       return validateNavigationReadRequest(payload);
     case "navigation_read_result":
       return validateNavigationReadResult(payload);
+    case "observe_scene_request":
+      return validateObserveSceneRequest(payload);
+    case "observe_scene_result":
+      return validateObserveSceneResult(payload);
     case "snapshot":
       return validateSnapshot(payload);
     case "catalog_update":
@@ -1033,6 +1084,10 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         : "invalid_player_control_receipt";
     case "execution_receipt":
       return validateReceipt(payload);
+    case "body_node_admission_challenge":
+      return validateBodyNodeAdmissionChallenge(payload);
+    case "body_node_admission_grant":
+      return validateBodyNodeAdmissionGrant(payload);
     case "program_verify":
     case "program_submit":
       return validateBodyProgramCandidateRequest(payload);
@@ -1063,6 +1118,94 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
     case "world_fact":
       return validateWorldFact(payload);
   }
+}
+
+function validateBodyNodeAdmissionChallenge(value: Record<string, unknown>, grant = false): string | null {
+  const base = ["programId","nodeId","nodeAttempt","admissionAttempt","stopEpoch","catalogRevision","policyIdentity","actionId","canonicalBoundArgs","derivedResourceClaims","deadlineMs"];
+  if (grant) base.push("grantId", "attachmentGeneration", "policyRevision", "executionBinding");
+  if (!hasExactKeys(value, base) || !isOpaqueId(value.programId) || !isOpaqueId(value.nodeId) || !isOpaqueId(value.actionId)) return "invalid_body_node_admission_challenge";
+  if (!["nodeAttempt","admissionAttempt"].every(k => isPositiveSafeInteger(value[k]) && (value[k] as number) <= 2_147_483_647) || !["stopEpoch","catalogRevision"].every(k => isNonNegativeSafeInteger(value[k])) || !isPositiveSafeInteger(value.deadlineMs)) return "invalid_body_node_admission_challenge";
+  if (!isRecord(value.policyIdentity) || !hasExactKeys(value.policyIdentity,["value","capabilityRevision"]) || !isAdmissionOpaque(value.policyIdentity.value) || !isNonNegativeSafeInteger(value.policyIdentity.capabilityRevision) || !isRecord(value.canonicalBoundArgs) || !isRecord(value.derivedResourceClaims)) return "invalid_body_node_admission_challenge";
+  return Object.keys(value.derivedResourceClaims).length <= 16 && Object.keys(value.canonicalBoundArgs).length <= 32 && Object.entries(value.derivedResourceClaims).every(([k,v])=>isOpaqueId(k)&&isOpaqueId(v)) && Object.entries(value.canonicalBoundArgs).every(([k,v])=>isOpaqueId(k)&&isBodyCanonicalValue(v)) ? null : "invalid_body_node_admission_challenge";
+}
+function validateBodyNodeAdmissionGrant(value: Record<string, unknown>): string | null {
+  const err = validateBodyNodeAdmissionChallenge(value, true); if (err) return "invalid_body_node_admission_grant";
+  if (!hasExactKeys(value,["programId","nodeId","nodeAttempt","admissionAttempt","stopEpoch","catalogRevision","policyIdentity","actionId","canonicalBoundArgs","derivedResourceClaims","deadlineMs","grantId","attachmentGeneration","policyRevision","executionBinding"]) || !isOpaqueId(value.grantId) || !isAdmissionOpaque(value.attachmentGeneration) || !isAdmissionOpaque(value.policyRevision)) return "invalid_body_node_admission_grant";
+  const binding = value.executionBinding;
+  return binding === null || (isRecord(binding) && hasExactKeys(binding, ["programId", "nodeId", "nodeAttempt", "requestId", "idempotencyKey", "executionId"])
+    && binding.programId === value.programId && binding.nodeId === value.nodeId && binding.nodeAttempt === value.nodeAttempt
+    && isOpaqueId(binding.requestId) && isOpaqueId(binding.idempotencyKey) && isOpaqueId(binding.executionId)) ? null : "invalid_body_node_admission_grant";
+}
+function isAdmissionOpaque(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 4096 && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+}
+function isBodyCanonicalValue(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.type === "destination_selector") {
+    const destination = value.destination;
+    return hasExactKeys(value, ["type", "destination"]) && isRecord(destination) && (
+      (hasExactKeys(destination, ["kind", "label"]) && destination.kind === "label" && typeof destination.label === "string"
+        && destination.label.length >= 1 && destination.label.length <= 128 && destination.label.trim().length > 0 && destination.label.normalize("NFC") === destination.label)
+      || (hasExactKeys(destination, ["kind", "ref"]) && destination.kind === "ref" && typeof destination.ref === "string" && /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/u.test(destination.ref)));
+  }
+  if (!hasExactKeys(value, ["type", "canonicalValue"]) || typeof value.canonicalValue !== "string" || value.canonicalValue.length > 512) return false;
+  if (value.type === "string") return true;
+  if (value.type === "boolean") return value.canonicalValue === "true" || value.canonicalValue === "false";
+  if (value.type !== "integer" || !/^(?:0|-?[1-9][0-9]*)$/u.test(value.canonicalValue)) return false;
+  const integer = BigInt(value.canonicalValue);
+  return integer >= -9223372036854775808n && integer <= 9223372036854775807n;
+}
+function isPositiveSafeInteger(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) > 0; }
+
+const OBSERVE_SCENE_KINDS = new Set(["npc", "chest", "crop", "forage", "door", "machine"]);
+const OBSERVE_SCENE_DIRECTIONS = new Set(["North", "South", "East", "West", "CurrentTile"]);
+const OBSERVE_SCENE_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit"]);
+
+export function isValidObserveSceneRequest(value: unknown): value is ObserveSceneRequest {
+  return isRecord(value) && validateObserveSceneRequest(value) === null;
+}
+
+export function isValidObserveSceneResult(value: unknown): value is ObserveSceneResult {
+  return isRecord(value) && validateObserveSceneResult(value) === null;
+}
+
+function validateObserveSceneRequest(value: Record<string, unknown>): string | null {
+  if (hasExactKeys(value, [])) return null;
+  return hasExactKeys(value, ["radius"]) && Number.isSafeInteger(value.radius) &&
+    (value.radius as number) >= 0 && (value.radius as number) <= 30
+    ? null
+    : "invalid_observe_scene_request";
+}
+
+function validateObserveSceneResult(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason"]) ||
+      !boundedSceneText(value.currentLocation, 128) || !boundedSceneText(value.currentRegion, 128) ||
+      !boundedSceneText(value.summary, 512) || typeof value.partial !== "boolean" ||
+      !Array.isArray(value.affordances) || value.affordances.length > 20 ||
+      (value.partial
+        ? typeof value.truncatedReason !== "string" || !OBSERVE_SCENE_TRUNCATION_REASONS.has(value.truncatedReason)
+        : value.truncatedReason !== null))
+    return "invalid_observe_scene_result";
+  const refs = new Set<string>();
+  return value.affordances.every((affordance) => {
+    if (!isRecord(affordance) || !hasExactKeys(affordance, ["ref", "kind", "name", "distance", "direction", "actionHint"]) ||
+        !isSceneReference(affordance.ref) || typeof affordance.kind !== "string" || !OBSERVE_SCENE_KINDS.has(affordance.kind) ||
+        !boundedSceneText(affordance.name, 128) || !Number.isSafeInteger(affordance.distance) ||
+        (affordance.distance as number) < 0 || (affordance.distance as number) > 30 ||
+        typeof affordance.direction !== "string" || !OBSERVE_SCENE_DIRECTIONS.has(affordance.direction) ||
+        (affordance.actionHint !== null && !boundedSceneText(affordance.actionHint, 160)) || refs.has(affordance.ref))
+      return false;
+    refs.add(affordance.ref as string);
+    return true;
+  }) ? null : "invalid_observe_scene_result";
+}
+
+function boundedSceneText(value: unknown, maximumLength: number): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= maximumLength && !/[\\u0000-\\u001f\\u007f\\u0080-\\u009f]/u.test(value);
+}
+
+function isSceneReference(value: unknown): value is string {
+  return typeof value === "string" && /^sr1_[A-Za-z0-9_-]{16}$/.test(value);
 }
 
 function validateNavigationReadRequest(value: Record<string, unknown>): string | null {
@@ -1448,6 +1591,13 @@ export function serializeBounded(value: unknown): string {
   }
   if (json === undefined) throw new Error("message_not_serializable");
   if (Buffer.byteLength(json, "utf8") > MAX_MESSAGE_BYTES) throw new Error("message_too_large");
+  if (isRecord(value) && (value.type === "body_node_admission_challenge" || value.type === "body_node_admission_grant")) {
+    const serialized = JSON.parse(json) as Record<string, unknown>;
+    const envelopeError = validateEnvelope(serialized, serialized.scope as Scope, serialized.timestampMs as number);
+    const payloadError = !isRecord(serialized.payload) ? "invalid_payload" : serialized.type === "body_node_admission_grant"
+      ? validateBodyNodeAdmissionGrant(serialized.payload) : validateBodyNodeAdmissionChallenge(serialized.payload);
+    if (envelopeError || payloadError) throw new Error(envelopeError ?? payloadError!);
+  }
   return json;
 }
 

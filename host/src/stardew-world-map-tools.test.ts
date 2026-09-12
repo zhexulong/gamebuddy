@@ -60,6 +60,38 @@ function integration(overrides: Partial<StardewBridgeConnection["state"]> = {}):
   };
 }
 
+test("observe-scene tool mounts only from a fresh Mod read-only capability and returns bounded factual results", async () => {
+  let calls = 0;
+  const fixture = integration();
+  const scene = {
+    ...fixture,
+    state: {
+      ...fixture.state,
+      capabilities: ["observe_scene"],
+      catalogRegistrations: [{ actionId: "observe_scene", familyId: "world_navigation", identityVersion: 1, lifecycle: "published" as const, kind: "read_only" as const }],
+      snapshot: { ...fixture.state.snapshot!, capabilities: ["observe_scene"] },
+    },
+    observeScene: async () => {
+      calls++;
+      return {
+        currentLocation: "Farm",
+        currentRegion: "outdoor",
+        affordances: [{ ref: "sr1_AAAAAAAAAAAAAAAA", kind: "chest" as const, name: "Chest", distance: 1, direction: "East" as const, actionHint: "inspect" }],
+        summary: "A chest is nearby.",
+        partial: false,
+        truncatedReason: null,
+      };
+    },
+  };
+  const tool = createStardewObservationTools(scene).find((candidate) => candidate.name === "stardew_observe_scene");
+  assert.ok(tool);
+  const result = await tool.execute("scene_01", {}, new AbortController().signal, () => {}, {} as never);
+  assert.equal(calls, 1);
+  const details = result.details as { result: { affordances: readonly [{ ref: string; actionHint: string | null }] } };
+  assert.equal(details.result.affordances[0].ref, "sr1_AAAAAAAAAAAAAAAA");
+  assert.equal(details.result.affordances[0].actionHint, "inspect");
+});
+
 test("world-map tool mounts only from a fresh Mod read-only capability and returns its exact result", async () => {
   const tools = createStardewObservationTools(integration());
   const tool = tools.find((candidate) => candidate.name === "stardew_inspect_world_map");
