@@ -10,6 +10,7 @@ import {
   DEFAULT_SUITE_TIMEOUT_MS,
   createWindowsProcessTreeKillerForTest,
   runBoundedChild,
+  runOneShotControlChild,
 } from "../src/process-supervisor.mjs";
 
 const nodeCommand = process.execPath;
@@ -219,6 +220,230 @@ async function withFakeChild(run) {
   setImmediate(() => child.emit("close", 0, null));
   return resultPromise;
 }
+
+const CONTROL_START = Object.freeze({
+  protocolVersion: 1,
+  runId: "run-1",
+  correlationId: "correlation-1",
+  scenarioId: "equip_tool_control",
+  deadlineEpochMs: 4_102_444_800_000,
+  cancellationId: "cancel-1",
+});
+
+function controlResult(overrides = {}) {
+  return {
+    protocolVersion: 1,
+    runId: CONTROL_START.runId,
+    correlationId: CONTROL_START.correlationId,
+    terminalCode: "succeeded",
+    actionOutcome: "succeeded",
+    harnessOutcome: "succeeded",
+    cleanupOutcome: "succeeded",
+    proof: {
+      issuer: "host_control_runner",
+      binding: {
+        runId: CONTROL_START.runId,
+        correlationId: CONTROL_START.correlationId,
+        requestId: "request-1",
+        executionId: "execution-1",
+        actionId: "equip_tool",
+      },
+      data: { accepted: true },
+    },
+    cleanupFacts: { restored: true },
+    ...overrides,
+  };
+}
+
+function controlChild({ onStart } = {}) {
+  const child = new EventEmitter();
+  child.pid = 2468;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = new EventEmitter();
+  child.stdin.frames = [];
+  child.stdin.end = (data, encoding) => {
+    child.stdin.frames.push({ data, encoding });
+    onStart?.(child, data, encoding);
+  };
+  child.finish = (code = 0, signal = null) => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.exitCode = code;
+    child.signalCode = signal;
+    child.stdout.emit("end");
+    child.stderr.emit("end");
+    child.emit("close", code, signal);
+  };
+  child.kill = () => true;
+  return child;
+}
+
+function emitControlResult(child, result, options = {}) {
+  emitControlLine(child, `${JSON.stringify(result)}\n`, options);
+}
+
+function emitControlLine(child, line, { stderr = "", exitCode = 0, signal = null } = {}) {
+  if (stderr) child.stderr.emit("data", Buffer.from(stderr));
+  child.stdout.emit("data", Buffer.from(line));
+  child.finish(exitCode, signal);
+}
+
+function runControlChild(child, { signal, killTree, timeoutMs = 1000 } = {}) {
+  return runOneShotControlChild({
+    command: "fake-control-runner",
+    args: ["--one-shot"],
+    start: CONTROL_START,
+    signal,
+    timeoutMs,
+    cleanupTimeoutMs: 100,
+    spawnProcess: () => child,
+    killTree: killTree ?? (async () => child.finish(null, "SIGKILL")),
+  });
+}
+
+test("runs one control start and one terminal result without exposing child or raw stdout", async () => {
+  let resultCount = 0;
+  const child = controlChild({
+    onStart(currentChild) {
+      resultCount += 1;
+      setImmediate(() => emitControlResult(currentChild, controlResult()));
+    },
+  });
+  const outcome = await runControlChild(child);
+
+  assert.equal(resultCount, 1);
+  assert.equal(child.stdin.frames.length, 1);
+  assert.equal(child.stdin.frames[0].encoding, "utf8");
+  assert.deepEqual(JSON.parse(child.stdin.frames[0].data), CONTROL_START);
+  assert.deepEqual(Object.keys(outcome).sort(), ["exit", "result", "stderr"]);
+  for (const key of ["child", "pid", "stdout"]) assert.equal(Object.hasOwn(outcome, key), false);
+  assert.deepEqual(Object.keys(outcome.result).sort(), [
+    "actionOutcome",
+    "cleanupFacts",
+    "cleanupOutcome",
+    "correlationId",
+    "harnessOutcome",
+    "proof",
+    "protocolVersion",
+    "runId",
+    "terminalCode",
+  ]);
+  assert.equal(outcome.stderr, "");
+});
+
+test("parses a terminal result split inside a UTF-8 code point", async () => {
+  const child = controlChild({
+    onStart(currentChild) {
+      setImmediate(() => {
+        const result = controlResult();
+        result.proof.data = { message: "😀" };
+        const line = Buffer.from(`${JSON.stringify(result)}\n`);
+        const emojiStart = line.indexOf(Buffer.from("😀"));
+        assert.ok(emojiStart >= 0);
+        currentChild.stdout.emit("data", line.subarray(0, emojiStart + 1));
+        currentChild.stdout.emit("data", line.subarray(emojiStart + 1));
+        currentChild.finish();
+      });
+    },
+  });
+
+  const outcome = await runControlChild(child);
+  assert.deepEqual(outcome.result.proof.data, { message: "😀" });
+});
+
+test("rejects malformed, duplicate, oversize, unknown, and identity-mismatched results", async () => {
+  const cases = [
+    {
+      name: "malformed JSON",
+      emit(child) { setImmediate(() => emitControlLine(child, "not-json\n")); },
+    },
+    {
+      name: "duplicate key",
+      emit(child) { setImmediate(() => emitControlLine(child, '{"protocolVersion":1,"protocolVersion":1}\n')); },
+    },
+    {
+      name: "oversize frame",
+      emit(child) { setImmediate(() => emitControlLine(child, `${"x".repeat(32 * 1024 + 1)}`)); },
+    },
+    {
+      name: "unknown protocol",
+      emit(child) { setImmediate(() => emitControlResult(child, controlResult({ protocolVersion: 2 }))); },
+    },
+    {
+      name: "identity mismatch",
+      emit(child) { setImmediate(() => emitControlResult(child, controlResult({ runId: "other-run" }))); },
+    },
+    {
+      name: "duplicate terminal frame",
+      emit(child) {
+        setImmediate(() => {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify(controlResult())}\n`));
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify(controlResult())}\n`));
+          child.finish();
+        });
+      },
+    },
+    {
+      name: "trailing stdout data",
+      emit(child) {
+        setImmediate(() => {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify(controlResult())}\ntrailing`));
+          child.finish();
+        });
+      },
+    },
+  ];
+
+  for (const { name, emit } of cases) {
+    const child = controlChild({ onStart: emit });
+    await assert.rejects(runControlChild(child), /control_child_invalid_result/, name);
+  }
+});
+
+test("aborts without writing a second stdin frame", async () => {
+  const controller = new AbortController();
+  let killCalls = 0;
+  const child = controlChild({
+    onStart() {
+      controller.abort();
+    },
+  });
+  await assert.rejects(runControlChild(child, {
+    signal: controller.signal,
+    killTree: async (pid, options) => {
+      killCalls += 1;
+      assert.equal(pid, child.pid);
+      assert.ok(options.signal instanceof AbortSignal);
+      child.finish(null, "SIGKILL");
+    },
+  }), /control_child_aborted/);
+  assert.equal(killCalls, 1);
+  assert.equal(child.stdin.frames.length, 1);
+});
+
+test("merges a valid terminal result with child exit status", async () => {
+  const child = controlChild({
+    onStart(currentChild) {
+      setImmediate(() => emitControlResult(currentChild, controlResult(), { exitCode: 7 }));
+    },
+  });
+  const outcome = await runControlChild(child);
+  assert.equal(outcome.result.terminalCode, "succeeded");
+  assert.deepEqual(outcome.exit, { code: 7, signal: null });
+});
+
+test("bounds stderr independently while preserving UTF-8", async () => {
+  const child = controlChild({
+    onStart(currentChild) {
+      setImmediate(() => emitControlResult(currentChild, controlResult(), { stderr: "界".repeat(100_000) }));
+    },
+  });
+  const outcome = await runControlChild(child);
+  assert.ok(Buffer.byteLength(outcome.stderr, "utf8") <= 64 * 1024);
+  assert.ok(!outcome.stderr.endsWith("\uFFFD"));
+});
 
 test("passes caller-selected termination policy to injected cleanup", async () => {
   const calls = [];
