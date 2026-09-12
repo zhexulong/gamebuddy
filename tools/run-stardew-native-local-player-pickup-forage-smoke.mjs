@@ -16,7 +16,14 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "pickup_forage", "inspect_self", "move_to_tile", "travel"];
+const EXPECTED_CAPABILITIES = [
+  "cancel_active_execution",
+  "inspect_self",
+  "move_to_tile",
+  "observe_scene",
+  "pickup_forage",
+  "travel",
+];
 
 /** Execute the pickup-forage contract against an already-connected bridge session. */
 export async function runPickupForageSmoke(
@@ -47,6 +54,10 @@ export async function runPickupForageSmoke(
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
     const target = chooseOnlyFreshForageTarget(snapshot);
+    // The scene observation is the authority for the mutation binding. Match
+    // the target's live tile geometry to one and only one forage affordance;
+    // never manufacture a ref from snapshot facts or fixture coordinates.
+    const sceneTarget = await chooseExactSceneForageTarget(client, snapshot, target);
     const request = await execute(
       client,
       trace,
@@ -57,6 +68,7 @@ export async function runPickupForageSmoke(
         y: target.y,
         expectedQualifiedItemId: target.qualifiedItemId,
         expectedTargetId: target.targetId,
+        sceneTarget,
       },
       snapshot,
     );
@@ -74,17 +86,20 @@ export async function runPickupForageSmoke(
       check: validateForageSnapshot,
     });
     const evidence = parseEvidence(terminal.evidence);
-    const targetGone = after.forageTargets.every((entry) => entry.targetId !== target.targetId);
+    const targetGone = after.forageTargets.every(
+      (entry) => entry.targetId !== target.targetId && (entry.x !== target.x || entry.y !== target.y),
+    );
     const inventoryBefore = parseSafeInteger(evidence.inventory_before);
     const inventoryAfter = parseSafeInteger(evidence.inventory_after);
     const inventoryDeltaProven =
-      inventoryBefore !== null && inventoryAfter !== null && inventoryAfter === inventoryBefore + target.stack;
+      inventoryBefore !== null && inventoryAfter !== null && inventoryAfter === inventoryBefore + 1;
     const passed =
       terminal.executionId === request.executionId &&
       terminal.requestId === request.requestId &&
       after.revision >= terminal.revision &&
       evidence.location === snapshot.location &&
-      evidence.target === `${target.x},${target.y}` &&
+      evidence.tile === `${target.x},${target.y}` &&
+      evidence.targetIdentity === target.targetId &&
       evidence.item === target.qualifiedItemId &&
       evidence.removed === "True" &&
       inventoryDeltaProven &&
@@ -256,6 +271,52 @@ function chooseOnlyFreshForageTarget(snapshot) {
     throw new Error(targets.length === 0 ? "no_fresh_live_forage_target" : "ambiguous_live_forage_targets");
   return targets[0];
 }
+async function chooseExactSceneForageTarget(client, snapshot, target) {
+  if (typeof client?.observeScene !== "function") throw new Error("observe_scene_unavailable");
+  const scene = await client.observeScene({});
+  if (
+    !scene ||
+    typeof scene.observationId !== "string" ||
+    scene.observationId.length === 0 ||
+    scene.partial !== false ||
+    scene.truncatedReason !== null ||
+    !Array.isArray(scene.affordances)
+  )
+    throw new Error("invalid_observe_scene_result");
+  if (typeof scene.currentLocation !== "string" || scene.currentLocation !== snapshot.location)
+    throw new Error("observe_scene_location_mismatch");
+
+  const position = scenePosition(snapshot.tile, target);
+  const matches = scene.affordances.filter(
+    (affordance) =>
+      affordance?.kind === "forage" &&
+      affordance.actionHint === "pickup_forage" &&
+      affordance.distance === position.distance &&
+      affordance.direction === position.direction &&
+      typeof affordance.ref === "string" &&
+      affordance.ref.length > 0,
+  );
+  if (matches.length !== 1)
+    throw new Error(matches.length === 0 ? "scene_forage_affordance_missing" : "ambiguous_scene_forage_affordances");
+  return { observationId: scene.observationId, ref: matches[0].ref };
+}
+function scenePosition(actorTile, target) {
+  const dx = target.x - actorTile.x;
+  const dy = target.y - actorTile.y;
+  return {
+    distance: Math.abs(dx) + Math.abs(dy),
+    direction:
+      dx === 0 && dy === 0
+        ? "CurrentTile"
+        : Math.abs(dx) >= Math.abs(dy)
+          ? dx < 0
+            ? "West"
+            : "East"
+          : dy < 0
+            ? "North"
+            : "South",
+  };
+}
 function validForageTargets(snapshot) {
   if (!Array.isArray(snapshot.forageTargets)) return [];
   return snapshot.forageTargets.filter(
@@ -311,7 +372,7 @@ function parseEvidence(evidence) {
     if (separator <= 0 || separator === field.length - 1) throw new Error("invalid_forage_evidence");
     const key = field.slice(0, separator);
     const value = field.slice(separator + 1);
-    if (!/^[a-z][a-z0-9_]{0,63}$/.test(key) || value.length > 512 || Object.hasOwn(result, key))
+    if (!/^[a-z][a-zA-Z0-9_]{0,63}$/.test(key) || value.length > 512 || Object.hasOwn(result, key))
       throw new Error("invalid_forage_evidence");
     result[key] = value;
   }

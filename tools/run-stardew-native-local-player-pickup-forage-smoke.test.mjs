@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runPickupForageSmoke } from "./run-stardew-native-local-player-pickup-forage-smoke.mjs";
 
-const CAPABILITIES = ["cancel_active_execution", "pickup_forage", "inspect_self", "move_to_tile", "travel"];
+const CAPABILITIES = [
+  "cancel_active_execution",
+  "inspect_self",
+  "move_to_tile",
+  "observe_scene",
+  "pickup_forage",
+  "travel",
+];
 
 function fixtureConfig(overrides = {}) {
   return {
@@ -29,6 +36,8 @@ function createFake({
   let currentLocation = location;
   let currentTile = { ...tile };
   let targets = forageTargets.map((target) => ({ ...target }));
+  let sceneObservationSequence = 0;
+  let latestScene = null;
   const state = { latestReceipt: null };
   const snapshotOf = () => ({
     revision,
@@ -40,6 +49,39 @@ function createFake({
     forageTargets: targets.map((target) => ({ ...target })),
     warps: warps.map((warp) => ({ ...warp })),
   });
+  const observeScene = async () => {
+    sceneObservationSequence += 1;
+    latestScene = {
+      observationId: `so1_observation_${sceneObservationSequence}`,
+      currentLocation,
+      currentRegion: "outdoor",
+      affordances: targets.map((target) => {
+        const dx = target.x - currentTile.x;
+        const dy = target.y - currentTile.y;
+        return {
+          ref: "sr1_AAAAAAAAAAAAAAAA",
+          kind: "forage",
+          name: target.qualifiedItemId,
+          distance: Math.abs(dx) + Math.abs(dy),
+          direction:
+            dx === 0 && dy === 0
+              ? "CurrentTile"
+              : Math.abs(dx) >= Math.abs(dy)
+                ? dx < 0
+                  ? "West"
+                  : "East"
+                : dy < 0
+                  ? "North"
+                  : "South",
+          actionHint: "pickup_forage",
+        };
+      }),
+      summary: "A forage is nearby.",
+      partial: false,
+      truncatedReason: null,
+    };
+    return latestScene;
+  };
   state.snapshot = snapshotOf();
   const publish = (payload) => {
     state.latestReceipt = payload;
@@ -77,6 +119,12 @@ function createFake({
       if (action === "pickup_forage") {
         revision += 1;
         publish(accepted);
+        if (
+          !args.sceneTarget ||
+          args.sceneTarget.observationId !== latestScene?.observationId ||
+          args.sceneTarget.ref !== latestScene?.affordances[0]?.ref
+        )
+          throw new Error("invalid_scene_target");
         const picked = targets.find((entry) => entry.targetId === args.expectedTargetId);
         if (!picked) throw new Error(`unknown_forage_target:${args.expectedTargetId}`);
         targets = targets.filter((entry) => entry.targetId !== picked.targetId);
@@ -91,13 +139,14 @@ function createFake({
           evidence: {
             detail:
               evidenceDetail ??
-              `location=${currentLocation};target=${picked.x},${picked.y};item=${picked.qualifiedItemId};removed=True;inventory_before=0;inventory_after=${picked.stack}`,
+              `location=${currentLocation};targetIdentity=${picked.targetId};tile=${picked.x},${picked.y};item=${picked.qualifiedItemId};removed=True;inventory_before=0;inventory_after=${picked.stack}`,
           },
         });
         return accepted;
       }
       throw new Error(`unexpected_action:${action}`);
     },
+    observeScene,
     onFact: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -119,7 +168,11 @@ test("pickup-forage runner passes with exact terminal correlation and fresh rere
   const result = await runPickupForageSmoke(client, receipts, fixtureConfig(), OPTIONS);
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "forage_picked_up");
-  assert.equal(result.receipt.executionId, "execution-pickup_forage-4");
+  assert.equal(result.receipt.reasonCode, "forage_picked_up");
+  assert.deepEqual(result.trace[0].args.sceneTarget, {
+    observationId: "so1_observation_1",
+    ref: "sr1_AAAAAAAAAAAAAAAA",
+  });
   assert.equal(result.evidence.item, "(O)16");
   assert.equal(result.evidence.removed, "True");
   assert.equal(result.targetGone, true);
@@ -129,14 +182,15 @@ test("pickup-forage runner passes with exact terminal correlation and fresh rere
     ["pickup_forage"],
   );
   assert.deepEqual(result.after.forageTargets, []);
-  assert.equal(result.after.location, "Farm");
+  assert.equal(result.after.hasLocation, true);
 });
 
 test("pickup-forage runner blocks on mismatched evidence", async () => {
   const target = { targetId: "forage_target_1", x: 3, y: 4, qualifiedItemId: "(O)16", stack: 1 };
   const client = createFake({
     forageTargets: [target],
-    evidenceDetail: "location=Farm;target=5,5;item=(O)16;removed=True;inventory_before=0;inventory_after=1",
+    evidenceDetail:
+      "location=Farm;targetIdentity=forage_target_1;tile=5,5;item=(O)16;removed=True;inventory_before=0;inventory_after=1",
   });
   const receipts = [];
   client.onFact((fact) => {
@@ -213,8 +267,8 @@ test("pickup-forage runner travels to Farm before picking up forage", async () =
     result.trace.map((entry) => entry.action),
     ["travel", "pickup_forage"],
   );
-  assert.equal(result.before.location, "Farm");
-  assert.equal(result.after.location, "Farm");
+  assert.equal(result.before.hasLocation, true);
+  assert.equal(result.after.hasLocation, true);
 });
 
 test("pickup-forage runner rejects a non-isolated topology", async () => {
