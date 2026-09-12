@@ -1,5 +1,8 @@
+using System.Text;
+using System.Text.Json;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Protocol;
 using GameBuddy.Stardew.Navigation;
 using Xunit;
 
@@ -58,6 +61,50 @@ public sealed class SceneObservationTests
         result.TruncatedReason.Should().BeOneOf("maximum_affordances", "payload_limit");
         result.Affordances.Should().HaveCountLessThanOrEqualTo(SceneObservationProjection.MaximumAffordances);
         result.Affordances[0].Direction.Should().Be("CurrentTile");
+    }
+
+    [Fact]
+    public void Observe_TruncatesAgainstSerializedUtf8PayloadCeiling()
+    {
+        var store = new SceneObservationStore();
+        SceneObservationContext context = Context(observationSequence: 3);
+        var projection = new SceneObservationProjection(store);
+        SceneObservationInput input = new(
+            "Farm",
+            10,
+            10,
+            Enumerable.Range(0, SceneObservationProjection.MaximumAffordances)
+                .Select(index => new SceneAffordanceSource(
+                    SceneAffordanceKind.Forage,
+                    new string('x', 128),
+                    $"forage_{index:00}",
+                    "Farm",
+                    10,
+                    10 + index,
+                    new string('a', 160)))
+                .ToArray());
+
+        SceneObservationProjectionResult result = projection.Observe(context, input);
+        var payload = new ObserveSceneResultPayload(
+            result.CurrentLocation,
+            result.CurrentRegion,
+            result.Affordances.Select(affordance => new ObserveSceneAffordancePayload(
+                affordance.Ref,
+                affordance.Kind,
+                affordance.Name,
+                affordance.Distance,
+                affordance.Direction,
+                affordance.ActionHint)).ToArray(),
+            result.Summary,
+            result.IsPartial,
+            result.TruncatedReason);
+
+        result.IsValid.Should().BeTrue();
+        result.IsPartial.Should().BeTrue();
+        result.TruncatedReason.Should().Be("payload_limit");
+        result.Affordances.Should().HaveCountLessThan(SceneObservationProjection.MaximumAffordances);
+        result.PayloadUtf8Bytes.Should().BeLessOrEqualTo(SceneObservationProjection.MaximumPayloadUtf8Bytes);
+        result.PayloadUtf8Bytes.Should().Be(Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(payload, BridgeProtocol.JsonOptions)));
     }
 
     [Fact]

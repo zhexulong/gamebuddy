@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Protocol;
 
 namespace GameBuddy.Stardew.Navigation;
 
@@ -144,16 +146,20 @@ internal sealed class SceneObservationProjection
 
     private static int MeasurePayload(SceneObservationProjectionResult result)
     {
-        object payload = new
-        {
-            currentLocation = result.CurrentLocation,
-            currentRegion = result.CurrentRegion,
-            affordances = result.Affordances,
-            summary = result.Summary,
-            partial = result.IsPartial,
-            truncatedReason = result.TruncatedReason,
-        };
-        return Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(payload));
+        ObserveSceneResultPayload payload = new(
+            result.CurrentLocation,
+            result.CurrentRegion,
+            result.Affordances.Select(affordance => new ObserveSceneAffordancePayload(
+                affordance.Ref,
+                affordance.Kind,
+                affordance.Name,
+                affordance.Distance,
+                affordance.Direction,
+                affordance.ActionHint)).ToArray(),
+            result.Summary,
+            result.IsPartial,
+            result.TruncatedReason);
+        return Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(payload, BridgeProtocol.JsonOptions));
     }
 
     private sealed record RankedCandidate(
