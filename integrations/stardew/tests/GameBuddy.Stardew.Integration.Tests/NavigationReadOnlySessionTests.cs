@@ -159,6 +159,133 @@ public sealed class NavigationReadOnlySessionTests
     }
 
     [Fact]
+    public void ObserveScene_MovementInvalidatesOldBinding_AndFreshObservationMintsReplacementBinding()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        SceneObservationInput input = new(
+            "Farm",
+            10,
+            10,
+            new[] { new SceneAffordanceSource(SceneAffordanceKind.Forage, "Old forage", "forage_old", "Farm", 11, 10, "pickup_forage") });
+        var session = new BridgeSession(
+            new ExecutionManager(new DummyMonitor(), () => publication),
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            sceneObservationProvider: () => input,
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+        Authenticate(session, scope);
+
+        session.TryObserveScene(1, SceneRequest(scope, "scene_movement_request_01"), out BridgeEnvelope<ObserveSceneResultPayload>? first, out string reason)
+            .Should().BeTrue(reason);
+        ObservationBindingV1 oldBinding = new(first!.Payload.ObservationId, first.Payload.Affordances.Single().Ref);
+
+        input = new SceneObservationInput(
+            "Farm",
+            11,
+            10,
+            new[] { new SceneAffordanceSource(SceneAffordanceKind.Forage, "Replacement forage", "forage_new", "Farm", 12, 10, "pickup_forage") });
+        session.TryResolveSceneTarget(oldBinding, out _, out reason).Should().BeFalse();
+        reason.Should().Be("observation_binding_stale");
+
+        session.TryObserveScene(1, SceneRequest(scope, "scene_movement_request_02"), out BridgeEnvelope<ObserveSceneResultPayload>? second, out reason)
+            .Should().BeTrue(reason);
+        second!.Payload.ObservationId.Should().NotBe(first.Payload.ObservationId);
+        second.Payload.Affordances.Should().ContainSingle().Which.Name.Should().Be("Replacement forage");
+        second.Payload.Affordances.Single().Ref.Should().NotBe(oldBinding.Ref);
+        session.TryResolveSceneTarget(new ObservationBindingV1(second.Payload.ObservationId, second.Payload.Affordances.Single().Ref), out SceneAffordanceBinding? binding, out reason)
+            .Should().BeTrue(reason);
+        binding!.OpaqueEntityIdentity.Should().Be("forage_new");
+    }
+
+    [Fact]
+    public void ObserveScene_DisconnectAndReconnectInvalidatesOldBindingBeforeFreshObservation()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        var session = new BridgeSession(
+            new ExecutionManager(new DummyMonitor(), () => publication),
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            sceneObservationProvider: () => new SceneObservationInput(
+                "Farm",
+                10,
+                10,
+                new[] { new SceneAffordanceSource(SceneAffordanceKind.Forage, "Forage", "forage_01", "Farm", 10, 10, "pickup_forage") }),
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+        Authenticate(session, scope);
+
+        session.TryObserveScene(1, SceneRequest(scope, "scene_disconnect_request_01"), out BridgeEnvelope<ObserveSceneResultPayload>? first, out string reason)
+            .Should().BeTrue(reason);
+        ObservationBindingV1 oldBinding = new(first!.Payload.ObservationId, first.Payload.Affordances.Single().Ref);
+
+        session.ClearSceneForBridgeLifecycle();
+        session.TryResolveSceneTarget(oldBinding, out _, out reason).Should().BeFalse();
+        reason.Should().Be("observation_binding_stale");
+
+        session.TryAuthenticate(2, new BridgeEnvelope<BridgeHello>(
+            BridgeProtocol.Version,
+            "navigation_hello_reconnect_02",
+            "navigation_hello_reconnect_02",
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            scope,
+            "hello",
+            new BridgeHello("navigation_token_0123456789abcdef")), out _, out reason).Should().BeTrue(reason);
+        session.TryResolveSceneTarget(oldBinding, out _, out reason).Should().BeFalse();
+        reason.Should().Be("observation_binding_stale");
+
+        session.TryObserveScene(2, SceneRequest(scope, "scene_reconnect_request_02"), out BridgeEnvelope<ObserveSceneResultPayload>? second, out reason)
+            .Should().BeTrue(reason);
+        second!.Payload.ObservationId.Should().NotBe(first.Payload.ObservationId);
+        second.Payload.Affordances.Single().Ref.Should().NotBe(oldBinding.Ref);
+    }
+
+    [Fact]
+    public void ObserveScene_RejectsOutOfRangeRadiusWithoutChangingActiveBinding()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        int providerCalls = 0;
+        var session = new BridgeSession(
+            new ExecutionManager(new DummyMonitor(), () => publication),
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            sceneObservationProvider: () =>
+            {
+                providerCalls++;
+                return new SceneObservationInput(
+                    "Farm",
+                    10,
+                    10,
+                    new[] { new SceneAffordanceSource(SceneAffordanceKind.Forage, "Forage", "forage_01", "Farm", 10, 10, "pickup_forage") });
+            },
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+        Authenticate(session, scope);
+
+        session.TryObserveScene(1, SceneRequest(scope, "scene_radius_request_01"), out BridgeEnvelope<ObserveSceneResultPayload>? first, out string reason)
+            .Should().BeTrue(reason);
+        ObservationBindingV1 binding = new(first!.Payload.ObservationId, first.Payload.Affordances.Single().Ref);
+
+        session.TryObserveScene(1, SceneRequest(scope, "scene_radius_request_02", radius: 31), out _, out reason)
+            .Should().BeFalse();
+        reason.Should().Be("scene_observation_invalid");
+        providerCalls.Should().Be(2);
+
+        session.TryResolveSceneTarget(binding, out SceneAffordanceBinding? resolved, out reason)
+            .Should().BeTrue(reason);
+        resolved!.OpaqueEntityIdentity.Should().Be("forage_01");
+    }
+
+    [Fact]
     public async Task ObserveScene_RejectsWrongGenerationAndOffThreadWithoutCallingProvider()
     {
         FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
@@ -374,14 +501,14 @@ public sealed class NavigationReadOnlySessionTests
         reason.Should().Be("unauthenticated");
     }
 
-    private static BridgeEnvelope<ObserveSceneRequestPayload> SceneRequest(BridgeScope scope, string requestId) => new(
+    private static BridgeEnvelope<ObserveSceneRequestPayload> SceneRequest(BridgeScope scope, string requestId, int radius = ObserveSceneRequestPayload.DefaultRadius) => new(
         BridgeProtocol.Version,
         requestId,
         requestId + "_correlation",
         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         scope,
         "observe_scene_request",
-        new ObserveSceneRequestPayload());
+        new ObserveSceneRequestPayload(radius));
 
     private static void Authenticate(BridgeSession session, BridgeScope scope)
     {
