@@ -56,6 +56,8 @@ export type GameplayTaskRecord = Readonly<{
     requestId: string;
     executionId: string;
     state: string;
+    expectedTargetId?: string;
+    sceneTargetRef?: string;
   }>[];
   /** A request was written but its execute response has not yet been reconciled. */
   pendingDispatch: Readonly<{
@@ -63,6 +65,8 @@ export type GameplayTaskRecord = Readonly<{
     requestId: string;
     state: "dispatching" | "uncertain";
     cancelRequired: boolean;
+    expectedTargetId?: string;
+    sceneTargetRef?: string;
   }> | null;
   /** Receipt reference only; evidence remains Mod-owned and is never copied into worker trace. */
   terminalReceipt: Readonly<{
@@ -126,12 +130,16 @@ type MutableTaskRecord = {
     requestId: string;
     executionId: string;
     state: string;
+    expectedTargetId?: string;
+    sceneTargetRef?: string;
   }>;
   pendingDispatch: {
     actionId: string;
     requestId: string;
     state: "dispatching" | "uncertain";
     cancelRequired: boolean;
+    expectedTargetId?: string;
+    sceneTargetRef?: string;
   } | null;
   terminalReceipt: {
     requestId: string;
@@ -857,6 +865,8 @@ export function hasAuthoritativeCompletion(
     actionId: string;
     requestId: string;
     executionId: string;
+    expectedTargetId?: string;
+    sceneTargetRef?: string;
   }>[],
   catalog: IntegrationActionCatalog,
 ): boolean {
@@ -877,7 +887,8 @@ export function hasAuthoritativeCompletion(
     requestId === receipt.requestId &&
     executionId === receipt.executionId &&
     execution !== undefined &&
-    catalog.hasCompletionEvidence(execution.actionId, receipt)
+    catalog.hasCompletionEvidence(execution.actionId, receipt) &&
+    hasTargetedCompletionIdentity(execution.actionId, receipt, execution)
   );
 }
 
@@ -900,6 +911,28 @@ export function hasActionPostconditionEvidence(
     reasonCode: receipt.reasonCode,
     evidence: receipt.evidence,
   });
+}
+
+function hasTargetedCompletionIdentity(
+  actionId: string,
+  receipt: IntegrationExecutionReceipt,
+  execution: Readonly<{ expectedTargetId?: string; sceneTargetRef?: string }>,
+): boolean {
+  if (actionId !== "pickup_forage") return true;
+  const expectedTargetId = execution.expectedTargetId;
+  const sceneTargetRef = execution.sceneTargetRef;
+  if (expectedTargetId === undefined || sceneTargetRef === undefined) return false;
+  const detail = receipt.evidence?.detail;
+  if (typeof detail !== "string") return false;
+  const fields = new Map<string, string>();
+  for (const part of detail.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator <= 0 || fields.has(part.slice(0, separator))) return false;
+    fields.set(part.slice(0, separator), part.slice(separator + 1));
+  }
+  // The Mod binds sceneTarget to the same target identity before native pickup;
+  // Host verifies that exact request-bound target, without a universal receipt field.
+  return fields.get("targetIdentity") === expectedTargetId;
 }
 
 function freezeRecord(record: MutableTaskRecord): GameplayTaskRecord {
@@ -975,11 +1008,21 @@ function taskScopedTool(
           throw new Error("gameplay_task_request_id_required");
         // Record ownership before yielding to the transport. Do not infer an
         // execution id or issue a cancel until the Mod has returned one.
+        const expectedTargetId =
+          isRecord(params) && typeof params.expectedTargetId === "string"
+            ? params.expectedTargetId
+            : undefined;
+        const sceneTargetRef =
+          isRecord(params) && isRecord(params.sceneTarget) && typeof params.sceneTarget.ref === "string"
+            ? params.sceneTarget.ref
+            : undefined;
         record.pendingDispatch = {
           actionId,
           requestId,
           state: "dispatching",
           cancelRequired: false,
+          ...(expectedTargetId === undefined ? {} : { expectedTargetId }),
+          ...(sceneTargetRef === undefined ? {} : { sceneTargetRef }),
         };
         try {
           const result = await tool.execute(
@@ -1278,6 +1321,8 @@ function settlePendingCorrelation(
       requestId,
       executionId,
       state: resolvedState,
+      ...(pending.expectedTargetId === undefined ? {} : { expectedTargetId: pending.expectedTargetId }),
+      ...(pending.sceneTargetRef === undefined ? {} : { sceneTargetRef: pending.sceneTargetRef }),
     });
   } else existing.state = resolvedState;
   if (

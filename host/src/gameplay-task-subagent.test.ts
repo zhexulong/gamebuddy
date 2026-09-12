@@ -8,6 +8,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import {
   admitGameplayAction,
@@ -139,6 +140,43 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
       succeeded,
       [],
       STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
+    ),
+    false,
+  );
+});
+
+test("pickup_forage authoritative completion binds evidence target identity to pending request", () => {
+  const catalog = STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog;
+  const receipt = {
+    requestId: "request_01",
+    executionId: "execution_01",
+    actionId: "pickup_forage",
+    state: "succeeded",
+    reasonCode: "forage_picked_up",
+    revision: 1,
+    evidence: {
+      detail:
+        "location=Farm;targetIdentity=forage_01;tile=3,4;item=(O)398;removed=true;inventory_before=0;inventory_after=1",
+    },
+  } as const;
+  const execution = {
+    actionId: "pickup_forage",
+    requestId: "request_01",
+    executionId: "execution_01",
+    expectedTargetId: "forage_01",
+    sceneTargetRef: "sr1_target_01",
+  } as const;
+  const report = {
+    state: "completed",
+    evidence: { requestId: "request_01", executionId: "execution_01" },
+  } as const;
+  assert.equal(hasAuthoritativeCompletion(report, receipt, [execution], catalog), true);
+  assert.equal(
+    hasAuthoritativeCompletion(
+      report,
+      { ...receipt, evidence: { detail: receipt.evidence.detail.replace("forage_01", "forage_02") } },
+      [execution],
+      catalog,
     ),
     false,
   );
