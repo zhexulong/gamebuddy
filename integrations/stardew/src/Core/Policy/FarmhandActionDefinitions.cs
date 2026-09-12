@@ -8,8 +8,10 @@ public enum FarmhandResourceTemplateValue { ScopePlayer = 1 }
 public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null);
 /// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.</summary>
 public sealed record FarmhandActionResourceTemplateClaim(string Key, FarmhandResourceTemplateValue Value);
+/// <summary>Action-specific typed binding metadata owned exclusively by Mod registration.</summary>
+public sealed record FarmhandActionObservationBindingDescriptor(string Type, int Version, bool Required, IReadOnlyList<string> RequiredProperties);
 /// <summary>Versioned descriptor contract owned exclusively by Mod registration.</summary>
-public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null);
+public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
 public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression }
@@ -53,13 +55,13 @@ public static class FarmhandActionCatalog
         E("travel", "transport_warps", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
-        E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, TargetItem()), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem()),
+        E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage()), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem()),
         E("water_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, Target()), E("plant_seed", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget()), E("fertilize_tile", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget()),
         E("machine_inspect", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, MachineInspect()), E("machine_load", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget()), E("machine_collect_output", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, Target()),
         E("collect_animal_product", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotTarget()), E("feed_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotTarget()), E("use_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "native_action_postcondition", ("slot","integer"),("expectedQualifiedItemId","string"))),
         E("harvest_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, TargetItem()), E("place_wood_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget()), E("place_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget()), E("bait_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget()),
         E("chop_tree_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("break_rock_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget()), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()),
-        R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"),
+        R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"), R("observe_scene", "world_perception"),
         E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, A(new Dictionary<string,string>{{"arrival","object"}}, null, "arrived_at_destination", ("destination","object"))),
         E("clear_debris", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.Experimental), E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental), E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental),
         E("express_emote", "expression", FarmhandActionHandlerGroup.Expression, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("emote", "string", EmoteEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "emote_finished_or_overridden", "Farmer.doEmote"), FarmhandActionLifecycle.Experimental),
@@ -71,6 +73,20 @@ public static class FarmhandActionCatalog
     private static FarmhandActionDescriptor A(IReadOnlyDictionary<string,string>? facts = null, IReadOnlyList<FarmhandActionResourceTemplateClaim>? resources = null, string postcondition = "native_action_postcondition", params (string,string)[] args) => new(args.Select(x => new FarmhandActionArgument(x.Item1,x.Item2)).ToArray(), facts ?? new Dictionary<string,string>(), resources ?? EmbodiedActorResource, resources is { Count: 0 } ? "read" : "write", postcondition);
     private static FarmhandActionDescriptor Target() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
     private static FarmhandActionDescriptor TargetItem() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedQualifiedItemId","string"),("expectedTargetId","string"));
+    private static FarmhandActionDescriptor PickupForage() => new(
+        new[]
+        {
+            new FarmhandActionArgument("x", "integer"),
+            new FarmhandActionArgument("y", "integer"),
+            new FarmhandActionArgument("expectedQualifiedItemId", "string"),
+            new FarmhandActionArgument("expectedTargetId", "string"),
+        },
+        new Dictionary<string, string>(),
+        EmbodiedActorResource,
+        "write",
+        "native_action_postcondition",
+        null,
+        new FarmhandActionObservationBindingDescriptor("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
     private static FarmhandActionDescriptor SlotTarget() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedTargetId","string"));
     private static FarmhandActionDescriptor SlotItemTarget() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedQualifiedItemId","string"),("expectedTargetId","string"));
     /// <summary>
