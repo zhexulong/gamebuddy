@@ -53,6 +53,53 @@ function worldFactFrame(eventId: string): Buffer {
   });
 }
 
+test("local Stardew bridge sends typed observe_scene requests only for Mod-published read-only capability", async () => {
+  const pipeName = `gamebuddy_observe_scene_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let requestType: string | null = null;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type === "hello") {
+          socket.write(frame({ ...request, messageId: "scene_hello", type: "hello_ack", payload: {
+            sessionId: "scene_session", capabilities: ["observe_scene"], catalogRevision: 1, enabledActionIds: [],
+            presentationLocale: "en-US", registrations: [{ actionId: "observe_scene", familyId: "world_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" }],
+            runtimeRole: "native_local_fixture", launchGeneration: null,
+          }}));
+          socket.write(frame({ ...request, messageId: "scene_snapshot", type: "snapshot", correlationId: "scene_snapshot", payload: {
+            revision: 1, location: "Farm", tile: { x: 1, y: 1 }, stamina: 100, health: 100, actionable: true,
+            capabilities: ["observe_scene"], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", activeExecution: null,
+          }}));
+        } else if (request.type === "observe_scene_request") {
+          requestType = request.type;
+          socket.write(frame({ ...request, messageId: "scene_result", type: "observe_scene_result", payload: {
+            currentLocation: "Farm", currentRegion: "outdoor", affordances: [{ ref: "sr1_AAAAAAAAAAAAAAAA", kind: "chest", name: "Chest", distance: 1, direction: "East", actionHint: null }],
+            summary: "A chest is nearby.", partial: false, truncatedReason: null,
+          }}));
+        }
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject));
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const result = await client.observeScene();
+    assert.equal(requestType, "observe_scene_request");
+    assert.equal(result.affordances[0]?.ref, "sr1_AAAAAAAAAAAAAAAA");
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
 test("local Stardew bridge keeps the newest snapshot revision from a delayed response", async () => {
   const pipeName = `gamebuddy_phase2_monotonic_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
