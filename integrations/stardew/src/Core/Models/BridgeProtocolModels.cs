@@ -322,6 +322,7 @@ public sealed class BridgeExecutionArgs
     public int? Slot { get; init; }
     public string? ExpectedQualifiedItemId { get; init; }
     public string? ExpectedTargetId { get; init; }
+    public ObservationBindingV1? SceneTarget { get; init; }
     public BridgeNavigationDestinationSelector? Destination { get; init; }
     public string? Emote { get; init; }
     public string? Direction { get; init; }

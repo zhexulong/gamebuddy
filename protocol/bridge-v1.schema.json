@@ -34,11 +34,15 @@
         "hello",
         "hello_ack",
         "observe_request",
+        "observe_scene_request",
+        "observe_scene_result",
         "navigation_read_request",
         "navigation_read_result",
         "snapshot",
         "catalog_update",
         "execution_request",
+        "body_node_admission_challenge",
+        "body_node_admission_grant",
         "execution_receipt_query",
         "cancel_request",
         "companion_presentation_request",
@@ -58,6 +62,14 @@
     }
   },
   "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "body_node_admission_challenge" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/bodyNodeAdmissionChallenge" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "body_node_admission_grant" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/bodyNodeAdmissionGrant" } } }
+    },
     {
       "if": {
         "properties": {
@@ -105,6 +117,14 @@
           }
         }
       }
+    },
+    {
+      "if": { "properties": { "type": { "const": "observe_scene_request" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/observeSceneRequest" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "observe_scene_result" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/observeSceneResult" } } }
     },
     {
       "if": { "properties": { "type": { "const": "navigation_read_request" } } },
@@ -356,6 +376,80 @@
     }
   ],
   "$defs": {
+    "admissionOpaque": {
+      "type": "string", "minLength": 1, "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+(?![\\s\\S])",
+      "$comment": "C# BridgeProtocol and Host validate/serialize paths enforce UTF-16 string bounds and the UTF-8 serialized frame byte limit; JSON Schema length counts Unicode code points."
+    },
+    "admissionRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "admissionAttempt": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "admissionCanonicalInteger": {
+      "type": "string",
+      "pattern": "^(?:0|-?[1-9][0-9]{0,17}|-?(?:[1-8][0-9]{18}|9[01][0-9]{17}|92[01][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[01][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7])|-9223372036854775808)(?![\\s\\S])"
+    },
+    "admissionCanonicalValue": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["type", "canonicalValue"], "properties": { "type": { "const": "integer" }, "canonicalValue": { "$ref": "#/$defs/admissionCanonicalInteger" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "canonicalValue"], "properties": { "type": { "const": "string" }, "canonicalValue": { "type": "string", "maxLength": 512 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "canonicalValue"], "properties": { "type": { "const": "boolean" }, "canonicalValue": { "enum": ["true", "false"] } } },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "destination"],
+          "properties": {
+            "type": { "const": "destination_selector" },
+            "destination": {
+              "oneOf": [
+                {
+                  "type": "object", "additionalProperties": false, "required": ["kind", "label"],
+                  "properties": { "kind": { "const": "label" }, "label": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" } },
+                  "$comment": "Unicode NFC and UTF-16 label bounds are runtime-only invariants enforced by C# BridgeProtocol and Host validate/serialize paths."
+                },
+                { "type": "object", "additionalProperties": false, "required": ["kind", "ref"], "properties": { "kind": { "const": "ref" }, "ref": { "type": "string", "pattern": "^dr1_[A-Za-z0-9_-]{21}[AQgw]$", "maxLength": 26 } } }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "bodyNodeAdmissionFields": {
+      "type": "object",
+      "required": ["programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "catalogRevision", "policyIdentity", "actionId", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs"],
+      "properties": {
+        "programId": { "$ref": "#/$defs/opaqueId" }, "nodeId": { "$ref": "#/$defs/opaqueId" },
+        "nodeAttempt": { "$ref": "#/$defs/admissionAttempt" }, "admissionAttempt": { "$ref": "#/$defs/admissionAttempt" },
+        "stopEpoch": { "$ref": "#/$defs/admissionRevision" }, "catalogRevision": { "$ref": "#/$defs/admissionRevision" },
+        "policyIdentity": { "type": "object", "additionalProperties": false, "required": ["value", "capabilityRevision"], "properties": { "value": { "$ref": "#/$defs/admissionOpaque" }, "capabilityRevision": { "$ref": "#/$defs/admissionRevision" } } },
+        "actionId": { "$ref": "#/$defs/opaqueId" },
+        "canonicalBoundArgs": { "type": "object", "maxProperties": 32, "propertyNames": { "$ref": "#/$defs/opaqueId" }, "additionalProperties": { "$ref": "#/$defs/admissionCanonicalValue" } },
+        "derivedResourceClaims": { "type": "object", "maxProperties": 16, "propertyNames": { "$ref": "#/$defs/opaqueId" }, "additionalProperties": { "$ref": "#/$defs/opaqueId" } },
+        "deadlineMs": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "bodyNodeAdmissionChallenge": {
+      "type": "object", "$ref": "#/$defs/bodyNodeAdmissionFields", "unevaluatedProperties": false
+    },
+    "bodyNodeAdmissionGrant": {
+      "type": "object", "$ref": "#/$defs/bodyNodeAdmissionFields", "unevaluatedProperties": false,
+      "required": ["grantId", "attachmentGeneration", "policyRevision", "executionBinding"],
+      "properties": {
+        "grantId": { "$ref": "#/$defs/opaqueId" },
+        "attachmentGeneration": { "$ref": "#/$defs/admissionOpaque" }, "policyRevision": { "$ref": "#/$defs/admissionOpaque" },
+        "executionBinding": {
+          "$comment": "Parent-grant equality of programId, nodeId and nodeAttempt is a runtime-only invariant enforced by C# BridgeProtocol and Host validate/serialize paths.",
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["programId", "nodeId", "nodeAttempt", "requestId", "idempotencyKey", "executionId"],
+              "properties": {
+                "programId": { "$ref": "#/$defs/opaqueId" }, "nodeId": { "$ref": "#/$defs/opaqueId" }, "nodeAttempt": { "$ref": "#/$defs/admissionAttempt" },
+                "requestId": { "$ref": "#/$defs/opaqueId" }, "idempotencyKey": { "$ref": "#/$defs/opaqueId" }, "executionId": { "$ref": "#/$defs/opaqueId" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "observationBinding": { "type": "object", "additionalProperties": false, "required": ["observationId", "ref"], "properties": { "observationId": { "$ref": "#/$defs/opaqueId" }, "ref": { "$ref": "#/$defs/opaqueId" } } },
     "opaqueId": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{1,128}$"
@@ -408,6 +502,98 @@
     "empty": {
       "type": "object",
       "additionalProperties": false
+    },
+    "observeSceneRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "radius": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30,
+          "default": 15
+        }
+      }
+    },
+    "observeSceneAffordance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "kind", "name", "distance", "direction", "actionHint"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^sr1_[A-Za-z0-9_-]{16}$"
+        },
+        "kind": {
+          "enum": ["npc", "chest", "crop", "forage", "door", "machine"]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "distance": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "direction": {
+          "enum": ["North", "South", "East", "West", "CurrentTile"]
+        },
+        "actionHint": {
+          "anyOf": [
+            { "type": "string", "maxLength": 160 },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "observeSceneResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason"],
+      "properties": {
+        "currentLocation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "currentRegion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "affordances": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/observeSceneAffordance" }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "truncatedReason": {
+          "anyOf": [
+            { "enum": ["maximum_affordances", "payload_limit"] },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "partial": { "const": true } } },
+          "then": { "properties": { "truncatedReason": { "enum": ["maximum_affordances", "payload_limit"] } } }
+        },
+        {
+          "if": { "properties": { "partial": { "const": false } } },
+          "then": { "properties": { "truncatedReason": { "type": "null" } } }
+        }
+      ]
     },
     "actionRegistration": {
       "type": "object",
@@ -1472,6 +1658,7 @@
     "slotArgs": { "type": "object", "additionalProperties": false, "required": ["slot"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 } } },
     "xyTargetArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedTargetId"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "xyQualifiedTargetArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "pickupForageArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" }, "sceneTarget": { "$ref": "#/$defs/observationBinding" } } },
     "slotXYTargetArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "slotXYQualifiedTargetArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "slotQualifiedArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "expectedQualifiedItemId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
@@ -1570,7 +1757,8 @@
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["move_to_tile", "travel", "enter_exit", "till_soil"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "navigate_to_destination" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/navigationDestinationArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "equip_tool" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "enum": ["pickup_forage", "pickup_item", "harvest_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyQualifiedTargetArgs" } } } },
+         { "if": { "required": ["action"], "properties": { "action": { "const": "pickup_forage" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/pickupForageArgs" } } } },
+         { "if": { "required": ["action"], "properties": { "action": { "enum": ["pickup_item", "harvest_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyQualifiedTargetArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["water_crop", "machine_inspect", "machine_collect_output", "npc_relationship", "pet_animal"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["clear_debris", "collect_animal_product", "feed_animal"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYTargetArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["plant_seed", "fertilize_tile"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
