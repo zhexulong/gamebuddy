@@ -80,8 +80,8 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
         } else if (request.type === "observe_scene_request") {
           requestType = request.type;
           socket.write(frame({ ...request, messageId: "scene_result", type: "observe_scene_result", payload: {
-            currentLocation: "Farm", currentRegion: "outdoor", affordances: [{ ref: "sr1_AAAAAAAAAAAAAAAA", kind: "chest", name: "Chest", distance: 1, direction: "East", actionHint: null }],
-            summary: "A chest is nearby.", partial: false, truncatedReason: null,
+           observationId: "observation_01", currentLocation: "Farm", currentRegion: "outdoor", affordances: [{ ref: "sr1_AAAAAAAAAAAAAAAA", kind: "chest", name: "Chest", distance: 1, direction: "East", actionHint: null }],
+             summary: "A chest is nearby.", partial: false, truncatedReason: null,
           }}));
         }
       }
@@ -92,7 +92,8 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
     const result = await client.observeScene();
     assert.equal(requestType, "observe_scene_request");
-    assert.equal(result.affordances[0]?.ref, "sr1_AAAAAAAAAAAAAAAA");
+     assert.equal(result.observationId, "observation_01");
+     assert.equal(result.affordances[0]?.ref, "sr1_AAAAAAAAAAAAAAAA");
     client.close();
   } finally {
     peer?.destroy();

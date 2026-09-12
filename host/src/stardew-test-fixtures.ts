@@ -12,7 +12,7 @@ export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] =
       ["travel", "transport_warps"],
       ["enter_exit", "movement_navigation"],
       ["till_soil", "farming_crops"],
-      ["pickup_forage", "resource_gathering"],
+       ["pickup_forage", "resource_gathering"],
       ["pickup_item", "inventory_items"],
       ["water_crop", "farming_crops"],
       ["refill_watering_can", "farming_crops"],
@@ -33,12 +33,24 @@ export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] =
       ["dig_artifact_spot", "resource_gathering"],
       ["chop_tree_source", "resource_gathering"],
     ].map(([actionId, familyId]) =>
-      Object.freeze({
-        actionId,
-        familyId,
-        identityVersion: 1,
-        lifecycle: "published" as const,
-        kind: "execution" as const,
-      }),
+       Object.freeze({
+         actionId,
+         familyId,
+         identityVersion: 1,
+         lifecycle: "published" as const,
+         kind: "execution" as const,
+         ...(actionId === "pickup_forage"
+           ? {
+               descriptor: Object.freeze({
+                 sceneTarget: Object.freeze({
+                   type: "ObservationBinding",
+                   version: 1,
+                   required: true,
+                   requiredProperties: Object.freeze(["observationId", "ref"]),
+                 }),
+               }),
+             }
+           : {}),
+       }),
     ),
   );
