@@ -74,8 +74,9 @@ test("observe-scene tool mounts only from a fresh Mod read-only capability and r
     observeScene: async () => {
       calls++;
       return {
-        currentLocation: "Farm",
-        currentRegion: "outdoor",
+         observationId: "observation_01",
+         currentLocation: "Farm",
+         currentRegion: "outdoor",
         affordances: [{ ref: "sr1_AAAAAAAAAAAAAAAA", kind: "chest" as const, name: "Chest", distance: 1, direction: "East" as const, actionHint: "inspect" }],
         summary: "A chest is nearby.",
         partial: false,

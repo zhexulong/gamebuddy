@@ -35,11 +35,95 @@ const snapshot: Snapshot = {
 };
 const now = 1_700_000_000_000;
 
+const admissionChallenge = {
+  programId: "program_1", nodeId: "node_1", nodeAttempt: 1, admissionAttempt: 2,
+  stopEpoch: 3, catalogRevision: 4, policyIdentity: { value: "mod:policy/v1", capabilityRevision: 5 },
+  actionId: "navigate_to_destination", canonicalBoundArgs: {
+    destination: { type: "destination_selector", destination: { kind: "label", label: "Town" } },
+    count: { type: "integer", canonicalValue: "9223372036854775807" },
+    enabled: { type: "boolean", canonicalValue: "true" }, text: { type: "string", canonicalValue: "" },
+  }, derivedResourceClaims: { actor: "player_1" }, deadlineMs: 5000,
+};
+const admissionBinding = { programId: "program_1", nodeId: "node_1", nodeAttempt: 1, requestId: "request_1", idempotencyKey: "key_1", executionId: "execution_1" };
+const admissionGrant = { ...admissionChallenge, grantId: "grant_1", attachmentGeneration: "attachment:epoch/7", policyRevision: "host:policy/9", executionBinding: null };
+function checkAdmission(payload: unknown, grant = false): string | null {
+  return validateBridgeMessage(newEnvelope(grant ? "body_node_admission_grant" : "body_node_admission_challenge", scope, payload, "corr_1", now), scope, now);
+}
+
+test("body admission challenge and grants preserve strings, destination and nullable full binding", () => {
+  for (const payload of [admissionChallenge, { ...admissionChallenge, canonicalBoundArgs: { destination: { type: "destination_selector", destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" } } } }]) assert.equal(checkAdmission(payload), null);
+  for (const executionBinding of [null, admissionBinding]) {
+    const envelope = newEnvelope("body_node_admission_grant", scope, { ...admissionGrant, executionBinding }, "corr_1", now);
+    const parsed = JSON.parse(serializeBounded(envelope));
+    assert.equal(validateBridgeMessage(parsed, scope, now), null);
+    assert.equal(parsed.payload.attachmentGeneration, "attachment:epoch/7");
+    assert.equal(parsed.payload.policyRevision, "host:policy/9");
+    assert.deepEqual(parsed.payload.executionBinding, executionBinding);
+    assert.deepEqual(parsed.payload.canonicalBoundArgs.destination.destination, { kind: "label", label: "Town" });
+  }
+});
+
+test("body admission rejects noncanonical scalar lexical forms and invalid selectors", () => {
+  for (const canonicalValue of ["01", "-0", "+1", " 1", "1.0", "1e0", "9223372036854775808", "-9223372036854775809"]) {
+    assert.notEqual(checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { count: { type: "integer", canonicalValue } } }), null, canonicalValue);
+  }
+  for (const canonicalValue of ["True", "0", "", 1, null]) assert.notEqual(checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { flag: { type: "boolean", canonicalValue } } }), null);
+  for (const destination of [{ kind: "label", label: "" }, { kind: "label", label: " " }, { kind: "label", label: "e\u0301" }, { kind: "label", label: "x".repeat(129) }, { kind: "ref", ref: "opaque" }, { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAB" }, { kind: "label", label: "Town", extra: 0 }]) {
+    assert.notEqual(checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { target: { type: "destination_selector", destination } } }), null);
+  }
+  assert.notEqual(checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { target: { type: "destination_selector", selector: { kind: "label", label: "Town" } } } }), null);
+});
+
+test("body admission enforces exact payload keys, policy identity, bounded maps and safe numbers", () => {
+  for (const key of Object.keys(admissionChallenge)) {
+    const payload: Record<string, unknown> = { ...admissionChallenge };
+    delete payload[key];
+    assert.notEqual(checkAdmission(payload), null, key);
+    payload[key] = null;
+    assert.notEqual(checkAdmission(payload), null, key);
+  }
+  for (const patch of [
+    { extra: 0 }, { nodeAttempt: 0 }, { nodeAttempt: 2_147_483_648 }, { admissionAttempt: 1.5 }, { stopEpoch: -1 }, { catalogRevision: Number.MAX_SAFE_INTEGER + 1 }, { deadlineMs: 0 },
+    { policyIdentity: { value: "", capabilityRevision: 5 } }, { policyIdentity: { value: "policy", capabilityRevision: -1 } },
+    { policyIdentity: { value: "policy", capabilityRevision: Number.MAX_SAFE_INTEGER + 1 } }, { policyIdentity: { value: "policy", capabilityRevision: 5, extra: 0 } },
+    { canonicalBoundArgs: { "bad key": { type: "string", canonicalValue: "" } } },
+    { canonicalBoundArgs: Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "" }])) },
+    { derivedResourceClaims: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`claim_${i}`, "actor"])) },
+  ]) assert.notEqual(checkAdmission({ ...admissionChallenge, ...patch }), null);
+});
+
+test("body admission grant rejects numeric opaque fields and malformed or missing binding", () => {
+  for (const key of ["attachmentGeneration", "policyRevision", "grantId", "executionBinding"]) {
+    const payload: Record<string, unknown> = { ...admissionGrant };
+    delete payload[key];
+    assert.notEqual(checkAdmission(payload, true), null);
+    for (const value of [0, "", {}, undefined]) assert.notEqual(checkAdmission({ ...admissionGrant, [key]: value }, true), null);
+  }
+  for (const key of Object.keys(admissionBinding)) {
+    const binding: Record<string, unknown> = { ...admissionBinding };
+    delete binding[key];
+    assert.notEqual(checkAdmission({ ...admissionGrant, executionBinding: binding }, true), null);
+  }
+  for (const patch of [{ extra: 0 }, { programId: "other" }, { nodeId: "other" }, { nodeAttempt: 2 }, { requestId: "bad id" }]) assert.notEqual(checkAdmission({ ...admissionGrant, executionBinding: { ...admissionBinding, ...patch } }, true), null);
+});
+
+test("body admission preserves envelope scope, type and serialized frame limits", () => {
+  const envelope = newEnvelope("body_node_admission_challenge", scope, admissionChallenge, "corr_1", now);
+  assert.throws(() => serializeBounded({ ...envelope, payload: { ...admissionChallenge, extra: 0 } }), /invalid_body_node_admission/);
+  assert.throws(() => serializeBounded({ ...envelope, protocolVersion: 2 }), /unsupported_protocol_version/);
+  assert.notEqual(validateBridgeMessage({ ...envelope, type: "body_node_admission_grant" }, scope, now), null);
+  assert.notEqual(validateBridgeMessage({ ...envelope, scope: { ...scope, saveId: "other" } }, scope, now), null);
+  assert.notEqual(validateBridgeMessage({ ...envelope, scope: { ...scope, extra: "field" } }, scope, now), null);
+  const oversized = { ...envelope, payload: { ...admissionChallenge, canonicalBoundArgs: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "x".repeat(512) }])) } };
+  assert.throws(() => serializeBounded(oversized), /message_too_large/);
+  assert.notEqual(validateBridgeMessage(oversized, scope, now), null);
+});
+
 test("current Mod hello acknowledgement wire projection is admitted", () => {
   const valid = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
+    { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: ["move_to_tile"], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
     "hello_01",
     now,
   );
@@ -57,7 +141,7 @@ test("current Mod hello acknowledgement wire projection is admitted", () => {
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "invalid session", capabilities: [], catalogRevision: 1, enabledActionIds: [], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
+        { sessionId: "invalid session", capabilities: [], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: [], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
         "hello_02",
         now,
       ),
@@ -71,7 +155,7 @@ test("current Mod hello acknowledgement wire projection is admitted", () => {
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "session_01", capabilities: [1], catalogRevision: 1, enabledActionIds: [], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
+        { sessionId: "session_01", capabilities: [1], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: [], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
         "hello_03",
         now,
       ),
@@ -86,7 +170,7 @@ test("catalog updates are exact and bounded", () => {
   const valid = newEnvelope(
     "catalog_update",
     scope,
-    { catalogRevision: 2, enabledActionIds: ["move_to_tile"] },
+    { catalogRevision: 2, policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 }, enabledActionIds: ["move_to_tile"] },
     "catalog_01",
     now,
   );
@@ -101,7 +185,7 @@ test("hello acknowledgement and snapshot reject missing or invalid presentation 
   const validHello = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
+    { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: ["move_to_tile"], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
     "hello_locale_01",
     now,
   );
@@ -979,7 +1063,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   const pickupForage = {
     ...valid,
     action: "pickup_forage",
-    args: { x: 10, y: 12, expectedQualifiedItemId: "(O)399", expectedTargetId: "forage_deadbeef" },
+     args: { x: 10, y: 12, expectedQualifiedItemId: "(O)399", expectedTargetId: "forage_deadbeef", sceneTarget: { observationId: "observation_deadbeef", ref: "sr1_AAAAAAAAAAAAAAAA" } },
   };
   const pickupItem = {
     ...valid,

@@ -19,6 +19,7 @@ export type BodyCanonicalValue = Readonly<
   | { type: "integer" | "string" | "boolean"; canonicalValue: string }
   | { type: "destination_selector"; destination: Readonly<{ kind: "label"; label: string } | { kind: "ref"; ref: string }> }
 >;
+export type FarmhandPolicyIdentity = Readonly<{ value: string; capabilityRevision: number }>;
 export type BodyPolicyIdentity = Readonly<{ value: string; capabilityRevision: number }>;
 export type BodyExecutionBinding = Readonly<{ programId: string; nodeId: string; nodeAttempt: number; requestId: string; idempotencyKey: string; executionId: string }>;
 export type BodyNodeAdmissionChallenge = Readonly<{
@@ -77,9 +78,9 @@ export type Snapshot = Readonly<{
   stamina: number;
   health: number;
   actionable: boolean;
-  capabilities: readonly string[];
-  catalogRevision: number;
-  enabledActionIds: readonly string[];
+   capabilities: readonly string[];
+   catalogRevision: number;
+   enabledActionIds: readonly string[];
   /** Older Mod snapshots may omit fields added after the initial bridge contract. */
   currentTool?: string | null;
   inventorySlots?: number;
@@ -424,6 +425,8 @@ export type ObserveSceneAffordance = Readonly<{
 
 /** Bounded, factual scene projection. Scene refs are opaque observation labels, not mutation authority. */
 export type ObserveSceneResult = Readonly<{
+  /** Fresh identity for this scene; refs are valid only within this observation. */
+  observationId: string;
   currentLocation: string;
   currentRegion: string;
   affordances: readonly ObserveSceneAffordance[];
@@ -633,6 +636,13 @@ export type ActionDescriptorArgument = Readonly<{
 export type ActionRegistrationDescriptor = Readonly<{
   arguments?: readonly ActionDescriptorArgument[];
   argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[] }>>;
+  /** Mod-owned opt-in required before Host can project pickup_forage sceneTarget. */
+  sceneTarget?: Readonly<{
+    type: string;
+    version: number;
+    required: boolean;
+    requiredProperties: readonly string[];
+  }>;
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }> | string;
   effect?: "read" | "write";
@@ -744,6 +754,7 @@ export type BridgeMessage =
         sessionId: string;
         capabilities: readonly string[];
         catalogRevision: number;
+        policyIdentity: FarmhandPolicyIdentity;
         enabledActionIds: readonly string[];
         presentationLocale: string;
         registrations: readonly ActionRegistration[];
@@ -757,7 +768,7 @@ export type BridgeMessage =
   | Envelope<"observe_scene_request", ObserveSceneRequest>
   | Envelope<"observe_scene_result", ObserveSceneResult>
   | Envelope<"snapshot", Snapshot>
-  | Envelope<"catalog_update", Readonly<{ catalogRevision: number; enabledActionIds: readonly string[] }>>
+  | Envelope<"catalog_update", Readonly<{ catalogRevision: number; policyIdentity: FarmhandPolicyIdentity; enabledActionIds: readonly string[] }>>
   | Envelope<"execution_request", ExecutionRequest>
   | Envelope<"body_node_admission_challenge", BodyNodeAdmissionChallenge>
   | Envelope<"body_node_admission_grant", BodyNodeAdmissionGrant>
@@ -846,7 +857,7 @@ const EXECUTION_ACTION_ARGUMENT_KEYS: Readonly<Record<ExecutionRequest["action"]
   travel: ["x", "y"],
   enter_exit: ["x", "y"],
   till_soil: ["x", "y"],
-  pickup_forage: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  pickup_forage: ["x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget"],
   pickup_item: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
   water_crop: ["x", "y", "expectedTargetId"],
   refill_watering_can: ["slot", "x", "y", "expectedTargetId"],
@@ -964,6 +975,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         "sessionId",
         "capabilities",
         "catalogRevision",
+        "policyIdentity",
         "enabledActionIds",
         "presentationLocale",
         "registrations",
@@ -972,8 +984,9 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
       ]) &&
         isOpaqueId(payload.sessionId) &&
         isStringArray(payload.capabilities) &&
-        isNonNegativeSafeInteger(payload.catalogRevision) &&
-        isUniqueOpaqueIdArray(payload.enabledActionIds) &&
+         isNonNegativeSafeInteger(payload.catalogRevision) &&
+         isFarmhandPolicyIdentity(payload.policyIdentity, payload.catalogRevision) &&
+         isUniqueOpaqueIdArray(payload.enabledActionIds) &&
         isBcp47Locale(payload.presentationLocale) &&
         isValidActionRegistrations(payload.registrations) &&
         isValidRuntimeAttestation(payload.runtimeRole, payload.launchGeneration)
@@ -992,8 +1005,9 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
     case "snapshot":
       return validateSnapshot(payload);
     case "catalog_update":
-      return hasExactKeys(payload, ["catalogRevision", "enabledActionIds"]) &&
+      return hasExactKeys(payload, ["catalogRevision", "policyIdentity", "enabledActionIds"]) &&
         isNonNegativeSafeInteger(payload.catalogRevision) &&
+        isFarmhandPolicyIdentity(payload.policyIdentity, payload.catalogRevision) &&
         isUniqueOpaqueIdArray(payload.enabledActionIds)
         ? null
         : "invalid_catalog_update";
@@ -1136,6 +1150,12 @@ function validateBodyNodeAdmissionGrant(value: Record<string, unknown>): string 
     && binding.programId === value.programId && binding.nodeId === value.nodeId && binding.nodeAttempt === value.nodeAttempt
     && isOpaqueId(binding.requestId) && isOpaqueId(binding.idempotencyKey) && isOpaqueId(binding.executionId)) ? null : "invalid_body_node_admission_grant";
 }
+function isFarmhandPolicyIdentity(value: unknown, catalogRevision: unknown): value is FarmhandPolicyIdentity {
+  return isRecord(value) && hasExactKeys(value, ["value", "capabilityRevision"]) &&
+    typeof value.value === "string" && /^[0-9a-f]{32}$/iu.test(value.value) &&
+    isNonNegativeSafeInteger(value.capabilityRevision) && value.capabilityRevision === catalogRevision;
+}
+
 function isAdmissionOpaque(value: unknown): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= 4096 && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
 }
@@ -1178,7 +1198,8 @@ function validateObserveSceneRequest(value: Record<string, unknown>): string | n
 }
 
 function validateObserveSceneResult(value: Record<string, unknown>): string | null {
-  if (!hasExactKeys(value, ["currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason"]) ||
+  if (!hasExactKeys(value, ["observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason"]) ||
+      !isOpaqueId(value.observationId) ||
       !boundedSceneText(value.currentLocation, 128) || !boundedSceneText(value.currentRegion, 128) ||
       !boundedSceneText(value.summary, 512) || typeof value.partial !== "boolean" ||
       !Array.isArray(value.affordances) || value.affordances.length > 20 ||
@@ -1206,6 +1227,12 @@ function boundedSceneText(value: unknown, maximumLength: number): value is strin
 
 function isSceneReference(value: unknown): value is string {
   return typeof value === "string" && /^sr1_[A-Za-z0-9_-]{16}$/.test(value);
+}
+
+/** Exact Host projection of the Mod-owned ObservationBinding/v1 opt-in target. */
+function isObservationBindingV1(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, ["observationId", "ref"])) return false;
+  return isOpaqueId(value.observationId) && isSceneReference(value.ref);
 }
 
 function validateNavigationReadRequest(value: Record<string, unknown>): string | null {
@@ -1363,10 +1390,11 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       typeof value.args.expectedQualifiedItemId !== "string" ||
       value.args.expectedQualifiedItemId.length === 0 ||
       value.args.expectedQualifiedItemId.length > 128 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_forage_target";
+       typeof value.args.expectedTargetId !== "string" ||
+       !isOpaqueId(value.args.expectedTargetId) ||
+       !isObservationBindingV1(value.args.sceneTarget)
+     )
+       return "invalid_forage_target";
   } else if (value.action === "pickup_item") {
     if (
       !isTileCoordinate(value.args.x) ||
@@ -2992,6 +3020,7 @@ function isStringArray(value: unknown): value is readonly string[] {
 const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "arguments",
   "argumentSchema",
+  "sceneTarget",
   "outputFacts",
   "resourceTemplate",
   "effect",
@@ -3033,6 +3062,16 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
         if (!prop.enum.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
       }
     }
+  }
+
+  if ("sceneTarget" in value && value.sceneTarget !== undefined) {
+    if (!isRecord(value.sceneTarget) || !hasExactKeys(value.sceneTarget, ["type", "version", "required", "requiredProperties"]) ||
+        typeof value.sceneTarget.type !== "string" || value.sceneTarget.type.length === 0 || value.sceneTarget.type.length > 64 ||
+        typeof value.sceneTarget.version !== "number" || !Number.isSafeInteger(value.sceneTarget.version) || value.sceneTarget.version < 1 ||
+        typeof value.sceneTarget.required !== "boolean" || !Array.isArray(value.sceneTarget.requiredProperties) ||
+        value.sceneTarget.requiredProperties.length > 16 ||
+        !value.sceneTarget.requiredProperties.every((property) => typeof property === "string" && /^[a-z][a-zA-Z0-9_]{0,63}$/.test(property)))
+      return false;
   }
 
   if ("outputFacts" in value && value.outputFacts !== undefined) {
