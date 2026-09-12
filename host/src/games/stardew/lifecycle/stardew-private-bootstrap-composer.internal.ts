@@ -27,22 +27,37 @@ import {
 import type { DesktopGuardianSession } from "../../../containment/auth/desktop-guardian-session.internal.js";
 
 /** Constructs the complete trusted production bootstrap composition. */
+export type StardewBootstrapGuardianOwnerFactory = Readonly<{
+  /** Creates one owner for the exact lifecycle invocation; no platform transport crosses this seam. */
+  create(
+    owner: StardewOwnedPlayerHostBootstrap,
+    deadlineUnixMs: number,
+    operationWaitBudgetMs: number,
+  ): StardewBootstrapGuardianOwner;
+}>;
+
 export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapInternalComposition & Readonly<{
   createStardewBootstrapGuardianOwner(
     owner: StardewOwnedPlayerHostBootstrap,
     native: StardewBootstrapGuardianNativePorts,
   ): StardewBootstrapGuardianOwner;
-
 }>;
 
-export function createStardewPrivateBootstrapComposition(): StardewPrivateBootstrapTrustedComposition & Readonly<{
-  createStardewBootstrapGuardianOwnerFromDesktopSession(
-    owner: StardewOwnedPlayerHostBootstrap,
-    session: DesktopGuardianSession,
-    deadlineUnixMs: number,
-    operationWaitBudgetMs: number,
-  ): StardewBootstrapGuardianOwner;
-}> {
+/** Creates the direct private seam used only by Host composition assembly. */
+function createStardewBootstrapGuardianOwnerFromDesktopSession(
+  owner: StardewOwnedPlayerHostBootstrap,
+  session: DesktopGuardianSession,
+  deadlineUnixMs: number,
+  operationWaitBudgetMs: number,
+): StardewBootstrapGuardianOwner {
+  const binding = createStardewBootstrapGuardianOwnerBinding(owner);
+  return createStardewBootstrapGuardianOwner(
+    binding,
+    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, deadlineUnixMs, operationWaitBudgetMs),
+  );
+}
+
+export function createStardewPrivateBootstrapComposition(): StardewPrivateBootstrapTrustedComposition {
   const core = createStardewPrivateBootstrapProductionCore({
     rawSpawn: productionSpawn,
     rawProbe: productionProbe,
@@ -54,13 +69,6 @@ export function createStardewPrivateBootstrapComposition(): StardewPrivateBootst
     ...core,
     createStardewBootstrapGuardianOwner: (owner, native) =>
       createStardewBootstrapGuardianOwner(createStardewBootstrapGuardianOwnerBinding(owner), native),
-    createStardewBootstrapGuardianOwnerFromDesktopSession: (owner, session, deadlineUnixMs, operationWaitBudgetMs) => {
-      const binding = createStardewBootstrapGuardianOwnerBinding(owner);
-      return createStardewBootstrapGuardianOwner(
-        binding,
-        createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, deadlineUnixMs, operationWaitBudgetMs),
-      );
-    },
   });
 }
 
