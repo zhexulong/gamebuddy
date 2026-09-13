@@ -445,6 +445,39 @@ test(
   },
 );
 
+test("operation serialization waits for a killed helper to close before starting the next operation", async () => {
+  let starts = 0;
+  const firstLifecycle: string[] = [];
+  const secondLifecycle: string[] = [];
+  let firstChild: ChildProcess | undefined;
+  let resolveFirstKill!: () => void;
+  const firstKilled = new Promise<void>((resolve) => {
+    resolveFirstKill = resolve;
+  });
+  const capability = createTestWindowsStaleLockReclaimer(() => {
+    const first = starts++ === 0;
+    const child = syntheticChild(
+      first ? "overflow-waiting-close" : "released",
+      [],
+      first ? firstLifecycle : secondLifecycle,
+      first ? resolveFirstKill : undefined,
+    );
+    if (first) firstChild = child;
+    return child;
+  });
+  const first = releaseOwnedLock(capability, absoluteCandidate, "00000000-0000-4000-8000-000000000000");
+  const second = releaseOwnedLock(capability, absoluteCandidate, "00000000-0000-4000-8000-000000000000");
+  await firstKilled;
+  assert.deepEqual(firstLifecycle, ["killed"]);
+  assert.deepEqual(secondLifecycle, []);
+  assert.equal(starts, 1);
+  firstChild!.emit("close", null, "SIGTERM");
+  await assert.rejects(first, /windows_stale_lock_reclaimer_unavailable/);
+  assert.equal(await second, "released");
+  assert.deepEqual(firstLifecycle, ["killed"]);
+  assert.deepEqual(secondLifecycle, ["closed"]);
+});
+
 test("public policy entry does not expose test-only capability minting", async () => {
   const source = await readFile(
     resolve(fileURLToPath(new URL("../..", import.meta.url)), "src", "windows-stale-lock-reclaimer", "index.ts"),
@@ -453,26 +486,42 @@ test("public policy entry does not expose test-only capability minting", async (
   assert.doesNotMatch(source, /__testOnly|test-support/);
 });
 
-function syntheticChild(outcome: string, requests: string[] = []): ChildProcess {
+function syntheticChild(
+  outcome: string,
+  requests: string[] = [],
+  lifecycle: string[] = [],
+  onKill?: () => void,
+): ChildProcess {
   if (outcome === "unavailable") throw new Error("spawn unavailable");
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
     stderr: new PassThrough(),
     kill: () => {
-      if (outcome === "timeout") queueMicrotask(() => child.emit("close", null, "SIGTERM"));
+      lifecycle.push("killed");
+      onKill?.();
+      if (outcome === "timeout" || outcome === "overflow") queueMicrotask(() => {
+        lifecycle.push("closed");
+        child.emit("close", null, outcome === "timeout" ? "SIGTERM" : null);
+      });
+      else if (outcome === "overflow-waiting-close") {
+        // The test controls close explicitly to make the serialization assertion deterministic.
+      }
       return true;
     },
   });
   child.stdin.on("data", (chunk) => {
     if (outcome === "timeout") return;
     requests.push(chunk.toString("utf8"));
-    if (outcome === "overflow") child.stdout.end(Buffer.alloc(64 * 1024 + 1));
+    if (outcome === "overflow" || outcome === "overflow-waiting-close") child.stdout.end(Buffer.alloc(64 * 1024 + 1));
     else if (outcome === "malformed") child.stdout.end('{"schemaVersion":1,"result":"other"}\n');
     else child.stdout.end(responseLine(outcome));
     if (outcome === "stderr") child.stderr.end("unexpected");
     else child.stderr.end();
-    queueMicrotask(() => child.emit("close", outcome === "nonzero" ? 1 : 0, null));
+    if (outcome !== "overflow" && outcome !== "overflow-waiting-close") queueMicrotask(() => {
+      lifecycle.push("closed");
+      child.emit("close", outcome === "nonzero" ? 1 : 0, null);
+    });
   });
   return child as unknown as ChildProcess;
 }

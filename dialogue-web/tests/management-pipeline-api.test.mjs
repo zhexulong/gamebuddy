@@ -74,6 +74,16 @@ function memoryRead(overrides = {}) {
   };
 }
 
+test("management mutation observer receives only successful content-free operation outcomes", async () => {
+  const observations = [];
+  const api = createManagementPipelineApi(async (path) => {
+    if (path.includes("/chat/title")) return response({ apiVersion: 1, title: null, managementRevision: 2 });
+    throw new Error("unexpected_route");
+  }, (observation) => observations.push(observation));
+  await api.renameChatTitle({ apiVersion: 1, selectionGeneration: 1, chatHandle: HANDLE, expectedManagementRevision: 1, title: "Renamed" }, HANDLE);
+  assert.deepEqual(observations, [{ operationId: "chat.rename", outcome: "passed", projectionRevision: "2" }]);
+});
+
 test("management Memory validators and client reject malformed, noncanonical, and non-strict mutations before fetch", async () => {
   let calls = 0;
   const api = createManagementPipelineApi(async () => {

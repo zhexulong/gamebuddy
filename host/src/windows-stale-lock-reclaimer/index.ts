@@ -388,46 +388,148 @@ async function executeOperation(state: ReclaimerState, request: WindowsStaleLock
   return await new Promise<string>((resolveOperation, rejectOperation) => {
     let child: ChildProcess;
     let settled = false;
+    let acceptingOutput = true;
     let outputBytes = 0;
+    let terminalFailure: Error | undefined;
+    let killAttempted = false;
+    let killReturned = false;
+    let closeDuringKill: Readonly<{ code: number | null; signal: NodeJS.Signals | null }> | undefined;
+    let cleanupDeadlineReached = false;
+    let operationTimer: ReturnType<typeof setTimeout> | undefined;
+    let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+
+    const clearOperationTimer = () => {
+      if (operationTimer === undefined) return;
+      clearTimeout(operationTimer);
+      operationTimer = undefined;
+    };
+    const clearCleanupTimer = () => {
+      if (cleanupTimer === undefined) return;
+      clearTimeout(cleanupTimer);
+      cleanupTimer = undefined;
+    };
+    const stopAcceptingOutput = () => {
+      if (!acceptingOutput) return;
+      acceptingOutput = false;
+      child.stdout?.off("data", onStdoutData);
+      child.stdout?.off("error", onStdoutError);
+      child.stderr?.off("data", onStderrData);
+      child.stderr?.off("error", onStderrError);
+    };
+    const removeListeners = () => {
+      stopAcceptingOutput();
+      child.off("error", onChildError);
+      child.off("close", onClose);
+      child.stdin?.off("error", onStdinError);
+    };
     const finish = (category?: string, error?: Error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      if (error) rejectOperation(error);
+      clearOperationTimer();
+      clearCleanupTimer();
+      removeListeners();
+      if (error !== undefined) rejectOperation(error);
       else resolveOperation(category!);
     };
-    const overflow = () => {
-      child.kill();
-      finish(undefined, unavailable());
+    const finishTerminalFailure = () => {
+      if (cleanupDeadlineReached) finish(undefined, unavailable());
     };
-    let timer: ReturnType<typeof setTimeout>;
+    const finishClose = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (terminalFailure !== undefined) {
+        finish(undefined, terminalFailure);
+        return;
+      }
+      if (code !== 0 || signal !== null || Buffer.concat(stderr).length !== 0) {
+        finish(undefined, unavailable());
+        return;
+      }
+      const category = parseResponse(Buffer.concat(stdout));
+      finish(category, category === undefined ? unavailable() : undefined);
+    };
+    const beginTerminalFailure = (error: Error) => {
+      if (settled || terminalFailure !== undefined) return;
+      terminalFailure = error;
+      clearOperationTimer();
+      stopAcceptingOutput();
+      cleanupTimer = setTimeout(() => {
+        cleanupDeadlineReached = true;
+        finishTerminalFailure();
+      }, 1_000);
+
+      if (killAttempted) return;
+      killAttempted = true;
+      try {
+        child.kill();
+      } catch {
+        // The cleanup deadline below remains the bounded terminal fallback when
+        // the child refuses to report close after a failed kill attempt.
+      } finally {
+        killReturned = true;
+      }
+      if (closeDuringKill !== undefined) {
+        const close = closeDuringKill;
+        closeDuringKill = undefined;
+        finishClose(close.code, close.signal);
+      }
+    };
+    function collect(target: Buffer[], chunk: Buffer): void {
+      if (!acceptingOutput) return;
+      outputBytes += chunk.length;
+      if (outputBytes > outputLimitBytes) {
+        beginTerminalFailure(unavailable());
+        return;
+      }
+      target.push(Buffer.from(chunk));
+    }
+    function onStdoutData(chunk: Buffer): void {
+      collect(stdout, chunk);
+    }
+    function onStderrData(chunk: Buffer): void {
+      collect(stderr, chunk);
+    }
+    function onStdoutError(): void {
+      beginTerminalFailure(unavailable());
+    }
+    function onStderrError(): void {
+      beginTerminalFailure(unavailable());
+    }
+    function onChildError(): void {
+      beginTerminalFailure(unavailable());
+    }
+    function onStdinError(): void {
+      beginTerminalFailure(unavailable());
+    }
+    function onClose(code: number | null, signal: NodeJS.Signals | null): void {
+      if (settled) return;
+      if (killAttempted) {
+        closeDuringKill = { code, signal };
+        if (killReturned) finishClose(code, signal);
+        return;
+      }
+      finishClose(code, signal);
+    }
+
     try {
       child = state.spawnHelper(state.executable, []);
     } catch {
       rejectOperation(unavailable());
       return;
     }
-    timer = setTimeout(() => {
-      child.kill();
-      finish(undefined, unavailable());
-    }, timeoutMs);
-    const collect = (target: Buffer[]) => (chunk: Buffer) => {
-      outputBytes += chunk.length;
-      if (outputBytes > outputLimitBytes) return overflow();
-      target.push(Buffer.from(chunk));
-    };
-    child.stdout?.on("data", collect(stdout));
-    child.stderr?.on("data", collect(stderr));
-    child.once("error", () => finish(undefined, unavailable()));
-    child.once("close", (code, signal) => {
-      if (code !== 0 || signal !== null || Buffer.concat(stderr).length !== 0) return finish(undefined, unavailable());
-      const category = parseResponse(Buffer.concat(stdout));
-      finish(category, category === undefined ? unavailable() : undefined);
-    });
-    child.stdin?.once("error", () => finish(undefined, unavailable()));
-    child.stdin?.end(serialized);
+    child.stdout?.on("data", onStdoutData);
+    child.stdout?.once("error", onStdoutError);
+    child.stderr?.on("data", onStderrData);
+    child.stderr?.once("error", onStderrError);
+    child.once("error", onChildError);
+    child.once("close", onClose);
+    child.stdin?.once("error", onStdinError);
+    operationTimer = setTimeout(() => beginTerminalFailure(unavailable()), timeoutMs);
+    try {
+      child.stdin?.end(serialized);
+    } catch {
+      beginTerminalFailure(unavailable());
+    }
   });
 }
 
