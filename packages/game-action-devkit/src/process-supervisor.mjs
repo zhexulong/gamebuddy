@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { types } from "node:util";
 import { StringDecoder } from "node:string_decoder";
 
 export const DEFAULT_SUITE_TIMEOUT_MS = 15 * 60_000;
@@ -411,6 +412,26 @@ function assertBoundedControlData(value, depth = 0) {
   }
   if (typeof value === "string") {
     if (Buffer.byteLength(value, "utf8") > MAX_CONTROL_DATA_STRING_BYTES) throw validationError("control_child_invalid_result");
+    return;
+  }
+  if (types.isProxy(value)) throw validationError("control_child_invalid_result");
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) throw validationError("control_child_invalid_result");
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    if (!lengthDescriptor || !Object.hasOwn(lengthDescriptor, "value") ||
+      !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value > MAX_CONTROL_DATA_ITEMS) {
+      throw validationError("control_child_invalid_result");
+    }
+    const length = lengthDescriptor.value;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== length + 1) throw validationError("control_child_invalid_result");
+    for (let index = 0; index < length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !Object.hasOwn(descriptor, "value") || !descriptor.enumerable) {
+        throw validationError("control_child_invalid_result");
+      }
+      assertBoundedControlData(descriptor.value, depth + 1);
+    }
     return;
   }
   assertPlainRecord(value, "control_child_invalid_result");
