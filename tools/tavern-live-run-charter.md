@@ -2,6 +2,8 @@
 
 > **Purpose:** run the implemented Tavern release profile with a real participant after its automated release prerequisites have passed. This runbook validates an end-to-end product flow; it is not a model leaderboard, does not execute SillyTavern runtime behavior, and does not substitute for parser/fuzz, migration, Magic Context fork, Pi partition, Game Action, or target-game live gates.
 >
+> **Chat mainline profile:** The active Chat mainline uses the distinct `chat-tavern-live` profile and must pass its repository-owned live orchestrator before the Chat mainline is called release-ready. That profile uses a GameBuddy-owned source-built disposable Chat artifact/runtime and does not depend on the full Windows production pointer, GitHub Actions release artifact, Windows reparse enforcement, guardian, or bundled-runtime gate. Passing it is a Chat/Tavern live claim only; the full Windows release gate remains separate. The profile must still execute real embedded provider turns and real mounted management UI operations with durable read-back; static profile declarations, fixtures, a single happy-path smoke, or retry-after-failure are not substitutes.
+>
 > **Normative BDD:** [`design/09_BDD_VALIDATION_PLAN.md`](../design/09_BDD_VALIDATION_PLAN.md), scenario **Tavern release live run 只在自动前置通过后验证真实交互闭环**. The implementation scope and release-profile declaration belong to [`design/24_TAVERN_COMPATIBILITY_IMPLEMENTATION_PLAN.md`](../design/24_TAVERN_COMPATIBILITY_IMPLEMENTATION_PLAN.md).
 
 <!-- tavern-release-must-flow-coverage
@@ -61,7 +63,13 @@ A fluent model response is not evidence that persistence, source placement, priv
 
 ### Versioned machine-readable operator record
 
-After the automated prerequisite command passes, an operator may run the separate validator with `node tools/run-tavern-release-live-gate.mjs --record <privacy-safe-record.json>`. It does not drive the UI, collect telemetry, or create observations. It only validates a supplied record and returns `inconclusive` unless every required observation is directly recorded by the operator and prerequisites pass.
+After the automated prerequisite command passes, an operator may run the separate validator with `node tools/run-tavern-release-live-gate.mjs --record <privacy-safe-record.json>`. It does not drive the UI, collect telemetry, or create observations. It only validates a supplied record and returns `inconclusive` unless every required observation is directly recorded by the operator and prerequisites pass. For the Chat mainline profile, the live orchestrator is additionally required:
+
+```bash
+node tools/run-tavern-release-live-gate.mjs --orchestrate --profile chat-tavern-live
+```
+
+The orchestrator's real main/failure/recovery summaries and mounted management UI operation evidence are release-gate inputs, not product-path facts. Automation evidence may satisfy the operation-mapping portion when it came from the authenticated UI/API run, but it never substitutes for an independently required operator record.
 
 The input is a JSON object with `schema_version: 1`, opaque lowercase-hex metadata IDs (16–128 characters), SHA-256 hashes for the listed versioned artifacts, and an `observations` array. Each observation permits **only** `step_id`, `outcome`, `reason_category`, `operator_observed_at`, and non-empty opaque `evidence_ids`. The validator rejects unknown fields (including dialogue, prompts, paths, notes, payloads, or UI captures), duplicate steps, missing must-flow steps, invalid IDs/hashes, and a `pass` without `reason_category: "observed"`. `TVL-06` alone may be `not_applicable`, and only with `operation_not_declared`.
 
@@ -97,7 +105,7 @@ This is a surface-lifecycle check only. It does not satisfy a Farmhand, Game Act
 
 ## 5. Verdict
 
-- **pass** — every release-profile `must` step passes; evidence record is complete; no unresolved safety, privacy, source/materialization, persistence, surface-isolation or causality failure remains.
+- **pass** — every release-profile `must` step passes; the Chat mainline additionally has a first-attempt passed `chat-tavern-live` orchestrator result with main/failure/recovery and mounted management operation read-back; evidence record is complete; no unresolved safety, privacy, source/materialization, persistence, surface-isolation or causality failure remains.
 - **fail** — a required step produces an observable wrong behavior, including internal-data exposure, silent mutation, wrong-thread resume, unauthorized active import behavior, or a surface-boundary breach.
 - **blocked** — an automated prerequisite is missing or failing; do not run around it manually.
 - **inconclusive** — insufficient observation, provider/runtime interruption without contradictory outcome, or participant stop. Preserve it as inconclusive.
