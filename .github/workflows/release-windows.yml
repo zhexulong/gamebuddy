@@ -61,6 +61,7 @@ jobs:
       # never use an unverified production generation.
       - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
       - run: node host/scripts/build-windows-reparse-inspector.mjs
+      - run: node host/scripts/build-windows-stardew-bootstrap-guardian.mjs
       # Validate the fresh TypeScript-emitted adapter namespace before any
       # release test or publisher step can consume it.
       - run: node host/scripts/check-windows-reparse-emitted-boundary.mjs
