@@ -77,8 +77,11 @@ jobs:
         with:
           node-version: 24.13.0
           cache: pnpm
+      # The solution uses the repository-locked SDK and net6.0 Stardew
+      # testhosts; install both side by side so dotnet test has its runtime.
       - uses: actions/setup-dotnet@v4
         with:
+          dotnet-version: 6.0.x
           global-json-file: global.json
       - run: pnpm install --frozen-lockfile
       - run: dotnet restore GameBuddy.sln --locked-mode

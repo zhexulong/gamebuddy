@@ -20,9 +20,8 @@ test("protected release gate remains fixed upstream of the no-argument entry", a
   assert.match(source, /assertProtectedWindowsReleaseCiEnvironment\(\);/);
   assert.match(source, /return acquireReleaseRuntimePublisher\(\{ descriptor, fetchRelease: fetch \}, async \(\) => buildFixedReleaseProductionArtifact\(\)\);/);
   const workflow = await readFile(workflowPath, "utf8");
-  assert.match(workflow, /- uses: actions\/setup-dotnet@v4\n[ \t]*with:\n[ \t]*global-json-file: global\.json\n[ \t]*# Host tests mint only repository-built, fixed Windows helper pairs;[\s\S]*- run: node host\/scripts\/build-windows-stale-lock-reclaimer\.mjs\n[ \t]*- run: node host\/scripts\/build-windows-reparse-inspector\.mjs\n(?:[ \t]*#[^\n]*\n)*[ \t]*- run: node host\/scripts\/check-windows-reparse-emitted-boundary\.mjs\n[ \t]*- run: node host\/scripts\/run-windows-reparse-live-gate\.mjs/);
+  assert.match(workflow, /- uses: actions\/setup-dotnet@v4\n[ \t]*with:\n[ \t]*dotnet-version: 6\.0\.x\n[ \t]*global-json-file: global\.json\n[ \t]*# Host tests mint only repository-built, fixed Windows helper pairs;[\s\S]*- run: node host\/scripts\/build-windows-stale-lock-reclaimer\.mjs\n[ \t]*- run: node host\/scripts\/build-windows-reparse-inspector\.mjs\n(?:[ \t]*#[^\n]*\n)*[ \t]*- run: node host\/scripts\/check-windows-reparse-emitted-boundary\.mjs\n[ \t]*- run: node host\/scripts\/run-windows-reparse-live-gate\.mjs/);
   assert.match(workflow, /node host\/scripts\/run-windows-reparse-live-gate\.mjs[\s\S]*?- run: dotnet restore integrations\/stardew\/tests\/GameBuddy\.Stardew\.Core\.Tests\/GameBuddy\.Stardew\.Core\.Tests\.csproj\n[ \t]*- run: dotnet restore integrations\/stardew\/tests\/GameBuddy\.Stardew\.Integration\.Tests\/GameBuddy\.Stardew\.Integration\.Tests\.csproj\n[ \t]*- run: pnpm --dir host test/);
-  assert.doesNotMatch(workflow, /run-windows-reparse-live-gate\.mjs[\s\S]*?dotnet-version: 6\.0\.x/);
 });
 
 test("release workflow delegates always cleanup to the no-input owned-root cleanup entry", async () => {
