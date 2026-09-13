@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { copyApprovedResources, readArtifactConfig, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsStardewBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
+import { copyApprovedResources, readArtifactConfig, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 
 const MARKER = "TEST_ONLY_NOT_A_PRODUCTION_ARTIFACT.txt";
 const POINTER = "test-current.json";
@@ -21,7 +21,7 @@ const windowsHelpers = [
   ["windowsReparseInspector", "native/windows-reparse-inspector/win-x64", verifyWindowsReparseInspectorPair, true],
   ["windowsStaleLockReclaimer", "native/windows-stale-lock-reclaimer/.dist/win-x64", verifyWindowsStaleLockReclaimerPair, false],
   ["windowsStardewFolderPicker", "native/windows-stardew-folder-picker/.dist/win-x64", verifyWindowsStardewFolderPickerPair, false],
-  ["windowsStardewBootstrapGuardian", "native/windows-stardew-bootstrap-guardian/.dist/win-x64", verifyWindowsStardewBootstrapGuardianPair, false],
+  ["windowsBootstrapGuardian", "native/windows-bootstrap-guardian/.dist/win-x64", verifyWindowsBootstrapGuardianPair, false],
 ];
 
 async function copyConfiguredWindowsHelpers({ hostRoot, stagingRoot, config, origins }) {
@@ -32,8 +32,8 @@ async function copyConfiguredWindowsHelpers({ hostRoot, stagingRoot, config, ori
     const sourceRoot = resolve(hostRoot, sourcePath);
     const sourceDescriptor = configKey === "windowsReparseInspector"
       ? descriptor
-      : { ...descriptor, destination: configKey === "windowsStardewBootstrapGuardian" ? "." : "win-x64" };
-    const source = await verify({ root: configKey === "windowsReparseInspector" ? hostRoot : (configKey === "windowsStardewBootstrapGuardian" ? sourceRoot : resolve(sourceRoot, "..")), descriptor: sourceDescriptor });
+      : { ...descriptor, destination: configKey === "windowsBootstrapGuardian" ? "." : "win-x64" };
+    const source = await verify({ root: configKey === "windowsReparseInspector" ? hostRoot : (configKey === "windowsBootstrapGuardian" ? sourceRoot : resolve(sourceRoot, "..")), descriptor: sourceDescriptor });
     const destinationRoot = resolve(stagingRoot, descriptor.destination);
     for (const name of [descriptor.helper, descriptor.manifest]) {
       const destination = resolve(destinationRoot, name);
@@ -84,10 +84,10 @@ export async function publishTestArtifact({ hostRoot, emittedRoot, outputRoot, r
     const inventory = await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins });
     await writeFile(resolve(staging, "production-inventory.json"), `${JSON.stringify(inventory, null, 2)}\n`);
     await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins, expectedInventory: inventory });
-    if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined) {
-      const verified = await verifyWindowsStardewBootstrapGuardianPair({ root: staging, descriptor: config.windowsStardewBootstrapGuardian });
+    if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined) {
+      const verified = await verifyWindowsBootstrapGuardianPair({ root: staging, descriptor: config.windowsBootstrapGuardian });
       const manifestSha256 = digest(await readFile(verified.manifest));
-      await writeFile(resolve(staging, "guardian-admission.json"), `${JSON.stringify({ schema: "gamebuddy-host-guardian-admission/v1", inventoryDigest: inventory.digest, helperPath: `${config.windowsStardewBootstrapGuardian.destination}/${config.windowsStardewBootstrapGuardian.helper}`, manifestPath: `${config.windowsStardewBootstrapGuardian.destination}/${config.windowsStardewBootstrapGuardian.manifest}`, helperSha256: verified.helperSha256, manifestSha256, manifestSchemaVersion: 1, manifestProtocolVersion: 1, manifestRid: "win-x64", manifestHelperFileName: config.windowsStardewBootstrapGuardian.helper })}\n`, { flag: "wx" });
+      await writeFile(resolve(staging, "guardian-admission.json"), `${JSON.stringify({ schema: "gamebuddy-host-guardian-admission/v1", inventoryDigest: inventory.digest, helperPath: `${config.windowsBootstrapGuardian.destination}/${config.windowsBootstrapGuardian.helper}`, manifestPath: `${config.windowsBootstrapGuardian.destination}/${config.windowsBootstrapGuardian.manifest}`, helperSha256: verified.helperSha256, manifestSha256, manifestSchemaVersion: 1, manifestProtocolVersion: 1, manifestRid: "win-x64", manifestHelperFileName: config.windowsBootstrapGuardian.helper })}\n`, { flag: "wx" });
     }
     const admission = testAdmission(inventory, generation, config.bundledRuntime);
     await writeFile(resolve(staging, ADMISSION), admission, { flag: "wx" });

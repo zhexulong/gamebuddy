@@ -18,9 +18,9 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
     internal string ProgramRoot => Path.Combine(root, "Programs", "GameBuddy");
     internal string CurrentPointerPath => Path.Combine(ProgramRoot, "current.json");
     internal string GenerationRoot => Directory.GetDirectories(Path.Combine(ProgramRoot, "generations")).Single();
-    internal string GuardianPairRoot => Path.Combine(GenerationRoot, "native", "windows-stardew-bootstrap-guardian", "win-x64");
-    internal string GuardianExePath => Path.Combine(GuardianPairRoot, "GameBuddy.WindowsStardewBootstrapGuardian.exe");
-    internal string TestGuardianExePath => Path.Combine(root, "fixtures", "GameBuddy.WindowsStardewBootstrapGuardian.Test.exe");
+    internal string GuardianPairRoot => Path.Combine(GenerationRoot, "native", "windows-bootstrap-guardian", "win-x64");
+    internal string GuardianExePath => Path.Combine(GuardianPairRoot, "GameBuddy.WindowsBootstrapGuardian.exe");
+    internal string TestGuardianExePath => Path.Combine(root, "fixtures", "GameBuddy.WindowsBootstrapGuardian.Test.exe");
     internal string ExactChildReportPath => Path.Combine(GenerationRoot, "runtime", "exact-child-bootstrap-report.json");
     internal string ExactChildRuntimePath => Path.Combine(GenerationRoot, "runtime", "node.exe");
     internal string HostRuntimeFixturePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "DesktopHostRuntimeFixture", "DesktopHostRuntimeFixture.exe");
@@ -34,7 +34,7 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
             Directory.CreateDirectory(fixture.root);
             CopyDirectory(await CanonicalProgramRoot.Value.ConfigureAwait(false), fixture.ProgramRoot);
             Directory.CreateDirectory(Path.GetDirectoryName(fixture.TestGuardianExePath)!);
-            File.Copy(Path.Combine(await CanonicalFixtureRoot.Value.ConfigureAwait(false), "GameBuddy.WindowsStardewBootstrapGuardian.Test.exe"), fixture.TestGuardianExePath);
+            File.Copy(Path.Combine(await CanonicalFixtureRoot.Value.ConfigureAwait(false), "GameBuddy.WindowsBootstrapGuardian.Test.exe"), fixture.TestGuardianExePath);
             if (!File.Exists(fixture.HostRuntimeFixturePath)) throw new InvalidOperationException("The Desktop Host runtime fixture was not published.");
             return fixture;
         }
@@ -50,7 +50,7 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
     private static async Task<string> BuildCanonicalFixtureRootAsync()
     {
         _ = await CanonicalProgramRoot.Value.ConfigureAwait(false);
-        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "host", "native", "windows-stardew-bootstrap-guardian", ".dist", "fixtures"));
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "host", "native", "windows-bootstrap-guardian", ".dist", "fixtures"));
     }
 
     private static async Task<string> BuildCanonicalProgramRootAsync()

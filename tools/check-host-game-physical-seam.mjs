@@ -29,7 +29,7 @@ const ALLOWED_STARDew_GENERIC_IMPORTERS = new Map([
   ])],
 ]);
 const RAW_STARDew_MODULES = [
-  "windows-stardew-bootstrap-guardian", "windows-stardew-folder-picker",
+  "windows-bootstrap-guardian", "windows-stardew-folder-picker",
   "windows-stale-lock-reclaimer", "windows-reparse-inspector",
 ];
 const NODE_BUILTINS = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]));

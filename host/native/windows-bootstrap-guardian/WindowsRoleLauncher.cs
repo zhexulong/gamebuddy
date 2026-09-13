@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 internal sealed class WindowsRoleLauncher
 {
@@ -18,7 +18,7 @@ internal sealed class WindowsRoleLauncher
     internal static void ValidateAbi()
     {
         if (IntPtr.Size != 8 || Marshal.SizeOf<STARTUPINFO>() != 104 || Marshal.SizeOf<STARTUPINFOEX>() != 112 || Marshal.SizeOf<PROCESS_INFORMATION>() != 24)
-            throw new PlatformNotSupportedException("windows_stardew_bootstrap_guardian_role_abi_invalid");
+            throw new PlatformNotSupportedException("windows_bootstrap_guardian_role_abi_invalid");
     }
 
     internal static LaunchedRole CreateSuspendedRole(WindowsJobOwner job, string executable, IReadOnlyList<string> arguments, string? cwd, IReadOnlyDictionary<string, string>? environment)
@@ -33,19 +33,19 @@ internal sealed class WindowsRoleLauncher
         var thread = SafeKernelHandle.Invalid;
         try
         {
-            if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, ref attributeBytes)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_attribute_list_init_failed");
+            if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, ref attributeBytes)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_bootstrap_guardian_attribute_list_init_failed");
             var jobs = new[] { job.Handle };
             var jobsPtr = Marshal.AllocHGlobal(IntPtr.Size);
             try
             {
                 Marshal.WriteIntPtr(jobsPtr, jobs[0]);
-                if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, (nuint)ProcThreadAttributeJobList, jobsPtr, (nuint)IntPtr.Size, IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_job_attribute_failed");
+                if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, (nuint)ProcThreadAttributeJobList, jobsPtr, (nuint)IntPtr.Size, IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_bootstrap_guardian_job_attribute_failed");
                 var commandLine = new System.Text.StringBuilder(BuildCommandLine(executable, arguments));
                 var environmentBlock = BuildEnvironment(environment);
                 try
                 {
                     var created = CreateProcessW(executable, commandLine, IntPtr.Zero, IntPtr.Zero, false, CreateSuspended | CreateUnicodeEnvironment | ExtendedStartupInfoPresent, environmentBlock, cwd, ref startup, out var processInfo);
-                    if (!created) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_role_create_failed");
+                    if (!created) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_bootstrap_guardian_role_create_failed");
                     process = new SafeKernelHandle(processInfo.hProcess, true); thread = new SafeKernelHandle(processInfo.hThread, true);
                     return new LaunchedRole(process, thread);
                 }
@@ -66,7 +66,7 @@ internal sealed class WindowsRoleLauncher
 
     internal static void VerifyMembership(LaunchedRole role, WindowsJobOwner job)
     {
-        if (!IsProcessInJob(role.Process, job.Handle)) throw new InvalidOperationException("windows_stardew_bootstrap_guardian_membership_failed");
+        if (!IsProcessInJob(role.Process, job.Handle)) throw new InvalidOperationException("windows_bootstrap_guardian_membership_failed");
     }
 
     internal static void Resume(LaunchedRole role) { if (ResumeThread(role.Thread) == uint.MaxValue) { TerminateProcess(role.Process, 1); throw new Win32Exception(Marshal.GetLastWin32Error()); } }
@@ -76,7 +76,7 @@ internal sealed class WindowsRoleLauncher
 
     private static string QuoteForWindowsCrt(string value)
     {
-        if (value.IndexOf('\0') >= 0) throw new InvalidDataException("windows_stardew_bootstrap_guardian_argument_invalid");
+        if (value.IndexOf('\0') >= 0) throw new InvalidDataException("windows_bootstrap_guardian_argument_invalid");
         var builder = new System.Text.StringBuilder(value.Length + 2);
         builder.Append('"');
         var slashes = 0;
@@ -94,13 +94,13 @@ internal sealed class WindowsRoleLauncher
 
     private static IntPtr BuildEnvironment(IReadOnlyDictionary<string, string>? environment)
     {
-        if (environment is null || environment.Count == 0) throw new InvalidDataException("windows_stardew_bootstrap_guardian_environment_missing");
+        if (environment is null || environment.Count == 0) throw new InvalidDataException("windows_bootstrap_guardian_environment_missing");
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var entries = environment.Select(pair =>
         {
             if (pair.Key.Length == 0 || pair.Key.Contains('\0') || pair.Key.Contains('=') || pair.Value.Contains('\0') ||
                 pair.Key.StartsWith("GAMEBUDDY_GUARDIAN_CONTROL_", StringComparison.OrdinalIgnoreCase) || pair.Key.Equals("GAMEBUDDY_GUARDIAN_MODE", StringComparison.OrdinalIgnoreCase) || !seen.Add(pair.Key))
-                throw new InvalidDataException("windows_stardew_bootstrap_guardian_environment_invalid");
+                throw new InvalidDataException("windows_bootstrap_guardian_environment_invalid");
             return pair;
         }).OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).ThenBy(pair => pair.Key, StringComparer.Ordinal);
         return Marshal.StringToHGlobalUni(string.Join('\0', entries.Select(pair => $"{pair.Key}={pair.Value}")) + "\0\0");
@@ -126,11 +126,11 @@ internal sealed class WindowsRoleLauncher
         internal LaunchedRole(SafeKernelHandle process, SafeKernelHandle thread) { Process = process; Thread = thread; }
         internal void Abort()
         {
-            if (Process.IsInvalid) throw new InvalidOperationException("windows_stardew_bootstrap_guardian_role_abort_process_invalid");
-            if (!TerminateProcess(Process, 1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_role_abort_terminate_failed");
+            if (Process.IsInvalid) throw new InvalidOperationException("windows_bootstrap_guardian_role_abort_process_invalid");
+            if (!TerminateProcess(Process, 1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_bootstrap_guardian_role_abort_terminate_failed");
             var wait = WaitForSingleObject(Process, RoleAbortWaitMilliseconds);
-            if (wait == WaitTimeout) throw new TimeoutException("windows_stardew_bootstrap_guardian_role_abort_timeout");
-            if (wait != WaitObject0) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_role_abort_wait_failed");
+            if (wait == WaitTimeout) throw new TimeoutException("windows_bootstrap_guardian_role_abort_timeout");
+            if (wait != WaitObject0) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_bootstrap_guardian_role_abort_wait_failed");
             Dispose();
         }
         public void Dispose() { Thread.Dispose(); Process.Dispose(); }

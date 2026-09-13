@@ -4,7 +4,7 @@ using Microsoft.Win32.SafeHandles;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 /** Recovery-only classifier. It opens only an exact post-CAS named Job and never creates or adopts one. */
 internal static class WindowsJobRecoveryClassifier
@@ -27,7 +27,16 @@ internal static class WindowsJobRecoveryClassifier
     internal static void ValidateAbi()
     {
         if (IntPtr.Size != 8 || Marshal.SizeOf<ExtendedLimitInformation>() != 144 || Marshal.SizeOf<BasicAccountingInformation>() != 48)
-            throw new PlatformNotSupportedException("windows_stardew_bootstrap_guardian_recovery_job_abi_invalid");
+            throw new PlatformNotSupportedException("windows_bootstrap_guardian_recovery_job_abi_invalid");
+    }
+
+    /** Player world ownership is not an AI containment artifact. Recovery must
+     * leave it untouched and force the caller onto fresh observation/reconnect. */
+    internal static string ClassifyPlayer(string name, string durableState)
+    {
+        _ = name;
+        _ = durableState;
+        return "unavailable";
     }
 
     internal static string Classify(string name, string durableState)

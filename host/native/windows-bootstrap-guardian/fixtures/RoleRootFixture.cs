@@ -17,6 +17,7 @@ internal static class RoleRootFixture
         string? probeJobDelete = null;
         string? recoveryJobName = null;
         string? recoveryJobMode = null;
+        string? pidFile = null;
         var childMode = false;
         var spawnDescendant = false;
         var exitAfterReport = false;
@@ -29,6 +30,7 @@ internal static class RoleRootFixture
             if (args[index] == "--hold-job" && index + 1 < args.Length) { heldJob = args[++index]; continue; }
             if (args[index] == "--probe-job-delete" && index + 1 < args.Length) { probeJobDelete = args[++index]; continue; }
             if (args[index] == "--recovery-job" && index + 2 < args.Length) { recoveryJobName = args[++index]; recoveryJobMode = args[++index]; continue; }
+            if (args[index] == "--pid-file" && index + 1 < args.Length) { pidFile = args[++index]; continue; }
             if (args[index] == "--spawn-descendant") { spawnDescendant = true; continue; }
             if (args[index] == "--child") { childMode = true; continue; }
             if (args[index] == "--exit-after-report") { exitAfterReport = true; continue; }
@@ -38,6 +40,7 @@ internal static class RoleRootFixture
         using var mutex = heldMutex is null ? null : CreateMutex(heldMutex);
         using var job = heldJob is null ? null : CreateJob(heldJob);
         using var recoveryJob = recoveryJobName is null ? null : CreateRecoveryJob(recoveryJobName, recoveryJobMode!);
+        if (pidFile is not null) File.WriteAllText(pidFile, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         if (report is not null)
         {
             var content = $"member={member.ToString().ToLowerInvariant()}\n";

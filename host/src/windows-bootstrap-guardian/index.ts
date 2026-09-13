@@ -3,15 +3,15 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const helperFileName = "GameBuddy.WindowsStardewBootstrapGuardian.exe";
-const manifestFileName = "windows-stardew-bootstrap-guardian.manifest.json";
+const helperFileName = "GameBuddy.WindowsBootstrapGuardian.exe";
+const manifestFileName = "windows-bootstrap-guardian.manifest.json";
 const protocolVersion = 1;
 const rid = "win-x64";
 /** Fixed artifact-relative pair destination of the selected Host-TCB production generation. */
-const pairDestination = `native/windows-stardew-bootstrap-guardian/${rid}`;
+const pairDestination = `native/windows-bootstrap-guardian/${rid}`;
 const inventoryFileName = "production-inventory.json";
 const inventorySchema = "gamebuddy-host-production-inventory/v4";
-const inventoryOriginKind = "verified_windows_stardew_bootstrap_guardian";
+const inventoryOriginKind = "verified_windows_bootstrap_guardian";
 
 import {
   validateGuardianRequest,
@@ -19,19 +19,19 @@ import {
   type ContainRoleRequest,
   type LaunchRoleRequest,
   type RecoverAttemptRequest,
-  type WindowsStardewBootstrapGuardianCategory,
-  type WindowsStardewBootstrapGuardianRequest,
+  type WindowsBootstrapGuardianCategory,
+  type WindowsBootstrapGuardianRequest,
 } from "./protocol.js";
 export type {
   ArmAttemptRequest,
   ContainRoleRequest,
   LaunchRoleRequest,
   RecoverAttemptRequest,
-  WindowsStardewBootstrapGuardianCategory,
-  WindowsStardewBootstrapGuardianRequest,
+  WindowsBootstrapGuardianCategory,
+  WindowsBootstrapGuardianRequest,
 } from "./protocol.js";
 
-export type WindowsStardewBootstrapGuardianCapability = object;
+export type WindowsBootstrapGuardianCapability = object;
 const capabilities = new WeakSet<object>();
 const states = new WeakMap<object, FixedPairFacts>();
 
@@ -45,9 +45,9 @@ const states = new WeakMap<object, FixedPairFacts>();
  * still only revalidates the complete pair and request, then remains unavailable
  * until the native Desktop generation launcher predecessor owns that process.
  */
-export async function createPublishedWindowsStardewBootstrapGuardian(
+export async function createPublishedWindowsBootstrapGuardian(
   hostArtifactRoot: string,
-): Promise<WindowsStardewBootstrapGuardianCapability> {
+): Promise<WindowsBootstrapGuardianCapability> {
   if (!isAbsolute(hostArtifactRoot)) throw unavailable();
   if (process.platform !== "win32") throw unavailable();
   return await createFixedGuardian(
@@ -67,30 +67,30 @@ export async function createPublishedWindowsStardewBootstrapGuardian(
  * admitted request still reports the fixed redacted `kept_unavailable` category.
  */
 export async function armAttempt(
-  capability: WindowsStardewBootstrapGuardianCapability,
+  capability: WindowsBootstrapGuardianCapability,
   request: ArmAttemptRequest,
-): Promise<WindowsStardewBootstrapGuardianCategory> {
+): Promise<WindowsBootstrapGuardianCategory> {
   return await invokeGuardian(capability, request);
 }
 
 export async function launchRole(
-  capability: WindowsStardewBootstrapGuardianCapability,
+  capability: WindowsBootstrapGuardianCapability,
   request: LaunchRoleRequest,
-): Promise<WindowsStardewBootstrapGuardianCategory> {
+): Promise<WindowsBootstrapGuardianCategory> {
   return await invokeGuardian(capability, request);
 }
 
 export async function containRole(
-  capability: WindowsStardewBootstrapGuardianCapability,
+  capability: WindowsBootstrapGuardianCapability,
   request: ContainRoleRequest,
-): Promise<WindowsStardewBootstrapGuardianCategory> {
+): Promise<WindowsBootstrapGuardianCategory> {
   return await invokeGuardian(capability, request);
 }
 
 export async function recoverAttempt(
-  capability: WindowsStardewBootstrapGuardianCapability,
+  capability: WindowsBootstrapGuardianCapability,
   request: RecoverAttemptRequest,
-): Promise<WindowsStardewBootstrapGuardianCategory> {
+): Promise<WindowsBootstrapGuardianCategory> {
   return await invokeGuardian(capability, request);
 }
 
@@ -112,7 +112,7 @@ async function createFixedGuardian(
   pairRoot: string,
   root: string,
   inventoryPath: string | undefined,
-): Promise<WindowsStardewBootstrapGuardianCapability> {
+): Promise<WindowsBootstrapGuardianCapability> {
   if (process.platform !== "win32") throw unavailable();
   if (process.arch !== "x64") throw unavailable();
   const executable = resolve(pairRoot, helperFileName);
@@ -282,9 +282,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 
 async function invokeGuardian(
-  capability: WindowsStardewBootstrapGuardianCapability,
-  request: WindowsStardewBootstrapGuardianRequest,
-): Promise<WindowsStardewBootstrapGuardianCategory> {
+  capability: WindowsBootstrapGuardianCapability,
+  request: WindowsBootstrapGuardianRequest,
+): Promise<WindowsBootstrapGuardianCategory> {
   const facts = capability !== undefined && capabilities.has(capability) ? states.get(capability) : undefined;
   if (facts === undefined) throw unavailable();
   verifyFixedPair(facts);
@@ -292,7 +292,7 @@ async function invokeGuardian(
   return "kept_unavailable";
 }
 
-function mintGuardianCapability(state: FixedPairFacts): WindowsStardewBootstrapGuardianCapability {
+function mintGuardianCapability(state: FixedPairFacts): WindowsBootstrapGuardianCapability {
   const capability = Object.freeze({});
   capabilities.add(capability);
   states.set(capability, state);
@@ -301,5 +301,5 @@ function mintGuardianCapability(state: FixedPairFacts): WindowsStardewBootstrapG
 
 
 function unavailable(): Error {
-  return new Error("windows_stardew_bootstrap_guardian_unavailable");
+  return new Error("windows_bootstrap_guardian_unavailable");
 }

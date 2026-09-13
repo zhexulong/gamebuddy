@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { readdir, readFile, rm } from "node:fs/promises";
-import { buildWindowsStardewBootstrapGuardian } from "./build-windows-stardew-bootstrap-guardian.mjs";
+import { buildWindowsBootstrapGuardian } from "./build-windows-bootstrap-guardian.mjs";
 import { buildFixedReleaseProductionArtifactForTest } from "./build-production-artifact.mjs";
 import { withSyntheticVerifiedReleaseBundledRuntimeFixedReleaseCompositionForTest } from "./node-runtime-release-acquisition.mjs";
 
@@ -47,7 +47,7 @@ async function syntheticRuntimeFixture(root) {
 
 const canonicalOutputRoot = resolve(outputRoot);
 await rm(canonicalOutputRoot, { recursive: true, force: true });
-await buildWindowsStardewBootstrapGuardian();
+await buildWindowsBootstrapGuardian();
 const runtime = await syntheticRuntimeFixture(resolve(fixtureRuntimeRoot));
 await withSyntheticVerifiedReleaseBundledRuntimeFixedReleaseCompositionForTest(
   runtime,

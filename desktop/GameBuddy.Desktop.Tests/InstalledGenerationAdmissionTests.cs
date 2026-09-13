@@ -48,9 +48,9 @@ public sealed class InstalledGenerationAdmissionTests
         var admissionPath = Path.Combine(generation.GenerationRoot, "guardian-admission.json");
         var contract = await File.ReadAllTextAsync(admissionPath);
         contract = contract
-            .Replace("native/windows-stardew-bootstrap-guardian/win-x64/GameBuddy.WindowsStardewBootstrapGuardian.exe", "foreign/ForeignGuardian.exe", StringComparison.Ordinal)
-            .Replace("native/windows-stardew-bootstrap-guardian/win-x64/windows-stardew-bootstrap-guardian.manifest.json", "foreign/foreign.manifest.json", StringComparison.Ordinal)
-            .Replace("GameBuddy.WindowsStardewBootstrapGuardian.exe", "ForeignGuardian.exe", StringComparison.Ordinal);
+            .Replace("native/windows-bootstrap-guardian/win-x64/GameBuddy.WindowsBootstrapGuardian.exe", "foreign/ForeignGuardian.exe", StringComparison.Ordinal)
+            .Replace("native/windows-bootstrap-guardian/win-x64/windows-bootstrap-guardian.manifest.json", "foreign/foreign.manifest.json", StringComparison.Ordinal)
+            .Replace("GameBuddy.WindowsBootstrapGuardian.exe", "ForeignGuardian.exe", StringComparison.Ordinal);
         await File.WriteAllTextAsync(admissionPath, contract);
         await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 

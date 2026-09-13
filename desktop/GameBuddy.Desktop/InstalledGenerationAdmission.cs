@@ -66,9 +66,9 @@ internal sealed class InstalledGenerationAdmission
 {
     private const string InventorySchema = "gamebuddy-host-production-inventory/v4";
     private const string GuardianAdmissionSchema = "gamebuddy-host-guardian-admission/v1";
-    private const string GuardianHelperPath = "native/windows-stardew-bootstrap-guardian/win-x64/GameBuddy.WindowsStardewBootstrapGuardian.exe";
-    private const string GuardianManifestPath = "native/windows-stardew-bootstrap-guardian/win-x64/windows-stardew-bootstrap-guardian.manifest.json";
-    private const string GuardianHelperFileName = "GameBuddy.WindowsStardewBootstrapGuardian.exe";
+    private const string GuardianHelperPath = "native/windows-bootstrap-guardian/win-x64/GameBuddy.WindowsBootstrapGuardian.exe";
+    private const string GuardianManifestPath = "native/windows-bootstrap-guardian/win-x64/windows-bootstrap-guardian.manifest.json";
+    private const string GuardianHelperFileName = "GameBuddy.WindowsBootstrapGuardian.exe";
     private const string GuardianAdmission = "guardian-admission.json";
     private readonly string? fixtureProgramRoot;
 

@@ -6,7 +6,7 @@ import test from "node:test";
 
 const helperPath = resolve(
   process.cwd(),
-  "native/windows-stardew-bootstrap-guardian/.dist/win-x64/GameBuddy.WindowsStardewBootstrapGuardian.exe",
+  "native/windows-bootstrap-guardian/.dist/win-x64/GameBuddy.WindowsBootstrapGuardian.exe",
 );
 const instanceId = "53ee44a2-d70b-4a49-a857-1ca4883e5d2e";
 const attemptId = "9b1c2d3e-4f5a-4b6c-8d7e-1f2a3b4c5d6e";
@@ -70,6 +70,6 @@ test("published Guardian fails closed without exact private mode and rejects del
     assert.equal(result.code, 1);
     assert.equal(result.signal, null);
     assert.equal(result.stdout.length, 0);
-    assert.equal(result.stderr.toString("utf8"), "windows_stardew_bootstrap_guardian_invalid_request\n");
+    assert.equal(result.stderr.toString("utf8"), "windows_bootstrap_guardian_invalid_request\n");
   }
 });

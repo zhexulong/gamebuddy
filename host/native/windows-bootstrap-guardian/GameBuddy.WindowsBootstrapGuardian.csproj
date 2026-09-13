@@ -4,12 +4,12 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>GameBuddy.WindowsStardewBootstrapGuardian</AssemblyName>
-    <RootNamespace>GameBuddy.WindowsStardewBootstrapGuardian</RootNamespace>
+    <AssemblyName>GameBuddy.WindowsBootstrapGuardian</AssemblyName>
+    <RootNamespace>GameBuddy.WindowsBootstrapGuardian</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <PropertyGroup Condition="'$(GuardianTestHooks)' == 'true'">
-    <AssemblyName>GameBuddy.WindowsStardewBootstrapGuardian.Test</AssemblyName>
+    <AssemblyName>GameBuddy.WindowsBootstrapGuardian.Test</AssemblyName>
     <DefineConstants>$(DefineConstants);GUARDIAN_TEST_HOOKS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>

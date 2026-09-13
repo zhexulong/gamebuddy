@@ -21,7 +21,7 @@ public sealed class WindowsNativeAbiTests
     [Fact]
     public void Extended_length_path_preserves_the_admitted_absolute_target()
     {
-        const string admitted = @"C:\\Users\\player\\AppData\\Local\\Programs\\GameBuddy\\generations\\g-mtiugve1-73288-0a0d298406044e94b65d4b9e4e0108d6\\native\\windows-stardew-bootstrap-guardian\\win-x64\\GameBuddy.WindowsStardewBootstrapGuardian.exe";
+        const string admitted = @"C:\\Users\\player\\AppData\\Local\\Programs\\GameBuddy\\generations\\g-mtiugve1-73288-0a0d298406044e94b65d4b9e4e0108d6\\native\\windows-bootstrap-guardian\\win-x64\\GameBuddy.WindowsBootstrapGuardian.exe";
 
         Assert.Equal(@"\\?\" + admitted, WindowsNative.ToExtendedLengthPath(admitted));
         Assert.Equal(@"\\?\C:\\already-extended.exe", WindowsNative.ToExtendedLengthPath(@"\\?\C:\\already-extended.exe"));
@@ -148,7 +148,7 @@ public sealed class WindowsNativeAbiTests
 
     private static string DisposableFixtureExecutable()
     {
-        var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "host", "native", "windows-stardew-bootstrap-guardian", ".dist", "fixtures", "RoleRootFixture.exe"));
+        var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "host", "native", "windows-bootstrap-guardian", ".dist", "fixtures", "RoleRootFixture.exe"));
         Assert.True(File.Exists(path), $"The Windows-native ABI fixture is unavailable: {path}");
         return path;
     }

@@ -126,10 +126,10 @@ test("reports exact generic-to-game and Stardew raw-module violations", async ()
   await withFixture({
     ...roots,
     "host/src/games/stardew/raw.ts": [
-      "import '../../windows-stardew-bootstrap-guardian/index.js';",
+      "import '../../windows-bootstrap-guardian/index.js';",
       "import 'node:child_process';",
     ].join("\n"),
-    "host/src/windows-stardew-bootstrap-guardian/index.ts": "export const raw = true;\n",
+    "host/src/windows-bootstrap-guardian/index.ts": "export const raw = true;\n",
   }, (root) => {
     const report = checkHostGamePhysicalSeam({ root });
     assert.equal(report.verdict, "blocked");
@@ -138,7 +138,7 @@ test("reports exact generic-to-game and Stardew raw-module violations", async ()
       { kind: "generic_layer_imports_game", importer: "host/src/bootstrap/entry.ts", specifier: "../games/stardew/value.js", line: 1, detail: "bootstrap_containment_and_composition_must_not_import_games" },
       { kind: "generic_layer_imports_game", importer: "host/src/composition/reverse.ts", specifier: "../games/stardew/value.js", line: 1, detail: "bootstrap_containment_and_composition_must_not_import_games" },
       { kind: "generic_layer_imports_game", importer: "host/src/containment/reverse.ts", specifier: "../games/stardew/value.js", line: 1, detail: "bootstrap_containment_and_composition_must_not_import_games" },
-      { kind: "game_imports_desktop_raw_module", importer: "host/src/games/stardew/raw.ts", specifier: "../../windows-stardew-bootstrap-guardian/index.js", line: 1, detail: "stardew_must_not_import_desktop_guardian_process_or_native_modules" },
+      { kind: "game_imports_desktop_raw_module", importer: "host/src/games/stardew/raw.ts", specifier: "../../windows-bootstrap-guardian/index.js", line: 1, detail: "stardew_must_not_import_desktop_guardian_process_or_native_modules" },
     ]);
   });
 });

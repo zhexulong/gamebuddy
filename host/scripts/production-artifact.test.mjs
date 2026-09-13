@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
 import { buildProductionArtifact, resolveTypeScriptInvocation, verifyDeclaredMagicContextArtifact } from "./build-production-artifact.mjs";
-import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsStardewBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
+import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { createIncompleteRuntimeFixture } from "./production-artifact-runtime-test-support.mjs";
 import { assertCompleteTestArtifact, publishTestArtifact, recheckTestArtifactEntry, resolveTestArtifactEntry, resolveTestArtifactModule } from "./production-artifact-test-support.mjs";
 import { withSyntheticVerifiedReleaseBundledRuntimeForTest } from "./node-runtime-release-acquisition.mjs";
@@ -183,17 +183,17 @@ test("Windows Stardew folder-picker provenance accepts only the fixed binary and
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("Windows Stardew bootstrap Guardian provenance accepts only the fixed binary and canonical manifest", async () => {
+test("Windows bootstrap Guardian provenance accepts only the fixed binary and canonical manifest", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-bootstrap-guardian-provenance-"));
-  const descriptor = { kind: "verified_windows_stardew_bootstrap_guardian", destination: "native/windows-stardew-bootstrap-guardian/win-x64", helper: "GameBuddy.WindowsStardewBootstrapGuardian.exe", manifest: "windows-stardew-bootstrap-guardian.manifest.json" };
+  const descriptor = { kind: "verified_windows_bootstrap_guardian", destination: "native/windows-bootstrap-guardian/win-x64", helper: "GameBuddy.WindowsBootstrapGuardian.exe", manifest: "windows-bootstrap-guardian.manifest.json" };
   try {
     const pair = join(root, descriptor.destination); await mkdir(pair, { recursive: true });
     const binary = Buffer.from("fixed bootstrap guardian"); const hash = createHash("sha256").update(binary).digest("hex");
     await writeFile(join(pair, descriptor.helper), binary);
     await writeFile(join(pair, descriptor.manifest), `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"${descriptor.helper}","sha256":"${hash}"}\n`);
-    assert.equal((await verifyWindowsStardewBootstrapGuardianPair({ root, descriptor })).helperSha256, hash);
+    assert.equal((await verifyWindowsBootstrapGuardianPair({ root, descriptor })).helperSha256, hash);
     await writeFile(join(pair, descriptor.manifest), "tampered\n");
-    await assert.rejects(verifyWindowsStardewBootstrapGuardianPair({ root, descriptor }), /windows_stardew_bootstrap_guardian_pair_invalid/);
+    await assert.rejects(verifyWindowsBootstrapGuardianPair({ root, descriptor }), /windows_bootstrap_guardian_pair_invalid/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -619,19 +619,19 @@ async function addCanonicalWindowsStardewFolderPicker(fixtureRoot) {
   await writeFile(join(pairRoot, windowsStardewFolderPickerDescriptor.manifest), `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsStardewFolderPicker.exe","sha256":"${helperSha256}"}\n`);
 }
 
-const windowsStardewBootstrapGuardianDescriptor = {
-  kind: "verified_windows_stardew_bootstrap_guardian",
-  destination: "native/windows-stardew-bootstrap-guardian/win-x64",
-  helper: "GameBuddy.WindowsStardewBootstrapGuardian.exe",
-  manifest: "windows-stardew-bootstrap-guardian.manifest.json",
+const windowsBootstrapGuardianDescriptor = {
+  kind: "verified_windows_bootstrap_guardian",
+  destination: "native/windows-bootstrap-guardian/win-x64",
+  helper: "GameBuddy.WindowsBootstrapGuardian.exe",
+  manifest: "windows-bootstrap-guardian.manifest.json",
 };
-async function addCanonicalWindowsStardewBootstrapGuardian(fixtureRoot) {
-  const pairRoot = join(fixtureRoot, "native", "windows-stardew-bootstrap-guardian", ".dist", "win-x64");
-  const helper = Buffer.from("canonical Windows Stardew bootstrap Guardian");
+async function addCanonicalWindowsBootstrapGuardian(fixtureRoot) {
+  const pairRoot = join(fixtureRoot, "native", "windows-bootstrap-guardian", ".dist", "win-x64");
+  const helper = Buffer.from("canonical Windows bootstrap Guardian");
   const helperSha256 = createHash("sha256").update(helper).digest("hex");
   await mkdir(pairRoot, { recursive: true });
-  await writeFile(join(pairRoot, windowsStardewBootstrapGuardianDescriptor.helper), helper);
-  await writeFile(join(pairRoot, windowsStardewBootstrapGuardianDescriptor.manifest), `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsStardewBootstrapGuardian.exe","sha256":"${helperSha256}"}\n`);
+  await writeFile(join(pairRoot, windowsBootstrapGuardianDescriptor.helper), helper);
+  await writeFile(join(pairRoot, windowsBootstrapGuardianDescriptor.manifest), `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsBootstrapGuardian.exe","sha256":"${helperSha256}"}\n`);
 }
 
 test("recheck reconstructs fixed Windows reparse helper origins and rejects helper tampering", async (t) => {
@@ -731,33 +731,33 @@ test("recheck reconstructs fixed Windows Stardew folder-picker origins and rejec
   });
 });
 
-test("recheck reconstructs fixed Windows Stardew bootstrap Guardian origins and rejects helper tampering", async (t) => {
+test("recheck reconstructs fixed Windows bootstrap Guardian origins and rejects helper tampering", async (t) => {
   if (process.platform !== "win32") {
     t.skip("Windows-specific production helper provenance");
     return;
   }
   await withFixture(async (root) => {
-    await addCanonicalWindowsStardewBootstrapGuardian(root);
+    await addCanonicalWindowsBootstrapGuardian(root);
     await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({
       entryRoots: ["main.js"],
       resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }],
-      windowsStardewBootstrapGuardian: windowsStardewBootstrapGuardianDescriptor,
+      windowsBootstrapGuardian: windowsBootstrapGuardianDescriptor,
       externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] },
     })));
     const outputRoot = join(root, "dist");
     await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot });
     const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot, entry: "main.js" });
-    const helperPath = `${windowsStardewBootstrapGuardianDescriptor.destination}/${windowsStardewBootstrapGuardianDescriptor.helper}`;
+    const helperPath = `${windowsBootstrapGuardianDescriptor.destination}/${windowsBootstrapGuardianDescriptor.helper}`;
     assert.deepEqual(selected.entries.find((entry) => entry.path === helperPath)?.origin, {
-      kind: windowsStardewBootstrapGuardianDescriptor.kind,
-      destination: windowsStardewBootstrapGuardianDescriptor.destination,
-      helper: windowsStardewBootstrapGuardianDescriptor.helper,
-      manifest: windowsStardewBootstrapGuardianDescriptor.manifest,
-      helperSha256: createHash("sha256").update(Buffer.from("canonical Windows Stardew bootstrap Guardian")).digest("hex"),
+      kind: windowsBootstrapGuardianDescriptor.kind,
+      destination: windowsBootstrapGuardianDescriptor.destination,
+      helper: windowsBootstrapGuardianDescriptor.helper,
+      manifest: windowsBootstrapGuardianDescriptor.manifest,
+      helperSha256: createHash("sha256").update(Buffer.from("canonical Windows bootstrap Guardian")).digest("hex"),
     });
     await assert.doesNotReject(recheckTestArtifactEntry({ hostRoot: root, selected }));
-    await writeFile(join(selected.artifactRoot, windowsStardewBootstrapGuardianDescriptor.destination, windowsStardewBootstrapGuardianDescriptor.helper), "tampered helper");
-    await assert.rejects(recheckTestArtifactEntry({ hostRoot: root, selected }), /windows_stardew_bootstrap_guardian_pair_invalid/);
+    await writeFile(join(selected.artifactRoot, windowsBootstrapGuardianDescriptor.destination, windowsBootstrapGuardianDescriptor.helper), "tampered helper");
+    await assert.rejects(recheckTestArtifactEntry({ hostRoot: root, selected }), /windows_bootstrap_guardian_pair_invalid/);
   });
 });
 
@@ -850,28 +850,28 @@ test("synthetic publisher recheck fails closed for fixed runtime/bootstrap mutat
 test("Host atomically emits the fixed Guardian admission contract after pair verification",  async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-specific Guardian admission publication");
   await withFixture(async (root) => {
-    await addCanonicalWindowsStardewBootstrapGuardian(root);
+    await addCanonicalWindowsBootstrapGuardian(root);
     await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({
       entryRoots: ["main.js"],
       resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }],
-      windowsStardewBootstrapGuardian: windowsStardewBootstrapGuardianDescriptor,
+      windowsBootstrapGuardian: windowsBootstrapGuardianDescriptor,
       externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] },
     })));
     const outputRoot = join(root, "dist");
     const published = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot });
     const contract = JSON.parse(await readFile(join(outputRoot, "test-generations", published.generation, "guardian-admission.json"), "utf8"));
-    const helperSha256 = createHash("sha256").update(Buffer.from("canonical Windows Stardew bootstrap Guardian")).digest("hex");
+    const helperSha256 = createHash("sha256").update(Buffer.from("canonical Windows bootstrap Guardian")).digest("hex");
     assert.deepEqual(contract, {
       schema: "gamebuddy-host-guardian-admission/v1",
       inventoryDigest: published.digest,
-      helperPath: "native/windows-stardew-bootstrap-guardian/win-x64/GameBuddy.WindowsStardewBootstrapGuardian.exe",
-      manifestPath: "native/windows-stardew-bootstrap-guardian/win-x64/windows-stardew-bootstrap-guardian.manifest.json",
+      helperPath: "native/windows-bootstrap-guardian/win-x64/GameBuddy.WindowsBootstrapGuardian.exe",
+      manifestPath: "native/windows-bootstrap-guardian/win-x64/windows-bootstrap-guardian.manifest.json",
       helperSha256,
-      manifestSha256: createHash("sha256").update(Buffer.from(`{\"schemaVersion\":1,\"protocolVersion\":1,\"rid\":\"win-x64\",\"helperFileName\":\"GameBuddy.WindowsStardewBootstrapGuardian.exe\",\"sha256\":\"${helperSha256}\"}\n`)).digest("hex"),
+      manifestSha256: createHash("sha256").update(Buffer.from(`{\"schemaVersion\":1,\"protocolVersion\":1,\"rid\":\"win-x64\",\"helperFileName\":\"GameBuddy.WindowsBootstrapGuardian.exe\",\"sha256\":\"${helperSha256}\"}\n`)).digest("hex"),
       manifestSchemaVersion: 1,
       manifestProtocolVersion: 1,
       manifestRid: "win-x64",
-      manifestHelperFileName: "GameBuddy.WindowsStardewBootstrapGuardian.exe",
+      manifestHelperFileName: "GameBuddy.WindowsBootstrapGuardian.exe",
     });
   });
 });
