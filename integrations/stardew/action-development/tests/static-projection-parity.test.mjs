@@ -26,6 +26,29 @@ async function loadSnapshot() {
   return { text, snapshot: JSON.parse(text) };
 }
 
+// Inline characterization only. This is ratified domain-contract material,
+// not a package producer document or an Agent-facing registration.
+const OBSERVE_SCENE_RATIFIED_CHARACTERIZATION = Object.freeze({
+  actionId: "observe_scene",
+  familyId: "world_perception",
+  identityVersion: 1,
+  kind: "read_only",
+  contractStatus: "ratified",
+  publicationStatus: "live-ineligible",
+  agentVisible: false,
+  executable: false,
+  requestProperties: Object.freeze(["radius"]),
+  resultProperties: Object.freeze([
+    "observationId",
+    "currentLocation",
+    "currentRegion",
+    "affordances",
+    "summary",
+    "partial",
+    "truncatedReason",
+  ]),
+});
+
 function fails(code, callback) {
   assert.throws(callback, new RegExp(`stardew_projection_parity_${code}`));
 }
@@ -33,6 +56,29 @@ function fails(code, callback) {
 function clone(snapshot) {
   return structuredClone(snapshot);
 }
+
+test("observe_scene ratification remains outside the generated Agent-facing parity surface", async () => {
+  const { snapshot } = await loadSnapshot();
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.contractStatus, "ratified");
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.publicationStatus, "live-ineligible");
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.agentVisible, false);
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.executable, false);
+  assert.deepEqual(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.requestProperties, ["radius"]);
+  assert.deepEqual(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.resultProperties, [
+    "observationId",
+    "currentLocation",
+    "currentRegion",
+    "affordances",
+    "summary",
+    "partial",
+    "truncatedReason",
+  ]);
+  assert.equal(snapshot.surface.actions.some(({ actionId }) => actionId === "observe_scene"), false);
+  assert.equal(snapshot.lifecycle.readOnlyActionIds.includes("observe_scene"), false);
+  assert.equal(snapshot.lifecycle.executableActionIds.includes("observe_scene"), false);
+  assert.equal(snapshot.ownership.nativeActionIds.includes("observe_scene"), false);
+  assert.equal(snapshot.ownership.localFixtureOwnedActionIds.includes("observe_scene"), false);
+});
 
 test("accepts the checked-in versioned parity snapshot and returns an immutable consumer view", async () => {
   const { text, snapshot } = await loadSnapshot();

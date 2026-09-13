@@ -19,6 +19,51 @@ const scope: Scope = {
   companionId: "companion_projection_01",
 };
 
+// Static characterization only. This fixture intentionally is not returned by
+// TEST_MOD_REGISTRATIONS and therefore cannot grant capability membership.
+const OBSERVE_SCENE_RATIFIED_CHARACTERIZATION = Object.freeze({
+  actionId: "observe_scene",
+  familyId: "world_perception",
+  identityVersion: 1,
+  kind: "read_only" as const,
+  lifecycle: "ratified" as const,
+  publicationStatus: "live-ineligible" as const,
+  agentVisible: false,
+  request: Object.freeze({ radius: Object.freeze({ minimum: 0, maximum: 30, default: 15 }) }),
+  result: Object.freeze({
+    properties: Object.freeze([
+      "observationId",
+      "currentLocation",
+      "currentRegion",
+      "affordances",
+      "summary",
+      "partial",
+      "truncatedReason",
+    ]),
+    maxAffordances: 20,
+    maxUtf8Bytes: 2048,
+  }),
+});
+
+test("observe_scene ratified characterization does not enter the Mod membership fixture", () => {
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.lifecycle, "ratified");
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.publicationStatus, "live-ineligible");
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.agentVisible, false);
+  assert.deepEqual(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.request.radius, { minimum: 0, maximum: 30, default: 15 });
+  assert.deepEqual(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.properties, [
+    "observationId",
+    "currentLocation",
+    "currentRegion",
+    "affordances",
+    "summary",
+    "partial",
+    "truncatedReason",
+  ]);
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxAffordances, 20);
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxUtf8Bytes, 2048);
+  assert.equal(TEST_MOD_REGISTRATIONS.some(({ actionId }) => actionId === "observe_scene"), false);
+});
+
 function integrationWithCapabilities(
   capabilities: readonly string[],
   execute: MoveCapableIntegration["execute"] = async () => {
