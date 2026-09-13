@@ -423,6 +423,32 @@ test("aborts without writing a second stdin frame", async () => {
   assert.equal(child.stdin.frames.length, 1);
 });
 
+test("cleans up when abort occurs immediately after spawn", async () => {
+  const controller = new AbortController();
+  const child = controlChild();
+  let killCalls = 0;
+  await assert.rejects(runOneShotControlChild({
+    command: "fake-control-runner",
+    args: ["--one-shot"],
+    start: CONTROL_START,
+    signal: controller.signal,
+    timeoutMs: 1000,
+    cleanupTimeoutMs: 100,
+    spawnProcess: () => {
+      controller.abort();
+      return child;
+    },
+    killTree: async (pid, options) => {
+      killCalls += 1;
+      assert.equal(pid, child.pid);
+      assert.ok(options.signal instanceof AbortSignal);
+      child.finish(null, "SIGKILL");
+    },
+  }), /control_child_aborted/);
+  assert.equal(killCalls, 1);
+  assert.ok(child.stdin.frames.length <= 1);
+});
+
 test("merges a valid terminal result with child exit status", async () => {
   const child = controlChild({
     onStart(currentChild) {
