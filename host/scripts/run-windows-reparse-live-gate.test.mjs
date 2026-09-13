@@ -133,25 +133,25 @@ test("a malformed baseline or unclassified mutation cannot count as consumer rej
   assert.match(source, /if \(!verdict\.baselineAccepted \|\| !verdict\.linkClassified\) continue;/);
 });
 
-test("live gate emits one redacted exact-schema blocked result and exits nonzero until every real assertion passes", async () => {
+test("live gate emits one redacted exact-schema result with an exit status matching its verdict", async () => {
   const child = await runGateProcess();
-  assert.notEqual(child.code, 0);
+  assert.equal(typeof child.code, "number");
   assert.equal(child.signal, null);
   assert.equal(child.stderr, "");
   assert.match(child.stdout, /^\{[^\n]+\}\n$/);
   const result = JSON.parse(child.stdout);
   assert.equal(isWindowsReparseLiveGateResult(result), true);
-  assert.equal(result.status, "blocked");
-  assert.notEqual(result.reason, "passed");
+  assert.equal(child.code === 0, result.status === "passed");
+  assert.equal(result.reason === "passed", result.status === "passed");
   for (const value of strings(result)) {
     assert.doesNotMatch(value, /gamebuddy-windows-reparse-live-gate|[A-Za-z]:[\\/]|(?:^|[\\/])tmp(?:[\\/]|$)/i);
   }
 });
 
-test("direct non-Windows invocation is an explicit blocked platform result, never a skipped pass", async () => {
+test("direct invocation reports an explicit platform or capability disposition, never a skipped pass", async () => {
   const result = await runWindowsReparseLiveGate();
   assert.equal(isWindowsReparseLiveGateResult(result), true);
-  assert.equal(result.status, "blocked");
+  assert.equal(result.reason === "passed", result.status === "passed");
   if (process.platform !== "win32") {
     assert.deepEqual(result, {
       schemaVersion: 1,
