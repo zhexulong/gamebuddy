@@ -353,6 +353,24 @@ test("parses a terminal result split inside a UTF-8 code point", async () => {
   assert.deepEqual(outcome.result.proof.data, { message: "😀" });
 });
 
+test("accepts nested JSON arrays in bounded proof data", async () => {
+  const child = controlChild({
+    onStart(currentChild) {
+      setImmediate(() => emitControlResult(currentChild, controlResult({
+        proof: {
+          ...controlResult().proof,
+          data: { attempts: [{ outcome: "succeeded", values: [1, true, null] }] },
+        },
+      })));
+    },
+  });
+
+  const outcome = await runControlChild(child);
+  assert.deepEqual(outcome.result.proof.data, {
+    attempts: [{ outcome: "succeeded", values: [1, true, null] }],
+  });
+});
+
 test("rejects malformed, duplicate, oversize, unknown, and identity-mismatched results", async () => {
   const cases = [
     {
