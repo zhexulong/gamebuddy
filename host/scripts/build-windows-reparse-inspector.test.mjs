@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { access, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, parse, resolve } from "node:path";
 import test from "node:test";
 import {
   buildWindowsReparseInspector,
@@ -15,6 +15,7 @@ import {
   protocolVersion,
   rid,
 } from "./build-windows-reparse-inspector.mjs";
+import { buildWindowsAfUnixReparseFixture } from "./build-windows-af-unix-reparse-fixture.mjs";
 
 const helperPath = resolve(outputRoot, helperFileName);
 
@@ -56,6 +57,37 @@ async function makeJunction(link, target) {
     const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script, link, target], { shell: false, windowsHide: true, stdio: "ignore" });
     child.once("error", rejectRun);
     child.once("close", (code) => code === 0 ? resolveRun() : rejectRun(new Error("junction_creation_unavailable")));
+  });
+}
+
+function waitForChildExit(child) {
+  return new Promise((resolveExit, rejectExit) => {
+    child.once("error", rejectExit);
+    child.once("close", (code, signal) => resolveExit({ code, signal }));
+  });
+}
+
+function waitForAfUnixFixtureReady(child) {
+  return new Promise((resolveReady, rejectReady) => {
+    let settled = false;
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => finish(new Error("af_unix_fixture_ready_timeout")), 15_000);
+    timer.unref();
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) rejectReady(error);
+      else resolveReady({ stdout, stderr });
+    };
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+      if (stdout.includes("ready\n")) finish();
+    });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.once("error", (error) => finish(error));
+    child.once("close", (code, signal) => finish(new Error(`af_unix_fixture_exited_before_ready:${code ?? "unknown"}:${signal ?? "none"}:${stderr}`)));
   });
 }
 
@@ -230,18 +262,67 @@ test("Windows reparse helper classifies an actual directory symbolic link where 
       await symlink(target, directoryLink, "dir");
       assert.equal((await lstat(directoryLink)).isSymbolicLink(), true);
       await assertResult(request(directoryLink), "reparse");
-    } catch {
-      t.skip("BLOCKED: directory symbolic-link creation is unavailable; symlink closure cannot be claimed");
+    } catch (error) {
+      if (error?.code === "EPERM" || error?.code === "EACCES") {
+        t.skip("platform_non_applicable: Windows directory symbolic-link creation requires Developer Mode or SeCreateSymbolicLinkPrivilege; junction and AF_UNIX probes cover this runner's release reparse detection");
+        return;
+      }
+      throw error;
     }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("Windows non-link reparse probe records an explicit blocked result when no fixture is available", { skip: process.platform !== "win32" }, async (t) => {
-  // This repository has no safe, portable producer for a non-link tag (for example
-  // an AppExecLink or cloud placeholder), so it must never be silently counted as coverage.
-  t.skip("BLOCKED: no non-link Windows reparse fixture is available on this runner; native reparse closure remains incomplete");
+test("Windows reparse helper classifies the repository-owned AF_UNIX socket as a non-link reparse point", { skip: process.platform !== "win32" }, async () => {
+  // Windows AF_UNIX addresses have a short native length limit. Keep this
+  // disposable fixture beneath the drive root so the test remains valid when
+  // CI redirects TEMP into a long worktree path.
+  const root = await mkdtemp(join(parse(resolve(tmpdir())).root, "gamebuddy-reparse-af-unix-"));
+  const socketPath = resolve(root, "socket");
+  let fixtureProcess;
+  let fixtureExit;
+  try {
+    const fixture = await buildWindowsAfUnixReparseFixture();
+    assert.match(fixture.sha256, /^[a-f0-9]{64}$/);
+    fixtureProcess = spawn(fixture.helperPath, [socketPath], { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    fixtureExit = waitForChildExit(fixtureProcess);
+    const ready = await waitForAfUnixFixtureReady(fixtureProcess);
+    assert.equal(ready.stdout, "ready\n");
+    assert.equal(ready.stderr, "");
+
+    await assertResult(request(socketPath), "reparse");
+    const identityResult = await runHelper(identityRequest(socketPath));
+    assert.equal(identityResult.code, 0);
+    assert.equal(identityResult.signal, null);
+    assert.equal(identityResult.stderr, "");
+    const identity = JSON.parse(identityResult.stdout);
+    assert.deepEqual(Object.keys(identity), ["schemaVersion", "operation", "status", "objectKind", "isReparsePoint", "volumeIdentity", "fileId"]);
+    assert.deepEqual(
+      {
+        schemaVersion: identity.schemaVersion,
+        operation: identity.operation,
+        status: identity.status,
+        objectKind: identity.objectKind,
+        isReparsePoint: identity.isReparsePoint,
+      },
+      {
+        schemaVersion: 2,
+        operation: "inspect_identity_v2",
+        status: "ok",
+        objectKind: "regular_file",
+        isReparsePoint: true,
+      },
+    );
+    assert.match(identity.volumeIdentity, /^[a-f0-9]{16}$/);
+    assert.match(identity.fileId, /^[a-f0-9]{32}$/);
+  } finally {
+    if (fixtureProcess !== undefined) {
+      fixtureProcess.stdin.end();
+      await fixtureExit?.catch(() => {});
+    }
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("helper manifest is strict, fixed, and canonical", () => {

@@ -8,6 +8,10 @@ const POINTER = "test-current.json";
 const GENERATIONS = "test-generations";
 const LOCK = ".test-publisher.lock";
 const ADMISSION = "test-runtime-admission.json";
+const RELEASE_POINTER = "current.json";
+const RELEASE_GENERATIONS = "generations";
+const RELEASE_LOCK = ".publisher.lock";
+const RELEASE_ADMISSION = "host-runtime-admission.json";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const inside = (root, path) => { const value = relative(root, path); return value === "" || (!value.startsWith(`..${sep}`) && value !== ".." && !isAbsolute(value)); };
 const exactKeys = (value, keys) => value !== null && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
@@ -15,7 +19,7 @@ const exactKeys = (value, keys) => value !== null && typeof value === "object" &
 async function regular(path, error) { const state = await lstat(path); if (state.isSymbolicLink() || !state.isFile()) throw new Error(error); return state; }
 async function allFiles(root, prefix = "") { const result = []; for (const entry of await readdir(resolve(root, prefix), { withFileTypes: true })) { const item = prefix ? `${prefix}/${entry.name}` : entry.name; if (entry.isDirectory()) result.push(...await allFiles(root, item)); else if (entry.isFile()) result.push(item); else throw new Error("test_artifact_nonregular_file"); } return result; }
 async function acquireLock(root) { const path = resolve(root, LOCK); const deadline = Date.now() + 5_000; while (true) { try { const handle = await open(path, "wx", 0o600); return async () => { await handle.close(); await unlink(path); }; } catch (error) { if (error?.code !== "EEXIST") throw error; if (Date.now() >= deadline) throw new Error("test_artifact_publisher_lock_timeout"); await new Promise((done) => setTimeout(done, 50)); } } }
-function testDescriptor(source) { return { runtimePath: "runtime/node.exe", bootstrapPath: "desktop-runtime-bootstrap.internal.js", nodeSha256: source.descriptor.nodeSha256 }; }
+function testDescriptor(source) { return { runtimePath: "runtime/node.exe", bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js", nodeSha256: source.descriptor.nodeSha256 }; }
 function testAdmission(inventory, generation, descriptor) { const runtime = inventory.entries.find((entry) => entry.path === descriptor.runtimePath); const bootstrap = inventory.entries.find((entry) => entry.path === descriptor.bootstrapPath); if (runtime === undefined || bootstrap === undefined) throw new Error("test_runtime_admission_required_entry_missing"); return `${JSON.stringify({ schema: "gamebuddy-host-test-runtime-admission/v1", inventoryDigest: inventory.digest, generation, runtimePath: descriptor.runtimePath, runtimeSha256: runtime.sha256, bootstrapPath: descriptor.bootstrapPath, bootstrapSha256: bootstrap.sha256 })}\n`; }
 const windowsHelpers = [
   ["windowsReparseInspector", "native/windows-reparse-inspector/win-x64", verifyWindowsReparseInspectorPair, true],
@@ -58,6 +62,51 @@ async function copyConfiguredWindowsHelpers({ hostRoot, stagingRoot, config, ori
 
 async function copyRuntime(stagingRoot, source, origins) { const sourceRoot = resolve(source.extractedRoot, source.descriptor.archiveRoot); for (const item of await allFiles(sourceRoot)) { const destinationPath = item === "node.exe" ? "runtime/node.exe" : `runtime/${item}`; const from = resolve(sourceRoot, item); const to = resolve(stagingRoot, destinationPath); await regular(from, "test_runtime_source_invalid"); await mkdir(dirname(to), { recursive: true }); await copyFile(from, to); await regular(to, "test_runtime_copy_invalid"); origins.set(destinationPath, { kind: "test_runtime", source: item, destination: destinationPath }); } }
 function testConfig(config, descriptor) { return { ...config, bundledRuntime: descriptor }; }
+async function addPublishedWindowsHelperOrigins({ artifactRoot, config, origins }) {
+  if (process.platform !== "win32") return;
+  for (const [configKey, , verify, hasAudit] of windowsHelpers) {
+    const descriptor = config[configKey];
+    if (descriptor === undefined) continue;
+    const verified = await verify({ root: artifactRoot, descriptor });
+    const origin = { kind: descriptor.kind, destination: descriptor.destination, helper: descriptor.helper, manifest: descriptor.manifest, helperSha256: verified.helperSha256 };
+    origins.set(`${descriptor.destination}/${descriptor.helper}`, origin);
+    origins.set(`${descriptor.destination}/${descriptor.manifest}`, origin);
+    if (hasAudit) {
+      const audit = resolve(verified.pairRoot, descriptor.probeEvidence);
+      try {
+        await regular(audit, "test_windows_reparse_audit");
+        origins.set(`${descriptor.destination}/${descriptor.probeEvidence}`, { kind: "passive_windows_reparse_live_gate_audit", destination: descriptor.destination, audit: descriptor.probeEvidence });
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+  }
+}
+function releaseRuntimeAdmission(inventory, generation, descriptor) {
+  const runtime = inventory.entries.find((entry) => entry.path === descriptor.runtimePath);
+  const bootstrap = inventory.entries.find((entry) => entry.path === descriptor.bootstrapPath);
+  if (runtime?.sha256 !== descriptor.nodeSha256 || bootstrap === undefined) throw new Error("test_release_runtime_admission_required_entry_missing");
+  const runtimeClosure = {
+    schema: "host-bundled-runtime-closure/v1",
+    files: inventory.entries
+      .filter((entry) => entry.path.startsWith("runtime/") && entry.path !== descriptor.runtimePath)
+      .map((entry) => ({ path: entry.path, sha256: entry.sha256 }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
+  };
+  return `${JSON.stringify({
+    schema: "host-runtime-admission/v1",
+    inventoryDigest: inventory.digest,
+    generation,
+    runtimePath: descriptor.runtimePath,
+    runtimeSha256: runtime.sha256,
+    bootstrapPath: descriptor.bootstrapPath,
+    bootstrapSha256: bootstrap.sha256,
+    runtimeVersion: descriptor.runtimeVersion,
+    runtimePlatform: descriptor.runtimePlatform,
+    runtimeArch: descriptor.runtimeArch,
+    runtimeClosure,
+  })}\n`;
+}
 
 export async function publishTestArtifact({ hostRoot, emittedRoot, outputRoot, runtimeSource }) {
   if (runtimeSource === null || typeof runtimeSource !== "object") throw new Error("test_runtime_source_required");
@@ -105,7 +154,7 @@ async function selectedTestArtifact({ hostRoot, outputRoot }) {
   if (!exactKeys(pointer, ["schema", "generation", "inventoryDigest", "testRuntimeAdmissionSha256"]) || pointer.schema !== "gamebuddy-host-test-current/v1" || !/^tg-[a-z0-9-]+$/i.test(pointer.generation) || !/^[a-f0-9]{64}$/.test(pointer.inventoryDigest) || !/^[a-f0-9]{64}$/.test(pointer.testRuntimeAdmissionSha256)) throw new Error("invalid_test_current_pointer");
   const artifactRoot = resolve(outputRoot, GENERATIONS, pointer.generation); if (!inside(resolve(outputRoot, GENERATIONS), artifactRoot)) throw new Error("invalid_test_generation");
   const state = await lstat(artifactRoot); if (state.isSymbolicLink() || !state.isDirectory()) throw new Error("invalid_test_generation");
-  const config = testConfig(await readArtifactConfig(hostRoot), { runtimePath: "runtime/node.exe", bootstrapPath: "desktop-runtime-bootstrap.internal.js" });
+  const config = testConfig(await readArtifactConfig(hostRoot), { runtimePath: "runtime/node.exe", bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js" });
   const manifest = JSON.parse(await readFile(resolve(artifactRoot, "production-inventory.json"), "utf8"));
   const origins = new Map(config.resources.map((resource) => [resource.destination, { kind: "allowlisted_resource", source: resource.source, destination: resource.destination, config: "production-artifact.config.json" }]));
   if (process.platform === "win32") {
@@ -132,6 +181,44 @@ async function selectedTestArtifact({ hostRoot, outputRoot }) {
   return { ...inventory, generation: pointer.generation, artifactRoot };
 }
 export async function assertCompleteTestArtifact(options) { return selectedTestArtifact(options); }
+
+/**
+ * Rechecks a production-shaped generation created by the test-only fixed-release
+ * composition. The synthetic descriptor is explicit test authority; production
+ * verification still reads its fixed descriptor and therefore cannot accept it.
+ */
+export async function assertCompleteTestReleaseArtifact({ hostRoot, outputRoot, runtimeDescriptor }) {
+  if (runtimeDescriptor === null || typeof runtimeDescriptor !== "object") throw new Error("test_release_runtime_descriptor_required");
+  const configured = await readArtifactConfig(hostRoot);
+  const descriptor = Object.freeze({ ...configured.bundledRuntime, ...runtimeDescriptor });
+  const rootEntries = await readdir(outputRoot);
+  if (rootEntries.some((entry) => ![RELEASE_POINTER, RELEASE_GENERATIONS, RELEASE_LOCK].includes(entry))) throw new Error("test_release_output_root_invalid");
+  const pointer = JSON.parse(await readFile(resolve(outputRoot, RELEASE_POINTER), "utf8"));
+  if (!exactKeys(pointer, ["schema", "generation", "inventoryDigest", "runtimeAdmissionSha256"])
+    || pointer.schema !== "gamebuddy-host-production-current/v2"
+    || typeof pointer.generation !== "string" || !/^g-[a-z0-9-]+$/i.test(pointer.generation)
+    || !/^[a-f0-9]{64}$/.test(pointer.inventoryDigest)
+    || !/^[a-f0-9]{64}$/.test(pointer.runtimeAdmissionSha256)) throw new Error("test_release_current_pointer_invalid");
+  const generationsRoot = resolve(outputRoot, RELEASE_GENERATIONS);
+  const artifactRoot = resolve(generationsRoot, pointer.generation);
+  if (!inside(generationsRoot, artifactRoot)) throw new Error("test_release_generation_invalid");
+  const generationState = await lstat(artifactRoot);
+  if (generationState.isSymbolicLink() || !generationState.isDirectory()) throw new Error("test_release_generation_invalid");
+  const admissionPath = resolve(artifactRoot, RELEASE_ADMISSION);
+  await regular(admissionPath, "test_release_runtime_admission");
+  const admissionBytes = await readFile(admissionPath);
+  if (digest(admissionBytes) !== pointer.runtimeAdmissionSha256) throw new Error("test_release_runtime_admission_pointer_mismatch");
+  const manifest = JSON.parse(await readFile(resolve(artifactRoot, "production-inventory.json"), "utf8"));
+  const config = testConfig(configured, descriptor);
+  const origins = new Map(config.resources.map((resource) => [resource.destination, { kind: "allowlisted_resource", source: resource.source, destination: resource.destination, config: "production-artifact.config.json" }]));
+  await addPublishedWindowsHelperOrigins({ artifactRoot, config, origins });
+  for (const entry of manifest.entries ?? []) if (entry.path?.startsWith("runtime/")) origins.set(entry.path, { kind: descriptor.kind, sourceUrl: descriptor.sourceUrl, archiveSha256: descriptor.archiveSha256 });
+  const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor: descriptor });
+  if (inventory.digest !== pointer.inventoryDigest) throw new Error("test_release_current_pointer_inventory_mismatch");
+  if (admissionBytes.toString("utf8") !== releaseRuntimeAdmission(inventory, pointer.generation, descriptor)) throw new Error("test_release_runtime_admission_invalid");
+  return { ...inventory, generation: pointer.generation, artifactRoot, runtimeAdmissionSha256: pointer.runtimeAdmissionSha256 };
+}
+
 export async function resolveTestArtifactEntry({ hostRoot, outputRoot, entry }) { if (typeof entry !== "string" || !/^[A-Za-z0-9._-]+\.js$/.test(entry)) throw new Error("test_entry_not_configured"); const config = await readArtifactConfig(hostRoot); if (!config.entryRoots.includes(entry)) throw new Error("test_entry_not_configured"); const selected = await selectedTestArtifact({ hostRoot, outputRoot }); const entryPath = resolve(selected.artifactRoot, entry); if (!inside(selected.artifactRoot, entryPath)) throw new Error("test_entry_not_configured"); await regular(entryPath, "test_entry_missing"); return { ...selected, entryPath, artifactKind: "test" }; }
 export async function recheckTestArtifactEntry({ hostRoot, selected }) { const rechecked = await selectedTestArtifact({ hostRoot, outputRoot: resolve(selected.artifactRoot, "..", "..") }); if (rechecked.generation !== selected.generation || rechecked.digest !== selected.digest) throw new Error("test_selected_generation_integrity_mismatch"); await regular(selected.entryPath, "test_entry_missing"); return selected; }
 export async function resolveTestArtifactModule({ selected, module }) { if (typeof module !== "string" || !/^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.js$/.test(module)) throw new Error("test_module_not_configured"); const modulePath = resolve(selected.artifactRoot, module); if (!inside(selected.artifactRoot, modulePath)) throw new Error("test_module_escapes_generation"); const entry = selected.entries.find((value) => value.path === module); if (entry?.type !== "file" || digest(await readFile(modulePath)) !== entry.sha256) throw new Error("test_module_integrity_mismatch"); return { ...selected, module, modulePath }; }

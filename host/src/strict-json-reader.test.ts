@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -57,6 +57,24 @@ async function rejects(contents: string | Buffer): Promise<void> {
   }
 }
 
+async function createDirectoryJunction(target: string, link: string): Promise<void> {
+  const command = process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, ["/d", "/c", "mklink", "/J", link, target], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0 && signal === null) {
+        resolve();
+        return;
+      }
+      reject(new Error(`windows_junction_creation_failed:${code ?? "null"}:${signal ?? "none"}`));
+    });
+  });
+}
+
 test("strict JSON reader returns valid parsed JSON", async () => {
   const subject = await fixture();
   try {
@@ -103,21 +121,18 @@ test("strict JSON reader rejects invalid UTF-8 and files over its bounded limit"
   }
 });
 
-test("strict JSON reader rejects non-files and symbolic links", async (t) => {
+test("strict JSON reader rejects non-files and reparse points", async () => {
   const subject = await fixture();
-  const target = join(subject.root, "target.json");
-  const link = join(subject.root, "link.json");
+  const target = join(subject.root, process.platform === "win32" ? "target-directory" : "target.json");
+  const link = join(subject.root, process.platform === "win32" ? "directory-junction" : "link.json");
   try {
     await assert.rejects(readStrictJsonFile(subject.root), { message: "invalid_strict_json_file" });
-    await writeFile(target, "{}", "utf8");
-    try {
+    if (process.platform === "win32") {
+      await mkdir(target);
+      await createDirectoryJunction(target, link);
+    } else {
+      await writeFile(target, "{}", "utf8");
       await symlink(target, link, "file");
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === "EPERM" || (error as NodeJS.ErrnoException).code === "EACCES") {
-        t.skip("symbolic links are not permitted in this environment");
-        return;
-      }
-      throw error;
     }
     await assert.rejects(readStrictJsonFile(link), { message: "invalid_strict_json_file" });
   } finally {

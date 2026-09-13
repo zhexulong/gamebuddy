@@ -121,6 +121,21 @@ test("accepts official directory entries without extracting them", async () => w
   const bytes = zip([{ name: `${rootName}/`, content: Buffer.alloc(0), attrs: 0x10 }, { name: `${rootName}/node.exe`, content: node }]);
   await acquire(root, bytes, descriptor(bytes, node));
 }));
+test("emits a globally ordered closure when a directory name sorts before its sibling file", async () => withRoot(async (root) => {
+  const rootName = "node-v24.20.0-win-x64";
+  const node = Buffer.from("node");
+  const bytes = zip([
+    { name: `${rootName}/node.exe`, content: node },
+    { name: `${rootName}/node_modules/npm/lib/cli.js` },
+    { name: `${rootName}/node_modules/npm/lib/cli/validate-engines.js` },
+  ]);
+  const runtime = await acquire(root, bytes, descriptor(bytes, node));
+  assert.deepEqual(runtime.files.map((entry) => entry.sourcePath), [
+    "node_modules/npm/lib/cli.js",
+    "node_modules/npm/lib/cli/validate-engines.js",
+    "node.exe",
+  ]);
+}));
 test("rejects duplicate paths, links, encryption, unsupported compression metadata, and missing node", async () => withRoot(async (root) => {
   for (const entries of [
     [{ name: "node-v24.20.0-win-x64/node.exe", content: Buffer.from("node") }, { name: "node-v24.20.0-win-x64/NODE.EXE" }],
@@ -162,7 +177,7 @@ test("production boundary modules expose no generic publisher/provider test APIs
   assert.equal(Object.hasOwn(await import("./node-runtime-release-acquisition.mjs"), "consumeFixedReleaseRuntimeForInternalPublisher"), false);
   assert.equal(Object.hasOwn(await import("./node-runtime-release-acquisition.mjs"), "withFixedReleaseRuntimeForInternalBuild"), false);
 });
-test("non-Windows synthetic acquisition retains isolated test scratch behavior", { skip: process.platform === "win32" }, async () => {
+test("non-Windows synthetic acquisition retains isolated test scratch behavior", { skip: process.platform === "win32" ? "platform_non_applicable: synthetic non-Windows scratch behavior is covered off Windows" : false }, async () => {
   const bytes = zip([{ name: "node-v24.20.0-win-x64/node.exe", content: Buffer.from("node") }]);
   await assert.doesNotReject(withSyntheticVerifiedReleaseBundledRuntimeForTest({ descriptor: descriptor(bytes), zipBytes: bytes }, async () => undefined));
 });
@@ -275,7 +290,7 @@ test("Windows release scratch admission removes its fresh exact helper pair and 
       descriptor: descriptor(bytes),
       zipBytes: bytes,
       scratchRootForTest: async () => {
-        const scratch = await createWindowsReleaseBootstrapScratch();
+        const scratch = await createWindowsReleaseBootstrapScratch({ env: protectedReleaseEnvironment });
         return Object.freeze({ root: scratch.root, dispose: scratch.close });
       },
       afterAcquisitionForTest: async ({ extractedRoot }) => {

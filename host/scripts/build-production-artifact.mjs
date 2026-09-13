@@ -384,6 +384,7 @@ async function buildComposedProductionArtifact({
   afterBrowserBuild = undefined,
   onCompositionVerified = undefined,
   onBrowserBuildInvocation = undefined,
+  platform = process.platform,
 } = {}) {
   if (afterBrowserBuild !== undefined && typeof afterBrowserBuild !== "function")
     throw new Error("invalid_after_browser_build_hook");
@@ -406,7 +407,7 @@ async function buildComposedProductionArtifact({
     await verifyMagicContext();
     // The version-locked native provenance and emitted policy adapter must exist
     // before Vite imports Lane C's manifest generator on Windows.
-    if (process.platform === "win32") {
+    if (platform === "win32") {
       await buildWindowsReparseInspector();
       const config = await readArtifactConfig(hostRoot);
       if (config.windowsReparseInspector === undefined) throw new Error("windows_reparse_inspector_descriptor_missing");
@@ -448,10 +449,10 @@ async function buildComposedProductionArtifact({
       manifest: browserManifest,
     });
     const verifyTavernStaticArtifact = await emittedHostStaticVerifier(stagingRoot);
-    const { createPublishedWindowsReparseInspector } = process.platform === "win32"
+    const { createPublishedWindowsReparseInspector } = platform === "win32"
       ? await import(pathToFileURL(resolve(stagingRoot, "windows-reparse-inspector", "index.js")).href)
       : {};
-    const inspector = process.platform === "win32" ? await createPublishedWindowsReparseInspector(closureRoot) : undefined;
+    const inspector = platform === "win32" ? await createPublishedWindowsReparseInspector(closureRoot) : undefined;
     await verifyTavernStaticArtifact(copiedBrowserRoot, browserIdentity, inspector);
     await onCompositionVerified?.(Object.freeze({ browserRoot: copiedBrowserRoot, identity: browserIdentity }));
     return await publish({ hostRoot, emittedRoot: closureRoot, outputRoot });
@@ -494,11 +495,12 @@ export async function buildFixedReleaseProductionArtifact() {
 }
 
 /** Test-only fixed-release composition for a disposable canonical generation. */
-export async function buildFixedReleaseProductionArtifactForTest({ outputRoot }) {
+export async function buildFixedReleaseProductionArtifactForTest({ outputRoot, ...options }) {
   const { publishFixedReleaseArtifactFromVerifiedRuntimeForTest } = await import("./production-artifact.mjs");
   if (typeof outputRoot !== "string" || outputRoot.length === 0 || fixedReleaseEmittedRoot !== undefined)
     throw new Error("invalid_release_runtime_composition");
   return await buildComposedProductionArtifact({
+    ...options,
     outputRoot,
     publish: async ({ emittedRoot }) => {
       fixedReleaseEmittedRoot = emittedRoot;

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -33,6 +33,28 @@ const canonicalTemporaryRoot = () => {
 const staleAgo = () => new Date(Date.now() - 6 * 60_000);
 const staleOwner = (pid: number, createdAtMs = Date.now() - 6 * 60_000) =>
   JSON.stringify({ token: "00000000-0000-4000-8000-000000000000", pid, createdAtMs });
+
+async function createDirectoryReparseFixture(target: string, link: string): Promise<void> {
+  if (process.platform !== "win32") {
+    await symlink(target, link, "dir");
+    return;
+  }
+  const command = process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, ["/d", "/c", "mklink", "/J", link, target], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0 && signal === null) {
+        resolve();
+        return;
+      }
+      reject(new Error(`windows_junction_creation_failed:${code ?? "null"}:${signal ?? "none"}`));
+    });
+  });
+}
 
 async function makeStale(path: string) {
   await utimes(path, staleAgo(), staleAgo());
@@ -691,7 +713,7 @@ test("normal owner release fails closed without a reclaimer capability", async (
 
 test("normal withPathLock use fails closed at release on non-Windows without any capability binding", async (t) => {
   if (process.platform === "win32") {
-    t.skip("Windows production locking mints the fixed helper pair; this documents the non-Windows default");
+    t.skip("platform_non_applicable: Windows production locking mints the fixed helper pair; this documents the non-Windows default");
     return;
   }
   // No fake and no explicit binding: on non-Windows the fixed default request
@@ -880,20 +902,7 @@ test("safe directory enumeration rejects linked entries before returning them", 
   const outside = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-safe-directory-outside-"));
   try {
     await writeFile(join(directory, "valid.json"), "ok", "utf8");
-    try {
-      await symlink(outside, join(directory, "linked"), process.platform === "win32" ? "junction" : "dir");
-    } catch (error) {
-      if (
-        process.platform === "win32" &&
-        error instanceof Error &&
-        "code" in error &&
-        ["EPERM", "EACCES", "ENOTSUP"].includes(String(error.code))
-      ) {
-        t.skip("Windows junction fixture creation is unsupported");
-        return;
-      }
-      throw error;
-    }
+    await createDirectoryReparseFixture(outside, join(directory, "linked"));
     await assert.rejects(readSafeDirectory(directory, directory), /unsafe_path_boundary/);
   } finally {
     await rm(directory, { recursive: true, force: true });

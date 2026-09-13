@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
@@ -6,20 +7,31 @@ import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { browserBuildEnvironment, browserBuildInvocation, buildProductionArtifact, retainEntrypointClosure, runBrowserBuild, writeBrowserViteConfig } from "./build-production-artifact.mjs";
-import { assertApprovedProductionBundledRuntimeAvailable, assertCompleteProductionArtifact, resolveProductionEntry, verifyWindowsReparseInspectorPair } from "./production-artifact.mjs";
+import { browserBuildEnvironment, browserBuildInvocation, buildFixedReleaseProductionArtifactForTest, retainEntrypointClosure, runBrowserBuild, writeBrowserViteConfig } from "./build-production-artifact.mjs";
+import { assertCompleteProductionArtifact, verifyWindowsReparseInspectorPair } from "./production-artifact.mjs";
+import { withSyntheticVerifiedReleaseBundledRuntimeFixedReleaseCompositionForTest } from "./node-runtime-release-acquisition.mjs";
+import { assertCompleteTestReleaseArtifact, resolveTestArtifactEntry } from "./production-artifact-test-support.mjs";
 
 const hostRoot = fileURLToPath(new URL("..", import.meta.url));
-const approvedRuntimeAvailable = (() => {
-  try {
-    assertApprovedProductionBundledRuntimeAvailable();
-    return true;
-  } catch (error) {
-    if (error?.message === "verified_bundled_runtime_input_required") return false;
-    throw error;
-  }
-})();
-const browserCompositionSkip = !approvedRuntimeAvailable && "approved-runtime-acquisition-unavailable";
+function syntheticRuntimeFixture() {
+  const node = Buffer.from("synthetic-node-runtime");
+  const archiveRoot = "node-v24.20.0-win-x64";
+  const u16 = (value) => { const bytes = Buffer.alloc(2); bytes.writeUInt16LE(value); return bytes; };
+  const u32 = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32LE(value); return bytes; };
+  const name = Buffer.from(`${archiveRoot}/node.exe`);
+  const local = Buffer.concat([Buffer.from("504b0304", "hex"), u16(20), u16(0), u16(0), u16(0), u16(0), u32(0), u32(node.length), u32(node.length), u16(name.length), u16(0), name, node]);
+  const central = Buffer.concat([Buffer.from("504b0102", "hex"), u16(0), u16(20), u16(0), u16(0), u16(0), u16(0), u32(0), u32(node.length), u32(node.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(0), name]);
+  const zipBytes = Buffer.concat([local, central, Buffer.from("504b0506", "hex"), u16(0), u16(0), u16(1), u16(1), u32(central.length), u32(local.length), u16(0)]);
+  const hash = (value) => createHash("sha256").update(value).digest("hex");
+  return { zipBytes, descriptor: { sourceUrl: "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip", archiveSha256: hash(zipBytes), archiveRoot, nodeSha256: hash(node) } };
+}
+
+async function buildSyntheticReleaseArtifact(outputRoot, options = {}) {
+  const runtime = syntheticRuntimeFixture();
+  const published = await withSyntheticVerifiedReleaseBundledRuntimeFixedReleaseCompositionForTest(runtime, async () =>
+    await buildFixedReleaseProductionArtifactForTest({ outputRoot, ...options }));
+  return { ...published, runtimeDescriptor: runtime.descriptor };
+}
 
 async function files(root, prefix = "") {
   const entries = await readdir(join(root, prefix), { withFileTypes: true });
@@ -45,17 +57,18 @@ test("closure retains the fixed desktop bootstrap without adding it to product e
   try {
     await mkdir(emittedRoot);
     await writeFile(join(emittedRoot, "main.js"), "export {};\n", "utf8");
-    await writeFile(join(emittedRoot, "desktop-host-entry.internal.js"), "export {};\n", "utf8");
+    await mkdir(join(emittedRoot, "bootstrap", "entry"), { recursive: true });
+    await writeFile(join(emittedRoot, "bootstrap", "entry", "desktop-host-entry.internal.js"), "export {};\n", "utf8");
 
     await retainEntrypointClosure({
       emittedRoot,
       closureRoot,
-      entryRoots: ["main.js", "desktop-host-entry.internal.js"],
+      entryRoots: ["main.js", "bootstrap/entry/desktop-host-entry.internal.js"],
     });
 
-    assert.equal(await readFile(join(closureRoot, "desktop-host-entry.internal.js"), "utf8"), "export {};\n");
+    assert.equal(await readFile(join(closureRoot, "bootstrap", "entry", "desktop-host-entry.internal.js"), "utf8"), "export {};\n");
     const { entryRoots } = JSON.parse(await readFile(join(hostRoot, "production-artifact.config.json"), "utf8"));
-    assert.equal(entryRoots.includes("desktop-host-entry.internal.js"), false);
+    assert.equal(entryRoots.includes("bootstrap/entry/desktop-host-entry.internal.js"), false);
   } finally {
     await fixture.dispose();
   }
@@ -112,11 +125,12 @@ test("Windows browser timeout awaits exact taskkill success and rejects taskkill
   }
 });
 
-test("non-Windows builder fails closed before browser composition or publication while approved runtime acquisition is unavailable", { skip: process.platform === "win32" }, async () => {
+test("non-Windows builder fails closed before browser composition or publication while approved runtime acquisition is unavailable", { skip: process.platform === "win32" ? "platform_non_applicable: non-Windows runtime acquisition gate" : false }, async () => {
   const fixture = await outputFixture();
   let browserBuildRequested = false;
   let compositionVerified = false;
   try {
+    const { buildProductionArtifact } = await import("./build-production-artifact.mjs");
     await assert.rejects(
       buildProductionArtifact({
         outputRoot: fixture.root,
@@ -133,13 +147,12 @@ test("non-Windows builder fails closed before browser composition or publication
   }
 });
 
-test("builder composes one verified private browser subtree into the published Host generation", { skip: browserCompositionSkip }, async () => {
+test("builder composes one verified private browser subtree into the published Host generation", async () => {
   const fixture = await outputFixture();
   let observed;
   let requestedBrowserStagingRoot;
   try {
-    const published = await buildProductionArtifact({
-      outputRoot: fixture.root,
+    const { runtimeDescriptor, ...published } = await buildSyntheticReleaseArtifact(fixture.root, {
       onBrowserBuildInvocation: ({ stagingRoot, invocation }) => {
         requestedBrowserStagingRoot = stagingRoot;
         assert.match(relative(join(hostRoot, "..", "dialogue-web", ".build-staging"), stagingRoot), /^[a-f0-9]{32}$/);
@@ -163,19 +176,25 @@ test("builder composes one verified private browser subtree into the published H
     assert.deepEqual(observed.files, ["index.html", "tavern-browser-artifact-manifest.json", ...copiedManifest.assets.map((asset) => asset.path)].sort());
     assert.equal(observed.files.some((path) => /WindowsReparseInspector|windows-reparse-inspector/i.test(path)), false, "browser tree must not serve native helper provenance");
     assert.ok(copiedManifest.assets.length > 0);
-    const complete = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
+    const complete = await assertCompleteTestReleaseArtifact({ hostRoot, outputRoot: fixture.root, runtimeDescriptor });
+    await assert.rejects(
+      assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root }),
+      /bundled_runtime_invalid/,
+      "the production verifier must not accept a synthetic release runtime descriptor",
+    );
     const browserEntries = complete.entries.filter((entry) => entry.path.startsWith("browser/"));
     assert.deepEqual(browserEntries.map((entry) => entry.path), observed.files.map((path) => `browser/tavern/v1/${path}`));
     assert.equal(published.generation, complete.generation);
-    for (const path of ["tavern/p4-durable-turn-acceptance.js", "tavern/p4-durable-turn-acceptance.internal.js"])
-      assert.ok(complete.entries.some((entry) => entry.path === path), `${path} must be retained as a verified P4 composition module`);
+    const config = JSON.parse(await readFile(join(hostRoot, "production-artifact.config.json"), "utf8"));
+    for (const path of config.verificationRoots)
+      assert.ok(complete.entries.some((entry) => entry.path === path), `${path} must be retained as a verified production verification root`);
     assert.ok(
-      complete.entries.some((entry) => entry.path === "desktop-host-entry.internal.js"),
+      complete.entries.some((entry) => entry.path === "bootstrap/entry/desktop-host-entry.internal.js"),
       "the fixed desktop runtime bootstrap must remain in the normal artifact closure without becoming an entryRoot",
     );
     await assert.rejects(
-      resolveProductionEntry({ hostRoot, outputRoot: fixture.root, entry: "tavern/p4-durable-turn-acceptance.js" }),
-      /production_entry_not_configured/,
+      resolveTestArtifactEntry({ hostRoot, outputRoot: fixture.root, entry: config.verificationRoots[0] }),
+      /test_entry_not_configured/,
     );
     assert.ok(requestedBrowserStagingRoot);
   } finally {
@@ -186,17 +205,20 @@ test("builder composes one verified private browser subtree into the published H
 async function assertRejectedBrowserComposition(mutate, expectedError) {
   const fixture = await outputFixture();
   try {
-    await buildProductionArtifact({ outputRoot: fixture.root });
-    const before = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
-    await assert.rejects(buildProductionArtifact({ outputRoot: fixture.root, afterBrowserBuild: mutate }), expectedError);
-    const after = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
+    const first = await buildSyntheticReleaseArtifact(fixture.root);
+    const before = await assertCompleteTestReleaseArtifact({ hostRoot, outputRoot: fixture.root, runtimeDescriptor: first.runtimeDescriptor });
+    await assert.rejects(
+      buildSyntheticReleaseArtifact(fixture.root, { afterBrowserBuild: mutate }),
+      expectedError,
+    );
+    const after = await assertCompleteTestReleaseArtifact({ hostRoot, outputRoot: fixture.root, runtimeDescriptor: first.runtimeDescriptor });
     assert.equal(after.generation, before.generation);
   } finally {
     await fixture.dispose();
   }
 }
 
-test("browser composition rejects wrong manifest identity", { skip: browserCompositionSkip }, async () => {
+test("browser composition rejects wrong manifest identity", async () => {
   await assertRejectedBrowserComposition(async (browserStagingRoot) => {
     const path = join(browserStagingRoot, "tavern-browser-artifact-manifest.json");
     const manifest = JSON.parse(await readFile(path, "utf8"));
@@ -205,20 +227,20 @@ test("browser composition rejects wrong manifest identity", { skip: browserCompo
   }, /invalid identity|invalid_declared_browser_artifact/);
 });
 
-test("browser composition rejects stale manifest hashes", { skip: browserCompositionSkip }, async () => {
+test("browser composition rejects stale manifest hashes", async () => {
   await assertRejectedBrowserComposition(async (browserStagingRoot) => {
     const manifest = JSON.parse(await readFile(join(browserStagingRoot, "tavern-browser-artifact-manifest.json"), "utf8"));
     await writeFile(join(browserStagingRoot, manifest.assets[0].path), "stale", "utf8");
   }, /does not match its manifest/);
 });
 
-test("browser composition rejects extra browser files", { skip: browserCompositionSkip }, async () => {
+test("browser composition rejects extra browser files", async () => {
   await assertRejectedBrowserComposition(async (browserStagingRoot) =>
     await writeFile(join(browserStagingRoot, "assets", "extra-abcdef12.js.map"), "{}", "utf8"),
   /source maps|unexpected file|invalid_tavern_static_artifact/);
 });
 
-test("browser composition rejects reparse/link staging entries", { skip: browserCompositionSkip }, async (t) => {
+test("browser composition rejects reparse/link staging entries", async (t) => {
   const probe = await mkdtemp(join(tmpdir(), "gamebuddy-link-probe-"));
   try {
     const target = join(probe, "target");
@@ -227,7 +249,7 @@ test("browser composition rejects reparse/link staging entries", { skip: browser
       await symlink(target, join(probe, "link"), "file");
     } catch (error) {
       if (process.platform === "win32" && ["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) {
-        t.skip(`Windows link fixture unavailable: ${error.code}`);
+        t.skip(`platform_non_applicable: Windows file-link fixture unavailable: ${error.code}`);
         return;
       }
       throw error;
@@ -243,20 +265,19 @@ test("browser composition rejects reparse/link staging entries", { skip: browser
   }, /symlink|reparse|non-regular/);
 });
 
-test("browser composition failure leaves the existing published generation untouched", { skip: browserCompositionSkip }, async () => {
+test("browser composition failure leaves the existing published generation untouched", async () => {
   const fixture = await outputFixture();
   try {
-    await buildProductionArtifact({ outputRoot: fixture.root });
-    const before = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
+    const first = await buildSyntheticReleaseArtifact(fixture.root);
+    const before = await assertCompleteTestReleaseArtifact({ hostRoot, outputRoot: fixture.root, runtimeDescriptor: first.runtimeDescriptor });
     await assert.rejects(
-      buildProductionArtifact({
-        outputRoot: fixture.root,
+      buildSyntheticReleaseArtifact(fixture.root, {
         afterBrowserBuild: async (browserStagingRoot) =>
           await writeFile(join(browserStagingRoot, "assets", "extra-abcdef12.js.map"), "{}", "utf8"),
       }),
       /source maps|unexpected file|invalid_tavern_static_artifact/,
     );
-    const after = await assertCompleteProductionArtifact({ hostRoot, outputRoot: fixture.root });
+    const after = await assertCompleteTestReleaseArtifact({ hostRoot, outputRoot: fixture.root, runtimeDescriptor: first.runtimeDescriptor });
     assert.equal(after.generation, before.generation);
     assert.equal(relative(after.artifactRoot, before.artifactRoot), "");
   } finally {
@@ -288,6 +309,7 @@ test("Windows helper pair verifier fails closed for missing or invalid helper/ma
 test("Windows composition fails closed before any publication while approved runtime acquisition is unavailable", { skip: process.platform !== "win32" }, async () => {
   const fixture = await outputFixture();
   try {
+    const { buildProductionArtifact } = await import("./build-production-artifact.mjs");
     await assert.rejects(
       buildProductionArtifact({ outputRoot: fixture.root }),
       /verified_bundled_runtime_input_required/,
@@ -298,10 +320,11 @@ test("Windows composition fails closed before any publication while approved run
   }
 });
 
-test("non-Windows browser composition failure cannot create a current pointer while runtime acquisition is unavailable", { skip: process.platform === "win32" }, async () => {
+test("non-Windows browser composition failure cannot create a current pointer while runtime acquisition is unavailable", { skip: process.platform === "win32" ? "platform_non_applicable: non-Windows runtime acquisition gate" : false }, async () => {
   const fixture = await outputFixture();
   let browserHookCalled = false;
   try {
+    const { buildProductionArtifact } = await import("./build-production-artifact.mjs");
     await assert.rejects(
       buildProductionArtifact({
         outputRoot: fixture.root,

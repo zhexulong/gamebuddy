@@ -15,6 +15,10 @@
     "src/main.ts",
     "src/dialogue-web-main.ts",
     "src/dialogue-web-main.test.ts",
+    "src/portfolio-protocol.test.ts",
+    "src/portfolio-transport.test.ts",
+    "src/portfolio-stardew-bridge.test.ts",
+    "src/portfolio-stardew-interop.test.ts",
     "src/windows-legacy-authority-seal/**"
   ]
 }

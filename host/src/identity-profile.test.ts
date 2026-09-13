@@ -68,22 +68,15 @@ test("IdentityProfile canonicalizes a bounded reviewed persona guide", () => {
   assert.notEqual(identityProfileHash(profile), identityProfileHash(DEFAULT_IDENTITY_PROFILE));
 });
 
-test("IdentityProfile writes reject a replaced symlink target without touching the outside sentinel", async (t) => {
+test("IdentityProfile writes reject a replaced directory boundary without touching the outside sentinel", async () => {
   const root = await canonicalTestRoot("gamebuddy-identity-profile-boundary-");
   const outside = await canonicalTestRoot("gamebuddy-identity-profile-outside-");
-  const outsideFile = join(outside, "sentinel.json");
-  const target = join(root, "identity-profile.json");
+  const link = join(root, "profile-directory");
+  const outsideFile = join(outside, "identity-profile.json");
+  const target = join(link, "identity-profile.json");
   try {
     await writeFile(outsideFile, "outside-sentinel", "utf8");
-    try {
-      await symlink(outsideFile, target, "file");
-    } catch (error) {
-      if (error instanceof Error && "code" in error && ["EPERM", "EACCES", "ENOTSUP"].includes(String(error.code))) {
-        t.skip("symlink fixture creation is unsupported");
-        return;
-      }
-      throw error;
-    }
+    await symlink(outside, link, process.platform === "win32" ? "junction" : "dir");
     await assert.rejects(
       writeIdentityProfile(target, DEFAULT_IDENTITY_PROFILE, { containmentRoot: root }),
       /unsafe_path_boundary/,

@@ -77,7 +77,7 @@ public sealed class InstalledHostRuntimeAdmissionTests
 
     [Theory]
     [InlineData("runtime/node.exe")]
-    [InlineData("desktop-host-entry.internal.js")]
+    [InlineData("bootstrap/entry/desktop-host-entry.internal.js")]
     public async Task Admit_rejects_runtime_or_bootstrap_tamper(string admittedFile)
     {
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();

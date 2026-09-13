@@ -33,7 +33,7 @@ const BUNDLED_RUNTIME = {
   archiveRoot: "node-v24.20.0-win-x64",
   runtimePath: "runtime/node.exe",
   nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
-  bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+  bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js",
   runtimeVersion: "v24.20.0",
   runtimePlatform: "win32",
   runtimeArch: "x64",
@@ -253,6 +253,9 @@ test("production-private runtime publisher emits a lexicographically ordered mul
     { path: "node.exe", bytes: Buffer.from("test node runtime") },
     { path: "a.dll", bytes: Buffer.from("a runtime dependency") },
     { path: "nested/z.dll", bytes: Buffer.from("nested runtime dependency") },
+    { path: "node_modules/@npmcli/agent/index.js", bytes: Buffer.from('export {};\n') },
+    { path: "node_modules/corepack/dist/corepack.js", bytes: Buffer.from('await import("node:fs");\n') },
+    { path: "node_modules/corepack/package.json", bytes: Buffer.from('{"name":"corepack"}\n') },
   ];
   const { bytes, node } = syntheticRuntimeZip(files);
   const descriptor = { ...BUNDLED_RUNTIME, archiveSha256: testHash(bytes), nodeSha256: testHash(node) };
@@ -267,10 +270,13 @@ test("production-private runtime publisher emits a lexicographically ordered mul
       const artifactRoot = join(outputRoot, "generations", published.generation);
       const sidecarPath = join(artifactRoot, "host-runtime-admission.json");
       const sidecar = JSON.parse(await readFile(sidecarPath, "utf8"));
-      const expectedClosure = [
-        { path: "runtime/a.dll", sha256: testHash(files[1].bytes) },
-        { path: "runtime/nested/z.dll", sha256: testHash(files[2].bytes) },
-      ];
+  const expectedClosure = [
+    { path: "runtime/a.dll", sha256: testHash(files[1].bytes) },
+    { path: "runtime/nested/z.dll", sha256: testHash(files[2].bytes) },
+    { path: "runtime/node_modules/@npmcli/agent/index.js", sha256: testHash(files[3].bytes) },
+    { path: "runtime/node_modules/corepack/dist/corepack.js", sha256: testHash(files[4].bytes) },
+    { path: "runtime/node_modules/corepack/package.json", sha256: testHash(files[5].bytes) },
+  ];
       assert.deepEqual(sidecar.runtimeClosure, { schema: "host-bundled-runtime-closure/v1", files: expectedClosure });
       for (const replacement of [
         { ...sidecar, runtimeClosure: { ...sidecar.runtimeClosure, files: [...expectedClosure].reverse() } },
@@ -318,7 +324,7 @@ test("production-private runtime publisher emits canonical admission/current bin
         generation: published.generation,
         runtimePath: "runtime/node.exe",
         runtimeSha256: testHash(node),
-        bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+        bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js",
         bootstrapSha256: testHash(Buffer.from("export {};\n")),
         runtimeVersion: "v24.20.0",
         runtimePlatform: "win32",
@@ -375,7 +381,7 @@ test("current production config fixes the bundled Node runtime and bootstrap ent
     archiveRoot: "node-v24.20.0-win-x64",
     runtimePath: "runtime/node.exe",
     nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
-    bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+    bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js",
     runtimeVersion: "v24.20.0",
     runtimePlatform: "win32",
     runtimeArch: "x64",
@@ -419,7 +425,7 @@ test("production config is exact v3 and retains the current Chat/reference verif
     (() => { const { verificationRoots, ...withoutRoots } = valid; return withoutRoots; })(),
     (() => { const { bundledRuntime, ...withoutRuntime } = valid; return withoutRuntime; })(),
     { ...valid, bundledRuntime: { ...BUNDLED_RUNTIME, runtimeVersion: "v24.20.1" } },
-    { ...valid, bundledRuntime: { ...BUNDLED_RUNTIME, bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js" } },
+    { ...valid, bundledRuntime: { ...BUNDLED_RUNTIME, bootstrapPath: "desktop-runtime-bootstrap.internal.js" } },
     { ...valid, verificationRoots: [] },
     { ...valid, verificationRoots: ["main.js"] },
     { ...valid, verificationRoots: [REQUIRED_VERIFICATION_ROOTS[0]] },
@@ -546,8 +552,9 @@ async function emit(root, content = "export {};\n") {
   const emitted = join(root, "emitted");
   await rm(emitted, { recursive: true, force: true });
   await mkdir(join(emitted, "tavern"), { recursive: true });
+  await mkdir(join(emitted, "bootstrap", "entry"), { recursive: true });
   await writeFile(join(emitted, "main.js"), `import "typebox";\n${content}`);
-  await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
+  await writeFile(join(emitted, "bootstrap/entry/desktop-host-entry.internal.js"), "export {};\n");
   for (const verificationRoot of REQUIRED_VERIFICATION_ROOTS) {
     await mkdir(dirname(join(emitted, verificationRoot)), { recursive: true });
     await writeFile(join(emitted, verificationRoot), "export {};\n");
@@ -812,7 +819,7 @@ test("synthetic publisher sidecar binds exact fixed runtime/bootstrap facts and 
     generation: second.generation,
     runtimePath: "runtime/node.exe",
     runtimeSha256: testHash(Buffer.from("test node runtime")),
-    bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+    bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js",
     bootstrapSha256: testHash(Buffer.from("export {};\n")),
   });
   for (const replacement of [
@@ -838,7 +845,7 @@ test("synthetic publisher recheck fails closed for fixed runtime/bootstrap mutat
   const dist = join(root, "dist");
   for (const [path, content] of [
     ["runtime/node.exe", "replaced runtime"],
-    ["desktop-runtime-bootstrap.internal.js", "replaced bootstrap"],
+    ["bootstrap/entry/desktop-host-entry.internal.js", "replaced bootstrap"],
   ]) {
     await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
     const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
@@ -1151,15 +1158,16 @@ test("rejects every legacy continuity artifact namespace by category", async () 
 test("publisher retains only the fixed Desktop formal entry closure without exposing a public entry root", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   const emitted = await emit(root);
+  await mkdir(join(emitted, "bootstrap", "entry"), { recursive: true });
   await mkdir(join(emitted, "desktop"), { recursive: true });
-  await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), 'import "./desktop/private-helper.js";\n');
+  await writeFile(join(emitted, "bootstrap/entry/desktop-host-entry.internal.js"), 'import "./../../desktop/private-helper.js";\n');
   await writeFile(join(emitted, "desktop/private-helper.js"), "export const privateHelper = true;\n");
 
   const published = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-  for (const module of ["desktop-runtime-bootstrap.internal.js", "desktop/private-helper.js"])
+  for (const module of ["bootstrap/entry/desktop-host-entry.internal.js", "desktop/private-helper.js"])
     assert.ok(published.entries.some((entry) => entry.path === module), `${module} must be retained`);
   const config = await readArtifactConfig(root);
-  assert.equal(config.entryRoots.includes("desktop-runtime-bootstrap.internal.js"), false);
+  assert.equal(config.entryRoots.includes("bootstrap/entry/desktop-host-entry.internal.js"), false);
 
   await mkdir(join(emitted, "unreachable"));
   await writeFile(join(emitted, "unreachable/otherwise-valid.js"), "export const unreachable = true;\n");
@@ -1169,7 +1177,7 @@ test("publisher retains only the fixed Desktop formal entry closure without expo
   );
   await rm(join(emitted, "unreachable"), { recursive: true });
 
-  await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
+  await writeFile(join(emitted, "bootstrap/entry/desktop-host-entry.internal.js"), "export {};\n");
   await assert.rejects(
     publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist }),
     /production_module_unreachable_from_entry_roots:desktop\/private-helper\.js/,
@@ -1268,8 +1276,10 @@ test("concurrent publishers serialize, preserve current, and reject stale direct
   for (const emitted of [first, second]) await mkdir(join(emitted, "tavern"), { recursive: true });
   await writeFile(join(first, "main.js"), 'import "typebox"; "first";');
   await writeFile(join(second, "main.js"), 'import "typebox"; "second";');
-  for (const emitted of [first, second])
-    await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
+  for (const emitted of [first, second]) {
+    await mkdir(join(emitted, "bootstrap", "entry"), { recursive: true });
+    await writeFile(join(emitted, "bootstrap/entry/desktop-host-entry.internal.js"), "export {};\n");
+  }
   for (const verificationRoot of REQUIRED_VERIFICATION_ROOTS) {
     await mkdir(dirname(join(first, verificationRoot)), { recursive: true });
     await mkdir(dirname(join(second, verificationRoot)), { recursive: true });
@@ -1633,7 +1643,8 @@ test("starter accepts exactly one configured root then forwards config arguments
       await mkdir(dirname(join(emitted, verificationRoot)), { recursive: true });
       await writeFile(join(emitted, verificationRoot), "export {};\n");
     }
-    await writeFile(join(emitted, "desktop-runtime-bootstrap.internal.js"), "export {};\n");
+    await mkdir(join(emitted, "bootstrap", "entry"), { recursive: true });
+    await writeFile(join(emitted, "bootstrap/entry/desktop-host-entry.internal.js"), "export {};\n");
     await writeFile(join(emitted, entry), 'import "typebox"; process.stdout.write(JSON.stringify({ args: process.argv.slice(2), controlsPresent: Boolean(process.env.GAMEBUDDY_CONTROL_PIPE || process.env.GAMEBUDDY_CONTROL_TOKEN) }));');
     await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
     const child = await runChild(process.execPath, [start, entry, "--config", `${entry}.json`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });

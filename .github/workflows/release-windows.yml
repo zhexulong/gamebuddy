@@ -50,23 +50,35 @@ jobs:
       - run: pnpm --filter @gamebuddy/voice-protocol typecheck
       - run: pnpm --filter @gamebuddy/voice-protocol build
       - run: pnpm typecheck
+      # The helper builders require the repository-locked SDK from global.json;
+      # install that exact SDK before any native release helper is built.
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
       # Host tests mint only repository-built, fixed Windows helper pairs; they
       # never use an unverified production generation.
       - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
       - run: node host/scripts/build-windows-reparse-inspector.mjs
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 6.0.x
+      # Validate the fresh TypeScript-emitted adapter namespace before any
+      # release test or publisher step can consume it.
+      - run: node host/scripts/check-windows-reparse-emitted-boundary.mjs
+      - run: node host/scripts/run-windows-reparse-live-gate.mjs
+      # The repository-locked SDK also restores the net6.0 test projects; do not
+      # switch toolchains before the release builder consumes the same lock.
       - run: dotnet restore integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/GameBuddy.Stardew.Core.Tests.csproj
       - run: dotnet restore integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj
       - run: pnpm --dir host test
         env:
           GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}
+          GAMEBUDDY_HOST_TEST_STRICT_DISPOSITION: "1"
       # This is the sole network-acquisition entry. It fails closed unless the
       # protected workflow identity, tag grammar, Windows x64 runner and release
       # environment marker all match. Installer assembly, certificate work, and
       # distribution upload are blocked pending their separately approved contract.
       - run: pnpm --dir host build:release
+      - run: node host/scripts/run-release-script-suite.mjs
+        env:
+          GAMEBUDDY_HOST_TEST_STRICT_DISPOSITION: "1"
       - run: pnpm --dir host check:production-artifact
       # Recovery cleanup is repository-owned and derives only this exact protected
       # workflow run root. It never accepts a path or scans TEMP. The native

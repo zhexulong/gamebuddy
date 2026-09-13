@@ -337,7 +337,9 @@ test("strict identity fails closed on unavailable, timeout, stderr, nonzero, and
   }
 });
 
-test("strict identity is explicitly unavailable on non-Windows", { skip: process.platform === "win32" }, async () => {
+test("strict identity is explicitly unavailable on non-Windows", {
+  skip: process.platform === "win32" ? "platform_non_applicable: strict identity is unavailable on non-Windows" : false,
+}, async () => {
   let invoked = false;
   const capability = createTestWindowsReparseInspector(() => {
     invoked = true;

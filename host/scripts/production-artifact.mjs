@@ -29,7 +29,7 @@ const BUNDLED_RUNTIME = Object.freeze({
   archiveRoot: "node-v24.20.0-win-x64",
   runtimePath: "runtime/node.exe",
   nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
-  bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+  bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js",
   runtimeVersion: "v24.20.0",
   runtimePlatform: "win32",
   runtimeArch: "x64",
@@ -707,12 +707,16 @@ async function verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot, des
 function runtimeOrigin(descriptor) {
   return Object.freeze({ kind: descriptor.kind, sourceUrl: descriptor.sourceUrl, archiveSha256: descriptor.archiveSha256 });
 }
+function isVerifiedBundledRuntimeOrigin(origin, descriptor) {
+  return origin !== null && typeof origin === "object" && descriptor !== undefined
+    && JSON.stringify(origin) === JSON.stringify(runtimeOrigin(descriptor));
+}
 
 /** An authorized supply lane mints this opaque input only after it verifies the
   * committed archive SHA-256. Publication has no filesystem-path fallback. */
 function validRuntimeClosureFiles(value) {
   return Array.isArray(value) && value.length > 0 && value.every((entry) => exactKeys(entry, ["sourcePath", "sha256"])
-    && typeof entry.sourcePath === "string" && /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(entry.sourcePath)
+    && typeof entry.sourcePath === "string" && /^(?:[A-Za-z0-9@._-]+\/)*[A-Za-z0-9@._-]+$/.test(entry.sourcePath)
     && typeof entry.sha256 === "string" && /^[a-f0-9]{64}$/.test(entry.sha256))
     && value.every((entry, index) => index === 0 || value[index - 1].sourcePath.localeCompare(entry.sourcePath) < 0);
 }
@@ -726,7 +730,7 @@ async function exactRuntimeTree(root, label) {
     const path = resolve(root, sourcePath); await safeAncestors(root, path, label); await regular(path, label);
     entries.push({ sourcePath: slash(sourcePath), sha256: digest(await readFile(path)) });
   }
-  return entries;
+  return entries.sort((left, right) => left.sourcePath.localeCompare(right.sourcePath));
 }
 
 async function copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor, source }) {
@@ -784,7 +788,7 @@ function canonicalRuntimeAdmission({ inventoryDigest, generation, descriptor, en
 
 async function emitRuntimeAdmission({ stagingRoot, inventory, generation, descriptor }) {
   await verifyBundledRuntimeInArtifact({ artifactRoot: stagingRoot, descriptor });
-  const bootstrapPath = resolve(stagingRoot, descriptor.bootstrapPath);
+  const bootstrapPath = resolve(stagingRoot, descriptor.bootstrapPath.replaceAll("/", sep));
   await safeAncestors(stagingRoot, bootstrapPath, "desktop_runtime_bootstrap"); await regular(bootstrapPath, "desktop_runtime_bootstrap");
   const expected = canonicalRuntimeAdmission({ inventoryDigest: inventory.digest, generation, descriptor, entries: inventory.entries }); const path = resolve(stagingRoot, RUNTIME_ADMISSION);
   await writeFile(path, expected, { flag: "wx" });
@@ -807,7 +811,7 @@ function rejectUnverifiedBrowserArtifactFiles(artifactFiles, origins) {
       throw new Error(`production_browser_artifact_outside_fixed_subtree:${path}`);
   }
 }
-export async function createInventory({ artifactRoot, origins = new Map(), externalRuntimeClosure, hostRoot, entryRoots, browserArtifactSnapshot, browserArtifactDescriptor, runtimeBootstrapPath }) {
+export async function createInventory({ artifactRoot, origins = new Map(), externalRuntimeClosure, hostRoot, entryRoots, browserArtifactSnapshot, browserArtifactDescriptor, runtimeBootstrapPath, runtimeDescriptor }) {
   const artifactFiles = await files(artifactRoot);
   if (browserArtifactDescriptor !== undefined) {
     rejectBrowserArtifactOutsideFixedSubtree(artifactFiles, browserArtifactDescriptor);
@@ -833,7 +837,7 @@ export async function createInventory({ artifactRoot, origins = new Map(), exter
     const absolute = resolve(artifactRoot, item); const state = await regular(absolute, "artifact");
     entries.push({ path: slash(item), type: "file", mode: (state.mode & 0o777).toString(8).padStart(3, "0"), sha256: digest(await readFile(absolute)), origin: origins.get(slash(item)) ?? { kind: "typescript_emit" } });
   }
-  const closure = await verifyExternalRuntimeClosure({ artifactRoot, hostRoot, externalRuntimeClosure, origins });
+  const closure = await verifyExternalRuntimeClosure({ artifactRoot, hostRoot, externalRuntimeClosure, origins, runtimeDescriptor });
   const canonical = JSON.stringify({ entries, externalRuntimeClosure: closure });
   return { schema: "gamebuddy-host-production-inventory/v4", entries, externalRuntimeClosure: closure, digest: digest(canonical) };
 }
@@ -857,7 +861,7 @@ export async function verifyArtifact({ artifactRoot, hostRoot, config, expectedI
   const rootsToUse = (expectedInventory && !expectedInventory?.entries?.some((e) => e.path === "runtime-core.internal.js"))
     ? allVerificationRoots(config).filter(r => expectedInventory.entries.some(e => e.path === r))
     : allVerificationRoots(config);
-  const inventory = await createInventory({ artifactRoot, hostRoot, origins: verifiedOrigins, entryRoots: rootsToUse, externalRuntimeClosure: closureToUse, browserArtifactSnapshot: verifiedBrowserArtifactSnapshot, browserArtifactDescriptor: config.browserArtifact, runtimeBootstrapPath: runtimeDescriptor?.bootstrapPath });
+  const inventory = await createInventory({ artifactRoot, hostRoot, origins: verifiedOrigins, entryRoots: rootsToUse, externalRuntimeClosure: closureToUse, browserArtifactSnapshot: verifiedBrowserArtifactSnapshot, browserArtifactDescriptor: config.browserArtifact, runtimeBootstrapPath: runtimeDescriptor?.bootstrapPath, runtimeDescriptor });
   const entriesToCheck = (expectedInventory && !expectedInventory?.entries?.some((e) => e.path === "runtime-core.internal.js"))
     ? config.entryRoots.filter(r => expectedInventory.entries.some(e => e.path === r))
     : config.entryRoots;
@@ -931,7 +935,7 @@ async function runEsmResolutionProbe(hostRoot, specifiers) {
   });
 }
 
-export async function verifyExternalRuntimeClosure({ artifactRoot, hostRoot, externalRuntimeClosure, origins = new Map() }) {
+export async function verifyExternalRuntimeClosure({ artifactRoot, hostRoot, externalRuntimeClosure, origins = new Map(), runtimeDescriptor }) {
   const declared = validateExternalClosure(externalRuntimeClosure);
   const used = new Set();
   const staticExternalSpecifiers = new Set();
@@ -941,7 +945,8 @@ export async function verifyExternalRuntimeClosure({ artifactRoot, hostRoot, ext
     if (!artifactFileSet.has(rule.module)) throw new Error(`production_dynamic_external_module_missing:${rule.module}`);
   }
   for (const item of artifactFiles) {
-    if (origins.get(slash(item))?.kind === BROWSER_ARTIFACT.kind) continue;
+    const origin = origins.get(slash(item));
+    if (origin?.kind === BROWSER_ARTIFACT.kind || isVerifiedBundledRuntimeOrigin(origin, runtimeDescriptor)) continue;
     if (extname(item) !== ".js") continue;
     const content = await readFile(resolve(artifactRoot, item), "utf8");
     let ingress;

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -91,6 +91,24 @@ function inventory(helperHash: string, manifestHash: string) {
   ] };
 }
 
+async function createDirectoryJunction(target: string, link: string): Promise<void> {
+  const command = process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
+  await new Promise<void>((resolveResult, reject) => {
+    const child = spawn(command, ["/d", "/c", "mklink", "/J", link, target], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0 && signal === null) {
+        resolveResult();
+        return;
+      }
+      reject(new Error(`windows_junction_creation_failed:${code ?? "null"}:${signal ?? "none"}`));
+    });
+  });
+}
+
 async function publishedFixture() {
   const root = await realpath(await mkdtemp(resolve(tmpdir(), "gamebuddy-folder-picker-published-")));
   const pairRoot = resolve(root, ...publishedDestination.split("/"));
@@ -131,14 +149,14 @@ test("published folder picker rejects duplicate and mismatched inventory origins
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
 
-test("published folder picker rejects a linked generation inventory", { skip: process.platform !== "win32" }, async (t) => {
+test("published folder picker rejects a reparse-point generation inventory", { skip: process.platform !== "win32" }, async () => {
   const fixture = await publishedFixture();
   try {
-    const outside = resolve(fixture.root, "outside-inventory.json");
-    await writeFile(outside, await readFile(fixture.inventoryPath));
+    const outside = resolve(fixture.root, "outside-inventory");
+    await mkdir(outside);
+    await writeFile(resolve(outside, "production-inventory.json"), await readFile(fixture.inventoryPath));
     await rm(fixture.inventoryPath);
-    try { await symlink(outside, fixture.inventoryPath, "file"); }
-    catch (error: any) { if (error?.code === "EPERM") { t.skip("Windows file symlink unavailable"); return; } throw error; }
+    await createDirectoryJunction(outside, fixture.inventoryPath);
     await assert.rejects(createPublishedWindowsStardewFolderPicker(fixture.root), /windows_stardew_folder_picker_unavailable/);
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });

@@ -13,6 +13,50 @@ const DEFAULT_TEST_BATCH_SIZE = 10;
 // measured serialized Windows baseline and can shrink a final child below its
 // own startup/cleanup minimum. Keep one shared 25-minute deadline.
 const DEFAULT_TEST_SUITE_TIMEOUT_MS = 25 * 60_000;
+const STRICT_TEST_DISPOSITION = process.env.GAMEBUDDY_HOST_TEST_STRICT_DISPOSITION === "1";
+const RELEASE_SCRIPT_TEST_SUFFIX = ".release.test.mjs";
+const ALLOWED_RELEASE_PLATFORM_SKIPS = Object.freeze([
+  Object.freeze({
+    testName: "Windows reparse helper classifies an actual directory symbolic link where permitted",
+    platform: "win32",
+    reason: "platform_non_applicable: Windows directory symbolic-link creation requires Developer Mode or SeCreateSymbolicLinkPrivilege; junction and AF_UNIX probes cover this runner's release reparse detection",
+  }),
+  Object.freeze({
+    testName: "non-Windows synthetic acquisition retains isolated test scratch behavior",
+    platform: "win32",
+    reason: "platform_non_applicable: synthetic non-Windows scratch behavior is covered off Windows",
+  }),
+  Object.freeze({
+    testName: "strict identity is explicitly unavailable on non-Windows",
+    platform: "win32",
+    reason: "platform_non_applicable: strict identity is unavailable on non-Windows",
+  }),
+  Object.freeze({
+    testName: "non-Windows builder fails closed before browser composition or publication while approved runtime acquisition is unavailable",
+    platform: "win32",
+    reason: "platform_non_applicable: non-Windows runtime acquisition gate",
+  }),
+  Object.freeze({
+    testName: "normal withPathLock use fails closed at release on non-Windows without any capability binding",
+    platform: "win32",
+    reason: "platform_non_applicable: Windows production locking mints the fixed helper pair; this documents the non-Windows default",
+  }),
+  Object.freeze({
+    testName: "non-Windows browser composition failure cannot create a current pointer while runtime acquisition is unavailable",
+    platform: "win32",
+    reason: "platform_non_applicable: non-Windows runtime acquisition gate",
+  }),
+  ...["EPERM", "EACCES", "ENOTSUP"].map((code) => Object.freeze({
+    testName: "rejects fixture workers broadly, tampering, orphans, symlinks, and invalid start entry names",
+    platform: "win32",
+    reason: `symlink unavailable: ${code}`,
+  })),
+  ...["EPERM", "EACCES", "ENOTSUP"].map((code) => Object.freeze({
+    testName: "browser composition rejects reparse/link staging entries",
+    platform: "win32",
+    reason: `platform_non_applicable: Windows file-link fixture unavailable: ${code}`,
+  })),
+]);
 
 function configuredBatchSize(value, defaultValue = DEFAULT_TEST_BATCH_SIZE) {
   if (value === undefined) return defaultValue;
@@ -77,25 +121,75 @@ export async function discoverTestFiles(root = defaultTestRoot, extension = ".te
   return tests;
 }
 
-export async function runDiscoveredTests(paths, { node = process.execPath, runChild = runBoundedChild, timeoutMs = undefined, onHeartbeat = undefined } = {}) {
+function parseTestDisposition(output) {
+  const summary = typeof output === "string"
+    ? /# tests (\d+)\r?\n# suites (\d+)\r?\n# pass (\d+)\r?\n# fail (\d+)\r?\n# cancelled (\d+)\r?\n# skipped (\d+)\r?\n# todo (\d+)/m.exec(output)
+    : null;
+  if (summary === null) throw runnerError("test_disposition_summary_missing", defaultTestRoot);
+  const skippedTests = typeof output === "string"
+    ? [...output.matchAll(/^ok \d+ - (.+?) # SKIP(?:[ \t]+(.*))?$/gm)].map((match) => Object.freeze({ testName: match[1], reason: match[2]?.trim() ?? "" }))
+    : [];
+  return Object.freeze({
+    tests: Number(summary[1]),
+    suites: Number(summary[2]),
+    passed: Number(summary[3]),
+    failed: Number(summary[4]),
+    cancelled: Number(summary[5]),
+    skipped: Number(summary[6]),
+    skippedTests: Object.freeze(skippedTests),
+    skippedReasons: Object.freeze(skippedTests.map(({ reason }) => reason)),
+    todo: Number(summary[7]),
+  });
+}
+
+export function assertTestDisposition(output, { strict = STRICT_TEST_DISPOSITION, platform = process.platform } = {}) {
+  const disposition = parseTestDisposition(output);
+  if (strict && disposition.skipped > 0) {
+    if (disposition.skippedTests.length !== disposition.skipped) {
+      throw runnerError("test_disposition_skip_reasons_missing", JSON.stringify(disposition));
+    }
+    const disallowedSkippedReasons = disposition.skippedTests.filter(
+      (skipped) => !ALLOWED_RELEASE_PLATFORM_SKIPS.some((allowed) => allowed.platform === platform && allowed.testName === skipped.testName && allowed.reason === skipped.reason),
+    );
+    if (disallowedSkippedReasons.length > 0) {
+      throw runnerError(
+        "test_disposition_not_release_green",
+        JSON.stringify({ ...disposition, disallowedSkippedReasons }),
+      );
+    }
+  }
+  if (disposition.failed !== 0 || disposition.cancelled !== 0 || disposition.todo !== 0) {
+    throw runnerError("test_disposition_not_release_green", JSON.stringify(disposition));
+  }
+  return disposition;
+}
+
+export async function runDiscoveredTests(paths, { node = process.execPath, runChild = runBoundedChild, timeoutMs = undefined, onHeartbeat = undefined, strictDisposition = STRICT_TEST_DISPOSITION, platform = process.platform } = {}) {
   if (!Array.isArray(paths) || paths.length === 0) throw runnerError("test_files_missing", defaultTestRoot);
   const args = [
     "--import",
     pathToFileURL(resolve(hostRoot, "scripts", "compiled-test-bootstrap.mjs")).href,
     "--test",
     "--test-concurrency=1",
+    ...(strictDisposition ? ["--test-reporter=tap"] : []),
     ...paths,
   ];
   // Tests deliberately resolve repository-owned source and test-only assets
   // relative to the Host package. Supplying an absolute test path does not
   // change Node's cwd, so keep this invariant in the shared runner.
-  return await runChild({
+  const result = await runChild({
     command: node,
     args,
     cwd: hostRoot,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(onHeartbeat === undefined ? {} : { onHeartbeat }),
   });
+  if (!strictDisposition) return result;
+  if (result?.code !== 0 || result?.signal !== null) {
+    throw runnerError("test_disposition_process_failed", JSON.stringify({ code: result?.code, signal: result?.signal }));
+  }
+  const disposition = assertTestDisposition(`${result?.stdout ?? result?.output ?? ""}\n${result?.stderr ?? ""}`, { strict: true, platform });
+  return Object.freeze({ ...result, disposition });
 }
 
 function reportHeartbeat(suite) {
@@ -128,6 +222,8 @@ export async function runTestBatches(paths, {
   timeoutMs = DEFAULT_TEST_SUITE_TIMEOUT_MS,
   run = runDiscoveredTests,
   now = Date.now,
+  strictDisposition = STRICT_TEST_DISPOSITION,
+  platform = process.platform,
 } = {}) {
   if (typeof suite !== "string" || suite.length === 0) throw runnerError("invalid_test_suite", String(suite));
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100) throw runnerError("invalid_test_suite_timeout", String(timeoutMs));
@@ -141,7 +237,12 @@ export async function runTestBatches(paths, {
     for (const path of batch) {
       const fileRemainingMs = deadlineMs - now();
       if (fileRemainingMs < 100) throw runnerError("test_suite_timeout", suite);
-      await run([path], { timeoutMs: fileRemainingMs, onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relative(hostRoot, path).replaceAll("\\\\", "/")}`) });
+      await run([path], {
+        timeoutMs: fileRemainingMs,
+        onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relative(hostRoot, path).replaceAll("\\\\", "/")}`),
+        strictDisposition,
+        platform,
+      });
     }
   }
 }
@@ -152,11 +253,23 @@ export async function runCompiledTests({ batchSize = configuredBatchSize(process
   return await runTestBatches(await discoverTestFiles(defaultTestRoot, ".test.js"), { suite: "compiled", batchSize });
 }
 
-export async function runScriptTests() {
+export function selectScriptTests(paths, { releaseOnly = false } = {}) {
+  if (!Array.isArray(paths) || paths.length === 0) throw runnerError("test_files_missing", defaultScriptTestRoot);
+  const tests = paths.filter((path) => path.endsWith(RELEASE_SCRIPT_TEST_SUFFIX) === releaseOnly);
+  if (tests.length === 0) throw runnerError("test_files_missing", defaultScriptTestRoot);
+  return tests;
+}
+
+export async function runScriptTests({ releaseOnly = false } = {}) {
   // Script tests run after the artifact lock is released. Some of them
   // intentionally invoke public package scripts to verify lock contention;
   // running them inside this process's build/test lock would self-deadlock.
-  return await runTestBatches(await discoverTestFiles(defaultScriptTestRoot, ".test.mjs"), { suite: "scripts" });
+  const discovered = await discoverTestFiles(defaultScriptTestRoot, ".test.mjs");
+  return await runTestBatches(selectScriptTests(discovered, { releaseOnly }), { suite: releaseOnly ? "release-scripts" : "scripts" });
+}
+
+export async function runReleaseScriptTests() {
+  return await runScriptTests({ releaseOnly: true });
 }
 
 async function main() {

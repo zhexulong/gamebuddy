@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -48,6 +49,28 @@ function record(overrides: Partial<StardewInstallationRegistrationRecordV1> = {}
     activeAttempt: null,
     ...overrides,
   } as StardewInstallationRegistrationRecordV1;
+}
+
+async function createDirectoryReparseFixture(target: string, link: string): Promise<void> {
+  if (process.platform !== "win32") {
+    await symlink(target, link, "dir");
+    return;
+  }
+  const command = process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, ["/d", "/c", "mklink", "/J", link, target], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0 && signal === null) {
+        resolve();
+        return;
+      }
+      reject(new Error(`windows_junction_creation_failed:${code ?? "null"}:${signal ?? "none"}`));
+    });
+  });
 }
 
 async function fixture(): Promise<{ root: string; path: string; dispose(): Promise<void> }> {
@@ -215,20 +238,12 @@ test("publish requires the exact predecessor and refuses active pointer records 
   }
 });
 
-test("safe-boundary failures are fail-closed", async (t) => {
+test("safe-boundary failures are fail-closed", async () => {
   const subject = await fixture();
   const link = join(subject.root, "stardew-installation-registration");
   try {
-    try {
-      await mkdir(join(subject.root, "outside"));
-      await symlink(join(subject.root, "outside"), link, "dir");
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === "EPERM" || (error as NodeJS.ErrnoException).code === "EACCES") {
-        t.skip("symbolic links are not permitted in this environment");
-        return;
-      }
-      throw error;
-    }
+    await mkdir(join(subject.root, "outside"));
+    await createDirectoryReparseFixture(join(subject.root, "outside"), link);
     await rejectsRedacted(() => publishStardewInstallationRegistration(subject.root, null, record({ locator: sentinelLocator })), sentinelLocator);
     await assert.rejects(readFile(pathLockPath(subject.path), "utf8"), { code: "ENOENT" });
   } finally {

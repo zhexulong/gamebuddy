@@ -188,6 +188,17 @@ async function withWindowsPlatform<T>(operation: () => Promise<T>): Promise<T> {
   finally { Object.defineProperty(process, "platform", descriptor); }
 }
 
+async function withDeterministicDateNow<T>(
+  initialMs: number,
+  operation: (setNowMs: (nowMs: number) => void) => Promise<T>,
+): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(Date, "now")!;
+  let nowMs = initialMs;
+  Object.defineProperty(Date, "now", { ...descriptor, value: () => nowMs });
+  try { return await operation((nextNowMs) => { nowMs = nextNowMs; }); }
+  finally { Object.defineProperty(Date, "now", descriptor); }
+}
+
 async function closeServer(server: Server): Promise<void> {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -214,7 +225,7 @@ async function createAdmissionBroker() {
   });
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
-  const root = await bootstrap.json() as { chat: { csrfToken: string } };
+  const root = await bootstrap.json() as { chat: { csrfToken: string; browserSession: { expiresAtMs: number } } };
   const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_disconnect"): IncomingMessage => {
     const originUrl = new URL(origin);
     const method = operation === "cabin_read" ? "GET" : "POST";
@@ -257,6 +268,7 @@ async function createAdmissionBroker() {
   return {
     handler,
     issue,
+    browserSessionExpiresAtMs: root.chat.browserSession.expiresAtMs,
     async close() {
       const handlerDrain = handler.close();
       server.closeAllConnections();
@@ -1829,20 +1841,31 @@ test("dynamic cabin confirmation rejects cross-session, expiry, stale revision, 
 });
 
 test("dynamic cabin handles distinguish expired and revision-stale failures", async () => {
-  const expiring = await prepareCabinCoordinator(Date.now() + 1_500);
-  try {
-    const choices = await expiring.coordinator.activationOwner.readCabinChoices(expiring.broker.issue("cabin_read"));
-    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 1_600));
-    assert.throws(
-      () => expiring.coordinator.activationOwner.confirmCabinChoice(expiring.broker.issue("cabin_confirm"), {
-        apiVersion: 1, choiceHandle: choices.choices[0]!.choiceHandle, idempotencyKey: "expired-key", confirmed: true,
-      }),
-      /stardew_cabin_choice_expired/,
-    );
-  } finally {
-    await expiring.coordinator.close();
-    await expiring.broker.close();
-  }
+  const startedAtMs = 1_789_000_000_000;
+  const stardewSessionExpiresAtMs = startedAtMs + 5 * 60_000;
+  const choiceHandleExpiresAtMs = startedAtMs + 60_000;
+  await withDeterministicDateNow(startedAtMs, async (setNowMs) => {
+    const expiring = await prepareCabinCoordinator(stardewSessionExpiresAtMs, { nowMs: () => Date.now() });
+    try {
+      const choices = await expiring.coordinator.activationOwner.readCabinChoices(expiring.broker.issue("cabin_read"));
+      assert.equal(choices.choices[0]!.expiresAtMs, choiceHandleExpiresAtMs);
+      assert.ok(choices.choices[0]!.expiresAtMs < stardewSessionExpiresAtMs);
+      assert.ok(choices.choices[0]!.expiresAtMs < expiring.broker.browserSessionExpiresAtMs);
+      setNowMs(choiceHandleExpiresAtMs + 1);
+      assert.ok(Date.now() < stardewSessionExpiresAtMs);
+      assert.ok(Date.now() < expiring.broker.browserSessionExpiresAtMs);
+      const confirmationAdmission = expiring.broker.issue("cabin_confirm");
+      assert.throws(
+        () => expiring.coordinator.activationOwner.confirmCabinChoice(confirmationAdmission, {
+          apiVersion: 1, choiceHandle: choices.choices[0]!.choiceHandle, idempotencyKey: "expired-key", confirmed: true,
+        }),
+        /stardew_cabin_choice_expired/,
+      );
+    } finally {
+      await expiring.coordinator.close();
+      await expiring.broker.close();
+    }
+  });
 
   const stale = await prepareCabinCoordinator();
   try {
