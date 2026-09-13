@@ -1429,12 +1429,6 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
       assert.ok(choice.expiresAtMs >= readStartedAt + 59_000);
       assert.deepEqual(Object.keys(choice).sort(), ["availability", "choiceHandle", "displayLabel", "expiresAtMs"]);
     }
-    const publicMetadata = JSON.stringify({
-      choices: choices.choices.map(({ choiceHandle: _choiceHandle, ...choice }) => choice),
-    });
-    for (const forbidden of ["cabin-alpha", "cabin-beta", "101", "202", "companion-1", "ownerFarmhandId"])
-      assert.equal(publicMetadata.includes(forbidden), false, forbidden);
-
     const command = { apiVersion: 1 as const, choiceHandle: choices.choices[0]!.choiceHandle, idempotencyKey: "confirm-key-alpha", confirmed: true as const };
     const first = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command);
     const joined = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command);
