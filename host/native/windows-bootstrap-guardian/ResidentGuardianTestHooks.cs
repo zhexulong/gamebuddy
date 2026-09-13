@@ -2,7 +2,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 #if GUARDIAN_TEST_HOOKS
 /** Disposable test-variant barrier. Production builds compile no hook surface. */

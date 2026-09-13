@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   armAttempt,
   containRole,
-  createPublishedWindowsStardewBootstrapGuardian,
+  createPublishedWindowsBootstrapGuardian,
   launchRole,
   recoverAttempt,
   type ArmAttemptRequest,
@@ -50,12 +50,12 @@ test("guardian rejects path, pid, token, bridge, lease substitution, unknown rol
     { schemaVersion: 1, operation: "begin_recovery", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
     { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2 },
     { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: "gamebuddy-stardew-token" },
-  ]) assert.throws(() => validateGuardianRequest(request), /windows_stardew_bootstrap_guardian_invalid_request/);
+  ]) assert.throws(() => validateGuardianRequest(request), /windows_bootstrap_guardian_invalid_request/);
 });
 
 test("guardian operations reject forged capabilities", async () => {
-  await assert.rejects(armAttempt({} as never, exactArmRequest), /windows_stardew_bootstrap_guardian_unavailable/);
-  await assert.rejects(armAttempt(undefined as never, exactArmRequest), /windows_stardew_bootstrap_guardian_unavailable/);
+  await assert.rejects(armAttempt({} as never, exactArmRequest), /windows_bootstrap_guardian_unavailable/);
+  await assert.rejects(armAttempt(undefined as never, exactArmRequest), /windows_bootstrap_guardian_unavailable/);
 });
 
 test(
@@ -64,7 +64,7 @@ test(
   async () => {
     const fixture = await makePublishedPairFixture();
     try {
-      const capability = await createPublishedWindowsStardewBootstrapGuardian(fixture.root);
+      const capability = await createPublishedWindowsBootstrapGuardian(fixture.root);
       const results = await Promise.all([
         armAttempt(capability, validRequests[0]),
         launchRole(capability, validRequests[1]),
@@ -81,7 +81,7 @@ test(
 test("production Guardian modules expose no spawn or capability registrar seam", async () => {
   const production = await import("./index.js");
   const protocol = await import("./protocol.js");
-  for (const name of ["createGuardianCapability", "registerGuardianCapability", "createTestWindowsStardewBootstrapGuardian", "invokeGuardianProtocol", "spawnHelper"]) {
+  for (const name of ["createGuardianCapability", "registerGuardianCapability", "createTestWindowsBootstrapGuardian", "invokeGuardianProtocol", "spawnHelper"]) {
     assert.equal(name in production, false);
     assert.equal(name in protocol, false);
   }
@@ -91,11 +91,11 @@ test("production Guardian modules expose no spawn or capability registrar seam",
 
 // Published-pair provenance regressions. The production mint is Windows/x64-only;
 // fixture bytes are never executed, so these checks remain no-process.
-const publishedHelperFileName = "GameBuddy.WindowsStardewBootstrapGuardian.exe";
-const publishedManifestFileName = "windows-stardew-bootstrap-guardian.manifest.json";
-const publishedPairDestination = "native/windows-stardew-bootstrap-guardian/win-x64";
+const publishedHelperFileName = "GameBuddy.WindowsBootstrapGuardian.exe";
+const publishedManifestFileName = "windows-bootstrap-guardian.manifest.json";
+const publishedPairDestination = "native/windows-bootstrap-guardian/win-x64";
 const publishedInventorySchema = "gamebuddy-host-production-inventory/v4";
-const publishedOriginKind = "verified_windows_stardew_bootstrap_guardian";
+const publishedOriginKind = "verified_windows_bootstrap_guardian";
 
 function fixtureCanonicalManifest(sha256: string): string {
   return `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"${publishedHelperFileName}","sha256":"${sha256}"}\n`;
@@ -158,7 +158,7 @@ test(
   async () => {
     const fixture = await makePublishedPairFixture();
     try {
-      const capability = await createPublishedWindowsStardewBootstrapGuardian(fixture.root);
+      const capability = await createPublishedWindowsBootstrapGuardian(fixture.root);
        assert.equal(typeof capability, "object");
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -175,8 +175,8 @@ test(
       await writeFile(resolve(pairRoot, publishedHelperFileName), helperBytes);
       await writeFile(resolve(pairRoot, publishedManifestFileName), fixtureCanonicalManifest(sha256), "utf8");
       await assert.rejects(
-        createPublishedWindowsStardewBootstrapGuardian(root),
-        /windows_stardew_bootstrap_guardian_unavailable/,
+        createPublishedWindowsBootstrapGuardian(root),
+        /windows_bootstrap_guardian_unavailable/,
       );
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -196,8 +196,8 @@ test(
         mutate(parsed);
         await writeFile(inventoryPath, JSON.stringify(parsed), "utf8");
         await assert.rejects(
-          createPublishedWindowsStardewBootstrapGuardian(fixture.root),
-          /windows_stardew_bootstrap_guardian_unavailable/,
+          createPublishedWindowsBootstrapGuardian(fixture.root),
+          /windows_bootstrap_guardian_unavailable/,
         );
       };
       await tamper((parsed) => {
@@ -240,8 +240,8 @@ test(
         mutate(parsed);
         await writeFile(inventoryPath, JSON.stringify(parsed), "utf8");
         await assert.rejects(
-          createPublishedWindowsStardewBootstrapGuardian(fixture.root),
-          /windows_stardew_bootstrap_guardian_unavailable/,
+          createPublishedWindowsBootstrapGuardian(fixture.root),
+          /windows_bootstrap_guardian_unavailable/,
         );
         await writeFile(inventoryPath, original, "utf8");
       };
@@ -270,7 +270,7 @@ test(
         const restored = JSON.parse(original);
         restored.entries.push({ path: "other/file", type: "file", sha256: "0".repeat(64), origin: { kind: "typescript_emit" } });
         await writeFile(inventoryPath, JSON.stringify(restored), "utf8");
-       await createPublishedWindowsStardewBootstrapGuardian(fixture.root);
+       await createPublishedWindowsBootstrapGuardian(fixture.root);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -284,7 +284,7 @@ test(
     const fixture = await makePublishedPairFixture();
     const moved = resolve(fixture.root, "pair-moved");
     try {
-      const capability = await createPublishedWindowsStardewBootstrapGuardian(fixture.root);
+      const capability = await createPublishedWindowsBootstrapGuardian(fixture.root);
       // Replace the pair directory with a junction to a directory containing a
       // byte-identical pair: the physical ancestor proof must fail closed both
       // at mint and immediately before the next operation.
@@ -306,11 +306,11 @@ test(
       assert.equal((await lstat(fixture.pairRoot)).isSymbolicLink(), true);
       await assert.rejects(
         armAttempt(capability, exactArmRequest),
-        /windows_stardew_bootstrap_guardian_unavailable/,
+        /windows_bootstrap_guardian_unavailable/,
       );
       await assert.rejects(
-        createPublishedWindowsStardewBootstrapGuardian(fixture.root),
-        /windows_stardew_bootstrap_guardian_unavailable/,
+        createPublishedWindowsBootstrapGuardian(fixture.root),
+        /windows_bootstrap_guardian_unavailable/,
       );
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -324,13 +324,13 @@ test(
   async () => {
     const fixture = await makePublishedPairFixture();
     try {
-      const capability = await createPublishedWindowsStardewBootstrapGuardian(fixture.root);
+      const capability = await createPublishedWindowsBootstrapGuardian(fixture.root);
       // A helper replaced after mint must fail closed before the next operation:
       // the capability never caches an unchecked pair bytes.
       await writeFile(fixture.helperPath, Buffer.from("replacement-helper-bytes", "utf8"));
       await assert.rejects(
         armAttempt(capability, exactArmRequest),
-        /windows_stardew_bootstrap_guardian_unavailable/,
+        /windows_bootstrap_guardian_unavailable/,
       );
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -344,18 +344,18 @@ test(
   async () => {
     const fixture = await makePublishedPairFixture();
     try {
-      const capability = await createPublishedWindowsStardewBootstrapGuardian(fixture.root);
+      const capability = await createPublishedWindowsBootstrapGuardian(fixture.root);
       // Tampering the manifest after mint must fail closed on the next operation:
       // the canonical manifest must byte-exactly match the helper digest.
       await writeFile(fixture.manifestPath, fixtureCanonicalManifest("0".repeat(64)), "utf8");
       await assert.rejects(
         armAttempt(capability, exactArmRequest),
-        /windows_stardew_bootstrap_guardian_unavailable/,
+        /windows_bootstrap_guardian_unavailable/,
       );
       // A fresh mint over the tampered manifest is equally rejected.
       await assert.rejects(
-        createPublishedWindowsStardewBootstrapGuardian(fixture.root),
-        /windows_stardew_bootstrap_guardian_unavailable/,
+        createPublishedWindowsBootstrapGuardian(fixture.root),
+        /windows_bootstrap_guardian_unavailable/,
       );
     } finally {
       await rm(fixture.root, { recursive: true, force: true });

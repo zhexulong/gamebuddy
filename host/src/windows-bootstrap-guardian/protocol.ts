@@ -1,10 +1,10 @@
-type WindowsStardewBootstrapGuardianOperation =
+type WindowsBootstrapGuardianOperation =
   | "arm_attempt"
   | "launch_role"
   | "contain_role"
   | "recover_attempt";
-type WindowsStardewBootstrapGuardianRole = "player_host" | "ai_client";
-export type WindowsStardewBootstrapGuardianCategory =
+type WindowsBootstrapGuardianRole = "player_host" | "ai_client";
+export type WindowsBootstrapGuardianCategory =
   | "armed"
   | "role_active"
   | "role_contained"
@@ -20,10 +20,10 @@ type GuardianCorrelation = Readonly<{
 }>;
 
 export type ArmAttemptRequest = GuardianCorrelation & Readonly<{ operation: "arm_attempt" }>;
-export type LaunchRoleRequest = GuardianCorrelation & Readonly<{ operation: "launch_role"; role: WindowsStardewBootstrapGuardianRole }>;
-export type ContainRoleRequest = GuardianCorrelation & Readonly<{ operation: "contain_role"; role: WindowsStardewBootstrapGuardianRole }>;
+export type LaunchRoleRequest = GuardianCorrelation & Readonly<{ operation: "launch_role"; role: WindowsBootstrapGuardianRole }>;
+export type ContainRoleRequest = GuardianCorrelation & Readonly<{ operation: "contain_role"; role: WindowsBootstrapGuardianRole }>;
 export type RecoverAttemptRequest = GuardianCorrelation & Readonly<{ operation: "recover_attempt"; recoveryInstanceId: string }>;
-export type WindowsStardewBootstrapGuardianRequest =
+export type WindowsBootstrapGuardianRequest =
   | ArmAttemptRequest
   | LaunchRoleRequest
   | ContainRoleRequest
@@ -31,7 +31,7 @@ export type WindowsStardewBootstrapGuardianRequest =
 
 const OPAQUE_CORRELATION_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_GUARDIAN_EPOCH = 0x7fffffff;
-const EXACT_REQUEST_KEYS: ReadonlyMap<WindowsStardewBootstrapGuardianOperation, readonly string[]> = new Map([
+const EXACT_REQUEST_KEYS: ReadonlyMap<WindowsBootstrapGuardianOperation, readonly string[]> = new Map([
   ["arm_attempt", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId"]],
   ["launch_role", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role"]],
   ["contain_role", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role"]],
@@ -40,11 +40,11 @@ const EXACT_REQUEST_KEYS: ReadonlyMap<WindowsStardewBootstrapGuardianOperation, 
 
 /** Validates and reconstructs the redacted Task 1 request. It grants no native
  * execution authority and has no process, path, PID, token, bridge, or Job seam. */
-export function validateGuardianRequest(input: unknown): WindowsStardewBootstrapGuardianRequest {
+export function validateGuardianRequest(input: unknown): WindowsBootstrapGuardianRequest {
   if (!isRecord(input)) throw invalid();
   const operation = input.operation;
   if (typeof operation !== "string") throw invalid();
-  const expectedKeys = EXACT_REQUEST_KEYS.get(operation as WindowsStardewBootstrapGuardianOperation);
+  const expectedKeys = EXACT_REQUEST_KEYS.get(operation as WindowsBootstrapGuardianOperation);
   if (expectedKeys === undefined) throw invalid();
   const ownKeys = Object.keys(input);
   if (ownKeys.length !== expectedKeys.length || !expectedKeys.every((key) => Object.hasOwn(input, key))) throw invalid();
@@ -80,5 +80,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function invalid(): Error {
-  return new Error("windows_stardew_bootstrap_guardian_invalid_request");
+  return new Error("windows_bootstrap_guardian_invalid_request");
 }

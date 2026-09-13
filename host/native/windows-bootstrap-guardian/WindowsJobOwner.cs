@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 internal sealed class WindowsJobOwner : IDisposable
 {
@@ -22,10 +22,10 @@ internal sealed class WindowsJobOwner : IDisposable
     internal static void ValidateAbi()
     {
         if (IntPtr.Size != 8 || Marshal.SizeOf<SECURITY_ATTRIBUTES>() != 24 || Marshal.SizeOf<ExtendedLimitInformation>() != 144 || Marshal.SizeOf<BasicAccountingInformation>() != 48 || Marshal.SizeOf<AssociateCompletionPort>() != 16)
-            throw new PlatformNotSupportedException("windows_stardew_bootstrap_guardian_job_abi_invalid");
+            throw new PlatformNotSupportedException("windows_bootstrap_guardian_job_abi_invalid");
     }
 
-    internal static WindowsJobOwner Create(string name)
+    internal static WindowsJobOwner Create(string name, bool killOnJobClose = true)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         using var security = NativeSecurity.CreateCurrentUserAttributes();
@@ -33,8 +33,8 @@ internal sealed class WindowsJobOwner : IDisposable
         var job = CreateJobObjectW(ref attributes, name);
         var createError = Marshal.GetLastWin32Error();
         if (job.IsInvalid) throw new Win32Exception(createError);
-        if (createError == 183) { job.Dispose(); throw new InvalidOperationException("windows_stardew_bootstrap_guardian_job_name_collision"); }
-        var limits = new ExtendedLimitInformation { BasicLimitInformation = new BasicLimitInformation { LimitFlags = JobObjectLimitKillOnJobClose } };
+        if (createError == 183) { job.Dispose(); throw new InvalidOperationException("windows_bootstrap_guardian_job_name_collision"); }
+        var limits = new ExtendedLimitInformation { BasicLimitInformation = new BasicLimitInformation { LimitFlags = killOnJobClose ? JobObjectLimitKillOnJobClose : 0 } };
         if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref limits, (uint)Marshal.SizeOf<ExtendedLimitInformation>())) { job.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
         var completionPort = CreateIoCompletionPort(new IntPtr(-1), IntPtr.Zero, UIntPtr.Zero, 1);
         if (completionPort.IsInvalid) { job.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
@@ -64,10 +64,10 @@ internal sealed class WindowsJobOwner : IDisposable
         while (true)
         {
             var remaining = deadline - Environment.TickCount64;
-            if (remaining <= 0) throw new TimeoutException("windows_stardew_bootstrap_guardian_job_drain_timeout");
+            if (remaining <= 0) throw new TimeoutException("windows_bootstrap_guardian_job_drain_timeout");
             if (!GetQueuedCompletionStatus(completionPort, out var message, out _, out var overlapped, (uint)Math.Min(remaining, int.MaxValue)))
             {
-                if (overlapped == IntPtr.Zero && Marshal.GetLastWin32Error() == 258) throw new TimeoutException("windows_stardew_bootstrap_guardian_job_drain_timeout");
+                if (overlapped == IntPtr.Zero && Marshal.GetLastWin32Error() == 258) throw new TimeoutException("windows_bootstrap_guardian_job_drain_timeout");
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             }
             activeProcessZeroSignaled |= message == JobObjectMsgActiveProcessZero;
@@ -99,7 +99,7 @@ internal sealed class WindowsJobOwner : IDisposable
     {
         internal static SecurityReference CreateCurrentUserAttributes()
         {
-            var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("windows_stardew_bootstrap_guardian_current_sid_missing");
+            var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("windows_bootstrap_guardian_current_sid_missing");
         // Recovery requires only QUERY/TERMINATE/SYNCHRONIZE plus READ_CONTROL
         // to attest this fixed current-user DACL; DELETE and ACL mutation stay absent.
         if (!ConvertStringSecurityDescriptorToSecurityDescriptorW($"D:P(A;;0x0012000C;;;{sid})", 1, out var descriptor, out _)) throw new Win32Exception(Marshal.GetLastWin32Error());

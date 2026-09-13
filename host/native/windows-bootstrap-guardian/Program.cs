@@ -1,8 +1,7 @@
 using System.Text;
-using System.Text.Json;
 using System.Threading.Channels;
 
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 internal static class Program
 {
@@ -52,7 +51,7 @@ internal static class Program
             {
                 var line = await publicFrames.Reader.ReadAsync().ConfigureAwait(false);
                 if (line is null) { closing.Cancel(); break; }
-                var command = ParsePublic(line);
+                var command = GuardianProtocol.Parse(line);
                 if (command.Operation == "arm_attempt")
                 {
                     if (armed) return Fail();
@@ -61,7 +60,10 @@ internal static class Program
                     if (armBinding is null) return Fail();
                     if (armBinding.LeaseName.Contains("/", StringComparison.Ordinal)) return Fail();
                     lease = GuardianLease.Create(armBinding.LeaseName);
-                    playerJob = WindowsJobOwner.Create(armBinding.PlayerJobName);
+                    // Player world ownership survives guardian/controller closure. The role job is
+                    // intentionally non-kill-on-close; explicit contain_role remains the
+                    // separate authenticated endgame operation.
+                    playerJob = WindowsJobOwner.Create(armBinding.PlayerJobName, killOnJobClose: false);
                     try { aiJob = WindowsJobOwner.Create(armBinding.AiJobName); }
                     catch { playerJob.Dispose(); playerJob = null; throw; }
                     activeCorrelation = command.Correlation;
@@ -92,7 +94,6 @@ internal static class Program
 #if GUARDIAN_TEST_HOOKS
                         ResidentGuardianTestHooks.Wait("after-membership");
 #endif
-                        if (!stateGate.TryRunOpen(() => { })) throw new OperationCanceledException();
 #if GUARDIAN_TEST_HOOKS
                         ResidentGuardianTestHooks.Wait("before-resume");
 #endif
@@ -116,7 +117,9 @@ internal static class Program
                     await WriteAsync(output, GuardianProtocol.Response("role_contained")).ConfigureAwait(false);
                 }
             }
-            if (armed) { playerJob?.TerminateAndDrain(); aiJob?.TerminateAndDrain(); }
+            // Ordinary controller EOF only drains AI authority. Player remains alive;
+            // explicit contain_role is the deliberate endgame endpoint.
+            if (armed) aiJob?.TerminateAndDrain();
             await publicReader.ConfigureAwait(false);
             return 0;
         }
@@ -124,7 +127,8 @@ internal static class Program
         finally
         {
             ingress?.Dispose();
-            try { playerJob?.TerminateAndDrain(); } catch { }
+            // Never terminate Player during ordinary guardian cleanup. Its non-kill-on-
+            // close job keeps the game world alive after the last guardian handle closes.
             try { aiJob?.TerminateAndDrain(); } catch { }
             player?.Dispose(); ai?.Dispose();
             playerJob?.Dispose(); aiJob?.Dispose();
@@ -160,8 +164,9 @@ internal static class Program
             {
                 var classification = await ingress.ReceiveClassificationAsync(post, timeout.Token).ConfigureAwait(false);
                 if (classification is null || !expectedRoles.Remove(classification.Role)) return Fail();
-                var jobName = classification.Role == GuardianProtocol.Role.PlayerHost ? post.PlayerJobName : post.AiJobName;
-                var result = WindowsJobRecoveryClassifier.Classify(jobName, classification.State);
+                 var result = classification.Role == GuardianProtocol.Role.PlayerHost
+                     ? WindowsJobRecoveryClassifier.ClassifyPlayer(post.PlayerJobName, classification.State)
+                     : WindowsJobRecoveryClassifier.Classify(post.AiJobName, classification.State);
                 await ingress.ReplyAsync(result).ConfigureAwait(false);
             }
             // Explicit authenticated private release is strictly last.
@@ -202,17 +207,6 @@ internal static class Program
         throw GuardianProtocol.Invalid();
     }
 
-    private static GuardianProtocol.Request ParsePublic(byte[] line)
-    {
-        using var document = JsonDocument.Parse(line, new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 8 });
-        var root = document.RootElement;
-        var operation = root.TryGetProperty("operation", out var op) && op.ValueKind == JsonValueKind.String ? op.GetString() : null;
-                var expected = operation switch { "arm_attempt" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId" }, "launch_role" or "contain_role" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role" }, _ => throw GuardianProtocol.Invalid() };
-        GuardianProtocol.RequireExactKeys(root, expected);
-        if (!root.TryGetProperty("schemaVersion", out var schema) || schema.GetInt32() != GuardianProtocol.SchemaVersion) throw GuardianProtocol.Invalid();
-        return GuardianProtocol.Parse(line);
-    }
-
     private static async Task WriteAsync(Stream output, string response) { var bytes = Encoding.UTF8.GetBytes(response); await output.WriteAsync(bytes).ConfigureAwait(false); await output.FlushAsync().ConfigureAwait(false); }
-    private static int Fail() { Console.Error.Write("windows_stardew_bootstrap_guardian_invalid_request\n"); return 1; }
+    private static int Fail() { Console.Error.Write("windows_bootstrap_guardian_invalid_request\n"); return 1; }
 }

@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using System.Security.Principal;
 
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 internal sealed class GuardianLease : IDisposable
 {
@@ -22,7 +22,7 @@ internal sealed class GuardianLease : IDisposable
         if (createError == 183)
         {
             mutex.Dispose();
-            throw new InvalidOperationException("windows_stardew_bootstrap_guardian_lease_name_collision");
+            throw new InvalidOperationException("windows_bootstrap_guardian_lease_name_collision");
         }
         return new GuardianLease(mutex);
     }
@@ -34,7 +34,7 @@ internal sealed class GuardianLease : IDisposable
     {
         if (!name.StartsWith("Local\\", StringComparison.Ordinal) || name.Length > 140 || name[6..].Length == 0 ||
             name[6..].Any(c => !char.IsLetterOrDigit(c) && c is not ('-' or '_')))
-            throw new InvalidDataException("windows_stardew_bootstrap_guardian_lease_name_invalid");
+            throw new InvalidDataException("windows_bootstrap_guardian_lease_name_invalid");
     }
 
     public void Dispose()
@@ -56,7 +56,7 @@ internal sealed class GuardianLease : IDisposable
 
         internal static Reference CreateCurrentUserAttributes()
         {
-            var sid = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("windows_stardew_bootstrap_guardian_current_sid_missing");
+            var sid = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("windows_bootstrap_guardian_current_sid_missing");
             // MUTEX_MODIFY_STATE | SYNCHRONIZE. Creation is protected by this DACL;
             // CreateMutexW may return a broader creator handle, but no broader ACL is published.
             var sddl = $"D:P(A;;0x00100001;;;{sid})";

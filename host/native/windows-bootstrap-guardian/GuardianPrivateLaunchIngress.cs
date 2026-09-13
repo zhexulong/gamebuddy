@@ -7,7 +7,7 @@ using Microsoft.Win32.SafeHandles;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 internal sealed class GuardianPrivateLaunchIngress : IDisposable
 {
@@ -23,15 +23,15 @@ internal sealed class GuardianPrivateLaunchIngress : IDisposable
 
     internal GuardianPrivateLaunchIngress(string pipeName, string token, GuardianProtocol.Correlation correlation)
     {
-        if (string.IsNullOrWhiteSpace(pipeName) || pipeName.Contains('\0') || pipeName.Contains('/') || pipeName.Contains('\\')) throw new InvalidDataException("windows_stardew_bootstrap_guardian_private_pipe_invalid");
-        if (string.IsNullOrWhiteSpace(token)) throw new InvalidDataException("windows_stardew_bootstrap_guardian_private_token_invalid");
+        if (string.IsNullOrWhiteSpace(pipeName) || pipeName.Contains('\0') || pipeName.Contains('/') || pipeName.Contains('\\')) throw new InvalidDataException("windows_bootstrap_guardian_private_pipe_invalid");
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidDataException("windows_bootstrap_guardian_private_token_invalid");
         this.pipeName = pipeName; this.token = token; this.correlation = correlation;
     }
 
     internal static void ValidateAbi()
     {
         if (IntPtr.Size != 8 || Marshal.SizeOf<SecurityAttributes>() != 24)
-            throw new PlatformNotSupportedException("windows_stardew_bootstrap_guardian_pipe_abi_invalid");
+            throw new PlatformNotSupportedException("windows_bootstrap_guardian_pipe_abi_invalid");
     }
 
     internal async Task<ArmBinding?> ReceiveArmAsync(CancellationToken cancellationToken)
@@ -70,12 +70,12 @@ internal sealed class GuardianPrivateLaunchIngress : IDisposable
     private NamedPipeServerStream CreateServer()
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
-        var sid = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("windows_stardew_bootstrap_guardian_current_sid_missing");
+        var sid = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("windows_bootstrap_guardian_current_sid_missing");
         using var security = CreateSecurity(sid);
         var attributes = security.Attributes;
         var handle = CreateNamedPipeW($"\\\\.\\pipe\\{pipeName}", PipeAccessDuplex | FileFlagOverlapped | FileFlagFirstPipeInstance,
             PipeTypeByte | PipeReadModeByte | PipeWait | PipeRejectRemoteClients, 1, MaxFrameBytes, MaxFrameBytes, 0, ref attributes);
-        if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_private_pipe_create_failed");
+        if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_bootstrap_guardian_private_pipe_create_failed");
         try { return new NamedPipeServerStream(PipeDirection.InOut, true, false, new SafePipeHandle(handle, true)); }
         catch { CloseHandle(handle); throw; }
     }
@@ -84,16 +84,16 @@ internal sealed class GuardianPrivateLaunchIngress : IDisposable
     {
         // PIPE_ACCESS_DUPLEX requires read/write plus synchronize; never publish ACL mutation rights.
         var sddl = $"D:P(A;;0x0012019B;;;{sid})";
-        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, out var descriptor, out _)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_private_pipe_security_failed");
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, out var descriptor, out _)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_bootstrap_guardian_private_pipe_security_failed");
         return new SecurityReference(new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), Descriptor = descriptor, InheritHandle = 0 });
     }
 
     private static void ValidateClientSid(NamedPipeServerStream pipe)
     {
-        var expected = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("windows_stardew_bootstrap_guardian_current_sid_missing");
+        var expected = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("windows_bootstrap_guardian_current_sid_missing");
         string? actual = null;
         pipe.RunAsClient(() => actual = WindowsIdentity.GetCurrent().User?.Value);
-        if (!StringComparer.OrdinalIgnoreCase.Equals(expected, actual)) throw new UnauthorizedAccessException("windows_stardew_bootstrap_guardian_private_client_sid_invalid");
+        if (!StringComparer.OrdinalIgnoreCase.Equals(expected, actual)) throw new UnauthorizedAccessException("windows_bootstrap_guardian_private_client_sid_invalid");
     }
 
     private async Task ReplyAsync(string value)

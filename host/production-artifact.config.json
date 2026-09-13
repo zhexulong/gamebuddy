@@ -50,11 +50,11 @@
     "helper": "GameBuddy.WindowsStardewFolderPicker.exe",
     "manifest": "windows-stardew-folder-picker.manifest.json"
   },
-  "windowsStardewBootstrapGuardian": {
-    "kind": "verified_windows_stardew_bootstrap_guardian",
-    "destination": "native/windows-stardew-bootstrap-guardian/win-x64",
-    "helper": "GameBuddy.WindowsStardewBootstrapGuardian.exe",
-    "manifest": "windows-stardew-bootstrap-guardian.manifest.json"
+  "windowsBootstrapGuardian": {
+    "kind": "verified_windows_bootstrap_guardian",
+    "destination": "native/windows-bootstrap-guardian/win-x64",
+    "helper": "GameBuddy.WindowsBootstrapGuardian.exe",
+    "manifest": "windows-bootstrap-guardian.manifest.json"
   },
   "externalRuntimeClosure": {
     "kind": "declared_external_runtime_closure",

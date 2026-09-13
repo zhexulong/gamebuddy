@@ -1,4 +1,4 @@
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 /** Serializes resident EOF closing with irreversible launch boundaries. */
 internal sealed class ResidentGuardianStateGate

@@ -4,15 +4,15 @@ import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import net from "node:net";
 import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(here, "..");
-const guardian = resolve(here, ".dist", "win-x64", "GameBuddy.WindowsStardewBootstrapGuardian.exe");
+const guardian = resolve(here, ".dist", "win-x64", "GameBuddy.WindowsBootstrapGuardian.exe");
 const fixture = resolve(here, ".dist", "fixtures", "RoleRootFixture.exe");
-const testGuardian = resolve(here, ".dist", "fixtures", "GameBuddy.WindowsStardewBootstrapGuardian.Test.exe");
+const testGuardian = resolve(here, ".dist", "fixtures", "GameBuddy.WindowsBootstrapGuardian.Test.exe");
 const isWindows = process.platform === "win32";
 const winOnly = { skip: !isWindows ? "BLOCKED: Task 1 requires a supported Windows host" : false };
 const PATH_ENVIRONMENT = { PATH: process.env.PATH ?? "C:\\Windows\\System32" };
@@ -43,10 +43,10 @@ test("failed role abort retains its root handle until bounded exit confirmation"
   const abort = source.slice(abortStart, source.indexOf("public void Dispose()", abortStart));
   assert.ok(abortStart >= 0, "LaunchedRole.Abort is missing");
   assert.match(source, /RoleAbortWaitMilliseconds\s*=\s*30_000/);
-  assert.match(abort, /if \(!TerminateProcess\(Process, 1\)\) throw new Win32Exception\(Marshal\.GetLastWin32Error\(\), "windows_stardew_bootstrap_guardian_role_abort_terminate_failed"\);/);
+  assert.match(abort, /if \(!TerminateProcess\(Process, 1\)\) throw new Win32Exception\(Marshal\.GetLastWin32Error\(\), "windows_bootstrap_guardian_role_abort_terminate_failed"\);/);
   assert.match(abort, /WaitForSingleObject\(Process, RoleAbortWaitMilliseconds\)/);
-  assert.match(abort, /if \(wait == WaitTimeout\) throw new TimeoutException\("windows_stardew_bootstrap_guardian_role_abort_timeout"\);/);
-  assert.match(abort, /if \(wait != WaitObject0\) throw new Win32Exception\(Marshal\.GetLastWin32Error\(\), "windows_stardew_bootstrap_guardian_role_abort_wait_failed"\);/);
+  assert.match(abort, /if \(wait == WaitTimeout\) throw new TimeoutException\("windows_bootstrap_guardian_role_abort_timeout"\);/);
+  assert.match(abort, /if \(wait != WaitObject0\) throw new Win32Exception\(Marshal\.GetLastWin32Error\(\), "windows_bootstrap_guardian_role_abort_wait_failed"\);/);
   assert.match(abort, /Dispose\(\);\s*\}/);
 });
 
@@ -69,6 +69,25 @@ test("test-only Guardian variant has barriers while production helper has none",
   }
 });
 
+test("resident launch verifies membership before the final resume gate without an empty gate", async () => {
+  const source = await readFile(resolve(here, "Program.cs"), "utf8");
+  const residentStart = source.indexOf("private static async Task<int> RunResidentAsync");
+  const recoveryStart = source.indexOf("private static async Task<int> RunRecoveryAsync", residentStart);
+  assert.ok(residentStart >= 0 && recoveryStart > residentStart, "resident method boundary is missing");
+  const resident = source.slice(residentStart, recoveryStart);
+  const launchStart = resident.indexOf('if (command.Operation == "launch_role")');
+  const launchEnd = resident.indexOf("\n                else\n", launchStart);
+  assert.ok(launchStart >= 0 && launchEnd > launchStart, "resident launch branch boundary is missing");
+  const launch = resident.slice(launchStart, launchEnd);
+  const membership = launch.indexOf("WindowsRoleLauncher.VerifyMembership");
+  const resume = launch.indexOf("WindowsRoleLauncher.Resume");
+  assert.ok(membership >= 0, "membership verification is missing");
+  assert.ok(resume > membership, "membership verification must precede resume");
+  assert.match(launch, /TryRunOpen\(\(\) => WindowsRoleLauncher\.VerifyMembership\(launched!, job\)\)/);
+  assert.match(launch, /TryRunOpen\(\(\) =>\s*\{[\s\S]*WindowsRoleLauncher\.Resume\(launched!\);/);
+  assert.doesNotMatch(launch, /TryRunOpen\(\(\) =>\s*\{\s*\}\)/);
+});
+
 test("resident EOF gates suspended launch boundaries", { ...winOnly, timeout: 90_000 }, async (t) => {
   for (const phase of ["before-create", "after-create", "after-membership", "before-resume"]) await t.test(`${phase} EOF wins without first user code`, async () => {
     const root = await temporaryRoot(`eof-${phase}`);
@@ -89,28 +108,39 @@ test("resident EOF gates suspended launch boundaries", { ...winOnly, timeout: 90
   });
 });
 
-test("resident resume wins before EOF, then EOF drains the active tree and discards queued work", { ...winOnly, timeout: 30_000 }, async () => {
+test("resident resume wins before EOF, then EOF drains AI while Player survives and discards queued work", { ...winOnly, timeout: 30_000 }, async () => {
   const phase = "before-resume";
   const root = await temporaryRoot("eof-resume-wins");
   const session = await startGuardianSession({ executable: testGuardian, testBarrierDirectory: root, testBarrierPhase: phase });
+  const playerPidFile = resolve(root, "player.pid");
+  let playerPid = null;
   try {
     const report = resolve(root, "player.report");
     const heartbeat = resolve(root, "player.heartbeat");
     const queuedReport = resolve(root, "ai-queued.report");
-    session.submitPlan(session.plan("player_host", ["--signal", report, "--heartbeat", heartbeat, "--spawn-descendant"]));
+    session.submitPlan(session.plan("player_host", ["--signal", report, "--heartbeat", heartbeat, "--pid-file", playerPidFile, "--spawn-descendant"]));
     session.sendPublic(session.publicCommand("launch_role", "player_host"));
     await waitForBarrier(root, phase);
     await releaseBarrier(root, phase);
     assert.equal(await session.nextPrivateLine(), "accepted");
     assert.equal(await session.nextPublicResult(), "role_active");
-    await Promise.all([waitForFile(report), waitForFile(heartbeat), waitForFile(`${heartbeat}.child`)]);
+    await Promise.all([waitForFile(report), waitForFile(heartbeat), waitForFile(`${heartbeat}.child`), waitForFile(playerPidFile)]);
+    playerPid = Number(await readFile(playerPidFile, "utf8"));
+    const playerBeforeEof = await readFile(heartbeat, "utf8");
     session.submitPlan(session.plan("ai_client", ["--signal", queuedReport]));
     session.sendPublic(session.publicCommand("launch_role", "ai_client"));
     session.endPublicInput();
-    assert.equal(await session.closesWithin(5_000), true, "resume-wins EOF teardown was not bounded");
-    await waitForStableFiles([heartbeat, `${heartbeat}.child`]);
+    assert.equal(await session.exitsWithin(5_000), true, "resume-wins EOF teardown was not bounded");
+    assert.equal(session.exitCode(), 1, JSON.stringify(session.diagnostics()));
+    const playerChildBeforeEof = await readFile(`${heartbeat}.child`, "utf8");
+    await waitForFileChange(`${heartbeat}.child`, playerChildBeforeEof);
+    await waitForFileChange(heartbeat, playerBeforeEof);
+    assert.equal(await isProcessAlive(playerPid), true, "Player exited after Guardian EOF");
     await expectNoFile(queuedReport, 250);
-  } finally { await session.close(); await removeRoot(root); }
+  } finally {
+    try { await terminateAndWaitForFixtureExit(playerPid ?? await readPidIfPresent(playerPidFile)); }
+    finally { await session.close(); await removeRoot(root); }
+  }
 });
 
 test("C2 recovery mode is private, classifies only after post-CAS/public authorization, and keeps explicit release last", async () => {
@@ -167,7 +197,7 @@ test("C2 recovery ingress rejects wrong token, preserves authorization ordering,
     socket.write(JSON.stringify(post) + "\n");
     accepted.stdin.write(JSON.stringify({ schemaVersion: 1, operation: "recover_attempt", ...recoveryCorrelation, recoveryInstanceId }) + "\n");
     socket.write('{"operation":"classify","role":"playerHost"}\n');
-    assert.equal(await next(), "contained");
+    assert.equal(await next(), "unavailable");
     socket.write('{"operation":"classify","role":"aiClient"}\n');
     assert.equal(await next(), "contained");
     socket.write('{"operation":"release"}\n');
@@ -177,7 +207,7 @@ test("C2 recovery ingress rejects wrong token, preserves authorization ordering,
   } finally { accepted.kill(); await closesWithin(accepted, 2_000); }
 });
 
-test("C2 classifier terminates and drains a valid active exact Job", { ...winOnly, timeout: 30_000 }, async () => {
+test("C2 recovery leaves a valid active Player Job untouched while AI classification remains contained", { ...winOnly, timeout: 30_000 }, async () => {
   const root = await temporaryRoot("c2-valid-job");
   const jobName = `Local\\RecoveryValid-${crypto.randomUUID()}`;
   const ready = resolve(root, "ready.txt");
@@ -186,10 +216,10 @@ test("C2 classifier terminates and drains a valid active exact Job", { ...winOnl
   try {
     await waitForFile(ready); await waitForFile(heartbeat);
     const result = await runRecoveryClassification({ playerJobName: jobName, playerHostState: "active", aiClientState: "contained" });
-    assert.deepEqual(result.classifications, ["contained", "contained"], result.stderr);
+    assert.deepEqual(result.classifications, ["unavailable", "contained"], result.stderr);
     assert.equal(result.exitCode, 0);
-    await waitForStableFiles([heartbeat]);
-    await closesWithin(holder, 3_000);
+    const before = await readFile(heartbeat, "utf8");
+    await waitForFileChange(heartbeat, before);
   } finally { holder.kill(); await closesWithin(holder, 2_000); await removeRoot(root); }
 });
 
@@ -204,7 +234,7 @@ test("C2 classifier quarantines jobs with wrong DACL, missing kill-on-close, or 
       await waitForFile(ready); await waitForFile(heartbeat);
       const before = await readFile(heartbeat, "utf8");
       const result = await runRecoveryClassification({ playerJobName: jobName, playerHostState: "active", aiClientState: "contained" });
-      assert.deepEqual(result.classifications, ["quarantined", "contained"]);
+      assert.deepEqual(result.classifications, ["unavailable", "contained"]);
       await waitForFileChange(heartbeat, before);
     } finally { holder.kill(); await closesWithin(holder, 2_000); await removeRoot(root); }
   });
@@ -214,28 +244,28 @@ test("C2 classifier contains a valid empty exact Job and quarantines access-deni
   await t.test("empty valid job", { timeout: 12_000 }, async () => {
     const root = await temporaryRoot("c2-empty-job"); const jobName = `Local\\RecoveryEmpty-${crypto.randomUUID()}`; const ready = resolve(root, "ready.txt");
     const holder = spawn(fixture, ["--recovery-job", jobName, "valid-empty", "--signal", ready], { windowsHide: true, shell: false, stdio: "ignore" });
-    try { await waitForFile(ready); const result = await runRecoveryClassification({ playerJobName: jobName, playerHostState: "active", aiClientState: "contained" }); assert.deepEqual(result.classifications, ["contained", "contained"]); }
+    try { await waitForFile(ready); const result = await runRecoveryClassification({ playerJobName: jobName, playerHostState: "active", aiClientState: "contained" }); assert.deepEqual(result.classifications, ["unavailable", "contained"]); }
     finally { holder.kill(); await closesWithin(holder, 2_000); await removeRoot(root); }
   });
   await t.test("access denied", { timeout: 12_000 }, async () => {
     const root = await temporaryRoot("c2-deny-job"); const jobName = `Local\\RecoveryDeny-${crypto.randomUUID()}`; const ready = resolve(root, "ready.txt");
     const holder = spawn(fixture, ["--recovery-job", jobName, "deny-current", "--signal", ready], { windowsHide: true, shell: false, stdio: "ignore" });
-    try { await waitForFile(ready); const result = await runRecoveryClassification({ playerJobName: jobName, playerHostState: "active", aiClientState: "contained" }); assert.deepEqual(result.classifications, ["quarantined", "contained"]); }
+    try { await waitForFile(ready); const result = await runRecoveryClassification({ playerJobName: jobName, playerHostState: "active", aiClientState: "contained" }); assert.deepEqual(result.classifications, ["unavailable", "contained"]); }
     finally { holder.kill(); await closesWithin(holder, 2_000); await removeRoot(root); }
   });
   await t.test("wrong object type", { timeout: 12_000 }, async () => {
     const root = await temporaryRoot("c2-wrong-object"); const jobName = `Local\\RecoveryMutex-${crypto.randomUUID()}`; const ready = resolve(root, "ready.txt");
     const holder = spawn(fixture, ["--hold-mutex", jobName, "--signal", ready], { windowsHide: true, shell: false, stdio: "ignore" });
-    try { await waitForFile(ready); const result = await runRecoveryClassification({ playerJobName: jobName, playerHostState: "active", aiClientState: "contained" }); assert.deepEqual(result.classifications, ["quarantined", "contained"]); }
+    try { await waitForFile(ready); const result = await runRecoveryClassification({ playerJobName: jobName, playerHostState: "active", aiClientState: "contained" }); assert.deepEqual(result.classifications, ["unavailable", "contained"]); }
     finally { holder.kill(); await closesWithin(holder, 2_000); await removeRoot(root); }
   });
 });
 
 test("C2 missing-state classification distinguishes reserved, armed, and already-contained", { ...winOnly, timeout: 30_000 }, async () => {
   const reserved = await runRecoveryClassification({ playerHostState: "reserved", aiClientState: "contained" });
-  assert.deepEqual(reserved.classifications, ["quarantined", "contained"]);
+  assert.deepEqual(reserved.classifications, ["unavailable", "contained"]);
   const armed = await runRecoveryClassification({ playerHostState: "armed", aiClientState: "contained" });
-  assert.deepEqual(armed.classifications, ["contained", "contained"]);
+  assert.deepEqual(armed.classifications, ["unavailable", "contained"]);
 
   const root = await temporaryRoot("c2-already-contained");
   const jobName = `Local\\RecoveryContained-${crypto.randomUUID()}`;
@@ -246,7 +276,7 @@ test("C2 missing-state classification distinguishes reserved, armed, and already
     await waitForFile(ready); await waitForFile(heartbeat);
     const before = await readFile(heartbeat, "utf8");
     const contained = await runRecoveryClassification({ playerJobName: jobName, playerHostState: "contained", aiClientState: "contained" });
-    assert.deepEqual(contained.classifications, ["contained", "contained"]);
+    assert.deepEqual(contained.classifications, ["unavailable", "contained"]);
     await waitForFileChange(heartbeat, before);
   } finally { holder.kill(); await closesWithin(holder, 2_000); await removeRoot(root); }
 });
@@ -288,6 +318,73 @@ test("atomic membership before first user code", { ...winOnly, timeout: 35_000 }
   } finally { await session.close(); await removeRoot(root); }
 });
 
+test("Player survives production Guardian EOF while AI exits", { ...winOnly, timeout: 45_000 }, async () => {
+  const root = await temporaryRoot("survival-eof");
+  const session = await startGuardianSession();
+  const playerHeartbeat = resolve(root, "player-heartbeat.txt");
+  const aiHeartbeat = resolve(root, "ai-heartbeat.txt");
+  const playerPidFile = resolve(root, "player.pid");
+  let bodyFailed = false;
+  try {
+    await session.launch("player_host", ["--heartbeat", playerHeartbeat, "--pid-file", playerPidFile]);
+    await session.launch("ai_client", ["--heartbeat", aiHeartbeat]);
+    await Promise.all([waitForFile(playerHeartbeat), waitForFile(aiHeartbeat), waitForFile(playerPidFile)]);
+    const playerPid = Number(await readFile(playerPidFile, "utf8"));
+    const before = await readFile(playerHeartbeat, "utf8");
+    session.endPublicInput();
+    assert.equal(await session.exitsWithin(5_000), true, `Guardian EOF did not exit: ${JSON.stringify(session.diagnostics())}`);
+    assert.equal(session.exitCode(), 1, JSON.stringify(session.diagnostics()));
+    await waitForFileChange(playerHeartbeat, before);
+    const after = await readFile(playerHeartbeat, "utf8");
+    await waitForStableFiles([aiHeartbeat]);
+    assert.notEqual(after, before, "Player heartbeat stopped after Guardian EOF");
+    assert.equal(await isProcessAlive(playerPid), true, "Player exited with Guardian EOF");
+  } catch (error) {
+    bodyFailed = true;
+    throw error;
+  } finally {
+    let cleanupError;
+    try {
+      const pid = await readPidIfPresent(playerPidFile);
+      await terminateAndWaitForFixtureExit(pid);
+    } catch (error) { cleanupError = error; }
+    await session.close(); await removeRoot(root);
+    if (cleanupError !== undefined && !bodyFailed) throw cleanupError;
+  }
+});
+
+test("Player survives production Guardian crash/last-handle close while AI exits", { ...winOnly, timeout: 45_000 }, async () => {
+  const root = await temporaryRoot("survival-crash");
+  const session = await startGuardianSession();
+  const playerHeartbeat = resolve(root, "player-heartbeat.txt");
+  const aiHeartbeat = resolve(root, "ai-heartbeat.txt");
+  const playerPidFile = resolve(root, "player.pid");
+  let bodyFailed = false;
+  try {
+    await session.launch("player_host", ["--heartbeat", playerHeartbeat, "--pid-file", playerPidFile]);
+    await session.launch("ai_client", ["--heartbeat", aiHeartbeat]);
+    await Promise.all([waitForFile(playerHeartbeat), waitForFile(aiHeartbeat), waitForFile(playerPidFile)]);
+    const playerPid = Number(await readFile(playerPidFile, "utf8"));
+    const before = await readFile(playerHeartbeat, "utf8");
+    await session.crash();
+    assert.equal(await session.exitsWithin(5_000), true, `Guardian crash did not exit: ${JSON.stringify(session.diagnostics())}`);
+    await waitForFileChange(playerHeartbeat, before);
+    assert.equal(await isProcessAlive(playerPid), true, "Player exited with Guardian crash");
+    await waitForStableFiles([aiHeartbeat]);
+  } catch (error) {
+    bodyFailed = true;
+    throw error;
+  } finally {
+    let cleanupError;
+    try {
+      const pid = await readPidIfPresent(playerPidFile);
+      await terminateAndWaitForFixtureExit(pid);
+    } catch (error) { cleanupError = error; }
+    await session.close(); await removeRoot(root);
+    if (cleanupError !== undefined && !bodyFailed) throw cleanupError;
+  }
+});
+
 test("role Jobs isolate Player from AI and drain AI descendants", { ...winOnly, timeout: 45_000 }, async () => {
   await mustExist(guardian); await mustExist(fixture);
   const root = await temporaryRoot("isolation");
@@ -311,33 +408,48 @@ test("role Jobs isolate Player from AI and drain AI descendants", { ...winOnly, 
   } finally { await session.close(); await removeRoot(root); }
 });
 
-test("wrong public correlation terminates fail-closed and KILL_ON_JOB_CLOSE drains the active role", { ...winOnly, timeout: 15_000 }, async () => {
+test("wrong public correlation terminates fail-closed and drains the surviving active role after explicit cleanup", { ...winOnly, timeout: 15_000 }, async () => {
   const root = await temporaryRoot("wrong-correlation-contain");
   const session = await startGuardianSession();
+  const heartbeat = resolve(root, "heartbeat.txt");
+  const playerPidFile = resolve(root, "player.pid");
+  let playerPid = null;
   try {
-    const heartbeat = resolve(root, "heartbeat.txt");
-    await session.launch("player_host", ["--heartbeat", heartbeat]);
-    await waitForFile(heartbeat);
+    await session.launch("player_host", ["--heartbeat", heartbeat, "--pid-file", playerPidFile]);
+    await Promise.all([waitForFile(heartbeat), waitForFile(playerPidFile)]);
+    playerPid = Number(await readFile(playerPidFile, "utf8"));
     session.sendPublic(session.publicCommand("contain_role", "player_host", { attemptId: crypto.randomUUID() }));
-    assert.equal(await session.closesWithin(3_000), true, "invalid public containment did not terminate boundedly");
+    assert.equal(await session.exitsWithin(3_000), true, "invalid public containment did not terminate boundedly");
     assert.equal(session.exitCode(), 1, "invalid public containment did not return terminal fail-closed");
-    await waitForStableFiles([heartbeat]);
     assert.equal(session.publicResults.includes("role_contained"), false, "invalid containment emitted role_contained");
-  } finally { await session.close(); await removeRoot(root); }
+    await terminateAndWaitForFixtureExit(playerPid);
+    await waitForStableFiles([heartbeat]);
+  } finally {
+    try { await terminateAndWaitForFixtureExit(playerPid ?? await readPidIfPresent(playerPidFile)); }
+    finally { await session.close(); await removeRoot(root); }
+  }
 });
 
 test("same role cannot execute a second first-user-code plan", { ...winOnly, timeout: 15_000 }, async () => {
   const root = await temporaryRoot("duplicate-role");
   const session = await startGuardianSession();
+  const playerPidFile = resolve(root, "player.pid");
+  let playerPid = null;
   try {
     const first = resolve(root, "first.txt"); const second = resolve(root, "second.txt");
-    await session.launch("player_host", ["--signal", first]);
-    await waitForFile(first);
+    await session.launch("player_host", ["--signal", first, "--pid-file", playerPidFile]);
+    await Promise.all([waitForFile(first), waitForFile(playerPidFile)]);
+    playerPid = Number(await readFile(playerPidFile, "utf8"));
     session.submitPlan(session.plan("player_host", ["--signal", second]));
     session.sendPublic(session.publicCommand("launch_role", "player_host"));
-    assert.equal(await session.closesWithin(3_000), true, "duplicate role did not fail closed");
+    assert.equal(await session.exitsWithin(3_000), true, "duplicate role did not fail closed");
+    assert.equal(session.exitCode(), 1, "duplicate role did not return terminal fail-closed");
+    await terminateAndWaitForFixtureExit(playerPid);
     await expectNoFile(second, 500);
-  } finally { await session.close(); await removeRoot(root); }
+  } finally {
+    try { await terminateAndWaitForFixtureExit(playerPid ?? await readPidIfPresent(playerPidFile)); }
+    finally { await session.close(); await removeRoot(root); }
+  }
 });
 
 test("wrong private arm token produces no fixture effect", { ...winOnly, timeout: 15_000 }, async () => {
@@ -539,6 +651,7 @@ async function startUnarmedGuardian({ controlPipe = `GameBuddyGuardian-${crypto.
     nextPublicResult: async () => JSON.parse(await nextOutputLine()).result,
     sendPublic(command) { child.stdin.write(JSON.stringify(command) + "\n"); },
     endPublicInput() { child.stdin.end(); },
+
     submitPlan(value) { socket.write(JSON.stringify(value) + "\n"); },
     async launchPlan(value) { this.submitPlan(value); this.sendPublic(this.publicCommand("launch_role", value.role)); assert.equal(await this.nextPrivateLine(), "accepted"); assert.equal(await this.nextPublicResult(), "role_active"); },
     async launch(role, arguments_) { await this.launchPlan(this.plan(role, arguments_)); },
@@ -546,7 +659,9 @@ async function startUnarmedGuardian({ controlPipe = `GameBuddyGuardian-${crypto.
     closesWithin: async (milliseconds) => await closesWithin(child, milliseconds),
     exitCode: () => child.exitCode,
     diagnostics: () => ({ exitCode: child.exitCode, stderr }),
-    close: async () => { socket?.destroy(); if (!child.stdin.destroyed) child.stdin.end(); if (!await closesWithin(child, 2_000)) { child.kill(); await closesWithin(child, 2_000); } },
+    async crash() { socket?.destroy(); await killProcessTree(child.pid); },
+    exitsWithin: async (milliseconds) => await exitsWithin(child, milliseconds),
+    close: async () => { socket?.destroy(); if (!child.stdin.destroyed) child.stdin.end(); if (!await exitsWithin(child, 2_000)) { child.kill(); await exitsWithin(child, 2_000); } },
   };
 }
 
@@ -560,6 +675,20 @@ function lineReader(stream, onLine = () => {}) {
 function onceEvent(emitter, event) { return new Promise((resolveEvent, rejectEvent) => { const onError = (error) => { emitter.off(event, onEvent); rejectEvent(error); }; const onEvent = (...args) => { emitter.off("error", onError); resolveEvent(args); }; emitter.once(event, onEvent); emitter.once("error", onError); }); }
 async function connectPipe(path, child) { let last; for (let attempt = 0; attempt < 800; attempt++) { if (child.exitCode !== null) throw new Error("Guardian exited before private pipe"); const socket = net.createConnection({ path }); try { await onceEvent(socket, "connect"); return socket; } catch (error) { last = error; socket.destroy(); if (error?.code !== "ENOENT") throw error; await delay(25); } } throw last ?? new Error("guardian private pipe unavailable"); }
 async function closesWithin(child, milliseconds) { if (child.exitCode !== null) return true; return await Promise.race([onceEvent(child, "close").then(() => true), delay(milliseconds).then(() => false)]); }
+async function exitsWithin(child, milliseconds) { if (child.exitCode !== null) return true; return await Promise.race([onceEvent(child, "exit").then(() => child.exitCode !== null), delay(milliseconds).then(() => false)]); }
+async function killProcessTree(pid) { if (pid === undefined) return; await new Promise((resolveKill) => execFile("taskkill", ["/pid", String(pid), "/f"], { windowsHide: true }, () => resolveKill())); }
+async function readPidIfPresent(path) { try { return Number(await readFile(path, "utf8")); } catch { return null; } }
+async function isProcessAlive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
+async function terminateAndWaitForFixtureExit(pid) {
+  if (pid === null || pid === undefined) return;
+  try { process.kill(pid); } catch (error) { if (error?.code !== "ESRCH") throw error; }
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (!(await isProcessAlive(pid))) return;
+    await delay(50);
+  }
+  throw new Error(`fixture player did not exit after cleanup: ${pid}`);
+}
 async function waitForFile(path) { for (let i = 0; i < 400; i++) { try { await access(path); return; } catch { await delay(25); } } throw new Error("fixture report missing"); }
 async function expectNoFile(path, milliseconds) { await delay(milliseconds); await assert.rejects(access(path)); }
 async function waitForFileChange(path, previous) { for (let attempt = 0; attempt < 40; attempt++) { await delay(50); if (await readFile(path, "utf8") !== previous) return; } throw new Error("fixture heartbeat did not advance"); }

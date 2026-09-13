@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.IO;
 using System.Text.RegularExpressions;
 
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 internal static class GuardianProtocol
 {
@@ -56,7 +56,7 @@ internal static class GuardianProtocol
         if (names.Length != expected.Length || expected.Any(name => !names.Contains(name, StringComparer.Ordinal))) throw Invalid();
     }
 
-    internal static Exception Invalid() => new InvalidDataException("windows_stardew_bootstrap_guardian_invalid_request");
+    internal static Exception Invalid() => new InvalidDataException("windows_bootstrap_guardian_invalid_request");
     internal static string Response(string result) => $"{{\"schemaVersion\":1,\"result\":\"{result}\"}}\n";
 
     internal enum Role { PlayerHost, AiClient }

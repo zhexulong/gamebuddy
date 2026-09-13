@@ -4,7 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import {
-  buildWindowsStardewBootstrapGuardian,
+  buildWindowsBootstrapGuardian,
   canonicalManifest,
   fixtureFileName,
   testGuardianFileName,
@@ -13,24 +13,24 @@ import {
   helperFileName,
   manifestFileName,
   projectFile,
-} from "./build-windows-stardew-bootstrap-guardian.mjs";
+} from "./build-windows-bootstrap-guardian.mjs";
 
 const isWindowsX64 = process.platform === "win32" && process.arch === "x64";
 const winOnly = { skip: !isWindowsX64 ? "BLOCKED: Guardian publication requires Windows x64" : false };
 let publication;
 
 test.before(async () => {
-  if (isWindowsX64) publication = await buildWindowsStardewBootstrapGuardian();
+  if (isWindowsX64) publication = await buildWindowsBootstrapGuardian();
 });
 
 test("production builder freshly publishes exact Guardian and disposable fixture outputs", winOnly, async () => {
   assert.deepEqual((await readdir(guardianOutputRoot)).sort(), [helperFileName, manifestFileName].sort());
-  assert.deepEqual((await readdir(new URL("../native/windows-stardew-bootstrap-guardian/.dist/fixtures/", import.meta.url))).sort(), [fixtureFileName, testGuardianFileName].sort());
+  assert.deepEqual((await readdir(new URL("../native/windows-bootstrap-guardian/.dist/fixtures/", import.meta.url))).sort(), [fixtureFileName, testGuardianFileName].sort());
   const helper = await readFile(publication.helperPath);
   const sha256 = createHash("sha256").update(helper).digest("hex");
   assert.equal(publication.sha256, sha256);
-  assert.equal(await readFile(new URL(`../native/windows-stardew-bootstrap-guardian/.dist/win-x64/${manifestFileName}`, import.meta.url), "utf8"), canonicalManifest(sha256));
-  assert.ok((await readFile(projectFile, "utf8")).includes("GameBuddy.WindowsStardewBootstrapGuardian"));
+  assert.equal(await readFile(new URL(`../native/windows-bootstrap-guardian/.dist/win-x64/${manifestFileName}`, import.meta.url), "utf8"), canonicalManifest(sha256));
+  assert.ok((await readFile(projectFile, "utf8")).includes("GameBuddy.WindowsBootstrapGuardian"));
   assert.ok((await readFile(fixtureProjectFile, "utf8")).includes("RoleRootFixture"));
 });
 
@@ -40,7 +40,7 @@ test("fresh Guardian apphost has the fixed no-input fail-closed probe", winOnly,
     code: 1,
     signal: null,
     stdout: "",
-    stderr: "windows_stardew_bootstrap_guardian_invalid_request\n",
+    stderr: "windows_bootstrap_guardian_invalid_request\n",
   });
 });
 
@@ -61,7 +61,7 @@ function runProbe(executable) {
     child.stderr.on("data", (chunk) => { stderr += String(chunk); });
     const timer = setTimeout(() => {
       child.kill();
-      rejectProbe(new Error("windows_stardew_bootstrap_guardian_probe_timeout"));
+      rejectProbe(new Error("windows_bootstrap_guardian_probe_timeout"));
     }, 10_000);
     child.once("error", (error) => {
       clearTimeout(timer);

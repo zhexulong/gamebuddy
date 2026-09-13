@@ -7,7 +7,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-namespace GameBuddy.WindowsStardewBootstrapGuardian;
+namespace GameBuddy.WindowsBootstrapGuardian;
 
 /** Separate recovery-only private session. It never creates, opens, queries, or terminates a Job. */
 internal sealed class GuardianRecoveryIngress : IDisposable

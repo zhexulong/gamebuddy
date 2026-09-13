@@ -7,16 +7,16 @@ import { fileURLToPath } from "node:url";
 const scriptPath = fileURLToPath(import.meta.url);
 const hostRoot = resolve(dirname(scriptPath), "..");
 const repositoryRoot = resolve(hostRoot, "..");
-const projectRoot = resolve(hostRoot, "native", "windows-stardew-bootstrap-guardian");
-export const projectFile = resolve(projectRoot, "GameBuddy.WindowsStardewBootstrapGuardian.csproj");
+const projectRoot = resolve(hostRoot, "native", "windows-bootstrap-guardian");
+export const projectFile = resolve(projectRoot, "GameBuddy.WindowsBootstrapGuardian.csproj");
 export const fixtureProjectFile = resolve(projectRoot, "fixtures", "RoleRootFixture.csproj");
 export const outputRoot = resolve(projectRoot, ".dist");
 export const guardianOutputRoot = resolve(outputRoot, "win-x64");
 const fixtureOutputRoot = resolve(outputRoot, "fixtures");
-export const helperFileName = "GameBuddy.WindowsStardewBootstrapGuardian.exe";
+export const helperFileName = "GameBuddy.WindowsBootstrapGuardian.exe";
 export const fixtureFileName = "RoleRootFixture.exe";
-export const testGuardianFileName = "GameBuddy.WindowsStardewBootstrapGuardian.Test.exe";
-export const manifestFileName = "windows-stardew-bootstrap-guardian.manifest.json";
+export const testGuardianFileName = "GameBuddy.WindowsBootstrapGuardian.Test.exe";
+export const manifestFileName = "windows-bootstrap-guardian.manifest.json";
 const protocolVersion = 1;
 const manifestSchemaVersion = 1;
 const rid = "win-x64";
@@ -34,33 +34,33 @@ function contained(root, value) {
 async function verifyPhysicalPath(path) {
   const physical = await realpath(path);
   const normalized = (value) => resolve(value).replaceAll("\\", "/").toLowerCase();
-  if (normalized(path) !== normalized(physical)) throw new Error("windows_stardew_bootstrap_guardian_output_unsafe");
+  if (normalized(path) !== normalized(physical)) throw new Error("windows_bootstrap_guardian_output_unsafe");
 }
 
 async function ensureDirectory(path) {
   await mkdir(path, { recursive: true });
   const state = await lstat(path);
-  if (!state.isDirectory() || state.isSymbolicLink()) throw new Error("windows_stardew_bootstrap_guardian_output_unsafe");
+  if (!state.isDirectory() || state.isSymbolicLink()) throw new Error("windows_bootstrap_guardian_output_unsafe");
   await verifyPhysicalPath(path);
 }
 
 async function resolveRepositoryDotnet() {
   const state = await lstat(trustedDotnetPath).catch(() => undefined);
-  if (!state?.isFile() || state.isSymbolicLink() || !contained("C:\\", trustedDotnetPath)) throw new Error("windows_stardew_bootstrap_guardian_dotnet_missing");
+  if (!state?.isFile() || state.isSymbolicLink() || !contained("C:\\", trustedDotnetPath)) throw new Error("windows_bootstrap_guardian_dotnet_missing");
   return trustedDotnetPath;
 }
 
 async function readLockedSdkVersion() {
   let parsed;
   try { parsed = JSON.parse(await readFile(resolve(repositoryRoot, "global.json"), "utf8")); }
-  catch { throw new Error("windows_stardew_bootstrap_guardian_dotnet_sdk_lock_invalid"); }
+  catch { throw new Error("windows_bootstrap_guardian_dotnet_sdk_lock_invalid"); }
   const version = parsed?.sdk?.version;
-  if (typeof version !== "string" || !expectedSdkVersionPattern.test(version)) throw new Error("windows_stardew_bootstrap_guardian_dotnet_sdk_lock_invalid");
+  if (typeof version !== "string" || !expectedSdkVersionPattern.test(version)) throw new Error("windows_bootstrap_guardian_dotnet_sdk_lock_invalid");
   return version;
 }
 
 function minimalDotnetEnvironment() {
-  const temporaryRoot = resolve(repositoryRoot, ".tmp", "windows-stardew-bootstrap-guardian");
+  const temporaryRoot = resolve(repositoryRoot, ".tmp", "windows-bootstrap-guardian");
   return { SystemRoot: "C:\\Windows", WINDIR: "C:\\Windows", ComSpec: "C:\\Windows\\System32\\cmd.exe", OS: "Windows_NT", PROCESSOR_ARCHITECTURE: "AMD64", ProgramFiles: "C:\\Program Files", ProgramW6432: "C:\\Program Files", PROGRAMDATA: "C:\\ProgramData", TEMP: temporaryRoot, TMP: temporaryRoot, USERPROFILE: resolve(temporaryRoot, "user-profile"), APPDATA: resolve(temporaryRoot, "appdata"), LOCALAPPDATA: resolve(temporaryRoot, "localappdata"), DOTNET_CLI_HOME: resolve(temporaryRoot, "dotnet-home"), NUGET_PACKAGES: resolve(temporaryRoot, "nuget-packages"), DOTNET_CLI_TELEMETRY_OPTOUT: "1", DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1", DOTNET_NOLOGO: "1" };
 }
 
@@ -69,15 +69,15 @@ async function runBounded(command, args, { timeout = timeoutMs } = {}) {
     let child; let outputBytes = 0; let timedOut = false; const stdout = []; const stderr = [];
     const finish = (error, result) => error ? rejectRun(error) : resolveRun(result);
     try { child = spawn(command, args, { cwd: repositoryRoot, env: minimalDotnetEnvironment(), shell: false, windowsHide: true, detached: false, stdio: ["ignore", "pipe", "pipe"] }); }
-    catch (error) { finish(new Error("windows_stardew_bootstrap_guardian_process_spawn_failed", { cause: error })); return; }
+    catch (error) { finish(new Error("windows_bootstrap_guardian_process_spawn_failed", { cause: error })); return; }
     const collect = (target) => (chunk) => { outputBytes += chunk.length; if (outputBytes <= outputLimitBytes) target.push(chunk); else child.kill(); };
     child.stdout.on("data", collect(stdout)); child.stderr.on("data", collect(stderr));
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeout);
-    child.once("error", (error) => { clearTimeout(timer); finish(new Error("windows_stardew_bootstrap_guardian_process_spawn_failed", { cause: error })); });
+    child.once("error", (error) => { clearTimeout(timer); finish(new Error("windows_bootstrap_guardian_process_spawn_failed", { cause: error })); });
     child.once("close", (code, signal) => {
       clearTimeout(timer);
-      if (timedOut) return finish(new Error("windows_stardew_bootstrap_guardian_process_timeout"));
-      if (outputBytes > outputLimitBytes) return finish(new Error("windows_stardew_bootstrap_guardian_process_output_overflow"));
+      if (timedOut) return finish(new Error("windows_bootstrap_guardian_process_timeout"));
+      if (outputBytes > outputLimitBytes) return finish(new Error("windows_bootstrap_guardian_process_output_overflow"));
       finish(undefined, Object.freeze({ code, signal, stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8") }));
     });
   });
@@ -85,23 +85,23 @@ async function runBounded(command, args, { timeout = timeoutMs } = {}) {
 
 async function assertLockedSdk(dotnet) {
   const result = await runBounded(dotnet, ["--version"]);
-  if (result.code !== 0 || result.signal || result.stdout.trim() !== await readLockedSdkVersion()) throw new Error("windows_stardew_bootstrap_guardian_dotnet_sdk_drift");
+  if (result.code !== 0 || result.signal || result.stdout.trim() !== await readLockedSdkVersion()) throw new Error("windows_bootstrap_guardian_dotnet_sdk_drift");
 }
 
 async function publishProject(dotnet, project, destination, properties = []) {
   await ensureDirectory(destination);
   const result = await runBounded(dotnet, ["publish", project, "--configuration", "Release", "--runtime", rid, "--self-contained", "true", "--output", destination, "-p:PublishSingleFile=true", "-p:PublishTrimmed=false", "-p:DebugType=None", "-p:DebugSymbols=false", "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true", "-p:UseAppHost=true", ...properties, "--nologo"]);
-  if (result.code !== 0 || result.signal) throw new Error("windows_stardew_bootstrap_guardian_dotnet_failed");
+  if (result.code !== 0 || result.signal) throw new Error("windows_bootstrap_guardian_dotnet_failed");
 }
 
 async function verifyExactOutput(destination, names) {
   const entries = await readdir(destination);
-  if (entries.length !== names.length || !names.every((name) => entries.includes(name))) throw new Error("windows_stardew_bootstrap_guardian_output_unsafe");
+  if (entries.length !== names.length || !names.every((name) => entries.includes(name))) throw new Error("windows_bootstrap_guardian_output_unsafe");
   const paths = [];
   for (const name of names) {
     const path = resolve(destination, name);
     const state = await lstat(path);
-    if (!state.isFile() || state.isSymbolicLink()) throw new Error("windows_stardew_bootstrap_guardian_output_unsafe");
+    if (!state.isFile() || state.isSymbolicLink()) throw new Error("windows_bootstrap_guardian_output_unsafe");
     await verifyPhysicalPath(path);
     paths.push(path);
   }
@@ -112,11 +112,11 @@ async function probeGuardian(helperPath) {
   // The guardian has no valid no-input startup state: a bounded clean exit with
   // its fail-closed status proves this freshly published self-contained apphost launches.
   const result = await runBounded(helperPath, [], { timeout: probeTimeoutMs });
-  if (result.code !== 1 || result.signal || result.stdout !== "" || result.stderr !== "windows_stardew_bootstrap_guardian_invalid_request\n") throw new Error("windows_stardew_bootstrap_guardian_probe_failed");
+  if (result.code !== 1 || result.signal || result.stdout !== "" || result.stderr !== "windows_bootstrap_guardian_invalid_request\n") throw new Error("windows_bootstrap_guardian_probe_failed");
 }
 
 export function canonicalManifest(sha256) {
-  if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("windows_stardew_bootstrap_guardian_helper_hash_invalid");
+  if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("windows_bootstrap_guardian_helper_hash_invalid");
   return `{"schemaVersion":${manifestSchemaVersion},"protocolVersion":${protocolVersion},"rid":"${rid}","helperFileName":"${helperFileName}","sha256":"${sha256}"}\n`;
 }
 
@@ -155,7 +155,7 @@ async function replaceFinalDirectories(stagingGuardian, stagingFixture, { output
       try { await renameWithBoundedRetry(from, to, renameDirectory); }
       catch { rollbackComplete = false; }
     }
-    if (!rollbackComplete) throw new Error("windows_stardew_bootstrap_guardian_publication_quarantined", { cause: error });
+    if (!rollbackComplete) throw new Error("windows_bootstrap_guardian_publication_quarantined", { cause: error });
     throw error;
   } finally {
     if (replacementComplete || rollbackComplete) await rm(backupRoot, { recursive: true, force: true });
@@ -167,15 +167,15 @@ async function replaceFinalDirectories(stagingGuardian, stagingFixture, { output
  * Only win-x64 is a production-consumed pair. The fixtures directory is test-only
  * and is never an active generation or a production authority input. The builder
  * deliberately never reuses an existing Task 0 output. */
-export async function buildWindowsStardewBootstrapGuardian() {
+export async function buildWindowsBootstrapGuardian() {
   const output = outputRoot;
   const guardianOutput = guardianOutputRoot;
   const fixtureOutput = fixtureOutputRoot;
-  if (process.platform !== "win32" || process.arch !== "x64") throw new Error("windows_stardew_bootstrap_guardian_build_requires_win_x64");
+  if (process.platform !== "win32" || process.arch !== "x64") throw new Error("windows_bootstrap_guardian_build_requires_win_x64");
   const stagingRoot = resolve(output, `.staging-${randomUUID()}`);
   const stagingGuardian = resolve(stagingRoot, "win-x64");
   const stagingFixture = resolve(stagingRoot, "fixtures");
-  if (!contained(output, stagingRoot) || stagingRoot === output || !contained(output, guardianOutput) || !contained(output, fixtureOutput)) throw new Error("windows_stardew_bootstrap_guardian_output_unsafe");
+  if (!contained(output, stagingRoot) || stagingRoot === output || !contained(output, guardianOutput) || !contained(output, fixtureOutput)) throw new Error("windows_bootstrap_guardian_output_unsafe");
   try {
     await ensureDirectory(output);
     await mkdir(stagingRoot);
@@ -201,6 +201,6 @@ export async function buildWindowsStardewBootstrapGuardian() {
 }
 
 if (process.argv[1] === scriptPath) {
-  try { const result = await buildWindowsStardewBootstrapGuardian(); process.stdout.write(canonicalManifest(result.sha256)); }
-  catch (error) { process.stderr.write(`${error instanceof Error ? error.message : "windows_stardew_bootstrap_guardian_build_failed"}\n`); process.exitCode = 1; }
+  try { const result = await buildWindowsBootstrapGuardian(); process.stdout.write(canonicalManifest(result.sha256)); }
+  catch (error) { process.stderr.write(`${error instanceof Error ? error.message : "windows_bootstrap_guardian_build_failed"}\n`); process.exitCode = 1; }
 }
