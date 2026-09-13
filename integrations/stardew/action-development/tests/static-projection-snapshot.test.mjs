@@ -51,6 +51,57 @@ function cloneSnapshot() {
   return structuredClone(validSnapshot);
 }
 
+// Inline only: ratification is characterized without adding observe_scene to
+// the generated surface or to any Mod capability fixture.
+const observeSceneRatified = Object.freeze({
+  actionId: "observe_scene",
+  familyId: "world_perception",
+  identityVersion: 1,
+  kind: "read_only",
+  lifecycle: "ratified",
+  advertised: false,
+  executable: false,
+  publicationStatus: "live-ineligible",
+  request: Object.freeze({ radius: Object.freeze({ type: "integer", minimum: 0, maximum: 30, default: 15 }) }),
+  result: Object.freeze({
+    properties: Object.freeze([
+      "observationId",
+      "currentLocation",
+      "currentRegion",
+      "affordances",
+      "summary",
+      "partial",
+      "truncatedReason",
+    ]),
+    maxAffordances: 20,
+    maxUtf8Bytes: 2048,
+  }),
+});
+
+test("characterizes the ratified observe_scene contract without publishing it", () => {
+  assert.equal(observeSceneRatified.actionId, "observe_scene");
+  assert.equal(observeSceneRatified.familyId, "world_perception");
+  assert.equal(observeSceneRatified.identityVersion, 1);
+  assert.equal(observeSceneRatified.kind, "read_only");
+  assert.equal(observeSceneRatified.lifecycle, "ratified");
+  assert.equal(observeSceneRatified.advertised, false);
+  assert.equal(observeSceneRatified.executable, false);
+  assert.equal(observeSceneRatified.publicationStatus, "live-ineligible");
+  assert.deepEqual(observeSceneRatified.request.radius, { type: "integer", minimum: 0, maximum: 30, default: 15 });
+  assert.deepEqual(observeSceneRatified.result.properties, [
+    "observationId",
+    "currentLocation",
+    "currentRegion",
+    "affordances",
+    "summary",
+    "partial",
+    "truncatedReason",
+  ]);
+  assert.equal(observeSceneRatified.result.maxAffordances, 20);
+  assert.equal(observeSceneRatified.result.maxUtf8Bytes, 2048);
+  assert.equal(validSnapshot.actions.some(({ actionId }) => actionId === observeSceneRatified.actionId), false);
+});
+
 test("accepts a valid restricted development snapshot and returns an immutable consumer view", () => {
   const validated = validateStaticActionDescriptorSnapshot(validSnapshot, { allowedActionIds });
   assert.equal(validated.schema, STATIC_PROJECTION_SCHEMA);
