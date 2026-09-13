@@ -40,12 +40,11 @@ not evidence that any pending lane is already complete.
   the adapter owns Stardew role policy, registration/attempt correlation,
   admission, reservation, launch recipe and product lifecycle semantics. Guardian
   itself is never a Stardew product/lifecycle owner.
-- The physical helper/publication seam is destructively renamed from
-  `windows-stardew-bootstrap-guardian` to `windows-bootstrap-guardian` (including
-  native/source/build/publication paths and names as applicable), with **no old
-  path fallback, alias, wrapper or compatibility read**. The Stardew lifecycle
-  owner names remain Stardew-specific for now; this physical helper rename does
-  not rename or relocate the Stardew lifecycle owner.
+- The physical helper/publication seam was destructively renamed and verified in commit `23c749b` from
+  `windows-stardew-bootstrap-guardian` to `windows-bootstrap-guardian` (including native/source/build/
+  publication paths and names as applicable), with **no old path fallback, alias, wrapper or compatibility
+  read**. The Stardew lifecycle owner names remain Stardew-specific; this physical helper rename does not
+  rename or relocate the Stardew lifecycle owner.
 - Player/world survival is explicit: Player Host and its game world survive AI
   failure, controller EOF, Guardian failure and ordinary GameBuddy close. AI-only
   cleanup stops/drains AI authority and must not terminate, classify, recover or
@@ -59,192 +58,345 @@ deployment-manifest authority, raw session/pipe/token/PID/Job/path handoff, a
  fallback, a second Resume/reconnect API, action-runtime changes, and any live
  Stardew mutation. Do not add these to make a lane easier.
 
-### Parallel lanes, ownership, dependencies and atomic commits
+### Verified checkpoint and open topology blockers (after `23c749b`)
 
-Each lane has one writer for its owned files. Lanes may prepare independent tests,
-inventories and review material in parallel, but a connected authority seam is
-implemented in dependency order. Every lane ends with focused validation, an
-independent topology/security review, and one atomic commit containing only its
-owned paths. Existing dirty WIP is not evidence for or against a lane and must
-not be reset, stashed, cleaned, reformatted, or attributed to the current lane.
+`23c749b` ("Rename Windows bootstrap Guardian") is the current verified physical
+publication checkpoint. It destructively renamed the native helper/project and Host
+Guardian seam to the neutral names, updated the production artifact descriptor,
+build/publication scripts, Desktop admitted-helper constants, fixtures and focused
+seam tests, and removed the old physical identity from that publication path. The
+canonical names are now:
 
-#### Lane 1 — Guardian policy split (Stardew policy adapter)
+```text
+host/native/windows-bootstrap-guardian/
+host/src/windows-bootstrap-guardian/
+GameBuddy.WindowsBootstrapGuardian.exe
+windows-bootstrap-guardian.manifest.json
+production config key: windowsBootstrapGuardian
+inventory kind: verified_windows_bootstrap_guardian
+```
 
+This commit proves a physical artifact/publication rename only. It does **not** prove
+Guardian policy/recovery, Stardew role delegation, Desktop product composition,
+GameSession/Resume, Chat migration, action execution, or a live gate. Do not reopen
+the rename, retain the old name as an alias, or infer generic Guardian authority from
+its neutral physical name. Stardew policy remains an adapter above generic Windows
+containment; the Stardew lifecycle owner and its product semantics remain Stardew-
+specific.
+
+The formal Desktop entry/root admission and authenticated Desktop↔Guardian session
+predecessor are accepted as focused slices. `DesktopPrivateHostComposition` is the
+first capability-gated mutable owner, constructed only by the private bootstrap wire;
+it currently retains the root capability and closure-bound authenticated Guardian
+session and exposes only `close()`. It does not yet own Chat, Game, browser,
+provider, installation, or action runtime. The current blocker is the unconnected
+production authority graph: `stardew-production-lifecycle-coordinator.internal.ts`
+still creates `createStardewPrivateBootstrapComposition()` independently, while the
+Desktop bootstrap creates `DesktopPrivateHostComposition`; no accepted coordinator→
+Desktop-session handoff currently gives the lifecycle owner the generic containment
+session or creates its per-invocation `RoleLaunchOperation` after fresh admission and
+the launch decision. The old direct role-spawn/fallback route must not be restored.
+
+The Shape B semantic split is also still open: the physical contract/core paths exist,
+but `contained-game-runtime.ts` still owns the `encodePrivateFacts`→`Uint8Array`
+step. The accepted target keeps typed/private game facts at the game-facing contract,
+binds the encoder/private transport in composition/platform/auth code, and never
+exposes native frame bytes through the game contract. This is a focused composition
+blocker, not permission to add a new public factory or generic action seam.
+
+The GameSession/Resume blocker is independent: the semantic production SQLite
+facade already owns Game-session metadata, but the published `game.resume` route is
+transport/auth/schema plumbing only. No final Host/GameSession owner consumes that
+facade, resolves the selected integration's private GameBuddy-owned world binding,
+or establishes attachment plus fresh observation. `accepted` therefore means command
+accepted, not attached, ready, or completed. The integration-private resolver and
+owner callback must be located before browser fields or a second binding schema are
+frozen.
+
+### Remaining-work plan: five disjoint lanes
+
+Each lane has one writer and one named commit boundary. A lane may prepare tests,
+read-only inventories and review notes before its dependencies are accepted, but it
+must not edit another lane's files to unblock itself. Existing dirty WIP is preserved
+and is never attributed to a lane without source-bound evidence.
+
+#### Lane A — Guardian policy and recovery (Stardew adapter)
+
+- **Current state:** The Stardew adapter has durable owner transitions, Player/AI role
+  policy, controlled close, settlement and a fail-closed recovery surface. The
+  Desktop-backed native port is closure-bound and redacted, but the production
+  lifecycle does not yet consume the Desktop session through the one accepted
+  composition topology; launch remains unavailable unless its lawful typed/private
+  authorization is supplied. Generic Windows containment owns Job membership,
+  drain, EOF/recovery transport and redacted acknowledgements; this lane owns no
+  generic physical helper or Windows process authority.
 - **Owned files:**
   `host/src/games/stardew/lifecycle/stardew-bootstrap-guardian.private.ts`,
-  `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts`,
-  `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts`,
   `host/src/games/stardew/lifecycle/stardew-private-bootstrap-owner-records.private.ts`,
-  `host/src/stardew-production-lifecycle-coordinator.internal.ts`,
+  `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts`,
   `host/src/stardew-player-host-process-owner.ts`,
-  `host/src/stardew-ai-client-process-owner.ts`, and corresponding focused tests.
-  Keep the Stardew lifecycle owner names and product lifecycle files in this lane.
-- **Dependency:** consumes the generic Windows containment contract/publication
-  from Lane 2. The adapter and policy tests may use test-only closure-bound ports
-  while Lane 4 is pending; only its final production delegation handoff consumes
-  the Desktop composition/session. Lane 1 must not make the generic platform lane
-  depend on Stardew.
-- **Implementation order:** first write failing policy tests for Player survival,
-  AI-only cleanup, explicit endgame, unavailable Player recovery, stale
-  controller/settlement and no raw Guardian facts; then replace direct role
-  spawn/kill authority with the narrow containment contract, preserving fresh
-  admission, reservation, recipe, attachment, STOP, quarantine and lifecycle
-  ownership. Create `RoleLaunchOperation` only after this lifecycle has completed
-  fresh admission/preconditions and decided to launch.
-- **Focused validation:** from `host/`, `pnpm run build:test`, the compiled
-  Stardew policy/composer/process-owner/coordinator suites serially, the focused
-  module-graph/physical-seam checks, and `pnpm run typecheck` when the worktree
-  allows. Prove ordinary close/EOF/AI failure preserve Player/world, AI cleanup
-  drains only AI, explicit authenticated End Game is separate, and recovery
-  remains unavailable. No live Stardew.
-- **Atomic commit:** `guardian-policy: tests + Stardew adapter/policy + owner
-  delegation`, after Lane 2's reviewed generic contract is available and before
-  Lane 4's final composition migration.
+  `host/src/stardew-ai-client-process-owner.ts`, and their source-named focused tests
+  and test-support files. Keep Stardew lifecycle owner names and product semantics.
+- **Dependencies:** May proceed in parallel with Lanes B–C after the accepted neutral
+  artifact from `23c749b`. It can use closure-bound test ports while Lane B and Lane D
+  are open. Its final production delegation consumes Lane B's typed Desktop/Guardian
+  predecessor and Lane D's composition-owned handoff; it must not make generic
+  containment depend on Stardew.
+- **Work:** Prove Player/world survival on AI failure, controller EOF, Guardian failure
+  and ordinary close; AI-only cleanup and drain; separate authenticated explicit
+  End Game; unavailable Player recovery; stale owner/settlement handling; same-tuple
+  unknown-result recovery; and no raw PID, Job, path, pipe, token or native-frame
+  facts. Remove only migration-before launch callbacks when the approved Shape B
+  composition seam is ready; do not preserve them as fallback aliases.
+- **Forbidden overlap:** Do not edit `desktop/GameBuddy.Desktop/*`,
+  `host/src/bootstrap/{entry,wire}/*`, `host/src/composition/desktop-host-composition.ts`,
+  `host/src/stardew-production-lifecycle-coordinator.internal.ts`,
+  `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts`,
+  `host/src/windows-bootstrap-guardian/*`, or shared publication files. Do not add
+  `ProductInputProducer`, direct role spawn/kill authority, external scan/attach, old
+  task/action replay, a registry/alias/fallback, or live Stardew mutation.
+- **Focused validation:** Run the compiled Stardew Guardian, owner, process-owner and
+  composer suites serially; source-bound checks for the generic contract and raw-fact
+  leaks; and Host typecheck/build only when the worktree permits. Tests must show
+  close/EOF/failure preserve Player/world, cleanup drains only AI, explicit End Game
+  is distinct, recovery is unavailable/held, and uncertain effects are not replayed.
+  No game or live target.
+- **Atomic commit:** `guardian-policy-recovery`: Stardew policy/recovery tests,
+  adapter and owner changes only. Review and accept this commit before Lane D's final
+  coordinator handoff.
 
-#### Lane 2 — Physical helper rename and generic publication
+#### Lane B — Desktop runtime and Guardian predecessor
 
-- **Owned files:** destructive rename of `host/native/windows-stardew-bootstrap-guardian/`
-  to `host/native/windows-bootstrap-guardian/` and all native namespaces/project
-  outputs; `host/src/windows-stardew-bootstrap-guardian/` to
-  `host/src/windows-bootstrap-guardian/`; the corresponding `host/scripts/*guardian*`,
-  `host/production-artifact.config.json`, `desktop/GameBuddy.Desktop/` admitted
-  helper constants, fixture paths, publication descriptors and their focused tests.
-  Update all current references in the renamed seam; do not edit unrelated dirty
-  files merely to normalize names.
-- **Dependency:** this lane precedes the policy adapter's generic infrastructure
-  import and may proceed independently of GameSession and Desktop composition,
-  provided it does not widen Guardian authority. Lane 1 consumes its generic
-  contract; Lane 4 consumes its admitted artifact/publication result.
-- **Implementation order:** introduce the neutral `windows-bootstrap-guardian`
-  names in one tree-wide owned-path change, update canonical manifests/build
-  outputs and inventory descriptors, then remove every old-path lookup. Do not
-  retain a fallback, alias, wrapper, dual publication, compatibility import or
-  Stardew-specific generic helper name. Keep Stardew lifecycle owner filenames and
-  symbols unchanged unless Lane 1's policy boundary specifically requires a
-  lifecycle edit.
-- **Focused validation:** native build and deterministic Guardian fixture/live
-  matrix; Host TypeScript build/tests for the renamed adapter/publication;
-  Desktop admission/supervisor/broker tests; source-bound import/publication
-  checks; `git diff --check` scoped to every renamed path. Assert the old path is
-  absent from production publication and no alternate helper is admitted.
-- **Atomic commit:** `guardian-physical-rename: destructive rename + publication
-  inventory + focused native/Host/Desktop tests`, before Lane 1's final adapter
-  commit and before Lane 4's runtime delegation commit.
-
-#### Lane 3 — GameSession/world-binding resolver
-
-- **Owned files:** existing semantic Game-session owner facade and focused tests
-  under `host/src/continuity-semantic-production-coordinator/` and
-  `host/src/continuity-semantic-store/`; the selected-integration private resolver
-  and adapter contract under `host/src/games/`/`host/src/game-browser/` only where
-  the source audit assigns them; `host/src/game-browser-contract/index.ts`,
-  `host/src/game-browser/game-browser-state-provider.ts`, and their focused browser
-  tests. Do not create a second store or generic Stardew fields in browser DTOs.
-- **Dependency:** requires Lane 4's long-lived Desktop composition boundary for
-  final startup wiring, but does not depend on Guardian policy or the physical
-  helper rename for its semantic owner work. It consumes the existing semantic
-  SQLite owner and selected published integration registry.
-- **Implementation order:** finish the narrow integration-neutral SPI
-  (`createWorldBinding`, `resumeWorldBinding`, fresh observation/capabilities and
-  terminal-world-state reporting); resolve a selected durable `gameSessionId`
-  only to its registered GameBuddy-owned binding; persist binding completion
-  before projecting resumable. Missing/mismatched/terminal/unobservable binding
-  is redacted `unavailable`/paused with Retry, Cancel and Start new game. Resume
-  never scans processes/windows/paths/saves/timestamps, never attaches an
-  external game, never replays old tasks/actions and never introduces a signed or
-  hashed second proof layer.
-- **Focused validation:** semantic owner/store tests from a fresh root, selected
-  integration adapter contract tests, `game.resume` browser/state-provider and
-  composed projection tests, and source-bound checks proving no process discovery,
-  no external attach, no `game.reconnect` parallel API, no native facts in DTOs.
-  Verify Chat remains untouched and independent.
-- **Atomic commit:** `game-session-binding: owner facade + resolver/SPI + redacted
-  browser projection/tests`, after the existing semantic owner is confirmed and
-  before final presentation migration. This lane may commit independently of
-  Lanes 1–2.
-
-#### Lane 4 — Desktop composition for Chat + Game
-
+- **Current state:** The formal `desktop-host-entry.internal.js` entry, exact root-layout
+  admission, generation admission and authenticated Desktop↔Guardian broker session
+  have focused evidence. `DesktopPrivateHostComposition` is the approved first owner,
+  not an inert placeholder. The remaining predecessor is to make the neutral admitted
+  Guardian/runtime control path consumable by the later Host composition without
+  exposing transport or Windows facts. The physical helper rename/publication is
+  already complete in `23c749b`; this lane must not redo it.
 - **Owned files:** `desktop/GameBuddy.Desktop/Program.cs`,
   `desktop/GameBuddy.Desktop/RuntimeSupervisor.cs`,
   `desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs`,
-  `desktop/GameBuddy.Desktop/GuardianSupervisor.cs` and focused Desktop tests;
-  `host/src/bootstrap/entry/desktop-host-entry.internal.ts`,
-  `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`,
-  `host/src/composition/desktop-host-composition.ts`,
-  `host/src/deployment-manifest.ts` only when consuming its existing authority
-  contract (not creating a new authority), and focused composition/bootstrap
-  tests. Lifecycle handoff consumers are coordinated with Lane 1, not copied into
-  this lane.
-- **Dependency:** consumes the exact admitted neutral Guardian artifact from
-  Lane 2, the existing Host deployment/semantic authority contracts, and Lane
-  1's reviewed typed policy/delegation seam. It may expose only typed
-  closure-bound capabilities. Lane 3 consumes this composition for final startup
-  wiring; Desktop bootstrap itself must not decide any lane's product facts.
-- **Implementation order:** keep Phase 1 runtime admission, exact Host child
-  authentication, root-layout revalidation and long-lived composition handoff;
-  add composition-owned startup/close for both existing Chat and Game services;
-  route selected Game integration and GameSession Create/Resume only from the
-  Game UI owner; keep `dialogue-web-main` as a temporary helper until final
-  acceptance. Close stops AI authority and drains presentation without ending
-  Player/world; failures propagate and cannot be reported as success.
-- **Focused validation:** Desktop broker/supervisor admission and EOF tests;
-  Host bootstrap/composition tests; Chat and Game concurrent startup/close,
-  independent-surface and redacted-projection tests; source-bound checks that
-  Bootstrap has no `GameSession`/`fresh`/`known`/selected-integration decisions,
-  no `ProductInputProducer`, no raw session handoff, and no second entry.
-- **Atomic commit:** `desktop-composition-chat-game: formal root + long-lived
-  composition + lifecycle handoff tests`, after Lane 2's artifact acceptance and
-  before Lane 5's deletion. It must not silently implement Lane 1's policy or
-  Lane 3's resolver.
+  `desktop/GameBuddy.Desktop/GuardianSupervisor.cs`, their focused Desktop tests,
+  `host/src/bootstrap/entry/desktop-host-entry.internal.ts` and tests only if the
+  accepted entry contract needs a correction, `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`
+  and tests, and `host/src/containment/auth/desktop-guardian-session.internal.ts`
+  and tests. The renamed `InstalledGenerationAdmission`/artifact files are read-only
+  inputs from `23c749b` unless a separately reviewed publication defect is found.
+- **Dependencies:** Starts from the accepted entry/root and the `23c749b` neutral
+  helper/publication. It is independent of GameSession/Resume and may proceed in
+  parallel with Lane A and Lane C. Lane D consumes its closed typed predecessor;
+  the final coordinator/composition handoff is serialized after this lane's review.
+- **Work:** Keep Desktop as the owner of Guardian process, stdin EOF, pipe/token/path
+  handling and Windows containment transport. Close malformed/replayed/cross-session,
+  Host-loss and EOF cases fail-closed; return only redacted acknowledgements; make
+  predecessor lifetime and close ordering explicit. Do not decide `GameSession`,
+  `fresh`/`known`, world binding, selected integration, or product lifecycle state.
+- **Forbidden overlap:** Do not edit Lane A policy/owner files, Lane D's
+  `host/src/composition/desktop-host-composition.ts` or coordinator/composer topology,
+  Lane C semantic/browser files, `host/src/dialogue-web-main.ts`, or publication config.
+  Do not pass raw session/pipe/token/PID/Job/path facts, create a second entry, scan or
+  attach an external game, add a fallback/alias/registry, or spawn Stardew roles here.
+- **Focused validation:** Focused Desktop admission/supervisor/broker tests and
+  Host entry/wire/auth tests; exact neutral-helper inventory and old-physical-name
+  absence checks; malformed/replay/cross-session/EOF/close ordering matrix. A native
+  Guardian fixture/live protocol check is allowed only as non-product containment
+  characterization; no Stardew launch or mutation.
+- **Atomic commit:** `desktop-runtime-guardian-predecessor`: Desktop/runtime/wire
+  predecessor and focused rejection matrix only. After review, the wire and auth seam
+  are frozen for Lane D.
 
-#### Lane 5 — Final `dialogue-web` deletion
+#### Lane C — GameSession and world-binding owner
 
-- **Owned files:** `host/src/dialogue-web-main.ts`, its sole entry/config/import
-  references, and only the focused artifact/module-graph/browser tests that name
-  that entry. If a generated publication manifest names it, update the owning
-  publication configuration in the same atomic commit; do not leave an alias.
-- **Dependency:** last lane. Requires Lane 3's `game.resume` owner callback and
-  world-binding resolver, Lane 4's composition-owned Chat+Game presentation
-  startup/close and exact concurrency tests, and a clean import/publication
-  inventory proving no caller remains. It is blocked until both surfaces work
-  through the formal composition.
-- **Implementation order:** move the existing browser listener/presentation
-  wiring into composition-owned startup, delete `dialogue-web-main.ts` and its
-  entry/import/config references in one destructive change, remove wrappers,
-  aliases, second entries, global registries and fallbacks, then update source-bound
-  tests to assert absence rather than compatibility.
-- **Focused validation:** fresh artifact build/publication, Host module graph,
-  Chat/Game browser and close/error propagation suites, `game.resume` projection
-  suites, and scoped `git diff --check`. Confirm exactly one Desktop composition
-  root and zero `dialogue-web-main` production references.
-- **Atomic commit:** `remove-dialogue-web-entry: composition migration + destructive
-  helper/entry deletion + focused artifact/module-graph tests`, only after Lanes
-  3–4 are reviewed and accepted.
+- **Current state:** The durable Game-session metadata facade exists in the semantic
+  production authority and already supports create/bind/fail/read/list operations.
+  The current `game.resume` route still has transport/auth/schema plumbing only; its
+  `accepted` result is not attachment or readiness. The integration-private
+  world-binding resolver and final Host/GameSession owner callback are still missing.
+- **Owned files:** The existing semantic owner and focused tests under
+  `host/src/continuity-semantic-production-coordinator/` and
+  `host/src/continuity-semantic-store/`; the selected-integration private resolver
+  and adapter seam under `host/src/games/` and `host/src/game-browser/` only where
+  the source audit assigns them; `host/src/stardew-owned-farmhand-game-session-materializer.internal.ts`
+  and direct tests where the existing Stardew-owned binding is the correct consumer;
+  then, only after the private owner/SPI is reviewed,
+  `host/src/composed-reference-game-browser.ts`,
+  `host/src/game-browser-contract/index.ts`,
+  `host/src/game-browser/game-browser-state-provider.ts`, and focused browser tests
+  for the redacted projection. Do not create a second store or generic Stardew DTO.
+- **Dependencies:** The owner/resolver work may proceed in parallel with Lanes A–B
+  and with Lane D's independent Chat/Shape-B preparation. It consumes the existing
+  semantic SQLite authority and selected published integration; it does not depend on
+  the physical Guardian rename. Final startup wiring waits for Lane D. Browser
+  contract edits are a serialized sub-gate after the private SPI and owner callback
+  exist; do not use the current route as a substitute.
+- **Work:** Resolve a selected durable `gameSessionId` only to its registered
+  GameBuddy-owned world binding; define the narrow integration-neutral private SPI
+  equivalent to `createWorldBinding`, `resumeWorldBinding`, fresh observation/
+  capabilities and terminal-world-state reporting; persist binding completion before
+  projecting resumable. Missing/mismatched/terminal/unobservable binding is redacted
+  `unavailable`/paused with Retry, Cancel and Start new game. Resume never scans
+  processes/windows/paths/saves/timestamps, attaches an external game, replays an
+  old task/action, or adds a signed/hashed second proof layer. New activation uses
+  fresh authentication and observation sync; it never auto-runs old work or reopens
+  independent Chat.
+- **Forbidden overlap:** Before its private seam is accepted, do not edit the generic
+  browser contract, `game.resume` result vocabulary, `game.reconnect`, Lane D's
+  coordinator/composition topology, `host/src/dialogue-web-main.ts`, or shared
+  publication files. Do not import Desktop/Guardian facts into generic DTOs or freeze
+  speculative binding fields/API names. After the browser sub-gate, the projection
+  files are frozen for Lane E.
+- **Focused validation:** Fresh-root semantic SQLite owner/store tests; selected
+  integration SPI/resolver tests; Game Resume idempotency and unavailable/paused
+  outcomes; redacted state-provider/browser tests; source-bound checks proving no
+  process discovery, external attach, second Resume API, native facts in DTOs,
+  old-task/action replay, or Chat takeover. No live game.
+- **Atomic commit:** `game-session-binding-owner`: owner facade, private resolver/SPI,
+  binding tests and (only after the serialized owner review) the minimal redacted
+  browser projection. If the browser sub-gate is not green, commit only the private
+  owner/resolver boundary and leave browser files untouched.
 
-**Commit/dependency order:** Lane 2 publication → Lane 1 Guardian policy and
-Lane 3 GameSession resolver may run in parallel after their predecessors → Lane 4
-Desktop composition and integrated Chat+Game verification (consuming Lane 1's
-reviewed policy seam and Lane 2's accepted artifact) → Lane 5 final
-`dialogue-web` deletion. Lane 1's policy tests and adapter work may begin before
-Lane 4, but its production session handoff is not accepted until Lane 4's typed
-composition boundary is green. Every commit is atomic and must stage only that
-lane's owned paths. If the existing dirty worktree
-contains overlapping edits, first record the overlap and attribute no hunk to a
-lane without source-bound evidence; preserve the WIP and split/rebase the lane
-rather than resetting it.
+#### Lane D — Host composition and presentation
+
+- **Current state:** The bootstrap wire constructs and closes the first private Desktop
+  owner, while the Stardew coordinator and the temporary `dialogue-web-main` path
+  still construct product authorities separately. The `ContainedGameRuntime` physical
+  contract/core split exists, but the composition-owned encoder/private transport
+  boundary is not accepted. Chat and Game must become children of one long-lived
+  Desktop composition without one surface owning, pausing, closing or recovering the
+  other.
+- **Owned files:** `host/src/composition/desktop-host-composition.ts` and focused
+  tests; `host/src/stardew-production-lifecycle-coordinator.internal.ts` and direct
+  tests; `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts`
+  and direct tests only for the composition handoff; the Shape B files
+  `host/src/containment/runtime/contract/game-runtime.ts` and
+  `host/src/containment/runtime/core/contained-game-runtime.ts` with compiled tests;
+  and narrowly selected composition-owned presentation/startup files under
+  `host/src/continuity-semantic-*`, `host/src/farmhand-companion-presentation.ts`,
+  `host/src/presentation.ts`, and `host/src/host-service.ts` when the source audit
+  assigns the handoff. `host/src/dialogue-web-main.ts` remains Lane E-owned.
+- **Dependencies:** Chat-only composition and Shape B tests may prepare in parallel
+  with Lanes A–C. Final role delegation consumes Lane A's reviewed policy seam and
+  Lane B's frozen Desktop/Guardian predecessor; final Game startup consumes Lane C's
+  accepted private owner callback. The coordinator/composition topology has one
+  writer and one serialized integration gate; no lane may land a parallel owner.
+- **Work:** Keep bootstrap limited to runtime/generation admission, child
+  authentication and long-lived composition handoff. Make composition own Chat and
+  Game startup/close and presentation admission while preserving independent surface
+  lifecycles. Delegate selected integration and GameSession Create/Resume only from
+  the Game UI/owner. Create `RoleLaunchOperation` only after fresh lifecycle
+  admission/preconditions and the launch decision. Complete the semantic Shape B
+  encoder/private transport split without moving native bytes through the game
+  contract. Close/EOF/AI failure stops AI authority and drains presentation while
+  Player Host/game world survives; unknown side effects are not called complete.
+- **Forbidden overlap:** Do not edit Lane A policy internals after its seam is handed
+  off, Lane B's bootstrap wire/auth files after predecessor acceptance, Lane C's
+  browser contract before its owner gate, Lane E's dialogue entry/publication files,
+  or any action definition/handler/receipt/postcondition. Do not add
+  `ProductInputProducer`, raw session/pipe/token/PID/Job/path handoff, a second
+  product entry, direct/native-local route, external scan/attach, old-task replay,
+  generic fallback/alias/registry, or live Stardew mutation.
+- **Focused validation:** Compiled Host composition/coordinator/Shape B tests;
+  Chat+Game concurrent startup/close and independent-surface tests; Desktop wire
+  integration with redacted Guardian acknowledgements; source-bound checks proving
+  bootstrap has no GameSession/fresh/known/selected-integration decisions, no
+  `ProductInputProducer`, no raw frame/game-facts leak and no second entry. Verify
+  Player/world survival, AI-only cleanup, failure propagation and no false success.
+- **Atomic commit:** `host-composition-chat-game`: one formal Desktop composition,
+  coordinator handoff, Shape B semantic seam, presentation lifecycle and focused
+  tests. It lands only after Lanes A–C/B's required review gates and before Lane E.
+
+#### Lane E — Final `dialogue-web` deletion and Chat migration
+
+- **Current state:** `host/src/dialogue-web-main.ts` remains the temporary Chat/browser
+  entry and still has production artifact, TypeScript, package/script, module-graph
+  and live-gate callers. It cannot be deleted while the composition-owned Chat/Game
+  startup, Lane C's real Resume owner callback, or fresh-root Chat/Tavern final gate
+  is incomplete. This is a destructive migration, not a compatibility exercise.
+- **Owned files:** `host/src/dialogue-web-main.ts`; its focused entry test(s);
+  `host/production-artifact.config.json`, `host/tsconfig.production.json`,
+  `host/tsconfig.test.json`, `host/tsconfig.chat-live.json`,
+  `host/package.json`, `host/knip.json`/root `knip.json` only where the entry is
+  named; `host/scripts/build-chat-live-artifact.mjs`,
+  `host/scripts/start-chat-live-artifact.mjs`,
+  `host/scripts/chat-live-artifact-support.mjs`,
+  `host/scripts/test-artifact-protocol.test.mjs`, focused artifact/module-graph
+  tests, and the exact `tools/run-tavern-narrative-gate.mjs`/
+  `tools/run-player-managed-memory-http-live.mjs` callers. Update a generated
+  publication manifest only through its owning publication configuration in this
+  same commit. Do not rewrite unrelated Chat/Tavern runtime code.
+- **Dependencies:** Last. Requires Lane C's accepted `game.resume` owner callback
+  and redacted projection, Lane D's single composition-owned Chat+Game startup/
+  close and concurrency/error tests, and a fresh-root production Chat/Tavern final
+  gate that does not depend on a fixture or operator setup. Before deletion, perform
+  an exact import/publication inventory; no caller may be left to a fallback.
+- **Work:** Move the existing browser listener/presentation startup into the formal
+  composition-owned owner, delete the entry and every production caller in one
+  destructive change, remove wrappers/aliases/second entries/global registries and
+  fallbacks, and update tests to assert absence. Preserve Chat/Game independence,
+  AI-only cleanup and Player/world survival; ordinary close is not End Game.
+- **Forbidden overlap:** No edits to Lane C's owner/SPI or frozen browser contract,
+  Lane D's coordinator/composition topology, Lane A/B policy/Guardian files, action
+  runtime, or live target. Do not retain `dialogue-web-main` as a hidden alias or
+  add another browser/CLI/daemon entry.
+- **Focused validation:** Fresh-root production artifact build/publication; Host
+  module-graph/import-boundary and Chat/Game browser/close/error suites; Resume
+  projection suites; exact inventory proving one Desktop composition root and zero
+  `dialogue-web-main` production references; scoped `git diff --check`. No live
+  Stardew action.
+- **Atomic commit:** `remove-dialogue-web-entry-chat-migration`: composition migration,
+  destructive entry/config/script deletion and focused artifact/module-graph tests,
+  with no unrelated source or generated output.
+
+### Parallelism map and serialized gates
+
+The safe parallel work is: Lane A policy/recovery tests and Lane B Desktop predecessor
+can proceed independently after `23c749b`; Lane C can build the semantic owner and
+private selected-integration resolver in parallel with both; Lane D can prepare Chat
+composition and Shape B tests while those lanes are under review. None of those
+parallel preparations is a production completion claim.
+
+The following gates are serialized:
+
+1. **Physical publication gate:** `23c749b` is already accepted. Do not reopen or
+   duplicate the rename. Any later artifact/publication change must be reviewed by
+   the publication owner and must use only `windows-bootstrap-guardian`.
+2. **Desktop predecessor gate:** Lane B's exact entry/root/session/Guardian
+   predecessor must be green before Lane D consumes a Desktop Guardian session.
+3. **Guardian policy gate:** Lane A's Player-survival, AI-only cleanup, recovery and
+   redacted-policy seam must be accepted before Lane D connects the coordinator.
+4. **Coordinator/composition topology gate:** only Lane D edits the connected
+   `desktop-host-composition.ts` → `stardew-production-lifecycle-coordinator.internal.ts`
+   → Stardew private bootstrap path. No second composition, product entry or direct
+   role-spawn route may land.
+5. **Browser-contract gate:** Lane C's private GameSession/world-binding owner and
+   selected-integration SPI are reviewed first; only then may it edit
+   `composed-reference-game-browser.ts`, `game-browser-contract/index.ts` or the
+   state provider. Once accepted, those browser files are frozen while Lane D wires
+   startup and Lane E migrates the entry.
+6. **Shared publication gate:** `host/production-artifact.config.json`, Host
+   `tsconfig*`, package/start scripts, module-graph roots and live-gate callers are
+   owned by Lane E for the final deletion. Lanes A–D must not opportunistically edit
+   them; the only exception is a separately reviewed blocker in the already-accepted
+   Guardian publication, which cannot reintroduce the old name.
+7. **Final deletion gate:** Lane E is last and serial after the accepted composition,
+   Resume/browser projection and fresh-root Chat/Tavern checks. Its destructive commit
+   must leave zero production `dialogue-web-main` references and no alias/fallback.
+
+After each lane, capture status/diff evidence without resetting or staging unrelated
+WIP. Stage only that lane's owned paths when its owner (not this handoff) commits.
 
 ### Parallel-lane review and worktree safety
 
 Before a lane's commit, capture `git status --short`, `git diff --stat` and
 `git diff --cached --stat`; use `git diff --check -- <owned paths>` and the lane's
-focused tests. A pre-existing failure or dirty hunk is residual only when it is
-shown to predate the lane, lies outside owned paths, and all scoped gates pass.
-Never use `git reset`, `git clean`, `git stash`, broad checkout/restore or mass
-formatting to make a lane appear green. A lane cannot claim completion from a
-source-only inventory, fixture, mock, Preview, direct/native-local route or an
-unrelated dirty WIP. The final review must independently confirm the target
-composition, Player/world survival and no-fallback/destructive rename rules.
+focused tests. A pre-existing failure or dirty hunk is residual only when it is shown
+to predate the lane, lies outside owned paths, and all scoped gates pass. Never use
+`git reset`, `git clean`, `git stash`, broad checkout/restore or mass formatting to
+make a lane appear green. A lane cannot claim completion from a source-only inventory,
+fixture, mock, Preview, direct/native-local route or unrelated dirty WIP. The final
+review must independently confirm the target composition, Player/world survival,
+Resume no-scan/no-replay rules, and no-fallback/destructive-rename rules.
 
 ```text
 Game UI integration + optional continuity choice
@@ -255,15 +407,16 @@ Game UI integration + optional continuity choice
 → Game action admission only after a new Game instruction
 ```
 
-The cross-game Game-session slice is no longer just a search task: the existing
-semantic SQLite Game-session metadata owner has been located and the `game.resume`
-contract/transport/UI waiting semantics have partial slices, but the private world-
-binding resolver and adapter Resume SPI are still missing. Do not add a parallel
-store, promote Stardew launch facts into the generic browser contract, scan for an
-external game, or claim Resume from the currently declared-but-unwired
-`game.reconnect` operation. A new activation may reuse an available AI process or
-create one through the selected integration's existing authority; that
-implementation choice is not a second Resume operation or a new proof layer.
+The cross-game Game-session slice is no longer just a search task: the durable
+Game-session metadata facade exists under the semantic production authority, while
+the published `game.resume` route currently provides transport/auth/schema plumbing
+only. The integration-private world-binding resolver and final Host/GameSession owner
+consumer have not been located. Do not add a parallel store, promote Stardew launch
+facts into the generic browser contract, scan for an external game, or claim Resume
+from the currently declared-but-unwired `game.reconnect` operation. A new activation
+may reuse an available AI process or create one through the selected integration's
+existing authority; that implementation choice is not a second Resume operation or
+a new proof layer.
 
 
 ```text
@@ -683,13 +836,13 @@ producer→consumer→verifier path and disjoint files. No live mutation is auth
 5. After that route is implemented and independently reviewed, run its named
    profile-free factual preflight against a ready registration; capture every
    readiness result before seeking live authorization.
-6. Resolve the Navigation current-authority contradiction: document current
-   withdrawal, remove live publication paths if required, then close its multi-hop
-   ordinary pipeline/recovery evidence and formal republish prerequisites.
-5. Request one explicit Navigation republish decision and a separate serial
-   live-mutation authorization.
-6. Run serial gates only after their individual readiness/review conditions are
-   green:
+ 6. Resolve the Navigation current-authority contradiction: document current
+    withdrawal, remove live publication paths if required, then close its multi-hop
+    ordinary pipeline/recovery evidence and formal republish prerequisites.
+ 7. Request one explicit Navigation republish decision and a separate serial
+    live-mutation authorization.
+ 8. Run serial gates only after their individual readiness/review conditions are
+    green:
 
    ```text
    equip_tool profile-free preflight → equip_tool live run → evidence/cleanup
@@ -697,8 +850,8 @@ producer→consumer→verifier path and disjoint files. No live mutation is auth
    Navigation preflight → Navigation live run → evidence/cleanup
    ```
 
-7. Resume BodyProgram production composition only after the two action gates and
-   the documented-root/lifecycle/native-action prerequisites are closed.
+ 9. Resume BodyProgram production composition only after the two action gates and
+    the documented-root/lifecycle/native-action prerequisites are closed.
 
 ## Primary documents
 
@@ -767,6 +920,28 @@ status. It must not expose installation paths, PID/Job, pipe/token, native
 frame, launch generation, reservation, or adapter-private facts. Existing
 `game.reconnect` is not a second product API; until the full `game.resume`
 contract and owner callback are wired, it remains not wired.
+
+### Current GameSession/Resume implementation status
+
+The durable metadata facade is present under the semantic production authority, but
+it is not yet consumed by the final Host/GameSession owner. The published
+`game.resume` route is transport/auth/schema plumbing only: it does not resolve a
+registered world binding, invoke an integration-private Resume resolver, establish
+attachment/readiness, or prove completion. The integration-private world-binding
+resolver and the final Host/GameSession owner consumer are not located yet.
+
+Resume therefore remains binding-only. It may attempt only the selected durable
+session's registered GameBuddy-owned world binding; it must not scan processes,
+windows, paths, saves, timestamps, or matching titles, attach an external game,
+replay an old task or action, or introduce a second identity/proof layer such as a
+signed advertisement or hash. `game.reconnect` is not a second product API, and
+`accepted` from the current route means command accepted only, not attached, ready,
+or completed.
+
+Until the owner seam is found, defer choosing API names and durable world-binding
+fields. Do not freeze those names in the generic browser/session contract or add a
+parallel binding schema; the owner must first establish the integration-private
+boundary and its redacted projection.
 
 ### Stardew exact-auth and projection-liveness slice status (2026-09-11)
 
@@ -860,11 +1035,12 @@ matching titles.
 
 Required next implementation tasks:
 
-1. Add/finish the Game-session owner facade around the existing semantic SQLite owner
-   so the UI/API can create/select a `gameSessionId` and read only redacted session /
-   world status. The generic record must stay limited to product facts such as
-   `gameSessionId`, published `integrationId`, optional `continuityIdentityId`, status,
-   and revision.
+1. Use the existing durable Game-session metadata facade under the semantic SQLite
+   production authority so the UI/API can create/select a `gameSessionId` and read
+   only redacted session/world status; locate and wire the final Host/GameSession
+   owner consumer before freezing API names or durable binding fields. The generic
+   record must stay limited to product facts such as `gameSessionId`, published
+   `integrationId`, optional `continuityIdentityId`, status, and revision.
 2. Define the selected-integration private SPI equivalent to
    `createWorldBinding`, `resumeWorldBinding`, `readObservation`, `readCapabilities`,
    and `readTerminalWorldState`. Exact names can change, but the boundary cannot carry
