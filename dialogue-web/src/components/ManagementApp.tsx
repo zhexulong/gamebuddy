@@ -63,7 +63,12 @@ type MemoryView =
   | Readonly<{ kind: "ready"; rows: readonly MemoryItemV1[]; projectionRevision: string }>;
 
 export function ManagementApp() {
-  const apiRef = useRef(createManagementPipelineApi());
+  const apiRef = useRef(createManagementPipelineApi(fetch, (observation) => {
+    if (new URLSearchParams(location.hash.slice(1)).get("record") !== "operations") return;
+    const key = "gamebuddy.tavern.ui.operation-observations";
+    const current = JSON.parse(sessionStorage.getItem(key) ?? "[]");
+    sessionStorage.setItem(key, JSON.stringify([...current, observation]));
+  }));
   const [view, setView] = useState<ViewState>({ kind: "loading" });
   const viewRef = useRef<ViewState>({ kind: "loading" });
   const [drawerOpen, setDrawerOpen] = useState(false);

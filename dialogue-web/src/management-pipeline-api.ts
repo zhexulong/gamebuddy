@@ -776,10 +776,15 @@ export type ManagementPipelineApi = Readonly<{
   setWorldInfoBinding(command: SetWorldInfoBindingCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
 }>;
 
-export function createManagementPipelineApi(fetchLike: typeof fetch = fetch): ManagementPipelineApi {
+export type ManagementOperationObservation = Readonly<{ operationId: string; outcome: "passed" | "not_applicable" | "blocked"; projectionRevision?: string }>;
+
+export function createManagementPipelineApi(fetchLike: typeof fetch = fetch, onOperation?: (observation: ManagementOperationObservation) => void): ManagementPipelineApi {
   if (typeof fetchLike !== "function") {
     throw new TypeError("createManagementPipelineApi requires a fetch-like function");
   }
+  const observe = (operationId: string, outcome: ManagementOperationObservation["outcome"], projectionRevision?: string): void => {
+    onOperation?.(Object.freeze({ operationId, outcome, ...(projectionRevision === undefined ? {} : { projectionRevision }) }));
+  };
   return Object.freeze({
     async bootstrap(token: string): Promise<TavernStateSnapshotV1> {
       if (!isOpaqueHandle(token)) throw new TavernProtocolError();
@@ -807,70 +812,40 @@ export function createManagementPipelineApi(fetchLike: typeof fetch = fetch): Ma
     },
     async saveDraft(command: SaveDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1> {
       if (!isSaveDraftCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      return exchange(
-        fetchLike,
-        "PUT",
-        "/api/tavern/v1/draft",
-        200,
-        validateDraft,
-        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
-        command,
-      );
+      const result = await exchange(fetchLike, "PUT", "/api/tavern/v1/draft", 200, validateDraft, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      observe("draft.save", "passed", String(result.revision));
+      return result;
     },
     async discardDraft(command: DiscardDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1> {
       if (!isDiscardDraftCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      return exchange(
-        fetchLike,
-        "DELETE",
-        "/api/tavern/v1/draft",
-        200,
-        validateDraft,
-        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
-        command,
-      );
+      const result = await exchange(fetchLike, "DELETE", "/api/tavern/v1/draft", 200, validateDraft, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      observe("draft.discard", "passed", String(result.revision));
+      return result;
     },
     async renameChatTitle(command: RenameChatTitleCommandV1, csrfToken: string): Promise<ChatTitleV1> {
       if (!isRenameChatTitleCommand(command)) throw new TavernProtocolError();
       if (!isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      return exchange(
-        fetchLike,
-        "PUT",
-        "/api/tavern/v1/chat/title",
-        200,
-        validateChatTitle,
-        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
-        command,
-      );
+      const result = await exchange(fetchLike, "PUT", "/api/tavern/v1/chat/title", 200, validateChatTitle, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      observe("chat.rename", "passed", String(result.managementRevision));
+      return result;
     },
     async readMemory(): Promise<MemoryReadV1> {
       return exchange(fetchLike, "GET", "/api/tavern/v1/memory", 200, validateMemoryRead);
     },
     async mutateMemory(command: MemoryMutationCommandV1, csrfToken: string): Promise<MemoryReadV1> {
       if (!isMemoryMutationCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      return exchange(
-        fetchLike,
-        "PUT",
-        "/api/tavern/v1/memory",
-        200,
-        validateMemoryRead,
-        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
-        command,
-      );
+      const result = await exchange(fetchLike, "PUT", "/api/tavern/v1/memory", 200, validateMemoryRead, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      observe("memory.mutate", "passed", result.projectionRevision);
+      return result;
     },
     async readWorldInfo(): Promise<WorldInfoStateV1> {
       return exchange(fetchLike, "GET", "/api/tavern/v1/world-info", 200, validateWorldInfoState);
     },
     async setWorldInfoBinding(command: SetWorldInfoBindingCommandV1, csrfToken: string): Promise<WorldInfoStateV1> {
       if (!isSetWorldInfoBindingCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      return exchange(
-        fetchLike,
-        "PUT",
-        "/api/tavern/v1/world-info",
-        200,
-        validateWorldInfoState,
-        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
-        command,
-      );
+      const result = await exchange(fetchLike, "PUT", "/api/tavern/v1/world-info", 200, validateWorldInfoState, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      observe("world-info.bind", "passed", result.revision);
+      return result;
     },
   });
 }
