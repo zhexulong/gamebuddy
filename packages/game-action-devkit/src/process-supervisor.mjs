@@ -624,7 +624,10 @@ export async function runOneShotControlChild({
   let startWriteFailed = false;
   let completed = false;
   try {
-    if (signal?.aborted) throw validationError("control_child_aborted");
+    if (signal?.aborted) {
+      await terminateControlChild(child, completionObserver, killTree, cleanupTimeoutMs, terminationPolicy, graceMs);
+      throw validationError("control_child_aborted");
+    }
     const outcomePromise = Promise.race([
       completion.then((value) => {
         completed = value.kind === "close";
