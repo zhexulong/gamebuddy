@@ -23,13 +23,15 @@ import {
 export const DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS = 60_000;
 
 /**
- * Builds the composition-owned contained Player Host launch seam. The runtime
- * binding uses the Stardew owner's Guardian correlation
+ * Builds the composition-owned contained launch seam for both roles. The
+ * runtime binding uses the Stardew owner's Guardian correlation
  * (guardianInstanceId/guardianEpoch/attemptId) plus the composition's fixed
  * arm/contain operation wait budget; the launch deadline arrives per
  * invocation from the lifecycle's RoleLaunchOperation and is never owned
- * here. Each call constructs a fresh `ContainedGameRuntime` over the closure
- * platform so one owner never reuses another owner's arm/launch state.
+ * here. One `ContainedGameRuntime` is bound per owner and retained: the
+ * Player Host and AI-client roles share the exact arm/launch/contain/close
+ * sequence on that runtime, so no owner ever reuses another owner's state
+ * and the platform session closes exactly once.
  */
 export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   platform: ContainedGameRuntimePlatform,
@@ -39,21 +41,41 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   // after a pre-claim failure reuses the exact bound runtime, while a post-
   // claim failure is terminal in the coordinator and never calls back here.
   const runtimesByOwner = new WeakMap<StardewOwnedPlayerHostBootstrap, ReturnType<typeof createContainedGameRuntime>>();
+  const runtimeFor = (owner: StardewOwnedPlayerHostBootstrap) => {
+    let runtime = runtimesByOwner.get(owner);
+    if (runtime === undefined) {
+      const binding = createStardewBootstrapGuardianOwnerBinding(owner);
+      const arm = readStardewBootstrapGuardianNativeArmFrame(binding);
+      runtime = createContainedGameRuntime(platform, Object.freeze({
+        guardianInstanceId: arm.guardianInstanceId,
+        guardianEpoch: arm.guardianEpoch,
+        attemptId: arm.attemptId,
+        operationWaitBudgetMs: DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS,
+      }));
+      runtimesByOwner.set(owner, runtime);
+    }
+    return runtime;
+  };
+  const requireRuntime = (owner: StardewOwnedPlayerHostBootstrap) => {
+    const runtime = runtimesByOwner.get(owner);
+    if (runtime === undefined) throw new Error("stardew_contained_runtime_for_owner_missing");
+    return runtime;
+  };
   return Object.freeze({
     launchPlayerHost(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
-      let runtime = runtimesByOwner.get(owner);
-      if (runtime === undefined) {
-        const binding = createStardewBootstrapGuardianOwnerBinding(owner);
-        const arm = readStardewBootstrapGuardianNativeArmFrame(binding);
-        runtime = createContainedGameRuntime(platform, Object.freeze({
-          guardianInstanceId: arm.guardianInstanceId,
-          guardianEpoch: arm.guardianEpoch,
-          attemptId: arm.attemptId,
-          operationWaitBudgetMs: DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS,
-        }));
-        runtimesByOwner.set(owner, runtime);
-      }
-      return runtime.launchRole("player_host", operation, launch.provideAuthorization);
+      return runtimeFor(owner).launchRole("player_host", operation, launch.provideAuthorization);
+    },
+    launchAiClient(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
+      return runtimeFor(owner).launchRole("ai_client", operation, launch.provideAuthorization);
+    },
+    containPlayerHost(owner: StardewOwnedPlayerHostBootstrap) {
+      return requireRuntime(owner).containRole("player_host");
+    },
+    containAiClient(owner: StardewOwnedPlayerHostBootstrap) {
+      return requireRuntime(owner).containRole("ai_client");
+    },
+    close(owner: StardewOwnedPlayerHostBootstrap) {
+      return requireRuntime(owner).close();
     },
   });
 }

@@ -79,7 +79,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "consumeOwnedFarmhandBridgeConnection" | "launchStagedPlayerHost" | "launchStagedPlayerHostContained" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "launchMaterializedAiClientContained" | "consumeOwnedFarmhandBridgeConnection" | "launchStagedPlayerHost" | "launchStagedPlayerHostContained" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -882,6 +882,7 @@ test("production internal exports no testing constructor, raw owner view, or bin
     "consumeStagedOwnedPlayerHostProfileForTesting",
     "createOwnerTransitionsForTesting",
     "createStardewPrivateBootstrapCompositionForTesting",
+    "launchMaterializedAiClientContainedForTesting",
     "launchMaterializedAiClientForTesting",
     "launchStagedPlayerHostForTesting",
     "materializeAiClientProfileAfterManifestAdmissionForTesting",
@@ -949,6 +950,7 @@ test("production internal composition exposes only the private C1 materializer w
     "createOwnedPlayerHostManifestHandoffCoordinator",
     "createStardewBootstrapGuardianOwner",
     "launchMaterializedAiClient",
+    "launchMaterializedAiClientContained",
     "launchStagedPlayerHost",
     "launchStagedPlayerHostContained",
     "materializeAiClientProfileAfterManifestAdmission",

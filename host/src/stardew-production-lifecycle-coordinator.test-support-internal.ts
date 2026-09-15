@@ -5,7 +5,10 @@ import type { ConstructedUnmountedGameSemanticFacade } from "./continuity-semant
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import {
   createStardewProductionLifecycleCoordinatorFromTestingComposition,
+  containedAiClientLaunchDecision,
   containedPlayerHostLaunchDecision,
+  containedRuntimeTeardownFromCollaborator,
+  type StardewLifecycleAiClientLaunch,
   type StardewLifecyclePlayerHostLaunch,
   type StardewProductionLifecycleCoordinator,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
@@ -29,18 +32,21 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
     deadlineMs: number,
   ): Promise<ConstructedUnmountedGameSemanticFacade>;
   /**
-   * When provided, the testing coordinator routes the staged Player Host
-   * launch through `launchStagedPlayerHostContained` and this collaborator
-   * (the deterministic stand-in for the composition-owned runtime). Absent, it
-   * keeps the direct-spawn Stage C consumer as the behavioral reference.
+   * When provided, the testing coordinator routes BOTH role launches through
+   * the same per-owner contained runtime and this collaborator (the
+   * deterministic stand-in for the composition-owned runtime), and wires
+   * contain/close teardown through it. Absent, it keeps the direct-spawn Stage
+   * C/D consumers as the behavioral reference.
    */
-  launchPlayerHostContained?: StardewPlayerHostRuntimeLaunchCollaborator;
+  runtimeLaunchContained?: StardewPlayerHostRuntimeLaunchCollaborator;
   /**
-   * Lifecycle-owned clock for the contained launch decision. Supplying a
+   * Lifecycle-owned clock for the contained Player Host decision. Supplying a
    * stale clock makes the RoleLaunchOperation deadline invalid before any
    * native/session call (the pre-claim fail-closed path); default is Date.now.
    */
   containedLaunchNowMs?: () => number;
+  /** Same clock control for the contained AI-client launch decision. */
+  containedAiLaunchNowMs?: () => number;
 }>;
 
 /** Dedicated deterministic adapter; production factory accepts no dependencies. */
@@ -70,16 +76,28 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
       ? overrides.stopPlayerHost(() => base.playerHostProcessOwner.stopOwnedPlayerHost())
       : base.playerHostProcessOwner.stopOwnedPlayerHost(),
   });
-  const playerHostLaunch: StardewLifecyclePlayerHostLaunch = overrides.launchPlayerHostContained === undefined
+  const playerHostLaunch: StardewLifecyclePlayerHostLaunch = overrides.runtimeLaunchContained === undefined
     ? (owner, installation) => internal.launchStagedPlayerHost(owner, installation)
     : (owner, installation) => internal.launchStagedPlayerHostContained(
         owner,
         installation,
         (launch) => containedPlayerHostLaunchDecision(
-          overrides.launchPlayerHostContained!,
+          overrides.runtimeLaunchContained!,
           owner,
           launch,
           overrides.containedLaunchNowMs,
+        ),
+      );
+  const aiClientLaunch: StardewLifecycleAiClientLaunch = overrides.runtimeLaunchContained === undefined
+    ? (owner, installation) => internal.launchMaterializedAiClient(owner, installation)
+    : (owner, installation) => internal.launchMaterializedAiClientContained(
+        owner,
+        installation,
+        (launch) => containedAiClientLaunchDecision(
+          overrides.runtimeLaunchContained!,
+          owner,
+          launch,
+          overrides.containedAiLaunchNowMs,
         ),
       );
   return createStardewProductionLifecycleCoordinatorFromTestingComposition(
@@ -119,5 +137,7 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
       return process as unknown as ChildProcess;
     }),
     playerHostLaunch,
+    aiClientLaunch,
+    overrides.runtimeLaunchContained === undefined ? undefined : containedRuntimeTeardownFromCollaborator(overrides.runtimeLaunchContained),
   );
 }

@@ -165,12 +165,27 @@ export type StardewContainedPlayerHostLaunchSeam = Readonly<{
 }>;
 
 /**
+ * One-shot contained-launch seam for the AI-client role. `provideAuthorization`
+ * is core-bound: invoking it atomically claims the exact one-shot AI-client
+ * reservation and hands the recipe's typed facts to the Host runtime
+ * authorization capability without creating a raw child. Same boundary rules
+ * as `StardewContainedPlayerHostLaunchSeam`.
+ */
+export type StardewContainedAiClientLaunchSeam = Readonly<{
+  readonly role: "ai_client";
+  readonly launchGeneration: string;
+  readonly provideAuthorization: TypedPrivateGameAuthorizationProducer;
+}>;
+
+/**
  * Private, bounded, per-owner runtime collaborator injected by the Host
- * composition. It constructs the composition-owned `ContainedGameRuntime`
- * (binding from the owner's Guardian correlation) and forwards the
+ * composition. It constructs one composition-owned `ContainedGameRuntime` per
+ * owner (binding from the owner's Guardian correlation) and forwards the
  * lifecycle-created `RoleLaunchOperation` and the core-bound authorization
- * seam to `runtime.launchRole`. No raw session, pipe, PID, Job, token, or path
- * crosses this seam.
+ * seam to `runtime.launchRole` for both roles. Containment and close are also
+ * routed through the same per-owner runtime so the lifecycle can prove
+ * containment of each launched role and close the platform session exactly
+ * once. No raw session, pipe, PID, Job, token, or path crosses this seam.
  */
 export type StardewPlayerHostRuntimeLaunchCollaborator = Readonly<{
   launchPlayerHost(
@@ -178,6 +193,18 @@ export type StardewPlayerHostRuntimeLaunchCollaborator = Readonly<{
     operation: import("../../../containment/runtime/contract/game-runtime.js").RoleLaunchOperation,
     launch: StardewContainedPlayerHostLaunchSeam,
   ): Promise<import("../../../containment/runtime/contract/game-runtime.js").RedactedRoleLaunchOutcome>;
+  launchAiClient(
+    owner: StardewOwnedPlayerHostBootstrap,
+    operation: import("../../../containment/runtime/contract/game-runtime.js").RoleLaunchOperation,
+    launch: StardewContainedAiClientLaunchSeam,
+  ): Promise<import("../../../containment/runtime/contract/game-runtime.js").RedactedRoleLaunchOutcome>;
+  containPlayerHost(
+    owner: StardewOwnedPlayerHostBootstrap,
+  ): Promise<import("../../../containment/runtime/contract/game-runtime.js").RedactedContainmentOutcome>;
+  containAiClient(
+    owner: StardewOwnedPlayerHostBootstrap,
+  ): Promise<import("../../../containment/runtime/contract/game-runtime.js").RedactedContainmentOutcome>;
+  close(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
 type StardewPrivateChildEnvironment = Readonly<{
@@ -193,6 +220,16 @@ type StardewPrivateChildEnvironment = Readonly<{
 type StardewAiClientLaunchRegistration = Readonly<{
   launchGeneration: string;
   launch(input: LaunchAiClientInput): Readonly<{
+    status: StardewAiClientProcessStatus;
+  }>;
+  /**
+   * Contained variant: marks the exact AI-client reservation consumed and the
+   * process owner awaiting attestation without creating a raw child. The
+   * native process is owned by the authenticated platform session; the
+   * kill-on-close Guardian Job terminates it at platform close, so the owner
+   * holds no pid and `stopOwnedAiClient` reports already-stopped.
+   */
+  containedLaunch(): Readonly<{
     status: StardewAiClientProcessStatus;
   }>;
   revoke(): void;
@@ -305,6 +342,21 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
+  /**
+   * Composition-private contained AI-client launch. The same owner/profile/
+   * inventory/bridge validations and fresh identity reread as
+   * `launchMaterializedAiClient` run first; then the launch decision receives
+   * a `StardewContainedAiClientLaunchSeam`. Invoking the seam's producer (the
+   * Host runtime's `launchRole` step) atomically commits the exact one-shot
+   * AI-client reservation and marks the process owner awaiting attestation
+   * without creating a raw child; the kill-on-close Guardian Job owns the
+   * native process at platform close.
+   */
+  launchMaterializedAiClientContained(
+    owner: StardewOwnedPlayerHostBootstrap,
+    installation: AdmittedStardewInstallation,
+    launchContained: (launch: StardewContainedAiClientLaunchSeam) => Promise<void> | void,
+  ): Promise<StardewOwnedAiClientStageDResult>;
   consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
     owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
@@ -376,6 +428,7 @@ export function createStardewPrivateBootstrapProductionCore(
     createOwnedPlayerHostManifestHandoffCoordinator: closed.createOwnedPlayerHostManifestHandoffCoordinator,
     materializeAiClientProfileAfterManifestAdmission: closed.materializeAiClientProfileAfterManifestAdmission,
     launchMaterializedAiClient: closed.launchMaterializedAiClient,
+    launchMaterializedAiClientContained: closed.launchMaterializedAiClientContained,
     consumeOwnedFarmhandBridgeConnection: closed.consumeOwnedFarmhandBridgeConnection,
     launchStagedPlayerHost: closed.launchStagedPlayerHost,
     launchStagedPlayerHostContained: closed.launchStagedPlayerHostContained,
@@ -422,6 +475,21 @@ export function createStardewPrivateBootstrapTestCore(
   launchMaterializedAiClient(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedAiClientStageDResult>;
+  /**
+   * Composition-private contained AI-client launch. The same owner/profile/
+   * inventory/bridge validations and fresh identity reread as
+   * `launchMaterializedAiClient` run first; then the launch decision receives
+   * a `StardewContainedAiClientLaunchSeam`. Invoking the seam's producer (the
+   * Host runtime's `launchRole` step) atomically commits the exact one-shot
+   * AI-client reservation and marks the process owner awaiting attestation
+   * without creating a raw child; the kill-on-close Guardian Job owns the
+   * native process at platform close.
+   */
+  launchMaterializedAiClientContained(
+    owner: StardewOwnedPlayerHostBootstrap,
+    installation: AdmittedStardewInstallation,
+    launchContained: (launch: StardewContainedAiClientLaunchSeam) => Promise<void> | void,
   ): Promise<StardewOwnedAiClientStageDResult>;
   consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
     owner: StardewOwnedPlayerHostBootstrap,
@@ -497,6 +565,9 @@ export function createStardewPrivateBootstrapTestCore(
     launchMaterializedAiClient(owner, installation) {
       return base.launchMaterializedAiClient(owner, installation);
     },
+    launchMaterializedAiClientContained(owner, installation, launchContained) {
+      return base.launchMaterializedAiClientContained(owner, installation, launchContained);
+    },
     consumeOwnedFarmhandBridgeConnection(owner, callback) {
       return base.consumeOwnedFarmhandBridgeConnection(owner, callback);
     },
@@ -564,6 +635,21 @@ type ClosedBootstrapCore = Readonly<{
   launchMaterializedAiClient(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedAiClientStageDResult>;
+  /**
+   * Composition-private contained AI-client launch. The same owner/profile/
+   * inventory/bridge validations and fresh identity reread as
+   * `launchMaterializedAiClient` run first; then the launch decision receives
+   * a `StardewContainedAiClientLaunchSeam`. Invoking the seam's producer (the
+   * Host runtime's `launchRole` step) atomically commits the exact one-shot
+   * AI-client reservation and marks the process owner awaiting attestation
+   * without creating a raw child; the kill-on-close Guardian Job owns the
+   * native process at platform close.
+   */
+  launchMaterializedAiClientContained(
+    owner: StardewOwnedPlayerHostBootstrap,
+    installation: AdmittedStardewInstallation,
+    launchContained: (launch: StardewContainedAiClientLaunchSeam) => Promise<void> | void,
   ): Promise<StardewOwnedAiClientStageDResult>;
   consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
     owner: StardewOwnedPlayerHostBootstrap,
@@ -826,6 +912,12 @@ function createClosedComposition(
          installation: AdmittedStardewInstallation,
        ): Promise<StardewOwnedAiClientStageDResult> =>
          launchMaterializedAiClient(owner, installation, compositionIdentity),
+       launchMaterializedAiClientContained: (
+         owner: StardewOwnedPlayerHostBootstrap,
+         installation: AdmittedStardewInstallation,
+         launchContained: (launch: StardewContainedAiClientLaunchSeam) => Promise<void> | void,
+       ): Promise<StardewOwnedAiClientStageDResult> =>
+         launchMaterializedAiClientContained(owner, installation, launchContained, compositionIdentity),
        consumeOwnedFarmhandBridgeConnection: <T extends Readonly<{ close(): void | Promise<void> }>>(
          owner: StardewOwnedPlayerHostBootstrap,
          callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
@@ -1301,6 +1393,8 @@ type OwnedPlayerHostBootstrapFacts = {
   /** Contained variant: claiming the launch commits the one-shot reservation without creating a raw child. */
   consumePlayerHostLaunchContained: <T>(callback: (claim: (typedFacts: TypedPrivateGameFacts) => void) => T) => T;
   consumeAiClientLaunch: <T>(callback: (launch: StardewAiClientLaunch) => T) => T;
+  /** Contained variant: commits the one-shot AI-client reservation and marks the process owner awaiting attestation without a raw child. */
+  consumeAiClientLaunchContained: <T>(callback: (claim: (typedFacts: TypedPrivateGameFacts) => void) => T) => T;
   quarantineOwner: () => Promise<void>;
 };
 
@@ -1948,6 +2042,99 @@ async function launchMaterializedAiClient(
   });
 }
 
+/**
+ * Core-private composition-bound contained AI-client launch. The same
+ * owner/profile/inventory/bridge preconditions and request-local fresh install
+ * identity reread as `launchMaterializedAiClient` run first; then the launch
+ * decision receives the core-bound `StardewContainedAiClientLaunchSeam`.
+ * Invoking the seam's producer (the Host runtime's `launchRole` step)
+ * atomically commits the exact one-shot AI-client reservation and marks the
+ * process owner awaiting attestation without creating a raw child. Pre-claim
+ * failures leave the reservation available; claim-attempt failures keep the
+ * one-shot owner behavior exactly like the direct-spawn Stage D consumer.
+ */
+async function launchMaterializedAiClientContained(
+  owner: StardewOwnedPlayerHostBootstrap,
+  installation: AdmittedStardewInstallation,
+  launchContained: (launch: StardewContainedAiClientLaunchSeam) => Promise<void> | void,
+  compositionIdentity: object,
+): Promise<StardewOwnedAiClientStageDResult> {
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+  if (facts.bindingState.value !== "bound" || facts.aiClientProfileState.value !== "materialized")
+    throw new Error("stardew_ai_client_profile_not_materialized");
+  if (facts.quarantine.started) throw new Error("stardew_owned_player_host_bootstrap_owner_quarantined");
+  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
+  if (facts.launchStates.aiClient !== "available") throw new Error("stardew_ai_client_launch_not_available");
+
+  const bridgeMaterial = facts.privateBridgeMaterial.value;
+  if (bridgeMaterial === null) throw new Error("stardew_ai_client_bridge_material_unavailable");
+
+  const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
+  const authorityRoot = dirname(dirname(transactionDirectory));
+  const ownerPath = join(transactionDirectory, OWNER_FILE);
+  const current = await readAndValidateOwner(ownerPath, authorityRoot);
+  if (
+    current.bootstrapId !== facts.durableOwner.record.bootstrapId ||
+    JSON.stringify(current) !== JSON.stringify(facts.durableOwner.record) ||
+    current.state !== "reserved" ||
+    JSON.stringify(current.managedPaths) !== JSON.stringify(C1_MANAGED_PATHS)
+  ) throw new Error("stardew_ai_client_profile_inventory_invalid");
+  await assertMaterializedC1Inventory(transactionDirectory, authorityRoot);
+  const configPath = join(
+    transactionDirectory,
+    AI_CLIENT_PROFILE_ROOT,
+    MODS_DIRECTORY,
+    MOD_DIRECTORY,
+    MOD_CONFIG_FILE,
+  );
+  await verifySafePathBoundary(configPath, transactionDirectory);
+  if (await readFile(configPath, "utf8") !== bridgeMaterial.configJson)
+    throw new Error("stardew_ai_client_bridge_config_changed");
+  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
+
+  const modsPath = join(transactionDirectory, AI_CLIENT_PROFILE_ROOT, MODS_DIRECTORY);
+  let claimAttempted = false;
+  await consumeAdmittedStardewInstallation(installation, async (root, executable) => {
+    await verifySafePathBoundary(configPath, transactionDirectory);
+    if (await readFile(configPath, "utf8") !== bridgeMaterial.configJson)
+      throw new Error("stardew_ai_client_bridge_config_changed");
+    if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
+    const recipe: StardewPrivateRoleLaunchRecipe = Object.freeze({
+      role: "ai_client",
+      executable,
+      cwd: root,
+      args: Object.freeze(["--mods-path", modsPath]),
+      launchGeneration: facts.aiClientRegistration.launchGeneration,
+    });
+    const typedFacts: TypedPrivateGameFacts = Object.freeze({
+      executable: recipe.executable,
+      cwd: recipe.cwd,
+      arguments: recipe.args,
+      environment: createStardewChildEnvironment(recipe.launchGeneration),
+    });
+    const seam: StardewContainedAiClientLaunchSeam = Object.freeze({
+      role: "ai_client",
+      launchGeneration: recipe.launchGeneration,
+      provideAuthorization: (authorize) => {
+        // The claim attempt boundary: any failure from here on (including a
+        // later arm/launch transport failure inside the caller's runtime)
+        // keeps the exact one-shot owner behavior.
+        claimAttempted = true;
+        facts.consumeAiClientLaunchContained((claim) => {
+          claim(typedFacts);
+          authorize(typedFacts);
+        });
+      },
+    });
+    return launchContained(seam);
+  });
+  // A launch decision that completes without ever invoking the producer
+  // cannot have committed the one-shot reservation: fail closed so a retry
+  // remains possible.
+  if (!claimAttempted) throw new Error("stardew_contained_ai_client_launch_claim_not_attempted");
+  return Object.freeze({ status: { kind: "awaiting_ai_client_attestation" as const } });
+}
+
 async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
   owner: StardewOwnedPlayerHostBootstrap,
   callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
@@ -2501,6 +2688,17 @@ function composeOwnedPlayerHostOwner(
       launch: (launchInput) => aiClientRegistration.launch(launchInput),
       revoke: revokeAiClientLaunch,
     }),
+    // Contained variant: committing the claim marks the process owner awaiting
+    // attestation without a raw child; the Guardian kill-on-close Job owns the
+    // native termination at platform close.
+    consumeAiClientLaunchContained: (callback) => consumeLaunch({
+      role: "ai_client",
+      callback,
+      getState: () => aiClientLaunchState,
+      setState: (state) => { aiClientLaunchState = state; },
+      launch: () => aiClientRegistration.containedLaunch(),
+      revoke: revokeAiClientLaunch,
+    }),
     quarantineOwner: () => {
       if (quarantinePromise !== null) return quarantinePromise;
       quarantineStarted = true;
@@ -2708,6 +2906,15 @@ type OwnedProcessState =
   | {
       readonly kind: "awaiting_ai_client_attestation";
       readonly owned: OwnedAiClient;
+      readonly launchGeneration: string;
+    }
+  | {
+      // Contained launch: the native process is owned by the authenticated
+      // platform session, so no pid/kill handle exists on the Host side. The
+      // kill-on-close Guardian Job terminates it at platform close; stop is a
+      // success no-op (already_stopped).
+      readonly kind: "awaiting_ai_client_attestation";
+      readonly owned: null;
       readonly launchGeneration: string;
     }
   | { readonly kind: "ai_client_stopped" };
@@ -2943,6 +3150,18 @@ function createAiClientProcessOwner(
           reservation = null;
           return launchWithGeneration(input, launchGeneration);
         },
+        containedLaunch() {
+          if (consumed || reservation?.capability !== capability)
+            throw new Error("ai_client_launch_reservation_not_active");
+          consumed = true;
+          reservation = null;
+          if (state.kind === "awaiting_ai_client_attestation")
+            throw new Error("owned_ai_client_already_active");
+          state = { kind: "awaiting_ai_client_attestation", owned: null, launchGeneration };
+          return Object.freeze({
+            status: { kind: "awaiting_ai_client_attestation" as const },
+          });
+        },
         revoke() {
           if (!consumed && reservation?.capability === capability) reservation = null;
           consumed = true;
@@ -2960,6 +3179,11 @@ function createAiClientProcessOwner(
     stopOwnedAiClient(): StopOwnedAiClientResult {
       if (state.kind === "idle") return { kind: "no_owned_ai_client", killed: false };
       if (state.kind === "ai_client_stopped") return { kind: "already_stopped", killed: false };
+      // Contained launch: the Host holds no pid/kill handle. The Guardian
+      // kill-on-close Job terminates the native process at platform close, so
+      // a direct stop is a success no-op and never probes an invented pid.
+      if (state.kind === "awaiting_ai_client_attestation" && state.owned === null)
+        return { kind: "already_stopped", killed: false };
 
       const { owned } = state;
       const probeResult = rawProbe(owned.pid);
