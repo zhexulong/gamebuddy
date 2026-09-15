@@ -6,6 +6,10 @@ import {
   createStardewRecoveryBindingContext,
   readStardewRecoveryBindingContext,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import {
+  HostNodeAdmissionService,
+  type HostNodeAdmissionResult,
+} from "../action-execution-coordinator.internal.js";
 import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
@@ -33,12 +37,16 @@ import type { RuntimeSession } from "../runtime.js";
 import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
 import {
   validateBodyProgramCandidateRequest,
-  validateBodyProgramCommandResult,
   validateBodyProgramEventsResult,
   validateBodyProgramStatusResult,
+  validateBodyProgramSubmitResult,
+  validateBodyProgramVerifyResult,
+  type BodyNodeAdmissionChallenge,
+  type BodyNodeAdmissionResult,
   type BodyProgramCandidateRequest,
   type BodyProgramEventsRequest,
   type BodyProgramStatusRequest,
+  type FarmhandPolicyIdentity,
 } from "../protocol.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import {
@@ -65,6 +73,7 @@ function createBodyProgramTools(
   consumer: BodyProgramConsumer,
   connection: GameConnection,
   mountedPolicy: IntegrationActionPolicy,
+  retainedPolicyIdentity: FarmhandPolicyIdentity,
 ): readonly ToolDefinition[] {
   const invoke = async <TResult>(
     request: Record<string, unknown>,
@@ -94,6 +103,7 @@ function createBodyProgramTools(
   };
   const candidateTool = (
     name: "stardew_verify_action_program" | "stardew_submit_action_program",
+    validateResult: (value: Record<string, unknown>) => string | null,
     call: (port: BodyProgramPort, request: BodyProgramCandidateRequest) => Promise<unknown>,
   ): ToolDefinition =>
     Object.freeze(defineTool({
@@ -104,13 +114,13 @@ function createBodyProgramTools(
       execute: async (_toolCallId, params) => {
         if (!isBodyProgramCandidateRequest(params))
           throw new Error("invalid_body_program_tool_arguments");
-        assertFreshBodyProgramPreflight(connection, mountedPolicy, params);
-        return invoke(params, validateBodyProgramCandidateRequest, validateBodyProgramCommandResult, (port) => call(port, params));
+        assertFreshBodyProgramPreflight(connection, mountedPolicy, retainedPolicyIdentity, params);
+        return invoke(params, validateBodyProgramCandidateRequest, validateResult, (port) => call(port, params));
       },
     }));
   return Object.freeze([
-    candidateTool("stardew_verify_action_program", (port, request) => port.verify(request)),
-    candidateTool("stardew_submit_action_program", (port, request) => port.submit(request)),
+    candidateTool("stardew_verify_action_program", validateBodyProgramVerifyResult, (port, request) => port.verify(request)),
+    candidateTool("stardew_submit_action_program", validateBodyProgramSubmitResult, (port, request) => port.submit(request)),
     Object.freeze(defineTool({
       name: "stardew_action_program_status",
       label: "stardew_action_program_status",
@@ -184,20 +194,67 @@ function createBodyProgramToolCloser(consumer: BodyProgramConsumer): () => Promi
 function assertFreshBodyProgramPreflight(
   connection: GameConnection,
   mountedPolicy: IntegrationActionPolicy,
+  retainedPolicyIdentity: FarmhandPolicyIdentity,
   request: Record<string, unknown>,
 ): void {
   if (connection.executionGate?.executable !== true) throw new Error("integration_not_ready");
-  const state = connection.module.readState(connection);
-  if (!state.connected || state.registrations === undefined) throw new Error("integration_not_ready");
-   const visible = connection.module.actionCatalog.visibleActions(
-     state.registrations,
-     state.enabledActionIds ?? [],
-     mountedPolicy,
-   );
+  let state: IntegrationStateView;
+  try {
+    state = connection.module.readState(connection);
+  } catch {
+    throw new Error("integration_not_ready");
+  }
+  if (!isStateView(state) || !state.connected || state.registrations === undefined)
+    throw new Error("integration_not_ready");
+  assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
+  const visible = connection.module.actionCatalog.visibleActions(
+    state.registrations,
+    state.enabledActionIds ?? [],
+    mountedPolicy,
+  );
   const allowed = new Set(visible.map((registration) => registration.actionId));
   if (Array.isArray(request.nodes) && request.nodes.some((node) =>
     !isRecord(node) || typeof node.actionId !== "string" || !allowed.has(node.actionId)
   )) throw new Error("body_program_preflight_rejected");
+}
+
+function readBodyProgramPolicyIdentity(connection: GameConnection): FarmhandPolicyIdentity {
+  let state: IntegrationStateView;
+  try {
+    state = connection.module.readState(connection);
+  } catch {
+    throw new Error("integration_not_ready");
+  }
+  if (!isStateView(state) || !state.connected || !isFarmhandPolicyIdentity(state.policyIdentity) ||
+    state.capabilityRevision !== state.policyIdentity.capabilityRevision) {
+    throw new Error("integration_not_ready");
+  }
+  return Object.freeze({
+    value: state.policyIdentity.value,
+    capabilityRevision: state.policyIdentity.capabilityRevision,
+  });
+}
+
+function assertCurrentBodyProgramPolicyIdentity(
+  state: IntegrationStateView,
+  retainedPolicyIdentity: FarmhandPolicyIdentity,
+): void {
+  if (!isFarmhandPolicyIdentity(state.policyIdentity) ||
+    state.capabilityRevision !== state.policyIdentity.capabilityRevision) {
+    throw new Error("integration_not_ready");
+  }
+  if (
+    state.policyIdentity.value !== retainedPolicyIdentity.value ||
+    state.policyIdentity.capabilityRevision !== retainedPolicyIdentity.capabilityRevision
+  ) throw new Error("body_program_preflight_rejected");
+}
+
+function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdentity {
+  if (!isRecord(value) || !hasExactKeys(value, ["value", "capabilityRevision"])) return false;
+  const capabilityRevision = value.capabilityRevision;
+  if (typeof value.value !== "string" || !/^[0-9a-f]{32}$/iu.test(value.value) ||
+    typeof capabilityRevision !== "number") return false;
+  return Number.isSafeInteger(capabilityRevision) && capabilityRevision > 0;
 }
 
 function validateStatusRequest(value: Record<string, unknown>): string | null {
@@ -211,6 +268,20 @@ function validateEventsRequest(value: Record<string, unknown>): string | null {
     (value.pageSize as number) >= 1 && (value.pageSize as number) <= 32
     ? null : "invalid_body_program_request";
 }
+function projectBodyNodeAdmissionResult(
+  challenge: BodyNodeAdmissionChallenge,
+  result: HostNodeAdmissionResult,
+): BodyNodeAdmissionResult {
+  switch (result.result) {
+    case "granted":
+      return Object.freeze({ ...result.grant, result: "granted" });
+    case "rejected":
+      return Object.freeze({ ...challenge, result: "rejected", code: result.code });
+    case "unavailable":
+      return Object.freeze({ ...challenge, result: "unavailable", code: result.code });
+  }
+}
+
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actual = Object.keys(value);
   return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
@@ -236,7 +307,10 @@ export function createHostGameRuntimeMaterializer(
       permit,
     ): Promise<MaterializedGameRuntime> {
       return await materializeExactEnter(reservation, permit, async (execution, admission) => {
-        const ports = materializeAuthenticatedStardewLaunchPorts(execution, admission);
+        const mountedPolicy = execution.connection.module.parsePolicy(
+          execution.connection.module.defaultPolicy,
+        );
+        const retainedPolicyIdentity = readBodyProgramPolicyIdentity(execution.connection);
         const recoveryIdentity = createStableGameRuntimeBindingIdentity(execution);
         const recoveryJournal = await StardewLogicalActionRecoveryJournal.open(
           Object.freeze({
@@ -250,20 +324,52 @@ export function createHostGameRuntimeMaterializer(
             scope: recoveryIdentity,
           }),
         );
-         const recoveryContext = createStardewRecoveryBindingContext(execution, recoveryJournal);
-         const bodyProgramConsumer = Object.freeze(Object.create(null)) as BodyProgramConsumer;
-         bodyProgramConsumers.set(bodyProgramConsumer, { port: ports.bodyProgram, available: true, active: 0 });
-          const closeFixedTools = createBodyProgramToolCloser(bodyProgramConsumer);
-          // Resolve exactly once for this construction; closures and adapter tools
-          // share this same object while live state remains freshly read per call.
-          const mountedPolicy = execution.connection.module.parsePolicy(
-            execution.connection.module.defaultPolicy,
-          );
-          const fixedTools = createBodyProgramTools(
-            bodyProgramConsumer,
-            execution.connection,
-            mountedPolicy,
-          );
+        const bodyProgramAdmission = new HostNodeAdmissionService(
+          recoveryJournal,
+          (challenge) => {
+            if (execution.connection.executionGate?.executable !== true)
+              return { result: "unavailable", code: "admission_unavailable" };
+            let state: IntegrationStateView;
+            try {
+              state = execution.connection.module.readState(execution.connection);
+            } catch {
+              return { result: "unavailable", code: "admission_unavailable" };
+            }
+            if (!isStateView(state) || !state.connected || state.registrations === undefined)
+              return { result: "unavailable", code: "admission_unavailable" };
+            assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
+            const visible = execution.connection.module.actionCatalog.visibleActions(
+              state.registrations,
+              state.enabledActionIds ?? [],
+              mountedPolicy,
+            );
+            const action = visible.find((registration) => registration.actionId === challenge.actionId);
+            if (action === undefined) return { result: "rejected", code: "policy_denied" };
+            if (challenge.catalogRevision !== state.catalogRevision)
+              return { result: "rejected", code: "catalog_stale" };
+            if (challenge.policyIdentity.value !== retainedPolicyIdentity.value || challenge.policyIdentity.capabilityRevision !== retainedPolicyIdentity.capabilityRevision)
+              return { result: "rejected", code: "policy_identity_mismatch" };
+            return { result: "granted", attachmentGeneration: state.sessionId ?? "", policyRevision: retainedPolicyIdentity.value };
+          },
+        );
+        const ports = materializeAuthenticatedStardewLaunchPorts(
+          execution,
+          admission,
+          async (challenge: BodyNodeAdmissionChallenge): Promise<BodyNodeAdmissionResult> =>
+            projectBodyNodeAdmissionResult(challenge, await bodyProgramAdmission.admit(challenge)),
+        );
+        const recoveryContext = createStardewRecoveryBindingContext(execution, recoveryJournal);
+        const bodyProgramConsumer = Object.freeze(Object.create(null)) as BodyProgramConsumer;
+        bodyProgramConsumers.set(bodyProgramConsumer, { port: ports.bodyProgram, available: true, active: 0 });
+        const closeFixedTools = createBodyProgramToolCloser(bodyProgramConsumer);
+        // Resolve exactly once for this construction; closures and adapter tools
+        // share this same object while live state remains freshly read per call.
+        const fixedTools = createBodyProgramTools(
+          bodyProgramConsumer,
+          execution.connection,
+          mountedPolicy,
+          retainedPolicyIdentity,
+        );
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
         let constructed: Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>;
         try {
@@ -280,8 +386,8 @@ export function createHostGameRuntimeMaterializer(
             Object.freeze({
               resolvedPolicy: mountedPolicy,
               recoveryJournal,
-            recoveryBinding: Object.freeze({ scope: recovery.identity, bindingIdentity: recovery.identity }),
-            recoveryPort: Object.freeze({
+                 recoveryBinding: Object.freeze({ scope: recovery.identity, bindingIdentity: recovery.identity }),
+             recoveryPort: Object.freeze({
               scope: recovery.identity,
               bindingIdentity: recovery.identity,
               queryExecutionReceipt: recovery.queryExecutionReceipt,

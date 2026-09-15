@@ -17,7 +17,7 @@ internal delegate bool SceneTargetResolver(
     out string reasonCode);
 
 /// <summary>Transport-neutral, SMAPI-game-thread-only authenticated session.</summary>
-internal sealed class BridgeSession
+internal sealed class BridgeSession : IBodyProgramAdmissionTransport
 {
     private const int MaximumRememberedIdempotencyKeys = 256;
     private const int MaximumPendingPlayerControls = 64;
@@ -360,6 +360,8 @@ internal sealed class BridgeSession
         this.sceneActorTileX = 0;
         this.sceneActorTileY = 0;
         this.sceneObservations.Close();
+        this.pendingBodyProgramAdmissions.Clear();
+        this.bodyProgramResults.Clear();
     }
 
     /// <summary>
@@ -378,6 +380,8 @@ internal sealed class BridgeSession
         this.sceneActorTileX = 0;
         this.sceneActorTileY = 0;
         this.sceneMovementSequence++;
+        this.pendingBodyProgramAdmissions.Clear();
+        this.bodyProgramResults.Clear();
     }
 
     internal bool TryNavigationRead(long generation, BridgeEnvelope<BridgeNavigationReadRequest>? envelope, out BridgeEnvelope<BridgeNavigationReadResult>? response, out string reasonCode)
@@ -704,6 +708,84 @@ internal sealed class BridgeSession
     }
 
     /// <summary>Publishes one complete newer availability replacement for this authenticated generation.</summary>
+    internal bool TryCreateBodyNodeAdmissionChallenge(long generation, NodeAdmissionChallenge challenge, string correlationId, out string json)
+    {
+        json = string.Empty;
+        if (!IsAuthenticated(generation, out _)
+            || challenge is null
+            || !BridgeProtocol.IsOpaqueId(correlationId)) return false;
+        return BridgeProtocol.TrySerialize(Reply("body_node_admission_challenge", correlationId, BridgeProtocol.ProjectBodyNodeAdmissionChallenge(challenge)), out json, out _);
+    }
+
+    internal bool TryDepositBodyNodeAdmissionResult(long generation, BridgeEnvelope<BodyNodeAdmissionResult>? envelope, out string reasonCode)
+    {
+        reasonCode = "invalid_body_node_admission";
+        if (!IsAuthenticated(generation, out reasonCode))
+            return false;
+        if (this.pipeBridge is null || this.pipeBridge.CurrentGeneration != generation)
+        {
+            reasonCode = "unauthenticated";
+            return false;
+        }
+        if (!IsValidEnvelope(envelope, "body_node_admission_result", out reasonCode)
+            || !BridgeProtocol.IsOpaqueId(envelope!.CorrelationId))
+            return false;
+        return this.TryDepositResult(generation, envelope.CorrelationId, envelope.Payload, out reasonCode);
+    }
+
+    void IBodyProgramAdmissionTransport.Send(NodeAdmissionChallenge challenge)
+    {
+        if (challenge is null || !IsAuthenticated(this.authenticatedGeneration, out _) || this.pipeBridge is null)
+            return;
+        string correlationId = Guid.NewGuid().ToString("N");
+        if (!TryCreateBodyNodeAdmissionChallenge(this.authenticatedGeneration, challenge, correlationId, out string json))
+            return;
+        this.pendingBodyProgramAdmissions[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = correlationId;
+        if (!this.pipeBridge.TryEnqueueOutbound(this.authenticatedGeneration, json))
+            this.pendingBodyProgramAdmissions.Remove((challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt));
+    }
+
+    BodyNodeAdmissionResult? IBodyProgramAdmissionTransport.TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
+    {
+        (string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt) key = (programId, nodeId, nodeAttempt, admissionAttempt);
+        if (!this.pendingBodyProgramAdmissions.TryGetValue(key, out _)
+            || !this.bodyProgramResults.Remove(key, out BodyNodeAdmissionResult? result))
+            return null;
+        this.pendingBodyProgramAdmissions.Remove(key);
+        return result;
+    }
+
+    private readonly Dictionary<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt), string> pendingBodyProgramAdmissions = new();
+    private readonly Dictionary<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt), BodyNodeAdmissionResult> bodyProgramResults = new();
+
+    private bool TryDepositResult(long generation, string correlationId, BodyNodeAdmissionResult result, out string reasonCode)
+    {
+        reasonCode = "invalid_body_node_admission";
+        if (!IsAuthenticated(generation, out reasonCode) || result is null) return false;
+        (string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt) key = result switch
+        {
+            BodyNodeAdmissionGrantedResult granted => (granted.Grant.ProgramId, granted.Grant.NodeId, granted.Grant.NodeAttempt, granted.Grant.AdmissionAttempt),
+            BodyNodeAdmissionRejectedResult rejected => (rejected.Challenge.ProgramId, rejected.Challenge.NodeId, rejected.Challenge.NodeAttempt, rejected.Challenge.AdmissionAttempt),
+            BodyNodeAdmissionUnavailableResult unavailable => (unavailable.Challenge.ProgramId, unavailable.Challenge.NodeId, unavailable.Challenge.NodeAttempt, unavailable.Challenge.AdmissionAttempt),
+            _ => default,
+        };
+        if (string.IsNullOrEmpty(key.ProgramId)
+            || !this.pendingBodyProgramAdmissions.TryGetValue(key, out string? expectedCorrelation)
+            || !FixedEquals(expectedCorrelation, correlationId))
+        {
+            reasonCode = "body_node_admission_correlation_mismatch";
+            return false;
+        }
+        if (this.bodyProgramResults.ContainsKey(key))
+        {
+            reasonCode = "body_node_admission_duplicate";
+            return false;
+        }
+        this.bodyProgramResults[key] = result;
+        reasonCode = "accepted";
+        return true;
+    }
+
     internal bool TryCreateCatalogUpdate(long generation, long previouslyPublishedRevision, string correlationId, out string json)
     {
         json = string.Empty;

@@ -118,6 +118,24 @@ public sealed record BodyNodeAdmissionExecutionBindingWire(string ProgramId, str
      IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs,
      string GrantId, string AttachmentGeneration, string PolicyRevision, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BodyNodeAdmissionExecutionBindingWire? ExecutionBinding = null);
 
+ public sealed record BodyNodeAdmissionGrantedResultWire(
+     string Result, string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt, long StopEpoch,
+     long CatalogRevision, BodyNodeAdmissionPolicyIdentityWire PolicyIdentity, string ActionId,
+     IReadOnlyDictionary<string, BodyNodeAdmissionCanonicalValueWire> CanonicalBoundArgs,
+     IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs,
+     string GrantId, string AttachmentGeneration, string PolicyRevision, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BodyNodeAdmissionExecutionBindingWire? ExecutionBinding = null) : BodyNodeAdmissionResultWire;
+  public sealed record BodyNodeAdmissionRejectedResultWire(
+      string Result, string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt, long StopEpoch,
+      long CatalogRevision, BodyNodeAdmissionPolicyIdentityWire PolicyIdentity, string ActionId,
+      IReadOnlyDictionary<string, BodyNodeAdmissionCanonicalValueWire> CanonicalBoundArgs,
+      IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs, string Code) : BodyNodeAdmissionResultWire;
+  public sealed record BodyNodeAdmissionUnavailableResultWire(
+      string Result, string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt, long StopEpoch,
+      long CatalogRevision, BodyNodeAdmissionPolicyIdentityWire PolicyIdentity, string ActionId,
+      IReadOnlyDictionary<string, BodyNodeAdmissionCanonicalValueWire> CanonicalBoundArgs,
+      IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs, string Code) : BodyNodeAdmissionResultWire;
+  public abstract record BodyNodeAdmissionResultWire;
+
 public sealed record BridgeTile(float X, float Y);
 /// <summary>Deterministic Mod-declared action identity projected on hello_ack.
 /// Reflects FarmhandActionCatalog.Registrations exactly; the Host treats this as

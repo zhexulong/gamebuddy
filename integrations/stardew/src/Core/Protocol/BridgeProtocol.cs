@@ -74,7 +74,11 @@ public static class BridgeProtocol
         }
         try
         {
-            json = JsonSerializer.Serialize(value, JsonOptions);
+            json = value switch
+            {
+                BridgeEnvelope<BodyNodeAdmissionResultWire> envelope => SerializeBodyNodeAdmissionResultEnvelope(envelope),
+                _ => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(T), JsonOptions),
+            };
             if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumMessageBytes)
             {
                 json = string.Empty;
@@ -86,8 +90,12 @@ public static class BridgeProtocol
             {
                 BodyNodeAdmissionChallengeWire => IsValidAdmissionPayload(JsonSerializer.SerializeToElement(value, JsonOptions), false, out _),
                 BodyNodeAdmissionGrantWire => IsValidAdmissionPayload(JsonSerializer.SerializeToElement(value, JsonOptions), true, out _),
+                BodyNodeAdmissionGrantedResultWire => IsValidAdmissionResultPayload(JsonSerializer.SerializeToElement(value, JsonOptions), out _),
+                BodyNodeAdmissionRejectedResultWire => IsValidAdmissionResultPayload(JsonSerializer.SerializeToElement(value, JsonOptions), out _),
+                BodyNodeAdmissionUnavailableResultWire => IsValidAdmissionResultPayload(JsonSerializer.SerializeToElement(value, JsonOptions), out _),
                 BridgeEnvelope<BodyNodeAdmissionChallengeWire> => TryDeserializeBodyNodeAdmissionChallenge(json, out _, out _),
                 BridgeEnvelope<BodyNodeAdmissionGrantWire> => TryDeserializeBodyNodeAdmissionGrant(json, out _, out _),
+                BridgeEnvelope<BodyNodeAdmissionResultWire> => TryDeserializeBodyNodeAdmissionResultWire(json, out _, out _),
                 _ => true,
             };
             if (!validAdmission)
@@ -132,6 +140,56 @@ public static class BridgeProtocol
     public static bool TryDeserializeBodyNodeAdmissionGrant(string json, out BridgeEnvelope<HostAdmissionGrant>? envelope, out string reasonCode) =>
         TryDeserializeAdmission(json, true, out envelope, out reasonCode);
 
+    public static bool TryDeserializeBodyNodeAdmissionResult(string json, out BridgeEnvelope<BodyNodeAdmissionResult>? envelope, out string reasonCode)
+    {
+        envelope = null;
+        reasonCode = "message_too_large";
+        if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumMessageBytes) return false;
+        if (!TryReadInboundPayload(json, "body_node_admission_result", out JsonDocument? document, out JsonElement payload, out reasonCode)) return false;
+        using (document)
+        {
+            if (!IsValidAdmissionResultPayload(payload, out object? core))
+            {
+                reasonCode = "invalid_body_node_admission";
+                return false;
+            }
+            JsonElement root = document!.RootElement;
+            BridgeScope scope = ReadScope(root.GetProperty("scope"));
+            envelope = new(Version, root.GetProperty("messageId").GetString()!, root.GetProperty("correlationId").GetString()!,
+                root.GetProperty("timestampMs").GetInt64(), scope, "body_node_admission_result", (BodyNodeAdmissionResult)core!);
+            reasonCode = "accepted";
+            return true;
+        }
+    }
+
+    internal static bool TryDeserializeBodyNodeAdmissionResultWire(string json, out BridgeEnvelope<BodyNodeAdmissionResultWire>? envelope, out string reasonCode)
+    {
+        envelope = null;
+        reasonCode = "message_too_large";
+        if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumMessageBytes) return false;
+        if (!TryReadInboundPayload(json, "body_node_admission_result", out JsonDocument? document, out JsonElement payload, out reasonCode)) return false;
+        using (document)
+        {
+            if (!IsValidAdmissionResultPayload(payload, out _))
+            {
+                reasonCode = "invalid_body_node_admission";
+                return false;
+            }
+            JsonElement root = document!.RootElement;
+            BodyNodeAdmissionResultWire wire = payload.GetProperty("result").GetString() switch
+            {
+                "granted" => JsonSerializer.Deserialize<BodyNodeAdmissionGrantedResultWire>(payload.GetRawText(), JsonOptions)!,
+                "rejected" => JsonSerializer.Deserialize<BodyNodeAdmissionRejectedResultWire>(payload.GetRawText(), JsonOptions)!,
+                "unavailable" => JsonSerializer.Deserialize<BodyNodeAdmissionUnavailableResultWire>(payload.GetRawText(), JsonOptions)!,
+                _ => throw new InvalidOperationException("Admission result discriminator was not validated."),
+            };
+            envelope = new(Version, root.GetProperty("messageId").GetString()!, root.GetProperty("correlationId").GetString()!,
+                root.GetProperty("timestampMs").GetInt64(), ReadScope(root.GetProperty("scope")), "body_node_admission_result", wire);
+            reasonCode = "accepted";
+            return true;
+        }
+    }
+
     private static bool TryDeserializeAdmission<T>(string json, bool grant, out BridgeEnvelope<T>? envelope, out string reasonCode)
     {
         envelope = null;
@@ -154,11 +212,72 @@ public static class BridgeProtocol
         }
     }
 
-    private static bool IsValidAdmissionPayload(JsonElement payload, bool grant, out object? core)
+    public static BodyNodeAdmissionResultWire ProjectBodyNodeAdmissionResult(BodyNodeAdmissionResult value) => value switch
+    {
+        BodyNodeAdmissionGrantedResult granted => ProjectBodyNodeAdmissionGrantedResult(granted.Grant),
+        BodyNodeAdmissionRejectedResult rejected => ProjectBodyNodeAdmissionRejectedResult(rejected.Challenge, rejected.Code),
+        BodyNodeAdmissionUnavailableResult unavailable => ProjectBodyNodeAdmissionUnavailableResult(unavailable.Challenge),
+        _ => throw new ArgumentOutOfRangeException(nameof(value)),
+    };
+
+    private static BodyNodeAdmissionGrantedResultWire ProjectBodyNodeAdmissionGrantedResult(HostAdmissionGrant value)
+    {
+        BodyNodeAdmissionGrantWire grant = ProjectBodyNodeAdmissionGrant(value);
+        return new("granted", grant.ProgramId, grant.NodeId, grant.NodeAttempt, grant.AdmissionAttempt, grant.StopEpoch, grant.CatalogRevision,
+            grant.PolicyIdentity, grant.ActionId, grant.CanonicalBoundArgs, grant.DerivedResourceClaims, grant.DeadlineMs,
+            grant.GrantId, grant.AttachmentGeneration, grant.PolicyRevision, grant.ExecutionBinding);
+    }
+
+    private static BodyNodeAdmissionRejectedResultWire ProjectBodyNodeAdmissionRejectedResult(NodeAdmissionChallenge value, string code)
+    {
+        BodyNodeAdmissionChallengeWire challenge = ProjectBodyNodeAdmissionChallenge(value);
+        return new("rejected", challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision,
+            challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalBoundArgs, challenge.DerivedResourceClaims, challenge.DeadlineMs, code);
+    }
+
+    private static BodyNodeAdmissionUnavailableResultWire ProjectBodyNodeAdmissionUnavailableResult(NodeAdmissionChallenge value)
+    {
+        BodyNodeAdmissionChallengeWire challenge = ProjectBodyNodeAdmissionChallenge(value);
+        return new("unavailable", challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision,
+            challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalBoundArgs, challenge.DerivedResourceClaims, challenge.DeadlineMs, "admission_unavailable");
+    }
+
+    private static string SerializeBodyNodeAdmissionResultEnvelope(BridgeEnvelope<BodyNodeAdmissionResultWire> envelope) =>
+        JsonSerializer.Serialize(new BridgeEnvelope<object>(envelope.ProtocolVersion, envelope.MessageId, envelope.CorrelationId,
+            envelope.TimestampMs, envelope.Scope, envelope.Type, envelope.Payload), JsonOptions);
+
+    private static bool IsValidAdmissionResultPayload(JsonElement payload, out object? core)
+    {
+        core = null;
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("result", out JsonElement result) || result.ValueKind != JsonValueKind.String)
+            return false;
+        string? resultValue = result.GetString();
+        if (resultValue == "granted")
+        {
+            if (!IsValidAdmissionPayload(payload, true, out object? grant, true) || grant is not HostAdmissionGrant hostGrant) return false;
+            core = new BodyNodeAdmissionGrantedResult(hostGrant);
+            return true;
+        }
+        if (resultValue is not ("rejected" or "unavailable") || !payload.TryGetProperty("code", out JsonElement code)
+            || code.ValueKind != JsonValueKind.String || !IsReasonCode(code.GetString())
+            || (resultValue == "unavailable" && code.GetString() != "admission_unavailable")) return false;
+        if (!IsValidAdmissionPayload(payload, false, out object? challenge, true) || challenge is not NodeAdmissionChallenge nodeChallenge) return false;
+        core = resultValue == "rejected"
+            ? new BodyNodeAdmissionRejectedResult(nodeChallenge, code.GetString()!)
+            : new BodyNodeAdmissionUnavailableResult(nodeChallenge);
+        return true;
+    }
+
+    private static bool IsValidAdmissionPayload(JsonElement payload, bool grant, out object? core, bool result = false)
     {
         core = null;
         string[] keys = { "programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "catalogRevision", "policyIdentity", "actionId", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs" };
-        if (!HasExactProperties(payload, grant ? keys.Concat(new[] { "grantId", "attachmentGeneration", "policyRevision", "executionBinding" }).ToArray() : keys)
+        string[] expectedKeys = grant
+            ? keys.Concat(new[] { "grantId", "attachmentGeneration", "policyRevision", "executionBinding" }).ToArray()
+            : keys;
+        if (result)
+            expectedKeys = grant ? expectedKeys.Concat(new[] { "result" }).ToArray() : expectedKeys.Concat(new[] { "result", "code" }).ToArray();
+        if (!HasExactProperties(payload, expectedKeys)
             || !ReadOpaqueString(payload.GetProperty("programId"), out string? programId)
             || !ReadOpaqueString(payload.GetProperty("nodeId"), out string? nodeId)
             || !ReadOpaqueString(payload.GetProperty("actionId"), out string? actionId)

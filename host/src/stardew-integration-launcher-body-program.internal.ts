@@ -9,7 +9,11 @@ import {
   RECEIPT_BACKED_INTEGRATION_AUTHORITY,
 } from "./integration-launcher.js";
 import type { ExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";
-import { LocalStardewBridgeClient, type LocalStardewBridgeFact } from "./local-stardew-bridge.js";
+import {
+  bindLocalStardewBridgeBodyNodeAdmission,
+  LocalStardewBridgeClient,
+  type LocalStardewBridgeFact,
+} from "./local-stardew-bridge.js";
 import type { GameConnection, StardewBridgeConnection } from "./game-connection.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { createStableGameRuntimeBindingIdentity } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
@@ -27,6 +31,8 @@ import type {
   BodyProgramStatusResult,
   BodyProgramSubmitResult,
   BodyProgramVerifyResult,
+  BodyNodeAdmissionChallenge,
+  BodyNodeAdmissionResult,
 } from "./protocol.js";
 
 /** Liveness check carried by one exact authenticated connection association. */
@@ -92,6 +98,10 @@ export type StardewAuthenticatedBodyProgramPort = Readonly<{
   events(request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult>;
 }>;
 
+type BodyNodeAdmissionHandler = (
+  challenge: BodyNodeAdmissionChallenge,
+) => Promise<BodyNodeAdmissionResult>;
+
 export type AuthenticatedStardewLaunchPorts = Readonly<{
   presentation: FarmhandPresentationBridge;
   bodyProgram: StardewAuthenticatedBodyProgramPort;
@@ -101,6 +111,7 @@ export type AuthenticatedStardewLaunchRecord = Readonly<{
   connection: IntegrationLaunchHandle["connection"];
   presentation: FarmhandPresentationBridge;
   bodyProgram?: StardewAuthenticatedBodyProgramPort;
+  bindBodyNodeAdmission(handler: BodyNodeAdmissionHandler): void;
   isClosed(): boolean;
 }>;
 
@@ -302,24 +313,55 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
         removeDiagnostic();
       },
     });
+    // Launcher-owned liveness for the retained presentation and body-program
+    // projections: an invalidated receipt, explicit close, or bridge disconnect
+    // freezes every later call so it fails closed before any native forwarding.
+    // Invalidation never cancels, replays, retries, or closes the native
+    // mutation/pipe; only the launcher-owned projections stop forwarding.
+    const isLauncherClosed = (): boolean => closed || invalidated || !bridge.state.connected;
+    const assertLauncherPortsLive = (): void => {
+      if (isLauncherClosed()) throw new Error("stardew_launcher_ports_not_live");
+    };
     const presentation: FarmhandPresentationBridge = Object.freeze({
-      get state() { return Object.freeze({ snapshot: bridge.state.snapshot }); },
-      presentCompanionText: (request) => bridge.presentCompanionText(request as never),
-      presentSystemNotice: (request) => bridge.presentSystemNotice(request as never),
+      get state() {
+        assertLauncherPortsLive();
+        return Object.freeze({ snapshot: bridge.state.snapshot });
+      },
+      presentCompanionText: (request) => {
+        assertLauncherPortsLive();
+        return bridge.presentCompanionText(request as never);
+      },
+      presentSystemNotice: (request) => {
+        assertLauncherPortsLive();
+        return bridge.presentSystemNotice(request as never);
+      },
     });
     const bodyProgram = bridge.hasExactFarmhandRuntimeAttestation
       ? Object.freeze({
-          verify: (request: BodyProgramCandidateRequest): Promise<BodyProgramVerifyResult> => bridge.programVerify(request),
-          submit: (request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult> => bridge.programSubmit(request),
-          status: (request: BodyProgramStatusRequest): Promise<BodyProgramStatusResult> => bridge.programStatus(request),
-          events: (request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult> => bridge.programEvents(request),
+          verify: (request: BodyProgramCandidateRequest): Promise<BodyProgramVerifyResult> => {
+            assertLauncherPortsLive();
+            return bridge.programVerify(request);
+          },
+          submit: (request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult> => {
+            assertLauncherPortsLive();
+            return bridge.programSubmit(request);
+          },
+          status: (request: BodyProgramStatusRequest): Promise<BodyProgramStatusResult> => {
+            assertLauncherPortsLive();
+            return bridge.programStatus(request);
+          },
+          events: (request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult> => {
+            assertLauncherPortsLive();
+            return bridge.programEvents(request);
+          },
         })
       : undefined;
     associateAuthenticatedStardewLaunch(handle, Object.freeze({
       connection,
       presentation,
       ...(bodyProgram === undefined ? {} : { bodyProgram }),
-      isClosed: () => closed || invalidated || !bridge.state.connected,
+       bindBodyNodeAdmission: (handler) => bindLocalStardewBridgeBodyNodeAdmission(bridge, handler),
+      isClosed: isLauncherClosed,
     }));
     return handle;
   } catch (error) {
@@ -412,6 +454,7 @@ export function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
 export function materializeAuthenticatedStardewLaunchPorts(
   execution: GameRuntimeBindingExecution,
   admission: OpaqueS4cMaterializationAdmission,
+  bodyNodeAdmissionHandler?: BodyNodeAdmissionHandler,
 ): AuthenticatedStardewLaunchPorts {
   assertActiveS4cMaterializationAdmission(execution, admission);
   const identity = createStableGameRuntimeBindingIdentity(execution);
@@ -428,5 +471,6 @@ export function materializeAuthenticatedStardewLaunchPorts(
   ) {
     throw new Error("authenticated_stardew_launch_ports_required");
   }
+  if (bodyNodeAdmissionHandler !== undefined) record.bindBodyNodeAdmission(bodyNodeAdmissionHandler);
   return Object.freeze({ presentation: record.presentation, bodyProgram: record.bodyProgram });
 }

@@ -8,12 +8,14 @@ import {
 import type { ExecutionWake, ExecutionWakeSource } from "./integration-launcher.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
-import type { ExecutionReceipt } from "./protocol.js";
+import type {
+  BodyNodeAdmissionChallenge,
+  BodyNodeAdmissionGrant,
+  ExecutionReceipt,
+} from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";
 import {
-  type HostAdmissionGrant,
   type HostNodeAdmissionRecord,
-  type NodeAdmissionChallenge,
   type StardewLogicalActionRecoveryJournal,
 } from "./stardew-logical-action-recovery-journal.js";
 
@@ -47,18 +49,18 @@ export type ActionExecutionAdmission = IntegrationDispatchAdmission &
  * mutator; its validator can only veto or grant the supplied exact challenge.
  */
 type HostNodeAdmissionDecision =
-  | Readonly<{ result: "granted"; attachmentGeneration: string; policyRevision: string; catalogRevision: string }>
+  | Readonly<{ result: "granted"; attachmentGeneration: string; policyRevision: string }>
   | Readonly<{ result: "rejected"; code: string }>
-  | Readonly<{ result: "unavailable" }>;
+  | Readonly<{ result: "unavailable"; code: "admission_unavailable" }>;
 
-export type HostNodeAdmissionValidator = (challenge: NodeAdmissionChallenge) =>
+export type HostNodeAdmissionValidator = (challenge: BodyNodeAdmissionChallenge) =>
   | HostNodeAdmissionDecision
   | Promise<HostNodeAdmissionDecision>;
 
 export type HostNodeAdmissionResult =
-  | Readonly<{ result: "granted"; grant: HostAdmissionGrant }>
+  | Readonly<{ result: "granted"; grant: BodyNodeAdmissionGrant }>
   | Readonly<{ result: "rejected"; code: string }>
-  | Readonly<{ result: "unavailable" }>;
+  | Readonly<{ result: "unavailable"; code: "admission_unavailable" }>;
 
 export class HostNodeAdmissionService {
   public constructor(
@@ -66,7 +68,7 @@ export class HostNodeAdmissionService {
     private readonly validateFresh: HostNodeAdmissionValidator,
   ) {}
 
-  public async admit(challenge: NodeAdmissionChallenge): Promise<HostNodeAdmissionResult> {
+  public async admit(challenge: BodyNodeAdmissionChallenge): Promise<HostNodeAdmissionResult> {
     let existing: HostNodeAdmissionRecord | null;
     try {
       existing = this.journal.admissionRecord(challenge);
@@ -82,35 +84,32 @@ export class HostNodeAdmissionService {
     try {
       decision = await this.validateFresh(challenge);
     } catch {
-      return Object.freeze({ result: "unavailable" });
+      return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
     }
-    if (decision.result === "unavailable") return Object.freeze({ result: "unavailable" });
+    if (decision.result === "unavailable") return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
     if (decision.result === "rejected") return this.#reject(challenge, decision.code);
-    if (decision.catalogRevision !== challenge.catalogRevision) return this.#reject(challenge, "catalog_revision_mismatch");
-    const grant = Object.freeze({
+    const grant: BodyNodeAdmissionGrant = Object.freeze({
+      ...challenge,
       grantId: `grant_${randomUUID()}`,
-      challenge,
       attachmentGeneration: decision.attachmentGeneration,
       policyRevision: decision.policyRevision,
-      // The Mod mints this opaque identity. Host only echoes the exact challenge value.
-      policyIdentity: challenge.policyIdentity,
-      catalogRevision: decision.catalogRevision,
+      executionBinding: null,
     });
     try {
       const saved = await this.journal.recordAdmission(Object.freeze({ challenge, state: "grant_issued", grant }));
       return Object.freeze({ result: "granted", grant: saved.grant! });
     } catch {
       // A grant is never returned unless its exact tuple was durably journaled.
-      return Object.freeze({ result: "unavailable" });
+      return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
     }
   }
 
-  async #reject(challenge: NodeAdmissionChallenge, code: string): Promise<HostNodeAdmissionResult> {
+  async #reject(challenge: BodyNodeAdmissionChallenge, code: string): Promise<HostNodeAdmissionResult> {
     try {
       await this.journal.recordAdmission(Object.freeze({ challenge, state: "admission_rejected", rejectionCode: code }));
       return Object.freeze({ result: "rejected", code });
     } catch {
-      return Object.freeze({ result: "unavailable" });
+      return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
     }
   }
 }

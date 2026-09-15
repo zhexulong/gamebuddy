@@ -1,5 +1,8 @@
+using System.IO.Pipes;
+using System.Reflection;
 using System.Text.Json;
 using FluentAssertions;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
@@ -112,6 +115,139 @@ public sealed class BridgeSessionPublicationTests
         using var stream = new FileStream(snapshotOutputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         using var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false));
         writer.Write(snapshotJson);
+    }
+
+    [Fact]
+    public void ObserveSnapshot_KeepsStaticCatalogRevisionAcrossCapabilityPublicationSuccessor()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal)
+        {
+            "move_to_tile",
+        });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        const string token = "publication_token_0123456789abcdef";
+        var session = new BridgeSession(
+            new ExecutionManager(new DummyMonitor(), () => publication),
+            new FarmhandActionRouter(),
+            scope,
+            token,
+            () => publication,
+            () => "en-US");
+        var hello = new BridgeEnvelope<BridgeHello>(
+            BridgeProtocol.Version,
+            "hello_snapshot_publication_01",
+            "hello_snapshot_publication_01",
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            scope,
+            "hello",
+            new BridgeHello(token));
+
+        session.TryAuthenticate(1, hello, out _, out string authenticationReason)
+            .Should().BeTrue(authenticationReason);
+
+        FarmhandCapabilityPublication successor = publication.WithEnabledActions(new HashSet<string>(StringComparer.Ordinal));
+        successor.CapabilityRevision.Should().BeGreaterThan(publication.CapabilityRevision);
+        publication = successor;
+
+        var observe = new BridgeEnvelope<BridgeObserveRequest>(
+            BridgeProtocol.Version,
+            "observe_snapshot_publication_01",
+            "observe_snapshot_publication_01",
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            scope,
+            "observe_request",
+            new BridgeObserveRequest());
+        session.TryObserve(1, observe, out BridgeEnvelope<BridgeSnapshot>? snapshot, out string observeReason)
+            .Should().BeTrue(observeReason);
+        snapshot.Should().NotBeNull();
+        snapshot!.Payload.CatalogRevision.Should().Be(FarmhandActionSurfacePublication.CatalogRevision);
+        snapshot.Payload.EnabledActionIds.Should().Equal(successor.EnabledActionIds);
+
+        session.TryCreateCatalogUpdate(1, 1, "catalog_snapshot_publication_01", out string catalogUpdateJson)
+            .Should().BeTrue();
+        using JsonDocument catalogUpdateDocument = JsonDocument.Parse(catalogUpdateJson);
+        catalogUpdateDocument.RootElement.GetProperty("payload").GetProperty("catalogRevision").GetInt64()
+            .Should().Be(FarmhandActionSurfacePublication.CatalogRevision);
+    }
+
+    [Fact]
+    public void BodyNodeAdmissionResult_PollBeforeArrivalRetainsPendingAndDepositsExactResultOnce()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "move_to_tile" });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        const string token = "admission_token_0123456789abcdef";
+        string pipeName = "gamebuddy_admission_result_" + Guid.NewGuid().ToString("N");
+        using LocalPipeBridge pipeBridge = new(pipeName);
+        using NamedPipeClientStream client = ConnectClient(pipeName);
+        long generation = WaitForGeneration(pipeBridge);
+        generation.Should().Be(1);
+        var session = new BridgeSession(new ExecutionManager(new DummyMonitor(), () => publication), new FarmhandActionRouter(), scope, token, () => publication, () => "en-US", pipeBridge: pipeBridge);
+        var hello = new BridgeEnvelope<BridgeHello>(BridgeProtocol.Version, "hello_admission_01", "hello_admission_01", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "hello", new BridgeHello(token));
+        session.TryAuthenticate(generation, hello, out _, out string authReason).Should().BeTrue(authReason);
+
+        NodeAdmissionChallenge challenge = new("program_1", "node_1", 1, 1, 1, 1, new("policy_1", 1), "move_to_tile",
+            new Dictionary<string, BodyProgramCanonicalValue>(), new Dictionary<string, string>(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 10_000);
+        IBodyProgramAdmissionTransport transport = session;
+        SeedPendingAdmission(session, challenge);
+        transport.TryTakeResult(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt).Should().BeNull();
+
+        BodyNodeAdmissionResult result = new BodyNodeAdmissionUnavailableResult(challenge);
+        var inbound = new BridgeEnvelope<BodyNodeAdmissionResult>(BridgeProtocol.Version, "result_message_1", "admission_correlation_1", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "body_node_admission_result", result);
+        session.TryDepositBodyNodeAdmissionResult(generation, inbound, out string depositReason).Should().BeTrue(depositReason);
+        transport.TryTakeResult(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt).Should().BeEquivalentTo(result);
+        transport.TryTakeResult(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt).Should().BeNull();
+    }
+
+    [Fact]
+    public void BodyNodeAdmissionResult_RejectsStaleGenerationAndCorrelationWithoutDeposit()
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "move_to_tile" });
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        const string token = "admission_token_0123456789abcdef";
+        string pipeName = "gamebuddy_admission_stale_" + Guid.NewGuid().ToString("N");
+        using LocalPipeBridge pipeBridge = new(pipeName);
+        using NamedPipeClientStream client = ConnectClient(pipeName);
+        long generation = WaitForGeneration(pipeBridge);
+        generation.Should().Be(1);
+        var session = new BridgeSession(new ExecutionManager(new DummyMonitor(), () => publication), new FarmhandActionRouter(), scope, token, () => publication, () => "en-US", pipeBridge: pipeBridge);
+        var hello = new BridgeEnvelope<BridgeHello>(BridgeProtocol.Version, "hello_admission_02", "hello_admission_02", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "hello", new BridgeHello(token));
+        session.TryAuthenticate(generation, hello, out _, out string authReason).Should().BeTrue(authReason);
+        NodeAdmissionChallenge challenge = new("program_1", "node_1", 1, 1, 1, 1, new("policy_1", 1), "move_to_tile", new Dictionary<string, BodyProgramCanonicalValue>(), new Dictionary<string, string>(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 10_000);
+        IBodyProgramAdmissionTransport transport = session;
+        SeedPendingAdmission(session, challenge);
+        var result = new BodyNodeAdmissionUnavailableResult(challenge);
+        var stale = new BridgeEnvelope<BodyNodeAdmissionResult>(BridgeProtocol.Version, "result_message_2", "admission_correlation_1", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "body_node_admission_result", result);
+        session.TryDepositBodyNodeAdmissionResult(generation + 1, stale, out _).Should().BeFalse();
+        var wrongCorrelation = stale with { CorrelationId = "admission_correlation_2" };
+        session.TryDepositBodyNodeAdmissionResult(generation, wrongCorrelation, out _).Should().BeFalse();
+        transport.TryTakeResult(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt).Should().BeNull();
+    }
+
+    private static void SeedPendingAdmission(BridgeSession session, NodeAdmissionChallenge challenge, string correlationId = "admission_correlation_1")
+    {
+        FieldInfo field = typeof(BridgeSession).GetField("pendingBodyProgramAdmissions", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var pending = (System.Collections.IDictionary)field.GetValue(session)!;
+        pending.Add((challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt), correlationId);
+    }
+
+    private static NamedPipeClientStream ConnectClient(string pipeName)
+    {
+        NamedPipeClientStream client = new(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        try { client.Connect(5_000); }
+        catch { client.Dispose(); throw; }
+        return client;
+    }
+
+    private static long WaitForGeneration(LocalPipeBridge bridge)
+    {
+        long deadline = Environment.TickCount64 + 5_000;
+        while (Environment.TickCount64 < deadline)
+        {
+            long generation = bridge.CurrentGeneration;
+            if (generation != 0) return generation;
+            Thread.Sleep(10);
+        }
+        throw new InvalidOperationException("the admission test bridge generation did not connect within the bounded window.");
     }
 
     [Fact]
