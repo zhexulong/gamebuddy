@@ -1,6 +1,7 @@
 import {
   createStardewBootstrapGuardianOwnerBinding,
   createStardewPrivateBootstrapTestCore,
+  type StardewContainedPlayerHostLaunchSeam,
   type StardewOwnedPlayerHostPhaseACoreTestView,
   type StardewOwnedAiClientStageDResult,
   type StardewOwnedPlayerHostStageCResult,
@@ -60,6 +61,11 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   launchStagedPlayerHost(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedPlayerHostStageCResult>;
+  launchStagedPlayerHostContained(
+    owner: StardewOwnedPlayerHostBootstrap,
+    installation: AdmittedStardewInstallation,
+    launchContained: (launch: StardewContainedPlayerHostLaunchSeam) => Promise<void> | void,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
   replaceStagedInstallationLocator(
     owner: StardewOwnedPlayerHostBootstrap,

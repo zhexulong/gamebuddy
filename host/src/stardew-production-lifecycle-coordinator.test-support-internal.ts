@@ -5,13 +5,15 @@ import type { ConstructedUnmountedGameSemanticFacade } from "./continuity-semant
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import {
   createStardewProductionLifecycleCoordinatorFromTestingComposition,
+  containedPlayerHostLaunchDecision,
+  type StardewLifecyclePlayerHostLaunch,
   type StardewProductionLifecycleCoordinator,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { createStardewPrivateBootstrapCompositionForTesting } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import type { StopOwnedPlayerHostResult } from "./stardew-player-host-process-owner.js";
-import type { StardewPrivateFarmhandBridgeConnection } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+import type { StardewPrivateFarmhandBridgeConnection, StardewPlayerHostRuntimeLaunchCollaborator } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { createTestWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.test-support.js";
 import type { StardewFolderPickerResult } from "./windows-stardew-folder-picker/index.js";
@@ -26,6 +28,19 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
     connection: StardewPrivateFarmhandBridgeConnection,
     deadlineMs: number,
   ): Promise<ConstructedUnmountedGameSemanticFacade>;
+  /**
+   * When provided, the testing coordinator routes the staged Player Host
+   * launch through `launchStagedPlayerHostContained` and this collaborator
+   * (the deterministic stand-in for the composition-owned runtime). Absent, it
+   * keeps the direct-spawn Stage C consumer as the behavioral reference.
+   */
+  launchPlayerHostContained?: StardewPlayerHostRuntimeLaunchCollaborator;
+  /**
+   * Lifecycle-owned clock for the contained launch decision. Supplying a
+   * stale clock makes the RoleLaunchOperation deadline invalid before any
+   * native/session call (the pre-claim fail-closed path); default is Date.now.
+   */
+  containedLaunchNowMs?: () => number;
 }>;
 
 /** Dedicated deterministic adapter; production factory accepts no dependencies. */
@@ -55,6 +70,18 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
       ? overrides.stopPlayerHost(() => base.playerHostProcessOwner.stopOwnedPlayerHost())
       : base.playerHostProcessOwner.stopOwnedPlayerHost(),
   });
+  const playerHostLaunch: StardewLifecyclePlayerHostLaunch = overrides.launchPlayerHostContained === undefined
+    ? (owner, installation) => internal.launchStagedPlayerHost(owner, installation)
+    : (owner, installation) => internal.launchStagedPlayerHostContained(
+        owner,
+        installation,
+        (launch) => containedPlayerHostLaunchDecision(
+          overrides.launchPlayerHostContained!,
+          owner,
+          launch,
+          overrides.containedLaunchNowMs,
+        ),
+      );
   return createStardewProductionLifecycleCoordinatorFromTestingComposition(
     manifest,
     Object.freeze({
@@ -91,5 +118,6 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
       });
       return process as unknown as ChildProcess;
     }),
+    playerHostLaunch,
   );
 }

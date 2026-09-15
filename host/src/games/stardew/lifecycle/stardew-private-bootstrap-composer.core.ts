@@ -49,6 +49,10 @@ import {
 import { readStrictJsonFile } from "../../../strict-json-reader.js";
 import type { Scope } from "../../../protocol.js";
 import { createStardewRoleLifecycleFacade } from "../../../stardew-role-lifecycle-facade.js";
+import type {
+  TypedPrivateGameAuthorizationProducer,
+  TypedPrivateGameFacts,
+} from "../../../containment/runtime/contract/game-runtime.js";
 import {
   StardewAttachmentFlow,
   type StardewJoinManifest,
@@ -137,12 +141,43 @@ type StardewPrivateBootstrapFacts = Readonly<{
  * reservation's generation; no platform bytes, Guardian material, plan ID, or
  * public DTO crosses this callback boundary.
  */
-type StardewPrivateRoleLaunchRecipe = Readonly<{
+export type StardewPrivateRoleLaunchRecipe = Readonly<{
   role: "player_host" | "ai_client";
   executable: string;
   cwd: string;
   args: readonly string[];
   launchGeneration: string;
+}>;
+
+/**
+ * One-shot contained-launch seam handed to the lifecycle launch decision after
+ * fresh installation admission and recipe assembly. `provideAuthorization` is
+ * core-bound: invoking it atomically claims the exact one-shot Player Host
+ * reservation and hands the recipe's typed facts (executable/cwd/arguments and
+ * the full child environment including the launch generation) to the Host
+ * runtime authorization capability. No platform bytes, raw child, or private
+ * recipe value crosses this boundary; the caller never interprets the facts.
+ */
+export type StardewContainedPlayerHostLaunchSeam = Readonly<{
+  readonly role: "player_host";
+  readonly launchGeneration: string;
+  readonly provideAuthorization: TypedPrivateGameAuthorizationProducer;
+}>;
+
+/**
+ * Private, bounded, per-owner runtime collaborator injected by the Host
+ * composition. It constructs the composition-owned `ContainedGameRuntime`
+ * (binding from the owner's Guardian correlation) and forwards the
+ * lifecycle-created `RoleLaunchOperation` and the core-bound authorization
+ * seam to `runtime.launchRole`. No raw session, pipe, PID, Job, token, or path
+ * crosses this seam.
+ */
+export type StardewPlayerHostRuntimeLaunchCollaborator = Readonly<{
+  launchPlayerHost(
+    owner: StardewOwnedPlayerHostBootstrap,
+    operation: import("../../../containment/runtime/contract/game-runtime.js").RoleLaunchOperation,
+    launch: StardewContainedPlayerHostLaunchSeam,
+  ): Promise<import("../../../containment/runtime/contract/game-runtime.js").RedactedRoleLaunchOutcome>;
 }>;
 
 type StardewPrivateChildEnvironment = Readonly<{
@@ -278,6 +313,22 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  /**
+   * Composition-private contained Player Host launch. Performing the exact
+   * same owner/staging validations and fresh identity reread as
+   * `launchStagedPlayerHost`, it hands the launch decision a
+   * `StardewContainedPlayerHostLaunchSeam`; once that decision invokes the
+   * runtime with `launchRole`, the seam's producer atomically claims the
+   * one-shot reservation and authorizes the recipe-derived typed facts. Any
+   * failure after the claim is classified through
+   * `didStardewOwnedPlayerHostStageCEnterControlledLaunch` exactly like the
+   * direct-spawn Stage C consumer.
+   */
+  launchStagedPlayerHostContained(
+    owner: StardewOwnedPlayerHostBootstrap,
+    installation: AdmittedStardewInstallation,
+    launchContained: (launch: StardewContainedPlayerHostLaunchSeam) => Promise<void> | void,
+  ): Promise<StardewOwnedPlayerHostStageCResult>;
   replaceStagedInstallationLocator(
     owner: StardewOwnedPlayerHostBootstrap,
     expectedRevision: number,
@@ -327,6 +378,7 @@ export function createStardewPrivateBootstrapProductionCore(
     launchMaterializedAiClient: closed.launchMaterializedAiClient,
     consumeOwnedFarmhandBridgeConnection: closed.consumeOwnedFarmhandBridgeConnection,
     launchStagedPlayerHost: closed.launchStagedPlayerHost,
+    launchStagedPlayerHostContained: closed.launchStagedPlayerHostContained,
     replaceStagedInstallationLocator: closed.replaceStagedInstallationLocator,
     reserveOwnedPlayerHostBootstrapForActivation: closed.reserveOwnedPlayerHostBootstrapForActivation,
     stageOwnedPlayerHostProfile: closed.stageOwnedPlayerHostProfile,
@@ -378,6 +430,11 @@ export function createStardewPrivateBootstrapTestCore(
   launchStagedPlayerHost(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedPlayerHostStageCResult>;
+  launchStagedPlayerHostContained(
+    owner: StardewOwnedPlayerHostBootstrap,
+    installation: AdmittedStardewInstallation,
+    launchContained: (launch: StardewContainedPlayerHostLaunchSeam) => Promise<void> | void,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
   replaceStagedInstallationLocator(
     owner: StardewOwnedPlayerHostBootstrap,
@@ -449,6 +506,9 @@ export function createStardewPrivateBootstrapTestCore(
       // cross-composition owners are rejected before the launch attempt.
       return base.launchStagedPlayerHost(owner, installation);
     },
+    launchStagedPlayerHostContained(owner, installation, launchContained) {
+      return base.launchStagedPlayerHostContained(owner, installation, launchContained);
+    },
     replaceStagedInstallationLocator(owner, expectedRevision, locator) {
       return base.replaceStagedInstallationLocator(owner, expectedRevision, locator);
     },
@@ -512,6 +572,11 @@ type ClosedBootstrapCore = Readonly<{
   launchStagedPlayerHost(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedPlayerHostStageCResult>;
+  launchStagedPlayerHostContained(
+    owner: StardewOwnedPlayerHostBootstrap,
+    installation: AdmittedStardewInstallation,
+    launchContained: (launch: StardewContainedPlayerHostLaunchSeam) => Promise<void> | void,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
   replaceStagedInstallationLocator(
     owner: StardewOwnedPlayerHostBootstrap,
@@ -775,6 +840,12 @@ function createClosedComposition(
         installation: AdmittedStardewInstallation,
       ): Promise<StardewOwnedPlayerHostStageCResult> =>
         launchStagedPlayerHost(owner, installation, compositionIdentity),
+        launchStagedPlayerHostContained: (
+        owner: StardewOwnedPlayerHostBootstrap,
+        installation: AdmittedStardewInstallation,
+        launchContained: (launch: StardewContainedPlayerHostLaunchSeam) => Promise<void> | void,
+      ): Promise<StardewOwnedPlayerHostStageCResult> =>
+        launchStagedPlayerHostContained(owner, installation, launchContained, compositionIdentity),
       replaceStagedInstallationLocator: async (owner, expectedRevision, locator): Promise<void> => {
         const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
         const runtimeRoot = dirname(dirname(facts.durableOwner.transactionDirectory));
@@ -1227,6 +1298,8 @@ type OwnedPlayerHostBootstrapFacts = {
   readonly privateBridgeMaterial: { value: StardewPrivateBridgeMaterial | null };
   stagingDependencies?: PrivateModProfileStagingDependencies;
   consumePlayerHostLaunch: <T>(callback: (launch: StardewPlayerHostLaunch) => T) => T;
+  /** Contained variant: claiming the launch commits the one-shot reservation without creating a raw child. */
+  consumePlayerHostLaunchContained: <T>(callback: (claim: (typedFacts: TypedPrivateGameFacts) => void) => T) => T;
   consumeAiClientLaunch: <T>(callback: (launch: StardewAiClientLaunch) => T) => T;
   quarantineOwner: () => Promise<void>;
 };
@@ -1714,6 +1787,95 @@ async function launchStagedPlayerHost(
     // one-shot owner behavior; the staged marker drains permanently.
     facts.playerHostProfileStagingState.value = launchEntered ? "not_staged" : "staged";
     if (launchEntered && typeof error === "object" && error !== null) {
+      stageCControlledLaunchErrors.add(error);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Core-private composition-bound contained staged Player Host launch. The same
+ * owner/staging validations and request-local fresh install identity reread as
+ * `launchStagedPlayerHost` run first; then the launch decision receives the
+ * core-bound `StardewContainedPlayerHostLaunchSeam`. Invoking the seam's
+ * producer (the Host runtime's `launchRole` step) atomically claims the exact
+ * one-shot Player Host reservation and authorizes the recipe-derived typed
+ * facts; no raw child is created here. Claim-attempt failures keep the one-shot
+ * owner behavior and drain the staged marker permanently (classified through
+ * `didStardewOwnedPlayerHostStageCEnterControlledLaunch`), while pre-claim
+ * failures restore the staged marker exactly like the direct-spawn path.
+ */
+async function launchStagedPlayerHostContained(
+  owner: StardewOwnedPlayerHostBootstrap,
+  installation: AdmittedStardewInstallation,
+  launchContained: (launch: StardewContainedPlayerHostLaunchSeam) => Promise<void> | void,
+  compositionIdentity: object,
+): Promise<StardewOwnedPlayerHostStageCResult> {
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+  if (facts.bindingState.value !== "bound")
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_bound");
+  if (facts.playerHostProfileStagingState.value !== "staged")
+    throw new Error("stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged");
+  if (facts.quarantine.started)
+    throw new Error("stardew_owned_player_host_bootstrap_owner_quarantined");
+  if (facts.expiresAtMs <= facts.readClock())
+    throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
+
+  // Atomically mark the in-flight launch attempt before any await so a
+  // concurrent contained staged Player Host invocation can never double-launch.
+  facts.playerHostProfileStagingState.value = "launching";
+
+  const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
+  const modsPath = join(transactionDirectory, HOST_PROFILE_ROOT, MODS_DIRECTORY);
+
+  let claimAttempted = false;
+  try {
+    await consumeAdmittedStardewInstallation(installation, (root, executable) => {
+      const recipe: StardewPrivateRoleLaunchRecipe = Object.freeze({
+        role: "player_host",
+        executable,
+        cwd: root,
+        args: Object.freeze(["--mods-path", modsPath]),
+        launchGeneration: facts.playerHostRegistration.launchGeneration,
+      });
+      const typedFacts: TypedPrivateGameFacts = Object.freeze({
+        executable: recipe.executable,
+        cwd: recipe.cwd,
+        arguments: recipe.args,
+        environment: createStardewChildEnvironment(recipe.launchGeneration),
+      });
+      const seam: StardewContainedPlayerHostLaunchSeam = Object.freeze({
+        role: "player_host",
+        launchGeneration: recipe.launchGeneration,
+        provideAuthorization: (authorize) => {
+          // The claim attempt boundary: any failure from here on (including
+          // a later arm/launch transport failure inside the caller's runtime)
+          // is treated as a possibly-entered controlled launch.
+          claimAttempted = true;
+          facts.consumePlayerHostLaunchContained((claim) => {
+            claim(typedFacts);
+            authorize(typedFacts);
+          });
+        },
+      });
+      return launchContained(seam);
+    });
+    // A launch decision that completes without ever invoking the producer
+    // cannot have committed the one-shot reservation: fail closed before the
+    // staged marker drains so a retry remains possible. The direct-spawn
+    // consumer is equivalent (success is only produced by consuming the launch).
+    if (!claimAttempted) throw new Error("stardew_contained_player_host_launch_claim_not_attempted");
+    // The contained launch succeeded: the staged profile has been used.
+    facts.playerHostProfileStagingState.value = "not_staged";
+    return Object.freeze({ status: { kind: "awaiting_player_host_attestation" as const } });
+  } catch (error) {
+    // A fresh identity failure never reaches the seam: zero claims happened, so
+    // the staged marker restores for a complete retry. Any claim-attempt
+    // failure keeps the one-shot owner behavior; the staged marker drains
+    // permanently and the caller's launchMayHaveRun classification matches the
+    // direct-spawn Stage C consumer.
+    facts.playerHostProfileStagingState.value = claimAttempted ? "not_staged" : "staged";
+    if (claimAttempted && typeof error === "object" && error !== null) {
       stageCControlledLaunchErrors.add(error);
     }
     throw error;
@@ -2317,6 +2479,18 @@ function composeOwnedPlayerHostOwner(
       getState: () => playerHostLaunchState,
       setState: (state) => { playerHostLaunchState = state; },
       launch: (launchInput) => playerHostRegistration.launch(launchInput),
+      revoke: revokePlayerHostLaunch,
+    }),
+    // Contained variant: claiming the launch does not create a raw child. The
+    // native process is owned by the authenticated platform session; the claim
+    // only commits the one-shot reservation and its launch generation so the
+    // lifecycle correlation and double-launch protection stay intact.
+    consumePlayerHostLaunchContained: (callback) => consumeLaunch({
+      role: "player_host",
+      callback,
+      getState: () => playerHostLaunchState,
+      setState: (state) => { playerHostLaunchState = state; },
+      launch: () => undefined,
       revoke: revokePlayerHostLaunch,
     }),
     consumeAiClientLaunch: (callback) => consumeLaunch({
