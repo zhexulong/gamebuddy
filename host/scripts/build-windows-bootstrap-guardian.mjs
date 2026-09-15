@@ -178,6 +178,13 @@ export async function buildWindowsBootstrapGuardian() {
   if (!contained(output, stagingRoot) || stagingRoot === output || !contained(output, guardianOutput) || !contained(output, fixtureOutput)) throw new Error("windows_bootstrap_guardian_output_unsafe");
   try {
     await ensureDirectory(output);
+    // A fresh publication never reuses an earlier run's output. Sweep any
+    // abandoned staging/replaced scratch from interrupted previous builds so
+    // the root contains exactly the live win-x64 and fixtures directories.
+    const scratchPattern = /^\.(?:staging|replaced)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+    for (const entry of await readdir(output)) {
+      if (scratchPattern.test(entry)) await rm(resolve(output, entry), { recursive: true, force: true });
+    }
     await mkdir(stagingRoot);
     await verifyPhysicalPath(stagingRoot);
     const dotnet = await resolveRepositoryDotnet();
