@@ -1,0 +1,6 @@
+[submodule "vendor/magic-context"]
+	path = vendor/magic-context
+	url = git@github.com:zhexulong/magic-context-airp.git
+	branch = main
+	ignore = untracked
+
