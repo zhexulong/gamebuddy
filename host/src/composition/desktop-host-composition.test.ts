@@ -108,3 +108,17 @@ test("desktop composition retains the typed root capability and closes the authe
   await Promise.all([composition.close(), composition.close()]);
   assert.equal(closeCalls, 1);
 });
+test("desktop product composition wires the semantic authority and Stardew lifecycle owner into reverse-order children", async () => {
+  const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts"), "utf8");
+  assert.match(source, /createSharedSemanticProductionAuthorityFromDeploymentManifest\(input\.manifest, input\.gameSessionMode\)/);
+  assert.match(source, /createStardewProductionLifecycleCoordinator\(input\.manifest, folderPicker, shared\.game\)/);
+  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[shared, lifecycleCoordinator\]\)/);
+  assert.match(source, /await lifecycleCoordinator\?\.close\(\)/);
+  assert.match(source, /await shared\?\.close\(\)/);
+  // The bootstrap mode and principal come only from the Host-owned manifest
+  // input; the composition never derives them from root layout/bootstrap facts.
+  assert.doesNotMatch(source, /process\.env/);
+  assert.doesNotMatch(source, /dataRoot|bootstrapId|programRoot|principal\s*:/);
+  assert.doesNotMatch(source, /export\s*\{/);
+  assert.doesNotMatch(source, /export\s+(?:type|interface|function|const)\s+(?:createSharedSemanticProductionAuthorityFromDeploymentManifest|createStardewProductionLifecycleCoordinator|DesktopGuardianSession|DesktopGuardianSessionBinding)/);
+});
