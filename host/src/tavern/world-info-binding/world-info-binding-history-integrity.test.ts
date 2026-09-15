@@ -11,7 +11,7 @@ const projection: PublicWorldInfoProjection = Object.freeze({
   revision: 2,
   publicTitle: "Pelican Town",
   summary: "The revised town facts.",
-  entries: Object.freeze([{ scope: "setting" as const, publicTitle: "Square", summary: "The town center." }]),
+  entries: Object.freeze([{ scope: "setting" as const, publicTitle: "Square", summary: "The town center.", keys: Object.freeze(["square"]), constant: true }]),
 });
 
 function sourceId(publicTitle: string, revision: number, hash: string): string {

@@ -188,13 +188,14 @@ export async function materializeTavernAuthoredContextCatalog(
       "source" in worldInfoSource.binding
         ? `managed-world-info/${worldInfoSource.binding.publicTitle}/revision/${worldInfoSource.binding.revision}/canonical/${worldInfoSource.binding.canonicalHash}`
         : `worldbook/${worldInfoSource.binding.worldBookId}/revision/${worldInfoSource.binding.revision}/canonical/${worldInfoSource.binding.canonicalHash}/provenance/${worldInfoSource.binding.provenance}`;
+    const stableWorldInfoContent = deriveStableWorldInfoContent(worldInfoSource);
     sources.push(
       source(
         "lorebook_constant",
         sourceId,
         worldInfoSource.binding.revision,
         worldInfoSource.binding.canonicalHash,
-        worldInfoContent(worldInfoSource),
+        stableWorldInfoContent,
         String(sources.length + 1).padStart(4, "0"),
         provenance,
       ),
@@ -404,6 +405,34 @@ function worldInfoContent(source: TavernWorldInfoSource): string {
   return "content" in source ? source.content : source.alwaysOnPremise;
 }
 
+function deriveStableWorldInfoContent(sourceValue: TavernWorldInfoSource): string {
+  const rawContent = worldInfoContent(sourceValue);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawContent);
+  } catch {
+    return rawContent;
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.entries)) return boundedWorldInfoOverview(rawContent);
+  const constantEntries = parsed.entries.filter((entry) => isRecord(entry) && entry.constant === true);
+  const overview = canonicalJson({
+    ...(typeof parsed.publicTitle === "string" ? { publicTitle: parsed.publicTitle } : {}),
+    ...(typeof parsed.summary === "string" ? { summary: parsed.summary } : {}),
+  });
+  if (constantEntries.length === 0) return boundedWorldInfoOverview(overview);
+  const constants = canonicalJson({
+    ...(typeof parsed.publicTitle === "string" ? { publicTitle: parsed.publicTitle } : {}),
+    entries: constantEntries,
+  });
+  return Math.ceil(constants.length / 4) <= TAVERN_STABLE_CONTEXT_MAX_TOKENS
+    ? constants
+    : boundedWorldInfoOverview(overview);
+}
+function boundedWorldInfoOverview(content: string): string {
+  const maxCharacters = TAVERN_STABLE_CONTEXT_MAX_TOKENS * 4;
+  return content.length <= maxCharacters ? content : content.slice(0, maxCharacters).trim();
+}
+
 function isRecord(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -413,13 +442,17 @@ function deriveVolatileWorldInfoSources(sourceValue: TavernWorldInfoSource, pare
   if (!isRecord(parsed) || !Array.isArray(parsed.entries)) return Object.freeze([]);
   const revision = sourceValue.binding.revision;
   const canonical = sourceValue.binding.canonicalHash;
-  return Object.freeze(parsed.entries.map((entry, index) => {
-    if (!isRecord(entry) || typeof entry.publicTitle !== "string" || typeof entry.summary !== "string") throw new Error("tavern_volatile_context_invalid_source");
+  return Object.freeze(parsed.entries.flatMap((entry, index) => {
+    if (!isRecord(entry)) throw new Error("tavern_volatile_context_invalid_source");
+    if (entry.constant === true) return [];
+    if (typeof entry.publicTitle !== "string" || typeof entry.summary !== "string") throw new Error("tavern_volatile_context_invalid_source");
     const content = entry.summary;
     if (!validSourceContent(content)) throw new Error("tavern_volatile_context_invalid_source");
     const sourceId = `${parentSourceId}_entry_${index + 1}`;
     const provenance = `tavern-world-info-entry/${sourceId}/revision/${revision}/canonical/${canonical}`;
-    return Object.freeze({ sourceId, kind: "lorebook_entry" as const, revision: String(revision), canonicalHash: hash(content), content, budgetTokens: Math.ceil(content.length / 4), totalOrderKey: String(index + 1).padStart(4, "0"), provenance, selectionKeys: Object.freeze([entry.publicTitle]) });
+    const selectionKeys = Array.isArray(entry.keys) && entry.keys.length > 0 ? entry.keys : [entry.publicTitle];
+    if (selectionKeys.some((key) => typeof key !== "string" || key.trim().length === 0)) throw new Error("tavern_volatile_context_invalid_source");
+    return [Object.freeze({ sourceId, kind: "lorebook_entry" as const, revision: String(revision), canonicalHash: hash(content), content, budgetTokens: Math.ceil(content.length / 4), totalOrderKey: String(index + 1).padStart(4, "0"), provenance, selectionKeys: Object.freeze([...selectionKeys]) })];
   }));
 }
 function validSourceContent(value: string): boolean {

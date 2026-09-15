@@ -69,8 +69,9 @@ export type RawLoreEntry = Readonly<{
   publicTitle?: string;
   content?: string;
   summary?: string;
-  key?: readonly string[];
+  key?: readonly string[] | string;
   keys?: readonly string[];
+  constant?: boolean;
   disable?: boolean;
   enabled?: boolean;
   scope?: "companion" | "setting";
@@ -186,6 +187,7 @@ export function importTavernLorebook(
       rawEntry.publicTitle ??
       (Array.isArray(rawEntry.keys) && rawEntry.keys[0]) ??
       (Array.isArray(rawEntry.key) && rawEntry.key[0]) ??
+      (typeof rawEntry.key === "string" && rawEntry.key.split(",")[0]) ??
       `Location ${adaptedEntries.length + 1}`;
 
     const entryTitle = cleanLorebookText(titleCandidate, MAX_TITLE);
@@ -196,12 +198,20 @@ export function importTavernLorebook(
     if (!entrySummary) continue;
 
     const scope: "companion" | "setting" = rawEntry.scope === "companion" ? "companion" : "setting";
+    const rawKeys = Array.isArray(rawEntry.keys) ? rawEntry.keys : rawEntry.key;
+    const keys = (Array.isArray(rawKeys) ? rawKeys : typeof rawKeys === "string" ? rawKeys.split(",") : [])
+      .map((key) => cleanLorebookText(key, 128))
+      .filter((key) => key.length > 0)
+      .slice(0, 128);
+    const constant = rawEntry.constant === true;
 
     adaptedEntries.push(
       Object.freeze({
         scope,
         publicTitle: entryTitle,
         summary: entrySummary,
+        ...(keys.length === 0 ? {} : { keys: Object.freeze(keys) }),
+        ...(constant ? { constant: true } : {}),
       }),
     );
   }
