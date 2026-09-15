@@ -15,6 +15,7 @@ import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../run
 import { TavernArtifactStore } from "./artifact-store.js";
 import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
 import { createTavernLibraryService } from "./library-service.js";
+import { renderMacros } from "./macro-engine.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import type { CharacterCandidate, TavernCompanion } from "./types.js";
 
@@ -135,7 +136,12 @@ export async function provisionNewCompanion(
   const companionId = `companion-${randomUUID()}`;
   const continuityId = `continuity-${randomUUID()}`;
   const identity: CompanionIdentity = Object.freeze({ playerId, companionId, continuityId });
-  return provisionNewCompanionNamespace(root, identity, reviewedProfile(approved, companionId, continuityId), threads);
+  return provisionNewCompanionNamespace(
+    root,
+    identity,
+    reviewedProfile(approved, companionId, continuityId, playerId),
+    threads,
+  );
 }
 
 async function provisionNewCompanionNamespace(
@@ -200,26 +206,32 @@ function reviewedProfile(
   fields: ReadonlyMap<string, string>,
   companionId: string,
   continuityId: string,
+  playerId: string,
 ): IdentityProfile {
   const base = DEFAULT_IDENTITY_PROFILE;
+  const identity = Object.freeze({
+    ...base.identity,
+    continuity: `Host-owned continuity ${continuityId}; ${base.identity.continuity}`,
+  });
+  const macros = Object.freeze({ char: identity.name, user: playerId ?? "Player" });
+  const render = (value: string): string => renderMacros(value, macros);
   const core = fields.get("persona_core");
   const interactionStyle = fields.get("persona_interaction_style");
   const expressionStyle = fields.get("persona_expression_style");
   const persona =
     core === undefined && interactionStyle === undefined && expressionStyle === undefined
       ? undefined
-      : Object.freeze({
-          core: core ?? base.persona?.core ?? "Maintain a stable, player-reviewed companion disposition.",
-          interactionStyle: interactionStyle ?? base.persona?.interactionStyle ?? "Be helpful, calm, and direct.",
-          expressionStyle: expressionStyle ?? base.persona?.expressionStyle ?? "Use clear, natural language.",
-        });
+       : Object.freeze({
+           core: render(core ?? base.persona?.core ?? "Maintain a stable, player-reviewed companion disposition."),
+           interactionStyle: render(
+             interactionStyle ?? base.persona?.interactionStyle ?? "Be helpful, calm, and direct.",
+           ),
+           expressionStyle: render(expressionStyle ?? base.persona?.expressionStyle ?? "Use clear, natural language."),
+         });
   return Object.freeze({
     ...base,
     profileId: `gamebuddy.${companionId}`,
-    identity: Object.freeze({
-      ...base.identity,
-      continuity: `Host-owned continuity ${continuityId}; ${base.identity.continuity}`,
-    }),
+    identity,
     ...(persona === undefined ? {} : { persona }),
   });
 }
