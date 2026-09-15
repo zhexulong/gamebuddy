@@ -131,6 +131,30 @@ type StardewPrivateBootstrapFacts = Readonly<{
   expiresAtMs: number;
 }>;
 
+/**
+ * Private role-launch recipe assembled only after fresh installation admission.
+ * It is deliberately limited to the admitted executable/cwd/args and the
+ * reservation's generation; no platform bytes, Guardian material, plan ID, or
+ * public DTO crosses this callback boundary.
+ */
+type StardewPrivateRoleLaunchRecipe = Readonly<{
+  role: "player_host" | "ai_client";
+  executable: string;
+  cwd: string;
+  args: readonly string[];
+  launchGeneration: string;
+}>;
+
+type StardewPrivateChildEnvironment = Readonly<{
+  PATH: string;
+  SystemRoot: string;
+  WINDIR: string;
+  TEMP: string;
+  TMP: string;
+  USERPROFILE: string;
+  [LAUNCH_GENERATION_ENVIRONMENT_VARIABLE]: string;
+}>;
+
 type StardewAiClientLaunchRegistration = Readonly<{
   launchGeneration: string;
   launch(input: LaunchAiClientInput): Readonly<{
@@ -1667,13 +1691,18 @@ async function launchStagedPlayerHost(
   try {
     const result = await consumeAdmittedStardewInstallation(installation, (root, executable) => {
       launchEntered = true;
-      return facts.consumePlayerHostLaunch((launch) =>
-        launch({
-          executable,
-          args: ["--mods-path", modsPath],
-          cwd: root,
-        }),
-      );
+      const recipe: StardewPrivateRoleLaunchRecipe = Object.freeze({
+        role: "player_host",
+        executable,
+        cwd: root,
+        args: Object.freeze(["--mods-path", modsPath]),
+        launchGeneration: facts.playerHostRegistration.launchGeneration,
+      });
+      return facts.consumePlayerHostLaunch((launch) => launch({
+        executable: recipe.executable,
+        args: recipe.args,
+        cwd: recipe.cwd,
+      }));
     });
     // Launch succeeded: the staged profile has been used.
     facts.playerHostProfileStagingState.value = "not_staged";
@@ -1742,10 +1771,17 @@ async function launchMaterializedAiClient(
     if (await readFile(configPath, "utf8") !== bridgeMaterial.configJson)
       throw new Error("stardew_ai_client_bridge_config_changed");
     if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
-    return facts.consumeAiClientLaunch((launch) => launch({
+    const recipe: StardewPrivateRoleLaunchRecipe = Object.freeze({
+      role: "ai_client",
       executable,
-      args: ["--mods-path", modsPath],
       cwd: root,
+      args: Object.freeze(["--mods-path", modsPath]),
+      launchGeneration: facts.aiClientRegistration.launchGeneration,
+    });
+    return facts.consumeAiClientLaunch((launch) => launch({
+      executable: recipe.executable,
+      args: recipe.args,
+      cwd: recipe.cwd,
     }));
   });
 }
@@ -2540,10 +2576,7 @@ function createPlayerHostProcessOwner(
       cwd: input.cwd,
       shell: false,
       windowsHide: true,
-      env: {
-        ...process.env,
-        [LAUNCH_GENERATION_ENVIRONMENT_VARIABLE]: launchGeneration,
-      },
+      env: createStardewChildEnvironment(launchGeneration),
     });
     const pid = spawned.pid;
     if (!Number.isSafeInteger(pid) || pid <= 0) {
@@ -2669,10 +2702,7 @@ function createAiClientProcessOwner(
       cwd: input.cwd,
       shell: false,
       windowsHide: true,
-      env: {
-        ...process.env,
-        [LAUNCH_GENERATION_ENVIRONMENT_VARIABLE]: launchGeneration,
-      },
+      env: createStardewChildEnvironment(launchGeneration),
     });
     const pid = spawned.pid;
     if (!Number.isSafeInteger(pid) || pid <= 0) {
@@ -3395,6 +3425,25 @@ function isReservedAiClient(value: unknown): boolean {
 
 function isOpaque(value: unknown): value is string {
   return typeof value === "string" && OPAQUE.test(value);
+}
+
+function createStardewChildEnvironment(launchGeneration: string): StardewPrivateChildEnvironment {
+  if (!isOpaque(launchGeneration)) throw new Error("invalid_stardew_child_launch_generation");
+  const required = (name: string): string => {
+    const value = process.env[name];
+    if (typeof value !== "string" || value.length === 0 || value.includes("\0"))
+      throw new Error("stardew_child_environment_invalid");
+    return value;
+  };
+  return Object.freeze({
+    PATH: required("PATH"),
+    SystemRoot: required("SystemRoot"),
+    WINDIR: required("WINDIR"),
+    TEMP: required("TEMP"),
+    TMP: required("TMP"),
+    USERPROFILE: required("USERPROFILE"),
+    [LAUNCH_GENERATION_ENVIRONMENT_VARIABLE]: launchGeneration,
+  });
 }
 
 function freezeBootstrapFacts(facts: Readonly<{

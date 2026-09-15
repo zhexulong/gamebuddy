@@ -327,6 +327,13 @@ type SpawnCall = Readonly<{
   environmentGeneration: string | undefined;
 }>;
 
+type CapturedLaunch = Readonly<{
+  executable: string;
+  args: readonly string[];
+  cwd: string | undefined;
+  environment: Readonly<NodeJS.ProcessEnv>;
+}>;
+
 function createHarness(input: Readonly<{
   nowMs?: number;
   bootstrapIds?: readonly string[];
@@ -916,20 +923,15 @@ test("only the production internal and dedicated test-only adapter import the co
    assert.deepEqual(coreImporters.sort(), [
      "stardew-bootstrap-guardian.private.test.ts",
      "stardew-bootstrap-guardian.private.ts",
-     "stardew-owned-farmhand-game-session-materializer.internal.ts",
      "stardew-private-bootstrap-composer.internal.ts",
      "stardew-private-bootstrap-composer.test-support-internal.ts",
      "stardew-private-bootstrap-composer.test.ts",
-     "stardew-production-lifecycle-coordinator.internal.ts",
-     "stardew-production-lifecycle-coordinator.test-support-internal.ts",
    ]);
    assert.deepEqual(testInternalImporters.sort(), [
      "stardew-bootstrap-guardian.private.test.ts",
      "stardew-private-bootstrap-composer.test-support.ts",
-    "stardew-private-bootstrap-composer.test.ts",
-    "stardew-production-lifecycle-coordinator.internal.test.ts",
-    "stardew-production-lifecycle-coordinator.test-support-internal.ts",
-  ]);
+     "stardew-private-bootstrap-composer.test.ts",
+   ]);
    const productionCoreSource = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.core.ts"), "utf8");
    const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");
     assert.doesNotMatch(productionCoreSource, /from\s+["'][^"']*stardew-bootstrap-guardian\.private\.js["']/);
@@ -987,11 +989,12 @@ test("closed composition has exact public keys and no registrar, launch, or pers
     assert.equal(forbidden in composition, false);
   }
   assert.deepEqual(Object.keys(composition.broker).sort(), ["close", "confirm"]);
-  assert.deepEqual(Object.keys(composition.aiClientProcessOwner).sort(), [
-    "readStatus",
-    "reserveAiClientLaunch",
-    "stopOwnedAiClient",
-  ]);
+   assert.deepEqual(Object.keys(composition.aiClientProcessOwner).sort(), [
+     "readOwnedAiClientGeneration",
+     "readStatus",
+     "reserveAiClientLaunch",
+     "stopOwnedAiClient",
+   ]);
   assert.deepEqual(Object.keys(composition.playerHostProcessOwner).sort(), [
     "readStatus",
     "reservePlayerHostLaunch",
@@ -1991,6 +1994,76 @@ test("launch callback permits exactly one invocation even before callback return
     assert.throws(() => launch({ executable: EXE, args: ["second"] }), /stardew_ai_client_launch_callback_not_active/);
   });
   assert.equal(harness.spawnCalls.length, 1);
+});
+
+test("direct Stardew child launches use the exact seven-key environment and exclude poisoned ambient values", async () => {
+  const poisonName = "GAMEBUDDY_STARDEW_POISON_ENV";
+  const previousPoison = process.env[poisonName];
+  process.env[poisonName] = "must-not-cross-process-owner-boundary";
+  const captured: CapturedLaunch[] = [];
+  try {
+    const harness = createHarness({
+      spawn: (executable, args, options) => {
+        captured.push(Object.freeze({
+          executable,
+          args: [...args],
+          cwd: options.cwd,
+          environment: Object.freeze({ ...options.env }),
+        }));
+        return Object.freeze({ pid: 4321, kill: () => true });
+      },
+      playerHostSpawn: (executable, args, options) => {
+        captured.push(Object.freeze({
+          executable,
+          args: [...args],
+          cwd: options.cwd,
+          environment: Object.freeze({ ...options.env }),
+        }));
+        return Object.freeze({ pid: 5432, kill: () => true });
+      },
+    });
+    const root = await createRoot();
+    const triple = mintOwnedTriple(harness.composition);
+    const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+      root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    );
+    ownerTestView(owner).consumePlayerHostLaunch((launch) => launch({
+      executable: EXE,
+      args: ["exact-player-environment"],
+      cwd: "C:\\GameBuddy\\player-host",
+    }));
+    ownerTestView(owner).consumeAiClientLaunch((launch) => launch({
+      executable: EXE,
+      args: ["exact-ai-environment"],
+      cwd: "C:\\GameBuddy\\ai-client",
+    }));
+
+    const expectedBase = {
+      PATH: process.env.PATH,
+      SystemRoot: process.env.SystemRoot,
+      WINDIR: process.env.WINDIR,
+      TEMP: process.env.TEMP,
+      TMP: process.env.TMP,
+      USERPROFILE: process.env.USERPROFILE,
+    };
+    assert.deepEqual(captured, [
+      {
+        executable: EXE,
+        args: ["exact-player-environment"],
+        cwd: "C:\\GameBuddy\\player-host",
+        environment: { ...expectedBase, GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "player-generation-1" },
+      },
+      {
+        executable: EXE,
+        args: ["exact-ai-environment"],
+        cwd: "C:\\GameBuddy\\ai-client",
+        environment: { ...expectedBase, GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "generation-1" },
+      },
+    ]);
+  } finally {
+    if (previousPoison === undefined) delete process.env[poisonName];
+    else process.env[poisonName] = previousPoison;
+  }
 });
 
 test("owner absolute expiry before callback revokes without spawn", async () => {
