@@ -49,5 +49,16 @@ function managedWorldInfoSourceId(publicTitle: string, revision: number, hash: s
 }
 
 function canonicalProjection(projection: PublicWorldInfoProjection) {
-  return { revision: projection.revision, publicTitle: projection.publicTitle, summary: projection.summary, entries: projection.entries.map((entry) => ({ scope: entry.scope, publicTitle: entry.publicTitle, summary: entry.summary })) };
+  return {
+    revision: projection.revision,
+    publicTitle: projection.publicTitle,
+    summary: projection.summary,
+    entries: projection.entries.map((entry) => ({
+      scope: entry.scope,
+      publicTitle: entry.publicTitle,
+      summary: entry.summary,
+      ...(entry.keys === undefined ? {} : { keys: entry.keys }),
+      ...(entry.constant === undefined ? {} : { constant: entry.constant }),
+    })),
+  };
 }

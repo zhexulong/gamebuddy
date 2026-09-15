@@ -12,11 +12,15 @@ import {
 const MAX_ARTIFACTS = 128;
 const MAX_TITLE = 128;
 const MAX_SUMMARY = 4_000;
+const MAX_KEYS = 128;
+const MAX_KEY_LENGTH = 128;
 
 export type PublicWorldInfoEntry = Readonly<{
   scope: "companion" | "setting";
   publicTitle: string;
   summary: string;
+  keys?: readonly string[];
+  constant?: boolean;
 }>;
 export type PublicWorldInfoProjection = Readonly<{
   revision: number;
@@ -326,17 +330,21 @@ function validateArtifact(value: unknown): ManagedArtifact {
   const entries = value.entries.map((entry) => {
     if (
       !record(entry) ||
-      !only(entry, ["scope", "publicTitle", "summary"]) ||
-      (entry.scope !== "companion" && entry.scope !== "setting") ||
-      !titleText(entry.publicTitle, MAX_TITLE) ||
-      !summaryText(entry.summary, MAX_SUMMARY)
+       !only(entry, ["scope", "publicTitle", "summary", "keys", "constant"]) ||
+       (entry.scope !== "companion" && entry.scope !== "setting") ||
+       !titleText(entry.publicTitle, MAX_TITLE) ||
+       !summaryText(entry.summary, MAX_SUMMARY) ||
+       (entry.keys !== undefined && !keysValue(entry.keys)) ||
+       (entry.constant !== undefined && typeof entry.constant !== "boolean")
     )
       throw new Error("invalid_world_info_request");
     return Object.freeze({
-      scope: entry.scope,
-      publicTitle: entry.publicTitle,
-      summary: entry.summary,
-    });
+       scope: entry.scope,
+       publicTitle: entry.publicTitle,
+       summary: entry.summary,
+       ...(entry.keys === undefined ? {} : { keys: Object.freeze([...entry.keys]) }),
+       ...(entry.constant === undefined ? {} : { constant: entry.constant }),
+     });
   });
   return Object.freeze({
     revision: value.revision,
@@ -360,6 +368,20 @@ function titleText(value: unknown, max: number): value is string {
     value.length > 0 &&
     value.length <= max &&
     !/[\u0000-\u001f\u007f<>]/u.test(value)
+  );
+}
+function keysValue(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= MAX_KEYS &&
+    value.every(
+      (key) =>
+        typeof key === "string" &&
+        key.length >= 1 &&
+        key.length <= MAX_KEY_LENGTH &&
+        !/[\u0000-\u001f\u007f]/u.test(key),
+    )
   );
 }
 function summaryText(value: unknown, max: number): value is string {

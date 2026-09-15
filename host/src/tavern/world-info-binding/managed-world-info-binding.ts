@@ -73,6 +73,8 @@ function canonicalProjection(projection: PublicWorldInfoProjection) {
       scope: entry.scope,
       publicTitle: entry.publicTitle,
       summary: entry.summary,
+      ...(entry.keys === undefined ? {} : { keys: entry.keys }),
+      ...(entry.constant === undefined ? {} : { constant: entry.constant }),
     })),
   };
 }

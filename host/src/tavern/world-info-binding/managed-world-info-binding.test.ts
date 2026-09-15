@@ -8,7 +8,7 @@ import { createManagedWorldInfoBindingResolver } from "./managed-world-info-bind
 const first = {
   publicTitle: "Pelican Town",
   summary: "A small valley town.",
-  entries: [{ scope: "setting" as const, publicTitle: "Square", summary: "Town center." }],
+  entries: [{ scope: "setting" as const, publicTitle: "Square", summary: "Town center.", keys: ["square", "town"], constant: true }],
 };
 
 test("managed resolver binds the exact immutable revision and never re-resolves as latest", async () => {
@@ -19,6 +19,9 @@ test("managed resolver binds the exact immutable revision and never re-resolves 
     const resolver = createManagedWorldInfoBindingResolver(repository);
     const binding = await resolver.bindExact("Pelican Town", 1);
     const initial = await resolver.resolve(binding);
+    assert.match(initial.content, /"keys":\["square","town"\]/);
+    assert.match(initial.content, /"constant":true/);
+    assert.equal(binding.canonicalHash, (await resolver.bindExact("Pelican Town", 1)).canonicalHash);
     await repository.update("Pelican Town", {
       expectedRevision: 1,
       publicTitle: "Pelican Town",

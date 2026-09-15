@@ -81,7 +81,8 @@ test("managed World Info rejects unknown, executable, scoped, and control-bearin
       { ...request, alwaysOnPremise: "not allowed" },
       { ...request, entries: [{ scope: "world", publicTitle: "No", summary: "No" }] },
       { ...request, entries: [{ scope: "setting", publicTitle: "No", summary: "<script>alert(1)</script>" }] },
-      { ...request, entries: [{ scope: "setting", publicTitle: "No", summary: "line\nbreak" }] },
+      { ...request, entries: [{ scope: "setting", publicTitle: "title\nbreak", summary: "Title cannot have newline" }] },
+      { ...request, entries: [{ scope: "setting", publicTitle: "No", summary: "null\u0000byte" }] },
       { ...request, entries: [{ scope: "setting", publicTitle: "No", summary: "Safe", regex: ".*" }] },
     ])
       assert.throws(() => repository.validateCreateRequest(invalid), /invalid_world_info_request/);
@@ -92,6 +93,29 @@ test("managed World Info rejects unknown, executable, scoped, and control-bearin
       () => repository.update("Pelican Town", { ...request, expectedRevision: 0 }),
       /invalid_world_info_request/,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("managed World Info accepts multiline paragraphs and formatted text in summaries", async () => {
+  const { root, repository } = await temporaryRepository();
+  try {
+    const multiline = {
+      publicTitle: "Wangshu Inn",
+      summary: "An inn in Bishui Plain.\n\nBuilt upon a massive stone pillar, it serves as a vantage point.",
+      entries: [
+        {
+          scope: "setting" as const,
+          publicTitle: "Observation Deck",
+          summary: "Top floor of the inn.\nOverlooks Dihua Marsh and Bishui River <south of Stone Gate>.",
+        },
+      ],
+    };
+    const created = await repository.create(multiline);
+    assert.equal(created.publicTitle, "Wangshu Inn");
+    assert.equal(created.summary, multiline.summary);
+    assert.equal(created.entries[0]?.summary, multiline.entries[0]?.summary);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
