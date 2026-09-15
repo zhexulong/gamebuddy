@@ -60,9 +60,10 @@ test("IdentityProfile canonicalizes a bounded reviewed persona guide", () => {
   const profile = validateIdentityProfile({
     ...DEFAULT_IDENTITY_PROFILE,
     profileId: "gamebuddy.companion.rin",
-    persona: { core: "calm", interactionStyle: "listen first", expressionStyle: "brief" },
+    persona: { core: "calm\nfocused\tand warm", interactionStyle: "listen first", expressionStyle: "brief" },
     examples: [{ user: "tired", companion: "let us slow down" }],
   });
+  assert.equal(profile.persona?.core, "calm\nfocused\tand warm");
   assert.match(renderIdentityProfile(profile), /Core disposition: calm/);
   assert.match(renderIdentityProfile(profile), /GameBuddy Companion: let us slow down/);
   assert.notEqual(identityProfileHash(profile), identityProfileHash(DEFAULT_IDENTITY_PROFILE));

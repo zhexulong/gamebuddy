@@ -308,7 +308,7 @@ function isRecord(value: unknown): value is Record<string, any> {
 
 function isBoundedText(value: unknown, maxLength: number): value is string {
   return (
-    typeof value === "string" && value.length > 0 && value.length <= maxLength && !/[\u0000-\u001f\u007f]/u.test(value)
+    typeof value === "string" && value.length > 0 && value.length <= maxLength && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
   );
 }
 
