@@ -17,6 +17,7 @@ import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-s
 const LOOPBACK_HOST = "127.0.0.1";
 const BROWSER_TTL_MS = 2 * 60 * 60_000;
 const MAX_BOOTSTRAP_BODY_BYTES = 4 * 1024;
+const MAX_MESSAGE_SUBMIT_BODY_BYTES = 24 * 1024;
 const REFERENCE_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline";
 const REFERENCE_RELEASE_TIER = "chat_core";
 const REFERENCE_ROUTE_IDS = [
@@ -121,8 +122,8 @@ export function createReferencePipelineDialogueWebRequestHandler(
         if (!tokensEqual(csrfHeader, session.csrf)) return sendProblem(response, 403, "csrf_failed");
         const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
         if (!isIdempotencyKey(idempotencyKey)) return sendProblem(response, 400, "invalid_request");
-        const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-        const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.submit");
+         const body = await readJsonBody(request, MAX_MESSAGE_SUBMIT_BODY_BYTES);
+         const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.submit");
         if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
           return sendProblem(response, 400, "invalid_request");
         const result = await pipelineService.submitAfterResponseCommit(

@@ -30,10 +30,10 @@ import type {
 
 const LOOPBACK_HOST = "127.0.0.1";
 const BROWSER_TTL_MS = 2 * 60 * 60_000;
-// A Memory command may carry the full 4096-byte content field plus JSON
-// envelope, opaque handles, and revision. Bound the complete request while
-// still admitting every contract-valid command.
-const MAX_BODY_BYTES = 5 * 1024;
+// Draft and message text may carry up to 16 KiB of UTF-8 content plus their
+// JSON envelope and opaque handles. Bound the complete request while still
+// admitting every contract-valid management command.
+const MAX_BODY_BYTES = 24 * 1024;
 const MANAGEMENT_PROFILE_ID = "gamebuddy.tavern-management.chat-list-title";
 const MANAGEMENT_RELEASE_TIER = "tavern_management";
 const MANAGEMENT_ROUTE_IDS = [
