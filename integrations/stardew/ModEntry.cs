@@ -3575,6 +3575,20 @@ public sealed partial class ModEntry : Mod
         state.LastBridgeGeneration = generation;
     }
 
+    /// <summary>
+    /// Host→Mod solicited-answer mailbox frames. These are replies to the Mod's
+    /// own outbound solicitations (body-node admission results and player-control
+    /// receipts); the correlation that would answer them is already settled on
+    /// the Host, so a Mod response would be a reply-to-a-reply leak. They are
+    /// classified here, before the RPC dispatch, and only ever deposited or
+    /// observability-logged — never turned into a wire response.
+    /// </summary>
+    private static readonly HashSet<string> LocalBridgeMailboxAnswerTypes = new(StringComparer.Ordinal)
+    {
+        "body_node_admission_result",
+        "player_control_receipt",
+    };
+
     private void DrainLocalPipeBridge(ScreenEmbodimentState state)
     {
         if (state.LocalPipeBridge is null || state.BridgeSession is null)
@@ -3601,6 +3615,15 @@ public sealed partial class ModEntry : Mod
                 if (requestType == "execution_request")
                     this.MonitorNativeChatIngress("navigation_execution_dequeued");
 
+                if (requestType is not null && LocalBridgeMailboxAnswerTypes.Contains(requestType))
+                {
+                    if (requestType == "body_node_admission_result")
+                        this.HandleBodyNodeAdmissionResult(state, inbound.Generation, inbound.Json);
+                    else
+                        this.HandlePlayerControlReceipt(state, inbound.Generation, inbound.Json);
+                    continue;
+                }
+
                 string? response = requestType switch
                 {
                     "hello" => this.HandleHello(state, inbound.Generation, inbound.Json),
@@ -3614,10 +3637,8 @@ public sealed partial class ModEntry : Mod
                     "program_submit" => this.HandleProgramSubmit(state, inbound.Generation, inbound.Json, correlationId),
                     "program_status" => this.HandleProgramStatus(state, inbound.Generation, inbound.Json, correlationId),
                     "program_events" => this.HandleProgramEvents(state, inbound.Generation, inbound.Json, correlationId),
-                    "body_node_admission_result" => this.HandleBodyNodeAdmissionResult(state, inbound.Generation, inbound.Json),
                     "companion_presentation_request" => this.HandleCompanionPresentation(state, inbound.Generation, inbound.Json),
                     "system_notice_request" => this.HandleSystemNotice(state, inbound.Generation, inbound.Json),
-                    "player_control_receipt" => this.HandlePlayerControlReceipt(state, inbound.Generation, inbound.Json, correlationId),
                     _ => this.SerializeError(state, correlationId, "unknown_message_type"),
                 };
 
@@ -4020,12 +4041,20 @@ public sealed partial class ModEntry : Mod
         (BridgeEnvelope<BridgeSystemNoticeRequest> request, out BridgeEnvelope<BridgeSystemNoticeReceipt>? response, out string reason) =>
             state.BridgeSession!.TryPresentSystemNotice(generation, request, this.TrySendSystemNotice, out response, out reason), out _);
 
-    private string? HandlePlayerControlReceipt(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    private string? HandlePlayerControlReceipt(ScreenEmbodimentState state, long generation, string json)
     {
-        if (!BridgeProtocol.TryDeserializeInbound(json, "player_control_receipt", out BridgeEnvelope<BridgePlayerControlReceipt>? receipt, out _, "controlId", "sourceEventId", "status"))
-            return this.SerializeError(state, correlationId, "invalid_player_control_receipt");
+        if (!BridgeProtocol.TryDeserializeInbound(json, "player_control_receipt", out BridgeEnvelope<BridgePlayerControlReceipt>? receipt, out string parseReason, "controlId", "sourceEventId", "status"))
+        {
+            this.Monitor.Log($"GameBuddy rejected malformed player-control receipt: {parseReason}.", LogLevel.Warn);
+            this.MonitorNativeChatIngress("ai_player_control_receipt_rejected_invalid_player_control_receipt");
+            return null;
+        }
         if (!state.BridgeSession!.TryAcceptPlayerControlReceipt(generation, receipt, out string reasonCode))
-            return this.SerializeError(state, correlationId, reasonCode);
+        {
+            this.Monitor.Log($"GameBuddy rejected player-control receipt: {reasonCode}.", LogLevel.Warn);
+            this.MonitorNativeChatIngress($"ai_player_control_receipt_rejected_{reasonCode}");
+            return null;
+        }
         this.MonitorNativeChatIngress("ai_player_control_host_accepted");
         return null;
     }
