@@ -46,12 +46,12 @@ test("IdentityProfile rejects malformed or control-bearing content", () => {
     () =>
       validateIdentityProfile({
         ...DEFAULT_IDENTITY_PROFILE,
-        identity: { ...DEFAULT_IDENTITY_PROFILE.identity, role: "bad\nrole" },
+        identity: { ...DEFAULT_IDENTITY_PROFILE.identity, role: "bad\u0000role" },
       }),
     /invalid_identity_profile/,
   );
   assert.throws(
-    () => validateIdentityProfile({ ...DEFAULT_IDENTITY_PROFILE, examples: [{ user: "ok", companion: "bad\nreply" }] }),
+    () => validateIdentityProfile({ ...DEFAULT_IDENTITY_PROFILE, examples: [{ user: "ok", companion: "bad\u0000reply" }] }),
     /invalid_identity_profile/,
   );
 });
