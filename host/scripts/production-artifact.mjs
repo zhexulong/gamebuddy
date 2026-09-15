@@ -29,7 +29,7 @@ const BUNDLED_RUNTIME = Object.freeze({
   archiveRoot: "node-v24.20.0-win-x64",
   runtimePath: "runtime/node.exe",
   nodeSha256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
-  bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+  bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js",
   runtimeVersion: "v24.20.0",
   runtimePlatform: "win32",
   runtimeArch: "x64",
@@ -109,10 +109,21 @@ const artifactRelativeModule = (artifactRoot, importer, specifier, artifactFileS
   if (TEST_ARTIFACT.test(relativeTarget)) throw new Error(`production_relative_module_test_artifact_forbidden:${importer}:${specifier}`);
   return relativeTarget;
 };
+/** Accepted emitted dynamic-import argument text: either the exact frozen
+ * computed magicContext bridge expression or the canonical JSON string
+ * literal that lexicalModuleIngress emits for a literal specifier argument. */
+const declaredDynamicExpressionText = (value) => {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (value === "pathToFileURL(magicContextEntry).href") return true;
+  if (value[0] !== '"') return false;
+  let decoded;
+  try { decoded = JSON.parse(value); } catch { return false; }
+  return typeof decoded === "string" && decoded.length > 0 && JSON.stringify(decoded) === value;
+};
 const declaredDynamicExternalImport = (value, packages) => value !== null && typeof value === "object" && !Array.isArray(value)
   && typeof value.package === "string" && packages.includes(value.package)
   && typeof value.module === "string" && /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.js$/.test(value.module)
-  && typeof value.expression === "string" && value.expression === "pathToFileURL(magicContextEntry).href"
+  && declaredDynamicExpressionText(value.expression)
   && Number.isInteger(value.occurrence) && value.occurrence >= 0;
 
 /** A fail-closed TypeScript lexical parser. Comments and strings are syntax,
@@ -1087,13 +1098,6 @@ async function acquirePublisherLock(outputRoot) {
 async function currentGeneration(outputRoot) {
   const pointerPath = resolve(outputRoot, POINTER); await safeAncestors(outputRoot, pointerPath, "production_pointer"); await regular(pointerPath, "production_pointer");
   const pointer = JSON.parse(await readFile(pointerPath, "utf8"));
-  if (pointer?.schema === "gamebuddy-host-production-current/v1") {
-    if (!exactKeys(pointer, ["schema", "generation", "inventoryDigest"])
-      || typeof pointer.generation !== "string" || !/^[a-z0-9-]+$/i.test(pointer.generation)
-      || typeof pointer.inventoryDigest !== "string" || !/^[a-f0-9]{64}$/.test(pointer.inventoryDigest))
-      throw new Error("invalid_production_current_pointer");
-    return pointer;
-  }
   if (!exactKeys(pointer, ["schema", "generation", "inventoryDigest", "runtimeAdmissionSha256"])
     || pointer.schema !== "gamebuddy-host-production-current/v2"
     || typeof pointer.generation !== "string" || !/^[a-z0-9-]+$/i.test(pointer.generation)
@@ -1236,16 +1240,12 @@ export async function publishFixedReleaseArtifactFromVerifiedRuntimeForTest({ ou
 export async function assertCompleteProductionArtifact({ hostRoot, outputRoot }) {
   await assertOutputRootLayout(outputRoot);
   const config = await readArtifactConfig(hostRoot); const pointer = await currentGeneration(outputRoot); const artifactRoot = await generationRoot(outputRoot, pointer.generation);
-  if (pointer.runtimeAdmissionSha256 !== undefined) {
-    await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer });
-  }
+  await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer });
   const runtimeDescriptor = runtimeDescriptorForArtifact(artifactRoot, config);
   const manifest = JSON.parse(await readFile(resolve(artifactRoot, "production-inventory.json"), "utf8"));
   const origins = new Map(config.resources.map((resource) => [slash(resource.destination), { kind: "allowlisted_resource", source: slash(resource.source), destination: slash(resource.destination), config: "production-artifact.config.json" }]));
-  if (pointer.runtimeAdmissionSha256 !== undefined) {
-    await verifyBundledRuntimeInArtifact({ artifactRoot, descriptor: runtimeDescriptor });
-    for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
-  }
+  await verifyBundledRuntimeInArtifact({ artifactRoot, descriptor: runtimeDescriptor });
+  for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
   if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
     for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
   }
@@ -1255,13 +1255,11 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   if (process.platform === "win32" && config.windowsStardewFolderPicker !== undefined) {
     for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
   }
-  if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined && (pointer.runtimeAdmissionSha256 !== undefined || manifest.entries.some((e) => e.path.startsWith("native/windows-bootstrap-guardian")))) {
+  if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined) {
     for (const [path, origin] of await verifiedWindowsBootstrapGuardianOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsBootstrapGuardian })) origins.set(path, origin);
   }
-  const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor: pointer.runtimeAdmissionSha256 !== undefined ? runtimeDescriptor : undefined });
-  if (pointer.runtimeAdmissionSha256 !== undefined) {
-    await verifyRuntimeAdmission({ artifactRoot, inventory, generation: pointer.generation, descriptor: runtimeDescriptor });
-  }
+  const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
+  await verifyRuntimeAdmission({ artifactRoot, inventory, generation: pointer.generation, descriptor: runtimeDescriptor });
   if (pointer.inventoryDigest !== inventory.digest) throw new Error("production_current_pointer_inventory_mismatch");
   return { ...inventory, generation: pointer.generation, artifactRoot, runtimeAdmissionSha256: pointer.runtimeAdmissionSha256 };
 }
@@ -1295,13 +1293,13 @@ export async function resolveProductionModule({ selected, module }) {
 }
 export async function recheckProductionEntry({ hostRoot, selected }) {
   const config = await readArtifactConfig(hostRoot);
+  if (typeof selected.runtimeAdmissionSha256 !== "string" || !/^[a-f0-9]{64}$/.test(selected.runtimeAdmissionSha256)) throw new Error("production_selected_runtime_admission_required");
+  await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot: selected.artifactRoot, pointer: selected });
   const runtimeDescriptor = runtimeDescriptorForArtifact(selected.artifactRoot, config);
   const manifest = JSON.parse(await readFile(resolve(selected.artifactRoot, "production-inventory.json"), "utf8"));
   const origins = new Map(config.resources.map((resource) => [slash(resource.destination), { kind: "allowlisted_resource", source: slash(resource.source), destination: slash(resource.destination), config: "production-artifact.config.json" }]));
-  if (selected.runtimeAdmissionSha256 !== undefined) {
-    await verifyBundledRuntimeInArtifact({ artifactRoot: selected.artifactRoot, descriptor: runtimeDescriptor });
-    for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
-  }
+  await verifyBundledRuntimeInArtifact({ artifactRoot: selected.artifactRoot, descriptor: runtimeDescriptor });
+  for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
   if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
     for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
   }
@@ -1311,13 +1309,11 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   if (process.platform === "win32" && config.windowsStardewFolderPicker !== undefined) {
     for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
   }
-  if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined && (selected.runtimeAdmissionSha256 !== undefined || manifest.entries.some((e) => e.path.startsWith("native/windows-bootstrap-guardian")))) {
+  if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined) {
     for (const [path, origin] of await verifiedWindowsBootstrapGuardianOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsBootstrapGuardian })) origins.set(path, origin);
   }
-  const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor: selected.runtimeAdmissionSha256 !== undefined ? runtimeDescriptor : undefined });
-  if (selected.runtimeAdmissionSha256 !== undefined) {
-    await verifyRuntimeAdmission({ artifactRoot: selected.artifactRoot, inventory, generation: selected.generation, descriptor: runtimeDescriptor });
-  }
+  const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
+  await verifyRuntimeAdmission({ artifactRoot: selected.artifactRoot, inventory, generation: selected.generation, descriptor: runtimeDescriptor });
   if (inventory.digest !== selected.digest) throw new Error("production_selected_generation_integrity_mismatch");
   await safeAncestors(selected.artifactRoot, selected.entryPath, "production_entry"); await regular(selected.entryPath, "production_entry");
   return selected;
