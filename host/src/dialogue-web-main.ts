@@ -9,7 +9,7 @@ import {
 } from "./continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.js";
 import {
   createSharedSemanticProductionAuthorityFromDeploymentManifest,
-} from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
+} from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import { type HostDeploymentManifest, loadHostDeploymentManifest } from "./deployment-manifest.js";
 import { parseDialogueLaunchMode } from "./dialogue-launch-mode.js";
 import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
@@ -29,7 +29,7 @@ import { createTavernManagementStateFacade } from "./tavern/tavern-management-st
 import { startTavernManagementStaticShellComposition } from "./tavern/tavern-management-static-shell-composition.js";
 import { createWorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
 import { createWorldInfoManagementRepository } from "./tavern/world-info-management/world-info-management.js";
-import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
+import { createChatLiveWindowsReparseInspector, createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import { createPublishedWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.js";
 
 const launch = parseDialogueLaunchMode(process.argv.slice(2));
@@ -71,7 +71,9 @@ async function runReferenceProfile(manifest: HostDeploymentManifest, mode: "fres
     const referenceStateFacade = await createReferencePipelineStateFacade(manifest, lease, profile, eventStream);
     pipelineService = createChatPipelineService({ manifest, lease, profile, eventStream });
     const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
-    const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
+    const inspector = process.env.GAMEBUDDY_CHAT_LIVE_ARTIFACT === "gamebuddy.chat-live.v1"
+    ? await createChatLiveWindowsReparseInspector(artifactRoot)
+    : await createPublishedWindowsReparseInspector(artifactRoot);
     server = await startReferencePipelineStaticShellComposition({
       referenceStateFacade,
       pipelineService,
@@ -127,6 +129,12 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
     // Construction failure must not leak Chat/Game resources. The shared owner
     // is created before the lifecycle so a Stardew construction failure still
     // lets the Chat runtime and shared owner drain below.
+    // MIGRATION-ERA (browser/product helper): no runtime collaborator is
+    // passed, so both role launches fail closed at the coordinator with
+    // stardew_*_launch_runtime_unavailable — never a silent raw spawn. The
+    // formal Desktop composition is the sole production launch authority; this
+    // entry and its imports are removed when presentation wiring moves into
+    // the composition-owned startup (design ADR-0007 Phase 1/2).
     lifecycleCoordinator = createStardewProductionLifecycleCoordinator(manifest, folderPicker, shared.game);
     lease = await facade.startMountedChatRuntime();
     const referenceStateFacade = await createReferencePipelineStateFacade(manifest, lease, tavernProfile, eventStream);
@@ -138,7 +146,9 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
       lifecycleCoordinator.launchReadinessReader,
     );
     const artifactRoot = hostArtifactRoot;
-    const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
+    const inspector = process.env.GAMEBUDDY_CHAT_LIVE_ARTIFACT === "gamebuddy.chat-live.v1"
+    ? await createChatLiveWindowsReparseInspector(artifactRoot)
+    : await createPublishedWindowsReparseInspector(artifactRoot);
     server = await startComposedReferenceGameStaticShellComposition({
       profile,
       bootstrapToken,
@@ -222,7 +232,9 @@ async function runManagementProfile(manifest: HostDeploymentManifest, mode: "fre
     managementService = createChatManagementService({ manifest, lease, profile });
     memoryService = createMemoryManagementService({ manifest, lease, profile });
     const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
-    const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
+    const inspector = process.env.GAMEBUDDY_CHAT_LIVE_ARTIFACT === "gamebuddy.chat-live.v1"
+    ? await createChatLiveWindowsReparseInspector(artifactRoot)
+    : await createPublishedWindowsReparseInspector(artifactRoot);
     server = await startTavernManagementStaticShellComposition({
       managementStateFacade,
       managementService,

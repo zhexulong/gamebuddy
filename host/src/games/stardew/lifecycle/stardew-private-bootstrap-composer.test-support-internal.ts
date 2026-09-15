@@ -1,6 +1,7 @@
 import {
   createStardewBootstrapGuardianOwnerBinding,
   createStardewPrivateBootstrapTestCore,
+  type StardewContainedAiClientLaunchSeam,
   type StardewContainedPlayerHostLaunchSeam,
   type StardewOwnedPlayerHostPhaseACoreTestView,
   type StardewOwnedAiClientStageDResult,
@@ -53,6 +54,11 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   launchMaterializedAiClient(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedAiClientStageDResult>;
+  launchMaterializedAiClientContained(
+    owner: StardewOwnedPlayerHostBootstrap,
+    installation: AdmittedStardewInstallation,
+    launchContained: (launch: StardewContainedAiClientLaunchSeam) => Promise<void> | void,
   ): Promise<StardewOwnedAiClientStageDResult>;
   consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
     owner: StardewOwnedPlayerHostBootstrap,
@@ -120,6 +126,14 @@ const testMaterializedAiClientLaunchers = new WeakMap<
     installation: AdmittedStardewInstallation,
   ) => Promise<StardewOwnedAiClientStageDResult>
 >();
+const testMaterializedAiClientContainedLaunchers = new WeakMap<
+  PublicStardewPrivateBootstrapComposition,
+  (
+    owner: StardewOwnedPlayerHostBootstrap,
+    installation: AdmittedStardewInstallation,
+    launchContained: (launch: StardewContainedAiClientLaunchSeam) => Promise<void> | void,
+  ) => Promise<StardewOwnedAiClientStageDResult>
+>();
 const testBridgeConnectionConsumers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
   <T extends Readonly<{ close(): void | Promise<void> }>>(
@@ -163,6 +177,7 @@ function registerTestingComposition(
   testOwnedPlayerHostProfileConsumers.set(composition, testingComposition.consumeStagedOwnedPlayerHostProfile);
   testAiClientMaterializers.set(composition, testingComposition.materializeAiClientProfileAfterManifestAdmission);
   testMaterializedAiClientLaunchers.set(composition, testingComposition.launchMaterializedAiClient);
+  testMaterializedAiClientContainedLaunchers.set(composition, testingComposition.launchMaterializedAiClientContained);
   testBridgeConnectionConsumers.set(composition, testingComposition.consumeOwnedFarmhandBridgeConnection);
   testStagedPlayerHostLaunchers.set(composition, testingComposition.launchStagedPlayerHost);
   testStagedInstallationLocatorReplacers.set(composition, testingComposition.replaceStagedInstallationLocator);
@@ -272,6 +287,23 @@ export async function launchMaterializedAiClientForTesting(
   const launch = testMaterializedAiClientLaunchers.get(registration.composition);
   if (launch === undefined) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   return launch(owner, installation);
+}
+
+export async function launchMaterializedAiClientContainedForTesting(
+  owner: StardewOwnedPlayerHostBootstrap,
+  installation: AdmittedStardewInstallation,
+  launchContained: (launch: StardewContainedAiClientLaunchSeam) => Promise<void> | void,
+  composition?: PublicStardewPrivateBootstrapComposition,
+): Promise<StardewOwnedAiClientStageDResult> {
+  const registration = testOwnerViews.get(owner);
+  if (registration === undefined ||
+      (composition !== undefined && registration.composition !== composition) ||
+      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+    throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
+  }
+  const launch = testMaterializedAiClientContainedLaunchers.get(registration.composition);
+  if (launch === undefined) throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
+  return launch(owner, installation, launchContained);
 }
 
 export async function consumeOwnedFarmhandBridgeConnectionForTesting<T extends Readonly<{ close(): void | Promise<void> }>>(

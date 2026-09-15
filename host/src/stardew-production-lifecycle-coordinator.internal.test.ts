@@ -6,7 +6,8 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
@@ -934,7 +935,7 @@ test("contained Player Host success constructs the real contained runtime and se
     // Deterministic lifecycle clock: the RoleLaunchOperation deadline must be
     // exactly this fixed instant plus the budget, never a rubric of uncertainty.
     const fixedNow = Date.now();
-    const fixture = await createFixture({ overrides: { launchPlayerHostContained: collaborator, containedLaunchNowMs: () => fixedNow } });
+    const fixture = await createFixture({ overrides: { runtimeLaunchContained: collaborator, containedLaunchNowMs: () => fixedNow } });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
@@ -1006,7 +1007,7 @@ test("contained Player Host launch failure after the claim durably quarantines t
       async close() { sessionCalls.push({ operation: "close", input: {} }); },
     });
     const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
-    const fixture = await createFixture({ overrides: { launchPlayerHostContained: collaborator } });
+    const fixture = await createFixture({ overrides: { runtimeLaunchContained: collaborator } });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
@@ -1053,7 +1054,7 @@ test("contained Player Host decision failing before the claim restores staged wi
     // any native/session call, so the launch decision fails pre-claim.
     let nowMs: () => number = () => Date.now() - 1_000_000;
     const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
-    const fixture = await createFixture({ overrides: { launchPlayerHostContained: collaborator, containedLaunchNowMs: () => nowMs() } });
+    const fixture = await createFixture({ overrides: { runtimeLaunchContained: collaborator, containedLaunchNowMs: () => nowMs() } });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
@@ -1082,6 +1083,87 @@ test("contained Player Host decision failing before the claim restores staged wi
       await fixture.broker.close();
     }
   });
+});
+
+test("contained AI and Player roles share one per-owner runtime, a no-pid stop is a success no-op, and close contains both roles then closes", async () => {
+  await withWindowsPlatform(async () => {
+    const sessionCalls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
+    const session: DesktopGuardianSession = Object.freeze({
+      async arm(input) {
+        sessionCalls.push({ operation: "arm", input: { ...input, privateFrame: "<bytes>" } });
+        return containedSessionAck("arm_attempt");
+      },
+      async launch(input) {
+        sessionCalls.push({ operation: "launch", input: { ...input, privateFrame: [...input.privateFrame] } });
+        return containedSessionAck("launch_role", input.role);
+      },
+      async contain(input) {
+        sessionCalls.push({ operation: "contain", input: { ...input } });
+        return containedSessionAck("contain_role", input.role);
+      },
+      async close() { sessionCalls.push({ operation: "close", input: {} }); },
+    });
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
+    const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+      overrides: { runtimeLaunchContained: collaborator },
+    });
+    try {
+      // Player Host launched first through the runtime; the shared per-owner
+      // runtime arms exactly once.
+      assert.deepEqual(sessionCalls.map((call) => call.operation), ["arm", "launch"]);
+      assert.equal(sessionCalls[1]!.input.role, "player_host");
+      assert.equal(fixture.playerSpawnCalls.length, 0);
+      assert.equal(fixture.spawnCalls.length, 0);
+      // Cabin confirm launches the AI client through the SAME runtime: no second
+      // arm, so the per-owner runtime binding is proven shared.
+      await confirmFirstCabin(fixture);
+      assert.deepEqual(sessionCalls.map((call) => call.operation), ["arm", "launch", "launch"]);
+      assert.equal(sessionCalls[1]!.input.role, "player_host");
+      assert.equal(sessionCalls[2]!.input.role, "ai_client");
+      assert.equal(fixture.playerSpawnCalls.length, 0);
+      assert.equal(fixture.spawnCalls.length, 0);
+      // The contained launch marks the AI process owner awaiting attestation
+      // without a pid, so the bridge correlation succeeds and both lifecycle
+      // view slots stay authoritative.
+      assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
+      assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
+        state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
+      });
+      assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).aiClient, {
+        state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn", lastStopOutcome: "none",
+      });
+      // Close: the no-pid stop is a success no-op (the Guardian kill-on-close
+      // Job terminates the native process at platform close), then containment
+      // for both launched roles, then the runtime/session close.
+      await fixture.coordinator.close();
+      assert.deepEqual(fixture.aiKillCalls, []);
+      assert.deepEqual(fixture.playerKillCalls, []);
+      assert.deepEqual(sessionCalls.map((call) => call.operation), ["arm", "launch", "launch", "contain", "contain", "close"]);
+      assert.equal(sessionCalls[3]!.input.role, "player_host");
+      assert.equal(sessionCalls[4]!.input.role, "ai_client");
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("production lifecycle coordinator has no direct-spawn fallback and both role launches fail closed without a runtime collaborator", async () => {
+  // The compiled test runs from dist-test; the source probe reads the tracked
+  // module from the Host source tree.
+  const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "stardew-production-lifecycle-coordinator.internal.ts"), "utf8");
+  const productionFactoryStart = source.indexOf("export function createStardewProductionLifecycleCoordinator(");
+  assert.notEqual(productionFactoryStart, -1);
+  const productionFactory = source.slice(productionFactoryStart);
+  // The production factory region never invokes the direct-spawn Stage C/D
+  // consumers; the test reference lives only in the testing adapter. The
+  // contained variants use the distinct `…Contained(` call shapes.
+  assert.equal(/internal\.launchStagedPlayerHost\s*\(/.test(productionFactory), false);
+  assert.equal(/internal\.launchMaterializedAiClient\s*\(/.test(productionFactory), false);
+  // Without the runtime collaborator both role launches fail closed.
+  assert.match(productionFactory, /stardew_player_host_launch_runtime_unavailable/);
+  assert.match(productionFactory, /stardew_ai_client_launch_runtime_unavailable/);
+  assert.match(productionFactory, /containedRuntimeTeardownFromCollaborator/);
 });
 
 test("Game launch rejects a different key while the first launch is pending", async () => {
