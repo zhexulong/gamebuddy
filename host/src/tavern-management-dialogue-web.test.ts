@@ -21,6 +21,7 @@ import {
 
 const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const handle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const maxDraftText = "a".repeat(16_384);
 const profile = composeTavernProfile({
   profileId: "gamebuddy.tavern-management.chat-list-title",
   releaseTier: "tavern_management",
@@ -259,11 +260,11 @@ test("management handler exposes the draft-capable profile and CSRF-protected mu
         apiVersion: 1,
         selectionGeneration: 1,
         expectedRevision: 0,
-        text: "Remember the orchard",
+        text: maxDraftText,
       }),
     });
     assert.equal(draftSave.status, 200);
-    assert.deepEqual(await draftSave.json(), { apiVersion: 1, revision: 1, text: "Remember the orchard" });
+    assert.deepEqual(await draftSave.json(), { apiVersion: 1, revision: 1, text: maxDraftText });
 
     const draftDiscard = await fetch(`${origin}/api/tavern/v1/draft`, {
       method: "DELETE",

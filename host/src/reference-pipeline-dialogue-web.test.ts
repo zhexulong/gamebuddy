@@ -245,10 +245,16 @@ const result: SubmitResultV1 = Object.freeze({
   }),
 });
 
-function service(recorder: { starts: number; statuses: number; closes: number; cancels?: string[] }): ChatPipelineService {
+function service(recorder: {
+  starts: number;
+  statuses: number;
+  closes: number;
+  cancels?: string[];
+  expectedText?: string;
+}): ChatPipelineService {
   return Object.freeze({
     async submitAfterResponseCommit(command, idempotencyKey, commit202) {
-      assert.equal(command.text, "Hello");
+      assert.equal(command.text, recorder.expectedText ?? "Hello");
       assert.equal(idempotencyKey, "A".repeat(22));
       assert.equal(recorder.starts, 0);
       await commit202(result);
@@ -360,6 +366,52 @@ test("reference handler exposes the exact seven-route profile and starts after r
       });
       assert.equal(response.status, 404);
     }
+  } finally {
+    await server.close();
+  }
+  assert.equal(recorder.closes, 1);
+});
+
+test("reference handler admits a full-size message while bootstrap remains capped at 4 KiB", async () => {
+  const largeText = "a".repeat(16_384);
+  const recorder = { starts: 0, statuses: 0, closes: 0, expectedText: largeText };
+  const server = await startReferencePipelineDialogueWebServer({
+    referenceStateFacade: facade,
+    pipelineService: service(recorder),
+    profile,
+    eventStream,
+    bootstrapToken: token,
+  });
+  try {
+    const oversizedBootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) + " ".repeat(4_096),
+    });
+    assert.equal(oversizedBootstrap.status, 400);
+
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const snapshot = (await bootstrap.json()) as { csrfToken: string };
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+
+    const submit = await fetch(`${server.origin}/api/tavern/v1/messages`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": snapshot.csrfToken,
+        "Idempotency-Key": "A".repeat(22),
+      },
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, text: largeText, locale: "en" }),
+    });
+    assert.equal(submit.status, 202);
+    assert.equal(recorder.starts, 1);
   } finally {
     await server.close();
   }
