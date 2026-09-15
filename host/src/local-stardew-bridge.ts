@@ -12,6 +12,8 @@ import {
   type BodyProgramStatusResult,
   type BodyProgramSubmitResult,
   type BodyProgramVerifyResult,
+  type BodyNodeAdmissionChallenge,
+  type BodyNodeAdmissionResult,
   type BridgeMessage,
   type CancelIdentity,
   type CompanionPresentationRequest,
@@ -71,6 +73,23 @@ type PendingRequest = Readonly<{
   timer: ReturnType<typeof setTimeout>;
 }>;
 
+type BodyNodeAdmissionHandler = (
+  challenge: BodyNodeAdmissionChallenge,
+) => Promise<BodyNodeAdmissionResult>;
+type BodyNodeAdmissionBinder = (handler: BodyNodeAdmissionHandler) => void;
+
+const bodyNodeAdmissionBinders = new WeakMap<LocalStardewBridgeClient, BodyNodeAdmissionBinder>();
+
+/** Construction-private launcher seam; the client exposes no public binder method. */
+export function bindLocalStardewBridgeBodyNodeAdmission(
+  bridge: LocalStardewBridgeClient,
+  handler: BodyNodeAdmissionHandler,
+): void {
+  const bind = bodyNodeAdmissionBinders.get(bridge);
+  if (bind === undefined) throw new Error("stardew_body_node_admission_binder_unavailable");
+  bind(handler);
+}
+
 type OutboundRequestType =
   | "hello"
   | "observe_request"
@@ -99,6 +118,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   #snapshot: Snapshot | null = null;
   #catalogRevision: number | undefined;
   #policyIdentity: FarmhandPolicyIdentity | undefined;
+  readonly #acceptedPolicyIdentityValues = new Set<string>();
   #enabledActionIds: readonly string[] | undefined;
   #catalogRefresh: Promise<Snapshot> | undefined;
   #catalogRefreshGeneration = 0;
@@ -110,6 +130,8 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   readonly #diagnosticListeners = new Set<(diagnostic: LocalStardewBridgeDiagnostic) => void>();
   /** One stable cancelId per request; cancelEpoch strictly increases per distinct cancel attempt. */
   readonly #cancelIdentities = new Map<string, CancelIdentity>();
+  #bodyNodeAdmissionHandler: BodyNodeAdmissionHandler | undefined;
+  readonly #bodyNodeAdmissionCorrelations = new Set<string>();
 
   private constructor(
     readonly scope: Scope,
@@ -123,6 +145,12 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     readonly gameVersion?: string,
     readonly module: GameIntegrationAdapter = STARDEW_GAME_INTEGRATION_ADAPTER,
   ) {
+    bodyNodeAdmissionBinders.set(this, (handler) => {
+      this.requireAuthenticated();
+      if (this.#bodyNodeAdmissionHandler !== undefined)
+        throw new Error("body_node_admission_handler_already_bound");
+      this.#bodyNodeAdmissionHandler = handler;
+    });
     transport.onMessage((json) => this.receive(json));
     transport.onFrameStage((stage) => {
       for (const listener of this.#diagnosticListeners) listener({ stage, reasonCode: "observed" });
@@ -138,10 +166,14 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.#sessionId = null;
       this.#capabilities = Object.freeze([]);
       this.#catalogRegistrations = Object.freeze([]);
-      this.#catalogRevision = undefined;
-      this.#policyIdentity = undefined;
-      this.#enabledActionIds = undefined;
-      this.#catalogRefresh = undefined;
+       this.#catalogRevision = undefined;
+       this.#policyIdentity = undefined;
+       this.#acceptedPolicyIdentityValues.clear();
+       this.#enabledActionIds = undefined;
+        this.#bodyNodeAdmissionHandler = undefined;
+        this.#bodyNodeAdmissionCorrelations.clear();
+        bodyNodeAdmissionBinders.delete(this);
+        this.#catalogRefresh = undefined;
       this.#catalogRefreshGeneration++;
       this.#snapshot = null;
       this.#latestReceipt = null;
@@ -497,9 +529,10 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     this.#sessionId = response.payload.sessionId;
     this.#capabilities = Object.freeze([...response.payload.capabilities]);
     this.#catalogRegistrations = Object.freeze([...response.payload.registrations]);
-    this.#catalogRevision = response.payload.catalogRevision;
-    this.#policyIdentity = Object.freeze({ ...response.payload.policyIdentity });
-    this.#enabledActionIds = Object.freeze([...response.payload.enabledActionIds]);
+     this.#catalogRevision = response.payload.catalogRevision;
+     this.#policyIdentity = Object.freeze({ ...response.payload.policyIdentity });
+     this.#acceptedPolicyIdentityValues.add(response.payload.policyIdentity.value);
+     this.#enabledActionIds = Object.freeze([...response.payload.enabledActionIds]);
   }
 
   private request(
@@ -590,8 +623,12 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       for (const listener of this.#diagnosticListeners)
         listener({ stage: "native_chat_bridge_player_control_validated", reasonCode: "accepted" });
     }
-    const pending = this.#pending.get(message.correlationId);
-    // A query response is a solicited recovery result. Its only consumer is
+     const pending = this.#pending.get(message.correlationId);
+     if (message.type === "hello_ack" && pending?.type !== "hello") {
+       this.transport.close("unexpected_hello_ack");
+       return;
+     }
+     // A query response is a solicited recovery result. Its only consumer is
     // the caller (the reconnect supervisor), which then routes it through the
     // coordinator's normal receipt admission. Never race that authority with
     // an unsolicited fact listener or mutable adapter receipt state for the
@@ -638,12 +675,33 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.#snapshot = null;
       this.#initialSnapshotReceived = false;
       this.#latestReceipt = null;
-      this.#catalogRevision = message.payload.catalogRevision;
-      this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
-      this.#enabledActionIds = Object.freeze([...message.payload.enabledActionIds]);
-      this.#capabilities = Object.freeze([...message.payload.capabilities]);
+       this.#catalogRevision = message.payload.catalogRevision;
+       this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
+       this.#acceptedPolicyIdentityValues.add(message.payload.policyIdentity.value);
+       this.#enabledActionIds = Object.freeze([...message.payload.enabledActionIds]);
+       this.#capabilities = Object.freeze([...message.payload.capabilities]);
       this.#catalogRegistrations = Object.freeze([...message.payload.registrations]);
       this.#latestReasonCode = null;
+    } else if (message.type === "body_node_admission_challenge") {
+      const bodyNodeAdmissionHandler = this.#bodyNodeAdmissionHandler;
+      if (!this.#authenticated || bodyNodeAdmissionHandler === undefined) {
+        this.transport.close("body_node_admission_unavailable");
+        return;
+      }
+      if (this.#bodyNodeAdmissionCorrelations.has(message.correlationId)) {
+        this.transport.close("body_node_admission_duplicate");
+        return;
+      }
+      this.#bodyNodeAdmissionCorrelations.add(message.correlationId);
+      void bodyNodeAdmissionHandler(message.payload).then((result) => {
+        if (!this.transport.connected || !this.#authenticated) return;
+        if (!this.#bodyNodeAdmissionCorrelations.has(message.correlationId)) return;
+        const response = newEnvelope("body_node_admission_result", this.scope, result, message.correlationId);
+        try { this.transport.send(response); } catch { this.transport.close("body_node_admission_result_write_failed"); }
+      }, () => {
+        this.#bodyNodeAdmissionCorrelations.delete(message.correlationId);
+        if (this.transport.connected) this.transport.close("body_node_admission_unavailable");
+      });
     } else if (message.type === "catalog_update") {
       if (message.payload.policyIdentity === undefined) {
         this.transport.close("invalid_catalog_update");
@@ -655,20 +713,22 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
           .map((registration) => registration.actionId),
       );
       if (
-        this.#catalogRevision === undefined ||
-        this.#policyIdentity === undefined ||
-        message.payload.catalogRevision !== this.#catalogRevision ||
-        message.payload.policyIdentity.capabilityRevision <= this.#policyIdentity.capabilityRevision ||
-        message.payload.policyIdentity.value === this.#policyIdentity.value ||
-        message.payload.enabledActionIds.some((actionId) => !registeredIds.has(actionId))
+         !this.#authenticated ||
+         this.#catalogRevision === undefined ||
+         this.#policyIdentity === undefined ||
+         message.payload.catalogRevision !== this.#catalogRevision ||
+         message.payload.policyIdentity.capabilityRevision <= this.#policyIdentity.capabilityRevision ||
+         this.#acceptedPolicyIdentityValues.has(message.payload.policyIdentity.value) ||
+         message.payload.enabledActionIds.some((actionId) => !registeredIds.has(actionId))
       ) {
         this.transport.close("invalid_catalog_update_authority");
         return;
       }
-      this.#catalogRevision = message.payload.catalogRevision;
-      this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
-      this.#enabledActionIds = Object.freeze([...message.payload.enabledActionIds]);
-      this.#catalogRefreshGeneration++;
+       this.#catalogRevision = message.payload.catalogRevision;
+       this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
+       this.#acceptedPolicyIdentityValues.add(message.payload.policyIdentity.value);
+       this.#enabledActionIds = Object.freeze([...message.payload.enabledActionIds]);
+       this.#catalogRefreshGeneration++;
       // Catalog availability is immutable per publication. Do not rewrite an
       // old snapshot into the new revision; the next fresh observe must bind it.
       this.#snapshot = null;
