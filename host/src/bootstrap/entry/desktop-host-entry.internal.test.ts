@@ -44,7 +44,14 @@ test("ordinary import does not consume inherited stdin or start the bootstrap en
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-  child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+  child.stderr.on("data", (chunk: Buffer) => {
+    // Node 24 emits a stderr ExperimentalWarning when the compiled entry
+    // imports node:sqlite. It is runtime noise, not bootstrap output; filter
+    // it so the empty-stderr assertion stays honest about actual output.
+    const text = chunk.toString("utf8");
+    if (text.includes("ExperimentalWarning: SQLite is an experimental feature") || text.includes("--trace-warnings")) return;
+    stderr.push(chunk);
+  });
   child.stdin.write(validFrame);
   await new Promise((resolveImport, rejectImport) => {
     child.once("error", rejectImport);
@@ -83,21 +90,41 @@ test("Host bootstrap rejects a valid root until private Guardian session admissi
       presentationRoot: join(fixtureRoot, "GameBuddy", "presentation"),
     };
     await Promise.all([moduleDirectory, rootLayout.dataRoot, rootLayout.operationalRoot, rootLayout.presentationRoot].map(async (path) => await mkdir(path, { recursive: true })));
-    await writeFile(join(moduleDirectory, "desktop-host-entry.internal.js"), await readFile(compiledEntry));
-    await mkdir(join(moduleDirectory, "wire"), { recursive: true });
-     await writeFile(join(moduleDirectory, "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(compiledBootstrapHelper));
-await cp(resolve(sourceDirectory, "..", "..", "windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
-     await cp(resolve(sourceDirectory, "..", "..", "strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
-    await cp(resolve(packageRoot, "native", "windows-reparse-inspector", ".dist", "win-x64"), join(moduleDirectory, "native", "windows-reparse-inspector", "win-x64"), { recursive: true });
+    await mkdir(join(moduleDirectory, "bootstrap", "entry"), { recursive: true });
+    await mkdir(join(moduleDirectory, "bootstrap", "wire"), { recursive: true });
+    const entryModule = join(moduleDirectory, "bootstrap", "entry", "desktop-host-entry.internal.js");
+    await writeFile(entryModule, await readFile(compiledEntry));
+    await writeFile(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(compiledBootstrapHelper));
+    await cp(resolve(sourceDirectory, "..", "..", "windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
+    await cp(resolve(sourceDirectory, "..", "..", "strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
+    await cp(resolve(sourceDirectory, "..", "..", "deployment-manifest.js"), join(moduleDirectory, "deployment-manifest.js"));
+    // moduleDirectory for the wire is dirname(import.meta.url) of the entry, so the
+    // native reparse inspector must sit under the entry's own directory, mirroring
+    // the production generation layout (bootstrap/entry + bootstrap/wire).
+    await cp(resolve(packageRoot, "native", "windows-reparse-inspector", ".dist", "win-x64"), join(moduleDirectory, "bootstrap", "entry", "native", "windows-reparse-inspector", "win-x64"), { recursive: true });
+
+    const manifestPath = join(fixtureRoot, "deployment-manifest.json");
+    await writeFile(manifestPath, `${JSON.stringify({
+      schemaVersion: 2,
+      topology: "independent_chat_and_game_surfaces",
+      runtimeRoot: fixtureRoot,
+      principal: { continuityId: "continuity-entry", companionId: "companion-entry", playerId: "player-entry" },
+      bootstrapOperationId: "bootstrap-entry",
+      authorityGeneration: 1,
+    })}\n`);
 
     const frameValue = { ...fixedFrame, bootstrapId: `${"a".repeat(56)}${process.pid.toString(16).padStart(8, "0")}`, rootLayout };
     const frame = Buffer.from(`${JSON.stringify(frameValue)}\n`);
-    const rejectedWithoutSession = await runEntry(frame, join(moduleDirectory, "desktop-host-entry.internal.js"), fixtureRoot);
+    const environment = {
+      GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath,
+      GAMEBUDDY_HOST_GAME_SESSION_MODE: "known",
+    };
+    const rejectedWithoutSession = await runEntry(frame, entryModule, fixtureRoot, environment);
     assert.notEqual(rejectedWithoutSession.code, 0);
     assert.deepEqual(rejectedWithoutSession.stdout, Buffer.alloc(0));
 
     const invalidRootFrame = Buffer.from(`${JSON.stringify({ ...frameValue, rootLayout: { ...rootLayout, dataRoot: join(fixtureRoot, "GameBuddy", "other") } })}\n`);
-    const rejected = await runEntry(invalidRootFrame, join(moduleDirectory, "desktop-host-entry.internal.js"), fixtureRoot);
+    const rejected = await runEntry(invalidRootFrame, entryModule, fixtureRoot, environment);
     assert.notEqual(rejected.code, 0);
     assert.deepEqual(rejected.stdout, Buffer.alloc(0));
   } finally {
@@ -127,7 +154,7 @@ test("Desktop bootstrap source consumes only frame facts before fresh root valid
   assert.doesNotMatch(source, /node:crypto|createHash|readdir\(|readVerifiedArtifactFile|artifactPath|safeArtifactAncestors/);
   assert.match(source, /createConnection\(/);
   assert.match(source, /gamebuddy-desktop-guardian-session\/v1/);
-  assert.match(source, /createDesktopPrivateHostCompositionForBootstrap\(rootAuthority, guardianAuthority\)/);
+  assert.match(source, /createDesktopProductCompositionForBootstrap\(rootAuthority, guardianAuthority, assemblyInput\)/);
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
 
   const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory)");
@@ -147,8 +174,8 @@ function findPackageRoot(directory: string): string {
   return candidate;
 }
 
-function startEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Users\\Player\\AppData\\Local"): Readonly<{ child: ReturnType<typeof spawn>; stdoutEnded: Promise<Buffer>; result: Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> }> {
-  const child = spawn(process.execPath, [entry], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, LOCALAPPDATA: localAppData } });
+function startEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Users\\Player\\AppData\\Local", environment: Readonly<Record<string, string>> = {}): Readonly<{ child: ReturnType<typeof spawn>; stdoutEnded: Promise<Buffer>; result: Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> }> {
+  const child = spawn(process.execPath, [entry], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, LOCALAPPDATA: localAppData, ...environment } });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -179,6 +206,6 @@ function startEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Us
   return Object.freeze({ child, stdoutEnded, result });
 }
 
-async function runEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Users\\Player\\AppData\\Local"): Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> {
-  return await startEntry(frame, entry, localAppData).result;
+async function runEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Users\\Player\\AppData\\Local", environment: Readonly<Record<string, string>> = {}): Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> {
+  return await startEntry(frame, entry, localAppData, environment).result;
 }

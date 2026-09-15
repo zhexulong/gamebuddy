@@ -2,7 +2,8 @@ import { createConnection, type Socket } from "node:net";
 import { win32 } from "node:path";
 
 import type { DesktopGuardianSession, GuardianAck } from "../../containment/auth/desktop-guardian-session.internal.js";
-import { createDesktopPrivateHostComposition } from "../../composition/desktop-host-composition.js";
+import type { DesktopHostAssemblyInput, DesktopPrivateHostComposition, DesktopRootLayoutCapability } from "../../composition/desktop-host-composition.js";
+import { loadHostDeploymentManifest } from "../../deployment-manifest.js";
 import { parseStrictJson } from "../../strict-json-reader.js";
 import {
   createPublishedWindowsReparseInspector,
@@ -15,6 +16,7 @@ import {
 const MAX_WIRE_BYTES = 32_768;
 const MAX_GUARDIAN_WIRE_BYTES = 16_384;
 const MAX_PRIVATE_FRAME_BYTES = 65_536;
+const MAX_GUARDIAN_DEADLINE_HORIZON_MS = 300_000;
 const guardianSessionSchema = "gamebuddy-desktop-guardian-session/v1";
 const bootstrapSchema = "gamebuddy-desktop-host-bootstrap/v1";
 const rootLayoutSchema = "gamebuddy-windows-root-layout/v1";
@@ -38,8 +40,6 @@ type DesktopHostBootstrapFrame = Readonly<{
 
 type DesktopGuardianSessionBinding = Omit<DesktopHostBootstrapFrame, "rootLayout">;
 
-declare const desktopRootLayoutCapabilityBrand: unique symbol;
-type DesktopRootLayoutCapability = object & { readonly [desktopRootLayoutCapabilityBrand]: true };
 declare const desktopGuardianSessionCapabilityBrand: unique symbol;
 type DesktopGuardianSessionCapability = object & { readonly [desktopGuardianSessionCapabilityBrand]: true };
 
@@ -54,14 +54,19 @@ export async function runDesktopHostBootstrap(moduleDirectory: string): Promise<
 
   const frame = parseBootstrapFrame(await readBootstrapFrame());
   const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory);
+  const assemblyInput = await loadDesktopHostAssemblyInput();
   const rootAuthority = mintDesktopRootLayoutCapability(rootLayout);
   const guardianAuthority = mintDesktopGuardianSessionCapability(frame);
-  const composition = await createDesktopPrivateHostCompositionForBootstrap(rootAuthority, guardianAuthority);
+  const composition = await createDesktopProductCompositionForBootstrap(rootAuthority, guardianAuthority, assemblyInput);
   try {
     const termination = waitForTermination();
-    await writeAcknowledgement(frame);
-    process.stdin.destroy();
-    await termination;
+    try {
+      await writeAcknowledgement(frame);
+      process.stdin.destroy();
+      await termination.promise;
+    } finally {
+      termination.dispose();
+    }
   } finally {
     await composition.close();
   }
@@ -200,12 +205,11 @@ function mintDesktopRootLayoutCapability(layout: DesktopRootLayout): DesktopRoot
   return capability;
 }
 
-function consumeDesktopRootLayoutCapability(capability: DesktopRootLayoutCapability): DesktopRootLayout {
+function consumeDesktopRootLayoutCapability(capability: DesktopRootLayoutCapability): DesktopRootLayoutCapability {
   if (!desktopRootLayoutCapabilities.delete(capability)) throw unavailable();
-  const layout = desktopRootLayouts.get(capability);
+  if (desktopRootLayouts.get(capability) === undefined) throw unavailable();
   desktopRootLayouts.delete(capability);
-  if (layout === undefined) throw unavailable();
-  return layout;
+  return capability;
 }
 
 function mintDesktopGuardianSessionCapability(frame: DesktopHostBootstrapFrame): DesktopGuardianSessionCapability {
@@ -228,10 +232,40 @@ function consumeDesktopGuardianSessionCapability(capability: DesktopGuardianSess
   return binding;
 }
 
-async function createDesktopPrivateHostCompositionForBootstrap(rootAuthority: DesktopRootLayoutCapability, guardianAuthority: DesktopGuardianSessionCapability): Promise<ReturnType<typeof createDesktopPrivateHostComposition>> {
-  consumeDesktopRootLayoutCapability(rootAuthority);
+async function createDesktopProductCompositionForBootstrap(
+  rootAuthority: DesktopRootLayoutCapability,
+  guardianAuthority: DesktopGuardianSessionCapability,
+  assemblyInput: DesktopHostAssemblyInput,
+): Promise<DesktopPrivateHostComposition> {
+  const consumedRootAuthority = consumeDesktopRootLayoutCapability(rootAuthority);
   const session = await createAuthenticatedDesktopGuardianSession(consumeDesktopGuardianSessionCapability(guardianAuthority));
-  return createDesktopPrivateHostComposition(session);
+  try {
+    // The value import is deferred so ordinary import of this private wire never
+    // evaluates the semantic coordinator/sqlite chain; the composition's
+    // construction failure still closes the authenticated session below.
+    const { createDesktopProductComposition } = await import("../../composition/desktop-host-composition.js");
+    return await createDesktopProductComposition(consumedRootAuthority, session, assemblyInput);
+  } catch (error) {
+    try {
+      await session.close();
+    } catch {
+      // Preserve the composition construction failure after closing the authenticated session.
+    }
+    throw error;
+  }
+}
+
+async function loadDesktopHostAssemblyInput(): Promise<DesktopHostAssemblyInput> {
+  const manifestPath = process.env.GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST;
+  const gameSessionMode = process.env.GAMEBUDDY_HOST_GAME_SESSION_MODE;
+  if (manifestPath === undefined || manifestPath.length === 0 || (gameSessionMode !== "fresh" && gameSessionMode !== "known")) throw unavailable();
+  let manifest;
+  try {
+    manifest = await loadHostDeploymentManifest(manifestPath);
+  } catch {
+    throw unavailable();
+  }
+  return Object.freeze({ manifest, gameSessionMode });
 }
 
 async function createAuthenticatedDesktopGuardianSession(binding: DesktopGuardianSessionBinding): Promise<DesktopGuardianSession> {
@@ -248,8 +282,8 @@ async function createAuthenticatedDesktopGuardianSession(binding: DesktopGuardia
 
 type GuardianRole = "player_host" | "ai_client";
 type GuardianOperation = "arm_attempt" | "launch_role" | "contain_role";
-type GuardianInput = Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role?: GuardianRole; privateFrame?: Uint8Array }>;
-type PendingResponse = Readonly<{ resolve(value: Record<string, unknown>): void; reject(reason: Error): void }>;
+type GuardianInput = Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs?: number; operationWaitBudgetMs?: number; role?: GuardianRole; privateFrame?: Uint8Array }>;
+type PendingResponse = { resolve(value: Record<string, unknown>): void; reject(reason: Error): void; timer?: ReturnType<typeof setTimeout> };
 
 class GuardianSessionClient implements DesktopGuardianSession {
   #closed = false;
@@ -264,9 +298,9 @@ class GuardianSessionClient implements DesktopGuardianSession {
     socket.once("error", () => this.fail());
   }
 
-  async arm(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; privateFrame: Uint8Array }>): Promise<GuardianAck> { return await this.command("arm_attempt", input); }
+  async arm(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; privateFrame: Uint8Array }>): Promise<GuardianAck> { return await this.command("arm_attempt", input); }
   async launch(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role: GuardianRole; privateFrame: Uint8Array }>): Promise<GuardianAck> { return await this.command("launch_role", input); }
-  async contain(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role: GuardianRole }>): Promise<GuardianAck> { return await this.command("contain_role", input); }
+  async contain(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; role: GuardianRole }>): Promise<GuardianAck> { return await this.command("contain_role", input); }
   async close(): Promise<void> { this.fail(); }
 
   async hello(): Promise<void> {
@@ -280,7 +314,7 @@ class GuardianSessionClient implements DesktopGuardianSession {
         if (this.#closed || !validGuardianInput(operation, input)) throw unavailable();
         const request: Record<string, unknown> = { schema: guardianSessionSchema, protocolVersion: 1, operation, ...this.binding, ...input };
         if (input.privateFrame !== undefined) request.privateFrame = Buffer.from(input.privateFrame).toString("base64url");
-        const acknowledgement = await this.request(request);
+        const acknowledgement = await this.request(request, operation === "launch_role" ? input.deadlineUnixMs! - Date.now() : input.operationWaitBudgetMs!);
         if (!validCommandAcknowledgement(acknowledgement, operation, input, this.binding)) throw unavailable();
         return acknowledgement;
       } catch (error) { this.fail(); throw error; }
@@ -290,13 +324,15 @@ class GuardianSessionClient implements DesktopGuardianSession {
     return await result;
   }
 
-  private request(message: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (this.#closed || this.#waiter !== undefined) return Promise.reject(unavailable());
+  private request(message: Record<string, unknown>, waitBudgetMs?: number): Promise<Record<string, unknown>> {
+    if (this.#closed || this.#waiter !== undefined || (waitBudgetMs !== undefined && (!Number.isSafeInteger(waitBudgetMs) || waitBudgetMs < 1 || waitBudgetMs > 2_147_483_647))) return Promise.reject(unavailable());
     const bytes = Buffer.from(`${JSON.stringify(message)}\n`, "utf8");
     if (bytes.length > MAX_GUARDIAN_WIRE_BYTES) return Promise.reject(unavailable());
     return new Promise((resolve, reject) => {
-      this.#waiter = { resolve, reject };
-      this.socket.write(bytes, (error) => { if (error !== undefined) this.fail(); });
+      const waiter: PendingResponse = { resolve, reject };
+      if (waitBudgetMs !== undefined) waiter.timer = setTimeout(() => this.fail(), waitBudgetMs);
+      this.#waiter = waiter;
+      this.socket.write(bytes, (error) => { if (error != null) this.fail(); });
     });
   }
 
@@ -314,6 +350,7 @@ class GuardianSessionClient implements DesktopGuardianSession {
       if (!isRecord(value)) return this.fail();
       const waiter = this.#waiter;
       this.#waiter = undefined;
+      if (waiter.timer !== undefined) clearTimeout(waiter.timer);
       waiter.resolve(value);
     } catch { this.fail(); }
   }
@@ -324,6 +361,7 @@ class GuardianSessionClient implements DesktopGuardianSession {
     this.socket.destroy();
     const waiter = this.#waiter;
     this.#waiter = undefined;
+    if (waiter?.timer !== undefined) clearTimeout(waiter.timer);
     waiter?.reject(unavailable());
   }
 }
@@ -342,7 +380,16 @@ function validHelloAcknowledgement(value: Record<string, unknown>, binding: Desk
 }
 
 function validGuardianInput(operation: GuardianOperation, input: GuardianInput): boolean {
-  if (!validOpaque(input.guardianInstanceId) || !Number.isSafeInteger(input.guardianEpoch) || input.guardianEpoch < 1 || !validOpaque(input.attemptId) || !Number.isSafeInteger(input.deadlineUnixMs) || input.deadlineUnixMs <= Date.now()) return false;
+  if (!validOpaque(input.guardianInstanceId) || !Number.isSafeInteger(input.guardianEpoch) || input.guardianEpoch < 1 || !validOpaque(input.attemptId)) return false;
+  if (operation === "launch_role") {
+    if (Object.hasOwn(input, "operationWaitBudgetMs")) return false;
+    const deadlineUnixMs = input.deadlineUnixMs;
+    if (typeof deadlineUnixMs !== "number" || !Number.isSafeInteger(deadlineUnixMs) || deadlineUnixMs <= Date.now() || deadlineUnixMs - Date.now() > MAX_GUARDIAN_DEADLINE_HORIZON_MS) return false;
+  } else {
+    if (Object.hasOwn(input, "deadlineUnixMs")) return false;
+    const operationWaitBudgetMs = input.operationWaitBudgetMs;
+    if (typeof operationWaitBudgetMs !== "number" || !Number.isSafeInteger(operationWaitBudgetMs) || operationWaitBudgetMs < 1 || operationWaitBudgetMs > 300_000) return false;
+  }
   return operation === "contain_role" ? validRole(input.role) && input.privateFrame === undefined : (operation === "arm_attempt" || validRole(input.role)) && input.privateFrame instanceof Uint8Array && input.privateFrame.byteLength <= MAX_PRIVATE_FRAME_BYTES;
 }
 
@@ -378,8 +425,12 @@ async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<v
   });
 }
 
-function waitForTermination(): Promise<void> {
-  return new Promise((resolveTermination) => {
+function waitForTermination(): Readonly<{
+  promise: Promise<void>;
+  dispose: () => void;
+}> {
+  let dispose: () => void = () => {};
+  const promise = new Promise<void>((resolveTermination) => {
     const livenessHandle = setInterval(() => {}, 2_147_483_647);
     const terminate = () => {
       clearInterval(livenessHandle);
@@ -387,9 +438,18 @@ function waitForTermination(): Promise<void> {
       process.off("SIGINT", terminate);
       resolveTermination();
     };
+    dispose = () => {
+      clearInterval(livenessHandle);
+      process.off("SIGTERM", terminate);
+      process.off("SIGINT", terminate);
+    };
     process.once("SIGTERM", terminate);
     process.once("SIGINT", terminate);
   });
+  return {
+    promise,
+    dispose,
+  };
 }
 
 function validHex(value: unknown): value is string {
