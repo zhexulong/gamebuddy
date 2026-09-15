@@ -5,6 +5,10 @@ import { createSharedSemanticProductionAuthorityFromDeploymentManifest } from ".
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { StardewOwnedPlayerHostBootstrap } from "../games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import { createStardewProductionLifecycleCoordinator, type StardewProductionLifecycleCoordinator } from "../stardew-production-lifecycle-coordinator.internal.js";
+import {
+  createDesktopGuardianGameRuntimePlatform,
+  createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
+} from "./contained-game-runtime-platform.private.js";
 import { createPublishedWindowsStardewFolderPicker } from "../windows-stardew-folder-picker/index.js";
 import { createStardewBootstrapGuardianOwnerBinding } from "../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import {
@@ -107,7 +111,13 @@ export async function createDesktopProductComposition(
     shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(input.manifest, input.gameSessionMode);
     const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     const folderPicker = await createPublishedWindowsStardewFolderPicker(artifactRoot);
-    lifecycleCoordinator = createStardewProductionLifecycleCoordinator(input.manifest, folderPicker, shared.game);
+    const runtimeCollaboratorFactory = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
+    lifecycleCoordinator = createStardewProductionLifecycleCoordinator(
+      input.manifest,
+      folderPicker,
+      shared.game,
+      runtimeCollaboratorFactory,
+    );
     return createDesktopPrivateHostComposition(rootLayoutCapability, session, [shared, lifecycleCoordinator]);
   } catch (error) {
     try {

@@ -43,10 +43,16 @@ import type {
 } from "./game-browser-contract/index.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
 import {
   createStardewRoleLifecycleFacade,
   type StardewRoleLifecycleReader,
 } from "./stardew-role-lifecycle-facade.js";
+import type {
+  StardewOwnedPlayerHostStageCResult,
+  StardewContainedPlayerHostLaunchSeam,
+  StardewPlayerHostRuntimeLaunchCollaborator,
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 
 export type StardewPrivateActivationSnapshot = Readonly<{
   schemaVersion: 1;
@@ -129,6 +135,55 @@ type BootstrapComposition = StardewPrivateBootstrapInternalComposition;
 type ActivationState = StardewPrivateActivationSnapshot["state"];
 type MaterializeFarmhandGameSession = StardewOwnedFarmhandGameSessionMaterializer["materialize"];
 
+/**
+ * Lifecycle-owned launch strategy for the staged Player Host. The coordinator
+ * treats it as opaque: the testing composition wires the direct-spawn Stage C
+ * consumer (test reference), while the formal Desktop composition wires the
+ * contained Player Host runtime launch seam. Production has no runtime
+ * fallback; each composition root selects exactly one launch strategy.
+ */
+export type StardewLifecyclePlayerHostLaunch = (
+  owner: StardewOwnedPlayerHostBootstrap,
+  installation: AdmittedStardewInstallation,
+) => Promise<StardewOwnedPlayerHostStageCResult>;
+
+/**
+ * Lifecycle-owned horizon for one Player Host role-launch invocation. It is
+ * created only after fresh admission, recipe, and reservation preconditions
+ * pass; it is never derived from a bootstrap timeout, browser admission
+ * expiry, owner/attempt expiry, or game lifetime.
+ */
+export const STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS = 60_000;
+
+/** Creates the per-invocation `RoleLaunchOperation` at the launch-decision point. */
+export function createStardewPlayerHostRoleLaunchOperation(
+  nowMs: () => number = Date.now,
+): RoleLaunchOperation {
+  const deadlineUnixMs = nowMs() + STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS;
+  if (!Number.isSafeInteger(deadlineUnixMs) || deadlineUnixMs <= Date.now())
+    throw new Error("stardew_player_host_role_launch_operation_deadline_invalid");
+  return Object.freeze({ deadlineUnixMs });
+}
+
+/**
+ * Composes the coordinator-side launch decision for the contained runtime
+ * path: after the core claim seam is handed over, create the invocation's
+ * RoleLaunchOperation, request the contained role launch through the
+ * composition collaborator, and convert an outcome failure into the same
+ * terminal classification the direct-spawn Stage C consumer produces.
+ */
+export function containedPlayerHostLaunchDecision(
+  runtimeLaunchPlayerHost: StardewPlayerHostRuntimeLaunchCollaborator,
+  owner: StardewOwnedPlayerHostBootstrap,
+  launch: StardewContainedPlayerHostLaunchSeam,
+  nowMs: () => number = Date.now,
+): Promise<void> {
+  return runtimeLaunchPlayerHost.launchPlayerHost(owner, createStardewPlayerHostRoleLaunchOperation(nowMs), launch)
+    .then((outcome) => {
+      if (outcome.status !== "succeeded") throw new Error("stardew_contained_player_host_launch_failed");
+    });
+}
+
 class StardewProductionLifecycleCloseError extends Error {
   public constructor() {
     super("stardew_lifecycle_close_incomplete");
@@ -158,6 +213,7 @@ function createCoordinator(
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
   materializeFarmhandGameSession: MaterializeFarmhandGameSession,
   folderPicker: WindowsStardewFolderPickerCapability,
+  playerHostLaunch: StardewLifecyclePlayerHostLaunch,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
   const playerId = `${manifest.principal.playerId}`;
@@ -360,7 +416,7 @@ function createCoordinator(
     try {
       if (isClosing()) throw new Error("stardew_lifecycle_closing");
       const result = await withFreshRegisteredInstallation((installation) =>
-        internal.launchStagedPlayerHost(owner, installation),
+        playerHostLaunch(owner, installation),
       );
       launchCompleted = true;
       if (result.status.kind !== "awaiting_player_host_attestation")
@@ -833,8 +889,20 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
   materializeFarmhandGameSession: MaterializeFarmhandGameSession,
   folderPicker: WindowsStardewFolderPickerCapability,
+  playerHostLaunch: StardewLifecyclePlayerHostLaunch = (owner, installation) =>
+    internal.launchStagedPlayerHost(owner, installation),
 ): StardewProductionLifecycleCoordinator {
-  return createCoordinator(manifest, internal, createInstallationInspector, materializeFarmhandGameSession, folderPicker);
+  return createCoordinator(
+    manifest,
+    internal,
+    createInstallationInspector,
+    materializeFarmhandGameSession,
+    folderPicker,
+    // The dedicated testing adapter keeps the direct-spawn Stage C consumer as
+    // the deterministic behavioral reference; production composition roots
+    // select the contained runtime launch strategy instead.
+    playerHostLaunch,
+  );
 }
 
 /** Constructs the coordinator exclusively from the closed first-party composition. */
@@ -842,14 +910,27 @@ export function createStardewProductionLifecycleCoordinator(
   manifest: HostDeploymentManifest,
   folderPicker: WindowsStardewFolderPickerCapability,
   game: SemanticGameProductionAuthority,
+  runtimeLaunchPlayerHost?: StardewPlayerHostRuntimeLaunchCollaborator,
 ): StardewProductionLifecycleCoordinator {
   const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
   const materializer = createStardewOwnedFarmhandGameSessionMaterializer(manifest, game);
+  const internal = createStardewPrivateBootstrapComposition();
+  const playerHostLaunch: StardewLifecyclePlayerHostLaunch = runtimeLaunchPlayerHost === undefined
+    // The migration-era browser helper and legacy reference paths keep the
+    // direct-spawn Stage C consumer; the formal Desktop composition always
+    // passes the contained runtime collaborator. Slice 3 removes this default.
+    ? (owner, installation) => internal.launchStagedPlayerHost(owner, installation)
+    : (owner, installation) => internal.launchStagedPlayerHostContained(
+        owner,
+        installation,
+        (launch) => containedPlayerHostLaunchDecision(runtimeLaunchPlayerHost, owner, launch),
+      );
   return createCoordinator(
     manifest,
-    createStardewPrivateBootstrapComposition(),
+    internal,
     () => createPublishedWindowsReparseInspector(hostArtifactRoot),
     materializer.materialize,
     folderPicker,
+    playerHostLaunch,
   );
 }

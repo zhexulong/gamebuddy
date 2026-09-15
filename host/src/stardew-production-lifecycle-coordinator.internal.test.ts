@@ -31,6 +31,15 @@ import {
 import { createStardewProductionLifecycleCoordinator } from "./stardew-production-lifecycle-coordinator.internal.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
+import type { DesktopGuardianSession, GuardianAck } from "./containment/auth/desktop-guardian-session.internal.js";
+import {
+  createDesktopGuardianGameRuntimePlatform,
+  createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
+} from "./composition/contained-game-runtime-platform.private.js";
+import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./composition/stardew-native-role-launch-plan.private.js";
+import {
+  STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS,
+} from "./stardew-production-lifecycle-coordinator.internal.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import { createTestWindowsReparseInspector } from "./windows-reparse-inspector/index.test-support.js";
 import type { WindowsPathObjectIdentity } from "./windows-reparse-inspector/index.js";
@@ -221,6 +230,22 @@ async function withWindowsPlatform<T>(operation: () => Promise<T>): Promise<T> {
   Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
   try { return await operation(); }
   finally { Object.defineProperty(process, "platform", descriptor); }
+}
+
+/** Shape the authenticated session expects back for every relayed command. */
+function containedSessionAck(operation: string, role?: string): GuardianAck {
+  return Object.freeze({
+    operation,
+    status: "ok",
+    bootstrapId: "bootstrap-coordinator-1",
+    generation: "generation-1",
+    inventoryDigest: "inventory-1",
+    runtimeAdmissionSha256: "admission-1",
+    guardianInstanceId: "guardian-instance-coordinator-1",
+    guardianEpoch: 1,
+    attemptId: "bootstrap-coordinator-1",
+    ...(role === undefined ? {} : { role }),
+  });
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -878,6 +903,180 @@ test("Game launch consumes setup once and replays exact command", async () => {
       await first;
       assert.equal(fixture.playerSpawnCalls.length, 1);
       await assert.rejects(fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { ...command, expectedInstanceGeneration: 2 }), /stardew_game_launch_idempotency_conflict/);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("contained Player Host success constructs the real contained runtime and session launch with exact typed-facts plan and 60s deadline", async () => {
+  await withWindowsPlatform(async () => {
+    const sessionCalls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
+    const firstDeadlineUnixMs: number[] = [];
+    const session: DesktopGuardianSession = Object.freeze({
+      async arm(input) {
+        sessionCalls.push({ operation: "arm", input: { ...input, privateFrame: "<bytes>" } });
+        return containedSessionAck("arm_attempt");
+      },
+      async launch(input) {
+        sessionCalls.push({ operation: "launch", input: { ...input, privateFrame: [...input.privateFrame] } });
+        firstDeadlineUnixMs.push(input.deadlineUnixMs);
+        return containedSessionAck("launch_role", input.role);
+      },
+      async contain(input) {
+        sessionCalls.push({ operation: "contain", input: { ...input } });
+        return containedSessionAck("contain_role", input.role);
+      },
+      async close() { sessionCalls.push({ operation: "close", input: {} }); },
+    });
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
+    // Deterministic lifecycle clock: the RoleLaunchOperation deadline must be
+    // exactly this fixed instant plus the budget, never a rubric of uncertainty.
+    const fixedNow = Date.now();
+    const fixture = await createFixture({ overrides: { launchPlayerHostContained: collaborator, containedLaunchNowMs: () => fixedNow } });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
+      await fixture.coordinator.activationOwner.launchPlayerHost(
+        fixture.broker.issue("game_launch"),
+        { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
+      );
+      // Neither the Player Host nor the AI-client process-owner raw-spawn path
+      // may run when the contained runtime owns the launch.
+      assert.equal(fixture.playerSpawnCalls.length, 0);
+      assert.equal(fixture.spawnCalls.length, 0);
+      assert.deepEqual(sessionCalls.map((call) => call.operation), ["arm", "launch"]);
+      const launchCall = sessionCalls[1]!;
+      assert.equal(launchCall.input.role, "player_host");
+      assert.equal(launchCall.input.guardianEpoch, 1);
+      assert.equal(launchCall.input.attemptId, "bootstrap-coordinator-1");
+      const decode = (frame: Uint8Array) => JSON.parse(new TextDecoder().decode(frame)) as Record<string, unknown>;
+      const plan = decode(new Uint8Array(launchCall.input.privateFrame as readonly number[]));
+      // ParseLaunch schema: exactly the ten keys, fully qualified executable/cwd,
+      // and the seven-key environment allowlist with the generation var.
+      assert.deepEqual(Object.keys(plan).sort(), ["arguments", "attemptId", "cwd", "deadlineUnixMs", "environment", "executable", "guardianEpoch", "guardianInstanceId", "planId", "role"].sort());
+      assert.equal(plan.role, "player_host");
+      assert.equal(plan.planId === undefined || (typeof plan.planId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(plan.planId)), true, "planId");
+      assert.equal(plan.executable, `${gameDirectoryCandidate}\\StardewModdingAPI.exe`);
+      assert.equal(plan.cwd, gameDirectoryCandidate);
+      assert.deepEqual(plan.arguments, ["--mods-path", join(fixture.runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "player-host", "Mods")]);
+      const environment = plan.environment as Record<string, string>;
+      assert.deepEqual(Object.keys(environment).sort(), [...STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS].sort());
+      assert.equal(environment.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "player-generation-1");
+      const deadlineUnixMs = firstDeadlineUnixMs[0]!;
+      assert.equal(plan.deadlineUnixMs, deadlineUnixMs);
+      // Exact lifecycle-created deadline: fixed clock + budget, equal in both
+      // the session launch input and the encoded plan.
+      assert.equal(deadlineUnixMs, fixedNow + STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS);
+      assert.equal(plan.deadlineUnixMs, fixedNow + STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS);
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "awaiting_player_host_attestation");
+      // The coordinated launch decision rejects a concurrent launch while the
+      // first invocation's launchPromise remains authoritative.
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(
+          fixture.broker.issue("game_launch"),
+          { apiVersion: 1, idempotencyKey: "CCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
+        ),
+        /stardew_game_launch_in_progress/,
+      );
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("contained Player Host launch failure after the claim durably quarantines the exact owner record", async () => {
+  await withWindowsPlatform(async () => {
+    const sessionCalls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
+    const session: DesktopGuardianSession = Object.freeze({
+      async arm(input) {
+        sessionCalls.push({ operation: "arm", input: { ...input, privateFrame: "<bytes>" } });
+        return containedSessionAck("arm_attempt");
+      },
+      async launch(input) {
+        sessionCalls.push({ operation: "launch", input: { ...input, privateFrame: [...input.privateFrame] } });
+        throw new Error("controlled_contained_native_launch_failure");
+      },
+      async contain(input) {
+        sessionCalls.push({ operation: "contain", input: { ...input } });
+        return containedSessionAck("contain_role", input.role);
+      },
+      async close() { sessionCalls.push({ operation: "close", input: {} }); },
+    });
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
+    const fixture = await createFixture({ overrides: { launchPlayerHostContained: collaborator } });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(
+          fixture.broker.issue("game_launch"),
+          { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
+        ),
+        /stardew_player_host_launch_failed/,
+      );
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "failed");
+      // Durable authority, not just the lifecycle snapshot: the exact owner record
+      // must be quarantined (termination of the launchMayHaveRun path).
+      assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+      assert.equal(fixture.playerSpawnCalls.length, 0);
+      // The claim was attempted exactly once: no blind native retry.
+      assert.deepEqual(sessionCalls.map((call) => call.operation), ["arm", "launch"]);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("contained Player Host decision failing before the claim restores staged with zero session calls and a retry succeeds", async () => {
+  await withWindowsPlatform(async () => {
+    const sessionCalls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
+    const session: DesktopGuardianSession = Object.freeze({
+      async arm(input) {
+        sessionCalls.push({ operation: "arm", input: { ...input, privateFrame: "<bytes>" } });
+        return containedSessionAck("arm_attempt");
+      },
+      async launch(input) {
+        sessionCalls.push({ operation: "launch", input: { ...input, privateFrame: [...input.privateFrame] } });
+        return containedSessionAck("launch_role", input.role);
+      },
+      async contain(input) {
+        sessionCalls.push({ operation: "contain", input: { ...input } });
+        return containedSessionAck("contain_role", input.role);
+      },
+      async close() { sessionCalls.push({ operation: "close", input: {} }); },
+    });
+    // Stale lifecycle clock: the RoleLaunchOperation deadline is invalid before
+    // any native/session call, so the launch decision fails pre-claim.
+    let nowMs: () => number = () => Date.now() - 1_000_000;
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
+    const fixture = await createFixture({ overrides: { launchPlayerHostContained: collaborator, containedLaunchNowMs: () => nowMs() } });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(
+          fixture.broker.issue("game_launch"),
+          { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
+        ),
+        /stardew_player_host_launch_failed/,
+      );
+      // Pre-claim failure: staged marker restored and no native/session call ran.
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
+      assert.deepEqual(sessionCalls.length, 0);
+      assert.equal(fixture.playerSpawnCalls.length, 0);
+      // A fresh launch invocation with a valid lifecycle clock succeeds through
+      // the same real runtime/executor path.
+      nowMs = () => Date.now();
+      await fixture.coordinator.activationOwner.launchPlayerHost(
+        fixture.broker.issue("game_launch"),
+        { apiVersion: 1, idempotencyKey: "CCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
+      );
+      assert.deepEqual(sessionCalls.map((call) => call.operation), ["arm", "launch"]);
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "awaiting_player_host_attestation");
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();

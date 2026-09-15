@@ -1,11 +1,62 @@
 import type { TypedPrivateGameFacts } from "../containment/runtime/contract/game-runtime.js";
 import type { ContainedGameRuntimePlatform } from "../containment/runtime/core/contained-game-runtime.js";
+import { createContainedGameRuntime } from "../containment/runtime/core/contained-game-runtime.js";
 import type { DesktopGuardianSession } from "../containment/auth/desktop-guardian-session.internal.js";
+import type { StardewOwnedPlayerHostBootstrap } from "../games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
+import {
+  createStardewBootstrapGuardianOwnerBinding,
+  readStardewBootstrapGuardianNativeArmFrame,
+  type StardewPlayerHostRuntimeLaunchCollaborator,
+} from "../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import {
   modelStardewNativeRoleLaunchPlan,
   encodeStardewNativeRoleLaunchPlan,
   type StardewNativeRoleLaunchPlanInput,
 } from "./stardew-native-role-launch-plan.private.js";
+
+/**
+ * One bounded arm/contain wait budget for the Desktop product composition.
+ * This transport/operation horizon is deliberately separate from the
+ * lifecycle-created RoleLaunchOperation deadline (the launch decision owns
+ * that; the deadline is never derived from a bootstrap/browser/owner timeout).
+ */
+export const DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS = 60_000;
+
+/**
+ * Builds the composition-owned contained Player Host launch seam. The runtime
+ * binding uses the Stardew owner's Guardian correlation
+ * (guardianInstanceId/guardianEpoch/attemptId) plus the composition's fixed
+ * arm/contain operation wait budget; the launch deadline arrives per
+ * invocation from the lifecycle's RoleLaunchOperation and is never owned
+ * here. Each call constructs a fresh `ContainedGameRuntime` over the closure
+ * platform so one owner never reuses another owner's arm/launch state.
+ */
+export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+  platform: ContainedGameRuntimePlatform,
+): StardewPlayerHostRuntimeLaunchCollaborator {
+  // The Guardian owner binding is one-shot per owner; the contained runtime
+  // for that owner is therefore bound once and retained here. A launch retry
+  // after a pre-claim failure reuses the exact bound runtime, while a post-
+  // claim failure is terminal in the coordinator and never calls back here.
+  const runtimesByOwner = new WeakMap<StardewOwnedPlayerHostBootstrap, ReturnType<typeof createContainedGameRuntime>>();
+  return Object.freeze({
+    launchPlayerHost(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
+      let runtime = runtimesByOwner.get(owner);
+      if (runtime === undefined) {
+        const binding = createStardewBootstrapGuardianOwnerBinding(owner);
+        const arm = readStardewBootstrapGuardianNativeArmFrame(binding);
+        runtime = createContainedGameRuntime(platform, Object.freeze({
+          guardianInstanceId: arm.guardianInstanceId,
+          guardianEpoch: arm.guardianEpoch,
+          attemptId: arm.attemptId,
+          operationWaitBudgetMs: DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS,
+        }));
+        runtimesByOwner.set(owner, runtime);
+      }
+      return runtime.launchRole("player_host", operation, launch.provideAuthorization);
+    },
+  });
+}
 
 /**
  * Composition-private bridge from typed game facts to the authenticated

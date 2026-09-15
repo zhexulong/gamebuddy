@@ -111,7 +111,8 @@ test("desktop composition retains the typed root capability and closes the authe
 test("desktop product composition wires the semantic authority and Stardew lifecycle owner into reverse-order children", async () => {
   const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts"), "utf8");
   assert.match(source, /createSharedSemanticProductionAuthorityFromDeploymentManifest\(input\.manifest, input\.gameSessionMode\)/);
-  assert.match(source, /createStardewProductionLifecycleCoordinator\(input\.manifest, folderPicker, shared\.game\)/);
+  assert.match(source, /createStardewProductionLifecycleCoordinator\(\s*input\.manifest,\s*folderPicker,\s*shared\.game,\s*runtimeCollaboratorFactory,\s*\)/s);
+  assert.match(source, /createStardewPlayerHostRuntimeLaunchCollaboratorFactory\(createDesktopGuardianGameRuntimePlatform\(session\)\)/);
   assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[shared, lifecycleCoordinator\]\)/);
   assert.match(source, /await lifecycleCoordinator\?\.close\(\)/);
   assert.match(source, /await shared\?\.close\(\)/);
