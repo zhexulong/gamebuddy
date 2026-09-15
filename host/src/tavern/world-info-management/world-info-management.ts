@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join, resolve, sep } from "node:path";
 import { atomicWriteFile, verifySafePathBoundary, withPathLock } from "../../path-lock.js";
-import { readStrictJsonFile } from "../../strict-json-reader.js";
+import { readStrictJsonFile, STRICT_JSON_READER_MAX_BUDGET_BYTES } from "../../strict-json-reader.js";
 import { canonicalHash, canonicalJson } from "../artifact-store.js";
 import {
   importTavernLorebook,
@@ -258,7 +258,10 @@ async function readRevision(
   let value: unknown;
   try {
     await verifySafePathBoundary(path, root);
-    value = await readStrictJsonFile(path);
+    // A single World Book (e.g. GI-Core, 256 entries) can exceed the 64 KiB
+    // default strict-JSON budget; the revision envelope is capped by the
+    // absolute 21 MiB reader ceiling, matching the 16 MiB character-book cap.
+    value = await readStrictJsonFile(path, STRICT_JSON_READER_MAX_BUDGET_BYTES);
   } catch {
     throw new Error("invalid_world_info_artifact");
   }
