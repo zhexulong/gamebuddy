@@ -14,6 +14,13 @@ const scope: Scope = {
 };
 const token = "phase2_test_token_1234";
 
+/**
+ * Validateable Mock Mod policy identity required by hello_ack and catalog_update
+ * wire fixtures since the authenticated hello_ack projection (bb5e3d6). The
+ * value must be a 32-char lowercase hex string like production Mods publish.
+ */
+const mockPolicyIdentity = Object.freeze({ value: "a".repeat(32), capabilityRevision: 1 });
+
 function frame(value: unknown): Buffer {
   return rawFrame(JSON.stringify(value));
 }
@@ -69,7 +76,7 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
         buffer = buffer.subarray(4 + length);
         if (request.type === "hello") {
           socket.write(frame({ ...request, messageId: "scene_hello", type: "hello_ack", payload: {
-            sessionId: "scene_session", capabilities: ["observe_scene"], catalogRevision: 1, enabledActionIds: [],
+            sessionId: "scene_session", capabilities: ["observe_scene"], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [],
             presentationLocale: "en-US", registrations: [{ actionId: "observe_scene", familyId: "world_perception", identityVersion: 1, lifecycle: "published", kind: "read_only" }],
             runtimeRole: "native_local_fixture", launchGeneration: null,
           }}));
@@ -118,10 +125,11 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
           messageId: "mod_hello_01",
           type: "hello_ack",
           payload: {
-            sessionId: "session_01",
-            capabilities: ["inspect_self"],
-            catalogRevision: 1,
-            enabledActionIds: [],
+    sessionId: "session_01",
+    capabilities: ["inspect_self"],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: [],
             presentationLocale: "en-US",
             registrations: [
               {
@@ -219,10 +227,11 @@ test("local Stardew bridge never returns a solicited snapshot that fails admissi
               messageId: "observe_stale_hello",
               type: "hello_ack",
               payload: {
-                sessionId: "session_01",
-                capabilities: [],
-                catalogRevision: 1,
-                enabledActionIds: [],
+    sessionId: "session_01",
+    capabilities: [],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: [],
                 presentationLocale: "en-US",
                 registrations: [
                   {
@@ -266,7 +275,7 @@ test("local Stardew bridge never returns a solicited snapshot that fails admissi
     });
   });
   await new Promise<void>((resolvePromise, reject) =>
-    server.listen(`\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
@@ -307,10 +316,11 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
               messageId: "catalog_hello",
               type: "hello_ack",
               payload: {
-                sessionId: "catalog_session",
-                capabilities: ["inspect_self"],
-                catalogRevision: 1,
-                enabledActionIds: [],
+    sessionId: "catalog_session",
+    capabilities: ["inspect_self"],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: [],
                 presentationLocale: "en-US",
                 registrations: [
                   {
@@ -375,7 +385,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
           timestampMs: Date.now(),
           scope,
           type: "catalog_update",
-          payload: { catalogRevision: revision, enabledActionIds: ["move_to_tile"] },
+          payload: { catalogRevision: revision, policyIdentity: { value: revision.toString(16).padStart(32, "0"), capabilityRevision: revision }, enabledActionIds: ["move_to_tile"] },
         }),
       );
 
@@ -458,10 +468,11 @@ test("local Stardew bridge rejects a duplicate-key raw named-pipe frame before J
           messageId: "mod_hello_duplicate_key",
           type: "hello_ack",
           payload: {
-            sessionId: "session_duplicate_key",
-            capabilities: [],
-            catalogRevision: 1,
-            enabledActionIds: [],
+    sessionId: "session_duplicate_key",
+    capabilities: [],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: [],
             presentationLocale: "en-US",
             registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
             runtimeRole: "native_local_fixture",
@@ -515,7 +526,7 @@ test("local Stardew bridge forwards a validated player_input semantic event", as
                   ...request,
                   messageId: "mod_hello_player_control",
                   type: "hello_ack",
-                  payload: { sessionId: "session_player_control", capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "zh-CN", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
+                  payload: { sessionId: "session_player_control", capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "zh-CN", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
                 }
               : {
                   ...request,
@@ -612,7 +623,7 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
             ...request,
             messageId: "mod_hello_player_control_reject",
             type: "hello_ack",
-             payload: { sessionId: "session_player_control_reject", capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "zh-CN", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
+             payload: { sessionId: "session_player_control_reject", capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "zh-CN", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
           }),
         );
       }
@@ -707,10 +718,11 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
               messageId: "mod_hello_execution_receipt",
               type: "hello_ack",
                payload: {
-                 sessionId: "session_execution_receipt",
-                 capabilities: ["move_to_tile"],
-                 catalogRevision: 1,
-                 enabledActionIds: ["move_to_tile"],
+    sessionId: "session_execution_receipt",
+    capabilities: ["move_to_tile"],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: ["move_to_tile"],
                  presentationLocale: "en-US",
                  registrations: [
                    { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" },
@@ -819,7 +831,7 @@ test("local Stardew bridge delivers an exact-correlated system notice receipt", 
               ...request,
               messageId: "mod_hello_system_notice",
               type: "hello_ack",
-              payload: { sessionId: "session_system_notice", capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
+              payload: { sessionId: "session_system_notice", capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
             }),
           );
           continue;
@@ -883,7 +895,7 @@ test("local Stardew bridge authenticates and observes Mod-declared capabilities"
                 ...request,
                 messageId: "mod_hello_01",
                 type: "hello_ack",
-                 payload: { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
+                 payload: { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
               }
             : {
                 ...request,
@@ -945,10 +957,11 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
               messageId: "mod_hello_cancel_identity",
               type: "hello_ack",
               payload: {
-                sessionId: "session_cancel_identity",
-                capabilities: ["move_to_tile"],
-                catalogRevision: 1,
-                enabledActionIds: ["move_to_tile"],
+    sessionId: "session_cancel_identity",
+    capabilities: ["move_to_tile"],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: ["move_to_tile"],
                 presentationLocale: "en-US",
                 registrations: [
                   { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" },
@@ -1039,7 +1052,7 @@ async function withNavigationBridge(
         const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
         buffer = buffer.subarray(4 + length);
         if (request.type === "hello") {
-          socket.write(frame({ ...request, messageId: `hello_${name}`, type: "hello_ack", payload: { sessionId: `session_${name}`, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "find_destination", familyId: "world_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" }], runtimeRole: "native_local_fixture", launchGeneration: null } }));
+          socket.write(frame({ ...request, messageId: `hello_${name}`, type: "hello_ack", payload: { sessionId: `session_${name}`, capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "find_destination", familyId: "world_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" }], runtimeRole: "native_local_fixture", launchGeneration: null } }));
         } else if (request.type === "navigation_read_request") onNavigation(socket, request);
       }
     });
@@ -1127,10 +1140,11 @@ async function withBodyProgramBridge(
             messageId: `body_program_hello_${name}`,
             type: "hello_ack",
             payload: {
-              sessionId: `body_program_session_${name}`,
-              capabilities: [],
-              catalogRevision: 1,
-              enabledActionIds: [],
+    sessionId: `body_program_session_${name}`,
+    capabilities: [],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: [],
               presentationLocale: "en-US",
               registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
               runtimeRole: "native_local_fixture",
@@ -1284,7 +1298,7 @@ test("body program requests forward exact authenticated messages and retain mode
         requests.push(request);
         if (request.type === "hello") {
           socket.write(frame({ ...request, messageId: "body_program_hello", type: "hello_ack", payload: {
-            sessionId: "body_program_session", capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US",
+            sessionId: "body_program_session", capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "en-US",
             registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
             runtimeRole: "native_local_fixture", launchGeneration: null,
           } }));
@@ -1346,10 +1360,11 @@ test("local Stardew bridge fails closed when a fact listener throws event_pump_e
             messageId: "mod_hello_listener_overflow",
             type: "hello_ack",
             payload: {
-              sessionId: "session_listener_overflow",
-              capabilities: [],
-              catalogRevision: 1,
-              enabledActionIds: [],
+    sessionId: "session_listener_overflow",
+    capabilities: [],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: [],
               presentationLocale: "en-US",
               registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
               runtimeRole: "native_local_fixture",
@@ -1413,10 +1428,11 @@ test("local Stardew bridge maps an arbitrary fact listener exception to fact_lis
             messageId: "mod_hello_listener_failed",
             type: "hello_ack",
             payload: {
-              sessionId: "session_listener_failed",
-              capabilities: [],
-              catalogRevision: 1,
-              enabledActionIds: [],
+    sessionId: "session_listener_failed",
+    capabilities: [],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: [],
               presentationLocale: "en-US",
               registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
               runtimeRole: "native_local_fixture",
@@ -1479,10 +1495,11 @@ test("a pending observe rejects through the normal close path when a fact listen
               messageId: "mod_hello_listener_pending",
               type: "hello_ack",
               payload: {
-                sessionId: "session_listener_pending",
-                capabilities: [],
-                catalogRevision: 1,
-                enabledActionIds: [],
+    sessionId: "session_listener_pending",
+    capabilities: [],
+    catalogRevision: 1,
+    policyIdentity: mockPolicyIdentity,
+    enabledActionIds: [],
                 presentationLocale: "en-US",
                 registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
                 runtimeRole: "native_local_fixture",
