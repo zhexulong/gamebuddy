@@ -3,7 +3,6 @@ import type { IdentityProfile } from "./identity-profile.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import type { WorldBookEntry } from "./worldbook.js";
 
-const MAX_INPUT_BYTES = ST_CARD_DECODER_LIMITS_V1.inputBytes;
 const MAX_JSON_DEPTH = ST_CARD_DECODER_LIMITS_V1.jsonDepth;
 const MAX_JSON_NODES = ST_CARD_DECODER_LIMITS_V1.jsonNodes;
 const MAX_PNG_CHUNKS = ST_CARD_DECODER_LIMITS_V1.pngChunks;
@@ -54,8 +53,11 @@ export type StCardImportPreview = Readonly<{
  */
 export function decodeStCard(input: string | Uint8Array): StCardImportReport {
   const bytes = typeof input === "string" ? Buffer.from(input, "utf8") : input;
-  if (bytes.byteLength > MAX_INPUT_BYTES) return rejected("json", "input", "input_too_large");
   const source = isPng(bytes) ? "png" : "json";
+  const maxInputBytes = source === "png"
+    ? ST_CARD_DECODER_LIMITS_V1.inputBytesPng
+    : ST_CARD_DECODER_LIMITS_V1.inputBytesJson;
+  if (bytes.byteLength > maxInputBytes) return rejected(source, "input", "input_too_large");
   const json = source === "png" ? extractPngCardJson(bytes) : decodeUtf8(bytes);
   if (json === undefined)
     return rejected(source, source === "png" ? "png_metadata" : "input", "missing_or_invalid_card_payload");
@@ -185,7 +187,7 @@ function extractPngCardJson(bytes: Uint8Array): string | undefined {
     const length = readU32(bytes, offset);
     const type = ascii(bytes.subarray(offset + 4, offset + 8));
     offset += 8;
-    if (length > MAX_INPUT_BYTES || offset + length + 4 > bytes.length) return undefined;
+    if (length > ST_CARD_DECODER_LIMITS_V1.inputBytesPng || offset + length + 4 > bytes.length) return undefined;
     const chunk = bytes.subarray(offset, offset + length);
     offset += length + 4;
     const text =
@@ -223,7 +225,9 @@ function pngCompressedText(chunk: Uint8Array): { keyword: string; value: string 
   const compressionMethod = chunk[split + 1];
   if (compressionMethod !== 0) return undefined;
   try {
-    const payload = inflateSync(chunk.subarray(split + 2), { maxOutputLength: MAX_INPUT_BYTES });
+    const payload = inflateSync(chunk.subarray(split + 2), {
+      maxOutputLength: ST_CARD_DECODER_LIMITS_V1.inflateMaxOutputBytes,
+    });
     return { keyword: ascii(chunk.subarray(0, split)), value: decodeUtf8(payload) ?? "" };
   } catch {
     return undefined;
@@ -242,7 +246,9 @@ function pngInternationalText(chunk: Uint8Array): { keyword: string; value: stri
   }
   try {
     const payload = compressed
-      ? inflateSync(chunk.subarray(offset), { maxOutputLength: MAX_INPUT_BYTES })
+      ? inflateSync(chunk.subarray(offset), {
+          maxOutputLength: ST_CARD_DECODER_LIMITS_V1.inflateMaxOutputBytes,
+        })
       : chunk.subarray(offset);
     return { keyword: ascii(chunk.subarray(0, first)), value: decodeUtf8(payload) ?? "" };
   } catch {
@@ -282,13 +288,15 @@ function disposition(
   return Object.freeze({ field, classification, reason });
 }
 function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3"): WorldBookEntry[] {
-  if (
-    !isRecord(value) ||
-    !Array.isArray(value.entries) ||
-    utf8Bytes(JSON.stringify(value)) > ST_CARD_DECODER_LIMITS_V1.characterBookBytes
-  )
+  if (!isRecord(value) || utf8Bytes(JSON.stringify(value)) > ST_CARD_DECODER_LIMITS_V1.characterBookBytes)
     return [];
-  return value.entries.slice(0, ST_CARD_DECODER_LIMITS_V1.characterBookEntries).flatMap((raw, index) => {
+  const entries = Array.isArray(value.entries)
+    ? value.entries
+    : isRecord(value.entries)
+      ? Object.values(value.entries)
+      : undefined;
+  if (entries === undefined) return [];
+  return entries.flatMap((raw, index) => {
     if (!isRecord(raw)) return [];
     const content = boundedMultilineText(raw.content, ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes);
     if (content === undefined) return [];
@@ -315,7 +323,6 @@ function parseExamples(value: string | undefined): readonly Readonly<{ user: str
       .split(/(?:<START>|\n{2,})/u)
       .map((part) => part.trim())
       .filter(Boolean)
-      .slice(0, 4)
       .flatMap((part) => {
         const user = part
           .match(/(?:\{\{user\}\}|You|User)\s*:\s*([\s\S]*?)(?=(?:\{\{char\}\}|Character|Assistant)\s*:|$)/iu)?.[1]
@@ -326,9 +333,7 @@ function parseExamples(value: string | undefined): readonly Readonly<{ user: str
         return user !== undefined &&
           companion !== undefined &&
           user.length > 0 &&
-          companion.length > 0 &&
-          user.length <= 512 &&
-          companion.length <= 512
+          companion.length > 0
           ? [Object.freeze({ user, companion })]
           : [];
       }),

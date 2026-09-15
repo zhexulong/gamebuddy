@@ -2,17 +2,19 @@ export type CompatibilityDecision = "accepted_typed" | "preserved_opaque" | "dro
 
 /** Exact UTF-8 limits enforced by the inert ST-card decoder. */
 export const ST_CARD_DECODER_LIMITS_V1 = Object.freeze({
-  inputBytes: 1_048_576,
+  inputBytesJson: 2_097_152,
+  inputBytesPng: 33_554_432,
+  inflateMaxOutputBytes: 67_108_864,
   jsonDepth: 64,
-  jsonNodes: 4_096,
-  pngChunks: 256,
-  nameBytes: 128,
-  textBytes: 1_024,
-  examplesBytes: 4_096,
-  characterBookBytes: 131_072,
-  characterBookEntryBytes: 4_000,
+  jsonNodes: 65_536,
+  pngChunks: 1_024,
+  nameBytes: 256,
+  textBytes: 2_097_152,
+  examplesBytes: 2_097_152,
+  characterBookBytes: 16_777_216,
+  characterBookEntryBytes: 16_384,
   characterBookTitleBytes: 256,
-  characterBookEntries: 128,
+  characterBookEntries: Number.POSITIVE_INFINITY,
 });
 
 /**
