@@ -150,7 +150,7 @@ export const MemoryItemV1Schema = strictObject({
 export const MemoryReadV1Schema = strictObject({
   apiVersion: ApiVersion,
   projectionRevision: OpaqueHandle,
-  memories: Type.Array(MemoryItemV1Schema, { maxItems: 200 }),
+  memories: Type.Array(MemoryItemV1Schema),
 });
 /**
  * Player-authored ordinary Memory CRUD. The browser provides only opaque

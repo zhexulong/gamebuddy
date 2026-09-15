@@ -248,26 +248,11 @@ test("memory read projection contains only safe bounded rows and validates stric
     }),
     false,
   );
-  // Max 200 items.
+  // More than 200 items remain valid; the v1 schema has no row-count ceiling.
   assert.equal(
     TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
       ...memory,
-      memories: Array.from({ length: 201 }, () => ({
-        handle,
-        title: "row",
-        content: "content",
-        category: "semantic" as const,
-        status: "active" as const,
-        pinned: false,
-      })),
-    }),
-    false,
-  );
-  // Exactly 200 items is allowed.
-  assert.equal(
-    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
-      ...memory,
-      memories: Array.from({ length: 200 }, (_, i) => ({
+      memories: Array.from({ length: 800 }, (_, i) => ({
         handle,
         title: `row ${i}`,
         content: `content ${i}`,

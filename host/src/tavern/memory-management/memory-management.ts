@@ -24,7 +24,7 @@ import type {
 } from "@cortexkit/pi-magic-context/memory";
 
 export type MemoryManagementService = Readonly<{
-  /** Reads the bounded, browser-safe Memory projection for the mounted continuity. */
+  /** Reads the complete browser-safe Memory projection for the mounted continuity. */
   read(): Promise<MemoryReadV1>;
   /** Performs one ordinary management CRUD operation then returns a fresh safe reread. */
   mutate?(command: MemoryMutationCommandV1): Promise<MemoryReadV1>;
@@ -109,7 +109,6 @@ export function createMemoryManagementService(
   };
 
   const projectRows = (rows: readonly MemoryRowView[]): MemoryReadV1 => {
-    if (rows.length > 200) throw unavailable();
     const memories: MemoryItemV1[] = rows.map((row) => {
       if (
         typeof row.stateToken !== "string" ||

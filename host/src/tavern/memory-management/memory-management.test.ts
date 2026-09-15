@@ -269,6 +269,48 @@ test("mounted memory service projects only safe DTOs for the exact continuity", 
   assert.equal(results.continuityId, "continuity_01");
 });
 
+test("mounted memory service projects every injected Memory row and fingerprints changes beyond row 500", async () => {
+  const results = await mounted(`
+    const { TavernBrowserValidatorsV1 } = await import(contractUrl);
+    let changed = false;
+    const stub = Object.freeze({
+      listMemories: async () => Array.from({ length: 800 }, (_, i) => ({
+        stateToken: "tok_" + i,
+        content: changed && i === 500 ? "changed row 500" : "row " + i,
+        category: i % 2 === 0 ? "semantic" : "interaction",
+        status: i % 3 === 0 ? "permanent" : i % 3 === 1 ? "active" : "archived",
+      })),
+    });
+    const service = createMemoryManagementService({ manifest, lease, profile }, stub);
+    const first = await service.read();
+    const same = await service.read();
+    changed = true;
+    const changedRead = await service.read();
+    process.stdout.write(JSON.stringify({
+      first,
+      same,
+      changedRead,
+      firstSchemaOk: TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(first),
+      changedSchemaOk: TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(changedRead),
+    }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  const first = results.first as { memories: ReadonlyArray<{ content: string }>; projectionRevision: string };
+  const same = results.same as { memories: ReadonlyArray<{ content: string }>; projectionRevision: string };
+  const changedRead = results.changedRead as { memories: ReadonlyArray<{ content: string }>; projectionRevision: string };
+  assert.equal(first.memories.length, 800);
+  assert.equal(same.memories.length, 800);
+  assert.equal(changedRead.memories.length, 800);
+  assert.equal(first.memories.some((memory) => memory.content === "row 500"), true);
+  assert.equal(changedRead.memories.some((memory) => memory.content === "changed row 500"), true);
+  assert.equal(results.firstSchemaOk, true);
+  assert.equal(results.changedSchemaOk, true);
+  assert.equal(first.projectionRevision, same.projectionRevision);
+  assert.notEqual(first.projectionRevision, changedRead.projectionRevision);
+});
+
 test("mounted memory service reads the exact embedded runtime's vendor Memory partition", async () => {
   const results = await mounted(`
     const runtime = await import(new URL("../../runtime.js", serviceUrl).href);
@@ -482,27 +524,29 @@ test("mounted memory service rejects malformed or oversized vendor content befor
   assert.match((results.outcome as { error: string }).error, /memory_read_service_unavailable/);
 });
 
-test("mounted memory service fails closed when the projected set exceeds the contract bound", async () => {
+test("mounted memory service retains all rows when the projected set exceeds 200 items", async () => {
   const results = await mounted(`
+    const { TavernBrowserValidatorsV1 } = await import(contractUrl);
     const largeStub = Object.freeze({
-      listMemories: async () => {
-        return Array.from({ length: 201 }, (_, i) => ({
-          stateToken: "tok_" + i,
-          content: "row " + i,
-          category: "semantic",
-          status: "active",
-        }));
-      },
+      listMemories: async () => Array.from({ length: 201 }, (_, i) => ({
+        stateToken: "tok_" + i,
+        content: "row " + i,
+        category: "semantic",
+        status: "active",
+      })),
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, largeStub);
-    const outcome = await run(async () => await service.read());
-    process.stdout.write(JSON.stringify({ outcome }));
+    const result = await service.read();
+    process.stdout.write(JSON.stringify({
+      result,
+      schemaOk: TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(result),
+    }));
     await service.close();
     await lease.close();
     await authority.close();
   `);
-  assert.equal((results.outcome as { ok: boolean }).ok, false);
-  assert.match((results.outcome as { error: string }).error, /memory_read_service_unavailable/);
+  assert.equal((results.result as { memories: unknown[] }).memories.length, 201);
+  assert.equal(results.schemaOk, true);
 });
 
 test("mounted memory service uses fixed category labels that never derive from content", async () => {
