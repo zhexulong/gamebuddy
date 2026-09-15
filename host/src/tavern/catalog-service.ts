@@ -62,6 +62,18 @@ export type TavernAuthoredContextCatalog = Readonly<{
     totalOrderKey: string;
     provenance: string;
   }>[];
+  volatileSources: readonly Readonly<{
+    sourceId: string;
+    kind: "lorebook_entry";
+    revision: string;
+    canonicalHash: string;
+    content: string;
+    budgetTokens: number;
+    totalOrderKey: string;
+    provenance: string;
+    /** Selection-only metadata; stripped before durable turn persistence. */
+    selectionKeys: readonly string[];
+  }>[];
 }>;
 type TavernAlwaysOnWorldBookSource = Readonly<{
   binding: TavernStableWorldBookBinding;
@@ -190,12 +202,14 @@ export async function materializeTavernAuthoredContextCatalog(
   }
   const budgetTokens = sources.reduce((total, item) => total + item.budgetTokens, 0);
   if (budgetTokens > TAVERN_STABLE_CONTEXT_MAX_TOKENS) throw new Error("tavern_stable_context_oversize");
+  const volatileSources = worldInfoSource === undefined ? Object.freeze([]) : deriveVolatileWorldInfoSources(worldInfoSource, sources.find((item) => item.kind === "lorebook_constant")?.sourceId ?? "world-info");
   const body = {
     version: "gamebuddy-authored-context-catalog/v2" as const,
     scope: binding,
     stableSources: sources,
+    volatileSources,
   };
-  return Object.freeze({ ...body, canonicalHash: hash(canonicalJson(body)), stableSources: Object.freeze(sources) });
+  return Object.freeze({ ...body, canonicalHash: hash(canonicalJson(body)), stableSources: Object.freeze(sources), volatileSources: Object.freeze(volatileSources) });
 }
 
 type TavernCatalogBindingStore = Readonly<{
@@ -388,6 +402,25 @@ function managedWorldInfoSourceId(binding: TavernStableManagedWorldInfoBinding):
 }
 function worldInfoContent(source: TavernWorldInfoSource): string {
   return "content" in source ? source.content : source.alwaysOnPremise;
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function deriveVolatileWorldInfoSources(sourceValue: TavernWorldInfoSource, parentSourceId: string): TavernAuthoredContextCatalog["volatileSources"] {
+  let parsed: unknown;
+  try { parsed = JSON.parse(worldInfoContent(sourceValue)); } catch { return Object.freeze([]); }
+  if (!isRecord(parsed) || !Array.isArray(parsed.entries)) return Object.freeze([]);
+  const revision = sourceValue.binding.revision;
+  const canonical = sourceValue.binding.canonicalHash;
+  return Object.freeze(parsed.entries.map((entry, index) => {
+    if (!isRecord(entry) || typeof entry.publicTitle !== "string" || typeof entry.summary !== "string") throw new Error("tavern_volatile_context_invalid_source");
+    const content = entry.summary;
+    if (!validSourceContent(content)) throw new Error("tavern_volatile_context_invalid_source");
+    const sourceId = `${parentSourceId}_entry_${index + 1}`;
+    const provenance = `tavern-world-info-entry/${sourceId}/revision/${revision}/canonical/${canonical}`;
+    return Object.freeze({ sourceId, kind: "lorebook_entry" as const, revision: String(revision), canonicalHash: hash(content), content, budgetTokens: Math.ceil(content.length / 4), totalOrderKey: String(index + 1).padStart(4, "0"), provenance, selectionKeys: Object.freeze([entry.publicTitle]) });
+  }));
 }
 function validSourceContent(value: string): boolean {
   return typeof value === "string" && value.length > 0 && !/[\u0000\u007f]/u.test(value);

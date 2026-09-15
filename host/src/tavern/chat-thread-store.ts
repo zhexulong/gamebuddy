@@ -122,6 +122,77 @@ export type AuthoredContextSourceRef = Readonly<{
   totalOrderKey: string;
 }>;
 
+/** Strict reference-only per-turn World Info contributor. Never contains entry text. */
+export type AuthoredContextVolatileSourceRef = Readonly<{
+  sourceId: string;
+  kind: "lorebook_entry";
+  revision: string;
+  canonicalHash: string;
+  totalOrderKey: string;
+  provenance: string;
+}>;
+
+/** Ephemeral catalog candidate; `content` is never copied into a durable plan. */
+export type AuthoredContextVolatileSourceCandidate = AuthoredContextVolatileSourceRef & Readonly<{
+  content: string;
+  budgetTokens: number;
+  selectionKeys: readonly string[];
+}>;
+
+/**
+ * Selects World Info entries using only the accepted player text and a bounded
+ * visible transcript tail. The result intentionally contains references only.
+ */
+export function selectAuthoredContextVolatileSourceRefs(
+  acceptedPlayerText: string,
+  boundedVisibleTail: string,
+  candidates: readonly AuthoredContextVolatileSourceCandidate[],
+): Readonly<{ refs: readonly AuthoredContextVolatileSourceRef[]; tokenCount: number }> {
+  if (typeof acceptedPlayerText !== "string" || typeof boundedVisibleTail !== "string")
+    throw new Error("invalid_chat_turn_context_selection_input");
+  const corpus = `${acceptedPlayerText}\n${boundedVisibleTail}`.normalize("NFC").toLowerCase();
+  const refs: AuthoredContextVolatileSourceRef[] = [];
+  const seen = new Set<string>();
+  let tokenCount = 0;
+  for (const candidate of candidates) {
+    if (
+      !isExactId(candidate.sourceId) ||
+      candidate.kind !== "lorebook_entry" ||
+      typeof candidate.revision !== "string" ||
+      candidate.revision.length === 0 ||
+      !/^[a-f0-9]{64}$/.test(candidate.canonicalHash) ||
+      typeof candidate.content !== "string" ||
+      createHash("sha256").update(candidate.content, "utf8").digest("hex") !== candidate.canonicalHash ||
+      typeof candidate.totalOrderKey !== "string" ||
+      candidate.totalOrderKey.length === 0 ||
+      !Number.isSafeInteger(candidate.budgetTokens) ||
+      candidate.budgetTokens < 0 ||
+      typeof candidate.provenance !== "string" ||
+      candidate.provenance.length === 0 ||
+      !Array.isArray(candidate.selectionKeys) ||
+      candidate.selectionKeys.some((key) => typeof key !== "string" || key.trim().length === 0) ||
+      seen.has(candidate.sourceId)
+    )
+      throw new Error("invalid_chat_turn_context_volatile_candidate");
+    const selected = candidate.selectionKeys.some((key) => corpus.includes(key.normalize("NFC").trim().toLowerCase()));
+    if (!selected) continue;
+    refs.push(
+      Object.freeze({
+        sourceId: candidate.sourceId,
+        kind: candidate.kind,
+        revision: candidate.revision,
+        canonicalHash: candidate.canonicalHash,
+        totalOrderKey: candidate.totalOrderKey,
+        provenance: candidate.provenance,
+      }),
+    );
+    seen.add(candidate.sourceId);
+    tokenCount += candidate.budgetTokens;
+  }
+  refs.sort((a, b) => (a.totalOrderKey < b.totalOrderKey ? -1 : a.totalOrderKey > b.totalOrderKey ? 1 : 0));
+  return Object.freeze({ refs: Object.freeze(refs), tokenCount });
+}
+
 export type AcceptedTurnAuthoredContextPlan = Readonly<{
   threadId: string;
   turnId: string;
@@ -134,11 +205,114 @@ export type AcceptedTurnAuthoredContextPlan = Readonly<{
   chatSurfaceSessionId: string;
   stableSources: readonly AuthoredContextSourceRef[];
   stableTokenCount: number;
+  /** Per-turn references only; this is intentionally independent from stableSources. */
+  volatileSources: readonly AuthoredContextVolatileSourceRef[];
+  volatileTokenCount: number;
 }>;
 
 export function validateAcceptedTurnAuthoredContextPlan(value: unknown): AcceptedTurnAuthoredContextPlan {
-  if (!value || typeof value !== "object") throw new Error("invalid_chat_turn_context_plan");
-  return value as AcceptedTurnAuthoredContextPlan;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_chat_turn_context_plan");
+  const plan = value as Record<string, unknown>;
+
+  if (
+    !isExactId(plan.threadId) ||
+    !isExactId(plan.turnId) ||
+    !isExactId(plan.continuityId) ||
+    !isExactId(plan.companionId) ||
+    !isExactId(plan.playerId) ||
+    !isExactProfileId(plan.profileId) ||
+    typeof plan.profileRevision !== "number" ||
+    !Number.isSafeInteger(plan.profileRevision) ||
+    plan.profileRevision <= 0 ||
+    typeof plan.profileCanonicalHash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(plan.profileCanonicalHash) ||
+    !isExactId(plan.chatSurfaceSessionId) ||
+    !Number.isSafeInteger(plan.stableTokenCount) ||
+    (plan.stableTokenCount as number) < 0 ||
+    !Number.isSafeInteger(plan.volatileTokenCount) ||
+    (plan.volatileTokenCount as number) < 0 ||
+    !Array.isArray(plan.stableSources) ||
+    !Array.isArray(plan.volatileSources)
+  ) {
+    throw new Error("invalid_chat_turn_context_plan");
+  }
+
+  let stablePrevious = "";
+  const stableSeen = new Set<string>();
+  const validatedStableSources: AuthoredContextSourceRef[] = [];
+  for (const item of plan.stableSources) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("invalid_chat_turn_context_plan");
+    const source = item as Record<string, unknown>;
+    const sourceId = source.sourceId;
+    const kind = source.kind;
+    const revision = source.revision;
+    const canonicalHash = source.canonicalHash;
+    const totalOrderKey = source.totalOrderKey;
+    if (
+      !isExactId(sourceId) ||
+      (kind !== "persona" && kind !== "scenario" && kind !== "dialogue_examples" && kind !== "lorebook_constant") ||
+      typeof revision !== "string" ||
+      revision.length === 0 ||
+      typeof canonicalHash !== "string" ||
+      !/^[a-f0-9]{64}$/.test(canonicalHash) ||
+      typeof totalOrderKey !== "string" ||
+      totalOrderKey <= stablePrevious ||
+      stableSeen.has(`${kind}:${sourceId}`)
+    ) {
+      throw new Error("invalid_chat_turn_context_plan");
+    }
+    stablePrevious = totalOrderKey;
+    stableSeen.add(`${kind}:${sourceId}`);
+    validatedStableSources.push(Object.freeze({ sourceId, kind, revision, canonicalHash, totalOrderKey }));
+  }
+
+  let volatilePrevious = "";
+  const volatileSeen = new Set<string>();
+  const validatedVolatileSources: AuthoredContextVolatileSourceRef[] = [];
+  for (const item of plan.volatileSources) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("invalid_chat_turn_context_plan");
+    const source = item as Record<string, unknown>;
+    const sourceId = source.sourceId;
+    const kind = source.kind;
+    const revision = source.revision;
+    const canonicalHash = source.canonicalHash;
+    const totalOrderKey = source.totalOrderKey;
+    const provenance = source.provenance;
+    if (
+      !isExactId(sourceId) ||
+      kind !== "lorebook_entry" ||
+      typeof revision !== "string" ||
+      revision.length === 0 ||
+      typeof canonicalHash !== "string" ||
+      !/^[a-f0-9]{64}$/.test(canonicalHash) ||
+      typeof totalOrderKey !== "string" ||
+      totalOrderKey <= volatilePrevious ||
+      typeof provenance !== "string" ||
+      provenance.length === 0 ||
+      volatileSeen.has(sourceId)
+    ) {
+      throw new Error("invalid_chat_turn_context_plan");
+    }
+    volatilePrevious = totalOrderKey;
+    volatileSeen.add(sourceId);
+    validatedVolatileSources.push(Object.freeze({ sourceId, kind, revision, canonicalHash, totalOrderKey, provenance }));
+  }
+
+  return Object.freeze({
+    threadId: plan.threadId as string,
+    turnId: plan.turnId as string,
+    continuityId: plan.continuityId as string,
+    companionId: plan.companionId as string,
+    playerId: plan.playerId as string,
+    profileId: plan.profileId as string,
+    profileRevision: plan.profileRevision as number,
+    profileCanonicalHash: plan.profileCanonicalHash as string,
+    chatSurfaceSessionId: plan.chatSurfaceSessionId as string,
+    stableSources: Object.freeze(validatedStableSources),
+    stableTokenCount: plan.stableTokenCount as number,
+    volatileSources: Object.freeze(validatedVolatileSources),
+    volatileTokenCount: plan.volatileTokenCount as number,
+  });
 }
 
 /** Durable, immutable record of P4b's claim boundary; it is never a prompt capability. */
@@ -277,6 +451,8 @@ type MountedAcceptanceInput = Readonly<{
   authoredContextPreparation: Readonly<{
     sourceRefs: readonly Readonly<Record<string, string>>[];
     stableTokenCount: number;
+    volatileSourceRefs?: readonly Readonly<Record<string, string>>[];
+    volatileTokenCount?: number;
   }>;
   text: string;
   locale: string;
@@ -290,9 +466,12 @@ type MountedAcceptanceCommand = Readonly<{
   locale: string;
   idempotencyKey: string;
   expectedDraftRevision: number;
-  authoredContextPreparation: Readonly<{
+  boundedVisibleTail?: string;
+  authoredContextPreparation?: Readonly<{
     sourceRefs: readonly Readonly<Record<string, string>>[];
     stableTokenCount: number;
+    volatileSourceRefs?: readonly Readonly<Record<string, string>>[];
+    volatileTokenCount?: number;
   }>;
 }>;
 
@@ -579,6 +758,13 @@ export async function acceptMountedPlayerMessage(
     chatThreadId: string;
     chatSurfaceSessionId: string;
     selectionGeneration: number;
+    authoredContextCapability?: {
+      prepare(turnId: string): {
+        sourceRefs: readonly any[];
+        stableTokenCount: number;
+        volatileSourceCandidates?: readonly any[];
+      };
+    };
   }>,
   command: MountedAcceptanceCommand,
 ): Promise<AcceptedQueuedTurn> {
@@ -588,7 +774,32 @@ export async function acceptMountedPlayerMessage(
   );
   const accept = acceptanceByRoute.get(route);
   if (accept === undefined) throw new Error("p4_acceptance_port_unavailable");
-  return await accept(Object.freeze({ ...binding, ...command }));
+
+  let authoredContextPreparation = command.authoredContextPreparation;
+  if (authoredContextPreparation === undefined && binding.authoredContextCapability !== undefined) {
+    const prepared = binding.authoredContextCapability.prepare(`preflight_${randomUUID().replace(/-/gu, "")}`);
+    const volatile = selectAuthoredContextVolatileSourceRefs(
+      command.text,
+      command.boundedVisibleTail ?? "",
+      (prepared.volatileSourceCandidates ?? []) as never,
+    );
+    authoredContextPreparation = Object.freeze({
+      sourceRefs: Object.freeze(prepared.sourceRefs.map((source) => Object.freeze({ ...source }))),
+      stableTokenCount: prepared.stableTokenCount,
+      volatileSourceRefs: Object.freeze(volatile.refs.map((source) => Object.freeze({ ...source }))),
+      volatileTokenCount: volatile.tokenCount,
+    });
+  }
+  if (authoredContextPreparation === undefined) {
+    authoredContextPreparation = Object.freeze({
+      sourceRefs: Object.freeze([]),
+      stableTokenCount: 0,
+      volatileSourceRefs: Object.freeze([]),
+      volatileTokenCount: 0,
+    });
+  }
+
+  return await accept(Object.freeze({ ...binding, ...command, authoredContextPreparation }));
 }
 
 /**
@@ -1034,10 +1245,11 @@ function initSchema(db: DatabaseSync): void {
       profile_revision INTEGER NOT NULL CHECK(profile_revision > 0),
       profile_canonical_hash TEXT NOT NULL,
       chat_surface_session_id TEXT NOT NULL,
-      stable_token_count INTEGER NOT NULL CHECK(stable_token_count >= 0)
-    );
+       stable_token_count INTEGER NOT NULL CHECK(stable_token_count >= 0),
+       volatile_token_count INTEGER NOT NULL DEFAULT 0 CHECK(volatile_token_count >= 0)
+     );
 
-    CREATE TABLE tavern_turn_context_sources (
+     CREATE TABLE tavern_turn_context_sources (
       turn_id TEXT NOT NULL REFERENCES tavern_turn_context_plans(turn_id) ON DELETE CASCADE,
       ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
       source_id TEXT NOT NULL,
@@ -1046,10 +1258,24 @@ function initSchema(db: DatabaseSync): void {
       canonical_hash TEXT NOT NULL,
       total_order_key TEXT NOT NULL,
       PRIMARY KEY(turn_id, ordinal),
-      UNIQUE(turn_id, kind, source_id)
-    );
+       UNIQUE(turn_id, kind, source_id)
+     );
 
-    CREATE TABLE tavern_drafts (
+     CREATE TABLE tavern_turn_context_volatile_sources (
+       turn_id TEXT NOT NULL REFERENCES tavern_turn_context_plans(turn_id) ON DELETE CASCADE,
+       ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+       durable_turn_id TEXT NOT NULL,
+       source_id TEXT NOT NULL,
+       kind TEXT NOT NULL CHECK(kind = 'lorebook_entry'),
+       revision TEXT NOT NULL,
+       canonical_hash TEXT NOT NULL,
+       total_order_key TEXT NOT NULL,
+       provenance TEXT NOT NULL,
+       PRIMARY KEY(turn_id, ordinal),
+       UNIQUE(turn_id, kind, source_id)
+     );
+
+     CREATE TABLE tavern_drafts (
       thread_id TEXT PRIMARY KEY REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
       draft_content TEXT,
       revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
@@ -2213,6 +2439,7 @@ function validateCanonicalHash(value: unknown): string {
   return value;
 }
 function isExactId(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/u.test(value); }
+function isExactProfileId(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_.-]{1,128}$/u.test(value) && value !== "unknown"; }
 
 function readContextPlan(db: DatabaseSync, turnId: string, thread: ChatThread): AcceptedTurnAuthoredContextPlan | undefined {
   const row = db.prepare("SELECT * FROM tavern_turn_context_plans WHERE turn_id = ?").get(turnId) as any;
@@ -2223,13 +2450,19 @@ function readContextPlan(db: DatabaseSync, turnId: string, thread: ChatThread): 
     return Object.freeze({ sourceId: source.source_id, kind: source.kind, revision: source.revision, canonicalHash: source.canonical_hash, totalOrderKey: source.total_order_key });
   });
   if (sources.some((source, index) => index > 0 && source.totalOrderKey <= sources[index - 1].totalOrderKey)) throw new Error("chat_turn_context_source_order_invalid");
-  if (!Number.isSafeInteger(row.stable_token_count) || row.stable_token_count < 0) throw new Error("chat_turn_context_token_mismatch");
-  return Object.freeze({ threadId: row.thread_id, turnId, continuityId: row.continuity_id, companionId: row.companion_id, playerId: row.player_id, profileId: row.profile_id, profileRevision: row.profile_revision, profileCanonicalHash: row.profile_canonical_hash, chatSurfaceSessionId: row.chat_surface_session_id, stableSources: Object.freeze(sources), stableTokenCount: row.stable_token_count });
+  if (!Number.isSafeInteger(row.stable_token_count) || row.stable_token_count < 0 || !Number.isSafeInteger(row.volatile_token_count) || row.volatile_token_count < 0) throw new Error("chat_turn_context_token_mismatch");
+  const volatileSources = (db.prepare("SELECT * FROM tavern_turn_context_volatile_sources WHERE turn_id = ? ORDER BY ordinal").all(turnId) as any[]).map((source, ordinal) => {
+    if (source.ordinal !== ordinal || source.durable_turn_id !== turnId) throw new Error("chat_turn_context_volatile_source_order_invalid");
+    return Object.freeze({ sourceId: source.source_id, kind: source.kind, revision: source.revision, canonicalHash: source.canonical_hash, totalOrderKey: source.total_order_key, provenance: source.provenance });
+  });
+  if (volatileSources.some((source, index) => index > 0 && source.totalOrderKey <= volatileSources[index - 1].totalOrderKey)) throw new Error("chat_turn_context_volatile_source_order_invalid");
+  return Object.freeze({ threadId: row.thread_id, turnId, continuityId: row.continuity_id, companionId: row.companion_id, playerId: row.player_id, profileId: row.profile_id, profileRevision: row.profile_revision, profileCanonicalHash: row.profile_canonical_hash, chatSurfaceSessionId: row.chat_surface_session_id, stableSources: Object.freeze(sources), stableTokenCount: row.stable_token_count, volatileSources: Object.freeze(volatileSources), volatileTokenCount: row.volatile_token_count });
 }
 
 function persistContextPlan(db: DatabaseSync, plan: AcceptedTurnAuthoredContextPlan, turnId: string): void {
-  db.prepare("INSERT INTO tavern_turn_context_plans (turn_id, thread_id, continuity_id, companion_id, player_id, profile_id, profile_revision, profile_canonical_hash, chat_surface_session_id, stable_token_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, plan.threadId, plan.continuityId, plan.companionId, plan.playerId, plan.profileId, plan.profileRevision, plan.profileCanonicalHash, plan.chatSurfaceSessionId, plan.stableTokenCount);
+  db.prepare("INSERT INTO tavern_turn_context_plans (turn_id, thread_id, continuity_id, companion_id, player_id, profile_id, profile_revision, profile_canonical_hash, chat_surface_session_id, stable_token_count, volatile_token_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, plan.threadId, plan.continuityId, plan.companionId, plan.playerId, plan.profileId, plan.profileRevision, plan.profileCanonicalHash, plan.chatSurfaceSessionId, plan.stableTokenCount, plan.volatileTokenCount);
   for (const [ordinal, source] of plan.stableSources.entries()) db.prepare("INSERT INTO tavern_turn_context_sources (turn_id, ordinal, source_id, kind, revision, canonical_hash, total_order_key) VALUES (?, ?, ?, ?, ?, ?, ?)").run(turnId, ordinal, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey);
+  for (const [ordinal, source] of plan.volatileSources.entries()) db.prepare("INSERT INTO tavern_turn_context_volatile_sources (turn_id, ordinal, durable_turn_id, source_id, kind, revision, canonical_hash, total_order_key, provenance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, ordinal, turnId, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey, source.provenance);
 }
 
 function createAcceptedContextPlan(thread: ChatThread, input: MountedAcceptanceInput, turnId: string): AcceptedTurnAuthoredContextPlan {
@@ -2258,6 +2491,23 @@ function createAcceptedContextPlan(thread: ChatThread, input: MountedAcceptanceI
     seen.add(`${kind}:${sourceId}`);
     return Object.freeze({ sourceId, kind, revision, canonicalHash, totalOrderKey });
   });
+  let volatilePrevious = "";
+  const volatileSeen = new Set<string>();
+  const volatileSources = (preparation.volatileSourceRefs ?? []).map((source) => {
+    if (!isRecord(source)) throw new Error("invalid_chat_turn_context_plan");
+    const sourceId = source.sourceId;
+    const kind = source.kind;
+    const revision = source.revision;
+    const canonicalHash = source.canonicalHash;
+    const totalOrderKey = source.totalOrderKey;
+    const provenance = source.provenance;
+    if (!isExactId(sourceId) || kind !== "lorebook_entry" || typeof revision !== "string" || !/^[a-f0-9]{64}$/.test(canonicalHash) || typeof totalOrderKey !== "string" || totalOrderKey <= volatilePrevious || typeof provenance !== "string" || provenance.length === 0 || volatileSeen.has(sourceId)) throw new Error("invalid_chat_turn_context_volatile_plan");
+    volatilePrevious = totalOrderKey;
+    volatileSeen.add(sourceId);
+    return Object.freeze({ sourceId, kind, revision, canonicalHash, totalOrderKey, provenance });
+  });
+  const volatileTokenCount = preparation.volatileTokenCount ?? 0;
+  if (!Number.isSafeInteger(volatileTokenCount) || volatileTokenCount < 0) throw new Error("chat_turn_context_token_mismatch");
   return Object.freeze({
     threadId: thread.chatThreadId,
     turnId,
@@ -2270,6 +2520,8 @@ function createAcceptedContextPlan(thread: ChatThread, input: MountedAcceptanceI
     chatSurfaceSessionId: thread.chatSurfaceSessionId,
     stableSources: Object.freeze(stableSources),
     stableTokenCount: preparation.stableTokenCount,
+    volatileSources: Object.freeze(volatileSources),
+    volatileTokenCount,
   });
 }
 
@@ -2283,7 +2535,10 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
   const draft = draftRow ? validateDraft({ revision: draftRow.revision, text: draftRow.draft_content ?? null }) : validateDraft({ revision: 0, text: null });
   const turnRow = db.prepare("SELECT * FROM tavern_turns WHERE thread_id = ? AND is_current = 1").get(chatThreadId) as any;
   const turnLedger = turnRow ? readTurnLedger(db, turnRow) : null;
-  const currentTurnContextPlan = turnRow && turnRow.status === "accepted_queued" ? readContextPlan(db, turnRow.turn_id, thread) : undefined;
+  const currentTurnContextPlan =
+    turnRow && (turnRow.status === "accepted_queued" || turnRow.status === "attempt_starting")
+      ? readContextPlan(db, turnRow.turn_id, thread)
+      : undefined;
   const idempotency = (db.prepare(
     "SELECT i.idempotency_key, i.fingerprint, t.turn_id, t.idempotency_key AS turn_idempotency_key, t.message_id, t.accepted_at_ms FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id WHERE i.thread_id = ? ORDER BY i.idempotency_key",
   ).all(chatThreadId) as any[]).map((entry) =>
@@ -2978,7 +3233,9 @@ function validateAuthoredContextPreparation(value: MountedAcceptanceInput["autho
     value.stableTokenCount < 0
   )
     throw new Error("chat_turn_context_token_mismatch");
-  if (value.sourceRefs.some((source) => !isRecord(source))) throw new Error("invalid_chat_turn_context_plan");
+   if (value.sourceRefs.some((source) => !isRecord(source))) throw new Error("invalid_chat_turn_context_plan");
+   if (value.volatileSourceRefs !== undefined && (!Array.isArray(value.volatileSourceRefs) || value.volatileSourceRefs.some((source) => !isRecord(source)))) throw new Error("invalid_chat_turn_context_volatile_plan");
+   if (value.volatileTokenCount !== undefined && (!Number.isSafeInteger(value.volatileTokenCount) || value.volatileTokenCount < 0)) throw new Error("chat_turn_context_token_mismatch");
 }
 
 function validateAttemptClaimInput(value: MountedAttemptClaimInput): void {
