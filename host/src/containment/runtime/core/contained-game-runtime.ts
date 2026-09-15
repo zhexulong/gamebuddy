@@ -6,26 +6,51 @@ import type {
   RedactedRoleLaunchOutcome,
   RoleLaunchOperation,
   TypedPrivateGameAuthorizationProducer,
+  TypedPrivateGameFacts,
 } from "../contract/game-runtime.js";
 import type {
   ContainmentCorrelation,
-  ContainmentDeadline,
-  DesktopGuardianSession,
+  ContainmentOperationWaitBudget,
 } from "../../auth/desktop-guardian-session.internal.js";
 
-type RuntimeBinding = ContainmentCorrelation & ContainmentDeadline;
+type RuntimeBinding = ContainmentCorrelation & ContainmentOperationWaitBudget;
 
-type InternalAuthorization = (privateGameFacts: unknown) => void;
+/**
+ * Composition-owned platform port. It receives typed game facts and owns the
+ * translation to its authenticated platform transport.
+ */
+export type ContainedGameRuntimePlatform = Readonly<{
+  arm(input: Readonly<{
+    readonly guardianInstanceId: string;
+    readonly guardianEpoch: number;
+    readonly attemptId: string;
+    readonly operationWaitBudgetMs: number;
+    readonly authorization: TypedPrivateGameFacts;
+  }>): Promise<void>;
+  launch(input: Readonly<{
+    readonly guardianInstanceId: string;
+    readonly guardianEpoch: number;
+    readonly attemptId: string;
+    readonly deadlineUnixMs: number;
+    readonly role: ContainmentRole;
+    readonly authorization: TypedPrivateGameFacts;
+  }>): Promise<void>;
+  contain(input: Readonly<{
+    readonly guardianInstanceId: string;
+    readonly guardianEpoch: number;
+    readonly attemptId: string;
+    readonly operationWaitBudgetMs: number;
+    readonly role: ContainmentRole;
+  }>): Promise<void>;
+  close(): Promise<void>;
+}>;
+
+type InternalAuthorization = (privateGameFacts: TypedPrivateGameFacts) => void;
 
 const rejected = (message: string): never => { throw new Error(`contained game runtime: ${message}`); };
 
-const encodePrivateFacts = (facts: unknown): Uint8Array => {
-  if (facts instanceof Uint8Array) return new Uint8Array(facts);
-  return new TextEncoder().encode(JSON.stringify(facts));
-};
-
 export function createContainedGameRuntime(
-  session: DesktopGuardianSession,
+  platform: ContainedGameRuntimePlatform,
   binding: RuntimeBinding,
 ): ContainedGameRuntime {
   const bindingSnapshot = Object.freeze({
@@ -61,35 +86,34 @@ export function createContainedGameRuntime(
         ensureOpen(deadlineUnixMs);
         if (roleStates.has(role)) rejected("role was already launched");
         if (armAttempted && !armed) rejected("arm already failed");
-        let privateFrame: Uint8Array | undefined;
+        let privateAuthorization: TypedPrivateGameFacts | undefined;
         let used = false;
         let active = true;
-        const authorization: InternalAuthorization = (facts) => {
+        const authorization: InternalAuthorization = (privateGameFacts) => {
           if (!active) rejected("authorization is stale");
           if (used) rejected("authorization replay");
           used = true;
-          if (facts === undefined) rejected("authorization forged");
+          if (privateGameFacts === undefined) rejected("authorization forged");
           ensureOpen(deadlineUnixMs);
-          privateFrame = encodePrivateFacts(facts);
+          privateAuthorization = privateGameFacts;
         };
         try {
           await produceAuthorization(authorization);
         } finally {
           active = false;
         }
-        const authorizedFrame = privateFrame === undefined
-          ? rejected("authorization was not produced")
-          : privateFrame;
+        if (privateAuthorization === undefined) rejected("authorization was not produced");
+        const authorizedValue: TypedPrivateGameFacts = privateAuthorization!;
         ensureOpen(deadlineUnixMs);
         if (!armed) {
           armAttempted = true;
-          await session.arm({ ...bindingSnapshot, deadlineUnixMs, privateFrame: new Uint8Array(authorizedFrame) });
+          await platform.arm({ ...bindingSnapshot, operationWaitBudgetMs: binding.operationWaitBudgetMs, authorization: authorizedValue });
           armed = true;
         }
         ensureOpen(deadlineUnixMs);
         roleStates.set(role, "launching");
         try {
-          await session.launch({ ...bindingSnapshot, deadlineUnixMs, role, privateFrame: new Uint8Array(authorizedFrame) });
+          await platform.launch({ ...bindingSnapshot, deadlineUnixMs, role, authorization: authorizedValue });
           roleStates.set(role, "launched");
           return outcome(role, "succeeded");
         } catch {
@@ -104,7 +128,7 @@ export function createContainedGameRuntime(
         if (roleStates.get(role) !== "launched") rejected("role was not launched");
         roleStates.set(role, "containing");
         try {
-          await session.contain({ ...bindingSnapshot, deadlineUnixMs: binding.deadlineUnixMs, role });
+          await platform.contain({ ...bindingSnapshot, operationWaitBudgetMs: binding.operationWaitBudgetMs, role });
           roleStates.set(role, "contained");
           return containmentOutcome(role, "succeeded");
         } catch {
@@ -116,7 +140,7 @@ export function createContainedGameRuntime(
     close() {
       if (closed) return operation.then(() => undefined);
       closed = true;
-      return serialize(async () => { await session.close(); });
+      return serialize(async () => { await platform.close(); });
     },
   });
   return runtime;
