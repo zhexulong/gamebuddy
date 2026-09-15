@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { access, lstat, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { identityProfileHash } from "../identity-profile.js";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { identityKey } from "../runtime.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
   createNewCompanionService,
   provisionDirectNewCompanion,
@@ -12,6 +15,14 @@ import {
 } from "./new-companion-service.js";
 
 const hash = "a".repeat(64);
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 
 async function cleanupTestRoot(root: string): Promise<void> {
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -114,6 +125,55 @@ test("New Companion fails closed when runtime namespace is replaced by a symlink
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("New Companion maps the reviewed persona and renders card macros deterministically", async () => {
+  const root = await canonicalTestRoot("tavern-new-companion-persona-");
+  const personaCandidate = {
+    ...candidate,
+    fields: [
+      {
+        field: "persona_core",
+        text: "{{char}} is calm when {{user}} needs help.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "persona_interaction_style",
+        text: "Listen to <USER> before answering.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "persona_expression_style",
+        text: "<BOT> speaks clearly to {{USER}}.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+    ],
+  };
+  try {
+    const review = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    }).review(personaCandidate, {
+      reviewedFields: ["persona_core", "persona_interaction_style", "persona_expression_style"],
+      approvedAtMs: 9,
+    });
+    const created = await provisionNewCompanion(
+      root,
+      "player",
+      personaCandidate,
+      review,
+      createChatThreadStore(root, "b".repeat(64)),
+    );
+    assert.deepEqual(created.profile.persona, {
+      core: "GameBuddy Companion is calm when player needs help.",
+      interactionStyle: "Listen to player before answering.",
+      expressionStyle: "GameBuddy Companion speaks clearly to player.",
+    });
+    assert.equal(identityProfileHash(created.profile), identityProfileHash({ ...created.profile, persona: { ...created.profile.persona! } }));
+  } finally {
+    await cleanupTestRoot(root);
   }
 });
 
