@@ -114,7 +114,7 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function text(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/u.test(value);
+  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);
 }
 function digest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 32);

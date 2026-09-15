@@ -1,7 +1,7 @@
 /** Pure Tavern artifact schemas. These values are inert product data, never prompts or executable imports. */
 const TAVERN_SCHEMA_VERSION = 1 as const;
 const ID = /^[A-Za-z0-9._-]{1,128}$/u;
-const TEXT = /[\u0000-\u001f\u007f]/u;
+const TEXT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
 type RuntimeEligibility = "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
 type ArtifactRevision = Readonly<{ schemaVersion: typeof TAVERN_SCHEMA_VERSION; revision: number }>;
 export type CharacterCandidate = ArtifactRevision &

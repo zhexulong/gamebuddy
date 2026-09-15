@@ -351,7 +351,7 @@ function boundedText(value: unknown, max: number): string | undefined {
   return typeof value === "string" &&
     utf8Bytes(value) > 0 &&
     utf8Bytes(value) <= max &&
-    !/[\u0000-\u001f\u007f]/u.test(value)
+    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
     ? value
     : undefined;
 }

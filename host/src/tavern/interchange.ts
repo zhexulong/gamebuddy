@@ -288,7 +288,7 @@ function name(value: unknown): value is string {
     typeof value === "string" &&
     Buffer.byteLength(value, "utf8") > 0 &&
     Buffer.byteLength(value, "utf8") <= 128 &&
-    !/[\u0000-\u001f\u007f]/u.test(value)
+    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
   );
 }
 function text(value: unknown): value is string {
@@ -296,7 +296,7 @@ function text(value: unknown): value is string {
     typeof value === "string" &&
     Buffer.byteLength(value, "utf8") > 0 &&
     Buffer.byteLength(value, "utf8") <= TAVERN_INTERCHANGE_LIMITS_V1.textBytes &&
-    !/[\u0000-\u001f\u007f]/u.test(value)
+    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
   );
 }
 function positive(value: unknown): value is number {

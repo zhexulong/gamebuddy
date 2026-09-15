@@ -3862,7 +3862,7 @@ function isText(value: unknown): value is string {
     typeof value === "string" &&
     value.length > 0 &&
     value === value.normalize("NFC") &&
-    !/[\u0000-\u001F\u007F-\u009F]/u.test(value) &&
+    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value) &&
     Buffer.byteLength(value, "utf8") <= MAX_CHAT_MESSAGE_TEXT_UTF8_BYTES
   );
 }
