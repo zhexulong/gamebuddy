@@ -2,7 +2,7 @@ import { createConnection, type Socket } from "node:net";
 import { win32 } from "node:path";
 
 import type { DesktopGuardianSession, GuardianAck } from "../../containment/auth/desktop-guardian-session.internal.js";
-import type { DesktopHostAssemblyInput, DesktopPrivateHostComposition, DesktopRootLayoutCapability } from "../../composition/desktop-host-composition.js";
+import { createDesktopProductComposition, type DesktopHostAssemblyInput, type DesktopPrivateHostComposition, type DesktopRootLayoutCapability } from "../../composition/desktop-host-composition.js";
 import { loadHostDeploymentManifest } from "../../deployment-manifest.js";
 import { parseStrictJson } from "../../strict-json-reader.js";
 import {
@@ -240,10 +240,9 @@ async function createDesktopProductCompositionForBootstrap(
   const consumedRootAuthority = consumeDesktopRootLayoutCapability(rootAuthority);
   const session = await createAuthenticatedDesktopGuardianSession(consumeDesktopGuardianSessionCapability(guardianAuthority));
   try {
-    // The value import is deferred so ordinary import of this private wire never
-    // evaluates the semantic coordinator/sqlite chain; the composition's
-    // construction failure still closes the authenticated session below.
-    const { createDesktopProductComposition } = await import("../../composition/desktop-host-composition.js");
+    // The composition is a static binding so the release artifact retains the
+    // whole entry closure at build time; its construction failure still closes
+    // the authenticated session below.
     return await createDesktopProductComposition(consumedRootAuthority, session, assemblyInput);
   } catch (error) {
     try {

@@ -92,9 +92,15 @@ test("Host bootstrap rejects a valid root until private Guardian session admissi
     await Promise.all([moduleDirectory, rootLayout.dataRoot, rootLayout.operationalRoot, rootLayout.presentationRoot].map(async (path) => await mkdir(path, { recursive: true })));
     await mkdir(join(moduleDirectory, "bootstrap", "entry"), { recursive: true });
     await mkdir(join(moduleDirectory, "bootstrap", "wire"), { recursive: true });
+    await mkdir(join(moduleDirectory, "composition"), { recursive: true });
     const entryModule = join(moduleDirectory, "bootstrap", "entry", "desktop-host-entry.internal.js");
     await writeFile(entryModule, await readFile(compiledEntry));
     await writeFile(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(compiledBootstrapHelper));
+    // The wire binds the production composition statically; this fixture provides
+    // only the narrow facade the wire imports. These scenarios must fail at root
+    // or guardian-session admission, never reach composition construction, so an
+    // invocation here is a regression and fails the child loudly.
+    await writeFile(join(moduleDirectory, "composition", "desktop-host-composition.js"), "export async function createDesktopProductComposition() { throw new Error(\"fixture_composition_unexpectedly_constructed\"); }\n");
     await cp(resolve(sourceDirectory, "..", "..", "windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
     await cp(resolve(sourceDirectory, "..", "..", "strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
     await cp(resolve(sourceDirectory, "..", "..", "deployment-manifest.js"), join(moduleDirectory, "deployment-manifest.js"));

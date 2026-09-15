@@ -296,6 +296,11 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   // The composition call site inside runDesktopHostBootstrap precedes the
   // acknowledgement: the formal bootstrap builds the product composition
   // before publishing bootstrap readiness.
+  // The composition must stay a static binding: a deferred relative dynamic
+  // import would be rejected by the production artifact validator, and the
+  // release closure already weaves the whole product chain at build time.
+  assert.match(source, /from "\.\.\/\.\.\/composition\/desktop-host-composition\.js"/);
+  assert.doesNotMatch(source, /await import\("\.\.\/\.\.\/composition/);
 });
 
 function findPackageRoot(directory: string): string {
