@@ -1,12 +1,12 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { TextEncoder } from "node:util";
-import { pathToFileURL } from "node:url";
 import {
   isCurrentMountedChatRuntimeLease,
   type MountedChatRuntimeLease,
 } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
-import { resolveMagicContextExtensionEntry, resolveRuntimePaths } from "../../runtime.js";
+import { identityProfileHash } from "../../identity-profile.js";
+import { resolveRuntimePaths } from "../../runtime.js";
 import {
   type ComposedTavernProfile,
   isComposedTavernProfile,
@@ -17,28 +17,11 @@ import {
   TavernBrowserValidatorsV1,
 } from "../browser-contract/index.js";
 
-/** Vendor-owned row; its state token never crosses the Host/browser boundary. */
-type MemoryRowView = Readonly<{
-  stateToken: string;
-  content: string;
-  category: "semantic" | "interaction";
-  status: "active" | "permanent" | "archived";
-}>;
-
-type MemoryReadProjection = Readonly<{
-  listMemories(input: Readonly<{ continuityId: string }>): Promise<readonly MemoryRowView[]>;
-}>;
-
-/**
- * Ordinary management-only CRUD seam. This is deliberately a vendor facade,
- * not a Pi tool or a callback injected into a provider runtime.
- */
-type MemoryCrudFacade = MemoryReadProjection &
-  Readonly<{
-    create(input: Readonly<{ continuityId: string; content: string }>): Promise<MemoryRowView>;
-    update(input: Readonly<{ continuityId: string; stateToken: string; content: string }>): Promise<MemoryRowView>;
-    archive(input: Readonly<{ continuityId: string; stateToken: string }>): Promise<void>;
-  }>;
+import type {
+  GameBuddyMemoryView as MemoryRowView,
+  GameBuddyPlayerMemoryCrudFacade as MemoryCrudFacade,
+  GameBuddyPlayerMemoryReadProjection as MemoryReadProjection,
+} from "@cortexkit/pi-magic-context/memory";
 
 export type MemoryManagementService = Readonly<{
   /** Reads the bounded, browser-safe Memory projection for the mounted continuity. */
@@ -84,11 +67,21 @@ export function createMemoryManagementService(
     options.profile.routeIds.includes("memory.mutate") &&
     options.profile.operationIds.includes("memory.mutate");
   const lease = options.lease;
+  const identityProfile = options.lease.runtimeSession?.profile;
+  if (!identityProfile) throw unavailable();
+  const profileBinding = Object.freeze({
+    profileId: identityProfile.profileId,
+    profileRevision: identityProfile.revision,
+    profileCanonicalHash: identityProfileHash(identityProfile),
+  });
   const handleSecret = randomBytes(32);
   const projectHandle = (stateToken: string): string =>
     createHmac("sha256", handleSecret).update(`memory\0${continuityId}\0${stateToken}`, "utf8").digest("base64url");
   let facadePromise: Promise<MemoryCrudFacade> | undefined;
   let closed = false;
+  let inFlight = 0;
+  let drainResolve: (() => void) | undefined;
+  let mutationQueue: Promise<unknown> = Promise.resolve();
 
   const assertOpen = (): void => {
     if (closed || !isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
@@ -97,11 +90,8 @@ export function createMemoryManagementService(
   async function facade(): Promise<MemoryCrudFacade> {
     if (injectedFacade !== undefined) return injectedFacade;
     facadePromise ??= (async () => {
-      const magicContextEntry = resolveMagicContextExtensionEntry();
-      const module = (await import(pathToFileURL(magicContextEntry).href)) as {
-        createGameBuddyPlayerMemoryCrudFacade?: (args: Readonly<{ continuityId: string; runtimeCwd: string }>) => unknown;
-      };
-      const value = module.createGameBuddyPlayerMemoryCrudFacade?.({ continuityId, runtimeCwd });
+      const { createGameBuddyPlayerMemoryCrudFacade } = await import("@cortexkit/pi-magic-context/memory");
+      const value = createGameBuddyPlayerMemoryCrudFacade({ continuityId, runtimeCwd, ...profileBinding });
       if (
         value === null ||
         typeof value !== "object" ||
@@ -151,7 +141,7 @@ export function createMemoryManagementService(
   };
 
   const readRows = async (): Promise<readonly MemoryRowView[]> => {
-    const rows = await (await facade()).listMemories({ continuityId });
+    const rows = await (await facade()).listMemories({ continuityId, ...profileBinding });
     assertOpen();
     return rows;
   };
@@ -159,42 +149,65 @@ export function createMemoryManagementService(
   return Object.freeze({
     async read(): Promise<MemoryReadV1> {
       assertOpen();
+      inFlight += 1;
       try {
         return projectRows(await readRows());
       } catch (error) {
         throw mapReadError(error);
+      } finally {
+        inFlight -= 1;
+        if (inFlight === 0 && drainResolve) {
+          drainResolve();
+        }
       }
     },
     ...(mutationEnabled
       ? {
           async mutate(command: MemoryMutationCommandV1): Promise<MemoryReadV1> {
             assertOpen();
+            inFlight += 1;
             try {
-              const rows = await readRows();
-              const before = projectRows(rows);
-              if (before.projectionRevision !== command.expectedProjectionRevision) throw conflict();
-              const vendor = await facade();
-              assertMutationFacade(vendor);
-              if (command.operation !== "archive" && !isMemoryContent(command.content)) throw unavailable();
-              if (command.operation === "create") {
-                await vendor.create({ continuityId, content: command.content });
-              } else {
-                const row = rows.find((candidate) => projectHandle(candidate.stateToken) === command.handle);
-                if (row === undefined) throw conflict();
-                if (command.operation === "update")
-                  await vendor.update({ continuityId, stateToken: row.stateToken, content: command.content });
-                else await vendor.archive({ continuityId, stateToken: row.stateToken });
-              }
-              assertOpen();
-              return projectRows(await readRows());
+              const operation = async () => {
+                assertOpen();
+                const rows = await readRows();
+                const before = projectRows(rows);
+                if (before.projectionRevision !== command.expectedProjectionRevision) throw conflict();
+                const vendor = await facade();
+                assertMutationFacade(vendor);
+                if (command.operation !== "archive" && !isMemoryContent(command.content)) throw unavailable();
+                if (command.operation === "create") {
+                  await vendor.create({ continuityId, ...profileBinding, content: command.content });
+                } else {
+                  const row = rows.find((candidate) => projectHandle(candidate.stateToken) === command.handle);
+                  if (row === undefined) throw conflict();
+                  if (command.operation === "update")
+                    await vendor.update({ continuityId, ...profileBinding, stateToken: row.stateToken, content: command.content });
+                  else await vendor.archive({ continuityId, ...profileBinding, stateToken: row.stateToken });
+                }
+                assertOpen();
+                return projectRows(await readRows());
+              };
+              const queued = mutationQueue.then(operation, operation);
+              mutationQueue = queued.catch(() => {});
+              return (await queued) as MemoryReadV1;
             } catch (error) {
               throw mapMutationError(error);
+            } finally {
+              inFlight -= 1;
+              if (inFlight === 0 && drainResolve) {
+                drainResolve();
+              }
             }
           },
         }
       : {}),
     async close(): Promise<void> {
       closed = true;
+      if (inFlight > 0) {
+        await new Promise<void>((resolve) => {
+          drainResolve = resolve;
+        });
+      }
     },
   });
 }

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import {
   type AgentSession,
@@ -498,8 +498,8 @@ export type GameHostBindingFactory = (
 /** Construction-owned attachment for a bounded Game runtime surface. */
 export type ChatRuntimeConstructionProduct = Readonly<{
   runtime: RuntimeSession;
-  authoredContextCapability: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability;
-  refreshAuthoredContext: (currentCapability: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability) => Promise<import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability>;
+  authoredContextCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability;
+  refreshAuthoredContext: (currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability) => Promise<import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability>;
   clearTavernNarrativeGateMarker?: () => void;
 }>;
 
@@ -531,10 +531,10 @@ export async function createChatRuntimeConstructionInternal(
       throw new Error("pi_session_binding_unavailable");
     const catalog: TavernAuthoredContextCatalog = await construction.materializeStableContextForPiSession(piSessionId);
     const { publishGameBuddyAuthoredStableCatalog, replaceGameBuddyAuthoredStableCatalog } = await import(
-      "@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge"
+      "@cortexkit/pi-magic-context/tavern"
     );
     const authoredContextCapability = publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);
-    const refreshAuthoredContext = async (currentCapability: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability) => {
+    const refreshAuthoredContext = async (currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability) => {
       const freshCatalog = await construction.materializeDesiredStableContextForPiSession(piSessionId);
       return replaceGameBuddyAuthoredStableCatalog(currentCapability, freshCatalog.scope, freshCatalog);
     };
@@ -1167,7 +1167,7 @@ export async function createRuntimeWithFixedToolsCore(
           // Gate evidence failure does not change the actual provider path.
         }
       };
-      const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
+      const bridge = (await import("@cortexkit/pi-magic-context/tavern")) as {
         registerTavernNarrativeGateMarker: (
           value: Readonly<{ sessionId: string; nonceSha256: string }>,
         ) => () => void;
@@ -1180,7 +1180,7 @@ export async function createRuntimeWithFixedToolsCore(
       );
     }
     if (gameOperationalGate !== undefined) {
-      const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
+      const bridge = (await import("@cortexkit/pi-magic-context/tavern")) as {
         registerGameOperationalGateMarker: (
           value: Readonly<{
             sessionId: string;
@@ -1198,7 +1198,7 @@ export async function createRuntimeWithFixedToolsCore(
       );
     }
     if (loadMagicContextExtension) {
-      const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
+      const bridge = (await import("@cortexkit/pi-magic-context/tavern")) as {
         registerTavernProviderStartObserver: (
           sessionId: string,
           onStart: (

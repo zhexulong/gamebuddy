@@ -3,9 +3,13 @@ import { join, resolve, sep } from "node:path";
 import { atomicWriteFile, verifySafePathBoundary, withPathLock } from "../../path-lock.js";
 import { readStrictJsonFile } from "../../strict-json-reader.js";
 import { canonicalHash, canonicalJson } from "../artifact-store.js";
+import {
+  importTavernLorebook,
+  isRawTavernLorebook,
+  type TavernLorebookImportOptions,
+} from "./tavern-lorebook-importer.js";
 
 const MAX_ARTIFACTS = 128;
-const MAX_ENTRIES = 32;
 const MAX_TITLE = 128;
 const MAX_SUMMARY = 4_000;
 
@@ -23,7 +27,8 @@ export type PublicWorldInfoProjection = Readonly<{
 export type CreateWorldInfoRequest = Omit<PublicWorldInfoProjection, "revision">;
 export type UpdateWorldInfoRequest = CreateWorldInfoRequest & Readonly<{ expectedRevision: number }>;
 export type WorldInfoManagementRepository = Readonly<{
-  create(request: CreateWorldInfoRequest): Promise<PublicWorldInfoProjection>;
+  create(request: CreateWorldInfoRequest | unknown): Promise<PublicWorldInfoProjection>;
+  import?(rawLorebook: unknown, options?: TavernLorebookImportOptions): Promise<PublicWorldInfoProjection>;
   list(): Promise<readonly PublicWorldInfoProjection[]>;
   detail(publicTitle: string): Promise<PublicWorldInfoProjection | null>;
   update(publicTitle: string, request: UpdateWorldInfoRequest): Promise<PublicWorldInfoProjection>;
@@ -66,15 +71,18 @@ export function createWorldInfoManagementRepository(runtimeRoot: string): WorldI
 
   return Object.freeze({
     async create(request) {
-      validateCreateRequest(request);
+      const normalized = isRawTavernLorebook(request)
+        ? importTavernLorebook(request)
+        : (request as CreateWorldInfoRequest);
+      validateCreateRequest(normalized);
       return withCatalog(root, catalogPath, async (catalog) => {
         if (
           catalog.artifacts.length >= MAX_ARTIFACTS ||
-          catalog.artifacts.some((item) => item.publicTitle === request.publicTitle)
+          catalog.artifacts.some((item) => item.publicTitle === normalized.publicTitle)
         )
           throw new Error("world_info_already_exists");
         const handle = makePersistentHandle();
-        const artifact = artifactFor(1, request);
+        const artifact = artifactFor(1, normalized);
         const readBack = await writeRevision(root, directory, handle, artifact);
         await writeCatalog(root, catalogPath, {
           schemaVersion: 1,
@@ -89,6 +97,10 @@ export function createWorldInfoManagementRepository(runtimeRoot: string): WorldI
         });
         return project(readBack);
       });
+    },
+    async import(rawLorebook, options) {
+      const adapted = importTavernLorebook(rawLorebook, options);
+      return this.create(adapted);
     },
     async list() {
       const catalog = await readCatalog(root, catalogPath);
@@ -187,7 +199,7 @@ async function readCatalog(root: string, path: string): Promise<Catalog> {
       !record(item) ||
       !only(item, ["handle", "publicTitle", "revision"]) ||
       !uuid(item.handle) ||
-      !text(item.publicTitle, MAX_TITLE) ||
+      !titleText(item.publicTitle, MAX_TITLE) ||
       !revision(item.revision)
     )
       throw new Error("invalid_world_info_catalog");
@@ -285,7 +297,8 @@ function project(artifact: ManagedArtifact): PublicWorldInfoProjection {
   });
 }
 function validateCreateRequest(value: unknown): asserts value is CreateWorldInfoRequest {
-  validateArtifact({ revision: 1, ...(record(value) ? value : {}) });
+  const target = isRawTavernLorebook(value) ? importTavernLorebook(value) : value;
+  validateArtifact({ revision: 1, ...(record(target) ? target : {}) });
 }
 function validateUpdateRequest(value: unknown): asserts value is UpdateWorldInfoRequest {
   if (
@@ -305,10 +318,9 @@ function validateArtifact(value: unknown): ManagedArtifact {
     !record(value) ||
     !only(value, ["revision", "publicTitle", "summary", "entries"]) ||
     !revision(value.revision) ||
-    !text(value.publicTitle, MAX_TITLE) ||
-    !text(value.summary, MAX_SUMMARY) ||
-    !Array.isArray(value.entries) ||
-    value.entries.length > MAX_ENTRIES
+    !titleText(value.publicTitle, MAX_TITLE) ||
+    !summaryText(value.summary, MAX_SUMMARY) ||
+    !Array.isArray(value.entries)
   )
     throw new Error("invalid_world_info_request");
   const entries = value.entries.map((entry) => {
@@ -316,8 +328,8 @@ function validateArtifact(value: unknown): ManagedArtifact {
       !record(entry) ||
       !only(entry, ["scope", "publicTitle", "summary"]) ||
       (entry.scope !== "companion" && entry.scope !== "setting") ||
-      !text(entry.publicTitle, MAX_TITLE) ||
-      !text(entry.summary, MAX_SUMMARY)
+      !titleText(entry.publicTitle, MAX_TITLE) ||
+      !summaryText(entry.summary, MAX_SUMMARY)
     )
       throw new Error("invalid_world_info_request");
     return Object.freeze({
@@ -334,7 +346,7 @@ function validateArtifact(value: unknown): ManagedArtifact {
   });
 }
 function validateTitle(value: unknown): asserts value is string {
-  if (!text(value, MAX_TITLE)) throw new Error("invalid_world_info_request");
+  if (!titleText(value, MAX_TITLE)) throw new Error("invalid_world_info_request");
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -342,9 +354,21 @@ function record(value: unknown): value is Record<string, unknown> {
 function only(value: Record<string, unknown>, keys: readonly string[]): boolean {
   return Object.keys(value).every((key) => keys.includes(key));
 }
-function text(value: unknown, max: number): value is string {
+function titleText(value: unknown, max: number): value is string {
   return (
-    typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f<>]/u.test(value)
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= max &&
+    !/[\u0000-\u001f\u007f<>]/u.test(value)
+  );
+}
+function summaryText(value: unknown, max: number): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= max &&
+    !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value) &&
+    !/<script\b/iu.test(value)
   );
 }
 function revision(value: unknown): value is number {

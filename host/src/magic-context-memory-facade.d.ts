@@ -1,4 +1,4 @@
-declare module "@cortexkit/pi-magic-context" {
+declare module "@cortexkit/pi-magic-context/memory" {
   export type GameBuddyMemoryCategory = "semantic" | "interaction";
   export type GameBuddyMemoryStatus = "active" | "permanent" | "archived";
   export type GameBuddyMemoryView = Readonly<{
@@ -6,21 +6,35 @@ declare module "@cortexkit/pi-magic-context" {
     content: string;
     category: GameBuddyMemoryCategory;
     status: GameBuddyMemoryStatus;
+    sourceRefs?: readonly string[];
+  }>;
+  export type GameBuddyPlayerMemoryProfileBinding = Readonly<{
+    continuityId: string;
+    runtimeCwd: string;
+    profileId: string;
+    profileRevision: number;
+    profileCanonicalHash: string;
+  }>;
+  export type GameBuddyPlayerMemoryReadInput = Readonly<{
+    continuityId: string;
+    profileId: string;
+    profileRevision: number;
+    profileCanonicalHash: string;
   }>;
   export type GameBuddyPlayerMemoryReadProjection = Readonly<{
-    listMemories(input: Readonly<{ continuityId: string }>): Promise<readonly GameBuddyMemoryView[]>;
-    getMemory(input: Readonly<{ continuityId: string; stateToken: string }>): Promise<GameBuddyMemoryView>;
+    listMemories(input: GameBuddyPlayerMemoryReadInput): Promise<readonly GameBuddyMemoryView[]>;
+    getMemory(input: GameBuddyPlayerMemoryReadInput & Readonly<{ stateToken: string }>): Promise<GameBuddyMemoryView>;
   }>;
   export function createGameBuddyPlayerMemoryReadProjection(
-    args: Readonly<{ continuityId: string; runtimeCwd: string }>,
+    args: GameBuddyPlayerMemoryProfileBinding,
   ): GameBuddyPlayerMemoryReadProjection;
   export type GameBuddyPlayerMemoryCrudFacade = GameBuddyPlayerMemoryReadProjection &
     Readonly<{
-      create(input: Readonly<{ continuityId: string; content: string }>): Promise<GameBuddyMemoryView>;
-      update(input: Readonly<{ continuityId: string; stateToken: string; content: string }>): Promise<GameBuddyMemoryView>;
-      archive(input: Readonly<{ continuityId: string; stateToken: string }>): Promise<void>;
+      create(input: GameBuddyPlayerMemoryReadInput & Readonly<{ content: string }>): Promise<GameBuddyMemoryView>;
+      update(input: GameBuddyPlayerMemoryReadInput & Readonly<{ stateToken: string; content: string }>): Promise<GameBuddyMemoryView>;
+      archive(input: GameBuddyPlayerMemoryReadInput & Readonly<{ stateToken: string }>): Promise<void>;
     }>;
   export function createGameBuddyPlayerMemoryCrudFacade(
-    args: Readonly<{ continuityId: string; runtimeCwd: string }>,
+    args: GameBuddyPlayerMemoryProfileBinding,
   ): GameBuddyPlayerMemoryCrudFacade;
 }
