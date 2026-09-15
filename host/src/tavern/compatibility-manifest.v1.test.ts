@@ -12,9 +12,18 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   assert.equal(fields.first_message.maxBytes, ST_CARD_DECODER_LIMITS_V1.textBytes);
   assert.equal(fields.mes_example.maxBytes, ST_CARD_DECODER_LIMITS_V1.examplesBytes);
   assert.equal(fields.character_book.maxBytes, ST_CARD_DECODER_LIMITS_V1.characterBookBytes);
-  assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes, 4_000);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.inputBytesJson, 2_097_152);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.inputBytesPng, 33_554_432);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.inflateMaxOutputBytes, 67_108_864);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.jsonDepth, 64);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.jsonNodes, 65_536);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.pngChunks, 1_024);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.nameBytes, 256);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.textBytes, 2_097_152);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.examplesBytes, 2_097_152);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes, 16_384);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes, 256);
-  assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookEntries, 128);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookEntries, Number.POSITIVE_INFINITY);
 });
 
 test("selected L3 contract limits profile use and interchange to the version-locked inert subset", () => {

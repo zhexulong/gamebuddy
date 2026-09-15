@@ -10,7 +10,7 @@ import { candidateToIdentityProfile, decodeStCard, previewStCard } from "./st-ca
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import fc from "fast-check";
 
-function pngWithChara(json: string, keyword = "chara"): Uint8Array {
+function pngWithChara(json: string, keyword = "chara", paddingBytes = 0): Uint8Array {
   const signature = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const chunk = (type: string, data: Uint8Array) => {
     const output = new Uint8Array(data.length + 12);
@@ -20,10 +20,12 @@ function pngWithChara(json: string, keyword = "chara"): Uint8Array {
     return output;
   };
   const payload = Buffer.from(`${keyword}\0${Buffer.from(json).toString("base64")}`, "utf8");
+  const padding = Buffer.concat([Buffer.from("padding\0", "ascii"), Buffer.alloc(paddingBytes)]);
   return Uint8Array.from(
     Buffer.concat([
       Buffer.from(signature),
       Buffer.from(chunk("tEXt", payload)),
+      ...(paddingBytes === 0 ? [] : [Buffer.from(chunk("tEXt", padding))]),
       Buffer.from(chunk("IEND", new Uint8Array())),
     ]),
   );
@@ -142,7 +144,7 @@ test("safe decoder classifies accepted, opaque, and executable card fields witho
   );
 });
 
-test("safe decoder rejects malformed, deeply nested, and oversized payloads", () => {
+test("safe decoder rejects malformed, deeply nested, and oversized JSON payloads", () => {
   assert.equal(decodeStCard("{nope").dispositions[0]!.classification, "rejected_invalid");
   assert.equal(
     decodeStCard(
@@ -151,12 +153,12 @@ test("safe decoder rejects malformed, deeply nested, and oversized payloads", ()
     "json_limits_exceeded",
   );
   assert.equal(
-    decodeStCard("x".repeat(ST_CARD_DECODER_LIMITS_V1.inputBytes + 1)).dispositions[0]!.reason,
+    decodeStCard("x".repeat(ST_CARD_DECODER_LIMITS_V1.inputBytesJson + 1)).dispositions[0]!.reason,
     "input_too_large",
   );
 });
 
-test("decoder accepts manifest field byte limits and excludes values one byte beyond them", () => {
+test("decoder preserves long text while retaining physical field bounds", () => {
   const acceptedName = "é".repeat(ST_CARD_DECODER_LIMITS_V1.nameBytes / 2);
   const overlongName = `${acceptedName}é`;
   assert.equal(
@@ -168,15 +170,10 @@ test("decoder accepts manifest field byte limits and excludes values one byte be
     "Imported Companion",
   );
 
-  const acceptedDescription = "é".repeat(ST_CARD_DECODER_LIMITS_V1.textBytes / 2);
-  const overlongDescription = `${acceptedDescription}é`;
-  assert.ok(
-    decodeStCard(JSON.stringify({ data: { description: acceptedDescription } })).candidate?.profileCandidate.persona,
-  );
-  assert.equal(
-    decodeStCard(JSON.stringify({ data: { description: overlongDescription } })).candidate?.profileCandidate.persona,
-    undefined,
-  );
+  const longDescription = "Long authored description. ".repeat(100);
+  const longDescriptionCard = JSON.stringify({ data: { description: longDescription } });
+  assert.equal(decodeStCard(longDescriptionCard).candidate?.profileCandidate.persona?.core, longDescription);
+  assert.equal(previewStCard(JSON.parse(longDescriptionCard)).profileCandidate.persona?.core, longDescription);
 
   const acceptedBook = { entries: [{ content: "é".repeat(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes / 2) }] };
   const overlongBook = { entries: [{ content: `${acceptedBook.entries[0]!.content}é` }] };
@@ -188,6 +185,19 @@ test("decoder accepts manifest field byte limits and excludes values one byte be
     decodeStCard(JSON.stringify({ data: { character_book: overlongBook } })).candidate?.worldBookCandidates.length,
     0,
   );
+});
+
+test("safe decoder accepts a 5MB PNG while applying the larger PNG input limit", () => {
+  const png = pngWithChara(
+    JSON.stringify({ spec: "chara_card_v3", data: { name: "Large PNG Rin" } }),
+    "chara",
+    5 * 1024 * 1024,
+  );
+  assert.ok(png.byteLength > 1 * 1024 * 1024);
+  assert.ok(png.byteLength < ST_CARD_DECODER_LIMITS_V1.inputBytesPng);
+  const report = decodeStCard(png);
+  assert.equal(report.source, "png");
+  assert.equal(report.candidate?.profileCandidate.identity.name, "Large PNG Rin");
 });
 
 test("safe decoder extracts only inert Chara PNG metadata and ignores non-card chunks", () => {
@@ -238,6 +248,25 @@ test("safe decoder preserves multiline formatting in description, personality, s
   assert.equal(preview.scenario, "Setting:\n- Pelican Town\n- Pierre's General Store");
   assert.equal(preview.profileCandidate.firstGreeting, "Hey there!\nWhat are you up to today?");
   assert.equal(preview.worldBookCandidates[0]?.content, "First line of lore.\r\nSecond line of lore with\ttabs.");
+});
+
+test("safe decoder supports dictionary-form character book entries and expanded JSON node budgets", () => {
+  const entries = Object.fromEntries(
+    Array.from({ length: 256 }, (_, index) => [String(index), { comment: `Entry ${index}`, content: `Lore ${index}` }]),
+  );
+  const metadata = Object.fromEntries(Array.from({ length: 5_000 }, (_, index) => [`metadata_${index}`, index]));
+  const report = decodeStCard(
+    JSON.stringify({
+      data: {
+        name: "Large Structured Card",
+        metadata,
+        character_book: { entries },
+      },
+    }),
+  );
+  assert.equal(report.candidate?.profileCandidate.identity.name, "Large Structured Card");
+  assert.equal(report.candidate?.worldBookCandidates.length, 256);
+  assert.equal(report.candidate?.worldBookCandidates[255]?.content, "Lore 255");
 });
 
 test("safe decoder parses zTXt compressed PNG chunks and ccv3 keyword", () => {
