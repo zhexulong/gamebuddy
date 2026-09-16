@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, ".");
 const moduleLoader = await readFile(join(root, "lib", "host-production-module.mjs"), "utf8");
 const allowedDirectReferences = new Set([
   "check-text-hygiene.mjs", // literal deny-list strings, not a loader/import
-  "run-stardew-portfolio-observe-smoke.mjs", // dedicated dist-portfolio topology
+  "run-stardew-native-local-player-navigation-mutation-smoke.mjs", // live gate loads the emitted dist-test Host client, same as companion-live
 ]);
 
 test("normal Host runners resolve inventory-pinned production modules instead of mutable host/dist", async () => {
