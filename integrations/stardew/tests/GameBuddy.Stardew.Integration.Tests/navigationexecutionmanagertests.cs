@@ -642,6 +642,111 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         harness.Commits.Should().Be(1);
     }
 
+    [Fact]
+    public void LockedWarpFrame_DeferredReplan_ThenActsWhenPlayerActionable()
+    {
+        // After the first native warp the fresh world view reports
+        // PlayerActionable=false for one transition frame (CanMove=false). The
+        // navigation must NOT settle a healthy multi-hop as destination_locked;
+        // it defers the next leg and replans once the player is actionable again.
+        NavigationTransitionLeg farmToMountain = new("Mountain", 1, 1, 2, 2, IsDoor: false);
+        NavigationTransitionLeg mountainToMine = new("Mine", 3, 3, 4, 4, IsDoor: false);
+        var harness = new MultiHopHarness(
+            initial: View(true, true, "Farm", at: false, new[] { farmToMountain }),
+            secondView: View(true, true, "Mountain", at: false, new[] { mountainToMine }),
+            arrivalView: View(true, true, "Mine", at: true, Array.Empty<NavigationTransitionLeg>()),
+            topologySources: new Dictionary<string, IReadOnlyList<NavigationTransitionLeg>>(StringComparer.Ordinal)
+            {
+                ["Farm"] = new[] { farmToMountain },
+                ["Mountain"] = new[] { mountainToMine },
+                ["Mine"] = Array.Empty<NavigationTransitionLeg>(),
+            },
+            // The first post-warp replan sees a locked frame; the retry sees the
+            // authentic actionable Mountain view and arms the second leg.
+            lockedSecondView: View(true, false, "Mountain", at: false, new[] { mountainToMine }));
+
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_defer_lock", Label("Mine"), Deadline());
+        accepted.State.Should().Be(ExecutionState.Accepted);
+
+        // First leg: approach → commit → warp
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.Commits.Should().Be(1);
+
+        // Warp lands while the player is momentarily not actionable: the next leg
+        // is deferred, never settled as destination_locked, and never armed twice.
+        harness.CompleteWarp("Farm", "Mountain", 2, 2);
+        harness.Armed.Should().HaveCount(1);
+        harness.Manager.IsBodySettled.Should().BeFalse();
+        harness.Manager.TryGetReceipt("req_defer_lock", out LocalExecutionReceipt? afterLockedFrame).Should().BeTrue();
+        afterLockedFrame!.State.Should().NotBe(ExecutionState.Rejected);
+        afterLockedFrame.ReasonCode.Should().NotBe("destination_locked");
+
+        // On a later tick the player is actionable again: the deferred replan
+        // arms the second leg (and only arms it once).
+        harness.Manager.Update();
+        harness.Armed.Should().HaveCount(2);
+        harness.Manager.IsBodySettled.Should().BeFalse();
+
+        // The navigation continues to its single terminal.
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.Commits.Should().Be(2);
+        harness.CompleteWarp("Mountain", "Mine", 4, 4);
+
+        var receipt = harness.Stored("req_defer_lock");
+        receipt.State.Should().Be(ExecutionState.Succeeded);
+        receipt.ReasonCode.Should().Be("navigation_completed");
+        receipt.ExecutionId.Should().Be(accepted.ExecutionId);
+        harness.Manager.IsBodySettled.Should().BeTrue();
+    }
+
+    [Fact]
+    public void LockedWarpFrame_PersistentLockedPlayer_SettlesDestinationLockedAfterGrace()
+    {
+        // A player who genuinely cannot act after the warp (event/menu) must not
+        // hang forever: after the grace window the deferred replan settles
+        // fail-closed as destination_locked exactly once, with no second line.
+        NavigationTransitionLeg farmToMountain = new("Mountain", 1, 1, 2, 2, IsDoor: false);
+        NavigationTransitionLeg mountainToMine = new("Mine", 3, 3, 4, 4, IsDoor: false);
+        var harness = new MultiHopHarness(
+            initial: View(true, true, "Farm", at: false, new[] { farmToMountain }),
+            secondView: View(true, true, "Mountain", at: false, new[] { mountainToMine }),
+            arrivalView: View(true, true, "Mine", at: true, Array.Empty<NavigationTransitionLeg>()),
+            topologySources: new Dictionary<string, IReadOnlyList<NavigationTransitionLeg>>(StringComparer.Ordinal)
+            {
+                ["Farm"] = new[] { farmToMountain },
+                ["Mountain"] = new[] { mountainToMine },
+                ["Mine"] = Array.Empty<NavigationTransitionLeg>(),
+            },
+            // The player is genuinely unable to act on the first post-warp frame:
+            // the fresh world reports PlayerActionable=false, so the replan defers.
+            lockedSecondView: View(true, false, "Mountain", at: false, new[] { mountainToMine }));
+
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_defer_grace", Label("Mine"), Deadline());
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.Commits.Should().Be(1);
+
+        // The player stays not actionable (probe disabled) after the warp, so the
+        // deferred replan never arms. The grace window must still bound it.
+        harness.CompleteWarp("Farm", "Mountain", 2, 2);
+        harness.PlayerActionableProbe = () => false;
+        harness.Armed.Should().HaveCount(1);
+
+        // Drive past the grace window (NavigationWarpReplanGraceTicks = 180).
+        for (int i = 0; i < 200; i++)
+            harness.Manager.Update();
+
+        var receipt = harness.Stored("req_defer_grace");
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("destination_locked");
+        receipt.ExecutionId.Should().Be(accepted.ExecutionId);
+        harness.Manager.IsBodySettled.Should().BeTrue();
+        harness.Armed.Should().HaveCount(1);
+        harness.Commits.Should().Be(1);
+    }
+
     // ── helpers ──
 
     private static Func<FarmhandCapabilityPublication> Surface()
@@ -759,6 +864,7 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         internal List<LocalMoveSpec> Armed { get; } = new();
         internal int Commits { get; private set; }
         private readonly bool failArmAfterFirstWarp;
+        internal Func<bool>? PlayerActionableProbe { get; set; }
 
         internal MultiHopHarness(
             NavigationWorldView initial,
@@ -766,7 +872,8 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
             NavigationWorldView? arrivalView,
             Dictionary<string, IReadOnlyList<NavigationTransitionLeg>> topologySources,
             bool failConnectivityAfterFirstWarp = false,
-            bool failArmAfterFirstWarp = false)
+            bool failArmAfterFirstWarp = false,
+            NavigationWorldView? lockedSecondView = null)
         {
             this.failArmAfterFirstWarp = failArmAfterFirstWarp;
             this.Manager = new ExecutionManager(new DummyMonitor(), Surface());
@@ -780,8 +887,23 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
 
             // Each native leg is planned once at admission/continuation and
             // revalidated once immediately before commit. The view changes only
-            // after the correlated warp callback.
-            var worldViews = new List<NavigationWorldView> { initial, initial, secondView, secondView };
+            // after the correlated warp callback. A locked frame option injects
+            // a PlayerActionable=false view for the first post-warp replan so the
+            // deferred-replan lifecycle is provable; the retry then reads the
+            // authentic second view, and the second commit re-validates it once
+            // more before the arrival view is finally observed.
+            var worldViews = new List<NavigationWorldView> { initial, initial };
+            if (lockedSecondView is not null)
+            {
+                worldViews.Add(lockedSecondView);   // first post-warp replan (locked frame)
+                worldViews.Add(secondView);         // deferred retry replan
+                worldViews.Add(secondView);         // second-leg commit revalidation
+            }
+            else
+            {
+                worldViews.Add(secondView);
+                worldViews.Add(secondView);
+            }
             if (arrivalView is not null)
                 worldViews.Add(arrivalView);
             var worldSource = new SequenceWorldSource(worldViews);
@@ -803,6 +925,7 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
                 (farmer, warp) => { this.Commits++; },
                 _ => true));
             this.Manager.SetNavigationLifecycleTestAuthorization(() => true);
+            this.Manager.SetNavigationPlayerActionableProbe(() => this.PlayerActionableProbe?.Invoke() ?? true);
         }
 
         internal void EmitApproachSucceeded() => this.Manager.EmitNavigationApproachTransition(ExecutionState.Succeeded, "target_reached", "tile=9,10;target=10,10");

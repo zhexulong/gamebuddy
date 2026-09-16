@@ -21,6 +21,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private const int DefaultDeadlineTicks = 60 * 20;
     private const int AnimalProductDiscoveryRadius = 1;
     private const int MaximumRememberedReceipts = 256;
+    // A freshly warped player may report CanMove=false for a few transition
+    // frames. The deferred warp replan waits this many ticks for the player to
+    // become actionable again before failing closed as a locked destination.
+    private const int NavigationWarpReplanGraceTicks = 60 * 3;
     private readonly IMonitor monitor;
     private readonly Dictionary<string, LocalExecutionReceipt> receiptsByRequestId = new(StringComparer.Ordinal);
     /** Same bounded lifetime as receipts; the action identity is ledger-owned, not bridge cache state. */
@@ -76,6 +80,68 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private AcceptedNavigationExecution? activeNavigationCoordinator;
     private Func<bool>? navigationLifecycleTestAuthorization;
     private NavigationApproachNative? navigationApproachNative;
+    private Func<bool>? navigationPlayerActionableProbe;
+    private long lastNavigationDiagnosticUnixMs;
+    private long lastWarpDiagnosticUnixMs;
+    // True between a native warp's postcondition pass and the next tick where the
+    // player is actionable again. A freshly warped player may briefly report
+    // CanMove=false during the warp transition; treating that instant as a locked
+    // destination would fail a healthy multi-hop navigation. The deferred replan
+    // is bounded by the grace window and the navigation deadline pass in Update().
+    private bool navigationWarpReplanDeferred;
+    private int navigationWarpDeferredAtTick = -1;
+
+    /// <summary>
+    /// Test-only probe for the player-actionable check that gates the deferred
+    /// warp replan. Production never sets this: the real check reads
+    /// Game1.player.CanMove / menus / events. Integration tests set it to a
+    /// deterministic value so the deferred-then-replan lifecycle is provable
+    /// without a live player.
+    /// </summary>
+    internal void SetNavigationPlayerActionableProbe(Func<bool>? probe)
+    {
+        this.navigationPlayerActionableProbe = probe;
+    }
+
+    /// <summary>Production truth for whether the local player may act this frame.</summary>
+    private bool IsPlayerActionableNow()
+    {
+        if (this.navigationPlayerActionableProbe is not null)
+            return this.navigationPlayerActionableProbe();
+        return Game1.player is { CanMove: true }
+            && Game1.activeClickableMenu is null
+            && !Game1.eventUp;
+    }
+
+    /// <summary>
+    /// Bounded live diagnostic for the Navigation state machine. It logs at most
+    /// once per 2.5s when a Navigation execution is active, is content-safe, and
+    /// never changes authority or receipt/evidence semantics.
+    /// </summary>
+    private void LogNavigationDiagnostic(string phase, string detail)
+    {
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (nowMs - this.lastNavigationDiagnosticUnixMs < 2_500L)
+            return;
+        this.lastNavigationDiagnosticUnixMs = nowMs;
+        this.EmitNavigationDiagnostic(phase, detail);
+    }
+
+    /// <summary>Warp/settle transitions log on a fast 500ms throttle so they are never swallowed by the tick throttle.</summary>
+    private void LogNavigationWarpDiagnostic(string phase, string detail)
+    {
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (nowMs - this.lastWarpDiagnosticUnixMs < 500L)
+            return;
+        this.lastWarpDiagnosticUnixMs = nowMs;
+        this.EmitNavigationDiagnostic(phase, detail);
+    }
+
+    private void EmitNavigationDiagnostic(string phase, string detail)
+    {
+        Farmer? player = Game1.player;
+        this.monitor.Log($"[nav-diagnostic] phase={phase};detail={detail};location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};controller_owned={this.controller.HasActiveExecution};move_owned={this.active is not null};active_nav_phase={this.activeNavigate?.Phase.ToString() ?? "none"};coordinator={this.activeNavigationCoordinator is not null};deadline_reached={this.activeNavigate is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeNavigate.DeadlineMs}", LogLevel.Trace);
+    }
 
     /// <summary>Wires the game-thread Navigation destination authority into this ledger.</summary>
     internal void SetNavigationRuntimeFactory(Func<NavigationRuntimeSnapshot?> navigationRuntimeFactory)
@@ -515,6 +581,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalNavigateSpec navigateSpec = this.activeNavigate;
             if (navigateSpec.Phase == LocalNavigatePhase.AwaitingWarp)
             {
+                this.navigationWarpReplanDeferred = false;
                 // A cancellation/deadline/unexpected lifecycle after the native warp
                 // has already been signalled is only ever an uncertain terminal: the
                 // destination may have been reached or a delivery left open. It is
@@ -652,6 +719,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     public void Update()
     {
         this.tick++;
+        if (this.activeNavigate is not null)
+            this.LogNavigationDiagnostic("tick", $"destination={this.activeNavigate.CanonicalDestinationIdentity}");
         // Deferred Navigation approach commit. The body controller marks an
         // approach Succeeded while it still reports HasActiveExecution and only
         // releases after its callback returns. Native-committing inside that
@@ -662,12 +731,48 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeNavigate is { Phase: LocalNavigatePhase.ApproachReleased } releasedNavigation)
         {
             if (this.controller.HasActiveExecution || this.active is not null)
+            {
+                this.LogNavigationWarpDiagnostic("approach_release_commit_blocked", $"controller_owned={this.controller.HasActiveExecution};move_owned={this.active is not null}");
                 this.SettleNavigationTerminal(releasedNavigation, ExecutionState.Uncertain, "navigation_commit_body_still_owned",
                     $"controller_owned={this.controller.HasActiveExecution.ToString().ToLowerInvariant()};move_owned={(this.active is not null).ToString().ToLowerInvariant()};never_retry=true");
+            }
             else
+            {
+                this.LogNavigationWarpDiagnostic("approach_release_commit", "proceeding");
                 this.CommitNavigationApproach(releasedNavigation);
+            }
         }
         this.controller.Update(this.tick);
+        // Deferred Navigation warp replan. A freshly warped player may report
+        // CanMove=false for one transition frame; the synchronous warp callback
+        // therefore re-frames the postcondition pass and leaves the next-route
+        // decision here, on a tick where the player is actionable again. It never
+        // arms twice, and a player who never becomes actionable within the grace
+        // window settles fail-closed as locked exactly once.
+        if (this.navigationWarpReplanDeferred
+            && this.activeNavigate is { Phase: LocalNavigatePhase.AwaitingWarp } deferredNavigation)
+        {
+            bool graceExpired = this.tick - this.navigationWarpDeferredAtTick > NavigationWarpReplanGraceTicks;
+            if (!this.controller.HasActiveExecution
+                && this.active is null
+                && this.IsPlayerActionableNow()
+                && !graceExpired)
+            {
+                this.navigationWarpReplanDeferred = false;
+                // Log through a local so this diagnostic cannot seed method-level
+                // Game1.player null-state for the later native postconditions.
+                Farmer? diagnosticPlayer = Game1.player;
+                this.LogNavigationWarpDiagnostic("warp_replan_retry", $"location={diagnosticPlayer?.currentLocation?.NameOrUniqueName ?? "none"};tile={diagnosticPlayer?.TilePoint.X ?? -1},{diagnosticPlayer?.TilePoint.Y ?? -1}");
+                this.TryContinueNavigationAfterWarp(deferredNavigation);
+            }
+            else if (graceExpired && !this.IsPlayerActionableNow())
+            {
+                this.navigationWarpReplanDeferred = false;
+                this.LogNavigationWarpDiagnostic("warp_replan_grace_expired", $"destination={deferredNavigation.CanonicalDestinationIdentity}");
+                this.SettleNavigationTerminal(deferredNavigation, ExecutionState.Rejected, "destination_locked",
+                    $"destination={deferredNavigation.CanonicalDestinationIdentity};phase=awaiting_warp;grace_expired=true;never_retry=true");
+            }
+        }
         if (this.activeTravel is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeTravel.DeadlineMs)
         {
             LocalTravelSpec specification = this.activeTravel;
@@ -681,6 +786,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeNavigate is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeNavigate.DeadlineMs)
         {
             LocalNavigateSpec specification = this.activeNavigate;
+            this.navigationWarpReplanDeferred = false;
+            this.LogNavigationWarpDiagnostic("deadline_reached", $"phase={specification.Phase};destination={specification.CanonicalDestinationIdentity}");
             this.activeNavigate = null;
             if (this.active is not null)
                 this.active = null;
@@ -872,6 +979,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeNavigate is not null)
         {
             LocalNavigateSpec specification = this.activeNavigate;
+            this.navigationWarpReplanDeferred = false;
             this.activeNavigate = null;
             if (this.active is not null)
                 this.active = null;
@@ -1087,7 +1195,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             player.Items.Count,
             player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp,
             advertisedCapabilities,
-            capabilityPublication.CapabilityRevision,
+            FarmhandActionSurfacePublication.CatalogRevision,
             capabilityPublication.EnabledActionIds,
             activeExecution,
             player.currentLocation?.warps
@@ -1138,7 +1246,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return new BridgeSnapshot(
         Revision: this.revision, Location: "unknown", Tile: new BridgeTile(0f, 0f), Stamina: 0f, Health: 0,
         CurrentTool: null, InventorySlots: 0, Actionable: false, Capabilities: advertisedCapabilities,
-        CatalogRevision: capabilityPublication.CapabilityRevision, EnabledActionIds: capabilityPublication.EnabledActionIds,
+        CatalogRevision: FarmhandActionSurfacePublication.CatalogRevision, EnabledActionIds: capabilityPublication.EnabledActionIds,
         ActiveExecution: null,
         Warps: Array.Empty<BridgeWarp>(), DoorTargets: null, SoilTiles: null, ToolSlots: Array.Empty<BridgeToolSlot>(),
         WateringCanFacts: null, RefillWateringCanTargets: null, ForageTargets: null, ItemTargets: null, CropTargets: null,
@@ -2263,10 +2371,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalNavigateSpec? activeNavigation = this.activeNavigate;
             if (activeNavigation is null || activeNavigation.ExecutionId != navigation.ExecutionId)
             {
+                this.LogNavigationWarpDiagnostic("approach_success_state_mismatch", $"active={this.activeNavigate?.Phase.ToString() ?? "none"};spec={navigation.Phase}");
                 this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_approach_state_revalidated_mismatch", "phase=approach;controller_traversal=true;never_retry=true");
                 return;
             }
 
+            this.LogNavigationWarpDiagnostic("approach_succeeded", "deferred commit to next tick");
             this.active = null;
             this.activeNavigate = activeNavigation with { Phase = LocalNavigatePhase.ApproachReleased };
             return;
@@ -2274,6 +2384,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         // Any approach terminal (Failed/Expired/Cancelled/Invalidated/Uncertain)
         // settles the navigation exactly once.
+        this.LogNavigationWarpDiagnostic("approach_terminal", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
         this.active = null;
         this.SettleNavigationTerminal(navigation, state, reasonCode,
             $"approach_pre_release={evidence ?? "none"};phase=approaching;controller_traversal=true");
@@ -2410,6 +2521,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private void SettleNavigationTerminal(LocalNavigateSpec navigation, ExecutionState state, string reasonCode, string? evidence)
     {
+        this.navigationWarpReplanDeferred = false;
+        this.LogNavigationWarpDiagnostic("settle", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
         this.active = null;
         this.activeNavigate = null;
         this.activeNavigationCoordinator = null;
@@ -2424,7 +2537,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         LocalNavigateSpec? navigation = this.activeNavigate;
         if (navigation is null)
+        {
+            this.LogNavigationWarpDiagnostic("warp_no_active_nav", $"new={newLocation}:{newTileX},{newTileY}");
             return;
+        }
+        this.LogNavigationWarpDiagnostic("warp_enter", $"old={navigation.ExpectedSourceLocation};new={newLocation}:{newTileX},{newTileY};local={isLocalPlayer};phase={navigation.Phase}");
         this.CompleteNavigationAfterWarp(isLocalPlayer, navigation.ExpectedSourceLocation, newLocation, newTileX, newTileY);
     }
 
@@ -2432,7 +2549,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         LocalNavigateSpec? navigation = this.activeNavigate;
         if (navigation is null || navigation.Phase != LocalNavigatePhase.AwaitingWarp)
+        {
+            this.LogNavigationWarpDiagnostic("warp_phase_mismatch", $"phase={navigation?.Phase.ToString() ?? "none"};expected=AwaitingWarp;old={oldLocation};new={newLocation}:{newTileX},{newTileY}");
             return;
+        }
         if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > navigation.DeadlineMs)
         {
             this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_deadline_expired_after_warp", "phase=awaiting_warp;deadline_expired=true;never_retry=true");
@@ -2453,6 +2573,36 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
+        // The correlated native warp is confirmed. Decide the next route leg now.
+        // If the fresh replan concludes the player is not actionable yet (a
+        // freshly warped player can report CanMove=false for one transition
+        // frame), defer to the next Update tick instead of misreading that frame
+        // as a locked destination. The Update retry only re-enters after the
+        // player is actionable again; the deadline pass settles it otherwise.
+        this.navigationWarpReplanDeferred = false;
+        this.LogNavigationWarpDiagnostic("warp_confirmed", $"old={oldLocation};new={newLocation}:{newTileX},{newTileY}");
+        this.TryContinueNavigationAfterWarp(navigation);
+    }
+
+    /// <summary>
+    /// Decides and arms the next Navigation leg from the confirmed warp state.
+    /// Runs synchronously from the warp callback; if the fresh replan concludes
+    /// the player is not actionable yet (CanMove=false transition frame), sets
+    /// <see cref="navigationWarpReplanDeferred"/> and returns so the Update pass
+    /// retries once the player is actionable again. A genuine locked destination
+    /// (still not actionable on retry) still settles fail-closed via the normal
+    /// terminal path on that retry.
+    /// </summary>
+    private void TryContinueNavigationAfterWarp(LocalNavigateSpec navigation)
+    {
+        if (navigation is null || navigation.Phase != LocalNavigatePhase.AwaitingWarp)
+            return;
+        if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > navigation.DeadlineMs)
+        {
+            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_deadline_expired_after_warp", "phase=awaiting_warp;deadline_expired=true;never_retry=true");
+            return;
+        }
+
         AcceptedNavigationExecution? coordinator = this.activeNavigationCoordinator;
         if (coordinator is null)
         {
@@ -2468,6 +2618,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         catch
         {
             this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "destination_access_indeterminate", "navigation_decision_unavailable");
+            return;
+        }
+        this.LogNavigationWarpDiagnostic("warp_planned", $"terminal={nextPlan.IsTerminal};state={nextPlan.Outcome.State};reason={nextPlan.Outcome.TerminalReasonCode};next={nextPlan.Outcome.NextLeg?.TargetLocation ?? "none"}");
+
+        // A freshly warped player can report CanMove=false for one transition
+        // frame. Defer rather than misreading that instant as a locked
+        // destination; the Update pass retries once the player is actionable.
+        // Retry is bounded by a short grace window and the navigation deadline
+        // so a genuinely locked destination still settles fail-closed exactly
+        // once.
+        if (nextPlan.IsTerminal && nextPlan.Outcome.TerminalReasonCode == "destination_locked")
+        {
+            this.navigationWarpReplanDeferred = true;
+            this.navigationWarpDeferredAtTick = this.tick;
+            this.LogNavigationWarpDiagnostic("warp_replan_deferred", "destination_locked;waiting_for_actionable_frame");
             return;
         }
 
@@ -2510,7 +2675,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             navigation.RequestId,
             navigation.Selector,
             canonicalDestinationIdentity,
-            newLocation ?? nextPlan.View.CurrentSourceLocation ?? "unknown",
+            nextPlan.View.CurrentSourceLocation ?? "unknown",
             nextLeg,
             approachTarget.Value,
             navigation.DeadlineMs,
