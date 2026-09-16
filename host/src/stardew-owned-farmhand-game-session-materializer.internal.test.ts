@@ -78,14 +78,13 @@ test("owned Farmhand materializer preserves authenticated receipt-backed constru
   assert.doesNotMatch(source, /attachVoiceStopper/);
 });
 
-test("Preview, Portfolio, and operational gate sources do not import the product materializer", async () => {
+test("Preview and operational gate sources do not import the product materializer", async () => {
   const testDirectory = dirname(fileURLToPath(import.meta.url));
   const sourceRoot = testDirectory.endsWith("src") ? testDirectory : resolve(testDirectory, "..", "src");
   const checked = [
     "farmhand-companion-preview.ts",
-    ...(await readdir(sourceRoot)).filter((leaf) => leaf.startsWith("portfolio-") && leaf.endsWith(".ts")),
   ];
-  assert.ok(checked.length > 1);
+  assert.ok(checked.length >= 1);
   for (const leaf of checked) {
     const source = await readFile(join(sourceRoot, leaf), "utf8");
     assert.doesNotMatch(source, /stardew-owned-farmhand-game-session-materializer/);

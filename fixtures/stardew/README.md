@@ -3,10 +3,11 @@
 This directory contains **metadata only**. It must never contain a player save, a
 profile configuration, a bridge token, an attachment manifest, or a session
 exchange file. The mandatory Farmhand end-to-end procedure is in
-[`RUNBOOK.md`](RUNBOOK.md). The isolated single-player Portfolio environment
-variables and gate-specific local setup are documented separately in
-[`PORTFOLIO_ENVIRONMENT_RUNBOOK.md`](PORTFOLIO_ENVIRONMENT_RUNBOOK.md); that
-runbook must not be used to cross the Farmhand/Portfolio topology boundary.
+ [`RUNBOOK.md`](RUNBOOK.md). The isolated single-player Portfolio environment
+ variables and gate-specific local setup were formerly documented in a
+ `PORTFOLIO_ENVIRONMENT_RUNBOOK.md`; that Portfolio envelope is retired — the
+ runbook and its constrained environment are removed, and the
+ Farmhand/Portfolio topology boundary language remains only as a historical note.
 
 A native action success gate has two independent parts:
 
