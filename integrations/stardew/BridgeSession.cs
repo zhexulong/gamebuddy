@@ -1197,135 +1197,19 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
     {
         if (request is null || !BridgeProtocol.IsOpaqueId(request.RequestId) || !BridgeProtocol.IsOpaqueId(request.IdempotencyKey) || request.Args is null)
         { reasonCode = "invalid_execution_request"; return false; }
-        if (request.Action == "pickup_forage" && !IsValidSceneTarget(request.Args.SceneTarget))
-        { reasonCode = "observation_binding_malformed"; return false; }
-        if (!HasExactArgumentShape(request.Action, request.Args))
+        // Execution acceptance is fully registry-owned: the registered descriptor
+        // carries the exact argument shape, and the registry-owned acceptance
+        // facts carry bounds and product facts. Unknown actions fail closed.
+        FarmhandActionRegistration? registration = FarmhandActionCatalog.Registrations
+            .FirstOrDefault(candidate => string.Equals(candidate.ActionId, request.Action, StringComparison.Ordinal));
+        if (registration is null || registration.Descriptor is not { } descriptor)
         { reasonCode = "invalid_execution_request"; return false; }
-        if (request.Action is "move_to_tile" or "enter_exit" or "travel" or "till_soil")
-        {
-            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000)
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action is "pickup_forage" or "pickup_item")
-        {
-            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 } || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-             { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action is "water_crop" or "harvest_crop")
-        {
-            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId) || (request.Action == "harvest_crop" && request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 }))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action is "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot")
-        {
-            if (request.Args.AdditionalProperties is { Count: > 0 } || !request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 } || (request.Action == "place_wood_fence" && request.Args.ExpectedQualifiedItemId != "(O)322") || (request.Action == "place_crab_pot" && request.Args.ExpectedQualifiedItemId != "(O)710") || (request.Action == "bait_crab_pot" && request.Args.ExpectedQualifiedItemId != "(O)685") || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action == "clear_debris")
-        {
-            if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action == "machine_inspect")
-        {
-            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action == "machine_load")
-        {
-            if (request.Args.AdditionalProperties is { Count: > 0 } || !request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId != "(O)433" || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action == "machine_collect_output")
-        {
-            if (request.Args.AdditionalProperties is { Count: > 0 } || request.Args.Slot.HasValue || request.Args.ExpectedQualifiedItemId is not null || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action is "npc_relationship" or "pet_animal")
-        {
-            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value < 0 || request.Args.Y.Value > 1000 || request.Args.X.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action is "collect_animal_product" or "feed_animal")
-        {
-            if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action == "use_item")
-        {
-            if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 })
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action == "navigate_to_destination")
-        {
-            if (!NavigationDestinationSelector.TryCreateFromWire(request.Args.Destination, out _))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action is "refill_watering_can" or "chop_tree_source" or "break_rock_source")
-        {
-            if (request.Args.AdditionalProperties is { Count: > 0 } || !request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action is "clear_hoedirt" or "dig_artifact_spot")
-        {
-            if (request.Args.AdditionalProperties is { Count: > 0 } || request.Args.ExpectedQualifiedItemId is not null || !request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action == "equip_tool")
-        {
-            if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36)
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action == "express_emote")
-        {
-            if (string.IsNullOrWhiteSpace(request.Args.Emote) || !FarmhandActionCatalog.EmoteEnum.Contains(request.Args.Emote))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else if (request.Action == "face_direction")
-        {
-            if (string.IsNullOrWhiteSpace(request.Args.Direction) || !FarmhandActionCatalog.DirectionEnum.Contains(request.Args.Direction))
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
-        else
-        { reasonCode = "invalid_execution_request"; return false; }
-        reasonCode = "accepted"; return true;
+        return FarmhandExecutionAcceptance.TryValidate(
+            descriptor,
+            request.Args,
+            out reasonCode,
+            destinationValidator: destination => NavigationDestinationSelector.TryCreateFromWire(destination, out _));
     }
-
-    private static bool HasExactArgumentShape(string action, BridgeExecutionArgs args)
-    {
-        if (args.AdditionalProperties is { Count: > 0 }) return false;
-        bool x = args.X.HasValue;
-        bool y = args.Y.HasValue;
-        bool slot = args.Slot.HasValue;
-        bool qualifiedItem = args.ExpectedQualifiedItemId is not null;
-        bool target = args.ExpectedTargetId is not null;
-        bool destination = args.Destination is not null;
-        bool emote = args.Emote is not null;
-        bool direction = args.Direction is not null;
-        bool sceneTarget = args.SceneTarget is not null;
-        if (action == "navigate_to_destination")
-            return destination && !x && !y && !slot && !qualifiedItem && !target && !sceneTarget && !emote && !direction;
-        if (action == "express_emote")
-            return emote && !x && !y && !slot && !qualifiedItem && !target && !sceneTarget && !destination && !direction;
-        if (action == "face_direction")
-            return direction && !x && !y && !slot && !qualifiedItem && !target && !sceneTarget && !destination && !emote;
-        return action switch
-        {
-            "move_to_tile" or "travel" or "enter_exit" or "till_soil" => x && y && !slot && !qualifiedItem && !target && !sceneTarget && !destination && !emote && !direction,
-            "equip_tool" => !x && !y && slot && !qualifiedItem && !target && !sceneTarget && !destination && !emote && !direction,
-            "pickup_forage" => x && y && !slot && qualifiedItem && target && sceneTarget && !destination && !emote && !direction,
-            "pickup_item" or "harvest_crop" => x && y && !slot && qualifiedItem && target && !sceneTarget && !destination && !emote && !direction,
-            "water_crop" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" => x && y && !slot && !qualifiedItem && target && !sceneTarget && !destination && !emote && !direction,
-            "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" => x && y && slot && qualifiedItem && target && !sceneTarget && !destination && !emote && !direction,
-            "clear_debris" or "collect_animal_product" or "feed_animal" or "refill_watering_can" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" => x && y && slot && !qualifiedItem && target && !sceneTarget && !destination && !emote && !direction,
-            "use_item" => !x && !y && slot && qualifiedItem && !target && !sceneTarget && !destination && !emote && !direction,
-            _ => false,
-        };
-    }
-
-    private static bool IsValidSceneTarget(ObservationBindingV1? target) => target is not null
-        && BridgeProtocol.IsOpaqueId(target.ObservationId)
-        && BridgeProtocol.IsOpaqueId(target.Ref);
 
     private static bool MatchesDurableAdmission(
         BridgeExecutionRequest request,
@@ -1361,7 +1245,10 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (request.ExpectedRevision != this.executions.Revision) { reasonCode = "stale_snapshot"; return false; }
-        if (request.DeadlineMs < nowMs || request.DeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds) { reasonCode = "invalid_deadline"; return false; }
+        long maxDeadlineMs = request.Action == "navigate_to_destination"
+            ? nowMs + (long)TimeSpan.FromMinutes(10).TotalMilliseconds
+            : nowMs + (long)TimeSpan.FromMinutes(1).TotalMilliseconds;
+        if (request.DeadlineMs < nowMs || request.DeadlineMs > maxDeadlineMs) { reasonCode = "invalid_deadline"; return false; }
         reasonCode = "accepted"; return true;
     }
     private bool IsValidEnvelope<TPayload>(BridgeEnvelope<TPayload>? envelope, string expectedType, out string reasonCode)

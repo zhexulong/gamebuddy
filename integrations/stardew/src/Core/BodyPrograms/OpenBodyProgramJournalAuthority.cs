@@ -4,6 +4,14 @@ using GameBuddy.Stardew.Core.Models;
 
 namespace GameBuddy.Stardew.Core.BodyPrograms;
 
+/// <summary>Lifecycle state for one Mod-owned Body Program authority tuple.</summary>
+public enum BodyProgramAuthorityLifecycleState
+{
+    Open,
+    Draining,
+    Closed,
+}
+
 /// <summary>Single Mod-owned dynamic program authority. Host candidates never become authority before journal commit.</summary>
 public sealed class OpenBodyProgramJournalAuthority
 {
@@ -12,6 +20,10 @@ public sealed class OpenBodyProgramJournalAuthority
     private readonly BridgeScope scope;
     private readonly Func<BodyProgramPolicyIdentity> currentPolicy;
     private readonly Func<long> nowMs;
+    private readonly object lifecycleGate = new();
+    private BodyProgramAuthorityLifecycleState lifecycleState = BodyProgramAuthorityLifecycleState.Open;
+    private int activeControllerUpdates;
+    private readonly Dictionary<int, int> activeControllerUpdatesByThread = new();
     private bool policyIdentityChanged;
     private BodyProgramJournalState state;
 
@@ -22,7 +34,103 @@ public sealed class OpenBodyProgramJournalAuthority
     }
 
     public BodyProgramJournalOpenStatus OpenStatus { get; private set; }
-    public BodyProgramJournalState Snapshot => this.state;
+
+    /// <summary>
+    /// Current lifecycle state of this exact authority tuple. A tuple moves only
+    /// forward: Open → Draining → Closed.
+    /// </summary>
+    public BodyProgramAuthorityLifecycleState LifecycleState
+    {
+        get
+        {
+            lock (this.lifecycleGate)
+                return this.lifecycleState;
+        }
+    }
+
+    public BodyProgramJournalState Snapshot
+    {
+        get
+        {
+            this.ThrowIfLifecycleUnavailable();
+            return this.state;
+        }
+    }
+
+    /// <summary>
+    /// Revokes this exact authority tuple and synchronously drains any active
+    /// game-thread controller update. A close re-entered by a synchronous
+    /// admission/native callback returns Draining rather than waiting on itself;
+    /// the outermost update completes the one-time Closed transition.
+    /// </summary>
+    public BodyProgramAuthorityLifecycleState Close()
+    {
+        lock (this.lifecycleGate)
+        {
+            if (this.lifecycleState == BodyProgramAuthorityLifecycleState.Closed)
+                return BodyProgramAuthorityLifecycleState.Closed;
+
+            this.lifecycleState = BodyProgramAuthorityLifecycleState.Draining;
+            if (this.activeControllerUpdates == 0)
+            {
+                this.lifecycleState = BodyProgramAuthorityLifecycleState.Closed;
+                Monitor.PulseAll(this.lifecycleGate);
+                return BodyProgramAuthorityLifecycleState.Closed;
+            }
+
+            if (this.activeControllerUpdatesByThread.ContainsKey(Environment.CurrentManagedThreadId))
+                return BodyProgramAuthorityLifecycleState.Draining;
+
+            while (this.activeControllerUpdates > 0)
+                Monitor.Wait(this.lifecycleGate);
+            return this.lifecycleState;
+        }
+    }
+
+    internal bool IsLifecycleOpen
+    {
+        get
+        {
+            lock (this.lifecycleGate)
+                return this.lifecycleState == BodyProgramAuthorityLifecycleState.Open;
+        }
+    }
+
+    internal bool TryEnterControllerUpdate()
+    {
+        lock (this.lifecycleGate)
+        {
+            if (this.lifecycleState != BodyProgramAuthorityLifecycleState.Open)
+                return false;
+            this.activeControllerUpdates++;
+            int threadId = Environment.CurrentManagedThreadId;
+            this.activeControllerUpdatesByThread[threadId] = this.activeControllerUpdatesByThread.GetValueOrDefault(threadId) + 1;
+            return true;
+        }
+    }
+
+    internal void ExitControllerUpdate()
+    {
+        lock (this.lifecycleGate)
+        {
+            if (this.activeControllerUpdates <= 0)
+                throw new InvalidOperationException("Body Program controller lifecycle update was not entered.");
+            this.activeControllerUpdates--;
+            int threadId = Environment.CurrentManagedThreadId;
+            if (!this.activeControllerUpdatesByThread.TryGetValue(threadId, out int threadUpdates) || threadUpdates <= 0)
+                throw new InvalidOperationException("Body Program controller lifecycle update thread ownership was not recorded.");
+            if (threadUpdates == 1)
+                this.activeControllerUpdatesByThread.Remove(threadId);
+            else
+                this.activeControllerUpdatesByThread[threadId] = threadUpdates - 1;
+            if (this.activeControllerUpdates == 0)
+            {
+                if (this.lifecycleState == BodyProgramAuthorityLifecycleState.Draining)
+                    this.lifecycleState = BodyProgramAuthorityLifecycleState.Closed;
+                Monitor.PulseAll(this.lifecycleGate);
+            }
+        }
+    }
 
     public static OpenBodyProgramJournalAuthority Open(IBodyProgramJournalStore store, BodyProgramActionCatalog catalog, BridgeScope scope, Func<BodyProgramPolicyIdentity> currentPolicy, Func<long> nowMs)
     {
@@ -31,19 +139,39 @@ public sealed class OpenBodyProgramJournalAuthority
         if (!scope.IsValid || !policy.IsValid) throw new ArgumentException("Scope and policy identity must be valid.");
         try
         {
-            string? encoded = store.Read();
-            if (encoded is null) return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.Empty);
-            if (!BodyProgramJournalPersistence.TryDecode(encoded, catalog, scope, out BodyProgramJournalState? decoded) || decoded is null)
-                return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.Corrupt);
-            BodyProgramJournalState fenced = RestartFence(decoded, out bool changed);
-            var authority = new OpenBodyProgramJournalAuthority(store, catalog, scope, currentPolicy, nowMs, fenced, changed ? BodyProgramJournalOpenStatus.RecoveryRequired : BodyProgramJournalOpenStatus.Opened);
-            if (changed && !authority.TryPersist(fenced)) authority.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed;
-            return authority;
+            BodyProgramJournalReadResult? read = store.Read();
+            if (read is null || !Enum.IsDefined(read.Status))
+                return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.PersistenceReadFailed);
+
+            switch (read.Status)
+            {
+                case BodyProgramJournalReadStatus.Empty:
+                    return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.Empty);
+                case BodyProgramJournalReadStatus.ReadFailed:
+                    return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.PersistenceReadFailed);
+                case BodyProgramJournalReadStatus.Present:
+                    if (!BodyProgramJournalPersistence.TryDecode(read.Payload, catalog, scope, out BodyProgramJournalState? decoded) || decoded is null)
+                        return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.Corrupt);
+
+                    BodyProgramJournalState fenced = RestartFence(decoded, out bool changed);
+                    BodyProgramJournalOpenStatus openStatus = changed || fenced.Programs.Any(program => program.State == BodyProgramState.RecoveryRequired)
+                        ? BodyProgramJournalOpenStatus.RecoveryRequired
+                        : BodyProgramJournalOpenStatus.Opened;
+                    var authority = new OpenBodyProgramJournalAuthority(store, catalog, scope, currentPolicy, nowMs, fenced, openStatus);
+                    if (changed && !authority.TryPersist(fenced)) authority.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed;
+                    return authority;
+                default:
+                    return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.PersistenceReadFailed);
+            }
         }
         catch { return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.PersistenceReadFailed); }
     }
 
-    public BodyProgramVerificationReport Verify(ActionProgramCandidate candidate, IReadOnlySet<string>? restrictiveActionIds = null) => BodyProgramVerifier.Verify(candidate, this.catalog, restrictiveActionIds);
+    public BodyProgramVerificationReport Verify(ActionProgramCandidate candidate, IReadOnlySet<string>? restrictiveActionIds = null)
+    {
+        this.ThrowIfLifecycleUnavailable();
+        return BodyProgramVerifier.Verify(candidate, this.catalog, restrictiveActionIds);
+    }
 
     public BodyProgramSubmitResult Submit(ActionProgramCandidate candidate, IReadOnlySet<string>? restrictiveActionIds = null)
     {
@@ -67,6 +195,7 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramStatusResult Status(string programId)
     {
+        this.ThrowIfLifecycleUnavailable();
         if (!BodyProgramValidation.IsIdentifier(programId)) return new(BodyProgramQueryCode.InvalidInput, null);
         BodyProgramJournalProgram? program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == programId);
         return program is null ? new(BodyProgramQueryCode.NotFound, null) : new(BodyProgramQueryCode.Found, SnapshotFor(program));
@@ -74,6 +203,7 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramEventsResult Events(string programId, long cursor, int pageSize)
     {
+        this.ThrowIfLifecycleUnavailable();
         if (!BodyProgramValidation.IsIdentifier(programId) || cursor < 0 || pageSize is < 1 or > 32) return new(programId, BodyProgramQueryCode.InvalidInput, Array.Empty<BodyProgramJournalEvent>(), cursor, this.state.EventHighWater);
         if (!this.state.Programs.Any(program => program.Program.ProgramId == programId)) return new(programId, BodyProgramQueryCode.NotFound, Array.Empty<BodyProgramJournalEvent>(), cursor, this.state.EventHighWater);
         BodyProgramJournalEvent[] events = this.state.Events.Where(@event => @event.ProgramId == programId && @event.Cursor > cursor).Take(pageSize).ToArray();
@@ -87,7 +217,7 @@ public sealed class OpenBodyProgramJournalAuthority
         if (!TryProgram(programId, out BodyProgramJournalProgram? program)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
         if (stopEpoch <= program!.StopEpoch) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramJournalProgram stopped = program with { State = BodyProgramState.Cancelled, StopEpoch = stopEpoch,
-            Nodes = Array.AsReadOnly(program.Nodes.Select(node => IsTerminal(node.State) ? node : node with { State = BodyProgramNodeState.Cancelled, GrantId = null, ExecutionBinding = null }).ToArray()) };
+            Nodes = Array.AsReadOnly(program.Nodes.Select(node => IsTerminal(node.State) ? node : node with { State = BodyProgramNodeState.Cancelled, GrantId = null }).ToArray()) };
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, stopped), program.Program.ProgramId, "stopped", null, null))) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PersistenceWriteFailed);
         return BodyProgramControllerResult.Success(SnapshotFor(this.state.Programs.Single(item => item.Program.ProgramId == programId)));
     }
@@ -108,13 +238,106 @@ public sealed class OpenBodyProgramJournalAuthority
         // them. A declared binding that cannot be resolved fails closed here.
         IReadOnlyDictionary<string, BodyProgramCanonicalValue>? materialized = MaterializedArguments(program, descriptor);
         if (materialized is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible);
-        BodyProgramJournalNode changed = node with { State = BodyProgramNodeState.AwaitingHostAdmission, NodeAttempt = node.NodeAttempt + 1, AdmissionAttempt = node.AdmissionAttempt + 1, GrantId = null };
+        int nodeAttempt = node.NodeAttempt + 1;
+        int admissionAttempt = node.AdmissionAttempt + 1;
+        BodyProgramJournalNode changed = node with
+        {
+            State = BodyProgramNodeState.AwaitingHostAdmission,
+            NodeAttempt = nodeAttempt,
+            AdmissionAttempt = admissionAttempt,
+            GrantId = null,
+            ExecutionBinding = null,
+            CanonicalBoundArguments = BodyProgramValidation.FreezeMap(materialized),
+            AttemptPolicyIdentity = policy,
+            ClaimOwnership = BodyProgramValidation.FreezeMap(descriptor.DerivedResourceClaims.Keys.ToDictionary(key => key, _ => BodyProgramClaimOwnershipState.NotAcquired, StringComparer.Ordinal)),
+            ReceiptId = null,
+            Evidence = null,
+            PostconditionVerification = null,
+            RecoveryDiagnostic = null,
+        };
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, ReplaceNode(program, changed)), program.Program.ProgramId, "admission_challenge", changed.NodeId, changed.NodeAttempt))) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.PersistenceWriteFailed);
-        return BodyProgramControllerResult.Success(Challenge(program, changed, descriptor, policy, materialized));
+        return BodyProgramControllerResult.Success(Challenge(program, changed, descriptor, changed.AttemptPolicyIdentity!, changed.CanonicalBoundArguments!));
     }
 
-    public BodyProgramControllerResult<HostAdmissionGrant> TryConsumeHostGrant(HostAdmissionGrant grant)
+    /// <summary>
+    /// Consumes one exact Host veto for the currently awaiting node. The veto is
+    /// a Mod-owned durable terminal fact; Host cannot select nodes, alter the
+    /// graph, or supply a replacement state. A successful first transition
+    /// atomically records the rejection and skips every still-pending dependent.
+    /// </summary>
+    public BodyProgramControllerResult<NodeAdmissionChallenge> TryRejectAdmission(NodeAdmissionChallenge challenge, string code)
     {
+        if (!IsMutable || challenge is null || !BodyProgramValidation.IsValidRejectionCode(code))
+            return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.InvalidInput);
+        BodyProgramJournalProgram? program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == challenge.ProgramId);
+        if (program is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NotFound);
+        BodyProgramJournalNode? node = program.Nodes.SingleOrDefault(item => item.NodeId == challenge.NodeId);
+        VerifiedBodyProgramNode? descriptor = program.Program.Nodes.SingleOrDefault(item => item.NodeId == challenge.NodeId);
+        if (node is null || descriptor is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible);
+
+        if (node.State == BodyProgramNodeState.Rejected)
+        {
+            if (node.RejectionCode == code && ExactAdmissionChallenge(challenge, program, node, descriptor, requireAwaiting: false, requireCurrentPolicy: false))
+                return BodyProgramControllerResult.Success(challenge);
+            return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.InvalidInput);
+        }
+
+        if (node.State != BodyProgramNodeState.AwaitingHostAdmission || !ExactAdmissionChallenge(challenge, program, node, descriptor, requireAwaiting: true))
+            return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.InvalidInput);
+
+        BodyProgramJournalNode rejected = node with
+        {
+            State = BodyProgramNodeState.Rejected,
+            GrantId = null,
+            ExecutionBinding = null,
+            ReceiptId = null,
+            Evidence = null,
+            PostconditionVerification = null,
+            RecoveryDiagnostic = null,
+            RejectionCode = code,
+        };
+        HashSet<string> descendants = new(StringComparer.Ordinal);
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (VerifiedBodyProgramNode candidate in program.Program.Nodes)
+                if (!descendants.Contains(candidate.NodeId) && candidate.DependsOn.Any(dependency => dependency == node.NodeId || descendants.Contains(dependency)))
+                    changed |= descendants.Add(candidate.NodeId);
+        } while (changed);
+
+        BodyProgramJournalNode[] skipped = program.Nodes
+            .Where(item => item.State == BodyProgramNodeState.Pending && descendants.Contains(item.NodeId))
+            .OrderBy(item => item.NodeId, StringComparer.Ordinal)
+            .Select(item => item with
+            {
+                State = BodyProgramNodeState.SkippedDependency,
+                NodeAttempt = 0,
+                AdmissionAttempt = 0,
+                GrantId = null,
+                ExecutionBinding = null,
+                CanonicalBoundArguments = null,
+                AttemptPolicyIdentity = null,
+                ClaimOwnership = null,
+                ReceiptId = null,
+                Evidence = null,
+                PostconditionVerification = null,
+                RecoveryDiagnostic = null,
+                RejectionCode = null,
+            }).ToArray();
+        BodyProgramJournalProgram updated = ReplaceNode(program, rejected);
+        foreach (BodyProgramJournalNode skippedNode in skipped) updated = ReplaceNode(updated, skippedNode);
+        updated = updated with { State = RecomputeProgramState(updated) };
+        BodyProgramJournalState next = ReplaceProgram(this.state, updated);
+        next = AppendEvent(next, program.Program.ProgramId, "admission_rejected", rejected.NodeId, rejected.NodeAttempt);
+        foreach (BodyProgramJournalNode skippedNode in skipped)
+            next = AppendEvent(next, program.Program.ProgramId, "node_skipped", skippedNode.NodeId, 0);
+        if (!TryPersist(next)) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.PersistenceWriteFailed);
+        return BodyProgramControllerResult.Success(challenge);
+    }
+
+     public BodyProgramControllerResult<HostAdmissionGrant> TryConsumeHostGrant(HostAdmissionGrant grant)
+     {
         if (!IsMutable) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(BodyProgramControllerResultCode.RecoveryRequired);
         if (grant?.ExecutionBinding is not null) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(BodyProgramControllerResultCode.ExecutionBindingMismatch);
         if (!TryGrant(grant, BodyProgramNodeState.AwaitingHostAdmission, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out VerifiedBodyProgramNode? descriptor, out BodyProgramControllerResultCode failure)) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(failure);
@@ -137,8 +360,8 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramControllerResult<BodyProgramTerminalResult> TryComplete(HostAdmissionGrant grant, BodyProgramTerminalResult result)
     {
-        if (result is null || !Enum.IsDefined(typeof(BodyProgramNodeOutcome), result.Outcome)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         if (!IsMutable) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.RecoveryRequired);
+        if (result is null || !Enum.IsDefined(typeof(BodyProgramNodeOutcome), result.Outcome)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         if (!TryGrant(grant, BodyProgramNodeState.Running, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out VerifiedBodyProgramNode? descriptor, out BodyProgramControllerResultCode failure)
             || node!.GrantId != grant.GrantId) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(failure == BodyProgramControllerResultCode.Succeeded ? BodyProgramControllerResultCode.GrantMismatch : failure);
         if (grant.ExecutionBinding is null || !Equals(node.ExecutionBinding, grant.ExecutionBinding) || !Equals(result.Execution, grant.ExecutionBinding)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.ExecutionBindingMismatch);
@@ -149,13 +372,107 @@ public sealed class OpenBodyProgramJournalAuthority
         }
         else if (result.Facts is null || result.Facts.Count != 0 || result.ReceiptId is not null || result.Evidence is not null || result.PostconditionVerification is not null) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramNodeState nodeState = result.Outcome switch { BodyProgramNodeOutcome.Succeeded => BodyProgramNodeState.Succeeded, BodyProgramNodeOutcome.Failed => BodyProgramNodeState.Failed, BodyProgramNodeOutcome.Cancelled => BodyProgramNodeState.Cancelled, _ => BodyProgramNodeState.RecoveryRequired };
-        BodyProgramJournalProgram updated = ReplaceNode(program!, node with { State = nodeState, GrantId = null, ExecutionBinding = null }) with { Facts = result.Outcome == BodyProgramNodeOutcome.Succeeded ? Array.AsReadOnly(program!.Facts.Concat(result.Facts!).ToArray()) : program!.Facts };
-        updated = updated with { State = result.Outcome switch { BodyProgramNodeOutcome.Failed => BodyProgramState.Failed, BodyProgramNodeOutcome.Cancelled => BodyProgramState.Cancelled, BodyProgramNodeOutcome.Uncertain => BodyProgramState.RecoveryRequired, _ when updated.Nodes.All(item => item.State == BodyProgramNodeState.Succeeded) => BodyProgramState.Succeeded, _ => BodyProgramState.Active } };
+        BodyProgramJournalNode completed = node with
+        {
+            State = nodeState,
+            GrantId = null,
+            ExecutionBinding = node.ExecutionBinding,
+            ReceiptId = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.ReceiptId : null,
+            Evidence = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.Evidence : null,
+            PostconditionVerification = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.PostconditionVerification : null,
+            RecoveryDiagnostic = result.Outcome == BodyProgramNodeOutcome.Uncertain ? "execution_uncertain" : null,
+        };
+        BodyProgramJournalProgram updated = ReplaceNode(program!, completed) with { Facts = result.Outcome == BodyProgramNodeOutcome.Succeeded ? Array.AsReadOnly(program!.Facts.Concat(result.Facts!).ToArray()) : program!.Facts };
+         updated = updated with { State = result.Outcome switch
+         {
+             BodyProgramNodeOutcome.Cancelled => BodyProgramState.Cancelled,
+             BodyProgramNodeOutcome.Uncertain => BodyProgramState.RecoveryRequired,
+             _ => RecomputeProgramState(updated),
+         } };
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, updated), program!.Program.ProgramId, "node_completed", node.NodeId, node.NodeAttempt))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.PersistenceWriteFailed);
+        if (result.Outcome == BodyProgramNodeOutcome.Uncertain) this.OpenStatus = BodyProgramJournalOpenStatus.RecoveryRequired;
         return BodyProgramControllerResult.Success(result);
     }
 
-    private bool TryGrant(HostAdmissionGrant? grant, BodyProgramNodeState expected, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out VerifiedBodyProgramNode? descriptor, out BodyProgramControllerResultCode failure)
+    /// <summary>
+    /// Authority-owned settlement seam for a terminal the strict completion
+    /// path refused after dispatch already durably projected the exact binding
+    /// to Running (the live deadline or policy revalidation changed in between,
+    /// or the terminal itself failed an acceptance gate). It durably
+    /// transitions exactly that Running node to RecoveryRequired without
+    /// accepting any facts, receipt, evidence, or postcondition from the
+    /// terminal, without changing graph authority, and without creating a new
+    /// admission attempt or retry. Exactness is preserved: the presented grant
+    /// must be the exact grant currently bound to the Running node and the
+    /// execution must equal that binding; any other tuple/state fails closed
+    /// without mutating the journal.
+    /// </summary>
+    public BodyProgramControllerResult<BodyProgramStatusSnapshot> TrySettleRecoveryRequired(HostAdmissionGrant grant, NodeExecutionBinding execution)
+    {
+        if (!IsMutable) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
+        if (grant is null || !BodyProgramValidation.IsIdentifier(grant.GrantId)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.GrantMismatch);
+        if (!TryProgram(grant.ProgramId, out BodyProgramJournalProgram? program)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
+        BodyProgramJournalNode? node = program!.Nodes.SingleOrDefault(item => item.NodeId == grant.NodeId);
+        VerifiedBodyProgramNode? descriptor = program.Program.Nodes.SingleOrDefault(item => item.NodeId == grant.NodeId);
+        // Exact-grant/exact-binding gate. The live deadline expiry and current
+        // policy revalidation that the strict completion path failed are
+        // intentionally not repeated: this seam exists precisely so a node whose
+        // deadline or policy changed after dispatch can still be settled. Every
+        // frozen identity check still applies and wrong tuples/states fail
+        // closed below.
+        if (node is null || descriptor is null || node.State != BodyProgramNodeState.Running || node.GrantId != grant.GrantId
+            || !grant.PolicyIdentity.Equals(this.state.PolicyIdentity) || grant.ExecutionBinding is null
+            || !Equals(node.ExecutionBinding, grant.ExecutionBinding) || !Equals(execution, grant.ExecutionBinding)
+            || !ExactGrantIdentity(grant, program, node, descriptor))
+            return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.GrantMismatch);
+        BodyProgramJournalNode settled = node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = node.ExecutionBinding, RecoveryDiagnostic = "recovery_required" };
+        BodyProgramJournalProgram updated = ReplaceNode(program, settled) with { State = BodyProgramState.RecoveryRequired };
+        if (!TryPersist(AppendEvent(ReplaceProgram(this.state, updated), program.Program.ProgramId, "node_settled", node.NodeId, node.NodeAttempt)))
+            return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PersistenceWriteFailed);
+        this.OpenStatus = BodyProgramJournalOpenStatus.RecoveryRequired;
+        return BodyProgramControllerResult.Success(SnapshotFor(this.state.Programs.Single(item => item.Program.ProgramId == program.Program.ProgramId)));
+    }
+
+    /// <summary>
+    /// Re-entry gate the controller performs for a bound Running node before
+    /// each continuation visit. It revalidates the exact same gate initial
+    /// dispatch runs (mutable authority, current policy vs granted/stated
+    /// identity, live deadline, stop epoch, exact grant↔journal identity, the
+    /// node's GrantId binding, and the execution binding) against the journal's
+    /// Running state. A non-Succeeded result means a mid-run gate changed
+    /// (deadline/policy/stop) and the controller must settle the still-Running
+    /// node via TrySettleRecoveryRequired instead of executing or retrying.
+    /// </summary>
+    internal BodyProgramControllerResultCode RevalidateRunningDispatch(HostAdmissionGrant grant, NodeExecutionBinding execution)
+    {
+        if (!IsMutable) return BodyProgramControllerResultCode.RecoveryRequired;
+        if (!TryGrant(grant, BodyProgramNodeState.Running, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out _, out BodyProgramControllerResultCode failure)
+            || node!.GrantId != grant.GrantId) return failure == BodyProgramControllerResultCode.Succeeded ? BodyProgramControllerResultCode.GrantMismatch : failure;
+        if (grant.ExecutionBinding is null || !Equals(node.ExecutionBinding, grant.ExecutionBinding) || !Equals(execution, grant.ExecutionBinding)
+            || !MatchesNode(execution, program!, node!)) return BodyProgramControllerResultCode.ExecutionBindingMismatch;
+        return BodyProgramControllerResultCode.Succeeded;
+    }
+
+    private bool ExactAdmissionChallenge(NodeAdmissionChallenge challenge, BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor,
+        bool requireAwaiting, bool requireCurrentPolicy = true)
+    {
+        BodyProgramPolicyIdentity policy = requireCurrentPolicy ? ObservePolicy() : this.state.PolicyIdentity;
+        return challenge is not null && (!requireAwaiting || node.State == BodyProgramNodeState.AwaitingHostAdmission)
+            && challenge.ProgramId == program.Program.ProgramId && challenge.NodeId == node.NodeId
+            && challenge.NodeAttempt == node.NodeAttempt && challenge.AdmissionAttempt == node.AdmissionAttempt
+            && challenge.StopEpoch == program.StopEpoch && challenge.CatalogRevision == program.Program.CatalogRevision
+            && challenge.CatalogRevision == this.catalog.Revision && challenge.PolicyIdentity is not null
+            && challenge.CanonicalArguments is not null && challenge.DerivedResourceClaims is not null
+            && node.AttemptPolicyIdentity is not null && challenge.PolicyIdentity.Equals(node.AttemptPolicyIdentity)
+            && (!requireCurrentPolicy || PolicyMatches(policy, challenge.PolicyIdentity)) && challenge.ActionId == descriptor.ActionId
+            && challenge.DeadlineMs == descriptor.DeadlineMs && node.CanonicalBoundArguments is not null
+            && BodyProgramCanonical.CanonicalMapsEqual(challenge.CanonicalArguments, node.CanonicalBoundArguments)
+            && BodyProgramCanonical.StringMapsEqual(challenge.DerivedResourceClaims, descriptor.DerivedResourceClaims)
+            && DescriptorMatchesLive(descriptor);
+    }
+
+    private bool TryGrant(HostAdmissionGrant? grant, BodyProgramNodeState expected, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node,
+        out VerifiedBodyProgramNode? descriptor, out BodyProgramControllerResultCode failure)
     {
         program = null; node = null; descriptor = null; failure = BodyProgramControllerResultCode.GrantMismatch;
         if (grant is null || !BodyProgramValidation.IsIdentifier(grant.GrantId) || !TryProgram(grant.ProgramId, out program)) return false;
@@ -164,13 +481,27 @@ public sealed class OpenBodyProgramJournalAuthority
         BodyProgramPolicyIdentity policy = ObservePolicy();
         if (!PolicyMatches(policy, this.state.PolicyIdentity) || !PolicyMatches(policy, grant.PolicyIdentity)) { failure = BodyProgramControllerResultCode.PolicyIdentityStale; return false; }
         if (node is null || descriptor is null || descriptor.DeadlineMs < this.nowMs()) { failure = descriptor is not null && descriptor.DeadlineMs < this.nowMs() ? BodyProgramControllerResultCode.DeadlineExpired : failure; return false; }
-        if (node.State != expected || node.NodeAttempt != grant.NodeAttempt || node.AdmissionAttempt != grant.AdmissionAttempt || grant.StopEpoch != program.StopEpoch
-            || grant.CatalogRevision != program.Program.CatalogRevision || grant.CatalogRevision != this.catalog.Revision || grant.ActionId != descriptor.ActionId || grant.DeadlineMs != descriptor.DeadlineMs
-            || !CanonicalArgumentsMatch(grant, program, descriptor) || !BodyProgramCanonical.StringMapsEqual(grant.DerivedResourceClaims, descriptor.DerivedResourceClaims)
-            || !DescriptorMatchesLive(descriptor)) return false;
+        if (node.State != expected || !ExactGrantIdentity(grant, program, node, descriptor)) return false;
         failure = BodyProgramControllerResultCode.Succeeded;
         return true;
     }
+
+    /// <summary>
+    /// Frozen grant↔journal identity revalidation shared by the strict
+    /// completion path and the RecoveryRequired settlement seam. It contains
+    /// only checks that cannot change after dispatch (tuple counts, epoch,
+    /// revisions, action identity, deadline value, materialized canonical
+    /// arguments, resource claims, and live catalog/scope conformance); live
+    /// deadline expiry and current policy identity revalidation stay in the
+    /// callers so settlement can still settle a node whose deadline or policy
+    /// changed after dispatch.
+    /// </summary>
+    private bool ExactGrantIdentity(HostAdmissionGrant grant, BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor) =>
+        node.NodeAttempt == grant.NodeAttempt && node.AdmissionAttempt == grant.AdmissionAttempt && node.AttemptPolicyIdentity is not null
+        && node.AttemptPolicyIdentity.Equals(grant.PolicyIdentity) && grant.StopEpoch == program.StopEpoch
+        && grant.CatalogRevision == program.Program.CatalogRevision && grant.CatalogRevision == this.catalog.Revision && grant.ActionId == descriptor.ActionId && grant.DeadlineMs == descriptor.DeadlineMs
+        && CanonicalArgumentsMatch(grant, node) && BodyProgramCanonical.StringMapsEqual(grant.DerivedResourceClaims, descriptor.DerivedResourceClaims)
+        && DescriptorMatchesLive(descriptor);
 
     private static bool MatchesNode(NodeExecutionBinding? execution, BodyProgramJournalProgram program, BodyProgramJournalNode node) => BodyProgramValidation.IsValidExecutionBinding(execution)
         && execution!.ProgramId == program.Program.ProgramId && execution.NodeId == node.NodeId && execution.NodeAttempt == node.NodeAttempt;
@@ -202,18 +533,24 @@ public sealed class OpenBodyProgramJournalAuthority
         return BodyProgramValidation.FreezeMap(materialized);
     }
 
-    private bool CanonicalArgumentsMatch(HostAdmissionGrant grant, BodyProgramJournalProgram program, VerifiedBodyProgramNode descriptor)
+    private static bool CanonicalArgumentsMatch(HostAdmissionGrant grant, BodyProgramJournalNode node)
     {
-        // The grant must echo exactly the canonical arguments the challenge
-        // carried. For a bound successor those are the materialized producing-fact
-        // values, so the recheck derives them fresh from the durable journal at
-        // consume, dispatch, and completion instead of trusting the literal map.
-        IReadOnlyDictionary<string, BodyProgramCanonicalValue>? materialized = MaterializedArguments(program, descriptor);
-        return materialized is not null && BodyProgramCanonical.CanonicalMapsEqual(grant.CanonicalArguments, materialized);
+        // The grant must echo the exact canonical map durably captured with this
+        // attempt's challenge. It is never reconstructed from a new attempt or
+        // accepted from a caller-supplied literal after the challenge boundary.
+        return node.CanonicalBoundArguments is not null && BodyProgramCanonical.CanonicalMapsEqual(grant.CanonicalArguments, node.CanonicalBoundArguments);
     }
     private bool DescriptorMatchesLive(VerifiedBodyProgramNode node) => this.catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action)
         && BodyProgramVerifier.ArgumentsMatch(node.CanonicalArguments, action!) && BodyProgramVerifier.ResourceClaimsMatch(node.DerivedResourceClaims, action!, this.scope);
-    private bool IsMutable => this.OpenStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened;
+    private bool IsMutable => this.IsLifecycleOpen && (this.OpenStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened);
+    private void ThrowIfLifecycleUnavailable()
+    {
+        BodyProgramAuthorityLifecycleState lifecycle;
+        lock (this.lifecycleGate)
+            lifecycle = this.lifecycleState;
+        if (lifecycle != BodyProgramAuthorityLifecycleState.Open)
+            throw new ObjectDisposedException(nameof(OpenBodyProgramJournalAuthority), $"Body Program authority lifecycle is {lifecycle}.");
+    }
     private BodyProgramPolicyIdentity ObservePolicy()
     {
         BodyProgramPolicyIdentity identity = this.currentPolicy();
@@ -222,7 +559,7 @@ public sealed class OpenBodyProgramJournalAuthority
     }
     private bool PolicyMatches(BodyProgramPolicyIdentity current, BodyProgramPolicyIdentity expected) => current.IsValid && expected.IsValid && current.Equals(expected) && !this.policyIdentityChanged;
     private bool TryProgram(string id, out BodyProgramJournalProgram? program) { program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == id); return program is not null && program.State == BodyProgramState.Active; }
-    private bool TryPersist(BodyProgramJournalState next) { if (!BodyProgramJournalPersistence.TryValidate(next, out _) || !BodyProgramJournalPersistence.MatchesCatalogProgram(next, this.catalog, this.scope)) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } try { if (!this.store.TryWrite(BodyProgramJournalPersistence.Encode(next))) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } this.state = BodyProgramJournalPersistence.FreezeState(next); return true; } catch { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } }
+    private bool TryPersist(BodyProgramJournalState next) { if (!BodyProgramJournalPersistence.TryValidate(next, out _) || !BodyProgramJournalPersistence.MatchesCatalogProgram(next, this.catalog, this.scope)) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } try { if (!this.store.TryWrite(BodyProgramJournalPersistence.Encode(next, this.catalog, this.scope))) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } this.state = BodyProgramJournalPersistence.FreezeState(next); return true; } catch { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } }
     private static BodyProgramJournalState Empty(BridgeScope scope, BodyProgramPolicyIdentity policy) => new(BodyProgramJournalPersistence.SchemaVersion, scope, policy, 0, Array.Empty<BodyProgramJournalProgram>(), Array.Empty<BodyProgramJournalEvent>());
     private static BodyProgramJournalState AppendEvent(BodyProgramJournalState source, string programId, string kind, string? nodeId, int? attempt) { long cursor = source.EventHighWater + 1; long revision = source.Programs.Single(program => program.Program.ProgramId == programId).Program.CatalogRevision; return source with { EventHighWater = cursor, Events = Array.AsReadOnly(source.Events.Append(new BodyProgramJournalEvent(cursor, programId, kind, revision, nodeId, attempt)).ToArray()) }; }
     private static BodyProgramJournalState ReplaceProgram(BodyProgramJournalState source, BodyProgramJournalProgram replacement) => source with { Programs = Array.AsReadOnly(source.Programs.Select(item => item.Program.ProgramId == replacement.Program.ProgramId ? replacement : item).ToArray()) };
@@ -243,14 +580,39 @@ public sealed class OpenBodyProgramJournalAuthority
     }
     private BodyProgramStatusSnapshot SnapshotFor(BodyProgramJournalProgram program) => new(program.Program.ProgramId, program.State, program.Program.CatalogRevision, program.StopEpoch, this.state.EventHighWater, Array.AsReadOnly(program.Nodes.ToArray()));
     private static NodeAdmissionChallenge Challenge(BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor, BodyProgramPolicyIdentity policy, IReadOnlyDictionary<string, BodyProgramCanonicalValue> materialized) => new(program.Program.ProgramId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt, program.StopEpoch, program.Program.CatalogRevision, policy, descriptor.ActionId, materialized, descriptor.DerivedResourceClaims, descriptor.DeadlineMs);
-    private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected;
+     private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency;
+      private static bool HasExecutableWork(BodyProgramJournalProgram program)
+      {
+          if (program.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running)) return true;
+          Dictionary<string, BodyProgramJournalNode> nodes = program.Nodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
+          return program.Program.Nodes.Any(descriptor => nodes[descriptor.NodeId].State == BodyProgramNodeState.Pending
+              && descriptor.DependsOn.All(dependency => nodes[dependency].State == BodyProgramNodeState.Succeeded));
+      }
+      private static BodyProgramState RecomputeProgramState(BodyProgramJournalProgram program)
+      {
+          if (program.State == BodyProgramState.Cancelled || program.State == BodyProgramState.RecoveryRequired) return program.State;
+          if (HasExecutableWork(program)) return BodyProgramState.Active;
+          return program.Nodes.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected) ? BodyProgramState.Failed : BodyProgramState.Succeeded;
+      }
     private static BodyProgramVerificationReport Rejected(string code, string? node, string path) => new(false, 0, null, new[] { new BodyProgramDiagnostic(BodyProgramDiagnosticSeverity.Error, code, node, path, code) });
     private static ActionProgramCandidate ToCandidate(VerifiedBodyProgram program) => new(program.ProgramId, program.Nodes.Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, node.CanonicalArguments.ToDictionary(pair => pair.Key, pair => BodyProgramValidation.ToRuntimeValue(pair.Value), StringComparer.Ordinal), node.DependsOn, node.Bindings, node.DeadlineMs)).ToArray());
     private static BodyProgramJournalState RestartFence(BodyProgramJournalState persisted, out bool changed)
     {
-        changed = persisted.Programs.Any(program => !program.Nodes.All(node => IsTerminal(node.State)));
+        changed = persisted.Programs.Any(program => program.State != BodyProgramState.RecoveryRequired
+            && program.Nodes.Any(node => !IsTerminal(node.State)));
         if (!changed) return persisted;
-        BodyProgramJournalProgram[] programs = persisted.Programs.Select(program => program.Nodes.All(node => IsTerminal(node.State)) ? program : program with { State = BodyProgramState.RecoveryRequired, Nodes = Array.AsReadOnly(program.Nodes.Select(node => IsTerminal(node.State) ? node : node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = null }).ToArray()) }).ToArray();
+        BodyProgramJournalProgram[] programs = persisted.Programs.Select(program => program.Nodes.All(node => IsTerminal(node.State))
+            ? program
+            : program with
+            {
+                State = BodyProgramState.RecoveryRequired,
+                Nodes = Array.AsReadOnly(program.Nodes.Select(node => node.State switch
+                {
+                    BodyProgramNodeState.Pending when node.NodeAttempt == 0 => node,
+                    BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired => node,
+                    _ => node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = node.ExecutionBinding, RecoveryDiagnostic = "recovery_required" },
+                }).ToArray())
+            }).ToArray();
         return new BodyProgramJournalState(persisted.SchemaVersion, persisted.Scope, persisted.PolicyIdentity, persisted.EventHighWater, Array.AsReadOnly(programs), persisted.Events);
     }
 }

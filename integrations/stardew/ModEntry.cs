@@ -817,12 +817,19 @@ public sealed partial class ModEntry : Mod
             // topology, and route-planning authorities used by execution. This
             // writes only transaction-owned fixture configuration; it creates no
             // player/world fact and grants no product capability.
-            if (fixture.NavigationMutationTargetLabel.Length != 0
-                || !DerivedDestinationSet.TryCreateCurrent("stardew", out DerivedDestinationSet? destinations, out _)
+            string? deriveReason = null;
+            DerivedDestinationSet? destinations = null;
+            if (fixture.NavigationMutationTargetLabel.Length != 0)
+            {
+                this.nativeLocalPlayerFixtureTerminal = true;
+                this.Monitor.Log("GameBuddy Navigation mutation fixture target already set.", LogLevel.Error);
+                return;
+            }
+            if (!DerivedDestinationSet.TryCreateCurrent("stardew", out destinations, out deriveReason)
                 || Game1.player?.currentLocation?.NameOrUniqueName is not string currentSource)
             {
                 this.nativeLocalPlayerFixtureTerminal = true;
-                this.Monitor.Log("GameBuddy Navigation mutation fixture could not derive a fresh target.", LogLevel.Error);
+                this.Monitor.Log($"GameBuddy Navigation mutation fixture could not derive a fresh target (derive_reason={deriveReason ?? "unknown"};current={Game1.player?.currentLocation?.NameOrUniqueName ?? "none"};searchable={destinations?.SearchDestinations.Count ?? 0})", LogLevel.Error);
                 return;
             }
 
@@ -839,8 +846,9 @@ public sealed partial class ModEntry : Mod
                 if (labelMatches != 1)
                     return false;
                 var binding = new NavigationDestinationBinding("stardew", destination.CanonicalIdentity, destinations.Generation, 0);
-                return source.TryCreateCurrentOrdinaryWarpTopology(binding, out NavigationOrdinaryWarpTopology? topology, out _)
-                    && planner.Plan(topology!, currentSource, binding).Kind == NavigationRoutePlanKind.NextEdge;
+                if (!source.TryCreateCurrentOrdinaryWarpTopology(binding, out NavigationOrdinaryWarpTopology? topology, out string topologyReason))
+                    return false;
+                return planner.Plan(topology!, currentSource, binding).Kind == NavigationRoutePlanKind.NextEdge;
             });
             if (selected is null)
             {
@@ -2078,7 +2086,14 @@ public sealed partial class ModEntry : Mod
             && ShouldComposeBodyProgramController(bodyProgramAuthority.OpenStatus)
             && state.BridgeSession is not null)
         {
-            farmhandBodyProgramController = new FarmhandBodyProgramController(bodyProgramAuthority, state.BridgeSession);
+            // The uniform executor re-enters the single Mod dispatch table
+            // (same router + ledger as ordinary execution) instead of acting as
+            // a second actionId→native mapping; it is construction-private and
+            // introduces no new public capability.
+            farmhandBodyProgramController = new FarmhandBodyProgramController(
+                bodyProgramAuthority,
+                state.BridgeSession,
+                new RouteReenteringBodyProgramExecutor(router, state.Executions));
             this.Monitor.Log("GameBuddy body program journal opened for this scope; program_verify/submit/status/events routes are live.", LogLevel.Info);
         }
         state.BodyProgramController = farmhandBodyProgramController;
