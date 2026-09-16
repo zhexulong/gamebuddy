@@ -78,7 +78,16 @@ export type StardewLifecycleActivationIssuerBindingSink = Readonly<{
 export type StardewGameSurfaceAttachmentView = Readonly<{
   status: "none" | "attached";
   generation: number;
-  connectionStatus: "none" | "connected_idle" | "reconnecting" | "stopping" | "stopped" | "failed";
+  /**
+   * Coordinator-owned resume phase vocabulary. The fresh resume activation
+   * projects `reconnecting` while the attempt is accepted/pending, `syncing`
+   * while the fresh bridge/session construction, observation and Game-owned
+   * conversation runtime are being established, and `connected_idle` exactly
+   * when the resumed world is attached with actions paused
+   * (ready-actions-paused; see the action authority view). The browser-facing
+   * layer maps this vocabulary onto its schema in the projection slice.
+   */
+  connectionStatus: "none" | "connected_idle" | "reconnecting" | "syncing" | "stopping" | "stopped" | "failed";
 }>;
 
 export type StardewGameSurfaceAttachmentReader = Readonly<{
@@ -141,11 +150,17 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
   /**
    * Coordinator-owned fresh-generation resume seam. Resolves the game
    * session's registered world binding, and only after an ok resolve creates a
-   * new activation: attachmentGeneration strictly increments to >= 2 (never
-   * reusing 0/1), action authority pauses, and no old task is resumed. Typed
-   * outcomes: accepted/attached on success, unavailable for a missing/terminal
-   * binding (no activation created). Fail-closed on stale tuples and in-progress
-   * overlap; the browser contract schema stays unmodified.
+   * new activation: any stale failed attachment is torn down through the shared
+   * teardown machinery, attachmentGeneration strictly increments to >= 2
+   * (never reusing 0/1), the fresh bridge/session attach chain runs through the
+   * existing materializer seam (hello, observation, Game-owned conversation
+   * runtime, committed ingress), and action authority stays paused until a new
+   * explicit Game instruction reopens it (no old task is resumed). Typed
+   * outcomes: `attached` only after the real attach completed, `accepted` when
+   * the attempt is admitted but the attach is not yet complete inside this
+   * instance, unavailable for a missing/terminal binding (no activation
+   * created). Fail-closed on stale tuples and in-progress overlap; the browser
+   * contract schema stays unmodified.
    */
   resume(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
@@ -300,6 +315,23 @@ function isTransientFarmhandBridgeConnectError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as NodeJS.ErrnoException).code;
   return code === "ENOENT" || code === "ECONNREFUSED";
+}
+
+/**
+ * Errors that mean the fresh resume attach cannot be built inside this
+ * coordinator instance because the one-shot owner/connection seam is not
+ * available (the prior activation consumed it) or was never armed (the AI
+ * profile was never materialized). They defer the attach to the next layer's
+ * fresh connection/launch authority instead of classifying the attempt as
+ * failed; every other error (owner quarantined/expired, launch generation
+ * mismatch, bridge protocol failures, deadlines) stays a hard failure.
+ */
+function isResumeAttachDeferredError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.message === "stardew_farmhand_bridge_connection_not_available" ||
+    error.message === "stardew_farmhand_bridge_profile_not_materialized"
+  );
 }
 
 async function waitForFarmhandBridgeRetry(deadlineMs: number): Promise<void> {
@@ -948,10 +980,82 @@ function createCoordinator(
     return promise;
   });
 
+  const closePartialAttachment = async (): Promise<void> => {
+    const stale = farmhandGameRuntimeFacade;
+    if (stale === undefined) return;
+    await stale.close();
+    if (farmhandGameRuntimeFacade === stale) {
+      farmhandGameRuntimeLease = undefined;
+      farmhandGameRuntimeFacade = undefined;
+      farmhandGameRuntimeFacadeClosed = true;
+    }
+  };
+
+  /**
+   * Closes any stale previous-activation attachment (facade/lease) through the
+   * shared teardown machinery before the fresh resume activation is minted, so
+   * no old-activation in-memory objects outlive the new activation. A facade
+   * left without a lease (a failed enter) is closed directly; a facade+lease
+   * pair goes through the full teardown timing (prompt-task cancel, stops
+   * join, exact facade close, generation/authority reset).
+   */
+  const closeStaleAttachment = async (): Promise<void> => {
+    if (farmhandGameRuntimeLease !== undefined && farmhandGameRuntimeFacade !== undefined) {
+      await teardownAttachment();
+      return;
+    }
+    await closePartialAttachment();
+  };
+
+  /**
+   * Builds the fresh resume activation over the registered world binding: a
+   * new Farmhand bridge connection (hello/instance-binding check), a new
+   * unmounted semantic facade and entered lease (fresh observation and the
+   * Game-owned companion conversation runtime), then the committed ingress
+   * publication. Only the coordinator's existing materializer attach seam is
+   * reused; no old activation task or prompt state is resumed. Returns true
+   * when the attach completed, false when the attempt stays accepted because
+   * the attach cannot be built inside this instance (the one-shot bridge/owner
+   * seam is exhausted or never armed, or the coordinator owns no activation).
+   */
+  const attachResumedWorld = async (deadlineMs: number): Promise<boolean> => {
+    const owner = exactOwner;
+    if (owner === undefined) return false;
+    attachmentConnectionStatus = "syncing";
+    while (farmhandGameRuntimeFacade === undefined) {
+      if (isClosing()) throw new Error("stardew_lifecycle_closing");
+      try {
+        farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
+          owner,
+          (connection) => materializeFarmhandGameSession(connection, deadlineMs),
+        );
+      } catch (error) {
+        if (isResumeAttachDeferredError(error)) {
+          // The attempt stays accepted: the fresh attach is pending on the
+          // next layer's fresh connection/launch authority for this owner.
+          attachmentConnectionStatus = "reconnecting";
+          return false;
+        }
+        if (!isTransientFarmhandBridgeConnectError(error)) throw error;
+        await waitForFarmhandBridgeRetry(deadlineMs);
+      }
+    }
+    const enteredLease = await farmhandGameRuntimeFacade.runEnter();
+    farmhandGameRuntimeLease = enteredLease;
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    enteredLease.host.attachVoiceStopper(async () => undefined);
+    enteredLease.activateCommittedIngress();
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    // The resumed world is attached with actions paused: the authority is
+    // reopened only by a fresh explicit Game instruction (ready-actions-paused).
+    attachmentConnectionStatus = "connected_idle";
+    return true;
+  };
+
   const resume: StardewProductionLifecycleActivationOwner["resume"] = (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameSessionResumeCommandV1,
-  ): Promise<GameResumeResultV1> => consumeBrowserAdmission(admission, "game_resume", (browserSessionId) => {
+  ): Promise<GameResumeResultV1> => consumeBrowserAdmission(admission, "game_resume", (browserSessionId, sessionExpiryMs) => {
     const prior = gameResumes.get(command.idempotencyKey);
     if (prior !== undefined) {
       if (
@@ -963,10 +1067,11 @@ function createCoordinator(
     }
     if (resumePromise !== undefined) throw new Error("stardew_game_resume_in_progress");
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
-    // Resume is the recovery seam over a previously ended activation: a live
-    // attached runtime is still a single-activation authority, so a fresh
-    // generation is never minted on top of one.
-    if (farmhandGameRuntimeLease !== undefined)
+    // Resume is the recovery seam over a previously ended activation. A live,
+    // healthy attached runtime is still a single-activation authority, so a
+    // fresh generation is never minted on top of one; a stale attachment
+    // marked failed is closed through the shared teardown machinery instead.
+    if (farmhandGameRuntimeLease !== undefined && attachmentConnectionStatus !== "failed")
       throw new Error("stardew_game_runtime_unavailable");
     // One coordinator owns one resumed world binding; resuming a different
     // Game session under the same lifecycle is a stale cross-session command.
@@ -977,6 +1082,7 @@ function createCoordinator(
     const nextGeneration = Math.max(attachmentGeneration + 1, 2);
     if (command.expectedAttachmentGeneration !== nextGeneration)
       throw new Error("stardew_game_attachment_generation_conflict");
+    const resumeDeadlineMs = Math.min(sessionExpiryMs, Date.now() + 60_000);
     let attempt!: Promise<GameResumeResultV1>;
     attempt = (async (): Promise<GameResumeResultV1> => {
       try {
@@ -986,6 +1092,10 @@ function createCoordinator(
           // No activation is created for a missing/foreign/terminal binding.
           return Object.freeze({ apiVersion: 1, status: "unavailable" });
         }
+        // Close any stale failed attachment so no old-activation facade/lease
+        // outlives the fresh activation.
+        await closeStaleAttachment();
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
         // Fresh activation: the world binding is registered and resumable.
         // Actions pause until a new explicit Game instruction reopens the
         // authority; no old task or prompt state is resumed.
@@ -993,7 +1103,26 @@ function createCoordinator(
         attachmentGeneration = nextGeneration;
         attachmentConnectionStatus = "reconnecting";
         actionAuthorityStatus = "paused";
-        return Object.freeze({ apiVersion: 1, status: "accepted" });
+        const attached = await attachResumedWorld(resumeDeadlineMs);
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        return Object.freeze({
+          apiVersion: 1,
+          status: attached ? "attached" : "accepted",
+        });
+      } catch (error) {
+        if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
+        attachmentConnectionStatus = "failed";
+        // A partial facade created before its lease entered must not outlive
+        // the failed attempt; a facade+lease pair is retained for the shared
+        // teardown on retry/close.
+        if (farmhandGameRuntimeLease === undefined && farmhandGameRuntimeFacade !== undefined) {
+          try {
+            await closePartialAttachment();
+          } catch {
+            // Retained for the coordinator close retry.
+          }
+        }
+        throw error;
       } finally {
         if (resumePromise === attempt) resumePromise = undefined;
       }

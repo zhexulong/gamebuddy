@@ -37,8 +37,8 @@ import type { DesktopGuardianSession, GuardianAck } from "./containment/auth/des
 import {
   createDesktopGuardianGameRuntimePlatform,
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
-} from "./composition/contained-game-runtime-platform.private.js";
-import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./composition/stardew-native-role-launch-plan.private.js";
+} from "./games/stardew/lifecycle/contained-game-runtime-platform.private.js";
+import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./games/stardew/lifecycle/stardew-native-role-launch-plan.private.js";
 import {
   STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
@@ -2703,6 +2703,164 @@ test("resume fails closed when a different resumed session is presented after on
       ),
       /stardew_game_resume_idempotency_conflict/,
     );
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});// ─── Slice 2: resume fresh attachment chain, stale teardown, and projection ──
+
+test("slice 2: resume rejects while a live healthy attachment is attached without disturbing it", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "connected_idle",
+    });
+    // A live, healthy attachment is still a single-activation authority: the
+    // fresh resume generation is refused without touching the live world.
+    assert.throws(
+      () => fixture.coordinator.activationOwner.resume(
+        fixture.broker.issue("game_resume"),
+        { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+      ),
+      /stardew_game_runtime_unavailable/,
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "connected_idle",
+    });
+    assert.deepEqual(fixture.bridgeCloseCalls, []);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("slice 2: resume closes a stale failed attachment through the shared teardown and admits the fresh generation as accepted", async () => {
+  // The gen-1 facade close fails once (stale failed attachment), then succeeds
+  // when the resume reuses the exact teardown machinery.
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    gameRuntimeBindingCloseResults: [false, true],
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await assert.rejects(
+      fixture.coordinator.activationOwner.disconnectGame(
+        fixture.broker.issue("game_disconnect"),
+        { apiVersion: 1, idempotencyKey: "slice2-stale-disconnect", expectedAttachmentGeneration: 1 },
+      ),
+      /controlled_game_runtime_binding_close_failure/,
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "failed",
+    });
+    assert.deepEqual(fixture.bridgeCloseCalls, []);
+
+    const result = await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+    );
+    assert.deepEqual(result, { apiVersion: 1, status: "accepted" });
+    assert.equal(GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result), true);
+    // The stale gen-1 activation was torn down through the shared teardown
+    // timing (prompt-task cancel + exact facade close), so no old-activation
+    // in-memory objects outlive the fresh claim.
+    assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
+    assert.equal(fixture.gameRuntimeTaskCancelCalls(), 2);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 1);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "reconnecting",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+    // The fresh attach did not replay the old task or mint a second native
+    // attachment in this instance: the one-shot bridge/owner seam belongs to
+    // the initial activation, so the attempt stays accepted.
+    assert.equal(fixture.bridgeConnectCalls.length, 1);
+    assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), 1);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("slice 2: resume fails closed when the stale attachment teardown itself fails and claims no fresh generation", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    gameRuntimeBindingCloseResults: [false, false],
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await assert.rejects(
+      fixture.coordinator.activationOwner.disconnectGame(
+        fixture.broker.issue("game_disconnect"),
+        { apiVersion: 1, idempotencyKey: "slice2-teardown-fail-disconnect", expectedAttachmentGeneration: 1 },
+      ),
+      /controlled_game_runtime_binding_close_failure/,
+    );
+    await assert.rejects(
+      fixture.coordinator.activationOwner.resume(
+        fixture.broker.issue("game_resume"),
+        { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+      ),
+      /controlled_game_runtime_binding_close_failure/,
+    );
+    // No stale object was torn down and no fresh activation was claimed: the
+    // coordinator retains exactly the failed-disconnect state for retry.
+    assert.deepEqual(fixture.bridgeCloseCalls, []);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "failed",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "active" });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("slice 2: resume after a clean disconnect admits the fresh generation paused with no stale objects and no replayed task", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "slice2-clean-disconnect", expectedAttachmentGeneration: 1 },
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
+
+    const result = await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+    );
+    assert.deepEqual(result, { apiVersion: 1, status: "accepted" });
+    assert.equal(GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result), true);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "reconnecting",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+    // No fresh bridge connect/enter/ingress: the one-shot owner/bridge seam
+    // stays consumed by the ended activation, so the accepted attempt defers
+    // the real attach to the fresh connection/launch authority of the next
+    // layer (no second native attachment is minted here).
+    assert.equal(fixture.bridgeConnectCalls.length, 1);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 1);
+    assert.equal(fixture.gameRuntimeTaskCancelCalls(), 1);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
