@@ -40,6 +40,7 @@ dist/
 # host/dist-test only through host/.test-artifact.lock.
 host/dist-test/
 /host/.tmp/
+/host/.scoped-test/
 host/.dist-production-emitted/
 host/.memory-live-check/
 dialogue-web/.build-staging/
@@ -85,11 +86,28 @@ integrations/stardew/config.json
 /.tmp/
 /tmp/
 tmp_*
+/tmp-*.html
+/%TEMP%/
+/%TEMP%*
+/\ .pi/
 .tmp-*/
 /.tmp-*
 /subagent-artifacts/
+/subagent-reports/
+/plans/
+/naming-refactor-review*.md
+/.cortexkit/
+/scratch/
 /host/.agents/
 /host/dist-*
+/host/.dist-production-*/
+/host/.policy-typecheck.*
+/host/.mount-probe.*
+/host/.task3-s4c-*
+/host/tsconfig.task3-s4c-verify.json
+/host/tsconfig.test-coordinator-slice.json
+/host/GameBuddy.WindowsStaleLockReclaimer.exe
+/host/native/windows-reparse-inspector/.release-bootstrap-inspector/
 /host/tmp-*.mjs
 /host/tsconfig.*.tmp.json
 /test-results/
@@ -103,3 +121,4 @@ tmp_*
 # Playwright generated artifacts
 dialogue-web/test-results/
 dialogue-web/playwright-report/
+

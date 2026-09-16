@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "D:/GameBuddy-chat-live-tmp",
+    "rootDir": "src",
+    "noEmit": false,
+    "noEmitOnError": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "incremental": false
+  },
+  "include": [],
+  "files": [
+    "src/dialogue-web-main.ts",
+    "src/magic-context-authored-context-bridge.d.ts"
+  ]
+}

@@ -17,6 +17,31 @@ module.exports = {
         pathNot: "(?:^|/)(?:test-fixtures|test-support)(?:/|$)|\\.test\\.(?:ts|tsx)$",
       },
     },
+    {
+      name: "generic-layers-must-not-import-games",
+      comment: "Generic infrastructure layers (bootstrap, containment, composition) must not depend on specific game implementations.",
+      severity: "warn",
+      from: {
+        path: "^host/src/(?:bootstrap|containment|composition)/",
+        pathNot: "(?:^|/)(?:test-fixtures|test-support)(?:/|$)|\\.test\\.(?:ts|tsx)$",
+      },
+      to: {
+        path: "^host/src/games/",
+      },
+    },
+    {
+      name: "games-must-not-import-unapproved-generic-layers",
+      comment: "Concrete games must only consume approved boundary contracts from generic layers.",
+      severity: "warn",
+      from: {
+        path: "^host/src/games/",
+        pathNot: "(?:^|/)(?:test-fixtures|test-support)(?:/|$)|\\.test\\.(?:ts|tsx)$",
+      },
+      to: {
+        path: "^host/src/(?:bootstrap|containment|composition)/",
+        pathNot: "^host/src/(?:containment/auth/desktop-guardian-session\\.internal|bootstrap/roots/stardew-private-mod-profile-staging)",
+      },
+    },
   ],
   options: {
     doNotFollow: {
