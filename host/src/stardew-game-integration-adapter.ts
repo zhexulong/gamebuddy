@@ -19,7 +19,6 @@ import { createIntegrationActionCatalog,
   type IntegrationStatusDetails,
   type IntegrationToolContext,
 } from "./game-integration-adapter.js";
-import type { StardewBridgeConnection } from "./game-connection.js";
 import {
   assertAuthenticatedStardewConnection,
 } from "./stardew-integration-launcher-body-program.internal.js";
@@ -389,12 +388,6 @@ function decremented(
   return left !== null && right !== null && right === left - 1;
 }
 
-/** Fixed Host-side description exported to the test-only Navigation surface producer. */
-const STARDEW_NAVIGATION_COMPLETION_VERIFICATION = Object.freeze({
-  reasonCode: "navigation_completed",
-  requiredEvidence: Object.freeze({ arrived: "true", postcondition: "true" }),
-});
-
 function hasNavigationCompletionEvidence(detail: string): boolean {
   // The Mod emits exactly this navigation_completed evidence only from a fresh
   // post-warp coordinator re-read at the destination. It contains only the
@@ -634,7 +627,6 @@ function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
     !expectedKeys.every((key) => key in evidence)
   )
     return false;
-  const _slot = integerEvidenceValue(evidence.slot);
   const before = integerEvidenceValue(evidence.water_before);
   const after = integerEvidenceValue(evidence.water_after);
   const max = integerEvidenceValue(evidence.water_max);
@@ -667,7 +659,6 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
     !expectedKeys.every((key) => key in evidence)
   )
     return false;
-  const _slot = integerEvidenceValue(evidence.slot);
   return (
     hasOpaqueIdEvidenceValue(evidence.target) &&
     evidence.tool === "pickaxe" &&
@@ -838,7 +829,6 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
     !expectedKeys.every((key) => key in evidence)
   )
     return false;
-  const _slot = integerEvidenceValue(evidence.slot);
   return (
     hasOpaqueIdEvidenceValue(evidence.target) &&
     evidence.tool === "axe" &&

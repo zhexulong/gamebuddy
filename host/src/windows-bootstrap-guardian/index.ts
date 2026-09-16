@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 const helperFileName = "GameBuddy.WindowsBootstrapGuardian.exe";
 const manifestFileName = "windows-bootstrap-guardian.manifest.json";

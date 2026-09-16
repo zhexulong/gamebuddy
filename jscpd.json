@@ -1,0 +1,31 @@
+{
+  "path": [
+    "host/src",
+    "dialogue-web/src",
+    "voice-gateway/src",
+    "packages",
+    "tools"
+  ],
+  "minTokens": 50,
+  "minLines": 5,
+  "ignore": [
+    "**/vendor/**",
+    "**/ref/**",
+    "**/tmp/**",
+    "**/.worktrees/**",
+    "**/dist*/**",
+    "**/*.test.*",
+    "**/node_modules/**",
+    "**/.commit-validation/**",
+    "**/tools/lib/**"
+  ],
+  "blame": false,
+  "exitCode": 0,
+  "format": [
+    "javascript",
+    "typescript"
+  ],
+  "reporters": [
+    "console"
+  ]
+}

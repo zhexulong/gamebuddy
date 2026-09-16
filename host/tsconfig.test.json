@@ -3,7 +3,12 @@
   "compilerOptions": {
     "outDir": "dist-test",
     "noEmit": false,
-    "noEmitOnError": true
+    "noEmitOnError": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
   },
   "include": [
     "src/**/*.ts",

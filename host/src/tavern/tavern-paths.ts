@@ -27,13 +27,6 @@ export function resolveTavernPaths(paths: RuntimePaths, identity: CompanionIdent
     continuityId: identity.continuityId,
   });
 }
-function tavernRootForPath(path: string): string {
-  const resolved = resolve(path);
-  const normalized = resolved.replaceAll("\\", "/");
-  const match = /^(.*\/tavern\/v1)(?:\/|$)/iu.exec(normalized);
-  if (match === null) throw new Error("unsafe_tavern_path");
-  return resolve(match[1]);
-}
 export function tavernRevisionPath(directory: string, revision: number): string {
   if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("invalid_tavern_revision");
   return join(safeDirectory(directory), "revisions", `${revision}.json`);
