@@ -17,6 +17,7 @@ internal sealed class GuardianPrivateLaunchIngress : IDisposable
     private readonly GuardianProtocol.Correlation correlation;
     private readonly HashSet<string> consumedPlans = new(StringComparer.Ordinal);
     private NamedPipeServerStream? server;
+    private ArmBinding? armBinding;
     private bool authenticated;
     private bool tokenConsumed;
     private bool closed;
@@ -47,6 +48,7 @@ internal sealed class GuardianPrivateLaunchIngress : IDisposable
             var frame = await ReadFrameAsync(server, cancellationToken).ConfigureAwait(false);
             ValidateClientSid(server);
             var binding = ParseArm(frame);
+            armBinding = binding;
             authenticated = true;
             await ReplyAsync("accepted").ConfigureAwait(false);
             return binding;
@@ -121,10 +123,12 @@ internal sealed class GuardianPrivateLaunchIngress : IDisposable
     {
         using var document = JsonDocument.Parse(frame, new JsonDocumentOptions { MaxDepth = 8, AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow });
         var root = document.RootElement;
-        GuardianProtocol.RequireExactKeys(root, "token", "guardianInstanceId", "guardianEpoch", "attemptId", "revision", "leaseName", "playerJobName", "aiJobName");
+        GuardianProtocol.RequireExactKeys(root, "token", "guardianInstanceId", "guardianEpoch", "attemptId", "revision", "leaseName", "playerJobName", "aiJobName", "approvedExecutable");
         AuthenticateArm(root);
         if (String(root, "guardianInstanceId") != correlation.InstanceId || Int(root, "guardianEpoch") != correlation.Epoch || String(root, "attemptId") != correlation.AttemptId) throw GuardianProtocol.Invalid();
-        var binding = new ArmBinding(String(root, "revision"), String(root, "leaseName"), String(root, "playerJobName"), String(root, "aiJobName"));
+        var approvedExecutable = String(root, "approvedExecutable");
+        if (!IsValidRoleExecutable(approvedExecutable)) throw GuardianProtocol.Invalid();
+        var binding = new ArmBinding(String(root, "revision"), String(root, "leaseName"), String(root, "playerJobName"), String(root, "aiJobName"), approvedExecutable);
         if (!Guid.TryParseExact(binding.Revision, "D", out _) || !IsJobName(binding.LeaseName) || !IsJobName(binding.PlayerJobName) || !IsJobName(binding.AiJobName) || new[] { binding.LeaseName, binding.PlayerJobName, binding.AiJobName }.Distinct(StringComparer.Ordinal).Count() != 3) throw GuardianProtocol.Invalid();
         return binding;
     }
@@ -142,6 +146,7 @@ internal sealed class GuardianPrivateLaunchIngress : IDisposable
         var role = String(root, "role") switch { "player_host" => GuardianProtocol.Role.PlayerHost, "ai_client" => GuardianProtocol.Role.AiClient, _ => throw GuardianProtocol.Invalid() };
         var executable = String(root, "executable"); var cwd = String(root, "cwd");
         if (!Path.IsPathFullyQualified(executable) || !Path.IsPathFullyQualified(cwd) || executable.Contains('\0') || cwd.Contains('\0') || executable.Length > 32767 || cwd.Length > 32767) throw GuardianProtocol.Invalid();
+        if (armBinding is null || !StringComparer.OrdinalIgnoreCase.Equals(executable, armBinding.ApprovedExecutable)) throw GuardianProtocol.Invalid();
         var arguments = root.GetProperty("arguments").ValueKind == JsonValueKind.Array ? root.GetProperty("arguments").EnumerateArray().Select(value => value.ValueKind == JsonValueKind.String ? value.GetString()! : throw GuardianProtocol.Invalid()).ToArray() : throw GuardianProtocol.Invalid();
         if (arguments.Length > 128 || arguments.Any(value => value.Length == 0 || value.Length > 4096 || value.Contains('\0'))) throw GuardianProtocol.Invalid();
         if (root.GetProperty("environment").ValueKind != JsonValueKind.Object) throw GuardianProtocol.Invalid();
@@ -165,11 +170,12 @@ internal sealed class GuardianPrivateLaunchIngress : IDisposable
 
     private static string String(JsonElement root, string name) => root.GetProperty(name).ValueKind == JsonValueKind.String ? root.GetProperty(name).GetString()! : throw GuardianProtocol.Invalid();
     private static int Int(JsonElement root, string name) => root.GetProperty(name).TryGetInt32(out var value) ? value : throw GuardianProtocol.Invalid();
+    private static bool IsValidRoleExecutable(string value) => Path.IsPathFullyQualified(value) && !value.Contains('\0') && value.Length <= 32767;
     private static bool IsJobName(string value) => value.StartsWith("Local\\", StringComparison.Ordinal) && value.Length > 6 && value.Length <= 140 && value[6..].All(c => char.IsLetterOrDigit(c) || c is '-' or '_');
-    private static bool IsAllowedEnvironment(string name) => name is "PATH" or "SystemRoot" or "WINDIR" or "TEMP" or "TMP" or "USERPROFILE";
+    private static bool IsAllowedEnvironment(string name) => name is "PATH" or "SystemRoot" or "WINDIR" or "TEMP" or "TMP" or "USERPROFILE" or "GAMEBUDDY_STARDEW_LAUNCH_GENERATION";
     public void Dispose() { closed = true; server?.Dispose(); server = null; }
 
-    internal sealed record ArmBinding(string Revision, string LeaseName, string PlayerJobName, string AiJobName);
+    internal sealed record ArmBinding(string Revision, string LeaseName, string PlayerJobName, string AiJobName, string ApprovedExecutable);
     internal sealed record LaunchPlan(GuardianProtocol.Correlation Correlation, string PlanId, GuardianProtocol.Role Role, long DeadlineUnixMs, string Executable, string WorkingDirectory, IReadOnlyList<string> Arguments, IReadOnlyDictionary<string, string> Environment);
 
     private const uint PipeAccessDuplex = 0x00000003;

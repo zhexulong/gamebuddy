@@ -16,6 +16,14 @@ const testGuardian = resolve(here, ".dist", "fixtures", "GameBuddy.WindowsBootst
 const isWindows = process.platform === "win32";
 const winOnly = { skip: !isWindows ? "BLOCKED: Task 1 requires a supported Windows host" : false };
 const PATH_ENVIRONMENT = { PATH: process.env.PATH ?? "C:\\Windows\\System32" };
+const ALLOWED_ENVIRONMENT = {
+  ...PATH_ENVIRONMENT,
+  SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
+  WINDIR: process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",
+  TEMP: process.env.TEMP ?? "C:\\Windows\\Temp",
+  TMP: process.env.TMP ?? process.env.TEMP ?? "C:\\Windows\\Temp",
+  USERPROFILE: process.env.USERPROFILE ?? "C:\\Users\\Default",
+};
 const recoveryCorrelation = Object.freeze({ guardianInstanceId: "53ee44a2-d70b-4a49-a857-1ca4883e5d2e", guardianEpoch: 1, attemptId: "9b1c2d3e-4f5a-4b6c-8d7e-1f2a3b4c5d6e" });
 const recoveryInstanceId = "f4a5b6c7-d8e9-4f0a-b1c2-d3e4f5a6b7c8";
 
@@ -536,6 +544,69 @@ test("role environment excludes Guardian control pipe and token", { ...winOnly, 
   } finally { await session.close(); await removeRoot(root); }
 });
 
+test("private launch accepts the exact Stardew launch-generation environment key", { ...winOnly, timeout: 15_000 }, async () => {
+  const root = await temporaryRoot("stardew-generation-environment"); const session = await startGuardianSession();
+  try {
+    const report = resolve(root, "accepted.txt");
+    await session.launchPlan(session.plan("player_host", ["--signal", report, "--exit-after-report"], {
+      environment: { ...ALLOWED_ENVIRONMENT, GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "generation-1" },
+    }));
+    await waitForFile(report);
+    assert.equal(await readFile(report, "utf8"), "member=true\n");
+  } finally { await session.close(); await removeRoot(root); }
+});
+
+test("private launch rejects unknown, credential, and Guardian-control environment keys without launching a role", { ...winOnly, timeout: 60_000 }, async (t) => {
+  const rejectedKeys = [
+    "GAMEBUDDY_LAUNCH_GENERATION",
+    "UNEXPECTED_ENVIRONMENT_KEY",
+    "CPA_OAI_API_KEY",
+    "GAMEBUDDY_BRIDGE_TOKEN",
+    "GAMEBUDDY_GUARDIAN_CONTROL_PIPE",
+    "GAMEBUDDY_GUARDIAN_CONTROL_TOKEN",
+    "GAMEBUDDY_GUARDIAN_MODE",
+  ];
+  for (const key of rejectedKeys) await t.test(key, { timeout: 8_000 }, async () => {
+    const root = await temporaryRoot(`rejected-environment-${key.toLowerCase()}`); const session = await startGuardianSession();
+    try {
+      const report = resolve(root, "unexpected.txt");
+      session.submitPlan(session.plan("player_host", ["--signal", report], {
+        environment: { ...ALLOWED_ENVIRONMENT, [key]: "rejected-value" },
+      }));
+      session.sendPublic(session.publicCommand("launch_role", "player_host"));
+      assert.equal(await session.closesWithin(3_000), true, `${key} was not rejected boundedly`);
+      assert.equal(session.publicResults.includes("role_active"), false, `${key} reached role_active`);
+      await expectNoFile(report, 500);
+    } finally { await session.close(); await removeRoot(root); }
+  });
+});
+
+test("private launch accepts the exact approved executable and rejects a replaced one without launching", { ...winOnly, timeout: 30_000 }, async () => {
+  const root = await temporaryRoot("approved-executable"); const session = await startGuardianSession();
+  try {
+    const report = resolve(root, "accepted.txt");
+    await session.launchPlan(session.plan("player_host", ["--signal", report, "--exit-after-report"], {
+      executable: fixture,
+    }));
+    await waitForFile(report);
+    assert.equal(await readFile(report, "utf8"), "member=true\n");
+  } finally { await session.close(); await removeRoot(root); }
+});
+
+test("replacing the approved executable after arm is rejected and starts no role", { ...winOnly, timeout: 15_000 }, async () => {
+  const root = await temporaryRoot("replaced-executable"); const session = await startGuardianSession();
+  try {
+    const report = resolve(root, "unexpected.txt");
+    session.submitPlan(session.plan("player_host", ["--signal", report], {
+      executable: testGuardian,
+    }));
+    session.sendPublic(session.publicCommand("launch_role", "player_host"));
+    assert.equal(await session.closesWithin(3_000), true, "replaced executable was not rejected boundedly");
+    assert.equal(session.publicResults.includes("role_active"), false, "replaced executable reached role_active");
+    await expectNoFile(report, 500);
+  } finally { await session.close(); await removeRoot(root); }
+});
+
 test("current-user role cannot reopen its exact Job with DELETE access", { ...winOnly, timeout: 15_000 }, async () => {
   const root = await temporaryRoot("job-delete-dacl"); const session = await startGuardianSession();
   try {
@@ -639,7 +710,7 @@ async function startUnarmedGuardian({ controlPipe = `GameBuddyGuardian-${crypto.
   child.stderr.on("data", (chunk) => { stderr += String(chunk); });
   let socket; let nextPrivateLine; let activeArmBinding;
   const publicCommand = (operation, role, overrides = {}) => ({ schemaVersion: 1, operation, guardianInstanceId, guardianEpoch: 1, attemptId, ...(role ? { role } : {}), ...overrides });
-  const armBinding = (overrides = {}) => ({ token, guardianInstanceId, guardianEpoch: 1, attemptId, revision: crypto.randomUUID(), leaseName: `Local\\Lease-${crypto.randomUUID()}`, playerJobName: `Local\\Player-${crypto.randomUUID()}`, aiJobName: `Local\\Ai-${crypto.randomUUID()}`, ...overrides });
+  const armBinding = (overrides = {}) => ({ token, guardianInstanceId, guardianEpoch: 1, attemptId, revision: crypto.randomUUID(), leaseName: `Local\\Lease-${crypto.randomUUID()}`, playerJobName: `Local\\Player-${crypto.randomUUID()}`, aiJobName: `Local\\Ai-${crypto.randomUUID()}`, approvedExecutable: fixture, ...overrides });
   const plan = (role, arguments_, overrides = {}) => ({ guardianInstanceId, guardianEpoch: 1, attemptId, planId: crypto.randomUUID(), role, deadlineUnixMs: Date.now() + 30_000, executable: fixture, cwd: projectRoot, arguments: arguments_, environment: PATH_ENVIRONMENT, ...overrides });
   return {
     publicResults, publicCommand, armBinding, plan,

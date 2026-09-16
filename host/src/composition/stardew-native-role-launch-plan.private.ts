@@ -61,7 +61,7 @@ function matchesPlanIdFormat(value: string): boolean {
 }
 
 /** Fully qualified Windows drive path exactly as `Path.IsPathFullyQualified` plus size/NUL constraints. */
-function fullyQualifiedWindowsPath(value: string): boolean {
+export function isFullyQualifiedWindowsPath(value: string): boolean {
   if (typeof value !== "string") return false;
   if (value.length === 0 || value.length > 32_767 || value.includes("\0")) return false;
   return /^[A-Za-z]:[\\/]/.test(value);
@@ -78,8 +78,8 @@ export function modelStardewNativeRoleLaunchPlan(input: StardewNativeRoleLaunchP
   if (typeof input.attemptId !== "string" || input.attemptId.length === 0 || input.attemptId.length > 1024) throw new Error("stardew_native_launch_plan_attempt_invalid");
   if (!Number.isSafeInteger(input.deadlineUnixMs) || input.deadlineUnixMs <= Date.now() || input.deadlineUnixMs - Date.now() > 2_147_483_647) throw new Error("stardew_native_launch_plan_deadline_invalid");
   if (input.role !== "player_host" && input.role !== "ai_client") throw new Error("stardew_native_launch_plan_role_invalid");
-  if (!fullyQualifiedWindowsPath(input.executable)) throw new Error("stardew_native_launch_plan_executable_invalid");
-  if (!fullyQualifiedWindowsPath(input.cwd)) throw new Error("stardew_native_launch_plan_cwd_invalid");
+  if (!isFullyQualifiedWindowsPath(input.executable)) throw new Error("stardew_native_launch_plan_executable_invalid");
+  if (!isFullyQualifiedWindowsPath(input.cwd)) throw new Error("stardew_native_launch_plan_cwd_invalid");
   const args = Array.isArray(input.arguments) ? input.arguments : [...input.arguments];
   if (args.length > 128 || args.some((argument) => typeof argument !== "string" || argument.length === 0 || argument.length > 4096 || argument.includes("\0"))) throw new Error("stardew_native_launch_plan_arguments_invalid");
   if (typeof input.environment !== "object" || input.environment === null || Array.isArray(input.environment)) throw new Error("stardew_native_launch_plan_environment_invalid");

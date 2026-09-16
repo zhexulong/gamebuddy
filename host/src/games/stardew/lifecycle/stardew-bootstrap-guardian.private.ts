@@ -82,6 +82,16 @@ export type StardewBootstrapGuardianOwner = Readonly<{
  * It never receives a path, fence, revision, record, or persistence callback.
  */
 /**
+ * Retired test-only seam. Production Desktop starts launches exclusively
+ * through the contained runtime path (`createDesktopGuardianGameRuntimePlatform`
+ * → `createStardewPlayerHostRuntimeLaunchCollaboratorFactory`), whose arm frames
+ * are produced by the composition armor and carry the `approvedExecutable` the
+ * native Guardian requires. This adapter's tokenless arm frame omits that field,
+ * so the native `ParseArm` rejects it by contract if it were ever wired again;
+ * the desktop-host-composition.test.ts reachability lock asserts the factory is
+ * retained but never invoked. Do not re-wire this seam without adding
+ * `approvedExecutable` to its arm body and its tests.
+ *
  * Adapts the authenticated Desktop session without exposing its transport. The
  * owner binding is the sole source for every correlation/native arm fact.
  * Launch remains unavailable unless a Guardian-private authority supplies its
