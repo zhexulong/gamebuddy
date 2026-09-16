@@ -480,7 +480,17 @@ type GameStateReadCommandV1 = Static<typeof GameStateReadCommandV1Schema>;
 export type GameLaunchCommandV1 = Static<typeof GameLaunchCommandV1Schema>;
 type GameAttachCommandV1 = Static<typeof GameAttachCommandV1Schema>;
 export type GameStopCommandV1 = Static<typeof GameStopCommandV1Schema>;
-type GameResumeCommandV1 = Static<typeof GameResumeCommandV1Schema>;
+export type GameResumeCommandV1 = Static<typeof GameResumeCommandV1Schema>;
+
+/**
+ * Coordinator-owned resume seam command. The browser transport schema stays
+ * frozen to `GameResumeCommandV1Schema` (strict, session-less); this narrow
+ * type-only extension carries the gameSessionId the coordinator needs to
+ * resolve the session's registered world binding. It is not a wire schema.
+ */
+export type GameSessionResumeCommandV1 = GameResumeCommandV1 & Readonly<{
+  gameSessionId: string;
+}>;
 export type GameResumeResultV1 = Static<typeof GameResumeResultV1Schema>;
 export type GameDisconnectCommandV1 = Static<typeof GameDisconnectCommandV1Schema>;
 type GameDiagnosticsReadCommandV1 = Static<typeof GameDiagnosticsReadCommandV1Schema>;

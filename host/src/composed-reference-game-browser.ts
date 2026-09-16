@@ -2,7 +2,6 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
-  ComposedReferenceGameBrowserRootV1Schema,
   ComposedReferenceGameBrowserValidatorsV1,
   type ComposedReferenceGameBrowserProfile,
   isComposedReferenceGameBrowserProfile,
@@ -17,24 +16,13 @@ import {
   type GameDisconnectCommandV1,
   type GameLaunchCommandV1,
   type GamePrerequisitesSetupCommandV1,
+  type GameResumeCommandV1,
   type GameResumeResultV1,
   type GameStopCommandV1,
   type StardewCabinChoicesV1,
   type StardewCabinConfirmCommandV1,
   type StardewCabinConfirmResultV1,
 } from "./game-browser-contract/index.js";
-
-/**
- * Local structural mirror of the contract's non-exported
- * `GameResumeCommandV1` (`GameResumeCommandV1Schema`). The contract authority
- * is immutable; the command shape is enforced at runtime by
- * `GameBrowserValidatorsV1.GameResumeCommandV1Schema.Check` before dispatch.
- */
-type GameResumeCommandV1 = Readonly<{
-  apiVersion: 1;
-  idempotencyKey: string;
-  expectedAttachmentGeneration: number;
-}>;
 
 export type ComposedReferenceGameBrowserReadContext = Readonly<{
   csrfToken: string;
