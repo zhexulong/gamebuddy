@@ -175,7 +175,7 @@ internal sealed partial class ExecutionManager
         string executionId = this.NewExecutionId(requestId);
         this.navigationExecutionIds.Add(executionId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (deadlineMs <= nowMs || deadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+        if (deadlineMs <= nowMs || deadlineMs > nowMs + TimeSpan.FromMinutes(10).TotalMilliseconds)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
 
         if (this.activeNavigate is not null

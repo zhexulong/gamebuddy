@@ -1366,7 +1366,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     typeof value.deadlineMs !== "number" ||
     !Number.isFinite(value.deadlineMs) ||
     value.deadlineMs < nowMs ||
-    value.deadlineMs > nowMs + 60_000
+    value.deadlineMs > nowMs + (value.action === "navigate_to_destination" ? 600_000 : 60_000)
   )
     return "invalid_deadline";
   if (!snapshot.actionable) return "player_not_actionable";
@@ -3039,7 +3039,7 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     for (const arg of value.arguments) {
       if (!isRecord(arg)) return false;
       if (!hasOnlyKeys(arg, ["name", "type", "enum", "boundedEnumValues"])) return false;
-      if (typeof arg.name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(arg.name)) return false;
+      if (typeof arg.name !== "string" || !/^[a-z][a-zA-Z0-9_]{0,63}$/.test(arg.name)) return false;
       if (typeof arg.type !== "string" || arg.type.length === 0 || arg.type.length > 64) return false;
       if ("enum" in arg && arg.enum !== undefined) {
         if (!Array.isArray(arg.enum) || arg.enum.length === 0 || arg.enum.length > 128) return false;
@@ -3055,7 +3055,7 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
   if ("argumentSchema" in value && value.argumentSchema !== undefined) {
     if (!isRecord(value.argumentSchema)) return false;
     for (const [key, prop] of Object.entries(value.argumentSchema)) {
-      if (!/^[a-z][a-z0-9_]{0,63}$/.test(key)) return false;
+      if (!/^[a-z][a-zA-Z0-9_]{0,63}$/.test(key)) return false;
       if (!isRecord(prop) || typeof prop.type !== "string") return false;
       if ("enum" in prop && prop.enum !== undefined) {
         if (!Array.isArray(prop.enum) || prop.enum.length === 0 || prop.enum.length > 128) return false;

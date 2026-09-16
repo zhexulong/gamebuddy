@@ -22,12 +22,18 @@ const EXPECTED_CAPABILITIES = [
   ACTION,
 ];
 
+/** Load the emitted Host client from the local dist-test artifact. */
+async function loadDistTestClient(entry) {
+  const { LocalStardewBridgeClient } = await import(`../host/dist-test/${entry}`);
+  return { LocalStardewBridgeClient };
+}
+
 /** Run one game-derived, typed Navigation mutation and verify its fresh outcome. */
 export async function runNavigationMutationSmoke(
   client,
   receipts,
   config,
-  { terminalTimeoutMs = 60_000, postconditionTimeoutMs = 10_000 } = {},
+  { terminalTimeoutMs = 600_000, postconditionTimeoutMs = 10_000 } = {},
 ) {
   const trace = [];
   const startedAt = Date.now();
@@ -54,7 +60,7 @@ export async function runNavigationMutationSmoke(
       action: ACTION,
       args: { destination },
       snapshot: before,
-      timeoutMs: 60_000,
+      timeoutMs: 600_000,
     });
     trace.push({ action: ACTION, selectorKind: destination.kind, receipt: summarizeReceipt(accepted) });
 
@@ -112,7 +118,7 @@ export async function runNavigationMutationSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadDistTestClient });
   try {
     const result = await runNavigationMutationSmoke(session.client, session.receipts, config);
     const reported = result.state === "blocked"
@@ -169,7 +175,9 @@ function requireResolvedLabelDestination(result, currentLocation) {
     throw new Error("navigation_mutation_destination_not_resolved");
   if (currentLocation !== undefined && destination.label === currentLocation)
     throw new Error("navigation_mutation_destination_is_current_location");
-  return Object.freeze({ kind: destination.kind, label: destination.label, ref: destination.ref });
+  // Normalize to the execution contract shape: label selectors must have
+  // exactly { kind, label } — no ref field —  matching C# IsExactNavigationDestinationSelector.
+  return Object.freeze({ kind: destination.kind, label: destination.label });
 }
 
 function assertSingleCorrelatedTerminal(receipts, accepted, selected) {
@@ -208,5 +216,7 @@ function same(left, right) {
 }
 
 function sameSelector(left, right) {
-  return left.kind === right.kind && left.label === right.label && left.ref === right.ref;
+  // The execution contract shape has no ref field for label selectors. Check
+  // only kind and label; any extra field from the read result is normalized away.
+  return left.kind === right.kind && left.label === right.label;
 }

@@ -72,7 +72,8 @@ function fake({
     },
     execute: async (request) => {
       calls.push(["execute", request]);
-      assert.deepEqual(request.args.destination, { kind: "label", label: "game-derived-target", ref: null });
+      // The execution contract shape omits the read-result ref field.
+      assert.deepEqual(request.args.destination, { kind: "label", label: "game-derived-target" });
       const accepted = {
         requestId: request.requestId,
         executionId: "execution-navigation",
