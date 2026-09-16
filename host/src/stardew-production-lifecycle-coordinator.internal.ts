@@ -36,12 +36,18 @@ import type {
   GameDisconnectCommandV1,
   GamePrerequisitesSetupCommandV1,
   GameLaunchCommandV1,
+  GameResumeResultV1,
+  GameSessionResumeCommandV1,
   GameStopCommandV1,
   StardewCabinChoicesV1,
   StardewCabinConfirmCommandV1,
   StardewCabinConfirmResultV1,
 } from "./game-browser-contract/index.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
+import {
+  createStardewWorldBindingResolverFromGameAuthority,
+  type StardewWorldBindingResolver,
+} from "./stardew-owned-farmhand-game-world-binding-resolver.internal.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
 import {
@@ -72,7 +78,7 @@ export type StardewLifecycleActivationIssuerBindingSink = Readonly<{
 export type StardewGameSurfaceAttachmentView = Readonly<{
   status: "none" | "attached";
   generation: number;
-  connectionStatus: "none" | "connected_idle" | "stopping" | "stopped" | "failed";
+  connectionStatus: "none" | "connected_idle" | "reconnecting" | "stopping" | "stopped" | "failed";
 }>;
 
 export type StardewGameSurfaceAttachmentReader = Readonly<{
@@ -92,6 +98,23 @@ export type StardewGameSurfaceLaunchReadinessView = Readonly<{
 
 export type StardewGameSurfaceLaunchReadinessReader = Readonly<{
   readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView;
+}>;
+
+/**
+ * Coordinator-owned redacted action authority projection. `active` means the
+ * attached runtime can admit new Game instructions (only a fresh explicit Game
+ * instruction reopens admission after a resume); `paused` is projected during
+ * and after a resume that created a newer activation and while no new
+ * instruction reopened the authority (equivalent to ready-actions-paused);
+ * `unavailable` is projected when there is no attached runtime behind the
+ * projection.
+ */
+export type StardewGameSurfaceActionAuthorityView = Readonly<{
+  status: "unavailable" | "active" | "paused";
+}>;
+
+export type StardewGameSurfaceActionAuthorityReader = Readonly<{
+  readActionAuthorityView(): StardewGameSurfaceActionAuthorityView;
 }>;
 
 export type StardewProductionLifecycleActivationOwner = Readonly<{
@@ -115,6 +138,19 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: StardewCabinConfirmCommandV1,
   ): Promise<StardewCabinConfirmResultV1>;
+  /**
+   * Coordinator-owned fresh-generation resume seam. Resolves the game
+   * session's registered world binding, and only after an ok resolve creates a
+   * new activation: attachmentGeneration strictly increments to >= 2 (never
+   * reusing 0/1), action authority pauses, and no old task is resumed. Typed
+   * outcomes: accepted/attached on success, unavailable for a missing/terminal
+   * binding (no activation created). Fail-closed on stale tuples and in-progress
+   * overlap; the browser contract schema stays unmodified.
+   */
+  resume(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameSessionResumeCommandV1,
+  ): Promise<GameResumeResultV1>;
   stopGame(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameStopCommandV1,
@@ -130,6 +166,7 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly lifecycleReader: StardewRoleLifecycleReader;
   readonly attachmentReader: StardewGameSurfaceAttachmentReader;
   readonly launchReadinessReader: StardewGameSurfaceLaunchReadinessReader;
+  readonly actionAuthorityReader: StardewGameSurfaceActionAuthorityReader;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
   close(): Promise<void>;
 }>;
@@ -277,6 +314,7 @@ function createCoordinator(
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
   materializeFarmhandGameSession: MaterializeFarmhandGameSession,
   folderPicker: WindowsStardewFolderPickerCapability,
+  worldBindingResolver: StardewWorldBindingResolver,
   playerHostLaunch: StardewLifecyclePlayerHostLaunch,
   aiClientLaunch: StardewLifecycleAiClientLaunch,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
@@ -320,6 +358,17 @@ function createCoordinator(
   let farmhandGameRuntimeFacadeClosed = false;
   let attachmentGeneration = 0;
   let attachmentConnectionStatus: StardewGameSurfaceAttachmentView["connectionStatus"] = "none";
+  // Coordinator-owned action authority: a resume creates a newer activation
+  // whose authority pauses until a fresh explicit Game instruction reopens it.
+  let actionAuthorityStatus: StardewGameSurfaceActionAuthorityView["status"] = "unavailable";
+  let resumedGameSessionId: string | undefined;
+  const gameResumes = new Map<string, Readonly<{
+    browserSessionId: string;
+    gameSessionId: string;
+    expectedAttachmentGeneration: number;
+    promise: Promise<GameResumeResultV1>;
+  }>>();
+  let resumePromise: Promise<GameResumeResultV1> | undefined;
   const gameStops = new Map<string, Readonly<{
     browserSessionId: string;
     expectedAttachmentGeneration: number;
@@ -372,6 +421,11 @@ function createCoordinator(
         return Object.freeze({ generation: expectedPlayerHostInstanceGeneration, status: "ready" });
       }
       return Object.freeze({ generation: 0, status: "none" });
+    },
+  });
+  const actionAuthorityReader: StardewGameSurfaceActionAuthorityReader = Object.freeze({
+    readActionAuthorityView(): StardewGameSurfaceActionAuthorityView {
+      return Object.freeze({ status: actionAuthorityStatus });
     },
   });
   // Coordinator-authoritative Player Host slot. The facade's process-owner
@@ -550,7 +604,7 @@ function createCoordinator(
 
   const consumeBrowserAdmission = <T>(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_disconnect",
+    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_disconnect",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -734,6 +788,7 @@ function createCoordinator(
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
         attachmentGeneration = 1;
         attachmentConnectionStatus = "connected_idle";
+        actionAuthorityStatus = "active";
         return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
       })
       .catch(async (error: unknown) => {
@@ -851,6 +906,8 @@ function createCoordinator(
           farmhandGameRuntimeLease = undefined;
           attachmentGeneration = 0;
           attachmentConnectionStatus = "none";
+          actionAuthorityStatus = "unavailable";
+          resumedGameSessionId = undefined;
         }
       })().then(resolveAttempt, rejectAttempt);
     } catch (error) {
@@ -891,6 +948,66 @@ function createCoordinator(
     return promise;
   });
 
+  const resume: StardewProductionLifecycleActivationOwner["resume"] = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameSessionResumeCommandV1,
+  ): Promise<GameResumeResultV1> => consumeBrowserAdmission(admission, "game_resume", (browserSessionId) => {
+    const prior = gameResumes.get(command.idempotencyKey);
+    if (prior !== undefined) {
+      if (
+        prior.browserSessionId !== browserSessionId ||
+        prior.gameSessionId !== command.gameSessionId ||
+        prior.expectedAttachmentGeneration !== command.expectedAttachmentGeneration
+      ) throw new Error("stardew_game_resume_idempotency_conflict");
+      return prior.promise;
+    }
+    if (resumePromise !== undefined) throw new Error("stardew_game_resume_in_progress");
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    // Resume is the recovery seam over a previously ended activation: a live
+    // attached runtime is still a single-activation authority, so a fresh
+    // generation is never minted on top of one.
+    if (farmhandGameRuntimeLease !== undefined)
+      throw new Error("stardew_game_runtime_unavailable");
+    // One coordinator owns one resumed world binding; resuming a different
+    // Game session under the same lifecycle is a stale cross-session command.
+    if (resumedGameSessionId !== undefined && command.gameSessionId !== resumedGameSessionId)
+      throw new Error("stardew_game_resume_idempotency_conflict");
+    // Fresh resume generations start at >= 2, strictly increment, and never
+    // reuse the 0/1 pair owned by the initial activation.
+    const nextGeneration = Math.max(attachmentGeneration + 1, 2);
+    if (command.expectedAttachmentGeneration !== nextGeneration)
+      throw new Error("stardew_game_attachment_generation_conflict");
+    let attempt!: Promise<GameResumeResultV1>;
+    attempt = (async (): Promise<GameResumeResultV1> => {
+      try {
+        const outcome = await worldBindingResolver.resolveWorldBinding(command.gameSessionId);
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        if (!outcome.ok) {
+          // No activation is created for a missing/foreign/terminal binding.
+          return Object.freeze({ apiVersion: 1, status: "unavailable" });
+        }
+        // Fresh activation: the world binding is registered and resumable.
+        // Actions pause until a new explicit Game instruction reopens the
+        // authority; no old task or prompt state is resumed.
+        resumedGameSessionId = command.gameSessionId;
+        attachmentGeneration = nextGeneration;
+        attachmentConnectionStatus = "reconnecting";
+        actionAuthorityStatus = "paused";
+        return Object.freeze({ apiVersion: 1, status: "accepted" });
+      } finally {
+        if (resumePromise === attempt) resumePromise = undefined;
+      }
+    })();
+    resumePromise = attempt;
+    gameResumes.set(command.idempotencyKey, Object.freeze({
+      browserSessionId,
+      gameSessionId: command.gameSessionId,
+      expectedAttachmentGeneration: command.expectedAttachmentGeneration,
+      promise: attempt,
+    }));
+    return attempt;
+  });
+
   const activationOwner: StardewProductionLifecycleActivationOwner = Object.freeze({
     bindBrowserAdmissionIssuer,
     activate,
@@ -899,6 +1016,7 @@ function createCoordinator(
     readPrivateActivationSnapshot: snapshot,
     readCabinChoices,
     confirmCabinChoice,
+    resume,
     stopGame,
     disconnectGame,
   });
@@ -912,6 +1030,8 @@ function createCoordinator(
     if (setup !== undefined) await setup.catch(() => undefined);
     const launch = launchPromise;
     if (launch !== undefined) await launch.catch(() => undefined);
+    const resume = resumePromise;
+    if (resume !== undefined) await resume.catch(() => undefined);
     const confirmationKey = cabinConfirmationKey;
     if (confirmationKey !== undefined) {
       await cabinConfirmations.get(confirmationKey)?.promise.catch(() => undefined);
@@ -974,6 +1094,9 @@ function createCoordinator(
     if (incomplete) throw new StardewProductionLifecycleCloseError();
     attachmentGeneration = 0;
     attachmentConnectionStatus = "none";
+    actionAuthorityStatus = "unavailable";
+    resumedGameSessionId = undefined;
+    gameResumes.clear();
     gameSetups.clear();
     gameStops.clear();
     gameDisconnects.clear();
@@ -991,7 +1114,7 @@ function createCoordinator(
     return attempt;
   };
 
-  return Object.freeze({ lifecycleReader, attachmentReader, launchReadinessReader, activationOwner, close });
+  return Object.freeze({ lifecycleReader, attachmentReader, launchReadinessReader, actionAuthorityReader, activationOwner, close });
 }
 
 /**
@@ -1006,6 +1129,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
   materializeFarmhandGameSession: MaterializeFarmhandGameSession,
   folderPicker: WindowsStardewFolderPickerCapability,
+  worldBindingResolver: StardewWorldBindingResolver,
   playerHostLaunch: StardewLifecyclePlayerHostLaunch = (owner, installation) =>
     internal.launchStagedPlayerHost(owner, installation),
   aiClientLaunch: StardewLifecycleAiClientLaunch = (owner, installation) =>
@@ -1018,6 +1142,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
     createInstallationInspector,
     materializeFarmhandGameSession,
     folderPicker,
+    worldBindingResolver,
     // The dedicated testing adapter keeps the direct-spawn Stage C/D consumers
     // as the deterministic behavioral reference; production composition roots
     // select the contained runtime launch strategy instead.
@@ -1063,6 +1188,7 @@ export function createStardewProductionLifecycleCoordinator(
     () => createPublishedWindowsReparseInspector(hostArtifactRoot),
     materializer.materialize,
     folderPicker,
+    createStardewWorldBindingResolverFromGameAuthority(game),
     playerHostLaunch,
     aiClientLaunch,
     containedRuntimeTeardown,

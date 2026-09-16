@@ -20,6 +20,11 @@ import type { StardewPrivateFarmhandBridgeConnection, StardewPlayerHostRuntimeLa
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { createTestWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.test-support.js";
 import type { StardewFolderPickerResult } from "./windows-stardew-folder-picker/index.js";
+import {
+  createStardewWorldBindingResolver,
+  type StardewWorldBindingResolver,
+} from "./stardew-owned-farmhand-game-world-binding-resolver.internal.js";
+import type { ProductionGameSessionWorldBinding } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 
 export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   closeBroker?(underlying: () => void): void;
@@ -27,6 +32,11 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   stopPlayerHost?(underlying: () => StopOwnedPlayerHostResult): StopOwnedPlayerHostResult;
   createInstallationInspector?(): Promise<WindowsReparseInspectorCapability>;
   selectStardewFolder?(): Promise<StardewFolderPickerResult>;
+  /**
+   * Integration-private world binding resolver seam. Absent, the coordinator
+   * resolves every session as missing (fail-closed, no resume activation).
+   */
+  worldBindingResolver?(input: Readonly<{ gameSessionId: string; integrationId: string }>): Promise<ProductionGameSessionWorldBinding | null>;
   connectFarmhandGameRuntimeFacade?(
     connection: StardewPrivateFarmhandBridgeConnection,
     deadlineMs: number,
@@ -88,6 +98,9 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
           overrides.containedLaunchNowMs,
         ),
       );
+  const worldBindingResolver: StardewWorldBindingResolver = createStardewWorldBindingResolver(
+    overrides.worldBindingResolver ?? (async () => null),
+  );
   const aiClientLaunch: StardewLifecycleAiClientLaunch = overrides.runtimeLaunchContained === undefined
     ? (owner, installation) => internal.launchMaterializedAiClient(owner, installation)
     : (owner, installation) => internal.launchMaterializedAiClientContained(
@@ -136,6 +149,7 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
       });
       return process as unknown as ChildProcess;
     }),
+    worldBindingResolver,
     playerHostLaunch,
     aiClientLaunch,
     overrides.runtimeLaunchContained === undefined ? undefined : containedRuntimeTeardownFromCollaborator(overrides.runtimeLaunchContained),

@@ -22,6 +22,7 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationAdmission,
   type ComposedReferenceGameBrowserReadContext,
 } from "./composed-reference-game-browser.js";
+import { GameBrowserValidatorsV1 } from "./game-browser-contract/index.js";
 import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
@@ -276,7 +277,7 @@ async function createAdmissionBroker() {
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
   const root = await bootstrap.json() as { chat: { csrfToken: string } };
-  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_disconnect"): IncomingMessage => {
+  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_disconnect"): IncomingMessage => {
     const originUrl = new URL(origin);
     const method = operation === "cabin_read" ? "GET" : "POST";
     const url = operation === "lifecycle_activation"
@@ -291,7 +292,9 @@ async function createAdmissionBroker() {
                ? "/api/composed-reference-game/v1/game/launch"
                : operation === "game_stop"
                  ? "/api/composed-reference-game/v1/game/stop"
-                 : "/api/composed-reference-game/v1/game/disconnect";
+                 : operation === "game_resume"
+                   ? "/api/composed-reference-game/v1/game/resume"
+                   : "/api/composed-reference-game/v1/game/disconnect";
     return {
       method,
       url,
@@ -305,7 +308,7 @@ async function createAdmissionBroker() {
     } as unknown as IncomingMessage;
   };
   const issue = (
-    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_disconnect" = "lifecycle_activation",
+    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_disconnect" = "lifecycle_activation",
   ): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       handler.lifecycleActivationIssuer,
@@ -2533,6 +2536,173 @@ test("failed Game disconnect retains generation and permits only a fresh-key ret
       status: "none", generation: 0, connectionStatus: "none",
     });
     assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+// ─── Slice 1B: coordinator fresh-generation resume seam ─────────────────────
+
+test("resume admits a registered binding, bumps attachment generation to >= 2, pauses actions, and runs no old task", async () => {
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+    },
+  });
+  try {
+    const result = await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+    );
+    assert.deepEqual(result, { apiVersion: 1, status: "accepted" });
+    assert.equal(GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result), true);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "reconnecting",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+    // No fresh native/attachment work and no old task in this slice.
+    assert.deepEqual(fixture.spawnCalls, []);
+    assert.deepEqual(fixture.playerSpawnCalls, []);
+    assert.deepEqual(fixture.bridgeConnectCalls, []);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 0);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 0);
+    assert.equal(fixture.gameRuntimeTaskCancelCalls(), 0);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("resume returns unavailable without creating an activation for a missing or terminal binding", async () => {
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async () => null,
+    },
+  });
+  try {
+    const result = await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-absent", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+    );
+    assert.deepEqual(result, { apiVersion: 1, status: "unavailable" });
+    assert.equal(GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result), true);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "unavailable" });
+    assert.deepEqual(fixture.spawnCalls, []);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("resume replays a duplicate idempotency key with the same accepted result and rejects a changed tuple", async () => {
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+    },
+  });
+  try {
+    const command = { apiVersion: 1 as const, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 };
+    const first = fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), command);
+    const replay = fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), command);
+    assert.equal(replay, first);
+    assert.deepEqual(await first, { apiVersion: 1, status: "accepted" });
+    assert.throws(
+      () => fixture.coordinator.activationOwner.resume(
+        fixture.broker.issue("game_resume"),
+        { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 3 },
+      ),
+      /stardew_game_resume_idempotency_conflict/,
+    );
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("resume fails closed when expectedAttachmentGeneration does not match the fresh generation", async () => {
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+    },
+  });
+  try {
+    await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+    );
+    assert.throws(
+      () => fixture.coordinator.activationOwner.resume(
+        fixture.broker.issue("game_resume"),
+        { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+      ),
+      /stardew_game_attachment_generation_conflict/,
+    );
+    // A mismatch must never mint a fresh activation.
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "reconnecting",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("resume rejects a second resume while the first is still in progress", async () => {
+  let releaseSet: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => { releaseSet = resolve; });
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async () => {
+        await gate;
+        return { gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 };
+      },
+    },
+  });
+  try {
+    const pending = fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+    );
+    assert.throws(
+      () => fixture.coordinator.activationOwner.resume(
+        fixture.broker.issue("game_resume"),
+        { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+      ),
+      /stardew_game_resume_in_progress/,
+    );
+    releaseSet!();
+    assert.deepEqual(await pending, { apiVersion: 1, status: "accepted" });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("resume fails closed when a different resumed session is presented after one world binding", async () => {
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async (input) =>
+        input.gameSessionId === "session-abc"
+          ? { gameSessionId: input.gameSessionId, integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }
+          : { gameSessionId: input.gameSessionId, integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 2 },
+    },
+  });
+  try {
+    await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+    );
+    // The same coordinator never attaches a second world binding.
+    assert.throws(
+      () => fixture.coordinator.activationOwner.resume(
+        fixture.broker.issue("game_resume"),
+        { apiVersion: 1, gameSessionId: "session-other", idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 3 },
+      ),
+      /stardew_game_resume_idempotency_conflict/,
+    );
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
