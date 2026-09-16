@@ -13,13 +13,11 @@ declare module "@cortexkit/pi-magic-context/memory" {
     runtimeCwd: string;
     profileId: string;
     profileRevision: number;
-    profileCanonicalHash: string;
   }>;
   export type GameBuddyPlayerMemoryReadInput = Readonly<{
     continuityId: string;
     profileId: string;
     profileRevision: number;
-    profileCanonicalHash: string;
   }>;
   export type GameBuddyPlayerMemoryReadProjection = Readonly<{
     listMemories(input: GameBuddyPlayerMemoryReadInput): Promise<readonly GameBuddyMemoryView[]>;

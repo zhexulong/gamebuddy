@@ -5,7 +5,6 @@ import {
   type MountedChatRuntimeLease,
 } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
-import { identityProfileHash } from "../../identity-profile.js";
 import { resolveRuntimePaths } from "../../runtime.js";
 import {
   type ComposedTavernProfile,
@@ -72,7 +71,6 @@ export function createMemoryManagementService(
   const profileBinding = Object.freeze({
     profileId: identityProfile.profileId,
     profileRevision: identityProfile.revision,
-    profileCanonicalHash: identityProfileHash(identityProfile),
   });
   const handleSecret = randomBytes(32);
   const projectHandle = (stateToken: string): string =>
