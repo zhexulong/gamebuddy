@@ -119,7 +119,8 @@
     "test:stardew-static-companion-evidence": "node --test tools/lib/stardew-companion-live-evidence.test.mjs",
     "test:stardew-static-companion-admission": "node --test tools/lib/stardew-companion-production-admission.test.mjs",
     "check:publint": "node tools/check-publint.mjs",
-    "check:clones": "jscpd --config jscpd.json"
+    "check:clones": "jscpd --config jscpd.json",
+    "check:architecture": "pnpm check:publint && pnpm check:clones && echo \"[110] knip/module-graph/import-boundary gated by live WIP; see design/110 Task 5\""
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
