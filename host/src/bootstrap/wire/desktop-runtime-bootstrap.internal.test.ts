@@ -25,7 +25,23 @@ test("desktop bootstrap helper performs one authenticated guardian wire roundtri
   assert.equal(typeof result.requests[2]!.deadlineUnixMs, "number");
   assert.equal(Object.hasOwn(result.requests[3]!, "operationWaitBudgetMs"), true);
   assert.equal(Object.hasOwn(result.requests[3]!, "deadlineUnixMs"), false);
+  // The wire carries the real composition-armor frame: the arm private frame
+  // must contain the approved executable and the native ParseLaunch-style
+  // launch frame must reuse that exact executable (ParseArm/ParseLaunch gate).
+  const armFrame = JSON.parse(Buffer.from(String(result.requests[1]!.privateFrame), "base64url").toString("utf8")) as Record<string, unknown>;
+  const launchFrame = JSON.parse(Buffer.from(String(result.requests[2]!.privateFrame), "base64url").toString("utf8")) as Record<string, unknown>;
+  assert.equal(armFrame.approvedExecutable, "C:\\Program Files\\GameBuddy\\roles\\RoleRootFixture.exe");
+  assert.equal(launchFrame.executable, armFrame.approvedExecutable);
   assert.ok(result.stderr.length >= 0);
+});
+
+test("desktop bootstrap helper never sends arm_attempt when the authorization lacks the approved executable", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("missing-arm-executable");
+  assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
+  assert.deepEqual(result.requests.map((request) => request.operation), ["hello"]);
+  assert.match(result.stderr, /(?:^|\n)contained game runtime: arm authorization missing approved executable\n$/);
+  assert.doesNotMatch(result.stderr, /unexpected_arm_success|arm_attempt|armed/);
 });
 
 test("desktop bootstrap helper rejects arm when guardian withholds ACK", async (t) => {
@@ -116,9 +132,9 @@ test("desktop bootstrap helper closes its composition when termination fails", a
   assert.match(result.stderr, /termination_failed/);
 });
 
-async function runWireFixture(scenario: "success" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure"): Promise<{ requests: Record<string, unknown>[]; acknowledgement?: string; stderr: string; guardianClosed: boolean; armReceiptAt?: number; workerClosedAt?: number }> {
+async function runWireFixture(scenario: "success" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure"): Promise<{ requests: Record<string, unknown>[]; acknowledgement?: string; stderr: string; guardianClosed: boolean; armReceiptAt?: number; workerClosedAt?: number }> {
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
-  const bootstrapId = (scenario === "success" ? "d" : scenario === "malformed-arm" ? "c" : scenario === "withheld-arm-ack" ? "b" : scenario === "delayed-arm-ack" ? "7" : scenario === "withheld-contain-ack" ? "a" : scenario === "expired-launch" ? "9" : scenario === "overhorizon-launch" ? "6" : "8").repeat(64);
+  const bootstrapId = (scenario === "success" ? "d" : scenario === "missing-arm-executable" ? "5" : scenario === "malformed-arm" ? "c" : scenario === "withheld-arm-ack" ? "b" : scenario === "delayed-arm-ack" ? "7" : scenario === "withheld-contain-ack" ? "a" : scenario === "expired-launch" ? "9" : scenario === "overhorizon-launch" ? "6" : "8").repeat(64);
   const guardianInstanceId = scenario === "success" ? "11111111-1111-4111-8111-111111111111" : scenario === "malformed-arm" ? "33333333-3333-4333-8333-333333333333" : "55555555-5555-4555-8555-555555555555";
   const attemptId = scenario === "success" ? "22222222-2222-4222-8222-222222222222" : scenario === "malformed-arm" ? "44444444-4444-4444-8444-444444444444" : "66666666-6666-4666-8666-666666666666";
   const rootLayout = {
@@ -174,6 +190,20 @@ async function runWireFixture(scenario: "success" | "malformed-arm" | "withheld-
     await cp(resolve(compiledRoot, "strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
     await mkdir(join(moduleDirectory, "composition"), { recursive: true });
     await cp(resolve(compiledRoot, "composition", "desktop-host-composition.js"), join(moduleDirectory, "composition", "desktop-host-composition.js"));
+    // The wire worker drives the real contained runtime platform encoder so the
+    // fixture asserts the actual arm frame (approvedExecutable) and the launch
+    // frame consistency instead of an opaque placeholder. That module needs the
+    // launch-plan encoder and the synchronized contained runtime core; the
+    // composer-core import inside it is a Guardian-owner seam the fixture never
+    // invokes, so a hermetic throwing stub keeps the fixture self-contained.
+    await cp(resolve(compiledRoot, "composition", "contained-game-runtime-platform.private.js"), join(moduleDirectory, "composition", "contained-game-runtime-platform.private.js"));
+    await cp(resolve(compiledRoot, "composition", "stardew-native-role-launch-plan.private.js"), join(moduleDirectory, "composition", "stardew-native-role-launch-plan.private.js"));
+    const containmentCore = join(moduleDirectory, "containment", "runtime", "core", "contained-game-runtime.js");
+    await mkdir(dirname(containmentCore), { recursive: true });
+    await cp(resolve(compiledRoot, "containment", "runtime", "core", "contained-game-runtime.js"), containmentCore);
+    const composerCorePath = join(moduleDirectory, "games", "stardew", "lifecycle", "stardew-private-bootstrap-composer.core.js");
+    await mkdir(dirname(composerCorePath), { recursive: true });
+    await writeFile(composerCorePath, "// Hermetic wire-fixture stub: the contained runtime platform imports this seam but\n// never invokes it; the fixture keeps the module graph self-contained instead of\n// dragging in the whole composer core closure.\nexport function createStardewBootstrapGuardianOwnerBinding() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function readStardewBootstrapGuardianNativeArmFrame() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\n");
     await cp(resolve(compiledRoot, "deployment-manifest.js"), join(moduleDirectory, "deployment-manifest.js"));
     const manifestPath = join(fixtureRoot, "deployment-manifest.json");
     await writeFile(manifestPath, `${JSON.stringify({
@@ -203,7 +233,7 @@ async function runWireFixture(scenario: "success" | "malformed-arm" | "withheld-
     } else if (scenario === "success") {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       worker.kill("SIGTERM");
-    } else if (scenario !== "malformed-arm") {
+    } else if (scenario !== "malformed-arm" && scenario !== "missing-arm-executable") {
       await withTimeout(workerClose, 2_000, `${scenario} rejection`);
     }
     const workerClosedAt = scenario === "delayed-arm-ack" ? performance.now() : undefined;
@@ -216,11 +246,17 @@ async function runWireFixture(scenario: "success" | "malformed-arm" | "withheld-
   }
 }
 
-function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure"): string {
+function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure"): string {
   const bootstrapUrl = pathToFileURL(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")).href;
   const compositionUrl = pathToFileURL(join(moduleDirectory, "composition", "desktop-host-composition.js")).href;
+  const platformUrl = pathToFileURL(join(moduleDirectory, "composition", "contained-game-runtime-platform.private.js")).href;
+  // The fixture drives the real contained runtime platform so the recorded wire
+  // arm frame is the usual approvedExecutable-carrying frame and the launch plan
+  // is the native ParseLaunch encoder output (executable === approvedExecutable).
   const operation = scenario === "success"
-    ? `await session.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, privateFrame: new Uint8Array([1]) }); await session.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() + 60000, role: "player_host", privateFrame: new Uint8Array([2]) }); await session.contain({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, role: "player_host" });`
+    ? `const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); const approvedExecutable = "C:\\\\Program Files\\\\GameBuddy\\\\roles\\\\RoleRootFixture.exe"; const launchFacts = { executable: approvedExecutable, cwd: "C:\\\\Program Files\\\\GameBuddy", arguments: ["--signal", "C:\\\\tmp\\\\wire.txt"], environment: { PATH: "C:\\\\Windows\\\\System32", SystemRoot: "C:\\\\Windows", WINDIR: "C:\\\\Windows", TEMP: "C:\\\\Windows\\\\Temp", TMP: "C:\\\\Windows\\\\Temp", USERPROFILE: "C:\\\\Users\\\\tester", GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "wire-generation" } }; await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, authorization: { role: "player_host", revision: "11111111-1111-4111-8111-111111111111", executable: approvedExecutable } }); await platform.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() + 60000, role: "player_host", authorization: launchFacts }); await platform.contain({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, role: "player_host" });`
+    : scenario === "missing-arm-executable"
+      ? `try { const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, authorization: { role: "player_host", revision: "33333333-3333-4333-8333-333333333333" } }); throw new Error("unexpected_arm_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
     : scenario === "composition-failure"
       ? `throw new Error("composition_construction_failed")`
       : scenario === "withheld-contain-ack"

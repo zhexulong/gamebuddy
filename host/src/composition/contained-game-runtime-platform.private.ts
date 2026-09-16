@@ -9,6 +9,7 @@ import {
   type StardewPlayerHostRuntimeLaunchCollaborator,
 } from "../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import {
+  isFullyQualifiedWindowsPath,
   modelStardewNativeRoleLaunchPlan,
   encodeStardewNativeRoleLaunchPlan,
   type StardewNativeRoleLaunchPlanInput,
@@ -93,7 +94,15 @@ export function createDesktopGuardianGameRuntimePlatform(
   session: DesktopGuardianSession,
 ): ContainedGameRuntimePlatform {
   const encodeArmAuthorization = (facts: TypedPrivateGameFacts): Uint8Array => {
-    const encoded = JSON.stringify(facts);
+    // The attested installation executable is fixed at arm time and is later
+    // enforced by the native Guardian's ParseLaunch. The Host wire mirrors the
+    // native ParseArm/ParseLaunch executable constraints here (existence,
+    // NUL, fully-qualified drive path, size bound) and fails closed before the
+    // authenticated session sees a frame the native Guardian would reject;
+    // the ordinal-ignore-case equality gate itself remains native-only.
+    const approvedExecutable = facts.executable;
+    if (typeof approvedExecutable !== "string" || !isFullyQualifiedWindowsPath(approvedExecutable)) throw new Error("contained game runtime: arm authorization missing approved executable");
+    const encoded = JSON.stringify({ ...facts, approvedExecutable });
     if (encoded === undefined) throw new Error("contained game runtime: authorization encoding failed");
     return new TextEncoder().encode(encoded);
   };
