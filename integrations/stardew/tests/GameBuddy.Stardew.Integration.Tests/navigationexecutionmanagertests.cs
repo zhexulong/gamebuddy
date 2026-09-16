@@ -209,6 +209,28 @@ public sealed class NavigationExecutionManagerTests
     }
 
     [Fact]
+    public void WarpLandingTileOffset_OnTargetMap_ContinuesNotMismatch()
+    {
+        // Stardew may adjust the exact landing tile after a warp (collision,
+        // standability, spawn offset). The warp postcondition is the target map
+        // identity; the arrival rule (AtDestination) still governs the terminal.
+        var harness = new ManagerHarness(NotAtFarm());
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_landoff", Label("Mine"), Deadline());
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+
+        // Warp lands on the target map (Mine) but not on the leg's declared tile.
+        harness.CompleteWarp(SourceFarm, "Mine", 21, 17);
+
+        // The landing tile offset must not be read as a postcondition mismatch;
+        // on the target map the real arrival rule decides the terminal.
+        var receipt = harness.Stored("req_landoff");
+        receipt.State.Should().NotBe(ExecutionState.Uncertain);
+        receipt.ReasonCode.Should().NotBe("navigation_warp_postcondition_mismatch");
+        harness.Manager.IsBodySettled.Should().BeTrue();
+    }
+
+    [Fact]
     public void WrongOldSource_WithMatchingTarget_SettlesOnceUncertain_AndNeverRetries()
     {
         var harness = new ManagerHarness(NotAtFarm());

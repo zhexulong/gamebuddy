@@ -102,6 +102,7 @@ public sealed partial class ModEntry : Mod
     private bool nativeLocalPlayerFixtureTerminal;
     private long nativeLocalPlayerFixtureDeadlineUnixMs;
     private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
+    private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
     private bool nativeLocalPlayerFixtureBootstrapInvoked;
     private bool nativeLocalPlayerFixtureBootstrapTerminal;
     private NativeLocalFeedFixturePending? nativeLocalFeedFixturePending;
@@ -1901,6 +1902,29 @@ public sealed partial class ModEntry : Mod
         this.Monitor.Log($"[DEBUG-native-local-readiness] state={state};location={Game1.player.currentLocation?.NameOrUniqueName ?? "unknown"};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};can_move={Game1.player.CanMove};event_up={Game1.eventUp};menu={Game1.activeClickableMenu?.GetType().Name ?? "none"}.", LogLevel.Trace);
     }
 
+    /// <summary>
+    /// Bounded pipeline heartbeat that proves the game-thread tick path is still
+    /// executing (and is not frozen in a pipe read or elsewhere). Logs at most
+    /// once per 2 seconds, is content-safe, and never changes authority.
+    /// </summary>
+    private void LogNativeLocalPipelineHeartbeat()
+    {
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (now - this.nativeLocalPlayerFixtureLastHeartbeatUnixMs < 2_000L)
+            return;
+        this.nativeLocalPlayerFixtureLastHeartbeatUnixMs = now;
+        Farmer? player = Game1.player;
+        bool navigateBusy = !(player is null) && this.GetEmbodimentState().Executions?.IsBodyBusy == true;
+        bool bridgeConnected = this.ReadinessBridgeConnected();
+        this.Monitor.Log($"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")}", LogLevel.Trace);
+    }
+
+    /// <summary>Content-free bridge liveness used only by the diagnostic heartbeat.</summary>
+    private bool ReadinessBridgeConnected()
+    {
+        return this.TryGetAiState(out ScreenEmbodimentState state) && state.BridgeSession is not null;
+    }
+
     private void TryStartFarmhandProvisioner()
     {
         if (this.provisioningConfigurationRejected || this.farmhandProvisioningTerminal || this.farmhandProvisioner is not null || this.config.FarmhandProvisioner?.Enable != true)
@@ -2196,6 +2220,7 @@ public sealed partial class ModEntry : Mod
             this.ObserveExecutionResponsePipeDeliveries(nativeLocalState);
             this.ObserveTerminalReceiptDeliveries(nativeLocalState);
             this.DrainLocalPipeBridge(nativeLocalState);
+            this.LogNativeLocalPipelineHeartbeat();
             nativeLocalState.Executions?.Update();
             this.PublishPendingStopObservation(nativeLocalState);
             return;

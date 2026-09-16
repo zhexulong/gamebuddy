@@ -762,8 +762,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // Log through a local so this diagnostic cannot seed method-level
                 // Game1.player null-state for the later native postconditions.
                 Farmer? diagnosticPlayer = Game1.player;
-                this.LogNavigationWarpDiagnostic("warp_replan_retry", $"location={diagnosticPlayer?.currentLocation?.NameOrUniqueName ?? "none"};tile={diagnosticPlayer?.TilePoint.X ?? -1},{diagnosticPlayer?.TilePoint.Y ?? -1}");
-                this.TryContinueNavigationAfterWarp(deferredNavigation);
+        this.LogNavigationWarpDiagnostic("warp_replan_retry", $"location={diagnosticPlayer?.currentLocation?.NameOrUniqueName ?? "none"};tile={diagnosticPlayer?.TilePoint.X ?? -1},{diagnosticPlayer?.TilePoint.Y ?? -1}");
+        bool preTry = this.activeNavigate is not null && this.activeNavigate.Phase == LocalNavigatePhase.AwaitingWarp;
+        this.monitor.Log($"[nav-retry-marker] request={deferredNavigation.RequestId};phase={deferredNavigation.Phase};pre_coordinator={this.activeNavigationCoordinator is not null};pre_try={preTry}", LogLevel.Trace);
+        this.TryContinueNavigationAfterWarp(deferredNavigation);
+        bool postActive = this.activeNavigate is not null;
+        string postPhase = this.activeNavigate?.Phase.ToString() ?? "none";
+        this.monitor.Log($"[nav-retry-marker] post_active={postActive};post_phase={postPhase}", LogLevel.Trace);
             }
             else if (graceExpired && !this.IsPlayerActionableNow())
             {
@@ -2522,6 +2527,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private void SettleNavigationTerminal(LocalNavigateSpec navigation, ExecutionState state, string reasonCode, string? evidence)
     {
         this.navigationWarpReplanDeferred = false;
+        // Unthrottled settle marker; the bounded warp throttle may swallow a
+        // transition log that occurs in the same window as another warp event.
+        this.monitor.Log($"[nav-settle-marker] request={navigation.RequestId};state={state};reason={reasonCode};evidence={evidence ?? "none"}", LogLevel.Trace);
         this.LogNavigationWarpDiagnostic("settle", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
         this.active = null;
         this.activeNavigate = null;
@@ -2559,9 +2567,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        bool destinationMatches = string.Equals(navigation.Leg.TargetLocation, newLocation, StringComparison.Ordinal)
-            && navigation.Leg.TargetX == newTileX
-            && navigation.Leg.TargetY == newTileY;
+        // The correlated native warp is confirmed. Stardew may adjust the exact
+        // landing tile (collision / standability / spawn offset), so the
+        // postcondition is the target map identity, not the warp's declared tile.
+        // Arrival at the final destination itself is still decided only by the
+        // fresh replan's AtDestination rule before any terminal success.
+        bool destinationMatches = string.Equals(navigation.Leg.TargetLocation, newLocation, StringComparison.Ordinal);
         if (!isLocalPlayer || !destinationMatches)
         {
             this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_warp_postcondition_mismatch", "phase=awaiting_warp;postcondition_mismatch=true;never_retry=true");
@@ -2822,10 +2833,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryPersistReceiptTransition(admission, durableReceipt);
             if (!result.IsSuccess)
             {
-                this.durabilityFailuresByRequestId.Add(receipt.RequestId);
-                return;
+                // Intermediate/progress receipts are observational: a persist
+                // failure for them must not poison the request's later durable
+                // terminal receipt. Only a REAL terminal persist failure is a
+                // genuine durability failure (the admission itself remains the
+                // authoritative baseline and is already durable).
+                if (ModEntry.IsUnconfirmedTerminal(receipt.State))
+                {
+                    this.durabilityFailuresByRequestId.Add(receipt.RequestId);
+                    this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};state={receipt.State};reason={receipt.ReasonCode};code={result.Code}", LogLevel.Trace);
+                    return;
+                }
+                this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};state={receipt.State};reason={receipt.ReasonCode};code={result.Code};ignored=observational", LogLevel.Trace);
             }
         }
+        this.monitor.Log($"[receipt-publish-marker] request={receipt.RequestId};state={receipt.State};reason={receipt.ReasonCode};revision={receipt.Revision}", LogLevel.Trace);
         if (this.durabilityFailuresByRequestId.Contains(receipt.RequestId))
             return;
         if (category is not null && !this.navigationExecutionIds.Contains(receipt.ExecutionId))
