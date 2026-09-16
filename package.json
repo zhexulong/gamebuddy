@@ -117,7 +117,9 @@
     "check:chat-conversational-quality-gate": "node tools/check-chat-conversational-quality-gate.mjs",
     "test:stardew-static-companion-fixture": "node --test tools/stardew-companion-live-scenario.test.mjs tools/stardew-companion-live-scorer.test.mjs",
     "test:stardew-static-companion-evidence": "node --test tools/lib/stardew-companion-live-evidence.test.mjs",
-    "test:stardew-static-companion-admission": "node --test tools/lib/stardew-companion-production-admission.test.mjs"
+    "test:stardew-static-companion-admission": "node --test tools/lib/stardew-companion-production-admission.test.mjs",
+    "check:publint": "node tools/check-publint.mjs",
+    "check:clones": "jscpd --config jscpd.json"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
@@ -125,7 +127,8 @@
     "@vscode/tree-sitter-wasm": "0.3.1",
     "dependency-cruiser": "17.3.2",
     "knip": "6.34.0",
-    "web-tree-sitter": "0.26.11"
+    "web-tree-sitter": "0.26.11",
+    "jscpd": "^5.2.1"
   },
   "workspaces": [
     "packages/*",
