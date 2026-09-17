@@ -311,6 +311,59 @@ test("bridge message payloads fail closed", () => {
     validateBridgeMessage({ ...receipt, payload: { ...receipt.payload, state: "made_up" } }, scope, now),
     "invalid_receipt",
   );
+  // Optional piggybackedScene attachment on a succeeded Navigation receipt is
+  // forwarded (never resolved/created by Host): valid scene passes, malformed
+  // scene fails closed, unknown extra keys are rejected.
+  const receiptWithScene = newEnvelope(
+    "execution_receipt",
+    scope,
+    {
+      executionId: "execution_01",
+      requestId: "request_01",
+      actionId: "navigate_to_destination",
+      state: "succeeded",
+      reasonCode: "navigation_completed",
+      revision: 6,
+      evidence: { detail: "destination=SeedShop;arrived=true" },
+      piggybackedScene: {
+        observationId: "so1_ABCDEFGHIJKLMNOPQRSTUV",
+        currentLocation: "SeedShop",
+        currentRegion: "SeedShop",
+        affordances: [
+          {
+            ref: "sr1_abcdeF0123456789",
+            kind: "chest",
+            name: "Cash Register",
+            distance: 1,
+            direction: "East",
+            actionHint: null,
+          },
+        ],
+        summary: "1 actionable objects visible in SeedShop.",
+        partial: false,
+        truncatedReason: null,
+      },
+    },
+    "receipt_01b",
+    now,
+  );
+  assert.equal(validateBridgeMessage(receiptWithScene, scope, now), null);
+  assert.equal(
+    validateBridgeMessage(
+      { ...receiptWithScene, payload: { ...receiptWithScene.payload, piggybackedScene: { ...receiptWithScene.payload!.piggybackedScene, partial: "yes" } } },
+      scope,
+      now,
+    ),
+    "invalid_receipt",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      { ...receiptWithScene, payload: { ...receiptWithScene.payload, extraKey: 1 } },
+      scope,
+      now,
+    ),
+    "invalid_receipt",
+  );
   const cancellationReceiptWithoutEvidence = newEnvelope(
     "execution_receipt",
     scope,

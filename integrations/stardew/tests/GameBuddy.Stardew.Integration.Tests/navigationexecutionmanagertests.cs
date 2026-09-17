@@ -517,6 +517,93 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
     }
 
     [Fact]
+    public void SuccessfulNavigation_AttachesPiggybackedScene_WhenProviderSucceeds()
+    {
+        var harness = new ManagerHarness(NotAtFarm());
+        ObserveSceneResultPayload scene = new(
+            "so1_ABCDEFGHIJKLMNOPQRSTUV",
+            "Mine",
+            "Mine",
+            new[] { new ObserveSceneAffordancePayload("sr1_abcdeF0123456789", "chest", "Chest", 1, "East", null) },
+            "1 actionable objects visible in Mine.",
+            false,
+            null);
+        harness.Manager.SetNavigationPiggybackedSceneProvider(() => scene);
+
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_pb_ok", Label("Mine"), Deadline());
+        accepted.State.Should().Be(ExecutionState.Accepted);
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.CompleteWarp(SourceFarm, "Mine", 20, 20);
+
+        LocalExecutionReceipt terminal = harness.Stored("req_pb_ok");
+        terminal.State.Should().Be(ExecutionState.Succeeded);
+        terminal.ReasonCode.Should().Be("navigation_completed");
+        terminal.PiggybackedScene.Should().NotBeNull();
+        terminal.PiggybackedScene!.ObservationId.Should().Be("so1_ABCDEFGHIJKLMNOPQRSTUV");
+        terminal.PiggybackedScene.CurrentLocation.Should().Be("Mine");
+        terminal.PiggybackedScene.Affordances.Should().HaveCount(1);
+        terminal.PiggybackedScene.Affordances[0].Ref.Should().Be("sr1_abcdeF0123456789");
+    }
+
+    [Fact]
+    public void SuccessfulNavigation_NoPiggybackedScene_WhenProviderFailsOrAbsent()
+    {
+        var harness = new ManagerHarness(NotAtFarm());
+        // Absent provider: no attachment, navigation still succeeds.
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_pb_none", Label("Mine"), Deadline());
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.CompleteWarp(SourceFarm, "Mine", 20, 20);
+        LocalExecutionReceipt terminal = harness.Stored("req_pb_none");
+        terminal.State.Should().Be(ExecutionState.Succeeded);
+        terminal.PiggybackedScene.Should().BeNull();
+    }
+
+    [Fact]
+    public void SuccessfulNavigation_NoPiggybackedScene_WhenProviderThrows()
+    {
+        var harness = new ManagerHarness(NotAtFarm());
+        harness.Manager.SetNavigationPiggybackedSceneProvider(() => throw new InvalidOperationException("scene unavailable"));
+
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_pb_throw", Label("Mine"), Deadline());
+        accepted.State.Should().Be(ExecutionState.Accepted);
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.CompleteWarp(SourceFarm, "Mine", 20, 20);
+
+        // Attachment failure must never revoke the already-completed navigation.
+        LocalExecutionReceipt terminal = harness.Stored("req_pb_throw");
+        terminal.State.Should().Be(ExecutionState.Succeeded);
+        terminal.ReasonCode.Should().Be("navigation_completed");
+        terminal.PiggybackedScene.Should().BeNull();
+    }
+
+    [Fact]
+    public void FailedNavigation_DoesNotAttachPiggybackedScene()
+    {
+        var harness = new ManagerHarness(NotAtFarm());
+        ObserveSceneResultPayload scene = new(
+            "so1_ABCDEFGHIJKLMNOPQRSTUV",
+            "Mine",
+            "Mine",
+            Array.Empty<ObserveSceneAffordancePayload>(),
+            "no objects",
+            false,
+            null);
+        harness.Manager.SetNavigationPiggybackedSceneProvider(() => scene);
+
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_pb_fail", Label("Mine"), Deadline());
+        accepted.State.Should().Be(ExecutionState.Accepted);
+        // Non-success settle (e.g. deadline/blocked) must not attach the scene.
+        harness.Emit(ExecutionState.Rejected, "navigation_approach_unavailable", "phase=approaching;arm=failed");
+
+        LocalExecutionReceipt terminal = harness.Stored("req_pb_fail");
+        terminal.State.Should().Be(ExecutionState.Rejected);
+        terminal.PiggybackedScene.Should().BeNull();
+    }
+
+    [Fact]
     public void DuplicateLateWarp_SettlesOnceUncertain_DoesNotRetry()
     {
         var harness = new ManagerHarness(NotAtFarm());

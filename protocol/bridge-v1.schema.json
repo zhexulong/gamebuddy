@@ -1946,6 +1946,9 @@
         },
         "observation": {
           "$ref": "#/$defs/localObservation"
+        },
+        "piggybackedScene": {
+          "$ref": "#/$defs/observeSceneResult"
         }
       }
     },
