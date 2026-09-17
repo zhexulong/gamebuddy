@@ -19,12 +19,10 @@ import {
   type StardewPrivateBootstrapInternalComposition,
 } from "./stardew-private-bootstrap-composer.core.js";
 import {
-  createStardewBootstrapGuardianNativePortsFromDesktopSession,
   createStardewBootstrapGuardianOwner,
   type StardewBootstrapGuardianNativePorts,
   type StardewBootstrapGuardianOwner,
 } from "./stardew-bootstrap-guardian.private.js";
-import type { DesktopGuardianSession } from "../../../containment/auth/desktop-guardian-session.internal.js";
 
 /** Constructs the complete trusted production bootstrap composition. */
 export type StardewBootstrapGuardianOwnerFactory = Readonly<{
@@ -42,20 +40,6 @@ export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapI
     native: StardewBootstrapGuardianNativePorts,
   ): StardewBootstrapGuardianOwner;
 }>;
-
-/** Creates the direct private seam used only by Host composition assembly. */
-function createStardewBootstrapGuardianOwnerFromDesktopSession(
-  owner: StardewOwnedPlayerHostBootstrap,
-  session: DesktopGuardianSession,
-  deadlineUnixMs: number,
-  operationWaitBudgetMs: number,
-): StardewBootstrapGuardianOwner {
-  const binding = createStardewBootstrapGuardianOwnerBinding(owner);
-  return createStardewBootstrapGuardianOwner(
-    binding,
-    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, deadlineUnixMs, operationWaitBudgetMs),
-  );
-}
 
 export function createStardewPrivateBootstrapComposition(): StardewPrivateBootstrapTrustedComposition {
   const core = createStardewPrivateBootstrapProductionCore({

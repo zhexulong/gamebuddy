@@ -29,9 +29,7 @@ import { bindWindowsStaleLockReclaimer, pathLockPath, withPathLock } from "../..
 import type { StardewPlayerHostBootstrapClaim } from "../../../stardew-player-host-bootstrap.js";
 import type { StardewPlayerHostLaunchReservation } from "../../../stardew-player-host-process-owner.js";
 import * as productionComposer from "./stardew-private-bootstrap-composer.js";
-import type { StardewBootstrapGuardianNativePorts } from "./stardew-bootstrap-guardian.private.js";
 import type {
-  StardewExternalPlayerHostPhaseAOwner,
   StardewOwnedPlayerHostBootstrap,
   StardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.js";
@@ -688,7 +686,7 @@ async function assertAttemptFixtureUnchanged(fixture: Awaited<ReturnType<typeof 
 test("v4 owner transition CAS enforces legal lifecycle transitions, immutable fences, and exact revisions", async () => {
   const harness = createHarness();
   const root = await createRoot();
-  const owner = await reserveFresh(harness, root);
+  await reserveFresh(harness, root);
   const transitions = createOwnerTransitions(harness, {
     ownerPath: ownerPath(root),
     containmentRoot: root,
@@ -721,12 +719,12 @@ test("v4 owner transition CAS enforces legal lifecycle transitions, immutable fe
 test("v4 recovery CAS binds the exact recovery actor and only finalizes both contained roles", async () => {
   const harness = createHarness();
   const root = await createRoot();
-  const owner = await reserveFresh(harness, root);
+  await reserveFresh(harness, root);
   const transition = createOwnerTransitions(harness, {
     ownerPath: ownerPath(root), containmentRoot: root,
     immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
   });
-  const recovering = await transition.beginRecovery(1, "recovery-1");
+  await transition.beginRecovery(1, "recovery-1");
   const partial = await transition.containRecoveringRole("playerHost", 2, "recovery-1");
   assert.equal(partial.playerHostState, "contained");
   assert.equal(partial.aiClientState, "reserved");
@@ -1120,7 +1118,7 @@ test("owner persistence generates exact single-separator Local guardian names be
     guardianAiJobNames: ["Local\\ai_job_name"],
   });
   const root = await createRoot();
-  const owner = await reserveFresh(harness, root);
+  await reserveFresh(harness, root);
 
   assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")).guardian, {
     bindingRevision: "guardian-revision-1",
@@ -1887,8 +1885,7 @@ test("owner is returned only after durable owner.json reread and malformed persi
   let releaseRead!: () => void;
   const readGate = new Promise<void>((resolveGate) => { releaseRead = resolveGate; });
   let rereadObserved = false;
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer((command, args) => {
-    return helperChild(async (request) => {
+  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
       if (request.operation === "release_owned_lock") {
         await rm(requestPath(request), { force: true });
         await writeFile(path, "{not-json", "utf8");
@@ -1897,8 +1894,7 @@ test("owner is returned only after durable owner.json reread and malformed persi
         return "released";
       }
       return "indeterminate";
-    });
-  }));
+    })));
   const pair = mintPair(harness.composition);
   let settled = false;
   const pending = harness.composition
