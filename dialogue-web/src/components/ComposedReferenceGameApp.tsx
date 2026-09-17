@@ -39,12 +39,13 @@ const MAX_POLL_ATTEMPTS = 60;
 const TERMINAL_TURN_STATES = new Set(["completed", "cancelled", "failed"]);
 
 /**
- * Bounded authoritative reread budget while an admitted `game.resume` is
- * converging. `accepted`/`attached` transport results are never runtime
- * success: the composed authoritative Game projection is the sole terminal
- * authority. This budget fails an unconverged attempt over to the existing
- * unavailable presentation (exact generation key preserved) instead of ever
- * clearing in-flight early and re-enabling a duplicate Resume.
+ * Bounded authoritative reread budget while an admitted `game.resume` or
+ * `game.reopen` is converging. `accepted`/`attached`/`reopened` transport
+ * results are never runtime success: the composed authoritative Game
+ * projection is the sole terminal authority. This budget fails an unconverged
+ * attempt over to the existing unavailable presentation (exact generation key
+ * preserved) instead of ever clearing in-flight early and re-enabling a
+ * duplicate command.
  */
 const RESUME_REREAD_INTERVAL_MS = 500;
 const RESUME_REREAD_MAX_ATTEMPTS = 60;
@@ -129,6 +130,11 @@ export function ComposedReferenceGameApp() {
   const [gameResumeActive, setGameResumeActive] = useState(false);
   const [gameResumeFailed, setGameResumeFailed] = useState(false);
   const [gameResumeUnavailable, setGameResumeUnavailable] = useState(false);
+  const gameReopenActiveRef = useRef(false);
+  const gameReopenKeysRef = useRef(new Map<number, string>());
+  const [gameReopenActive, setGameReopenActive] = useState(false);
+  const [gameReopenFailed, setGameReopenFailed] = useState(false);
+  const [gameReopenUnavailable, setGameReopenUnavailable] = useState(false);
   const cabinIdempotencyKeysRef = useRef(new Map<string, string>());
 
   const commit = useCallback((next: ViewState): void => {
@@ -753,6 +759,107 @@ export function ComposedReferenceGameApp() {
     setGameResumeActive(false);
   };
 
+  /**
+   * Bounded authoritative rereads for one admitted `game.reopen`. The strict
+   * `reopened` result only exists on the exact same attachment generation; keep
+   * the attempt visibly in flight until the composed authoritative Game
+   * projection shows the paused action authority reopened to `active` at that
+   * generation, a newer/conflicting generation supersedes the attempt, or the
+   * bounded budget expires (unavailable; the exact generation key is preserved
+   * for replay). Reopen never touches old task/facade/lease or attachment
+   * machinery, so only the action-authority flip is awaited.
+   */
+  const reopenAwaitAuthoritative = async (
+    generation: number,
+    attempts: number,
+  ): Promise<"active" | "superseded" | "unavailable"> => {
+    if (cancelledRef.current || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
+    try {
+      await reread();
+    } catch {
+      if (cancelledRef.current) return "unavailable";
+      // An inconclusive authoritative read never completes the reopen; keep
+      // rereading inside the bounded budget.
+      await delay(RESUME_REREAD_INTERVAL_MS);
+      return reopenAwaitAuthoritative(generation, attempts + 1);
+    }
+    const fresh = viewRef.current;
+    if (fresh.kind !== "ready" || fresh.root.game === null) return "superseded";
+    const projection = fresh.root.game.game;
+    if (projection.attachment.generation !== generation) return "superseded";
+    if (
+      projection.attachment.status === "attached" &&
+      projection.actionAuthority === "active"
+    ) return "active";
+    await delay(RESUME_REREAD_INTERVAL_MS);
+    return reopenAwaitAuthoritative(generation, attempts + 1);
+  };
+
+  const handleGameReopen = async (): Promise<void> => {
+    const current = viewRef.current;
+    const game = current.kind === "ready" ? current.root.game : null;
+    // ready-actions-paused is the exact precondition: connected_idle equals a
+    // live observation surface, actionAuthority "paused" means only a new
+    // explicit Game instruction may reopen action admission. Never approximate
+    // it with the connection status alone.
+    if (
+      gameReopenActiveRef.current ||
+      current.kind !== "ready" ||
+      game === null ||
+      game.game.actionAuthority !== "paused" ||
+      game.game.attachment.status !== "attached" ||
+      game.game.attachment.generation < 1 ||
+      game.game.connectionStatus !== "connected_idle"
+    ) return;
+    const generation = game.game.attachment.generation;
+    const existingKey = gameReopenKeysRef.current.get(generation);
+    const idempotencyKey = existingKey ?? newIdempotencyKey();
+    gameReopenKeysRef.current.set(generation, idempotencyKey);
+    gameReopenActiveRef.current = true;
+    setGameReopenActive(true);
+    setGameReopenFailed(false);
+    setGameReopenUnavailable(false);
+    try {
+      await composedApiRef.current.reopenGame({
+        apiVersion: 1,
+        idempotencyKey,
+        expectedAttachmentGeneration: generation,
+      });
+    } catch (error) {
+      let rereadSucceeded = false;
+      try {
+        await reread();
+        rereadSucceeded = true;
+      } catch { /* retain the current authoritative projection */ }
+      const fresh = viewRef.current;
+      const staleGenerationReconciled =
+        error instanceof ComposedReferenceGameProblemError &&
+        error.code === "game_attachment_conflict" &&
+        rereadSucceeded &&
+        fresh.kind === "ready" &&
+        fresh.root.game?.game.attachment.generation !== generation;
+      setGameReopenFailed(!staleGenerationReconciled);
+      gameReopenActiveRef.current = false;
+      setGameReopenActive(false);
+      return;
+    }
+    // The strict `reopened` result is still not runtime success on its own: the
+    // composed authoritative Game projection at the exact same attachment
+    // generation must show the action authority reopened to `active`. Keep the
+    // attempt visibly in flight while bounded rereads converge, a newer
+    // generation supersedes the attempt, or the bounded budget expires
+    // (unavailable; the exact generation key stays for an idempotent replay).
+    let convergence: "active" | "superseded" | "unavailable";
+    try {
+      convergence = await reopenAwaitAuthoritative(generation, 1);
+    } catch {
+      convergence = "unavailable";
+    }
+    if (convergence === "unavailable") setGameReopenUnavailable(true);
+    gameReopenActiveRef.current = false;
+    setGameReopenActive(false);
+  };
+
   const handleStop = async (): Promise<void> => {
     const current = viewRef.current;
     const turn = current.kind === "ready" ? current.session.snapshot.chat?.turn : null;
@@ -800,6 +907,13 @@ export function ComposedReferenceGameApp() {
     view.root.game.game.attachment.generation > 0 &&
     RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus);
   const gameResumeInFlight = gameResumeActiveRef.current || gameResumeActive;
+  const gameReopenAvailable = view.kind === "ready" &&
+    view.root.game !== null &&
+    view.root.game.game.actionAuthority === "paused" &&
+    view.root.game.game.attachment.status === "attached" &&
+    view.root.game.game.attachment.generation > 0 &&
+    view.root.game.game.connectionStatus === "connected_idle";
+  const gameReopenInFlight = gameReopenActiveRef.current || gameReopenActive;
   const gameSyncing = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.connectionStatus === "syncing";
@@ -868,6 +982,17 @@ export function ComposedReferenceGameApp() {
                 {gameResumeActive && <p role="status">{labels().gameResumeInProgress}</p>}
                 {gameResumeFailed && <p role="status">{labels().gameResumeFailed}</p>}
                 {gameResumeUnavailable && <p role="status">{labels().gameResumeUnavailable}</p>}
+                {gameReopenAvailable && (
+                  <>
+                    <p role="status">{labels().gameActionsPaused}</p>
+                    <button type="button" disabled={gameReopenInFlight} onClick={() => void handleGameReopen()}>
+                      {labels().gameReopen}
+                    </button>
+                  </>
+                )}
+                {gameReopenActive && <p role="status">{labels().gameReopenInProgress}</p>}
+                {gameReopenFailed && <p role="status">{labels().gameReopenFailed}</p>}
+                {gameReopenUnavailable && <p role="status">{labels().gameReopenUnavailable}</p>}
                <StardewCabinHandoff
                  state={cabinView}
                  labels={labels()}
