@@ -491,7 +491,7 @@ function WorldInfoBindingPanel({
   labels: ReturnType<typeof messages>;
   onBind: (sourceHandle: string | null) => void;
 }>): ReactElement {
-  if (worldInfo === null) return <></>;
+  if (worldInfo === null) return null;
   const controlsLocked = worldInfo.state === "locked" || worldInfo.state === "unavailable";
   const hasItems = worldInfo.items.length > 0;
   return (
