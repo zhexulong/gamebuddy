@@ -7,7 +7,7 @@ import {
 import {
   createGameBrowserStateProvider,
 } from "./game-browser-state-provider.js";
-import type { StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView, StardewGameSurfaceLaunchReadinessReader, StardewGameSurfaceLaunchReadinessView } from "../stardew-production-lifecycle-coordinator.internal.js";
+import type { StardewGameSurfaceActionAuthorityReader, StardewGameSurfaceActionAuthorityView, StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView, StardewGameSurfaceLaunchReadinessReader, StardewGameSurfaceLaunchReadinessView } from "../stardew-production-lifecycle-coordinator.internal.js";
 import type {
   StardewRoleLifecycleReader,
   StardewRoleLifecycleView,
@@ -37,6 +37,12 @@ function launchReadiness(
   view: StardewGameSurfaceLaunchReadinessView = Object.freeze({ generation: 0, status: "none" }),
 ): StardewGameSurfaceLaunchReadinessReader {
   return Object.freeze({ readLaunchReadinessView: () => view });
+}
+
+function actionAuthority(
+  status: StardewGameSurfaceActionAuthorityView["status"] = "unavailable",
+): StardewGameSurfaceActionAuthorityReader {
+  return Object.freeze({ readActionAuthorityView: () => Object.freeze({ status }) });
 }
 
 function lifecycle(view: StardewRoleLifecycleView, onRead = () => {}): StardewRoleLifecycleReader {
@@ -106,6 +112,7 @@ test("read-only provider accepts a reader-only fresh lifecycle and projects only
     compatibility: { status: "unchecked", message: null },
     attachment: { status: "none", generation: 0 },
     connectionStatus: "none",
+    actionAuthority: "unavailable",
     role: null,
     companionName: null,
     selectedWorld: null,
@@ -124,6 +131,7 @@ test("read-only provider projects unavailable lifecycle without fabricated attac
     compatibility: { status: "unchecked", message: null },
     attachment: { status: "none", generation: 0 },
     connectionStatus: "none",
+    actionAuthority: "unavailable",
     role: null,
     companionName: null,
     selectedWorld: null,
@@ -187,10 +195,41 @@ test("provider requires an exact composed profile with game.state.read mounted",
   );
 });
 
+test("provider projects the coordinator-owned action authority exactly and defaults closed without a reader", async () => {
+  const lifecycleView = lifecycle(authenticatedView("verified"));
+  const attached = attachment(Object.freeze({ status: "attached", generation: 1, connectionStatus: "connected_idle" }));
+  const readiness = launchReadiness();
+  for (const status of ["unavailable", "active", "paused"] as const) {
+    const state = await createGameBrowserStateProvider(
+      profile(),
+      lifecycleView,
+      attached,
+      readiness,
+      actionAuthority(status),
+    ).readState(context);
+    assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
+    assert.equal(state.game.actionAuthority, status);
+    // The authority is a distinct dimension: a paused resume authority still
+    // coexists with an attached connected_idle surface.
+    assert.equal(state.game.connectionStatus, "connected_idle");
+  }
+  // Without a reader the projection defaults to unavailable and never invents
+  // active/paused from the attachment or connection facts.
+  const noReader = await createGameBrowserStateProvider(
+    profile(),
+    lifecycleView,
+    attached,
+    readiness,
+  ).readState(context);
+  assert.equal(noReader.game.actionAuthority, "unavailable");
+  assert.equal(noReader.game.connectionStatus, "connected_idle");
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(noReader), true);
+});
+
 test("provider rejects short or non-canonical CSRF context without reading lifecycle", async () => {
   let lifecycleReads = 0;
   const provider = createGameBrowserStateProvider(profile(), lifecycle(unavailableView(), () => lifecycleReads++), attachment(), launchReadiness());
-  for (const csrfToken of ["short", "A".repeat(21) + "!", "B".repeat(22)])
+  for (const csrfToken of ["short", `${"A".repeat(21)}!`, "B".repeat(22)])
     await assert.rejects(
       () => provider.readState({ csrfToken, browserSessionExpiresAtMs: context.browserSessionExpiresAtMs }),
       /invalid_game_browser_read_state_context/,

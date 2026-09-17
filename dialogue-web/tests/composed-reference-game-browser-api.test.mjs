@@ -54,6 +54,7 @@ function gameSnapshot(overrides = {}) {
       compatibility: { status: "unchecked", message: null },
       attachment: { status: "none", generation: 0 },
       connectionStatus: "none",
+      actionAuthority: "unavailable",
       role: null,
       companionName: null,
       selectedWorld: null,
@@ -163,6 +164,25 @@ test("composed Game projection admits the resume-phase syncing status while stay
       ComposedReferenceGameProtocolError,
     );
   }
+});
+
+test("composed Game projection admits the action-authority statuses while staying closed to invented values", () => {
+  for (const actionAuthority of ["unavailable", "active", "paused"]) {
+    assert.equal(
+      validateComposedReferenceGameRoot(root(gameSnapshot({ actionAuthority }))).game.game.actionAuthority,
+      actionAuthority,
+    );
+  }
+  for (const actionAuthority of ["pending", "awaiting", "resumed", "ready"]) {
+    assert.throws(
+      () => validateComposedReferenceGameRoot(root(gameSnapshot({ actionAuthority }))),
+      ComposedReferenceGameProtocolError,
+    );
+  }
+  assert.throws(
+    () => validateComposedReferenceGameRoot(root(gameSnapshot({ actionAuthorityDetail: "paused" }))),
+    ComposedReferenceGameProtocolError,
+  );
 });
 
 test("composed client reports bounded server problems without accepting additive fields", async () => {

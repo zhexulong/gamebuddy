@@ -39,6 +39,7 @@ const baseState = {
     compatibility: { status: "compatible" as const, message: null },
     attachment: { status: "none" as const, generation: 0 },
     connectionStatus: "none" as const,
+    actionAuthority: "unavailable" as const,
     role: null,
     companionName: null,
     selectedWorld: null,
@@ -131,6 +132,34 @@ test("GameBrowserStateV1 pending states never claim connected", () => {
     assert.notEqual(state.game.connectionStatus, "connected_idle");
     assert.notEqual(state.game.connectionStatus, "active");
   }
+});
+
+test("GameBrowserStateV1 accepts every actionAuthority value", () => {
+  const validator = Compile(GameBrowserStateV1Schema);
+  for (const actionAuthority of ["unavailable", "active", "paused"] as const) {
+    assert.equal(
+      validator.Check({ ...baseState, game: { ...baseState.game, actionAuthority } }),
+      true,
+    );
+  }
+});
+
+test("GameBrowserStateV1 rejects invented actionAuthority values", () => {
+  const validator = Compile(GameBrowserStateV1Schema);
+  for (const actionAuthority of ["pending", "awaiting", "resumed", "ready", "ACTIVE"]) {
+    assert.equal(
+      validator.Check({ ...baseState, game: { ...baseState.game, actionAuthority } as unknown }),
+      false,
+    );
+  }
+});
+
+test("GameBrowserStateV1 rejects extra action-authority sibling field", () => {
+  const validator = Compile(GameBrowserStateV1Schema);
+  assert.equal(
+    validator.Check({ ...baseState, game: { ...baseState.game, actionAuthorityDetail: "paused" } as unknown }),
+    false,
+  );
 });
 
 // ─── Rejection of raw/internal fields ───────────────────────────────────────

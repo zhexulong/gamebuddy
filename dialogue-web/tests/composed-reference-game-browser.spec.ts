@@ -49,6 +49,7 @@ const game = {
     compatibility: { status: "unchecked", message: null },
     attachment: { status: "none", generation: 0 },
     connectionStatus: "none",
+    actionAuthority: "unavailable",
     role: null,
     companionName: null,
     selectedWorld: null,
