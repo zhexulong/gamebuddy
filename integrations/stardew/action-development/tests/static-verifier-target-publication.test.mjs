@@ -28,36 +28,34 @@ function spawnReceipt(receipts, calls) {
 }
 const seams = (extra = {}) => ({ exists: () => true, stat: () => ({ isFile: () => true, size: 1 }), hashFile: (file) => { const artifact = PUBLICATION_ARTIFACTS.find((entry) => file.endsWith(entry.relativePath)); return sha(artifact.id); }, ...extra });
 
-test("target publication freezes both compiled contracts and runtimeconfig siblings", () => {
+test("target publication freezes the compiled contract and runtimeconfig sibling", () => {
   assert.deepEqual(PUBLICATION_ARTIFACTS.slice(-2).map(({ id, relativePath, assemblyIdentity }) => ({ id, relativePath, assemblyIdentity })), [
-    { id: "portfolio-mine-elevator-projection-contract", relativePath: "PortfolioMineElevatorProjection.Contract.dll", assemblyIdentity: "PortfolioMineElevatorProjection.Contract" },
-    { id: "portfolio-mine-elevator-projection-contract-runtime", relativePath: "PortfolioMineElevatorProjection.Contract.runtimeconfig.json", assemblyIdentity: "Microsoft.NETCore.App@6.0.0" },
+    { id: "capability-publication-contract", relativePath: "FarmhandCapabilityPublicationProjection.Contract.dll", assemblyIdentity: "FarmhandCapabilityPublicationProjection.Contract" },
+    { id: "capability-publication-contract-runtime", relativePath: "FarmhandCapabilityPublicationProjection.Contract.runtimeconfig.json", assemblyIdentity: "Microsoft.NETCore.App@6.0.0" },
   ]);
 });
 
-test("verifier executes both digest-bound contracts and records exact success receipts", async () => {
+test("verifier executes the digest-bound contract and records the exact success receipt", async () => {
   const calls = [];
   const report = await verifyTargetPublication(manifest(), seams({ spawnCommand: spawnReceipt([
     "Farmhand capability publication identity/path/digest contract passed.",
-    "Portfolio mine projection and direct ladder structural contract passed.",
   ], calls) }));
   assert.equal(report.state, "passed");
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   assert.equal(calls.every((call) => call.options.shell === false), true);
   assert.deepEqual(report.contract.executions.map((entry) => entry.successReceipt), [
     "Farmhand capability publication identity/path/digest contract passed.",
-    "Portfolio mine projection and direct ladder structural contract passed.",
   ]);
-  assert.deepEqual(calls[1].args.slice(1, 3), ["--expected-sha256", sha("gamebuddy-stardew-mod")]);
+  assert.deepEqual(calls[0].args.slice(1, 3), ["--expected-mod-sha256", sha("gamebuddy-stardew-mod")]);
 });
 
-test("second contract output, digest, and identity failures fail closed", async () => {
-  const wrongOutput = await verifyTargetPublication(manifest(), seams({ spawnCommand: spawnReceipt(["Farmhand capability publication identity/path/digest contract passed.", "wrong"], []) }));
+test("contract output, digest, and identity failures fail closed", async () => {
+  const wrongOutput = await verifyTargetPublication(manifest(), seams({ spawnCommand: spawnReceipt(["wrong"], []) }));
   assert.equal(wrongOutput.reasonCode, "failed_target_publication_contract_output");
   const digestMismatch = await verifyTargetPublication(manifest(), seams({ hashFile: () => "0".repeat(64) }));
   assert.equal(digestMismatch.reasonCode, "failed_target_publication_digest_mismatch");
   const drifted = structuredClone(manifest());
-  drifted.artifacts[4].assemblyIdentity = "Other.Contract";
+  drifted.artifacts[2].assemblyIdentity = "Other.Contract";
   const identityMismatch = await verifyTargetPublication(drifted, seams());
   assert.equal(identityMismatch.reasonCode, "failed_target_publication_identity_mismatch");
 });

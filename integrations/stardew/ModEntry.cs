@@ -111,11 +111,6 @@ public sealed partial class ModEntry : Mod
     private NativeLocalDigArtifactSpotFixturePending? nativeLocalDigArtifactSpotFixturePending;
     private NativeLocalPlaceCrabPotFixturePending? nativeLocalPlaceCrabPotFixturePending;
     private NativeLocalBaitCrabPotFixturePending? nativeLocalBaitCrabPotFixturePending;
-    private PortfolioLocalPlayerBinding? portfolioBinding;
-    private PortfolioBridgeSession? portfolioBridgeSession;
-    private PortfolioLocalPipeBridge? portfolioPipeBridge;
-    private long portfolioBindingGeneration;
-    private long portfolioLastObservedRevision = -1;
     private bool nativeChatObservationInstalled;
     private bool nativeChatStopCommandRegistered;
     private static ModEntry? nativeChatIngressOwner;
@@ -252,38 +247,6 @@ public sealed partial class ModEntry : Mod
             this.Monitor.Log("GameBuddy rejected Stardew Game Action policy: use ActionPolicyVersion 1 with known DeniedActions/DeniedActionFamilies, or an explicit legacy EnabledActions configuration.", LogLevel.Error);
             return;
         }
-        if (this.config.Portfolio?.P0bLifecycleProducer?.Enable == true && !this.config.IsP0bExclusiveConfigurationValid)
-        {
-            this.provisioningConfigurationRejected = true;
-            this.Monitor.Log("GameBuddy rejected Portfolio P0b configuration: P0b requires every fixture, bootstrap, automation, and provisioning mode to be explicitly disabled, including root ModConfig modes.", LogLevel.Error);
-            return;
-        }
-        if (this.config.Portfolio?.Enable == true)
-        {
-            if (this.config.NativeLocalPlayerFixture?.Enable == true)
-            {
-                this.provisioningConfigurationRejected = true;
-                this.Monitor.Log("GameBuddy rejected configuration: NativeLocalPlayerFixture and Portfolio cannot be enabled together.", LogLevel.Error);
-                return;
-            }
-            this.hostRoleConfigured = false;
-            this.provisioningProbe = null;
-            if (this.config.Portfolio.Bootstrap is { Enable: true })
-            {
-                this.Monitor.Log(this.config.Portfolio.IsBootstrapValid
-                    ? "GameBuddy Portfolio native-save bootstrap armed: only the target-version title-screen new-game lifecycle may run; observe bridge remains closed until bootstrap disarms itself."
-                    : "GameBuddy rejected Portfolio native-save bootstrap configuration; no save or bridge was started.",
-                    this.config.Portfolio.IsBootstrapValid ? LogLevel.Info : LogLevel.Error);
-            }
-            else
-            {
-                this.Monitor.Log(this.config.Portfolio.IsValid
-                    ? "GameBuddy Portfolio topology enabled: Farmhand/provisioning/HostAutomation surfaces are disabled; observe-only native local Player binding will begin after SaveLoaded."
-                    : "GameBuddy rejected Portfolio configuration; no Farmhand or Portfolio bridge was started.",
-                    this.config.Portfolio.IsValid ? LogLevel.Info : LogLevel.Error);
-            }
-            return;
-        }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
             if ((!this.config.NativeLocalPlayerFixture.IsValid && !this.config.NativeLocalPlayerFixture.IsBootstrapValid)
@@ -292,7 +255,7 @@ public sealed partial class ModEntry : Mod
                 || this.config.HostAutomation?.Enable == true)
             {
                 this.provisioningConfigurationRejected = true;
-                this.Monitor.Log("GameBuddy rejected NativeLocalPlayerFixture configuration: it requires a GameBuddyFixture save and no HostAutomation, Farmhand provisioning, LAN host, or Portfolio topology.", LogLevel.Error);
+                this.Monitor.Log("GameBuddy rejected NativeLocalPlayerFixture configuration: it requires a GameBuddyFixture save and no HostAutomation, Farmhand provisioning, or LAN host.", LogLevel.Error);
                 return;
             }
             this.hostRoleConfigured = false;
@@ -577,34 +540,9 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
-        // Configuration rejection is terminal for this load. Do not allow an
-        // invalid P0b-exclusive profile to reach any Portfolio lifecycle owner.
+        // Configuration rejection is terminal for this load.
         if (this.provisioningConfigurationRejected)
             return;
-        // Portfolio is a single-player native topology. It must not enter the
-        // Farmhand fixture, host automation, provisioning, or embodiment paths.
-        if (this.config.Portfolio?.Enable == true)
-        {
-            if (this.config.Portfolio.Bootstrap is { Enable: true })
-            {
-                if (this.TryCompletePortfolioBootstrap())
-                    return;
-                this.TryInitializePortfolioBinding();
-                return;
-            }
-            if (this.config.Portfolio.InitialNativeLoad is { Enable: true })
-            {
-                // A rejected native load is terminal and must never fall through
-                // into binding initialization. Only a successfully observed
-                // current slot/scope is allowed to open the Portfolio bridge.
-                if (this.TryCompletePortfolioInitialNativeLoad() == PortfolioInitialNativeLoadCompletion.Succeeded)
-                    this.TryInitializePortfolioBinding();
-                return;
-            }
-            this.TryInitializePortfolioBinding();
-            this.OnPortfolioP0bSaveLoaded();
-            return;
-        }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
             if (this.config.NativeLocalPlayerFixture.Bootstrap is { Enable: true })
@@ -2176,29 +2114,13 @@ public sealed partial class ModEntry : Mod
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
         this.ApplyWindowModeTick();
-        // This gate must precede bootstrap, binding, producer, and bridge work;
-        // rejected P0b configuration is fail-closed for the entire tick path.
+        // This gate must precede bootstrap, binding, producer, and bridge work.
         if (this.provisioningConfigurationRejected)
             return;
         ScreenEmbodimentState pendingTeardownState = this.GetEmbodimentState();
         if (pendingTeardownState.BodyProgramTeardownPending)
         {
             this.ClearState(pendingTeardownState, "body_program_teardown_drain");
-            return;
-        }
-        if (this.config.Portfolio?.Bootstrap is { Enable: true })
-        {
-            this.TryBootstrapPortfolioNativeSave();
-            if (!Context.IsWorldReady)
-                return;
-        }
-        if (this.config.Portfolio?.InitialNativeLoad is { Enable: true })
-        {
-            this.TryLoadPortfolioInitialNativeSave();
-            // An armed one-shot loader owns the only route into a Portfolio
-            // binding. It disarms itself only from a matching SaveLoaded
-            // completion; terminal rejection must never fall through to the
-            // generic loaded-world branch on a later tick.
             return;
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
@@ -2225,19 +2147,9 @@ public sealed partial class ModEntry : Mod
             this.PublishPendingStopObservation(nativeLocalState);
             return;
         }
-        if (this.config.Portfolio?.Enable != true)
-        {
-            this.TryInitializeNativeFixtureScenario();
-            this.TryStartHostAutomation();
-            this.TryStartFarmhandProvisioner();
-        }
-        if (this.config.Portfolio?.Enable == true)
-        {
-            this.TryInitializePortfolioBinding();
-            this.UpdatePortfolioP0bLifecycleProducer();
-            this.UpdatePortfolioBridge();
-            return;
-        }
+        this.TryInitializeNativeFixtureScenario();
+        this.TryStartHostAutomation();
+        this.TryStartFarmhandProvisioner();
         this.hostFarmhandProvisioner?.Update();
         this.TryObserveNativeAutomationClientExit();
         this.TryTriggerNativeAutomationSave();
@@ -3260,16 +3172,6 @@ public sealed partial class ModEntry : Mod
 
     private void OnWarped(object? sender, WarpedEventArgs e)
     {
-        // The internal Given fixture must settle before Portfolio binding can
-        // open; action adapters still observe the same native lifecycle below.
-        this.ObservePortfolioMineEntryGivenWarped(e);
-        this.ObservePortfolioMineLadderGivenWarped(e);
-        this.ObservePortfolioMineElevatorGivenWarped(e);
-        // M8 consumes only the fresh native Player.Warped lifecycle callback;
-        // the adapter and coordinator remain the sole owners of postcondition.
-        this.portfolioMineElevatorAdapter?.ObserveWarped(e);
-        this.portfolioMineEntryAdapter?.ObserveWarped(e);
-        this.portfolioMineLadderAdapter?.ObserveWarped(e);
         if (this.nativeLocalBaitCrabPotFixturePending is NativeLocalBaitCrabPotFixturePending baitPending && e.Player == Game1.player)
         {
             if (e.NewLocation is Farm farm && string.Equals(farm.NameOrUniqueName, baitPending.FarmName, StringComparison.Ordinal)
@@ -3447,12 +3349,6 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaving(object? sender, SavingEventArgs e)
     {
-        // P0b retains only its frozen initial scope across this invalidation.
-        // It must never consult the live Portfolio binding during save lifecycle.
-        this.InvalidatePortfolioState("portfolio_saving");
-        this.ResetPortfolioMineLadderGivenFixture("saving");
-        this.ResetPortfolioMineElevatorGivenFixture("saving");
-        this.OnPortfolioP0bSaving();
         this.hostFarmhandProvisioner?.OnSaving();
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
@@ -3463,7 +3359,6 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaved(object? sender, SavedEventArgs e)
     {
-        this.OnPortfolioP0bSaved();
         this.hostFarmhandProvisioner?.OnSaved();
         // A request can arrive while the previous native SaveGameMenu cycle is
         // still settling. Release the fixture latch at the authoritative Saved
@@ -3474,12 +3369,6 @@ public sealed partial class ModEntry : Mod
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
         this.salientEventFilter.Reset();
-        // P0b reload is authorized by its frozen initial scope and derived slot,
-        // never by a binding that survived a title transition.
-        this.InvalidatePortfolioState("portfolio_returned_to_title");
-        this.ResetPortfolioMineLadderGivenFixture("returned_to_title");
-        this.ResetPortfolioMineElevatorGivenFixture("returned_to_title");
-        this.OnPortfolioP0bReturnedToTitle();
         this.hostFarmhandProvisioner?.OnReturnedToTitle();
         this.hostAutomationSaveMenuOpened = false;
         this.farmhandProvisioner?.Disconnect();

@@ -18,8 +18,7 @@ The script:
 
 1. runs `dotnet build GameBuddy.sln --configuration <Configuration>`;
 2. calculates SHA-256 from the just-built `GameBuddy.Stardew.dll`;
-3. runs `PortfolioMineElevatorProjection.Contract --expected-sha256 <digest> <path>`, including compiled-IL verification of the Mine Ladder runtime composition (typed construction, watchdog/active-disconnect, four inbound handlers, BridgeSession calls, and terminal drain); and
-4. runs `FarmhandActionCapabilityProjection.Contract --expected-sha256 <digest> <path>` against that same DLL.
+3. runs `FarmhandActionCapabilityProjection.Contract --expected-sha256 <digest> <path>` against that same DLL.
 
 The executables require an externally supplied 64-lowercase-hex expected SHA-256 and production assembly path. They capture the caller-selected file once into a private snapshot, verify the supplied digest against that snapshot before metadata inspection or type loading, and use independent snapshot streams for metadata validation and loading; the byte-altered-file characterization independently captures the canonical snapshot, appends a byte, and proves rejection before metadata/load. This binds the process-runner to its private verified snapshot of caller-selected bytes. It does not establish independent provenance, signing, path immutability, or live proof.
 

@@ -84,20 +84,6 @@ export const PUBLICATION_ARTIFACTS = Object.freeze([
     assemblyIdentity: "Microsoft.NETCore.App@6.0.0",
     required: true,
   }),
-  Object.freeze({
-    id: "portfolio-mine-elevator-projection-contract",
-    role: "contract",
-    relativePath: "PortfolioMineElevatorProjection.Contract.dll",
-    assemblyIdentity: "PortfolioMineElevatorProjection.Contract",
-    required: true,
-  }),
-  Object.freeze({
-    id: "portfolio-mine-elevator-projection-contract-runtime",
-    role: "support",
-    relativePath: "PortfolioMineElevatorProjection.Contract.runtimeconfig.json",
-    assemblyIdentity: "Microsoft.NETCore.App@6.0.0",
-    required: true,
-  }),
 ]);
 
 export const DIGEST_REQUIREMENTS = Object.freeze(
@@ -557,7 +543,7 @@ function validateContractSection(report) {
     if (report.contract.executions.length !== 0) fail("report_contract_state");
     return;
   }
-  const expectedIds = ["capability-publication-contract", "portfolio-mine-elevator-projection-contract"];
+  const expectedIds = ["capability-publication-contract"];
   if (report.contract.executions.length < 1 || report.contract.executions.length > expectedIds.length) fail("report_contract_state");
   for (let index = 0; index < report.contract.executions.length; index++) {
     const contract = report.contract.executions[index];

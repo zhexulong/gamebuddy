@@ -16,7 +16,6 @@ const stardewRoot = path.resolve(here, "..", "..");
 const publisherProject = path.join(stardewRoot, "tests", "ActionDevelopmentTargetPublication", "ActionDevelopmentTargetPublication.csproj");
 const projects = [
   path.join(stardewRoot, "tests", "FarmhandCapabilityPublicationProjection.Contract.csproj"),
-  path.join(stardewRoot, "tests", "PortfolioMineElevatorProjection.Contract.csproj"),
   path.join(stardewRoot, "GameBuddy.Stardew.csproj"),
 ];
 const names = [
@@ -24,8 +23,6 @@ const names = [
   "GameBuddy.Stardew.Core.dll",
   "FarmhandCapabilityPublicationProjection.Contract.dll",
   "FarmhandCapabilityPublicationProjection.Contract.runtimeconfig.json",
-  "PortfolioMineElevatorProjection.Contract.dll",
-  "PortfolioMineElevatorProjection.Contract.runtimeconfig.json",
 ];
 const sha256 = async (file) => createHash("sha256").update(await readFile(file)).digest("hex");
 
@@ -57,7 +54,7 @@ test("real fresh-build PE tracer publishes and executes both unsigned compiled c
     for (const artifact of manifest.artifacts) assert.equal(artifact.sha256, await sha256(path.join(temporaryRoot, artifact.relativePath)));
     const report = await verifyTargetPublication(manifest);
     assert.equal(report.state, "passed", JSON.stringify(report));
-    assert.equal(report.contract.executions.length, 2);
+    assert.equal(report.contract.executions.length, 1);
     assert.equal(report.contract.executions.every((entry) => entry.successReceipt.length > 0), true);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
