@@ -18,6 +18,8 @@ import {
   type GamePrerequisitesSetupCommandV1,
   type GameResumeCommandV1,
   type GameResumeResultV1,
+  type GameReopenActionAuthorityCommandV1,
+  type GameReopenActionAuthorityResultV1,
   type GameStopCommandV1,
   type StardewCabinChoicesV1,
   type StardewCabinConfirmCommandV1,
@@ -54,6 +56,10 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameResumeCommandV1,
   ) => Promise<GameResumeResultV1>;
+  gameReopen?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameReopenActionAuthorityCommandV1,
+  ) => Promise<GameReopenActionAuthorityResultV1>;
   gameDisconnect?: (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameDisconnectCommandV1,
@@ -88,6 +94,7 @@ const GAME_SETUP_PATH = `${GAME_PATH}/prerequisites/setup`;
 const GAME_LAUNCH_PATH = `${GAME_PATH}/launch`;
 const GAME_STOP_PATH = `${GAME_PATH}/stop`;
 const GAME_RESUME_PATH = `${GAME_PATH}/resume`;
+const GAME_REOPEN_PATH = `${GAME_PATH}/reopen`;
 const GAME_DISCONNECT_PATH = `${GAME_PATH}/disconnect`;
 const LIFECYCLE_ACTIVATE_PATH = "/api/composed-reference-game/v1/lifecycle/activate";
 const STARDEW_CABINS_PATH = "/api/composed-reference-game/v1/game/stardew/cabins";
@@ -231,6 +238,18 @@ function gameResumeProblemCode(error: unknown): string {
       return "idempotency_conflict";
     case "stardew_game_resume_in_progress":
       return "game_operation_in_progress";
+    default:
+      return "state_unavailable";
+  }
+}
+
+function gameReopenProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  switch (error.message) {
+    case "stardew_game_action_authority_not_paused":
+      return "game_operation_in_progress";
+    case "stardew_game_reopen_idempotency_conflict":
+      return "idempotency_conflict";
     default:
       return "state_unavailable";
   }
@@ -392,6 +411,7 @@ type LifecycleAdmissionOperation =
   | "game_launch"
   | "game_stop"
   | "game_resume"
+  | "game_reopen"
   | "game_disconnect";
 
 type LifecycleActivationAdmissionState = {
@@ -531,6 +551,8 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
     operation = "game_stop";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_RESUME_PATH) {
     operation = "game_resume";
+  } else if (request.method === "POST" && requestUrl.pathname === GAME_REOPEN_PATH) {
+    operation = "game_reopen";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_DISCONNECT_PATH) {
     operation = "game_disconnect";
   } else {
@@ -661,6 +683,10 @@ export function createComposedReferenceGameBrowserRequestHandler(
   const gameResumeMounted = options.profile.gameProfile?.operationIds.includes("game.resume") === true;
   if (gameResumeMounted !== (options.gameResume !== undefined)) {
     throw new Error("Composed reference-game resume operation is mismounted");
+  }
+  const gameReopenMounted = options.profile.gameProfile?.operationIds.includes("game.reopen") === true;
+  if (gameReopenMounted !== (options.gameReopen !== undefined)) {
+    throw new Error("Composed reference-game reopen operation is mismounted");
   }
   const gameDisconnectMounted = options.profile.gameProfile?.operationIds.includes("game.disconnect") === true;
   if (gameDisconnectMounted !== (options.gameDisconnect !== undefined)) {
@@ -947,6 +973,28 @@ export function createComposedReferenceGameBrowserRequestHandler(
         if (!GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result)) throw new ControlledStateError();
         sendJson(response, 200, result);
       } catch (error) { sendProblem(response, 409, gameResumeProblemCode(error)); }
+      return;
+    }
+
+    if (requestUrl.pathname === GAME_REOPEN_PATH && request.method === "POST") {
+      if (!isEmptyQuery(requestUrl) || options.gameReopen === undefined) {
+        sendProblem(response, options.gameReopen === undefined ? 404 : 409, options.gameReopen === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      let body: Buffer;
+      try { body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      let command: unknown;
+      try { command = JSON.parse(body.toString("utf8")); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      if (!GameBrowserValidatorsV1.GameReopenActionAuthorityCommandV1Schema.Check(command)) {
+        sendProblem(response, 409, "malformed_request"); return;
+      }
+      try {
+        const result = await options.gameReopen(admission, command as GameReopenActionAuthorityCommandV1);
+        if (!GameBrowserValidatorsV1.GameReopenActionAuthorityResultV1Schema.Check(result)) throw new ControlledStateError();
+        sendJson(response, 200, result);
+      } catch (error) { sendProblem(response, 409, gameReopenProblemCode(error)); }
       return;
     }
 

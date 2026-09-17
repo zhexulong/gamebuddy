@@ -37,6 +37,8 @@ import type {
   GamePrerequisitesSetupCommandV1,
   GameLaunchCommandV1,
   GameResumeResultV1,
+  GameReopenActionAuthorityCommandV1,
+  GameReopenActionAuthorityResultV1,
   GameSessionResumeCommandV1,
   GameStopCommandV1,
   StardewCabinChoicesV1,
@@ -166,6 +168,17 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameSessionResumeCommandV1,
   ): Promise<GameResumeResultV1>;
+  /**
+   * Coordinator-owned action-authority reopen seam. A new explicit Game
+   * instruction is the only path that reopens the paused authority to active;
+   * it never touches an old task/facade/lease and never changes the
+   * attachment generation. Fail-closed on any authority state other than
+   * `paused` and on stale idempotency tuples.
+   */
+  reopenActionAuthority(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameReopenActionAuthorityCommandV1,
+  ): Promise<GameReopenActionAuthorityResultV1>;
   stopGame(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameStopCommandV1,
@@ -401,6 +414,11 @@ function createCoordinator(
     promise: Promise<GameResumeResultV1>;
   }>>();
   let resumePromise: Promise<GameResumeResultV1> | undefined;
+  const gameReopens = new Map<string, Readonly<{
+    browserSessionId: string;
+    expectedAttachmentGeneration: number;
+    promise: Promise<GameReopenActionAuthorityResultV1>;
+  }>>();
   const gameStops = new Map<string, Readonly<{
     browserSessionId: string;
     expectedAttachmentGeneration: number;
@@ -636,7 +654,7 @@ function createCoordinator(
 
   const consumeBrowserAdmission = <T>(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_disconnect",
+    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_reopen" | "game_disconnect",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -1173,6 +1191,44 @@ function createCoordinator(
     return attempt;
   });
 
+  /**
+   * Coordinator-owned action-authority reopen seam. A resume is the only path
+   * that pauses the authority (ready-actions-paused); a fresh explicit Game
+   * instruction is the only path that reopens it to active. No old task,
+   * facade, lease, or attachment is touched and attachmentGeneration never
+   * changes. Fail-closed on any other authority state and on stale idempotency
+   * tuples.
+   */
+  const reopenActionAuthority: StardewProductionLifecycleActivationOwner["reopenActionAuthority"] = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameReopenActionAuthorityCommandV1,
+  ): Promise<GameReopenActionAuthorityResultV1> => consumeBrowserAdmission(admission, "game_reopen", (browserSessionId) => {
+    const prior = gameReopens.get(command.idempotencyKey);
+    if (prior !== undefined) {
+      if (prior.browserSessionId !== browserSessionId || prior.expectedAttachmentGeneration !== command.expectedAttachmentGeneration)
+        throw new Error("stardew_game_reopen_idempotency_conflict");
+      return prior.promise;
+    }
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    // Only a fresh explicit Game instruction may reopen a paused authority;
+    // it never touches an old task/facade/lease and never changes the
+    // attachment generation. A stale tuple from an older attachment fails
+    // closed like every other generation-bound mutation command.
+    if (actionAuthorityStatus !== "paused")
+      throw new Error("stardew_game_action_authority_not_paused");
+    if (command.expectedAttachmentGeneration !== attachmentGeneration)
+      throw new Error("stardew_game_attachment_generation_conflict");
+    actionAuthorityStatus = "active";
+    const result: GameReopenActionAuthorityResultV1 = Object.freeze({ apiVersion: 1, status: "reopened" });
+    const promise = Promise.resolve(result);
+    gameReopens.set(command.idempotencyKey, Object.freeze({
+      browserSessionId,
+      expectedAttachmentGeneration: command.expectedAttachmentGeneration,
+      promise,
+    }));
+    return promise;
+  });
+
   const activationOwner: StardewProductionLifecycleActivationOwner = Object.freeze({
     bindBrowserAdmissionIssuer,
     activate,
@@ -1182,6 +1238,7 @@ function createCoordinator(
     readCabinChoices,
     confirmCabinChoice,
     resume,
+    reopenActionAuthority,
     stopGame,
     disconnectGame,
   });
@@ -1262,6 +1319,7 @@ function createCoordinator(
     actionAuthorityStatus = "unavailable";
     resumedGameSessionId = undefined;
     gameResumes.clear();
+    gameReopens.clear();
     gameSetups.clear();
     gameStops.clear();
     gameDisconnects.clear();

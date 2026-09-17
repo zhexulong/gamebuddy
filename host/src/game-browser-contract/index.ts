@@ -276,6 +276,24 @@ export const GameResumeResultV1Schema = strictObject({
   ]),
 });
 
+export const GameReopenActionAuthorityCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  idempotencyKey: IdempotencyKey,
+  expectedAttachmentGeneration: PositiveGeneration,
+});
+
+/**
+ * Redacted outcome of an admitted `game.reopen`. The strict single-value
+ * vocabulary reports that the paused action authority was reopened to active
+ * by this fresh explicit Game instruction. It never carries session, launch,
+ * path, process, token, generation-proof, lease, digest, receipt, or
+ * attestation facts.
+ */
+export const GameReopenActionAuthorityResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  status: Type.Literal("reopened"),
+});
+
 export const GameDisconnectCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
   idempotencyKey: IdempotencyKey,
@@ -316,6 +334,7 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.attach",
   "game.stop",
   "game.resume",
+  "game.reopen",
   "game.disconnect",
   "game.diagnostics.read",
   "game.stardew.cabins.read",
@@ -331,6 +350,7 @@ const GameOperationId = Type.Union([
   Type.Literal("game.attach"),
   Type.Literal("game.stop"),
   Type.Literal("game.resume"),
+  Type.Literal("game.reopen"),
   Type.Literal("game.disconnect"),
   Type.Literal("game.diagnostics.read"),
   Type.Literal("game.stardew.cabins.read"),
@@ -451,6 +471,8 @@ export const GameBrowserContractV1 = Object.freeze({
     GameResumeCommandV1Schema,
     GameResumeResultV1Schema,
     GameDisconnectCommandV1Schema,
+    GameReopenActionAuthorityCommandV1Schema,
+    GameReopenActionAuthorityResultV1Schema,
     GameDiagnosticsReadCommandV1Schema,
     StardewCabinChoicesV1Schema,
     StardewCabinConfirmCommandV1Schema,
@@ -493,6 +515,8 @@ export type GameSessionResumeCommandV1 = GameResumeCommandV1 & Readonly<{
   gameSessionId: string;
 }>;
 export type GameResumeResultV1 = Static<typeof GameResumeResultV1Schema>;
+export type GameReopenActionAuthorityCommandV1 = Static<typeof GameReopenActionAuthorityCommandV1Schema>;
+export type GameReopenActionAuthorityResultV1 = Static<typeof GameReopenActionAuthorityResultV1Schema>;
 export type GameDisconnectCommandV1 = Static<typeof GameDisconnectCommandV1Schema>;
 type GameDiagnosticsReadCommandV1 = Static<typeof GameDiagnosticsReadCommandV1Schema>;
 type GameProblemV1 = Static<typeof GameProblemV1Schema>;
