@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
+import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "./child-process-tool.mjs";
 import { buildProductionArtifact, resolveTypeScriptInvocation, verifyDeclaredMagicContextArtifact } from "./build-production-artifact.mjs";
 import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { createIncompleteRuntimeFixture } from "./production-artifact-runtime-test-support.mjs";

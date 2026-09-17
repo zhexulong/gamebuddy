@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, readdir, rmdir, unlink, writeFile } from "node:f
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { cleanupAtomicDirectory, commitAtomicDirectory, prepareAtomicDirectory } from "../src/atomic-directory.mjs";
+import { cleanupAtomicDirectory, commitAtomicDirectory, prepareAtomicDirectory } from "./atomic-directory.mjs";
 
 async function cleanup(root) {
   const stack = [{ path: root, visited: false }];

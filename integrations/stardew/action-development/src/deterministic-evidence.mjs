@@ -2,7 +2,7 @@ import {
   beginEvidenceRun,
   finalizeEvidenceRun,
   finalizeIncompleteEvidenceRun,
-} from "@gamebuddy/game-action-devkit";
+} from "./devkit-local/evidence.mjs";
 import { runDeterministicScenario } from "./deterministic-scenario.mjs";
 
 function fail(code) {

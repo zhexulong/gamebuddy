@@ -15,9 +15,6 @@ importers:
       '@biomejs/biome':
         specifier: 2.2.4
         version: 2.2.4
-      '@gamebuddy/game-action-devkit':
-        specifier: workspace:*
-        version: link:packages/game-action-devkit
       '@vscode/tree-sitter-wasm':
         specifier: 0.3.1
         version: 0.3.1
@@ -83,9 +80,6 @@ importers:
         specifier: 1.1.38
         version: 1.1.38
     devDependencies:
-      '@gamebuddy/game-action-devkit':
-        specifier: workspace:*
-        version: link:../packages/game-action-devkit
       '@types/node':
         specifier: 24.10.1
         version: 24.10.1
@@ -102,13 +96,7 @@ importers:
         specifier: 3.4.0
         version: 3.4.0
 
-  integrations/stardew/action-development:
-    devDependencies:
-      '@gamebuddy/game-action-devkit':
-        specifier: workspace:*
-        version: link:../../../packages/game-action-devkit
-
-  packages/game-action-devkit: {}
+  integrations/stardew/action-development: {}
 
   packages/game-action-program: {}
 

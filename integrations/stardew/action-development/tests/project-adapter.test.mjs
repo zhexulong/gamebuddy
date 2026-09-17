@@ -277,10 +277,10 @@ test("fails closed for wrong identity, malformed verification, and incomplete cl
 
 test("exposes canonical action scripts with a required profile passthrough", async () => {
   const scripts = JSON.parse(await readFile(packageFile, "utf8")).scripts;
-  assert.equal(scripts["action:check"], "node ../../../packages/game-action-devkit/bin/game-action.mjs check --project game-action-project.json");
-  assert.equal(scripts["action:status"], "node ../../../packages/game-action-devkit/bin/game-action.mjs status --project game-action-project.json");
-  assert.equal(scripts["action:preflight"], "node ../../../packages/game-action-devkit/bin/game-action.mjs preflight --project game-action-project.json");
-  assert.equal(scripts["action:run-live"], "node ../../../packages/game-action-devkit/bin/game-action.mjs run-live --project game-action-project.json");
+  assert.equal(scripts["action:check"], "pnpm exec game-action check --project game-action-project.json");
+  assert.equal(scripts["action:status"], "pnpm exec game-action status --project game-action-project.json");
+  assert.equal(scripts["action:preflight"], "pnpm exec game-action preflight --project game-action-project.json");
+  assert.equal(scripts["action:run-live"], "pnpm exec game-action run-live --project game-action-project.json");
   for (const name of ["action:check", "action:preflight", "action:run-live"]) {
     assert.doesNotMatch(scripts[name], /--action|--profile/);
   }

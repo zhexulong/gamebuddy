@@ -9,7 +9,7 @@ import {
   cleanupAtomicDirectory,
   commitAtomicDirectory,
   prepareAtomicDirectory,
-} from "@gamebuddy/game-action-devkit";
+} from "./lib/atomic-directory.mjs";
 import {
   REQUIRED_INPUTS_PATH,
   REQUIRED_INPUTS_SCHEMA,

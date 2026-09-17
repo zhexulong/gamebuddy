@@ -7,17 +7,14 @@
     "node": ">=24.13.0 <25",
     "pnpm": ">=11.1.3 <12"
   },
-  "devDependencies": {
-    "@gamebuddy/game-action-devkit": "workspace:*"
-  },
   "scripts": {
     "test": "node src/run-tests.mjs",
     "action:inventory": "node src/tool-inventory.mjs",
     "action:extraction-rehearsal": "node src/standalone-extraction-rehearsal.mjs",
-    "action:check": "node ../../../packages/game-action-devkit/bin/game-action.mjs check --project game-action-project.json",
-    "action:status": "node ../../../packages/game-action-devkit/bin/game-action.mjs status --project game-action-project.json",
-    "action:preflight": "node ../../../packages/game-action-devkit/bin/game-action.mjs preflight --project game-action-project.json",
-    "action:run-live": "node ../../../packages/game-action-devkit/bin/game-action.mjs run-live --project game-action-project.json",
+    "action:check": "pnpm exec game-action check --project game-action-project.json",
+    "action:status": "pnpm exec game-action status --project game-action-project.json",
+    "action:preflight": "pnpm exec game-action preflight --project game-action-project.json",
+    "action:run-live": "pnpm exec game-action run-live --project game-action-project.json",
     "action:portfolio": "node src/portfolio.mjs",
     "action:ci": "node src/portfolio.mjs --ci",
     "action:publish-release-bundle": "node src/publish-release-bundle.mjs",

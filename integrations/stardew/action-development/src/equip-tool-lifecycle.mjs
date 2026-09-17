@@ -1,5 +1,5 @@
 import path from "node:path";
-import { beginPrivateResultFile, cleanupPrivateResultFile, readPrivateResultFile } from "@gamebuddy/game-action-devkit";
+import { beginPrivateResultFile, cleanupPrivateResultFile, readPrivateResultFile } from "./devkit-local/private-result-file.mjs";
 import { runStardewClosureBackend, TEARDOWN_RECEIPT_GRACE_MS } from "./stardew-closure-backend.mjs";
 import { parseScenarioResultText } from "./scenario-result.mjs";
 import { validateEquipToolScenarioProof } from "./equip-tool-scenario-result.mjs";

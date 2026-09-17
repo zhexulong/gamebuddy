@@ -4,8 +4,8 @@ import {
   beginPrivateResultFile,
   cleanupPrivateResultFile,
   readPrivateResultFile,
-  runBoundedChild,
-} from "@gamebuddy/game-action-devkit";
+} from "./devkit-local/private-result-file.mjs";
+import { runBoundedChild } from "./devkit-local/process-supervisor.mjs";
 import { parseScenarioResultText } from "./scenario-result.mjs";
 
 const PACKAGE_DIRECTORY = path.dirname(path.dirname(fileURLToPath(import.meta.url)));

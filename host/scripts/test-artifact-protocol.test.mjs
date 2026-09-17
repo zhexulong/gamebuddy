@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { withTestArtifactLock } from "./test-artifact-lock.mjs";
 import test from "node:test";
 
-import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
+import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "./child-process-tool.mjs";
 import { assertHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

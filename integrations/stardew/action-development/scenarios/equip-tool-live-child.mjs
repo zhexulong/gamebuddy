@@ -1,4 +1,4 @@
-import { writePrivateResultFile } from "@gamebuddy/game-action-devkit";
+import { writePrivateResultFile } from "../src/devkit-local/private-result-file.mjs";
 import { connectNativeLocalClient, readNativeClientConfig } from "../../../../tools/lib/stardew-native-smoke-harness-v1.mjs";
 import { runEquipToolSmoke } from "../../../../tools/run-stardew-native-local-player-equip-tool-smoke.mjs";
 import { observeFresh } from "../../../../tools/lib/stardew-native-smoke-harness-v1.mjs";

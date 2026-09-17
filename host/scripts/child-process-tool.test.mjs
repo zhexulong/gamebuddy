@@ -11,7 +11,7 @@ import {
   createWindowsProcessTreeKillerForTest,
   runBoundedChild,
   runOneShotControlChild,
-} from "../src/process-supervisor.mjs";
+} from "./child-process-tool.mjs";
 
 const nodeCommand = process.execPath;
 const childScript = (source) => ["--input-type=module", "-e", source];

@@ -126,7 +126,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
-    "@gamebuddy/game-action-devkit": "workspace:*",
     "@vscode/tree-sitter-wasm": "0.3.1",
     "dependency-cruiser": "17.3.2",
     "knip": "6.34.0",
