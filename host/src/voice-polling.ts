@@ -258,7 +258,7 @@ export function createHostShutdownLifecycle(options: HostShutdownLifecycleOption
   const runOnce = (index: number): Promise<void> => {
     const existing = promises[index];
     if (existing !== undefined) return existing;
-    const operation = Promise.resolve().then(() => operations[index]());
+    const operation = Promise.resolve().then(() => operations[index]!());
     promises[index] = operation;
     return operation;
   };

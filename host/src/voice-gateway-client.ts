@@ -96,15 +96,19 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   public get connected(): boolean {
     return this.#connected;
   }
-  #capabilities:
-    | Readonly<{
-        providerId: string;
-        modelRevision: string;
-        perUtteranceDirection: boolean;
-        ready: boolean;
-        epoch: number;
-      }>
-    | undefined;
+  #capabilities: Readonly<{
+    providerId: string;
+    modelRevision: string;
+    perUtteranceDirection: boolean;
+    ready: boolean;
+    epoch: number;
+  }> = Object.freeze({
+    providerId: "unavailable",
+    modelRevision: "unavailable",
+    perUtteranceDirection: false,
+    ready: false,
+    epoch: 0,
+  });
   public get capabilities() {
     return this.#capabilities;
   }
@@ -140,7 +144,7 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
         voiceProfile,
         speechPort: this,
         voiceAudioAdmission: this.createAudioEpochAdmission(),
-        stopVoice: (reasonCode) => this.stopAll(reasonCode),
+        stopVoice: (reasonCode: string) => this.stopAll(reasonCode),
       }),
     );
     return attachment;
@@ -277,13 +281,19 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   }
 
   private invalidateAudioAdmission(): number {
-    this.#capabilities = undefined;
+    this.#capabilities = Object.freeze({
+      providerId: "unavailable",
+      modelRevision: "unavailable",
+      perUtteranceDirection: false,
+      ready: false,
+      epoch: 0,
+    });
     this.#audioAdmissionGeneration++;
     return this.#audioAdmissionGeneration;
   }
 
   private captureAudioEpochBinding(): VoiceAudioEpochBinding {
-    const _capabilities = this.currentReadyCapabilities();
+    this.currentReadyCapabilities();
     const binding = Object.freeze({});
     this.#audioEpochBindings.add(binding);
     this.#audioEpochGenerations.set(binding, this.#audioAdmissionGeneration);

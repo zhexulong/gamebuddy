@@ -147,4 +147,5 @@ function isBase64(value: unknown): value is string { return typeof value === "st
 function isPositiveSafeInteger(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value > 0; }
 function concat(left: Uint8Array, right: Uint8Array): Uint8Array<ArrayBufferLike> { const result = new Uint8Array(left.byteLength + right.byteLength); result.set(left); result.set(right, left.byteLength); return result; }
 
+export * from "./v2.js";
 export * from "./lifecycle-fsm.js";
