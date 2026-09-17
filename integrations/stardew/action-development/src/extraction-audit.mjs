@@ -7,7 +7,6 @@ const REPOSITORY_ROOT = path.resolve(PACKAGE_DIRECTORY, "../../..");
 const CORE_EXPORTER = path.join(REPOSITORY_ROOT, "integrations", "stardew", "tests", "ActionDevelopmentContractExport", "ActionDevelopmentContractExport.csproj");
 const CORE_PROJECT = path.join(REPOSITORY_ROOT, "integrations", "stardew", "src", "Core", "GameBuddy.Stardew.Core.csproj");
 const CORE_SOURCE_DIRECTORY = path.join(REPOSITORY_ROOT, "integrations", "stardew", "src", "Core");
-const DEVKIT_PACKAGE = path.join(REPOSITORY_ROOT, "packages", "game-action-devkit", "package.json");
 
 function fail(code) {
   throw new Error(`stardew_action_extraction_audit_${code}`);
@@ -20,9 +19,9 @@ async function present(file) {
 export async function auditStandaloneCoupling() {
   let packageJson;
   try { packageJson = JSON.parse(await readFile(path.join(PACKAGE_DIRECTORY, "package.json"), "utf8")); } catch { fail("package_unreadable"); }
-  const workspaceDevkit = packageJson.dependencies?.["@gamebuddy/game-action-devkit"] === "workspace:*";
+  const devkitDependency = packageJson.dependencies?.["@gamebuddy/game-action-devkit"];
   const items = Object.freeze([
-    Object.freeze({ id: "devkit-workspace-link", present: workspaceDevkit && await present(DEVKIT_PACKAGE), reason: "the production package resolves devkit through monorepo workspace:* rather than a packed dependency" }),
+    Object.freeze({ id: "devkit-dependency-absent", present: devkitDependency !== undefined, reason: "the retired @gamebuddy/game-action-devkit must not be a production package dependency" }),
     Object.freeze({ id: "stardew-contract-exporter-project", present: await present(CORE_EXPORTER), reason: "equip_tool contract drift check executes this Stardew-owned exporter project outside action-development/" }),
     Object.freeze({ id: "stardew-core-source-closure", present: await present(CORE_PROJECT) && await present(CORE_SOURCE_DIRECTORY), reason: "the exporter ProjectReference targets GameBuddy.Stardew.Core; SDK default compile items require the Stardew-owned src/Core/** closure, not just the exporter project" }),
   ]);

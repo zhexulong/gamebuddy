@@ -6,7 +6,7 @@ import {
   cleanupAtomicDirectory,
   commitAtomicDirectory,
   prepareAtomicDirectory,
-} from "@gamebuddy/game-action-devkit";
+} from "./lib/atomic-directory.mjs";
 import {
   assertCanonicalDirectory,
   assertFrozenSnapshotIndex,

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { readPassedEvidence } from "@gamebuddy/game-action-devkit";
+import { readPassedEvidence } from "../src/devkit-local/evidence.mjs";
 import { runDeterministicScenarioWithEvidence } from "../src/deterministic-evidence.mjs";
 
 const identity = Object.freeze({

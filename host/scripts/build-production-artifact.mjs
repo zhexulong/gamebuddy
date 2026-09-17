@@ -7,7 +7,7 @@ import { assertApprovedProductionBundledRuntimeAvailable, publishProductionArtif
 import { buildWindowsReparseInspector, outputRoot as windowsReparseInspectorBuildRoot } from "./build-windows-reparse-inspector.mjs";
 import { buildWindowsBootstrapGuardian, outputRoot as windowsBootstrapGuardianBuildRoot } from "./build-windows-bootstrap-guardian.mjs";
 import { buildWindowsStardewFolderPicker, outputRoot as windowsStardewFolderPickerBuildRoot } from "./build-windows-stardew-folder-picker.mjs";
-import { runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
+import { runBoundedChild } from "./child-process-tool.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const hostRoot = resolve(dirname(scriptPath), "..");

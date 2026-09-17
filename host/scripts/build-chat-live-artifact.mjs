@@ -4,7 +4,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import ts from "typescript";
-import { runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
+import { runBoundedChild } from "./child-process-tool.mjs";
 import {
   assertChatLiveArtifactRoot,
   chatLiveDependencyClosureDigest,

@@ -1,4 +1,4 @@
-import { writePrivateResultFile } from "@gamebuddy/game-action-devkit";
+import { writePrivateResultFile } from "../../src/devkit-local/private-result-file.mjs";
 
 function option(name) {
   const index = process.argv.indexOf(name);

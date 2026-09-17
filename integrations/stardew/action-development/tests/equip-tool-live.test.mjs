@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readdir, readFile, rmdir, unlink, writeFile } from "nod
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { writePrivateResultFile } from "@gamebuddy/game-action-devkit";
+import { writePrivateResultFile } from "../src/devkit-local/private-result-file.mjs";
 import { runEquipToolLifecycle } from "../src/equip-tool-lifecycle.mjs";
 import { __testOnly, runEquipToolLive, readEquipToolLiveStatus } from "../src/equip-tool-live.mjs";
 import { createImmutableReleaseBundleBinding } from "../src/immutable-release-bundle.mjs";

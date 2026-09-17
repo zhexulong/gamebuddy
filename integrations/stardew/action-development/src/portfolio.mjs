@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { runActionProject } from "@gamebuddy/game-action-devkit";
+import { runActionProject } from "./devkit-local/project-runner.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFixedPackageUtf8File } from "./package-safe-reader.mjs";

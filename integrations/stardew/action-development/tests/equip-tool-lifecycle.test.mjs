@@ -9,7 +9,7 @@ import {
   cleanupPrivateResultFile,
   readPrivateResultFile,
   writePrivateResultFile,
-} from "@gamebuddy/game-action-devkit";
+} from "../src/devkit-local/private-result-file.mjs";
 import { runEquipToolLifecycle } from "../src/equip-tool-lifecycle.mjs";
 import { createImmutableReleaseBundleBinding, IMMUTABLE_RELEASE_BUNDLE_FILES } from "../src/immutable-release-bundle.mjs";
 import { writeStardewClosureBackendResult } from "../src/write-lifecycle-result.mjs";

@@ -3,7 +3,7 @@ import {
   finalizeEvidenceRun,
   finalizeIncompleteEvidenceRun,
   readLatestEvidenceStatus,
-} from "@gamebuddy/game-action-devkit";
+} from "./devkit-local/evidence.mjs";
 import { createImmutableReleaseBundleBinding } from "./immutable-release-bundle.mjs";
 import { runEquipToolLifecycle } from "./equip-tool-lifecycle.mjs";
 import { consumeReadyEquipToolProfile, preflightEquipTool } from "./equip-tool-preflight.mjs";

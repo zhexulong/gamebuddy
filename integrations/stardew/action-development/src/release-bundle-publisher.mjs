@@ -6,7 +6,7 @@ import {
   cleanupAtomicDirectory,
   commitAtomicDirectory,
   prepareAtomicDirectory,
-} from "@gamebuddy/game-action-devkit";
+} from "./devkit-local/atomic-directory.mjs";
 
 export const RELEASE_BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",

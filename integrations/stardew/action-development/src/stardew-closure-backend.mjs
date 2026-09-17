@@ -1,6 +1,6 @@
 import { lstat, open } from "node:fs/promises";
 import path from "node:path";
-import { runBoundedChild } from "@gamebuddy/game-action-devkit";
+import { runBoundedChild } from "./devkit-local/process-supervisor.mjs";
 import { parseJsonWithoutDuplicateKeys } from "./json-text.mjs";
 import {
   LIFECYCLE_FAILURE_PHASES,

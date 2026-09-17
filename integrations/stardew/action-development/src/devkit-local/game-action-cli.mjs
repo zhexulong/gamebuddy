@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { runGameActionCli, serializeCliReport } from "../src/cli.mjs";
+import { runGameActionCli, serializeCliReport } from "./cli.mjs";
 
 try {
   const report = await runGameActionCli(process.argv.slice(2));
