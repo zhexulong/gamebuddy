@@ -78,6 +78,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private Func<NavigationRuntimeSnapshot?>? navigationRuntimeFactory;
     private LocalNavigateSpec? activeNavigate;
     private AcceptedNavigationExecution? activeNavigationCoordinator;
+    private Func<string?, string?>? navigationShopPreflight;
     private Func<bool>? navigationLifecycleTestAuthorization;
     private NavigationApproachNative? navigationApproachNative;
     private Func<bool>? navigationPlayerActionableProbe;
@@ -147,6 +148,48 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     internal void SetNavigationRuntimeFactory(Func<NavigationRuntimeSnapshot?> navigationRuntimeFactory)
     {
         this.navigationRuntimeFactory = navigationRuntimeFactory ?? throw new ArgumentNullException(nameof(navigationRuntimeFactory));
+    }
+
+    /// <summary>
+    /// Test-only seam for the plan-time shop-opening pre-flight. Production never
+    /// sets this: the real pre-flight reads Data/Shops shop keys and
+    /// Game1.isFestivalDay() on the game thread and returns evidence for
+    /// store-class destinations that are festively closed today. It never
+    /// creates, bypasses, or expands receipt/ledger authority; the native door
+    /// execution guard still applies even when the pre-flight passes.
+    /// </summary>
+    internal void SetNavigationShopPreflight(Func<string?, string?>? preflight)
+    {
+        this.navigationShopPreflight = preflight;
+    }
+
+    /// <summary>Production shop-opening pre-flight; null when the destination may proceed.</summary>
+    private string? RunNavigationShopPreflight(string? canonicalDestinationIdentity)
+    {
+        if (this.navigationShopPreflight is not null)
+            return this.navigationShopPreflight(canonicalDestinationIdentity);
+        try
+        {
+            // Festival days are authoritative asset files named Data/Festivals/
+            // {season}{day} (e.g. spring13, summer11). Checking asset existence
+            // avoids any hard-coded shop schedule and works on the target
+            // version without depending on a method that may not exist. Data
+            // failure passes through to the native execution guard.
+            string? season = Game1.currentSeason;
+            if (season is not null && Game1.dayOfMonth >= 1 && Game1.dayOfMonth <= 28)
+            {
+                string festivalAsset = $"Data/Festivals/{season}{Game1.dayOfMonth}";
+                bool festivalToday = Game1.content.DoesAssetExist<Dictionary<string, string>>(festivalAsset);
+                return ShopOpeningPreflight.Evaluate(canonicalDestinationIdentity, festivalToday, ShopOpeningPreflight.LoadShopKeys());
+            }
+            return ShopOpeningPreflight.Evaluate(canonicalDestinationIdentity, false, ShopOpeningPreflight.LoadShopKeys());
+        }
+        catch
+        {
+            // Pre-flight is advisory: any data failure passes through so the
+            // native execution guard remains the authority.
+            return null;
+        }
     }
 
     /// <summary>

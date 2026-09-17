@@ -223,6 +223,17 @@ internal sealed partial class ExecutionManager
             }
 
             coordinator = AcceptedNavigationExecution.ForAcceptedDestination(admission);
+            string? canonicalIdentity = admission.Resolution.Binding?.CanonicalDestinationIdentity;
+            string? shopClosingEvidence = this.RunNavigationShopPreflight(canonicalIdentity);
+            if (shopClosingEvidence is not null)
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Blocked,
+                    "destination_closed_hours",
+                    shopClosingEvidence);
+            }
             plan = coordinator.PlanNextRouteLeg();
         }
         catch
