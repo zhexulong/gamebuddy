@@ -4,6 +4,9 @@ import test from "node:test";
 
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import type { BridgeMessage, Scope } from "./protocol.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
+
+const testAdapter = STARDEW_GAME_INTEGRATION_ADAPTER;
 
 const scope: Scope = {
   integrationId: "stardew",
@@ -96,7 +99,7 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
   });
   await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject));
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const result = await client.observeScene();
     assert.equal(requestType, "observe_scene_request");
      assert.equal(result.observationId, "observation_01");
@@ -194,7 +197,7 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     await written;
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
     assert.equal(client.state.snapshot?.revision, 8);
@@ -278,7 +281,7 @@ test("local Stardew bridge never returns a solicited snapshot that fails admissi
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     await assert.rejects(client.observe(), /observe_snapshot_not_admitted/);
     // The stale payload was never admitted and never surfaced, so the bridge stays usable.
     assert.equal(client.state.snapshot, null);
@@ -373,7 +376,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const catalogRevision = () => client.state.catalogRevision;
     const snapshotRevision = () => client.state.snapshot?.revision;
     const catalogUpdate = (revision: number) =>
@@ -492,7 +495,7 @@ test("local Stardew bridge rejects a duplicate-key raw named-pipe frame before J
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
       client.onConnectionFact(resolvePromise),
     );
@@ -554,7 +557,7 @@ test("local Stardew bridge forwards a validated player_input semantic event", as
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const received = new Promise<Extract<BridgeMessage, { type: "semantic_event" }>>((resolvePromise) => {
       client.onFact((fact) => {
         if (fact.type === "semantic_event") resolvePromise(fact);
@@ -634,7 +637,7 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const diagnostics: Readonly<{ stage: string; reasonCode: string }>[] = [];
     let resolveRejectedDiagnostic: ((value: Readonly<{ stage: string; reasonCode: string }>) => void) | undefined;
     const rejectedDiagnostic = new Promise<Readonly<{ stage: string; reasonCode: string }>>((resolvePromise) => {
@@ -765,7 +768,7 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const facts: Extract<BridgeMessage, { type: "execution_receipt" }>[] = [];
     let diagnostics = 0;
     let closes = 0;
@@ -856,7 +859,7 @@ test("local Stardew bridge delivers an exact-correlated system notice receipt", 
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     await client.presentSystemNotice({
       noticeId: "stop_notice_01",
       key: "system.stop.active_turn_cancelled",
@@ -923,7 +926,7 @@ test("local Stardew bridge authenticates and observes Mod-declared capabilities"
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     assert.equal(client.state.authenticated, true);
     assert.deepEqual(client.state.capabilities, ["move_to_tile"]);
     const snapshot = await client.observe();
@@ -1001,7 +1004,7 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const first = await client.cancel("cancel_request_01", "cancel_execution_01", "stop_requested");
 
     const replay = await client.cancel("cancel_request_01", "cancel_execution_01", "stop_requested");
@@ -1059,7 +1062,7 @@ async function withNavigationBridge(
   });
   await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     assert.ok(peer !== undefined);
     await run(client, peer);
     client.close();
@@ -1159,7 +1162,7 @@ async function withBodyProgramBridge(
   });
   await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
   try {
-    await run(await LocalStardewBridgeClient.connect(scope, pipeName, token));
+    await run(await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter));
   } finally {
     peer?.destroy();
     await close(server);
@@ -1323,7 +1326,7 @@ test("body program requests forward exact authenticated messages and retain mode
   });
   await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const candidate = { programId: "program_01", nodes: [{ nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: Date.now() + 10_000 }] } as const;
     assert.equal((await client.programVerify(candidate)).accepted, true);
     assert.equal((await client.programSubmit(candidate)).code, "rejected");
@@ -1384,7 +1387,7 @@ test("local Stardew bridge fails closed when a fact listener throws event_pump_e
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
       client.onConnectionFact(resolvePromise),
     );
@@ -1448,7 +1451,7 @@ test("local Stardew bridge maps an arbitrary fact listener exception to fact_lis
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
       client.onConnectionFact(resolvePromise),
     );
@@ -1536,7 +1539,7 @@ test("a pending observe rejects through the normal close path when a fact listen
     server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
   );
   try {
-    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
       client.onConnectionFact(resolvePromise),
     );

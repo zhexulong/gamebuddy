@@ -175,6 +175,7 @@ test("terminal receipts buffered before the Host listener mounts are replayed ex
               payload: {
 sessionId: "session_buffered",
 capabilities: [],
+policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
 catalogRevision: 1,
 enabledActionIds: [],
 presentationLocale: "en-US",
@@ -323,6 +324,7 @@ async function launchWithFakeMod(): Promise<{
               payload: {
 sessionId: "session_wake",
 capabilities: ["inspect_self"],
+policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
 catalogRevision: 1,
 enabledActionIds: [],
 presentationLocale: "en-US",

@@ -65,10 +65,15 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
       scope,
       local.pipeName,
       local.bridgeToken,
+      STARDEW_GAME_INTEGRATION_ADAPTER,
       local.knowledge,
       local.gameVersion,
     );
-    return createStardewIntegrationLaunchHandleFromAuthenticatedBridge(bridge, identity, local);
+    return createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+      bridge,
+      identity,
+      { ...local, module: STARDEW_GAME_INTEGRATION_ADAPTER },
+    );
   },
 });
 

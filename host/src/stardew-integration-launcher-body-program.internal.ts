@@ -15,7 +15,7 @@ import {
   type LocalStardewBridgeFact,
 } from "./local-stardew-bridge.js";
 import type { GameConnection, StardewBridgeConnection } from "./game-connection.js";
-import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
+import type { GameIntegrationAdapter } from "./game-integration-adapter.js";
 import { createStableGameRuntimeBindingIdentity } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import type { GameRuntimeBindingExecution } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
 import {
@@ -132,7 +132,7 @@ function associateAuthenticatedStardewLaunch(
 export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
   bridge: LocalStardewBridgeClient,
   identity: Readonly<{ playerId: string; companionId: string; continuityId?: string; saveId?: string; worldId?: string }>,
-  options: Readonly<{ expectedPresentationLocale?: string; knowledge?: import("./knowledge.js").KnowledgeBundle; gameVersion?: string }> = {},
+  options: Readonly<{ module: GameIntegrationAdapter; expectedPresentationLocale?: string; knowledge?: import("./knowledge.js").KnowledgeBundle; gameVersion?: string }>,
 ): Promise<IntegrationLaunchHandle> {
   if (!(bridge instanceof LocalStardewBridgeClient)) throw new Error("authenticated_stardew_bridge_required");
   if (identity.saveId === undefined || identity.worldId === undefined)
@@ -258,7 +258,7 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     });
     const connection: StardewBridgeConnection = Object.freeze({
       scope,
-      module: STARDEW_GAME_INTEGRATION_ADAPTER,
+      module: local.module,
       get state() { return bridge.state; },
       knowledge: local.knowledge,
       gameVersion: local.gameVersion,
@@ -400,7 +400,7 @@ export function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
     case "execution_receipt":
       return { source: "stardew_mod", kind: "execution_receipt", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.payload.executionId, revision: message.payload.revision, executionId: message.payload.executionId, requestId: message.payload.requestId, payload: message.payload };
     case "semantic_event":
-      return { source: "stardew_mod", kind: "semantic_event", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: message.payload.revision, executionId: message.payload.activeExecution?.executionId, payload: message.payload };
+      return { source: "stardew_mod", kind: "semantic_event", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: message.payload.revision, ...(message.payload.activeExecution?.executionId === undefined ? {} : { executionId: message.payload.activeExecution.executionId }), payload: message.payload };
     case "lifecycle":
       return { source: "stardew_mod", kind: "lifecycle", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: 0, payload: message.payload };
     case "world_fact": {
