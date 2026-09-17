@@ -471,6 +471,16 @@ registry presently returns `BLOCKED: host_runner_not_registered` for `run-live`,
 regardless of whether a profile is supplied. Do not use `action:preflight` or
 `action:run-live` with a profile to launch or mutate a target.
 
+> **Correction (2026-09-18, current source):** the registry-level
+> `BLOCKED: host_runner_not_registered` statement above no longer matches source.
+> `9413fde` (2026-09-05) introduced that blocked policy, and `85b7dfb` (2026-09-07)
+> removed it and restored `runLive: runEquipToolRegistration → runEquipToolLive`
+> (`integrations/stardew/action-development/src/action-registry.mjs:98-111`). The
+> profile-based wrapper is therefore callable again at the registry level. The
+> live-mutation prohibition itself stands — no live authorization has been granted
+> — but it is no longer enforced by a registry blocked policy; see the equip_tool
+> status update below for the remaining open prerequisites.
+
 The future control command is intentionally not named until the registration-backed,
 coordinator-owned Host runner, fixture boundary, and cutover are implemented and
 accepted. Do not invent an alternate devkit command or bypass the current blocked
@@ -525,10 +535,57 @@ native-local harness timeout and must be deleted with that route, not moved into
 registration. The future bounded control intent instead carries `deadlineEpochMs`;
 Host derives the admitted action deadline and identities after attachment.
 
+> **Status update (2026-09-18, current source):** `gamebuddy-action-target-profile/v1`
+> is still present (`integrations/stardew/action-development/src/profile.mjs:5`
+> `SCHEMA`, `profiles/example.json`, `tests/profile.test.mjs`), so prerequisite 4's
+> atomic deletion of the native-local profile/lease/fixture route has **not**
+> happened. The devkit retirement `5e3a0c7` (2026-09-17) moved
+> `devkit-local/` into `integrations/stardew/action-development/src/devkit-local/`, a
+> merge that kept rather than deleted the route; the legacy wrapper remains fully
+> wired via `profile → preflight → runtime lease → immutable release bundle →
+> PowerShell/SMAPI child → equip_tool` (`equip-tool-live.mjs:56-141`,
+> `equip-tool-lifecycle.mjs`, `target-runtime-lease.mjs`).
+
 The installation registration's desktop binding is only `rootLayoutVersion: 1`.
 `productInstallationId` is unowned and must not appear in registration schema,
 fixtures, validation, serialized records, or control protocols; records carrying
 it are rejected rather than migrated or compatibility-read.
+
+> **Status update (2026-09-18, current source):** this requirement is now
+> enforced — DONE. The production registration schema binds exactly
+> `{ rootLayoutVersion: 1 }` (`host/src/stardew-installation-registration.internal.ts:26-27,
+> 357, 376`); a record carrying `productInstallationId` in the binding is rejected
+> (`stardew-installation-registration.internal.test.ts:126,139`), and the identifier
+> appears nowhere in production registration/schema code.
+
+> **equip_tool wrapper / six prerequisites status (2026-09-18):** the historical
+> wrapper itself (controls) was previously BLOCKED by
+> `equipToolActionRegistration.blockedPolicy: host_runner_not_registered`
+> (introduced `9413fde` 2026-09-05; removed by `85b7dfb` 2026-09-07). The current
+> registration is `runLive: runEquipToolRegistration` (`action-registry.mjs:98-111`)
+> with the full profile→fixture→lease→release-bundle→lifecycle body restored, and
+> the wrapper now ends in an owner-branded neutral report consumed by the devkit
+> `project-runner` with contract/receipt-evidence-postcondition/cleanup verifiers
+> (`equip-tool-live.mjs:180-208`, `devkit-local/project-runner.mjs`, `action-registry.mjs:70-84`).
+> Of the six future profile-free control prerequisites:
+> 1. registration-plan plus guardian/bootstrap containment — **partial**: the Host
+>    installation registration parser exists (`host/src/stardew-installation-registration.internal.ts`);
+>    guardian/containment completeness is tracked in the Desktop ↔ Guardian ↔ Host
+>    sections, not this lane.
+> 2. coordinator-private fixture prepare/restore boundary — **open** (fixture/lease
+>    tooling still lives in action-development; no coordinator-private boundary).
+> 3. Host-owned one-shot profile-free control runner — **open** (devkit-local
+>    `project-runner` + `cli.mjs:9` still expose profile-based `preflight`/`run-live`
+>    `--profile` commands; the profile-free control route is not implemented;
+>    `ACTION_RUNBOOK.md:40-45` still describes it as future).
+> 4. atomic deletion of the native-local profile/lease/fixture route — **open**
+>    (see `gamebuddy-action-target-profile/v1` update above).
+> 5. successful non-mutating factual preflight against a registered target — **open**
+>    (no ready registration; only deterministic tests).
+> 6. aggregate independent review and explicit project-owner authorization — **open**.
+> Note `integrations/stardew/action-development/ACTION_RUNBOOK.md:35-38` still claims
+> `BLOCKED: host_runner_not_registered`; that doc line is stale relative to source
+> (left untouched per this task's scope).
 
 ### Generic action migration invariant
 
@@ -575,6 +632,19 @@ node tools/preflight-stardew-navigation-agent-live.mjs
 
 This does not establish target readiness.
 
+> **Status update (2026-09-18):** two later commits ran the legacy native-local
+> smoke route this document forbids as a substitute for formal admission:
+> `6125602` (2026-09-16) "unblock navigation live gate" (smoke now loads the
+> emitted Host client from `host/dist-test` and relaxes the navigate deadline to
+> 10 minutes for multi-hop) and `3ababe0` (2026-09-17), which recorded a live
+> multi-hop run FarmHouse → Farm → BusStop → Backwoods settling `succeeded /
+> navigation_completed` with correlation/postcondition/evidence checks passing.
+> These are dev-smoke evidence only (the exact runner named above); design
+> authority still classifies Navigation `publication: withdrawn,
+> liveEligibility: not-established` (open-gameplay-release Task 5), and the seven
+> republish prerequisites of this section remain open — see the reconciliation
+> status in the next section for per-item evidence.
+
 ## Navigation authority contradiction — resolve before republish
 
 Current design authority conservatively says all of:
@@ -606,6 +676,50 @@ design/94_STARDEW_NAVIGATION_MULTIHOP_RECOVERY_IMPLEMENTATION_PLAN.md
 design/tasks/active/open-gameplay-release.md
 design/adr/006-verified-body-programs.md
 ```
+
+> **Reconciliation status (2026-09-18, verified in current source):** the
+> contradiction is **still present** — no withdrawal or republish decision has
+> landed in source, design, or a dated decision record.
+>
+> - Mod side unchanged: `FarmhandActionDefinitions.cs:71-72` still registers
+>   `inspect_world_map`/`find_destination` read-only and `navigate_to_destination`
+>   execution, all `Published`; `ModConfig.cs:100` still lists all three in
+>   `PublishedActions` under the v1 policy path; the generated
+>   `action-surface.v1.json` still declares all three `published`
+>   (navigate = `execution`); `FarmhandActionLifecycle` has only
+>   `Published | Experimental` (`FarmhandActionDefinitions.cs:3`) — there is no
+>   withdrawn lifecycle; `BridgeSession.cs:547` still admits
+>   `navigate_to_destination` executions.
+> - Host side is still a live projection, not an unavailable one:
+>   `action-registry.ts:34-39/222` retains the `navigate_to_destination` adapter and
+>   tool name; `game-tools.ts:481-519` still mounts the navigate tool whenever the
+>   Mod's live capability snapshot allows it; `protocol.ts:667,3175` admits only
+>   `published | experimental` lifecycles.
+> - The only withdrawal in code is the BodyProgram catalog projection:
+>   `FarmhandBodyProgramCatalogProjection` rejects `navigate_to_destination` with
+>   `object_or_unsupported_argument` (`FarmhandBodyProgramCatalogProjectionTests.cs:40-47`)
+>   — it blocks BodyProgram membership, not the ordinary published surface, so the
+>   ordinary-pipeline contradiction stands exactly as described above.
+> - Design authority: `design/36:3,541` still says the three operations are not
+>   production-materialized/live-closed; `design/94:21-23,42` claims a Task-0
+>   withdrawal whose source precondition (navigate absent from the Mod catalog) is
+>   false in current source.
+> - open-gameplay-release Task 5: item 210 `[x]` keeps the classification
+>   `implementation: offline-partial, publication: withdrawn,
+>   liveEligibility: not-established`; item 211 `[ ]` (DEFERRED) makes the typed
+>   `object → destination_selector/destination_arrival` conformance migration a
+>   prerequisite and records that live republish additionally requires this
+>   handoff's reconciliation plus separate authorization; items 212/213 `[ ]`
+>   (conditional/blocked re-runs; 2026-09-16 review 76da98d6 found no blocker for
+>   Tasks 0–5 but no closing evidence).
+> - Republish prerequisites still open: multi-source characterization's last
+>   launched attempt ended `blocked / world_not_ready`
+>   (`task5c-terminal-blocked-world-not-ready-2026-08-24` in design/94), the
+>   digest-bound production receipt registry is empty
+>   (`tools/stardew-navigation-multisource-receipt-ledger.mjs`
+>   `PRODUCTION_RECEIPT_REGISTRY = Object.freeze([])`), Task 5D/5E acceptance,
+>   aggregate independent review, formal profile/runbook/preflight, republish
+>   decision, and separate target-mutation authorization have not been recorded.
 
 ## BodyProgram status
 
@@ -663,6 +777,61 @@ Do not wire `ModEntry`, `BridgeSession`, the four `program_*` handlers, or sched
 ```
 
 `WindowsBodyProgramJournalStore` is lower-level persistence mechanics; it is not a root-discovery/admission authority. Never pass it guessed AppData, installation, Mods, Host GameBuddy data root, or SMAPI global-data paths.
+
+### Production composition blockers — closure status (2026-09-18)
+
+Verified against current source; historical blocker list above is retained. Of the
+seven upstream blockers, 1–5 and 7 are closed at the offline/composition level and
+6 is closed except for the live gate itself:
+
+```text
+1. documented target-version Stardew per-user data-root admission — DONE:
+   ModEntry.cs:4183-4188 documents Constants.SavesPath as the store root; store
+   construction and scope-path encoding fail closed (ModEntry.cs:1967-1975;
+   open-gameplay-release Task 2B:136-137 [x]).
+2. fresh root identity/reopen proof — DONE (offline): OpenBodyProgramJournalAuthority.Open
+   over the strict BodyProgramJournal/v1 codec with reopen/quarantine tests;
+   non-terminal state reopens as diagnostic-only recovery_required, old grants are
+   never consumed, successors never dispatched (Task 2C [x]; Task 2:157 [x];
+   NN_BODY_PROGRAM_ADMISSION_OUTCOME plan Tasks 1-3 [x]).
+3. Mod lifecycle ownership + Saving/ReturnedToTitle quarantine fence — DONE:
+   SaveLoaded opens journal/controller per exact scope (ModEntry.cs:1954-2061),
+   OnSaving invalidates + publishes world_unavailable/saving (3350-3358),
+   OnReturnedToTitle closes (3369-3401), ClearState closes controller-with-drain
+   then store (4203-4231), teardown drain path (2123).
+4. Mod-owned catalog + policy identity composition — DONE: FarmhandBodyProgramCatalogProjection
+   pins navigate/read-only/experimental rejection (FarmhandBodyProgramCatalogProjectionTests.cs:40-47);
+   Mod-minted policy identity bound to live capability publication (ModEntry.cs:4197-4201)
+   and rechecked through challenge/grant/consume/CAS (Task 2:155-156 [x]).
+5. private authenticated program bridge topology — DONE: BridgeSession implements
+   IBodyProgramAdmissionTransport (BridgeSession.cs:20,736-756) with the lossless
+   three-state body_node_admission_result wire granted/rejected/unavailable
+   (BridgeSession.cs:720-787); Host side LocalStardewBridgeClient forwards the
+   typed result (local-stardew-bridge.ts:690-709), HostNodeAdmissionService emits
+   only journal-backed granted/rejected/admission_unavailable
+   (action-execution-coordinator.internal.ts:51-115), composed exclusively in
+   materializeExactEnter (continuity-semantic-game-runtime-materializer.ts:309-360);
+   forwarding commits 3d812fd (2026-09-15) + f3c0532 (2026-09-16); the
+   nullable-TryTakeGrant blocker recorded earlier is resolved by this wire
+   (NN_BODY_PROGRAM_ADMISSION_OUTCOME_IMPLEMENTATION_PLAN.md Tasks 0-4 [x]).
+6. real product action native receipt/evidence/postcondition producer — DONE at
+   composition level: RouteReenteringBodyProgramExecutor re-enters the single
+   FarmhandActionRouter/ledger (ModEntry.cs:2051-2058;
+   RouteReenteringBodyProgramExecutor.cs:38-42) with the real machine_inspect /
+   machine_load registrations and typed machine_target_id derivation; only the
+   target-version live world-state freshness remains unproven — that is exactly
+   open-gameplay-release Task 6.
+7. receipt-backed scheduler + cancellation/recovery — DONE (offline): game-thread
+   Controller pump, STOP epoch, same-tuple recovery, restart fence, addressed
+   status/events (Task 2:153-157 [x]; Task 4:196-200 [x]).
+```
+
+**Still open:** open-gameplay-release Task 5 items 207/208/211 (DEFERRED),
+212/213 (conditional re-runs/closure), and Task 6 — the single authorized
+A=`machine_inspect` → B=`machine_load` target-version production live gate has
+**not** been run (open-gameplay-release Task 6 checklist lines are all `[ ]`, and
+no gate evidence exists). Task 6 remains the only unclosed item of the original
+"wire/journal/lineage foundations + 7 blockers + live gate" composition.
 
 ## Action-development closure status
 
@@ -852,6 +1021,22 @@ producer→consumer→verifier path and disjoint files. No live mutation is auth
 
  9. Resume BodyProgram production composition only after the two action gates and
     the documented-root/lifecycle/native-action prerequisites are closed.
+
+> **Status-aware notes (2026-09-18, current source):**
+> - Item 4's "retain `host_runner_not_registered` only for the historical wrapper"
+>   is moot: `85b7dfb` (2026-09-07) already removed that blocked policy
+>   (`action-registry.mjs:98-111`). The genuinely still-open equip_tool work is the
+>   profile-free control runner (prerequisite 3), the coordinator-private fixture
+>   boundary (2), and the atomic deletion of the profile/lease/fixture route (4),
+>   which still exists — see the equip_tool section status update.
+> - Item 6 (Navigation contradiction) is still open exactly as written; see the
+>   reconciliation status in the Navigation authority contradiction section
+>   (2026-09-18 evidence block).
+> - Item 9: BodyProgram composition blockers 1–5 and 7 are now closed and 6 is
+>   closed at composition level; the remaining BodyProgram work is
+>   open-gameplay-release Task 5 deferred/conditional items plus the Task 6
+>   target-version live gate, which has not run — see the BodyProgram closure
+>   status section.
 
 ## Primary documents
 
