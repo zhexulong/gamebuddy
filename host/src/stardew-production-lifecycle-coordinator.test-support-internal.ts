@@ -8,6 +8,7 @@ import {
   containedAiClientLaunchDecision,
   containedPlayerHostLaunchDecision,
   containedRuntimeTeardownFromCollaborator,
+  type StardewGameSessionCreationAuthority,
   type StardewLifecycleAiClientLaunch,
   type StardewLifecyclePlayerHostLaunch,
   type StardewProductionLifecycleCoordinator,
@@ -22,6 +23,7 @@ import { createTestWindowsStardewFolderPicker } from "./windows-stardew-folder-p
 import type { StardewFolderPickerResult } from "./windows-stardew-folder-picker/index.js";
 import {
   createStardewWorldBindingResolver,
+  type CreateWorldBindingSeam,
   type StardewWorldBindingResolver,
 } from "./stardew-owned-farmhand-game-world-binding-resolver.internal.js";
 import type { ProductionGameSessionWorldBinding } from "./continuity-semantic-store/continuity-semantic-production-store.js";
@@ -37,6 +39,20 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
    * resolves every session as missing (fail-closed, no resume activation).
    */
   worldBindingResolver?(input: Readonly<{ gameSessionId: string; integrationId: string }>): Promise<ProductionGameSessionWorldBinding | null>;
+  /**
+   * Slice-0 durable create surface. Absent, every admitted `game.create`
+   * fails closed as unavailable before any durable write.
+   */
+  gameSessionCreationAuthority?: StardewGameSessionCreationAuthority;
+  /**
+   * Integration-private world creation seam. Absent, `game.create` fails
+   * closed at phase 2 (the production Stardew implementation is a later
+   * integration task; this override stands in for any fake second
+   * integration implementing the same seam).
+   */
+  createWorldBinding?(
+    input: Readonly<{ gameSessionId: string; integrationId: string; worldRequest: unknown }>,
+  ): Promise<Readonly<{ bindingRef: string }>>;
   connectFarmhandGameRuntimeFacade?(
     connection: StardewPrivateFarmhandBridgeConnection,
     deadlineMs: number,
@@ -101,6 +117,9 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
   const worldBindingResolver: StardewWorldBindingResolver = createStardewWorldBindingResolver(
     overrides.worldBindingResolver ?? (async () => null),
   );
+  const createWorldBindingSeam: CreateWorldBindingSeam | undefined = overrides.createWorldBinding === undefined
+    ? undefined
+    : Object.freeze({ createWorldBinding: overrides.createWorldBinding });
   const aiClientLaunch: StardewLifecycleAiClientLaunch = overrides.runtimeLaunchContained === undefined
     ? (owner, installation) => internal.launchMaterializedAiClient(owner, installation)
     : (owner, installation) => internal.launchMaterializedAiClientContained(
@@ -152,6 +171,8 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
     worldBindingResolver,
     playerHostLaunch,
     aiClientLaunch,
+    overrides.gameSessionCreationAuthority,
+    createWorldBindingSeam,
     overrides.runtimeLaunchContained === undefined ? undefined : containedRuntimeTeardownFromCollaborator(overrides.runtimeLaunchContained),
   );
 }

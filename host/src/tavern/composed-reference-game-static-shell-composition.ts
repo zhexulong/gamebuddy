@@ -15,7 +15,13 @@ import type { ChatPipelineService } from "./chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./reference-pipeline-state.js";
 import type { WindowsReparseInspectorCapability } from "../windows-reparse-inspector/index.js";
 import type { ComposedReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
-import type { GameBrowserStateV1, GameLaunchCommandV1 } from "../game-browser-contract/index.js";
+import type {
+  GameBrowserStateV1,
+  GameLaunchCommandV1,
+  GameResumeCommandV1,
+  GameResumeResultV1,
+  GameSessionResumeCommandV1,
+} from "../game-browser-contract/index.js";
 import type { TavernStateSnapshotV1 } from "./browser-contract/index.js";
 import {
   createTavernStaticArtifactRequestHandler,
@@ -60,6 +66,18 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
     stopGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameStop"]>;
     disconnectGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameDisconnect"]>;
     reopenActionAuthority?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameReopen"]>;
+    /**
+     * Coordinator-owned resume seam (session-keyed; the composed browser wire
+     * stays session-less, so the wired adapter passes the strict command and
+     * the coordinator fails closed on the missing session handle until the
+     * Slice 3 B-path session selection exists).
+     */
+    resume?: (
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+      command: GameSessionResumeCommandV1,
+    ) => Promise<GameResumeResultV1>;
+    createGameSession?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameCreate"]>;
+    cancelResume?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameResumeCancel"]>;
   }>;
 }>;
 
@@ -109,6 +127,18 @@ export async function startComposedReferenceGameStaticShellComposition(
     gameStop: options.lifecycleActivationBindingSink?.stopGame?.bind(options.lifecycleActivationBindingSink),
     gameDisconnect: options.lifecycleActivationBindingSink?.disconnectGame?.bind(options.lifecycleActivationBindingSink),
     gameReopen: options.lifecycleActivationBindingSink?.reopenActionAuthority?.bind(options.lifecycleActivationBindingSink),
+    gameResume: options.lifecycleActivationBindingSink?.resume === undefined
+      ? undefined
+      : async (
+          admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+          command: GameResumeCommandV1,
+        ): Promise<GameResumeResultV1> =>
+          options.lifecycleActivationBindingSink!.resume!(
+            admission,
+            command as unknown as GameSessionResumeCommandV1,
+          ),
+    gameCreate: options.lifecycleActivationBindingSink?.createGameSession?.bind(options.lifecycleActivationBindingSink),
+    gameResumeCancel: options.lifecycleActivationBindingSink?.cancelResume?.bind(options.lifecycleActivationBindingSink),
     stardewCabins:
       options.lifecycleActivationBindingSink?.readCabinChoices !== undefined &&
       options.lifecycleActivationBindingSink.confirmCabinChoice !== undefined

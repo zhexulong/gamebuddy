@@ -36,6 +36,8 @@ const IdempotencyKey = Type.String({
 });
 const PositiveGeneration = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const NonNegativeGeneration = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+/** Loose safe identifier for published integration ids and opaque durable session handles (not a proof or canonical handle). */
+const SAFE_ID = Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9_-]{1,128}$" });
 
 // ─── Problem code ───────────────────────────────────────────────────────────
 
@@ -274,6 +276,71 @@ export const GameResumeCommandV1Schema = strictObject({
 });
 
 /**
+ * Minimal strict `game.create` command (boundary card D1). It carries only
+ * the selected published integration and the player's explicit continuity
+ * binding choice (null = default, no binding). It never carries an expected
+ * attachment generation, a gameSessionId (the store mints it), or any
+ * bootstrap/native/launch fact. The coordinator mints the store-level
+ * creation request identity in its own idempotency slot.
+ */
+export const GameCreateCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  idempotencyKey: IdempotencyKey,
+  integrationId: SAFE_ID,
+  continuityIdentityId: Type.Union([SAFE_ID, Type.Null()]),
+});
+
+/**
+ * Redacted outcome of an admitted `game.create` (boundary card D1).
+ * `accepted` means the binding/observation is still in progress, `attached`
+ * means the world binding and the first activation completed, `unavailable`
+ * means the create failed without any resumable half-record. The opaque
+ * `gameSessionId` is only an interpretive projection: every later use must be
+ * re-verified through the store. The status binds the handle exactly:
+ * `accepted`/`attached` always carry the store-minted `gameSessionId` (never
+ * null) and `unavailable` always carries null (never an id). It never carries
+ * session internals, launch, path, process, token, generation-proof, lease,
+ * digest, receipt, or attestation facts.
+ */
+export const GameCreateResultV1Schema = Type.Union([
+  strictObject({
+    apiVersion: ApiVersion,
+    status: Type.Union([
+      Type.Literal("accepted"),
+      Type.Literal("attached"),
+    ]),
+    gameSessionId: SAFE_ID,
+  }),
+  strictObject({
+    apiVersion: ApiVersion,
+    status: Type.Literal("unavailable"),
+    gameSessionId: Type.Null(),
+  }),
+]);
+
+/**
+ * Independent `game.resume.cancel` command (boundary card D3). It is never
+ * folded into create and never reuses game.disconnect/game.stop (both require
+ * a live attachment); it pins the exact in-flight reconnect attempt via the
+ * armed attachment generation, mirroring the resume tuple discipline.
+ */
+export const GameResumeCancelCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  idempotencyKey: IdempotencyKey,
+  expectedAttachmentGeneration: PositiveGeneration,
+});
+
+/**
+ * Single-value cancelled outcome (single-literal precedent: game.reopen
+ * `reopened`). The Player world and the durable session state are untouched;
+ * the session stays resumable.
+ */
+export const GameResumeCancelResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  status: Type.Literal("cancelled"),
+});
+
+/**
  * Redacted outcome of an admitted `game.resume`. The strict status vocabulary
  * distinguishes an attempt that is admitted and still in progress from one
  * that established a completed attachment and from an outcome that is
@@ -347,8 +414,10 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.attach",
   "game.stop",
   "game.resume",
+  "game.resume.cancel",
   "game.reopen",
   "game.disconnect",
+  "game.create",
   "game.diagnostics.read",
   "game.stardew.cabins.read",
   "game.stardew.cabins.confirm",
@@ -357,14 +426,14 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
 const contractDeclaredOperationIds = new Set<string>(GAME_BROWSER_OPERATION_IDS_V1);
 const contractDeclaredNavigationItemIds = new Set<string>(["game"]);
 
-type GameBrowserOperationIdV1 = (typeof GAME_BROWSER_OPERATION_IDS_V1)[number];
+
 type GameBrowserNavigationItemIdV1 = "game";
 type GameReleaseTierV1 = "game_preview";
 
 export type ComposedGameProfile = Readonly<{
   readonly profileId: string;
   readonly releaseTier: GameReleaseTierV1;
-  readonly operationIds: readonly GameBrowserOperationIdV1[];
+  readonly operationIds: readonly GameOperationId[];
   readonly navigationItemIds: readonly GameBrowserNavigationItemIdV1[];
 }>;
 
@@ -427,7 +496,7 @@ export function composeGameProfile(input: unknown): ComposedGameProfile {
   const profile = Object.freeze({
     profileId: value.profileId,
     releaseTier: value.releaseTier,
-    operationIds: Object.freeze([...value.operationIds] as GameBrowserOperationIdV1[]),
+    operationIds: Object.freeze([...value.operationIds] as GameOperationId[]),
     navigationItemIds: Object.freeze([...value.navigationItemIds] as GameBrowserNavigationItemIdV1[]),
   });
   composedGameProfiles.add(profile);
@@ -463,6 +532,10 @@ export const GameBrowserContractV1 = Object.freeze({
     GameStopCommandV1Schema,
     GameResumeCommandV1Schema,
     GameResumeResultV1Schema,
+    GameCreateCommandV1Schema,
+    GameCreateResultV1Schema,
+    GameResumeCancelCommandV1Schema,
+    GameResumeCancelResultV1Schema,
     GameDisconnectCommandV1Schema,
     GameReopenActionAuthorityCommandV1Schema,
     GameReopenActionAuthorityResultV1Schema,
@@ -483,11 +556,16 @@ export const GameBrowserValidatorsV1: Readonly<Record<keyof typeof GameBrowserCo
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+export type GameOperationId = (typeof GAME_BROWSER_OPERATION_IDS_V1)[number];
 export type GameBrowserStateV1 = Static<typeof GameBrowserStateV1Schema>;
 export type GamePrerequisitesSetupCommandV1 = Static<typeof GamePrerequisitesSetupCommandV1Schema>;
 export type GameLaunchCommandV1 = Static<typeof GameLaunchCommandV1Schema>;
 export type GameStopCommandV1 = Static<typeof GameStopCommandV1Schema>;
 export type GameResumeCommandV1 = Static<typeof GameResumeCommandV1Schema>;
+export type GameCreateCommandV1 = Static<typeof GameCreateCommandV1Schema>;
+export type GameCreateResultV1 = Static<typeof GameCreateResultV1Schema>;
+export type GameResumeCancelCommandV1 = Static<typeof GameResumeCancelCommandV1Schema>;
+export type GameResumeCancelResultV1 = Static<typeof GameResumeCancelResultV1Schema>;
 
 /**
  * Coordinator-owned resume seam command. The browser transport schema stays
