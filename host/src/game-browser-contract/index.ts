@@ -127,6 +127,7 @@ const ConnectionStatus = Type.Union([
   Type.Literal("active"),
   Type.Literal("stopping"),
   Type.Literal("reconnecting"),
+  Type.Literal("syncing"),
   Type.Literal("stopped"),
   Type.Literal("failed"),
   Type.Literal("disconnected"),
