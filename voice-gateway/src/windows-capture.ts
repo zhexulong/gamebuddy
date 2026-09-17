@@ -288,7 +288,7 @@ function parseDevice(value: unknown): WindowsInputDevice {
   if (
     !isRecord(value) ||
     typeof value.id !== "string" ||
-    !/^wavein:[0-9]{1,4}$/.test(value.id) ||
+    !/^wavein:(?:default|[0-9]{1,4})$/.test(value.id) ||
     typeof value.name !== "string" ||
     value.name.trim().length === 0 ||
     value.name.length > 256

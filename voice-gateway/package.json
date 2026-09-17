@@ -8,9 +8,10 @@
     "build": "tsc --project tsconfig.json",
     "test": "pnpm run build && node --test dist/**/*.test.js",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "start": "node dist/main.js",
+    "start": "node --use-env-proxy dist/main.js",
     "live-gate": "node scripts/run-pipeline-live-gate.mjs",
-    "check:funasr-baseline": "node ../tools/run-funasr-offline-baseline.mjs"
+    "check:funasr-baseline": "node ../tools/run-funasr-offline-baseline.mjs",
+    "probe:groq": "node --use-env-proxy ../tools/run-groq-asr-probe.mjs"
   },
   "dependencies": { "@gamebuddy/voice-protocol": "workspace:*" },
   "devDependencies": { "@types/node": "24.10.1", "typescript": "5.9.3" }

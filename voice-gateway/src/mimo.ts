@@ -1,7 +1,10 @@
 import type { SpeechJob, TtsProvider } from "./gateway.js";
+import { resamplePcm16To16k } from "./pcm-resampler.js";
 
 export const MIMO_TTS_ENDPOINT = "https://api.xiaomimimo.com/v1/chat/completions";
 export const MIMO_TTS_MODEL = "mimo-v2.5-tts";
+/** MiMo streams 24 kHz PCM16LE mono; the wire contract is frozen at 16 kHz, so each chunk is resampled here. */
+export const MIMO_SAMPLE_RATE = 24_000;
 
 const MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_SSE_BUFFER_BYTES = 512 * 1024;
@@ -157,7 +160,7 @@ export class MimoTtsProvider implements TtsProvider {
       audioBytes += pcm16.byteLength;
       if (audioBytes > MAX_AUDIO_BYTES) throw new Error("mimo_audio_limit");
       sawAudio = true;
-      pendingAudio.push(pcm16);
+      pendingAudio.push(resamplePcm16To16k(pcm16, MIMO_SAMPLE_RATE));
     };
     const pendingAudio: Uint8Array[] = [];
 

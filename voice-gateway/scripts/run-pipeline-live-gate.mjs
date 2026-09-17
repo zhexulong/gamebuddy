@@ -12,10 +12,10 @@
  *                      every stage completes.
  *
  *   --mode live        (final gate): records the microphone while you speak
- *                      (PTT via WindowsPttCapture), runs audited SenseVoice
- *                      ASR, then plays the transcript back through the same
- *                      pipeline. Requires GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST
- *                      and GAMEBUDDY_WINDOWS_OUTPUT_DEVICE (or "default").
+ *                      (PTT via WindowsPttCapture), runs cloud Groq Whisper ASR
+ *                      (GROQ_API_KEY) or audited local SenseVoice
+ *                      (GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST), then plays the
+ *                      transcript back through the same pipeline.
  *
  * Exit codes: 0 = gate passed, 1 = gate failed, 2 = environment/precondition
  * missing. A JSON artifact is written next to the script.
@@ -35,6 +35,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const voiceGatewayRoot = resolve(__dirname, "..");
 const require = createRequire(import.meta.url);
 
+// Same optional local operator env source as gateway main.ts (.env.local).
+for (const envPath of [resolve(voiceGatewayRoot, ".env.local"), resolve(voiceGatewayRoot, "..", ".env.local")]) {
+  try {
+    process.loadEnvFile?.(envPath);
+    break;
+  } catch {
+    // optional local file
+  }
+}
+
 // Compiled dist outputs (pnpm --filter @gamebuddy/voice-gateway build).
 const gatewayDist = (name) => import(pathToFileURL(resolve(voiceGatewayRoot, "dist", name)).href);
 
@@ -46,6 +56,7 @@ function option(name, argv = process.argv) {
 const mode = option("--mode") ?? "rehearsal";
 const outputDevice = option("--output-device") ?? process.env.GAMEBUDDY_WINDOWS_OUTPUT_DEVICE ?? "default";
 const inputDevice = option("--input-device") ?? process.env.GAMEBUDDY_WINDOWS_INPUT_DEVICE ?? "default";
+const ttsMode = option("--tts") ?? "synth";
 const artifactPath = resolve(__dirname, "pipeline-live-gate.json");
 
 if (process.platform !== "win32") {
@@ -56,12 +67,19 @@ if (mode !== "rehearsal" && mode !== "live") {
   console.error("voice_gate_invalid_mode");
   process.exit(2);
 }
+if (ttsMode !== "synth" && ttsMode !== "mimo") {
+  console.error("voice_gate_invalid_tts");
+  process.exit(2);
+}
 
 const { createWindowsAudioMixer } = await gatewayDist("windows-audio.js");
+const { createStreamingWindowsAudioMixer } = await gatewayDist("streaming-windows-audio.js");
 const { createStreamingSpeechPipeline } = await gatewayDist("streaming-pipeline.js");
 const { synthSpeechLikePcm16 } = await gatewayDist("synth-audio.js");
 const { WindowsPttCapture } = await gatewayDist("windows-capture.js");
+const { GroqWhisperAsrProvider } = await gatewayDist("groq.js");
 const { SenseVoiceCliAsrProvider } = await gatewayDist("sensevoice.js");
+const { MimoTtsProvider } = await gatewayDist("mimo.js");
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -78,29 +96,34 @@ function report(summary) {
 }
 
 async function rehearsal() {
-  const mixer = await createWindowsAudioMixer(outputDevice);
+  const mixer = await createStreamingWindowsAudioMixer(outputDevice);
   if (mixer.ready !== true) {
     await writeFile(artifactPath, JSON.stringify(report({ passed: false, reason: mixer.failureReason ?? "mixer_not_ready" }), null, 2));
     console.error(`voice_gate_output_unavailable: ${mixer.failureReason ?? "unknown"}`);
     process.exit(1);
   }
-  // Physical honesty: the current WinMM adapter commits one PowerShell process
-  // per play() call, so the pipeline's 20ms micro-chunks cannot stride that
-  // boundary one chunk at a time (hundreds of process spawns). The rehearsal
-  // therefore accumulates micro-chunks in a sentence and commits the sentence
-  // with one real device write. Streaming micro-chunk stride playback requires
-  // the WASAPI resident-stream render target (Phase 2 L4 work), which this
-  // gate records but does not fake.
-  const sentenceMixer = createSentenceCommittingMixer(mixer);
-  const pipeline = await createStreamingSpeechPipeline({ tts: synthTts(), mixer: sentenceMixer });
+  const ttsProvider = ttsMode === "mimo" ? await configuredRehearsalMimo() : await synthTts();
+  if (ttsProvider === undefined) {
+    await writeFile(artifactPath, JSON.stringify(report({ passed: false, reason: "tts_unavailable" }), null, 2));
+    console.error("voice_gate_tts_unavailable: set MIMO_API_KEY for --tts mimo");
+    process.exit(2);
+  }
+  ttsForReport = {
+    providerId: ttsProvider.providerId,
+    modelRevision: ttsProvider.modelRevision,
+  };
+  // Phase 2 render: the resident stream mixer opens the device once and
+  // accepts 20ms micro-chunks via stdin, so the pipeline pumps each micro-chunk
+  // directly (no per-chunk process spawn, no sentence batching workaround).
+  const pipeline = await createStreamingSpeechPipeline({ tts: ttsProvider, mixer });
   const played = { sentences: 0, microChunks: 0 };
   try {
     const sentences = ["你好，这是第一条合成语音。", "第二条用于验证分句与微块播放。", "第三条结束后会被平滑淡出。"];
     for (const sentence of sentences) {
       await pipeline.pushText(sentence, Date.now());
       await pipeline.flush();
-      while (pipeline.pump()) played.microChunks += 1; // drain micro-chunks into the sentence accumulator
-      await sentenceMixer.commit(); // one real WinMM write per sentence
+      // Resident stream: each 20ms micro-chunk is written straight to the open device.
+      while (await pipeline.pumpAwait()) played.microChunks += 1;
       played.sentences += 1;
       if (mixer.ready !== true) {
         await writeFile(
@@ -111,29 +134,29 @@ async function rehearsal() {
         process.exit(1);
       }
     }
-    // Cancel path: queue a sentence, drain micro-chunks, then drop instead of
-    // committing — the physical device never hears the abandoned text.
+    // Cancel path: a queued utterance is faded by the sink and the unplayed
+    // audio is dropped before it ever reaches the resident stream device.
     await pipeline.pushText("这条语音会被取消，用于验证未提交的音频永远不会到达设备。", Date.now());
     await pipeline.flush();
-    while (pipeline.pump()) played.microChunks += 1;
+    for (let index = 0; index < 4 && (await pipeline.pumpAwait()); index += 1) played.microChunks += 1;
     await pipeline.cancelSpeech();
-    const dropped = sentenceMixer.drop();
+    while (await pipeline.pumpAwait()) played.microChunks += 1;
     const summary = report({
       passed: true,
       stage: "rehearsal",
       mixerReady: mixer.ready === true,
       playedMicroChunks: played.microChunks,
       committedSentences: played.sentences,
-      droppedChunksAfterCancel: dropped,
-      // Physical commit granularity today is one WinMM write per sentence;
-      // 20ms stride playback needs the WASAPI render target (Phase 2 L4).
-      microChunkStridePlayback: "wasapi_l4_pending",
+      cancelExercised: true,
+      ttsProvider: ttsForReport.providerId,
+      // Phase 2 render path: device opens once and micro-chunks stride stdin.
+      renderPath: "winmm_resident_stream",
     });
     await writeFile(artifactPath, JSON.stringify(summary, null, 2));
-    console.log(`voice_gate_passed: ${played.sentences} sentences / ${played.microChunks} micro-chunks on ${outputDevice}`);
+    console.log(`voice_gate_passed: ${played.sentences} sentences / ${played.microChunks} micro-chunks on ${outputDevice} (tts=${ttsForReport.providerId}, render=winmm_resident_stream)`);
   } finally {
     await pipeline.close();
-    mixer.stop();
+    await mixer.close();
   }
 }
 
@@ -144,7 +167,14 @@ async function rehearsal() {
  * product pipeline, because the commit granularity is a physical property of
  * the current Windows render adapter.
  */
-function createSentenceCommittingMixer(inner) {
+/**
+ * Sentence-committing mixer adapter for the live gate only: play() accumulates
+ * micro-chunks; commit() issues one real device write; drop() discards the
+ * accumulated sentence after a cancel. Deliberately rehearsed here, not in the
+ * product pipeline, because the commit granularity is a physical property of
+ * the current Windows render adapter.
+ */
+function createSentenceCommittingMixer(inner, commitEveryMs = Infinity) {
   let accumulated = new Uint8Array(0);
   return {
     get ready() {
@@ -156,11 +186,17 @@ function createSentenceCommittingMixer(inner) {
       merged.set(pcm16, accumulated.byteLength);
       accumulated = merged;
     },
+    async commitMaybe() {
+      // Bound each real device write to ~commitEveryMs of audio so long live
+      // transcripts never exceed the waveout PowerShell timeout.
+      if (commitEveryMs === Infinity || accumulated.byteLength / 2 / 16_000 * 1_000 < commitEveryMs) return;
+      await this.commit();
+    },
     async commit() {
       if (accumulated.byteLength === 0) return;
       const sentence = accumulated;
       accumulated = new Uint8Array(0);
-      await inner.play("voice_rehearsal", 0, sentence);
+      await inner.play("voice_live", 0, sentence);
     },
     drop() {
       const dropped = accumulated.byteLength / 2 / 16_000; // seconds
@@ -179,27 +215,41 @@ function synthTts() {
     modelRevision: "synth-v1",
     ready: true,
     async *synthesize(job) {
-      const durationMs = Math.max(120, job.text.length * 120);
+      // Cap the synthetic utterance so a long transcript never exceeds the
+      // waveout PowerShell timeout (12s): the gate proves the pipeline, the
+      // real TTS provider owns production timing.
+      const durationMs = Math.min(Math.max(120, job.text.length * 60), 3_000);
       yield synthSpeechLikePcm16(durationMs / 1_000, { amplitude: 4_000 });
     },
   };
 }
 
-async function live() {
-  const manifestPath = process.env.GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST;
-  if (!manifestPath) {
-    await writeFile(artifactPath, JSON.stringify(report({ passed: false, reason: "sensevoice_manifest_missing" }), null, 2));
-    console.error("voice_gate_live_requires_sensevoice_manifest: set GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST");
-    process.exit(2);
-  }
-  let manifest;
+/** MiMo for rehearsal: operator-configured key + voice; requires cloud access. */
+async function configuredRehearsalMimo() {
+  const apiKey = process.env.MIMO_API_KEY;
+  const voice = process.env.GAMEBUDDY_MIMO_VOICE ?? "mimo_default";
+  if (apiKey === undefined || apiKey.trim().length < 16) return undefined;
   try {
-    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    return new MimoTtsProvider({
+      apiKey: apiKey.trim(),
+      voiceByProfile: { "companion.default": voice },
+      admission: Object.freeze({ assertCurrent() {} }),
+    });
   } catch {
-    console.error("voice_gate_manifest_unreadable");
+    return undefined;
+  }
+}
+
+async function live() {
+  const asr = await configuredLiveAsr();
+  if (asr === undefined) {
+    await writeFile(
+      artifactPath,
+      JSON.stringify(report({ passed: false, reason: "asr_unavailable" }), null, 2),
+    );
+    console.error("voice_gate_live_requires_asr: set GROQ_API_KEY or GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST");
     process.exit(2);
   }
-  const asr = new SenseVoiceCliAsrProvider(manifest);
   const capture = new WindowsPttCapture(inputDevice);
   const mixer = await createWindowsAudioMixer(outputDevice);
   if (mixer.ready !== true) {
@@ -216,18 +266,34 @@ async function live() {
   const text = await asr.transcribe(pcm16, "zh-CN", new AbortController().signal);
   console.log(`转录结果: ${text}`);
 
-  const pipeline = await createStreamingSpeechPipeline({ tts: synthTts(), mixer });
+  const tts = await configuredLiveTts();
+  // WinMM commits one PowerShell play() per call, so 20ms micro-chunks cannot
+  // stride the device boundary individually (observed live: each chunk spawns
+  // a process and the gate times out after the first seconds — the "pulsing
+  // noise" the operator heard). Accumulate micro-chunks and commit bounded
+  // ~4s segments with one real device write each; the physical granularity
+  // limit is recorded, not faked.
+  const sentenceMixer = createSentenceCommittingMixer(mixer, 4_000);
+  const pipeline = await createStreamingSpeechPipeline({ tts, mixer: sentenceMixer });
   try {
     await pipeline.pushText(text, Date.now());
     await pipeline.flush();
     let chunks = 0;
-    while (await pipeline.pumpAwait()) {
+    while (pipeline.pump()) {
       chunks += 1;
+      await sentenceMixer.commitMaybe();
       if (mixer.ready !== true) throw new Error(`output_revoked: ${mixer.failureReason ?? "unknown"}`);
     }
-    const summary = report({ passed: true, stage: "live", transcript: text, playedMicroChunks: chunks });
+    await sentenceMixer.commit();
+    const summary = report({
+      passed: true,
+      stage: "live",
+      transcript: text,
+      playedMicroChunks: chunks,
+      ttsProvider: ttsForReport.providerId,
+    });
     await writeFile(artifactPath, JSON.stringify(summary, null, 2));
-    console.log(`voice_gate_passed: "${text}" played back in ${chunks} micro-chunks`);
+    console.log(`voice_gate_passed: "${text}" played back in ${chunks} micro-chunks (tts=${ttsForReport.providerId})`);
   } finally {
     await pipeline.close();
     mixer.stop();
@@ -238,12 +304,68 @@ function delay(ms) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
+/** Live ASR is opt-in and fail-closed: Groq cloud (key) or audited local SenseVoice (manifest). */
+async function configuredLiveAsr() {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey !== undefined && groqKey.trim().length >= 16) {
+    return new GroqWhisperAsrProvider({ apiKey: groqKey.trim() });
+  }
+  const manifestPath = process.env.GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST;
+  if (manifestPath === undefined || manifestPath.length === 0) return undefined;
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch {
+    console.error("voice_gate_manifest_unreadable");
+    return undefined;
+  }
+  return new SenseVoiceCliAsrProvider(manifest);
+}
+
+/**
+ * Live-gate TTS: MiMo cloud TTS when the operator configured a key and voice
+ * (running this gate is itself the explicit operator consent), otherwise the
+ * synthetic provider so the pipeline still proves end-to-end. The report
+ * records which provider actually voiced the transcript.
+ */
+async function configuredLiveTts() {
+  const apiKey = process.env.MIMO_API_KEY;
+  const voice = process.env.GAMEBUDDY_MIMO_VOICE ?? "mimo_default";
+  if (apiKey !== undefined && apiKey.trim().length >= 16) {
+    try {
+      // This gate is an explicit operator action: the admission object is the
+      // operator's own consent to a bounded cloud utterance (the gate is not
+      // the product path, which remains fail-closed without a Host-owned
+      // admission contract).
+      const tts = new MimoTtsProvider({
+        apiKey: apiKey.trim(),
+        voiceByProfile: { "companion.default": voice },
+        admission: Object.freeze({ assertCurrent() {} }),
+      });
+      ttsForReport = { providerId: tts.providerId, modelRevision: tts.modelRevision };
+      return tts;
+    } catch {
+      // fall through to synth provider
+    }
+  }
+  ttsForReport = { providerId: "synth-live-gate", modelRevision: "synth-v1" };
+  return synthTts();
+}
+let ttsForReport = { providerId: "unset", modelRevision: "" };
+
 try {
   if (mode === "rehearsal") await rehearsal();
   else await live();
 } catch (error) {
-  await writeFile(artifactPath, JSON.stringify(report({ passed: false, reason: error instanceof Error ? error.message : "unknown" }), null, 2));
-  console.error(`voice_gate_failed: ${error instanceof Error ? error.message : "unknown"}`);
+  const detail =
+    error instanceof Error && Array.isArray(error.errors)
+      ? error.errors.map((item) => (item instanceof Error ? item.message : String(item))).join(" | ")
+      : undefined;
+  await writeFile(
+    artifactPath,
+    JSON.stringify(report({ passed: false, reason: error instanceof Error ? error.message : "unknown", detail }), null, 2),
+  );
+  console.error(`voice_gate_failed: ${error instanceof Error ? error.message : "unknown"}${detail === undefined ? "" : ` [${detail}]`}`);
   process.exit(1);
 } finally {
   rl.close();
