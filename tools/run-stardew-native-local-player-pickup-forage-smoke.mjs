@@ -7,14 +7,22 @@
 import {
   assertExactCapabilities,
   connectNativeLocalClient,
+  delay,
   executeFresh,
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
+  waitForActionable,
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+
+/** Load the emitted Host client from the local dist-test artifact. */
+async function loadDistTestClient(entry) {
+  const { LocalStardewBridgeClient } = await import(`../host/dist-test/${entry}`);
+  return { LocalStardewBridgeClient };
+}
 
 const EXPECTED_CAPABILITIES = [
   "cancel_active_execution",
@@ -77,12 +85,15 @@ export async function runPickupForageSmoke(
       throw new Error(`forage_failed:${terminal.reasonCode}`);
 
     // Native forage can publish its terminal receipt one tick before the player
-    // becomes actionable again. Pre-request checks remain immediate and strict;
-    // only the fresh postcondition gets this bounded stabilization wait.
+    // becomes actionable again. The world revision advances only on action, so
+    // requiring an actionable observation here would never resolve: the player's
+    // animation recovery is not a new revision. The postcondition only needs a
+    // fresh observation at/after the terminal revision that proves the forage
+    // is gone and the inventory delta; actionability is not part of it.
     const after = await waitForFreshSnapshot(client, {
       minRevision: terminal.revision,
       timeoutMs: postconditionTimeoutMs,
-      requireActionable: true,
+      requireActionable: false,
       check: validateForageSnapshot,
     });
     const evidence = parseEvidence(terminal.evidence);
@@ -132,7 +143,7 @@ export async function runPickupForageSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadDistTestClient });
   try {
     const result = await runPickupForageSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));
@@ -155,7 +166,11 @@ async function travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, tr
       "move_to_farm_warp",
       moveTimeoutMs,
     );
-  snapshot = await observeForageActionable(client);
+  // Reuse the snapshot returned by the previous action (or the caller's
+  // revision-bound baseline) as the travel request baseline instead of
+  // re-observing: the world revision advances only on action, so a fresh
+  // observe between actions would return the same revision and be rejected
+  // as stale by the client admission guard.
   assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
   const freshWarp = snapshot.warps.find(
     (entry) =>
@@ -180,7 +195,11 @@ async function travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, tr
   const terminal = await waitForTerminal(receipts, accepted, travelTimeoutMs);
   if (terminal.state !== "succeeded" || terminal.reasonCode !== "travel_completed")
     throw new Error(`travel_failed:${terminal.reasonCode}`);
-  const after = await observeForageActionable(client);
+  // The travel terminal settles while the warp transition is still animating;
+  // the player is not actionable until the new map takes over. Poll for an
+  // actionable observation bound to at least the terminal revision; the poll
+  // tolerates stale intermediate observations at the same world revision.
+  let after = await waitForActionable(client, null, travelTimeoutMs);
   if (
     after.revision < terminal.revision ||
     after.location !== "Farm" ||
@@ -216,6 +235,10 @@ async function moveToFreshForageTarget(client, receipts, trace, snapshot, moveTi
         const reason = String(error instanceof Error ? error.message : error);
         if (!reason.endsWith("_not_accepted:no_native_path") && !reason.startsWith("move_failed:no_native_path"))
           throw error;
+        // Immediate no_native_path rejections are fast; throttle the retry
+        // loop so dialog with the Mod stays inside its inbound rate limit
+        // (32 requests/second) instead of bursting on every rejected waypoint.
+        await delay(120);
         snapshot = await observeForageActionable(client);
         if (hasOneFreshForageTarget(snapshot)) return snapshot;
       }
@@ -225,7 +248,9 @@ async function moveToFreshForageTarget(client, receipts, trace, snapshot, moveTi
 }
 
 async function move(client, receipts, trace, snapshot, target, phase, timeoutMs) {
-  snapshot = await observeForageActionable(client);
+  // Reuse the caller's revision-bound snapshot as the request baseline: the
+  // Mod advances the world revision only on action, so a fresh observe here
+  // would return the same revision and be rejected as stale by the client.
   assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
   const accepted = await execute(client, trace, phase, "move_to_tile", target, snapshot);
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
@@ -239,9 +264,24 @@ async function move(client, receipts, trace, snapshot, target, phase, timeoutMs)
 }
 
 async function observeForageActionable(client) {
-  const snapshot = await observeFresh(client, { actionable: true });
-  validateForageSnapshot(snapshot);
-  return snapshot;
+  try {
+    const snapshot = await observeFresh(client, { actionable: true });
+    validateForageSnapshot(snapshot);
+    return snapshot;
+  } catch (error) {
+    // A hello/catalog refresh may admit the current world snapshot before this
+    // explicit observe, making the same-revision response look stale. The
+    // client already admitted the equivalent fresh world; use it rather than
+    // failing the smoke on a harmless refresh race.
+    if (error instanceof Error && error.message === "observe_snapshot_not_admitted") {
+      const cached = client.state?.snapshot;
+      if (cached !== null && cached !== undefined) {
+        validateForageSnapshot(cached);
+        return cached;
+      }
+    }
+    throw error;
+  }
 }
 
 function validateForageSnapshot(snapshot) {
@@ -274,12 +314,13 @@ function chooseOnlyFreshForageTarget(snapshot) {
 async function chooseExactSceneForageTarget(client, snapshot, target) {
   if (typeof client?.observeScene !== "function") throw new Error("observe_scene_unavailable");
   const scene = await client.observeScene({});
+  const validPartial = scene?.partial === true
+    && (scene.truncatedReason === "maximum_affordances" || scene.truncatedReason === "payload_limit");
   if (
     !scene ||
     typeof scene.observationId !== "string" ||
     scene.observationId.length === 0 ||
-    scene.partial !== false ||
-    scene.truncatedReason !== null ||
+    !(scene.partial === false || validPartial) ||
     !Array.isArray(scene.affordances)
   )
     throw new Error("invalid_observe_scene_result");

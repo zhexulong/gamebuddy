@@ -325,7 +325,10 @@ export function fixtureActions(action) {
   // Harvest likewise has no tool-selection prerequisite: ordinary Grab crops
   // are harvested by the typed production action after navigation.
   if (action === "harvest_crop") return ["move_to_tile", "travel", "harvest_crop"];
-  if (action === "pickup_forage") return ["move_to_tile", "travel", "pickup_forage"];
+  // The pickup_forage smoke observes the scene to derive the exact forage
+  // target (observe → sceneTarget → pickup), so the read-only observe_scene
+  // capability must be published alongside the gathering action.
+  if (action === "pickup_forage") return ["move_to_tile", "travel", "pickup_forage", "observe_scene"];
   if (action === "pickup_item") return ["move_to_tile", "travel", "pickup_item"];
   if (action === "machine_inspect") return ["move_to_tile", "machine_inspect"];
   // Fixture establishes an idle native Keg and exactly five owned Coffee
