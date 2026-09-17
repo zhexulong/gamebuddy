@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { Mixer, TtsProvider } from "./gateway.js";
-import { MimoTtsProvider } from "./mimo.js";
+import { MimoTtsProvider, type MimoTtsAdmission } from "./mimo.js";
 import { auditSenseVoiceAssets, type SenseVoiceAssetManifest, SenseVoiceCliAsrProvider } from "./sensevoice.js";
 import { startVoiceGateway } from "./server.js";
 import { createWindowsAudioMixer, type WindowsOutputSelection } from "./windows-audio.js";
@@ -19,7 +19,10 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535 || !/^[A-Za-z0-9_-]{16,
   process.exitCode = 2;
 } else {
   const asr = await configuredAsr();
-  const candidateTts = await configuredTts();
+  // Environment credentials/configuration are not player consent. This
+  // executable has no product-owned admission/vault authority, so cloud TTS
+  // stays unavailable until its parent composition supplies one explicitly.
+  const candidateTts = await configuredTts(undefined);
   const mixer = await configuredMixer();
   const capture = await configuredCapture(asr);
   const tts = candidateTts === undefined ? undefined : await verifyTtsAgainstMixer(candidateTts, mixer);
@@ -48,16 +51,16 @@ async function configuredAsr(): Promise<SenseVoiceCliAsrProvider | undefined> {
   return new SenseVoiceCliAsrProvider(manifest);
 }
 
-/** Cloud TTS is separately opt-in; missing key/profile remains text-only. */
-async function configuredTts(): Promise<MimoTtsProvider | undefined> {
+/** Cloud TTS is separately opt-in; missing key/profile/admission remains text-only. */
+async function configuredTts(admission: MimoTtsAdmission | undefined): Promise<MimoTtsProvider | undefined> {
+  if (admission === undefined) return undefined;
   const apiKey = process.env.MIMO_API_KEY;
   const voice = process.env.GAMEBUDDY_MIMO_VOICE;
   if (apiKey === undefined || voice === undefined) return undefined;
   // Prove that the configured credential/profile can produce a bounded PCM
   // chunk before speech is published. Errors deliberately collapse to an
   // unavailable surface and never expose provider response text or secrets.
-  const candidate = new MimoTtsProvider({ apiKey, voiceByProfile: { "companion.default": voice } });
-  return candidate;
+  return new MimoTtsProvider({ apiKey, voiceByProfile: { "companion.default": voice }, admission });
 }
 
 /** Provider readiness is not publishable until its actual PCM opens/writes/completes on the chosen Windows output. */
@@ -77,11 +80,7 @@ async function verifyTtsAgainstMixer(candidate: MimoTtsProvider, mixer: Mixer): 
     };
     for await (const pcm16 of candidate.synthesize(job, AbortSignal.timeout(12_000))) {
       await mixer.probePcm(pcm16);
-      return new MimoTtsProvider({
-        apiKey: process.env.MIMO_API_KEY!,
-        voiceByProfile: { "companion.default": process.env.GAMEBUDDY_MIMO_VOICE! },
-        ready: true,
-      });
+      return candidate.markReadyAfterProbe();
     }
   } catch {
     mixer.stop();
