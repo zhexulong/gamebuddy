@@ -33,7 +33,6 @@ import {
   type SystemNoticeRequest,
   validateBridgeMessage,
 } from "./protocol.js";
-import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { parseStrictBridgeJson } from "./strict-bridge-json.js";
 
 export type LocalStardewBridgeState = StardewBridgeConnectionState &
@@ -141,9 +140,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       runtimeRole: "farmhand_client";
       launchGeneration: string;
     }> | undefined,
+    readonly module: GameIntegrationAdapter,
     readonly knowledge?: KnowledgeBundle,
     readonly gameVersion?: string,
-    readonly module: GameIntegrationAdapter = STARDEW_GAME_INTEGRATION_ADAPTER,
   ) {
     bodyNodeAdmissionBinders.set(this, (handler) => {
       this.requireAuthenticated();
@@ -191,6 +190,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     scope: Scope,
     pipeName: string,
     token: string,
+    module: GameIntegrationAdapter,
     knowledge?: KnowledgeBundle,
     gameVersion?: string,
   ): Promise<LocalStardewBridgeClient> {
@@ -199,6 +199,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       pipeName,
       token,
       undefined,
+      module,
       knowledge,
       gameVersion,
     );
@@ -210,6 +211,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     token: string,
     launchGeneration: string,
     deadlineMs: number,
+    module: GameIntegrationAdapter,
     knowledge?: KnowledgeBundle,
     gameVersion?: string,
   ): Promise<LocalStardewBridgeClient> {
@@ -222,6 +224,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       pipeName,
       token,
       Object.freeze({ runtimeRole: "farmhand_client", launchGeneration }),
+      module,
       knowledge,
       gameVersion,
       deadlineMs,
@@ -236,6 +239,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       runtimeRole: "farmhand_client";
       launchGeneration: string;
     }> | undefined,
+    module: GameIntegrationAdapter,
     knowledge?: KnowledgeBundle,
     gameVersion?: string,
     deadlineMs?: number,
@@ -247,6 +251,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       await NamedPipeTransport.connect(pipeName, deadlineMs),
       token,
       expectedRuntimeAttestation,
+      module,
       knowledge,
       gameVersion,
     );

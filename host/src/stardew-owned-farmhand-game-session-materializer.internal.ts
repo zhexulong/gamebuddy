@@ -48,6 +48,7 @@ export function createStardewOwnedFarmhandGameSessionMaterializer(
         connection.token,
         connection.launchGeneration,
         deadlineMs,
+        STARDEW_INTEGRATION_LAUNCHER.module,
       );
       const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
         bridge,
@@ -57,6 +58,7 @@ export function createStardewOwnedFarmhandGameSessionMaterializer(
           saveId: connection.scope.saveId,
           worldId: connection.scope.worldId,
         }),
+        { module: STARDEW_INTEGRATION_LAUNCHER.module },
       );
       const binding = await createGameRuntimeBindingFromReceiptBackedLaunch(
         Object.freeze({
