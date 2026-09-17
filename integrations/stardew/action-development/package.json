@@ -10,7 +10,6 @@
   "scripts": {
     "test": "node src/run-tests.mjs",
     "action:inventory": "node src/tool-inventory.mjs",
-    "action:extraction-rehearsal": "node src/standalone-extraction-rehearsal.mjs",
     "action:check": "pnpm exec game-action check --project game-action-project.json",
     "action:status": "pnpm exec game-action status --project game-action-project.json",
     "action:preflight": "pnpm exec game-action preflight --project game-action-project.json",
