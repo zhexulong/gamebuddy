@@ -9,6 +9,7 @@
     "test": "pnpm run build && node --test dist/**/*.test.js",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "start": "node dist/main.js",
+    "live-gate": "node scripts/run-pipeline-live-gate.mjs",
     "check:funasr-baseline": "node ../tools/run-funasr-offline-baseline.mjs"
   },
   "dependencies": { "@gamebuddy/voice-protocol": "workspace:*" },
