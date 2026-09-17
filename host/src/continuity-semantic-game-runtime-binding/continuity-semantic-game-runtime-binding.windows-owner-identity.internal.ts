@@ -19,10 +19,3 @@ export function brandWindowsRuntimeOwnerIdentityPort(
   portBrand.add(branded);
   return branded;
 }
-
-function assertWindowsRuntimeOwnerIdentityPort(
-  value: unknown,
-): asserts value is WindowsRuntimeOwnerIdentityPort {
-  if (typeof value !== "object" || value === null || !portBrand.has(value) || !Object.isFrozen(value))
-    throw new Error("invalid_windows_runtime_owner_identity_port");
-}

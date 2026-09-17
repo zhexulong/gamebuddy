@@ -4,9 +4,7 @@ import { Value } from "typebox/value";
 
 import {
   DEFAULT_ACTION_POLICY,
-  isCandidateActionId,
   isCandidateDescriptorComplete,
-  STARDEW_ACTION_ADAPTERS,
   STARDEW_ACTION_TOOL_NAMES,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";

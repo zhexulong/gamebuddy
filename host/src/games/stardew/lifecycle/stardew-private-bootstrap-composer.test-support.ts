@@ -5,7 +5,6 @@ import {
   launchStagedPlayerHostForTesting,
 } from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import type {
-  StardewOwnedPlayerHostBootstrap,
   StardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.js";
 import type {
@@ -44,7 +43,7 @@ export type StardewPrivateBootstrapComposerTestSupportInput = Readonly<{
 export function createStardewPrivateBootstrapComposerTestSupport(
   input: StardewPrivateBootstrapComposerTestSupportInput,
 ): StardewPrivateBootstrapComposition {
-  if (input === null || typeof input !== "object" || Object.prototype.hasOwnProperty.call(input, "staging")) {
+  if (input === null || typeof input !== "object" || Object.hasOwn(input, "staging")) {
     throw new TypeError("invalid_stardew_private_bootstrap_testing_dependencies");
   }
   return createStardewPrivateBootstrapCompositionForTesting({

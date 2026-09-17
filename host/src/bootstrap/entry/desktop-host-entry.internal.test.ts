@@ -187,7 +187,7 @@ function startEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Us
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
   child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
   const stdoutEnded = new Promise<Buffer>((resolveAcknowledgement, rejectAcknowledgement) => {
-    const receive = (chunk: Buffer) => {
+    const receive = (_chunk: Buffer) => {
       const bytes = Buffer.concat(stdout);
       const newline = bytes.indexOf(10);
       if (newline < 0) return;

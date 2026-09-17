@@ -151,7 +151,7 @@ test("strict parser rejects malformed schemas, unsafe structures, unowned produc
     }
     await writeFile(subject.path, `{"schema":"gamebuddy-stardew-installation-registration/v1","schema":"wrong"}`, "utf8");
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
-    await writeFile(subject.path, JSON.stringify({ ...record(), locator: sentinelLocator }) + "\n", "utf8");
+    await writeFile(subject.path, `${JSON.stringify({ ...record(), locator: sentinelLocator })}\n`, "utf8");
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
     await writeFile(subject.path, "x".repeat(64 * 1024 + 1), "utf8");
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);

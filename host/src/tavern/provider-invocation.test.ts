@@ -14,8 +14,6 @@ import type {
 import { createChatEventStream } from "./chat-event-stream.js";
 import { runMountedProviderInvocation, type NativeChatPreviewPublisher } from "./provider-invocation.js";
 
-let nativeListener: ((event: unknown) => void) | undefined;
-
 function nativeText(text: string) {
   return Object.freeze({ type: "text" as const, text });
 }
@@ -30,14 +28,6 @@ function nativeAssistant(
     content: [...content],
     stopReason,
     responseId,
-  });
-}
-
-function nativeAssistantStartWithoutIdentity() {
-  return Object.freeze({
-    role: "assistant" as const,
-    content: [nativeText("")],
-    stopReason: "pending",
   });
 }
 

@@ -280,6 +280,24 @@ test("draft save and discard update revision monotonically with CAS guard", asyn
   }
 });
 
+test("multiline drafts preserve newline, CRLF, and tab text", async () => {
+  const { root, store: s, creation } = await store();
+  const multiline = "first line\nsecond line\r\nthird line\twith tab";
+  try {
+    await creation.createExplicit(request("blank"));
+    const draft = await s.saveDraft!({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      expectedDraftRevision: 0,
+      text: multiline,
+    });
+    assert.equal(draft.text, multiline);
+  } finally {
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("lifecycle transitions increment managementRevision monotonically with CAS guard", async () => {
   const { root, store: s, creation } = await store();
   try {
@@ -522,6 +540,136 @@ test("coordinator-branded World Info acknowledgement applies only the exact desi
   }
 });
 
+test("volatile selector uses accepted text and bounded tail while returning refs only", async () => {
+  const { selectAuthoredContextVolatileSourceRefs } = await import("./chat-thread-store.js");
+  const candidate = {
+    sourceId: "world-info_entry_1",
+    kind: "lorebook_entry" as const,
+    revision: "1",
+    canonicalHash: createHash("sha256").update("secret body").digest("hex"),
+    totalOrderKey: "0001",
+    provenance: "world-info/revision/1",
+    content: "secret body",
+    budgetTokens: 12,
+    selectionKeys: ["moon festival"],
+  };
+  const selected = selectAuthoredContextVolatileSourceRefs("Discuss the Moon Festival", "visible tail", [candidate]);
+  assert.equal(selected.tokenCount, 12);
+  assert.deepEqual(selected.refs, [{ sourceId: candidate.sourceId, kind: candidate.kind, revision: candidate.revision, canonicalHash: candidate.canonicalHash, totalOrderKey: candidate.totalOrderKey, provenance: candidate.provenance }]);
+  assert.equal("content" in selected.refs[0]!, false);
+  assert.deepEqual(selectAuthoredContextVolatileSourceRefs("unrelated", "visible tail", [candidate]), { refs: [], tokenCount: 0 });
+});
+
+test("volatile selector respects secondaryKeys and selectiveLogic across all 4 modes", async () => {
+  const { selectAuthoredContextVolatileSourceRefs } = await import("./chat-thread-store.js");
+
+  const makeCandidate = (
+    id: string,
+    selectionKeys: string[],
+    secondaryKeys?: string[],
+    selectiveLogic?: 0 | 1 | 2 | 3,
+  ) => ({
+    sourceId: `source_${id}`,
+    kind: "lorebook_entry" as const,
+    revision: "1",
+    canonicalHash: createHash("sha256").update(`content ${id}`).digest("hex"),
+    totalOrderKey: id.padStart(4, "0"),
+    provenance: `world-info/${id}`,
+    content: `content ${id}`,
+    budgetTokens: 10,
+    selectionKeys,
+    ...(secondaryKeys !== undefined ? { secondaryKeys } : {}),
+    ...(selectiveLogic !== undefined ? { selectiveLogic } : {}),
+  });
+
+  // cand0: logic 0 (AND ANY) with secondaryKeys ["fire", "water"]
+  const cand0 = makeCandidate("0", ["magic"], ["fire", "water"], 0);
+  // cand1: logic 1 (NOT ALL) with secondaryKeys ["fire", "water"]
+  const cand1 = makeCandidate("1", ["magic"], ["fire", "water"], 1);
+  // cand2: logic 2 (NOT ANY) with secondaryKeys ["fire", "water"]
+  const cand2 = makeCandidate("2", ["magic"], ["fire", "water"], 2);
+  // cand3: logic 3 (AND ALL) with secondaryKeys ["fire", "water"]
+  const cand3 = makeCandidate("3", ["magic"], ["fire", "water"], 3);
+
+  // Scenario A: corpus has primary "magic" and neither secondary
+  {
+    const res = selectAuthoredContextVolatileSourceRefs("cast magic spell", "tail", [cand0, cand1, cand2, cand3]);
+    const ids = res.refs.map((r) => r.sourceId);
+    // 0 (AND ANY): false (0/2 match) -> suppressed
+    // 1 (NOT ALL): true (0/2 match, !allSecondary) -> triggered
+    // 2 (NOT ANY): true (0/2 match, !anySecondary) -> triggered
+    // 3 (AND ALL): false (0/2 match) -> suppressed
+    assert.deepEqual(ids, ["source_1", "source_2"]);
+  }
+
+  // Scenario B: corpus has primary "magic" and one secondary "fire"
+  {
+    const res = selectAuthoredContextVolatileSourceRefs("cast magic fire", "tail", [cand0, cand1, cand2, cand3]);
+    const ids = res.refs.map((r) => r.sourceId);
+    // 0 (AND ANY): true (1/2 match) -> triggered
+    // 1 (NOT ALL): true (1/2 match, !allSecondary) -> triggered
+    // 2 (NOT ANY): false (1/2 match, !anySecondary is false) -> suppressed
+    // 3 (AND ALL): false (1/2 match, allSecondary is false) -> suppressed
+    assert.deepEqual(ids, ["source_0", "source_1"]);
+  }
+
+  // Scenario C: corpus has primary "magic" and both secondaries "fire" and "water"
+  {
+    const res = selectAuthoredContextVolatileSourceRefs("cast magic fire and water", "tail", [cand0, cand1, cand2, cand3]);
+    const ids = res.refs.map((r) => r.sourceId);
+    // 0 (AND ANY): true (2/2 match) -> triggered
+    // 1 (NOT ALL): false (2/2 match, !allSecondary is false) -> suppressed
+    // 2 (NOT ANY): false (2/2 match, !anySecondary is false) -> suppressed
+    // 3 (AND ALL): true (2/2 match, allSecondary is true) -> triggered
+    assert.deepEqual(ids, ["source_0", "source_3"]);
+  }
+
+  // Scenario D: corpus has both secondaries "fire" and "water", but NO primary "magic"
+  {
+    const res = selectAuthoredContextVolatileSourceRefs("fire and water everywhere", "tail", [cand0, cand1, cand2, cand3]);
+    // None should trigger because primaryMatch fails
+    assert.deepEqual(res.refs, []);
+    assert.equal(res.tokenCount, 0);
+  }
+
+  // Scenario E: default selectiveLogic is 0 (AND ANY) when secondaryKeys is present but selectiveLogic is undefined
+  {
+    const candDefault = makeCandidate("def", ["magic"], ["fire", "water"]);
+    const resHit = selectAuthoredContextVolatileSourceRefs("magic fire", "tail", [candDefault]);
+    assert.equal(resHit.refs.length, 1);
+    const resMiss = selectAuthoredContextVolatileSourceRefs("magic only", "tail", [candDefault]);
+    assert.equal(resMiss.refs.length, 0);
+  }
+
+  // Scenario F: validation rejects invalid secondaryKeys and selectiveLogic
+  {
+    assert.throws(
+      () => selectAuthoredContextVolatileSourceRefs("magic", "tail", [{ ...cand0, secondaryKeys: [] as any }]),
+      /invalid_chat_turn_context_volatile_candidate/,
+    );
+    assert.throws(
+      () => selectAuthoredContextVolatileSourceRefs("magic", "tail", [{ ...cand0, secondaryKeys: [""] as any }]),
+      /invalid_chat_turn_context_volatile_candidate/,
+    );
+    assert.throws(
+      () => selectAuthoredContextVolatileSourceRefs("magic", "tail", [{ ...cand0, secondaryKeys: [123] as any }]),
+      /invalid_chat_turn_context_volatile_candidate/,
+    );
+    assert.throws(
+      () => selectAuthoredContextVolatileSourceRefs("magic", "tail", [{ ...cand0, selectiveLogic: 4 as any }]),
+      /invalid_chat_turn_context_volatile_candidate/,
+    );
+    assert.throws(
+      () => selectAuthoredContextVolatileSourceRefs("magic", "tail", [{ ...cand0, selectiveLogic: -1 as any }]),
+      /invalid_chat_turn_context_volatile_candidate/,
+    );
+    assert.throws(
+      () => selectAuthoredContextVolatileSourceRefs("magic", "tail", [{ ...cand0, selectiveLogic: "0" as any }]),
+      /invalid_chat_turn_context_volatile_candidate/,
+    );
+  }
+});
+
 test("P4 durable turn acceptance, claim, start, and presentation transitions work atomically", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-thread-p4p5-");
   const continuityKey = createHash("sha256")
@@ -559,8 +707,8 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
     assert.equal(accepted.status, "accepted_queued");
 
     const acceptedState = await s.resumeThread("thread_01", "surface_01");
-    assert.deepEqual(acceptedState.currentTurnContextPlan, {
-      threadId: "thread_01",
+       assert.deepEqual(acceptedState.currentTurnContextPlan, {
+       threadId: "thread_01",
       turnId: accepted.turnId,
       continuityId: "continuity_01",
       companionId: "companion_01",
@@ -571,6 +719,8 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
       chatSurfaceSessionId: "surface_01",
       stableSources: [],
       stableTokenCount: 0,
+      volatileSources: [],
+      volatileTokenCount: 0,
     });
 
     const claimBinding = {

@@ -20,7 +20,7 @@
  */
 
 import type { StardewCompatibilityStatus } from "./stardew-compatibility.js";
-import { StardewAttachmentFlow } from "./stardew-attachment.js";
+import type { StardewAttachmentFlow } from "./stardew-attachment.js";
 import type {
   StardewAiClientProcessOwner,
   StopOwnedAiClientResult,

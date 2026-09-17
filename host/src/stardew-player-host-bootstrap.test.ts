@@ -11,7 +11,7 @@ import { createStardewPrivateBootstrapComposerTestSupport } from "./games/starde
 
 type AssertFalse<T extends false> = T;
 type ClaimCannotBeStructurallyMinted = AssertFalse<
-  {} extends StardewPlayerHostBootstrapClaim ? true : false
+  object extends StardewPlayerHostBootstrapClaim ? true : false
 >;
 void (0 as unknown as ClaimCannotBeStructurallyMinted);
 

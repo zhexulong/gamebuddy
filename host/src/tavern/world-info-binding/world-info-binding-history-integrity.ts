@@ -1,4 +1,4 @@
-import type { AcceptedTurnAuthoredContextPlan, AuthoredContextSourceRef } from "../chat-thread-store.js";
+import type { AcceptedTurnAuthoredContextPlan } from "../chat-thread-store.js";
 import type { PublicWorldInfoProjection, WorldInfoManagementRepository } from "../world-info-management/world-info-management.js";
 import { createHash } from "node:crypto";
 import { canonicalHash } from "../artifact-store.js";

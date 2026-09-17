@@ -124,7 +124,7 @@ function hasExactOwnKeys(value: JsonObject, keys: readonly string[]): boolean {
   const ownKeys = Object.keys(value);
   return (
     ownKeys.length === keys.length &&
-    keys.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+    keys.every((key) => Object.hasOwn(value, key))
   );
 }
 

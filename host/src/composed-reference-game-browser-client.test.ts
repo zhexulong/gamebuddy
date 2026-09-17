@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
 import test from "node:test";
 import {
   createComposedReferenceGameBrowserRequestHandler,

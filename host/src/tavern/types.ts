@@ -2,6 +2,7 @@
 const TAVERN_SCHEMA_VERSION = 1 as const;
 const ID = /^[A-Za-z0-9._-]{1,128}$/u;
 const TEXT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
+const SINGLE_LINE = /[\u0000-\u001F\u007F-\u009F]/u;
 type RuntimeEligibility = "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
 type ArtifactRevision = Readonly<{ schemaVersion: typeof TAVERN_SCHEMA_VERSION; revision: number }>;
 export type CharacterCandidate = ArtifactRevision &
@@ -142,7 +143,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
   const sourceFormat = requiredSourceFormat(v.sourceFormat);
   const sourceVersion = requiredText(v.sourceVersion, 64);
   const sourceHash = requiredHash(v.sourceHash);
-  const name = requiredText(v.name, 128);
+  const name = requiredSingleLine(v.name, 128);
   const reviewState = requiredReviewState(v.reviewState);
   return freeze({
     schemaVersion: TAVERN_SCHEMA_VERSION,
@@ -232,7 +233,7 @@ function companion(v: Record<string, unknown>): TavernCompanion {
     revision: requiredRevision(v.revision),
     companionId: requiredId(v.companionId),
     continuityId: requiredId(v.continuityId),
-    name: requiredText(v.name, 128),
+    name: requiredSingleLine(v.name, 128),
     profileId: requiredId(v.profileId),
     profileRevision: requiredRevision(v.profileRevision),
     profileHash: requiredHash(v.profileHash),
@@ -245,7 +246,7 @@ function persona(v: Record<string, unknown>): UserPersona {
     schemaVersion: TAVERN_SCHEMA_VERSION,
     revision: requiredRevision(v.revision),
     personaId: requiredId(v.personaId),
-    name: requiredText(v.name, 128),
+    name: requiredSingleLine(v.name, 128),
     ...(description === undefined ? {} : { description }),
   });
 }
@@ -256,7 +257,7 @@ function scenario(v: Record<string, unknown>): Scenario {
     schemaVersion: TAVERN_SCHEMA_VERSION,
     revision: requiredRevision(v.revision),
     scenarioId: requiredId(v.scenarioId),
-    name: requiredText(v.name, 128),
+    name: requiredSingleLine(v.name, 128),
     description: requiredText(v.description, 8_192),
     text: requiredText(v.text, 8_192),
     provenance: requiredProvenance(v.provenance),
@@ -277,7 +278,7 @@ function greetings(v: Record<string, unknown>): GreetingSet {
   if (!only(v, ["schemaVersion", "revision", "greetingSetId", "label", "variants"])) fail();
   const variants = array(v.variants, 16).map((x) => {
     if (!record(x) || !only(x, ["variantId", "label", "text"])) fail();
-    const label = optionalText(x.label, 128);
+    const label = optionalSingleLine(x.label, 128);
     return freeze({
       variantId: requiredId(x.variantId),
       ...(label === undefined ? {} : { label }),
@@ -285,7 +286,7 @@ function greetings(v: Record<string, unknown>): GreetingSet {
     });
   });
   if (new Set(variants.map((x) => x.variantId)).size !== variants.length) fail();
-  const label = optionalText(v.label, 128);
+  const label = optionalSingleLine(v.label, 128);
   return freeze({
     schemaVersion: TAVERN_SCHEMA_VERSION,
     revision: requiredRevision(v.revision),
@@ -380,6 +381,17 @@ function requiredText(v: unknown, max: number): string {
 function optionalText(v: unknown, max: number): string | undefined {
   if (v === undefined) return undefined;
   return requiredText(v, max);
+}
+function singleLine(v: unknown, max: number): v is string {
+  return typeof v === "string" && v.length > 0 && v.length <= max && !SINGLE_LINE.test(v);
+}
+function requiredSingleLine(v: unknown, max: number): string {
+  if (!singleLine(v, max)) fail();
+  return v;
+}
+function optionalSingleLine(v: unknown, max: number): string | undefined {
+  if (v === undefined) return undefined;
+  return requiredSingleLine(v, max);
 }
 function requiredHash(v: unknown): string {
   if (!hash(v)) fail();

@@ -24,11 +24,6 @@ export type ActiveSwipeSelection =
   | null
   | undefined;
 
-type SwipeGroup = Readonly<{
-  parentId: string | null;
-  nodes: readonly MessageTreeNode[];
-}>;
-
 export type SwipeInfo = Readonly<{
   nodeId: string;
   parentId: string | null;
@@ -164,7 +159,7 @@ function resolveSwipeIndex(
       }
     } else if (typeof activeSwipeIndices === "object") {
       const record = activeSwipeIndices as Record<string, number>;
-      const key = parentId === null ? (record["root"] !== undefined ? "root" : "null") : parentId;
+      const key = parentId === null ? (record.root !== undefined ? "root" : "null") : parentId;
       if (record[key] !== undefined) {
         const val = record[key];
         if (typeof val === "number" && Number.isFinite(val)) {

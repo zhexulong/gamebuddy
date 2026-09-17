@@ -32,7 +32,7 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
       summary: "A small valley town.",
       entries: [{ scope: "setting", publicTitle: "Town square", summary: "The center of town.", constant: true, keys: ["square", "town"] }],
     });
-    const updated = await repository.update("Pelican Town", {
+    await repository.update("Pelican Town", {
       expectedRevision: 1,
       publicTitle: "Pelican Town",
       summary: "A small valley town, revised.",

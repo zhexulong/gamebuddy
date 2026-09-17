@@ -1,11 +1,11 @@
 import { spawn, spawnSync } from "node:child_process";
-import {
-  type StardewAiClientProcessProbeResult,
-  type StardewAiClientProcessSpawnResult,
+import type {
+  StardewAiClientProcessProbeResult,
+  StardewAiClientProcessSpawnResult,
 } from "../../../stardew-ai-client-process-owner.js";
-import {
-  type StardewPlayerHostProcessProbeResult,
-  type StardewPlayerHostProcessSpawnResult,
+import type {
+  StardewPlayerHostProcessProbeResult,
+  StardewPlayerHostProcessSpawnResult,
 } from "../../../stardew-player-host-process-owner.js";
 
 export function productionSpawn(

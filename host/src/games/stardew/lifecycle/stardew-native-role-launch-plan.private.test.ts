@@ -104,7 +104,7 @@ test("rejects undeclared or missing environment keys fail-closed like ParseLaunc
     /environment_key_disallowed/,
   );
   const withoutGeneration = makeEnvironment();
-  delete withoutGeneration["GAMEBUDDY_STARDEW_LAUNCH_GENERATION"];
+  delete withoutGeneration.GAMEBUDDY_STARDEW_LAUNCH_GENERATION;
   assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ environment: withoutGeneration })), /environment_required_missing/);
   assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ environment: { ...makeEnvironment(), PATH: "bad\u0000value" } })), /environment_value_invalid/);
 });

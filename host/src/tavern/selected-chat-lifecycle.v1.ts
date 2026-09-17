@@ -32,16 +32,3 @@ export const SELECTED_CHAT_LIFECYCLE_V1 = Object.freeze({
 export function chatLifecycleRouteEnabled(routeId: string): boolean {
   return SELECTED_CHAT_LIFECYCLE_V1.routes.some((route) => route.id === routeId);
 }
-
-function selectedChatLifecycleBootstrapModel(): Readonly<{
-  profile: Readonly<{ schemaVersion: number; id: string }>;
-  routes: readonly ChatLifecycleRoute[];
-}> {
-  return Object.freeze({
-    profile: Object.freeze({
-      schemaVersion: SELECTED_CHAT_LIFECYCLE_V1.schemaVersion,
-      id: SELECTED_CHAT_LIFECYCLE_V1.id,
-    }),
-    routes: SELECTED_CHAT_LIFECYCLE_V1.routes,
-  });
-}

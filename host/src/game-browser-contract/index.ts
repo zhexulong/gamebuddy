@@ -354,26 +354,6 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.stardew.cabins.confirm",
 ] as const);
 
-const GameOperationId = Type.Union([
-  Type.Literal("game.prerequisites.read"),
-  Type.Literal("game.prerequisites.setup"),
-  Type.Literal("game.instances.read"),
-  Type.Literal("game.state.read"),
-  Type.Literal("game.launch"),
-  Type.Literal("game.attach"),
-  Type.Literal("game.stop"),
-  Type.Literal("game.resume"),
-  Type.Literal("game.reopen"),
-  Type.Literal("game.disconnect"),
-  Type.Literal("game.diagnostics.read"),
-  Type.Literal("game.stardew.cabins.read"),
-  Type.Literal("game.stardew.cabins.confirm"),
-]);
-
-const GameNavigationItemId = Type.Union([Type.Literal("game")]);
-
-const GameReleaseTier = Type.Union([Type.Literal("game_preview")]);
-
 const contractDeclaredOperationIds = new Set<string>(GAME_BROWSER_OPERATION_IDS_V1);
 const contractDeclaredNavigationItemIds = new Set<string>(["game"]);
 
@@ -504,17 +484,8 @@ export const GameBrowserValidatorsV1: Readonly<Record<keyof typeof GameBrowserCo
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type GameBrowserStateV1 = Static<typeof GameBrowserStateV1Schema>;
-type GamePrerequisiteStateV1 = Static<typeof GamePrerequisiteStateV1Schema>;
-type GameInstanceV1 = Static<typeof GameInstanceV1Schema>;
-type GameCompatibilityV1 = Static<typeof GameCompatibilityV1Schema>;
-type GameAttachmentStateV1 = Static<typeof GameAttachmentStateV1Schema>;
-type GameCapabilitySummaryV1 = Static<typeof GameCapabilitySummaryV1Schema>;
-type GamePrerequisitesReadCommandV1 = Static<typeof GamePrerequisitesReadCommandV1Schema>;
 export type GamePrerequisitesSetupCommandV1 = Static<typeof GamePrerequisitesSetupCommandV1Schema>;
-type GameInstancesReadCommandV1 = Static<typeof GameInstancesReadCommandV1Schema>;
-type GameStateReadCommandV1 = Static<typeof GameStateReadCommandV1Schema>;
 export type GameLaunchCommandV1 = Static<typeof GameLaunchCommandV1Schema>;
-type GameAttachCommandV1 = Static<typeof GameAttachCommandV1Schema>;
 export type GameStopCommandV1 = Static<typeof GameStopCommandV1Schema>;
 export type GameResumeCommandV1 = Static<typeof GameResumeCommandV1Schema>;
 
@@ -531,8 +502,6 @@ export type GameResumeResultV1 = Static<typeof GameResumeResultV1Schema>;
 export type GameReopenActionAuthorityCommandV1 = Static<typeof GameReopenActionAuthorityCommandV1Schema>;
 export type GameReopenActionAuthorityResultV1 = Static<typeof GameReopenActionAuthorityResultV1Schema>;
 export type GameDisconnectCommandV1 = Static<typeof GameDisconnectCommandV1Schema>;
-type GameDiagnosticsReadCommandV1 = Static<typeof GameDiagnosticsReadCommandV1Schema>;
-type GameProblemV1 = Static<typeof GameProblemV1Schema>;
 export type StardewCabinChoicesV1 = Static<typeof StardewCabinChoicesV1Schema>;
 export type StardewCabinConfirmCommandV1 = Static<typeof StardewCabinConfirmCommandV1Schema>;
 export type StardewCabinConfirmResultV1 = Static<typeof StardewCabinConfirmResultV1Schema>;
