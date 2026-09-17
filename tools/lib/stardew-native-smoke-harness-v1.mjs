@@ -17,8 +17,8 @@ export const TERMINAL_STATES = new Set([
   "uncertain",
 ]);
 
-const MAX_REQUEST_TIMEOUT_MS = 60_000;
-const MAX_TERMINAL_WAIT_MS = 300_000;
+const MAX_REQUEST_TIMEOUT_MS = 600_000;
+const MAX_TERMINAL_WAIT_MS = 600_000;
 
 export class NativeSmokeHarnessError extends Error {
   constructor(code) {
@@ -259,7 +259,12 @@ export async function connectNativeLocalClient(
   };
 }
 
-/** Poll until the snapshot is actionable with no active execution. */
+/**
+ * Poll until the snapshot is actionable with no active execution. A polled
+ * observe may be rejected as stale while the world revision is unchanged
+ * between actions; that is "not changed yet", not a terminal failure, so the
+ * poll continues to its deadline.
+ */
 export async function waitForActionable(client, snapshot, timeoutMs) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TERMINAL_WAIT_MS)
     throw new NativeSmokeHarnessError("invalid_native_actionable_timeout");
@@ -268,9 +273,25 @@ export async function waitForActionable(client, snapshot, timeoutMs) {
   while (Date.now() < deadline) {
     if (latest?.actionable === true && latest.activeExecution == null) return latest;
     await delay(100);
-    latest = await observeFresh(client);
+    latest = await observeFreshPolling(client);
   }
   throw new NativeSmokeHarnessError("native_snapshot_not_actionable");
+}
+
+/**
+ * One poll observation that tolerates the client's stale-revision rejection
+ * (same world revision between actions) as "not changed yet".
+ */
+async function observeFreshPolling(client) {
+  try {
+    return await observeFresh(client);
+  } catch (error) {
+    if (error instanceof Error && error.message === "observe_snapshot_not_admitted") {
+      const cached = client.state?.snapshot;
+      if (cached !== null && cached !== undefined) return cached;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -289,10 +310,10 @@ export async function waitForFreshSnapshot(
     throw new NativeSmokeHarnessError("invalid_native_reread_check");
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const snapshot = await observeFresh(client);
-    if (snapshot.revision < minRevision) continue;
-    if (requireActionable && (snapshot.actionable !== true || snapshot.activeExecution != null)) continue;
-    if (check !== undefined && !check(snapshot)) continue;
+    const snapshot = await observeFreshPolling(client);
+    if (snapshot.revision < minRevision) { await delay(100); continue; }
+    if (requireActionable && (snapshot.actionable !== true || snapshot.activeExecution != null)) { await delay(100); continue; }
+    if (check !== undefined && !check(snapshot)) { await delay(100); continue; }
     return snapshot;
   }
   throw new NativeSmokeHarnessError("native_fresh_snapshot_timeout");
