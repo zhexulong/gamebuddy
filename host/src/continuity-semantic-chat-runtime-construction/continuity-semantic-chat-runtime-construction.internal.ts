@@ -2,8 +2,8 @@ import { join } from "node:path";
 import type { ChatRuntimeBindingExecution } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { PresentationRuntime } from "../presentation.js";
-import type { CompanionIdentity, CompanionModelConfig } from "../runtime.js";
-import { identityKey, resolveRuntimePaths } from "../runtime.js";
+import type { CompanionIdentity, CompanionModelConfig } from "../runtime-identity.js";
+import { identityKey, resolveRuntimePaths } from "../runtime-identity.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
@@ -121,7 +121,7 @@ export async function prepareExactChatRuntimeConstruction(
           ? freshState.thread
           : Object.freeze({
               ...freshState.thread,
-              ...(effectiveBinding === undefined ? { worldBookBinding: undefined } : { worldBookBinding: effectiveBinding }),
+              ...(effectiveBinding === undefined ? {} : { worldBookBinding: effectiveBinding }),
             });
       return await materializeTavernAuthoredStableCatalog(
         tavernPaths,

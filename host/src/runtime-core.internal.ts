@@ -1,8 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -58,6 +56,17 @@ import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
 import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
+
+import {
+  identityKey,
+  resolveRuntimePaths,
+  type CompanionIdentity,
+  type CompanionModelConfig,
+  type CompanionThinkingLevel,
+  type RuntimePaths,
+} from "./runtime-identity.js";
+export { identityKey, resolveRuntimePaths };
+export type { CompanionModelConfig, CompanionThinkingLevel, RuntimePaths };
 
 export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
   pi: "0.84.4",
@@ -166,40 +175,13 @@ export const PHASE_0B_ALLOWED_TOOL_NAMES = Object.freeze(["companion_status"]);
  * experience key; legacy game-only callers may omit it and remain partitioned
  * by their exact save/world pair. A dialogue surface has no live world.
  */
-export type CompanionIdentity = Readonly<{
-  playerId: string;
-  companionId: string;
-  continuityId?: string;
-  saveId?: string;
-  worldId?: string;
-}>;
+export type { CompanionIdentity } from "./runtime-identity.js";
 
 export type GameCompanionIdentity = CompanionIdentity &
   Readonly<{
     saveId: string;
     worldId: string;
   }>;
-
-export type RuntimePaths = Readonly<{
-  root: string;
-  runtimeCwd: string;
-  agentDir: string;
-  sessionDir: string;
-  identityProfilePath: string;
-  identityProfileBindingPath: string;
-  runManifestPath: string;
-  /** Explicit user-visible surface session ID when the continuity ledger selects one. */
-  surfaceSessionId?: string;
-}>;
-
-export type CompanionThinkingLevel = "low" | "medium" | "high";
-
-export type CompanionModelConfig = Readonly<{
-  /** CPA is the configured local provider boundary for approved Agent models. */
-  provider: "cpa-oai";
-  modelId: "deepseek-v4-flash" | "gpt-5.6-luna";
-  thinkingLevel: CompanionThinkingLevel;
-}>;
 
 /** The player-facing Dialogue Director uses DeepSeek V4 Flash; gameplay children never inherit it. */
 export const DEFAULT_COMPANION_MODEL_CONFIG: CompanionModelConfig =
@@ -293,15 +275,6 @@ export type RuntimeSession = Readonly<{
   refreshIntegrationTools?: () => Promise<void>;
 }>;
 
-function requireOpaqueSegment(label: string, value: string): string {
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(value)) {
-    throw new Error(
-      `${label} must be a 1–128 character opaque identifier using only letters, digits, _ and -.`,
-    );
-  }
-  return value;
-}
-
 /** Stable, non-display-name partition for one logical Companion continuity. */
 export function assertFrozenFixedTools(tools: readonly ToolDefinition[]): void {
   if (!Object.isFrozen(tools) || !tools.every((tool) => Object.isFrozen(tool)))
@@ -309,29 +282,6 @@ export function assertFrozenFixedTools(tools: readonly ToolDefinition[]): void {
   const names = tools.map((tool) => tool.name);
   if (names.some((name) => typeof name !== "string" || name.length === 0) || new Set(names).size !== names.length)
     throw new Error("fixed_runtime_tool_name_collision");
-}
-
-export function identityKey(identity: CompanionIdentity): string {
-  const canonical =
-    identity.continuityId === undefined
-      ? [
-          requireOpaqueSegment("playerId", identity.playerId),
-          requireOpaqueSegment(
-            "saveId",
-            requiredGameId("saveId", identity.saveId),
-          ),
-          requireOpaqueSegment(
-            "worldId",
-            requiredGameId("worldId", identity.worldId),
-          ),
-          requireOpaqueSegment("companionId", identity.companionId),
-        ]
-      : [
-          requireOpaqueSegment("playerId", identity.playerId),
-          requireOpaqueSegment("companionId", identity.companionId),
-          requireOpaqueSegment("continuityId", identity.continuityId),
-        ];
-  return createHash("sha256").update(canonical.join("\u001f")).digest("hex");
 }
 
 /**
@@ -440,48 +390,6 @@ function createIntegrationToolRefresher(input: Readonly<{
     } finally {
       running = undefined;
     }
-  };
-}
-
-function requiredGameId(
-  label: "saveId" | "worldId",
-  value: string | undefined,
-): string {
-  if (value === undefined)
-    throw new Error(`${label} is required when continuityId is absent.`);
-  return value;
-}
-
-export function resolveRuntimePaths(
-  identity: CompanionIdentity,
-  root = join(homedir(), ".gamebuddy"),
-  surfaceSessionId?: string,
-): RuntimePaths {
-  const key = identityKey(identity);
-  const resolvedRoot = resolve(root);
-  const runtimeCwd = join(resolvedRoot, "contexts", key);
-  if (surfaceSessionId !== undefined)
-    requireOpaqueSegment("surfaceSessionId", surfaceSessionId);
-  const sessionRoot =
-    surfaceSessionId === undefined
-      ? runtimeCwd
-      : join(runtimeCwd, "surface-sessions", surfaceSessionId);
-
-  return {
-    root: resolvedRoot,
-    runtimeCwd,
-    agentDir: join(runtimeCwd, "pi-agent"),
-    sessionDir: join(sessionRoot, "sessions"),
-    identityProfilePath: join(runtimeCwd, "identity-profile.json"),
-    identityProfileBindingPath:
-      surfaceSessionId === undefined
-        ? join(runtimeCwd, "identity-profile-binding.json")
-        : join(sessionRoot, "identity-profile-binding.json"),
-    runManifestPath:
-      surfaceSessionId === undefined
-        ? join(runtimeCwd, "companion-run-manifest.json")
-        : join(sessionRoot, "companion-run-manifest.json"),
-    ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
   };
 }
 
