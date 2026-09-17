@@ -96,6 +96,7 @@ test("GameBrowserStateV1 accepts every valid connectionStatus value", () => {
     "active",
     "stopping",
     "reconnecting",
+    "syncing",
     "stopped",
     "failed",
     "disconnected",
@@ -103,6 +104,18 @@ test("GameBrowserStateV1 accepts every valid connectionStatus value", () => {
   for (const connectionStatus of validStatuses) {
     assert.equal(validator.Check({ ...baseState, game: { ...baseState.game, connectionStatus } }), true);
   }
+});
+
+test("GameBrowserStateV1 accepts the resume-phase syncing value distinct from reconnecting and connected_idle", () => {
+  const validator = Compile(GameBrowserStateV1Schema);
+  const state = { ...baseState, game: { ...baseState.game, connectionStatus: "syncing" as const } };
+  assert.equal(validator.Check(state), true);
+  // Resume phase order: reconnecting → syncing → connected_idle. A syncing
+  // snapshot is never already connected and is distinct from the pending
+  // reconnect phase.
+  assert.notEqual(state.game.connectionStatus, "reconnecting");
+  assert.notEqual(state.game.connectionStatus, "connected_idle");
+  assert.notEqual(state.game.connectionStatus, "active");
 });
 
 test("GameBrowserStateV1 pending states never claim connected", () => {
