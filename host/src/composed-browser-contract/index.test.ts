@@ -11,7 +11,7 @@ import {
   isComposedReferenceGameBrowserProfile,
 } from "./index.js";
 import { TavernBrowserFixtureV1 } from "../tavern/browser-contract/index.js";
-import { GameBrowserFixtureV1, GAME_BROWSER_OPERATION_IDS_V1 } from "../game-browser-contract/index.js";
+import { GameBrowserFixtureV1 } from "../game-browser-contract/index.js";
 import { composeTavernProfile, isComposedTavernProfile } from "../tavern/browser-contract/index.js";
 import { composeGameProfile } from "../game-browser-contract/index.js";
 

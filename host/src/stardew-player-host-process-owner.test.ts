@@ -25,7 +25,7 @@ import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclai
 
 type AssertFalse<T extends false> = T;
 type ReservationCannotBeStructurallyMinted = AssertFalse<
-  {} extends StardewPlayerHostLaunchReservation ? true : false
+  object extends StardewPlayerHostLaunchReservation ? true : false
 >;
 void (0 as unknown as ReservationCannotBeStructurallyMinted);
 

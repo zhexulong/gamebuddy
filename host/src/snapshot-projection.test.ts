@@ -7,9 +7,6 @@ import {
   projectInventoryContext,
   projectGameSnapshotContext,
   MAX_GAME_SNAPSHOT_PROJECTION_BYTES,
-  type MovementContextProjection,
-  type FarmingContextProjection,
-  type InventoryContextProjection,
 } from "./snapshot-projection.js";
 import type { Snapshot } from "./protocol.js";
 

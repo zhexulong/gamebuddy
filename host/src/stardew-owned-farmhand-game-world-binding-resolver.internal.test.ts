@@ -23,24 +23,6 @@ const bootstrap: ProductionBootstrapInput = {
 
 type StoreView = ReturnType<ProductionContinuityStore["bindBootstrapContext"]>;
 
-function createStardewSession(
-  root: string,
-  creationRequestId: string,
-  integrationId = "stardew",
-  bindingRef = "opaque-world-ref",
-  operationId = "bind-resolver-01",
-) {
-  const control = openProductionContinuityStore({ runtimeRoot: root });
-  const metadata = control.bootstrapFresh(bootstrap);
-  const store = control.bindBootstrapContext({ bootstrap, metadata });
-  const session = store.createGameSessionMetadata({
-    creationRequestId,
-    integrationId,
-    continuityIdentityId: principal.continuityId,
-  });
-  return { control, store, session };
-}
-
 function registerBinding(
   store: StoreView,
   session: { gameSessionId: string },
@@ -125,7 +107,6 @@ test("exact registered binding resolves and reopen reads the same record", async
 
     // Reopen consistency: the exact registered binding survives reopen.
     const reopenedControl = openProductionContinuityStore({ runtimeRoot: root });
-    let reopenedClosed = false;
     try {
       const reopenedStore = reopenedControl.bindBootstrapContext({
         bootstrap,
@@ -139,7 +120,6 @@ test("exact registered binding resolves and reopen reads the same record", async
       if (reopenedOutcome.ok) assert.deepEqual(reopenedOutcome.binding, registered);
     } finally {
       reopenedControl.close();
-      reopenedClosed = true;
     }
   });
 });
@@ -212,7 +192,6 @@ test("terminal binding is unavailable and remains unavailable after reopen", asy
 
     // Reopen consistency: terminal is sticky across reopen.
     const reopenedControl = openProductionContinuityStore({ runtimeRoot: root });
-    let reopenedClosed = false;
     try {
       const reopenedStore = reopenedControl.bindBootstrapContext({
         bootstrap,
@@ -225,7 +204,6 @@ test("terminal binding is unavailable and remains unavailable after reopen", asy
       assert.deepEqual(reopenedOutcome, { ok: false, reason: "terminal" });
     } finally {
       reopenedControl.close();
-      reopenedClosed = true;
     }
   });
 });

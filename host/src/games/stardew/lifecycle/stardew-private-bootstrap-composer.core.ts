@@ -2,32 +2,32 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rmdir, writeFile } from "node:fs/promises";
 import { platform } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import {
-  type LaunchAiClientInput,
-  type ReadOwnedAiClientGenerationResult,
-  type StardewAiClientLaunchReservation,
-  type StardewAiClientProcessOwner,
-  type StardewAiClientProcessProbe,
-  type StardewAiClientProcessSpawn,
-  type StardewAiClientProcessStatus,
-  type StopOwnedAiClientResult,
+import type {
+  LaunchAiClientInput,
+  ReadOwnedAiClientGenerationResult,
+  StardewAiClientLaunchReservation,
+  StardewAiClientProcessOwner,
+  StardewAiClientProcessProbe,
+  StardewAiClientProcessSpawn,
+  StardewAiClientProcessStatus,
+  StopOwnedAiClientResult,
 } from "../../../stardew-ai-client-process-owner.js";
-import {
-  type StardewPlayerHostBootstrapBroker,
-  type StardewPlayerHostBootstrapCapability,
-  type StardewPlayerHostBootstrapClaim,
-  type StardewPlayerHostBootstrapRequest,
-  type StardewPlayerHostBootstrapView,
+import type {
+  StardewPlayerHostBootstrapBroker,
+  StardewPlayerHostBootstrapCapability,
+  StardewPlayerHostBootstrapClaim,
+  StardewPlayerHostBootstrapRequest,
+  StardewPlayerHostBootstrapView,
 } from "../../../stardew-player-host-bootstrap.js";
-import {
-  type LaunchPlayerHostInput,
-  type StardewPlayerHostLaunchReservation,
-  type StardewPlayerHostProcessOwner,
-  type StardewPlayerHostProcessProbe,
-  type StardewPlayerHostProcessProbeResult,
-  type StardewPlayerHostProcessSpawn,
-  type StardewPlayerHostProcessStatus,
-  type StopOwnedPlayerHostResult,
+import type {
+  LaunchPlayerHostInput,
+  StardewPlayerHostLaunchReservation,
+  StardewPlayerHostProcessOwner,
+  StardewPlayerHostProcessProbe,
+  StardewPlayerHostProcessProbeResult,
+  StardewPlayerHostProcessSpawn,
+  StardewPlayerHostProcessStatus,
+  StopOwnedPlayerHostResult,
 } from "../../../stardew-player-host-process-owner.js";
 import {
   consumeAdmittedStardewInstallation,

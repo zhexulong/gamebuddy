@@ -226,7 +226,7 @@ test("navigate-to-destination mounts only from its live Mod execution publicatio
   assert.deepEqual((received as { args: unknown }).args, {
     destination: { kind: "label", label: "Mine" },
   });
-  assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /\"state\":\"accepted\"/);
+  assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /"state":"accepted"/);
 
   const readOnlyRegistration: MoveCapableIntegration = {
     ...executionIntegration,

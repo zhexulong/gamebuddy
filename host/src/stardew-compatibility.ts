@@ -45,19 +45,6 @@ export type StardewCompatibilityReasonCode =
   | "compatibility_evidence_incomplete"
   | "tuple_verified";
 
-/**
- * Named tri-state check values. Literal unions, never booleans: each check
- * distinguishes a confirmed positive, a confirmed negative classification,
- * an explicitness of the negative only where a mismatch is meaningful, and an
- * undetermined value. `not_applicable` is legal only for the native
- * multiplayer peer check (there may be no native multiplayer session).
- */
-type CompatibilityCheckValue =
-  | "confirmed_ok"
-  | "confirmed_failure"
-  | "confirmed_mismatch"
-  | "unknown";
-
 /** A concrete runtime is either present, confirmed missing, or unknown. */
 type RuntimePresenceCheck =
   | "confirmed_ok"

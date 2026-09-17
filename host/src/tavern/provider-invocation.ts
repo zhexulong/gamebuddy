@@ -14,7 +14,6 @@ export type ProviderInvocationResult =
   | Readonly<{ outcome: "failed"; ledger: FailedTurn }>
   | Readonly<{ outcome: "armed"; ledger: AttemptStartingTurn }>
   | Readonly<{ outcome: "not_started"; ledger: AttemptStartingTurn }>;
-type ProviderInvocationLedger = AttemptStartingTurn | CompletedTurn | CancelledTurn | FailedTurn;
 
 /** Ephemeral delta projection; it has no message ID or durable authority. */
 export type NativeChatPreview = Readonly<{
@@ -26,14 +25,6 @@ export type NativeChatPreviewPublisher = Readonly<{
   publish(preview: NativeChatPreview): void | Promise<void>;
   clear(): void | Promise<void>;
 }>;
-
-async function runMountedProviderInvocationLedger(
-  scope: ProviderInvocationScope,
-  previewPublisher?: NativeChatPreviewPublisher,
-): Promise<ProviderInvocationLedger> {
-  return (await runMountedProviderInvocation(scope, previewPublisher)).ledger;
-}
-
 
 function isDeadlineExpired(error: unknown): boolean {
   return error instanceof Error && /semantic_chat_runtime_p4_provider_start_deadline_expired/.test(error.message);

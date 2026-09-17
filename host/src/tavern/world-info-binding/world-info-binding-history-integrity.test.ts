@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { canonicalHash } from "../artifact-store.js";
 import type { AcceptedTurnAuthoredContextPlan } from "../chat-thread-store.js";

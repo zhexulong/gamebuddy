@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createCompanionLiveEvidenceArtifact } from "./companion-live-evidence-artifact.js";
 import { createLiveSourceAttester } from "./companion-live-source-attestation.js";
-import { CompanionLoop } from "./companion-loop.js";
-import { createFarmhandSystemNoticePresenter, type FarmhandPresentationBridge } from "./farmhand-companion-presentation.js";
-import { CompanionHostService, GameTurnLineageTracker } from "./host-service.js";
+import type { CompanionLoop } from "./companion-loop.js";
+import type { FarmhandPresentationBridge } from "./farmhand-companion-presentation.js";
+import { createFarmhandSystemNoticePresenter } from "./farmhand-companion-presentation.js";
+import type { CompanionHostService } from "./host-service.js";
+import { GameTurnLineageTracker } from "./host-service.js";
 import { assertReceiptBackedLaunch, type IntegrationLauncher, type IntegrationLaunchHandle } from "./integration-launcher.js";
 import type { GameCompanionIdentity, RuntimeSession } from "./runtime.js";
 import { isExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";

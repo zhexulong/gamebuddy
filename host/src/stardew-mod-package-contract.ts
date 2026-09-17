@@ -8,7 +8,6 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
   inspectWindowsPathIdentityChain,
   type WindowsReparseInspectorCapability,
-  type WindowsPathObjectIdentity,
 } from "./windows-reparse-inspector/index.js";
 
 export type StardewModPackageContract = Readonly<{

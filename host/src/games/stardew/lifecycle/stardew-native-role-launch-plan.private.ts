@@ -93,7 +93,7 @@ export function modelStardewNativeRoleLaunchPlan(input: StardewNativeRoleLaunchP
     environment[name] = value;
   }
   for (const key of STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(environment, key)) throw new Error("stardew_native_launch_plan_environment_required_missing");
+    if (!Object.hasOwn(environment, key)) throw new Error("stardew_native_launch_plan_environment_required_missing");
   }
   const planId = mintStardewNativeRoleLaunchPlanId();
   if (!matchesPlanIdFormat(planId)) throw new Error("stardew_native_launch_plan_id_invalid");

@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  ADVISORY_MINIMUM_SMAPI_VERSION,
   classifyStardewCompatibility,
   type StardewCompatibilityFacts,
-  type StardewCompatibilityOutcome,
   STARDEW_COMPATIBILITY_REASONS,
   STARDEW_COMPATIBILITY_REASONS_BY_STATUS,
   STARDEW_COMPATIBILITY_STATUSES,
@@ -29,9 +27,6 @@ function exactFacts(
     ...overrides,
   });
 }
-
-const allowed = (outcome: StardewCompatibilityOutcome): boolean =>
-  outcome.status !== "hard_incompatible";
 
 test("exact verified tuple with all named checks confirmed classifies verified and attachable", () => {
   const result = classifyStardewCompatibility(exactFacts());

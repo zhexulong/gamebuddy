@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { TSchema } from "typebox";
 import { Compile } from "typebox/compile";
 import {
   type ComposedTavernProfile,

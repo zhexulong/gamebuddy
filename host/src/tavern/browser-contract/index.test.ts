@@ -977,5 +977,5 @@ test("world-info bind command is a strict opaque revision-scoped union", () => {
   assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: "Pelican Town" }), false);
   assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, extra: true }), false);
   assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, selectionGeneration: 0 }), false);
-  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: handle + "=" }), false);
+  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: `${handle}=` }), false);
 });

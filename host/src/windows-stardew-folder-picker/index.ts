@@ -1,8 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { createPickerCapability, pickerState, type PickerState, type SpawnPicker, type WindowsStardewFolderPickerCapability } from "./internal.js";
 
 const helperFileName = "GameBuddy.WindowsStardewFolderPicker.exe";
@@ -12,8 +11,6 @@ const inventorySchema = "gamebuddy-host-production-inventory/v4";
 const originKind = "verified_windows_stardew_folder_picker";
 const outputLimitBytes = 16 * 1024;
 const defaultTimeoutMs = 120_000;
-const modulePath = fileURLToPath(import.meta.url);
-const repositoryRoot = resolve(dirname(modulePath), "..", "..");
 
 export type { WindowsStardewFolderPickerCapability } from "./internal.js";
 export type StardewFolderPickerResult = Readonly<{ status: "cancelled" } | { status: "selected"; path: string }>;
@@ -24,12 +21,6 @@ export async function createPublishedWindowsStardewFolderPicker(artifactRoot: st
   if (!isAbsolute(artifactRoot) || process.platform !== "win32" || process.arch !== "x64") throw unavailable();
   return createFixed(resolve(artifactRoot, pairDestination), artifactRoot, resolve(artifactRoot, "production-inventory.json"));
 }
-/** Explicit build/test mint; never used by the production mint. */
-async function createBuildWindowsStardewFolderPicker(): Promise<WindowsStardewFolderPickerCapability> {
-  if (process.platform !== "win32" || process.arch !== "x64") throw unavailable();
-  const root = resolve(repositoryRoot, "native", "windows-stardew-folder-picker", ".dist", "win-x64");
-  return createFixed(root, root, undefined);
-}
 
 /** Shows the native picker and returns an untrusted candidate or normal cancellation. */
 export async function selectStardewFolder(capability: WindowsStardewFolderPickerCapability): Promise<StardewFolderPickerResult> {
@@ -39,7 +30,7 @@ export async function selectStardewFolder(capability: WindowsStardewFolderPicker
 }
 
 function createFixed(pairRoot: string, root: string, inventoryPath: string | undefined) {
-  const facts = verifyPair({ root, pairRoot, executable: resolve(pairRoot, helperFileName), manifest: resolve(pairRoot, manifestFileName), inventoryPath });
+  const facts = verifyPair({ root, pairRoot, executable: resolve(pairRoot, helperFileName), manifest: resolve(pairRoot, manifestFileName), ...(inventoryPath === undefined ? {} : { inventoryPath }) });
   return createPickerCapability({ executable: facts.executable, spawnPicker: verifiedSpawn(facts) });
 }
 function verifiedSpawn(facts: PairFacts): SpawnPicker {
