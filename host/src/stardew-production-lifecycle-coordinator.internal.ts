@@ -941,7 +941,10 @@ function createCoordinator(
           actionAuthorityStatus = "unavailable";
           resumedGameSessionId = undefined;
         }
-      })().then(resolveAttempt, rejectAttempt);
+      })().then(() => {
+        if (attachmentTeardownPromise === attempt) attachmentTeardownPromise = undefined;
+        resolveAttempt();
+      }, rejectAttempt);
     } catch (error) {
       rejectAttempt(error);
     }
@@ -1013,32 +1016,65 @@ function createCoordinator(
    * unmounted semantic facade and entered lease (fresh observation and the
    * Game-owned companion conversation runtime), then the committed ingress
    * publication. Only the coordinator's existing materializer attach seam is
-   * reused; no old activation task or prompt state is resumed. Returns true
-   * when the attach completed, false when the attempt stays accepted because
-   * the attach cannot be built inside this instance (the one-shot bridge/owner
-   * seam is exhausted or never armed, or the coordinator owns no activation).
+   * reused; no old activation task or prompt state is resumed. Each resume
+   * first arms a fresh per-activation connection/launch generation in the core
+   * (ending the previous activation's AI, never reusing its connection,
+   * callback, lease, or attachment), then relaunches the AI client under the
+   * existing launch authority before consuming the freshly armed connection.
+   * Returns true when the attach completed, false when the attempt stays
+   * accepted because the attach cannot be built inside this instance (the
+   * profile was never materialized or no prior activation exists to supersede).
    */
   const attachResumedWorld = async (deadlineMs: number): Promise<boolean> => {
     const owner = exactOwner;
     if (owner === undefined) return false;
     attachmentConnectionStatus = "syncing";
-    while (farmhandGameRuntimeFacade === undefined) {
-      if (isClosing()) throw new Error("stardew_lifecycle_closing");
-      try {
-        farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
-          owner,
-          (connection) => materializeFarmhandGameSession(connection, deadlineMs),
-        );
-      } catch (error) {
-        if (isResumeAttachDeferredError(error)) {
-          // The attempt stays accepted: the fresh attach is pending on the
-          // next layer's fresh connection/launch authority for this owner.
-          attachmentConnectionStatus = "reconnecting";
-          return false;
+    try {
+      if (farmhandGameRuntimeFacade === undefined) {
+        // Fresh activation: prepare a genuinely new generation of the one-shot
+        // connection/launch authority, then relaunch the AI client through the
+        // existing Stage D seam (fresh installation reread before the exact
+        // claim at the launch decision). A deferred error keeps the attempt
+        // accepted; every other failure abandons the armed activation so a
+        // later resume can prepare a new generation again.
+        await internal.prepareFreshFarmhandAiClientActivation(owner);
+        try {
+          await withFreshRegisteredInstallation((installation) => aiClientLaunch(owner, installation));
+        } catch (error) {
+          await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
+          throw error;
         }
-        if (!isTransientFarmhandBridgeConnectError(error)) throw error;
-        await waitForFarmhandBridgeRetry(deadlineMs);
+        while (farmhandGameRuntimeFacade === undefined) {
+          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          try {
+            farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
+              owner,
+              (connection) => materializeFarmhandGameSession(connection, deadlineMs),
+            );
+          } catch (error) {
+            if (!isTransientFarmhandBridgeConnectError(error)) {
+              if (isResumeAttachDeferredError(error)) {
+                // A deferred error after arming closes the armed activation so
+                // the next resume can prepare again; the attempt stays accepted.
+                await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
+                attachmentConnectionStatus = "reconnecting";
+                return false;
+              }
+              await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
+              throw error;
+            }
+            await waitForFarmhandBridgeRetry(deadlineMs);
+          }
+        }
       }
+    } catch (error) {
+      if (isResumeAttachDeferredError(error)) {
+        // The attempt stays accepted: the fresh attach is pending on the next
+        // layer's fresh connection/launch authority for this owner.
+        attachmentConnectionStatus = "reconnecting";
+        return false;
+      }
+      throw error;
     }
     const enteredLease = await farmhandGameRuntimeFacade.runEnter();
     farmhandGameRuntimeLease = enteredLease;

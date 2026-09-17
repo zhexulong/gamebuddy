@@ -79,7 +79,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "launchMaterializedAiClientContained" | "consumeOwnedFarmhandBridgeConnection" | "launchStagedPlayerHost" | "launchStagedPlayerHostContained" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "launchMaterializedAiClientContained" | "consumeOwnedFarmhandBridgeConnection" | "prepareFreshFarmhandAiClientActivation" | "abandonFarmhandAiClientActivation" | "launchStagedPlayerHost" | "launchStagedPlayerHostContained" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -944,6 +944,7 @@ test("production internal composition exposes only the private C1 materializer w
   if (process.platform !== "win32") return;
   const internal = internalComposer.createStardewPrivateBootstrapComposition();
   assert.deepEqual(Object.keys(internal).sort(), [
+    "abandonFarmhandAiClientActivation",
     "composition",
     "consumeOwnedFarmhandBridgeConnection",
     "createOwnedPlayerHostAttachmentFlow",
@@ -954,6 +955,7 @@ test("production internal composition exposes only the private C1 materializer w
     "launchStagedPlayerHost",
     "launchStagedPlayerHostContained",
     "materializeAiClientProfileAfterManifestAdmission",
+    "prepareFreshFarmhandAiClientActivation",
     "quarantineOwnedPlayerHostOwner",
     "readAndCorrelateOwnedPlayerHostSession",
     "replaceStagedInstallationLocator",
@@ -3932,6 +3934,98 @@ test("private Farmhand Bridge connection rejects wrong owner, tamper, and stoppe
     /stardew_farmhand_bridge_ai_client_not_awaiting_attestation/,
   );
   assert.equal(callbacks, 0);
+});
+
+test("fresh Farmhand activation re-arms the one-shot authority with a fresh durable generation per activation", async () => {
+  const fixture = await prepareLaunchedAiClientFixture();
+  const ownerView = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner);
+  const ownerPath = join(ownerView.transactionDirectory, "owner.json");
+
+  // Initial activation: launch generation 1 and one bridge connection.
+  let firstGeneration: string | undefined;
+  await fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, (connection) => {
+    firstGeneration = connection.launchGeneration;
+    return Object.freeze({ close: () => undefined });
+  });
+  assert.equal(firstGeneration, "generation-1");
+  assert.equal(fixture.harness.spawnCalls[0]!.environmentGeneration, "generation-1");
+  assert.deepEqual(ownerView.record.aiClient.launchGeneration, "generation-1");
+  assert.equal(JSON.parse(await readFile(ownerPath, "utf8")).aiClient.launchGeneration, "generation-1");
+
+  // The one-shot connection stays consumed until a fresh activation is armed.
+  await assert.rejects(
+    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+      Object.freeze({ close: () => undefined })),
+    /stardew_farmhand_bridge_connection_not_available/,
+  );
+
+  // First fresh activation: the ended AI is stopped, generation 2 is reserved
+  // and durably rotated, and both per-activation states re-arm.
+  const prepared = await fixture.testCore.prepareFreshFarmhandAiClientActivation(fixture.owner);
+  assert.deepEqual(prepared, { launchGeneration: "generation-2" });
+  assert.deepEqual(ownerView.record.aiClient.launchGeneration, "generation-2");
+  assert.equal(JSON.parse(await readFile(ownerPath, "utf8")).aiClient.launchGeneration, "generation-2");
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(fixture.harness.killCalls, [4321]);
+
+  // An armed activation cannot be re-armed before its fresh launch/consume ran.
+  await assert.rejects(
+    () => fixture.testCore.prepareFreshFarmhandAiClientActivation(fixture.owner),
+    /stardew_farmhand_bridge_connection_not_available/,
+  );
+
+  // Fresh launch under the new reservation, then the re-armed connection
+  // consume binds the fresh generation end-to-end.
+  const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+  const launch = await fixture.testCore.launchMaterializedAiClient(fixture.owner, installation);
+  assert.deepEqual(launch, { status: { kind: "awaiting_ai_client_attestation" } });
+  assert.equal(fixture.harness.spawnCalls[1]!.environmentGeneration, "generation-2");
+  let secondGeneration: string | undefined;
+  await fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, (connection) => {
+    secondGeneration = connection.launchGeneration;
+    return Object.freeze({ close: () => undefined });
+  });
+  assert.equal(secondGeneration, "generation-2");
+  assert.equal(fixture.harness.spawnCalls.length, 2);
+
+  // The machine is per-activation: a second fresh activation repeats the cycle
+  // with a third generation and never reuses the second activation's objects.
+  const second = await fixture.testCore.prepareFreshFarmhandAiClientActivation(fixture.owner);
+  assert.deepEqual(second, { launchGeneration: "generation-3" });
+  assert.deepEqual(ownerView.record.aiClient.launchGeneration, "generation-3");
+  assert.equal(JSON.parse(await readFile(ownerPath, "utf8")).aiClient.launchGeneration, "generation-3");
+  assert.deepEqual(fixture.harness.killCalls, [4321, 4321]);
+});
+
+test("fresh Farmhand activation refuses to arm without an ended activation and abandon restores the consumed base", async () => {
+  // A never-consumed (or in-flight) activation cannot be superseded.
+  const neverEnded = await prepareMaterializedAiClientFixture();
+  await assert.rejects(
+    () => neverEnded.testCore.prepareFreshFarmhandAiClientActivation(neverEnded.owner),
+    /stardew_farmhand_bridge_connection_not_available/,
+  );
+
+  const fixture = await prepareLaunchedAiClientFixture();
+  await fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+    Object.freeze({ close: () => undefined }));
+
+  const armed = await fixture.testCore.prepareFreshFarmhandAiClientActivation(fixture.owner);
+  assert.deepEqual(armed, { launchGeneration: "generation-2" });
+  // An abandoned fresh activation returns to the fully consumed base so a
+  // later resume can prepare again.
+  await fixture.testCore.abandonFarmhandAiClientActivation(fixture.owner);
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_stopped" });
+  const record = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record;
+  assert.deepEqual(record.aiClient.launchGeneration, "generation-2");
+  await assert.rejects(
+    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+      Object.freeze({ close: () => undefined })),
+    /stardew_farmhand_bridge_connection_not_available/,
+  );
+  const rearmed = await fixture.testCore.prepareFreshFarmhandAiClientActivation(fixture.owner);
+  assert.deepEqual(rearmed, { launchGeneration: "generation-3" });
+  assert.deepEqual(fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record.aiClient.launchGeneration, "generation-3");
+  await fixture.testCore.abandonFarmhandAiClientActivation(fixture.owner);
 });
 
 test("connected no-live C1 composition privately provisions Bridge scope before exact AI launch", async () => {

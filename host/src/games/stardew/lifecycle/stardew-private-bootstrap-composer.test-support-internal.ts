@@ -64,6 +64,10 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
+  prepareFreshFarmhandAiClientActivation(
+    owner: StardewOwnedPlayerHostBootstrap,
+  ): Promise<{ launchGeneration: string }>;
+  abandonFarmhandAiClientActivation(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   launchStagedPlayerHost(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
