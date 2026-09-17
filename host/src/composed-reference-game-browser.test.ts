@@ -1107,6 +1107,38 @@ test("authenticated game.disconnect is schema-bound, admission-bound, and return
   } finally { await server.close(); }
 });
 
+test("composed state gate admits a resume-phase paused action-authority snapshot", async () => {
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    async readChat(context) { return stateForChat(context); },
+    async readGame(context) {
+      const base = GameBrowserFixtureV1.connectedState();
+      // Resume-phase facts: the fresh attachment is connected_idle while the
+      // coordinator-owned action authority stays paused until an explicit
+      // Game instruction reopens it.
+      return {
+        ...base,
+        build: { ...base.build, profileId: gameProfile.profileId },
+        csrfToken: context.csrfToken,
+        browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+        game: { ...base.game, actionAuthority: "paused" as const },
+      };
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    assert.equal(initial.status, 200);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, { headers: { origin: server.origin, cookie } });
+    assert.equal(state.status, 200);
+    const root = await state.json() as { game: { game: { connectionStatus: string; actionAuthority: string } } };
+    assert.equal(root.game.game.connectionStatus, "connected_idle");
+    assert.equal(root.game.game.actionAuthority, "paused");
+  } finally { await server.close(); }
+});
+
 test("game.resume mount is exact and cannot drift from its production callback", () => {
   assert.throws(
     () => createComposedReferenceGameBrowserRequestHandler({

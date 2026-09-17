@@ -56,6 +56,7 @@ const CONNECTION_STATUSES = [
   "disconnected",
 ] as const;
 const OUTCOMES = ["none", "succeeded", "failed", "cancelled"] as const;
+const ACTION_AUTHORITY_STATUSES = ["unavailable", "active", "paused"] as const;
 const PROBLEM_CODES = [
   "closed",
   "unauthorized",
@@ -83,6 +84,7 @@ const GAME_KEYS = [
   "compatibility",
   "attachment",
   "connectionStatus",
+  "actionAuthority",
   "role",
   "companionName",
   "selectedWorld",
@@ -126,6 +128,7 @@ export type GameBrowserStateV1 = Readonly<{
       generation: number;
     }>;
     connectionStatus: (typeof CONNECTION_STATUSES)[number];
+    actionAuthority: (typeof ACTION_AUTHORITY_STATUSES)[number];
     role: "player" | "companion" | null;
     companionName: string | null;
     selectedWorld: string | null;
@@ -412,6 +415,7 @@ function isGameProjection(value: unknown): value is GameBrowserStateV1 {
     return false;
   }
   if (!isOneOf(game.connectionStatus, CONNECTION_STATUSES) ||
+      !isOneOf(game.actionAuthority, ACTION_AUTHORITY_STATUSES) ||
       !(game.role === null || game.role === "player" || game.role === "companion") ||
       !isNullableLabel(game.companionName, MAX_GAME_LABEL_LENGTH) ||
       !isNullableLabel(game.selectedWorld, MAX_GAME_LABEL_LENGTH) ||

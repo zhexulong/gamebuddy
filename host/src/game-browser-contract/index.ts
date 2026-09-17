@@ -133,6 +133,12 @@ const ConnectionStatus = Type.Union([
   Type.Literal("disconnected"),
 ]);
 
+const ActionAuthority = Type.Union([
+  Type.Literal("unavailable"),
+  Type.Literal("active"),
+  Type.Literal("paused"),
+]);
+
 const Role = Type.Union([Type.Literal("player"), Type.Literal("companion"), Type.Null()]);
 
 const Outcome = Type.Union([
@@ -192,6 +198,13 @@ export const GameBrowserStateV1Schema = strictObject({
     compatibility: GameCompatibilityV1Schema,
     attachment: GameAttachmentStateV1Schema,
     connectionStatus: ConnectionStatus,
+    /**
+     * Coordinator-owned action authority: `unavailable` when no attached runtime
+     * stands behind the projection, `paused` during and after a resume until a
+     * fresh explicit Game instruction reopens admission, `active` when the
+     * attached runtime admits new Game instructions.
+     */
+    actionAuthority: ActionAuthority,
     role: Role,
     companionName: CompanionName,
     selectedWorld: SafeWorldLabel,
@@ -541,6 +554,7 @@ export const GameBrowserFixtureV1 = Object.freeze({
         compatibility: { status: "compatible" as const, message: null },
         attachment: { status: "none" as const, generation: 0 },
         connectionStatus: "none" as const,
+        actionAuthority: "unavailable" as const,
         role: null,
         companionName: null,
         selectedWorld: null,
@@ -561,6 +575,7 @@ export const GameBrowserFixtureV1 = Object.freeze({
         compatibility: { status: "compatible" as const, message: null },
         attachment: { status: "attached" as const, generation: 3 },
         connectionStatus: "connected_idle" as const,
+        actionAuthority: "active" as const,
         role: "player" as const,
         companionName: "Farmhand",
         selectedWorld: "Pelican Town",

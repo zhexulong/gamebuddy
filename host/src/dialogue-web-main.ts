@@ -144,6 +144,7 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
       lifecycleCoordinator.lifecycleReader,
       lifecycleCoordinator.attachmentReader,
       lifecycleCoordinator.launchReadinessReader,
+      lifecycleCoordinator.actionAuthorityReader,
     );
     const artifactRoot = hostArtifactRoot;
     const inspector = process.env.GAMEBUDDY_CHAT_LIVE_ARTIFACT === "gamebuddy.chat-live.v1"

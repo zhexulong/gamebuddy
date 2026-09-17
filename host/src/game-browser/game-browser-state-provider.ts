@@ -5,7 +5,7 @@ import {
   isComposedGameProfile,
 } from "../game-browser-contract/index.js";
 import type { StardewCompatibilityStatus } from "../stardew-compatibility.js";
-import type { StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView, StardewGameSurfaceLaunchReadinessReader, StardewGameSurfaceLaunchReadinessView } from "../stardew-production-lifecycle-coordinator.internal.js";
+import type { StardewGameSurfaceActionAuthorityReader, StardewGameSurfaceActionAuthorityView, StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView, StardewGameSurfaceLaunchReadinessReader, StardewGameSurfaceLaunchReadinessView } from "../stardew-production-lifecycle-coordinator.internal.js";
 import type {
   StardewRoleLifecycleReader,
   StardewRoleLifecycleView,
@@ -24,8 +24,9 @@ type GameBrowserReadStateContext = Readonly<{
  *
  * This deliberately projects only facts that already exist. Role lifecycle
  * evidence governs installation compatibility; the independent Host-owned
- * attachment reader governs the exact surface generation and connection state.
- * Neither source attests catalog, companion, world/save, or action outcomes.
+ * attachment reader governs the exact surface generation and connection state;
+ * the Host-owned action authority reader governs ready-actions-paused. Neither
+ * source attests catalog, companion, world/save, or action outcomes.
  */
 export type GameBrowserStateProvider = Readonly<{
   readState(context: GameBrowserReadStateContext): Promise<GameBrowserStateV1>;
@@ -36,6 +37,7 @@ export function createGameBrowserStateProvider(
   lifecycle: StardewRoleLifecycleReader,
   attachment: StardewGameSurfaceAttachmentReader,
   launchReadiness: StardewGameSurfaceLaunchReadinessReader,
+  actionAuthority?: StardewGameSurfaceActionAuthorityReader,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
   if (!profile.operationIds.includes("game.state.read"))
@@ -47,7 +49,8 @@ export function createGameBrowserStateProvider(
       const lifecycleView = await lifecycle.readRoleLifecycleView();
       const attachmentView = attachment.readAttachmentView();
       const launchReadinessView = launchReadiness.readLaunchReadinessView();
-      return projectGameBrowserState(profile, context, lifecycleView, attachmentView, launchReadinessView);
+      const actionAuthorityView = actionAuthority?.readActionAuthorityView();
+      return projectGameBrowserState(profile, context, lifecycleView, attachmentView, launchReadinessView, actionAuthorityView);
     },
   });
 }
@@ -58,6 +61,7 @@ function projectGameBrowserState(
   lifecycle: StardewRoleLifecycleView,
   attachment: StardewGameSurfaceAttachmentView,
   launchReadiness: StardewGameSurfaceLaunchReadinessView,
+  actionAuthority: StardewGameSurfaceActionAuthorityView | undefined,
 ): GameBrowserStateV1 {
   const compatibility = projectCompatibility(lifecycle);
   const playerHostStarted = lifecycle.playerHost.ownership === "gamebuddy_direct_spawn";
@@ -83,6 +87,7 @@ function projectGameBrowserState(
       compatibility: Object.freeze(compatibility),
       attachment: Object.freeze({ status: attachment.status, generation: attachment.generation }),
       connectionStatus: attachment.connectionStatus,
+      actionAuthority: actionAuthority?.status ?? "unavailable",
       role: null,
       companionName: null,
       selectedWorld: null,
