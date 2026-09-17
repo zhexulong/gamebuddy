@@ -18,15 +18,13 @@ pnpm --dir integrations/stardew/action-development action:inventory
 pnpm --dir integrations/stardew/action-development action:check
 pnpm --dir integrations/stardew/action-development action:ci
 pnpm --dir integrations/stardew/action-development check:bridge-ledger
-pnpm --dir integrations/stardew/action-development action:extraction-rehearsal
 pnpm --dir integrations/stardew/action-development action:publish-release-bundle -- --source <absolute-source-dir> --destination <absolute-destination-dir>
 ```
 
 `test` runs the package's deterministic test suite. `action:inventory` validates
 the migration map; it is not an executable registry. `action:check`
 is the deterministic generated-contract check. `action:ci` runs the package's
-owned deterministic portfolio. `action:extraction-rehearsal` performs the
-fresh-root frozen-install rehearsal. The release-bundle command publishes only
+owned deterministic portfolio. The release-bundle command publishes only
 the exact bundle requested by its explicit source and destination arguments;
 it does not publish an action capability.
 
@@ -46,9 +44,14 @@ request-local admission.
 
 For active live in-game verification of embodied companion actions, presentation, and sensory facts, follow the repository's unified SOP in [`fixtures/stardew/RUNBOOK.md`](../../../fixtures/stardew/RUNBOOK.md) (`## Native humanlike companion live observation and verification SOP`) using `node tools/start-smapi-and-run-live.mjs` or `node tools/run-stardew-companion-live-coop-01.mjs`.
 
-`action:check`, `action:inventory`, `action:ci`, and extraction rehearsal remain
-deterministic/offline package commands. They do not prove a target is ready or
-authorize a live action.
+`action:check`, `action:inventory`, and `action:ci` remain
+  deterministic/offline package commands. They do not prove a target is ready or
+  authorize a live action.
+
+> **2026-09-18**: the standalone extraction rehearsal mechanism
+> (`action:extraction-rehearsal`, `standalone/` mirror, and its CI tests) was
+> retired alongside the devkit package retirement (ADR-0008). The former
+> "extract action-development into a separate repo" rehearsal is no longer run.
 
 ## Development flow
 
