@@ -299,7 +299,7 @@ test('source extras are ignored while required source members remain mandatory',
   await assertAbsent(fixture.env.GAMEBUDDY_NAVIGATION_MULTISOURCE_ARTIFACT_PATH);
 });
 
-test('post-launch staged DLL tampering, missing observation, and duplicate observation fail without artifacts', async (t) => {
+test('post-launch staged DLL tampering, missing observation, and duplicate observation fail without artifacts', async () => {
   const scenarios = [
     ['tampered', async ({ profileRoot }) => writeFile(join(profileRoot, 'GameBuddy.NavigationTopologyCharacterization', 'GameBuddy.Stardew.NavigationTopologyCharacterization.dll'), 'tampered')],
     ['missing', async () => {}],

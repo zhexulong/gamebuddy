@@ -49,6 +49,6 @@ test("supports recursive cleanup and caller error codes", async () => withRoot(a
   await assert.rejects(lstat(transaction.stagingPath), { code: "ENOENT" });
 
   const missing = await prepareAtomicDirectory(path.join(root, "another", "bundle"), { code: "ci_snapshot", create: false });
-  assert.equal(missing.stagingPath.endsWith(".staging-" + missing.stagingPath.split(".staging-").at(-1)), true);
+  assert.equal(missing.stagingPath.endsWith(`.staging-${missing.stagingPath.split(".staging-").at(-1)}`), true);
   await assert.rejects(commitAtomicDirectory(missing), /ci_snapshot_temporary_output_invalid/);
 }));

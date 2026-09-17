@@ -276,7 +276,6 @@ async function defaultPwshRunner(assemblyPath) {
 export async function characterizeStardewTargetVersion({
   gamePath,
   out,
-  pretty = false,
   runner = defaultPwshRunner,
 } = {}) {
   if (!gamePath) {
@@ -435,7 +434,6 @@ if (isMain) {
     const result = await characterizeStardewTargetVersion({
       gamePath: args.gamePath,
       out: args.out,
-      pretty: args.pretty,
     });
     if (!args.out) {
       process.stdout.write(`${JSON.stringify(result, null, args.pretty ? 2 : 0)}\n`);

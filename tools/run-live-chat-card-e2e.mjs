@@ -168,7 +168,7 @@ async function executeStream(messages) {
           fullText += delta.content;
           chunkCount++;
         }
-      } catch (e) {
+      } catch {
         // ignore incomplete SSE chunk
       }
     }
@@ -381,7 +381,7 @@ async function runLiveEvaluation() {
   recordGate("Gate-2.1", "Turn 1 Persona & Natural Tone", personaCheck1, {
     "Response Length": `${response1.text.length} chars`,
     "Tone Fidelity": "High (Maintains maid/tsundere voice)",
-    "Preview": response1.text.slice(0, 45) + "..."
+    "Preview": `${response1.text.slice(0, 45)}...`
   });
 
   recordGate("Gate-3.1", "Turn 1 Anti-Leak & Presentation Purity", leakCheck1.clean, {
@@ -439,7 +439,7 @@ async function runLiveEvaluation() {
   recordGate("Gate-4.1", "Turn 2 Context Continuity & Specific Trait Ingress", mentionsCatOrFluffy && leakCheck2.clean, {
     "Context Grounding": "Accurately recognized player's cat offer",
     "Card Trait Ingress": "Triggered special weakness/fondness for fluffy animals",
-    "Preview": response2.text.slice(0, 45) + "..."
+    "Preview": `${response2.text.slice(0, 45)}...`
   });
 
   // --- Turn 3: Swipe / Regenerate Alternative Generation on Turn 2 ---
@@ -529,14 +529,14 @@ async function runLiveEvaluation() {
   recordGate("Gate-4.2", "Turn 4 Branch Continuation Grounding", branchContinuity, {
     "Branch Parent ID": "msg_4 (Variant 2)",
     "Continuity Status": "Seamlessly advanced conversation on active branch",
-    "Preview": response4.text.slice(0, 45) + "..."
+    "Preview": `${response4.text.slice(0, 45)}...`
   });
 
   // --- Clean up Temp DB ---
   try {
     db.close();
     rmSync(tempDir, { recursive: true, force: true });
-  } catch (e) {}
+  } catch {}
 
   // --- Final Summary Report ---
   console.log("================================================================================");

@@ -48,8 +48,6 @@ export const NAVIGATION_SOURCES = Object.freeze([
 ]);
 const execFileAsync = promisify(execFile);
 
-function isRecord(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
-
 export async function defaultReadVersion(filePath) {
   if (process.platform !== "win32") throw new Error("target_version_read_unavailable");
   const result = await execFileAsync(
@@ -273,6 +271,6 @@ async function cliMain(args) {
   process.exitCode = report.ready ? 0 : 1;
 }
 
-if (process.argv[1] && new URL("file:" + process.argv[1]).href === import.meta.url) {
+if (process.argv[1] && new URL(`file:${process.argv[1]}`).href === import.meta.url) {
   cliMain(process.argv.slice(2)).catch((error) => { console.error(String(error?.message || error)); process.exitCode = 1; });
 }

@@ -73,7 +73,7 @@ export async function recordTavernUiOperationEvidence({ inputPath, outputPath })
   };
   if (!HASH.test(result.profile_hash) || !Object.values(result.operations).every((ids) => ids.every((id) => OPAQUE_ID.test(id))))
     throw new Error("ui_operation_evidence_internal_invalid");
-  await writeFile(outputPath, JSON.stringify(result, null, 2) + "\n", "utf8");
+  await writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
   return result;
 }
 

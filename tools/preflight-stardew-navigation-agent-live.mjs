@@ -92,7 +92,7 @@ export async function runAgentLivePreflight(options = {}) {
   let fixtureExportsReady = false;
   if (missing.length === 0) {
     try {
-      const fixtureSource = await readFixtureSource(TOOLS_DIR + "lib/stardew-native-local-player-fixture.mjs");
+      const fixtureSource = await readFixtureSource(`${TOOLS_DIR}lib/stardew-native-local-player-fixture.mjs`);
       fixtureExportsReady = FIXTURE_LIB_EXPORTS.every((expected) => fixtureSource.includes(expected));
     } catch {
       fixtureExportsReady = false;

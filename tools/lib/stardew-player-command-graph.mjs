@@ -1163,7 +1163,6 @@ function sourceBranchCandidates({
   sourceFile,
   sourceMethod,
   definitions,
-  ingressId,
   sourceEdgeIds,
   reason,
 }) {
@@ -1239,7 +1238,6 @@ export function game1PressUseToolButtonBranchCandidates(game1Source, rootDispatc
     sourceFile: options.sourceFile ?? "StardewValley/Game1.cs",
     sourceMethod: "pressUseToolButton",
     definitions: GAME1_PRESS_USE_TOOL_BUTTON_BRANCHES,
-    ingressId: root.ingressId,
     sourceEdgeIds: rootDispatchEdges
       .filter((edge) => edge.ingressId === root.ingressId && edge.from.endsWith(".pressUseToolButton"))
       .map((edge) => edge.edgeId),
@@ -1265,7 +1263,6 @@ export function toolOverrideBranchCandidates(sourceIndex, rootDispatchEdges, ing
       sourceFile: source.sourceFile,
       sourceMethod: definition.sourceMethod,
       definitions: [definition],
-      ingressId: definition.ingressId,
       sourceEdgeIds: toolDispatchEdges.map((edge) => edge.edgeId),
       reason: "dynamic_tool_target_domain_phase_and_bridge_equivalence_not_yet_reconstructed",
     });
@@ -1286,7 +1283,6 @@ export function toolBeginUsingBranchCandidates(sourceIndex, beginEdges, ingress)
     sourceFile: source.sourceFile,
     sourceMethod: "beginUsing",
     definitions: TOOL_BEGIN_USING_BRANCHES,
-    ingressId: root.ingressId,
     sourceEdgeIds: beginEdges
       .filter((edge) => edge.ingressId === root.ingressId && edge.to.includes("beginUsing"))
       .map((edge) => edge.edgeId),
@@ -1308,7 +1304,6 @@ export function toolEndUsingBranchCandidates(sourceIndex, releaseEdges, ingress)
     sourceFile: source.sourceFile,
     sourceMethod: "endUsing",
     definitions: TOOL_END_USING_BRANCHES,
-    ingressId: root.ingressId,
     sourceEdgeIds: releaseEdges
       .filter((edge) => edge.ingressId === root.ingressId && edge.to.includes("endUsing"))
       .map((edge) => edge.edgeId),

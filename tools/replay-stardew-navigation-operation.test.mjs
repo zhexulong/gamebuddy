@@ -24,7 +24,6 @@ const scope = {
   companionId: "companion_01",
 };
 
-const OPAQUE = (body) => body.repeat(4);
 const completionDetail = () =>
   `destination=dr1_${"A".repeat(20)};location=lc1_${"B".repeat(20)};arrived=true;postcondition=true`;
 

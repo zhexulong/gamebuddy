@@ -217,9 +217,9 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
     "mounted_composed_tavern_profile_operation_to_evidence_mapping_schema_invalid",
     checks,
   );
-  const exactIdentity = Object.prototype.hasOwnProperty.call(operationEvidenceMapping, "profile");
-  const hashIdentity = Object.prototype.hasOwnProperty.call(operationEvidenceMapping, "profile_hash");
-  const idIdentity = Object.prototype.hasOwnProperty.call(operationEvidenceMapping, "profile_id");
+  const exactIdentity = Object.hasOwn(operationEvidenceMapping, "profile");
+  const hashIdentity = Object.hasOwn(operationEvidenceMapping, "profile_hash");
+  const idIdentity = Object.hasOwn(operationEvidenceMapping, "profile_id");
   check(
     (exactIdentity ? 1 : 0) + (hashIdentity ? 1 : 0) + (idIdentity ? 1 : 0) === 1,
     "mounted_profile_operation_evidence_identity_shape",
@@ -641,7 +641,7 @@ export async function runTavernReleaseLiveOrchestrator({
 function parseArguments(input) {
   if (input[0] === "--record" && input[1]) {
     let profile = DEFAULT_TAVERN_RELEASE_PROFILE;
-    let recordPath = input[1];
+    const recordPath = input[1];
     let mountedProfilePath;
     let mappingPath;
     for (let index = 2; index < input.length; index += 2) {

@@ -245,7 +245,7 @@ async function callDeepSeekStream(messages, onChunk, maxRetries = 3) {
               contentText += delta.content;
               onChunk?.({ type: "content", text: delta.content });
             }
-          } catch (e) {
+          } catch {
             // Skip partial JSON chunks
           }
         }
@@ -273,7 +273,7 @@ async function callDeepSeekStream(messages, onChunk, maxRetries = 3) {
 async function runLiveVerification() {
   console.log("================================================================================");
   console.log("🎮 GameBuddy Live Run: Tavern Message Tree & Swipe Branching Protocol");
-  console.log("🤖 Model: " + MODEL + " via " + API_BASE);
+  console.log(`🤖 Model: ${MODEL} via ${API_BASE}`);
   console.log("================================================================================\n");
 
   const store = createLiveTestStore();
@@ -313,7 +313,7 @@ async function runLiveVerification() {
     console.log("--------------------------------------------------------------------------------");
     console.log("📍 [Step 2] Player clicks '🔄 重新生成' -> Stream Response Variant 2 (2/2)");
     console.log("--------------------------------------------------------------------------------");
-    console.log("🖱️ [Action]: chat.regenerate on message handle: " + compNode1.id);
+    console.log(`🖱️ [Action]: chat.regenerate on message handle: ${compNode1.id}`);
 
     process.stdout.write("💭 [Abigail 重新思考 (Variant 2)]: ");
     const resp2 = await callDeepSeekStream(
@@ -383,7 +383,8 @@ async function runLiveVerification() {
     console.log(`💬 [Abigail 台词]: ${resp3.content}`);
     console.log(`⚡ [性能]: TTFT = ${resp3.metrics.ttft}ms | Total = ${resp3.metrics.totalTime}ms\n`);
 
-    const compNode2 = store.addCompanionResponse(threadId, resp3.content, playerNode2.id);
+    // addCompanionResponse mutates the projected transcript store; keep the call, discard the handle.
+    store.addCompanionResponse(threadId, resp3.content, playerNode2.id);
 
     // Inspect Complete Projected Transcript
     console.log("--------------------------------------------------------------------------------");

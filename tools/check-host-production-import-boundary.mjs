@@ -50,7 +50,6 @@ const ACCEPTANCE_BRIDGE_MODULE = "tavern/player-turn-acceptance.internal.ts";
 const CLAIM_FACADE_MODULE = "tavern/provider-attempt-claim.ts";
 const CLAIM_BRIDGE_MODULE = "tavern/provider-attempt-claim.internal.ts";
 const PROVIDER_START_MODULE = "tavern/chat-provider-start.ts";
-const PROVIDER_START_EXECUTION_MODULE = "tavern/p4-provider-start-execution.ts";
 const CHAT_THREAD_STORE_MODULE = "tavern/chat-thread-store.ts";
 const MOUNTED_TURN_TRANSITION_AUTHORITY_MODULE = "tavern/chat-thread-store.mounted-turn-transition.internal.ts";
 const ACCEPTANCE_COORDINATOR_IMPORTS = new Set(["acceptMountedDurableTurn", "consumeMountedDurableAdmission"]);
@@ -1133,9 +1132,6 @@ function isClaimBridge(root, path) {
 }
 function isProviderStart(root, path) {
   return isExactModule(root, path, PROVIDER_START_MODULE);
-}
-function isProviderStartExecution(root, path) {
-  return isExactModule(root, path, PROVIDER_START_EXECUTION_MODULE);
 }
 function isAnyMountedTurnBridge(root, path) {
   return isAcceptanceBridge(root, path) || isClaimBridge(root, path);

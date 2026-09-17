@@ -28,25 +28,6 @@ const entries = Object.freeze([
   { id: "synthetic-tie-b", labels: { "en-US": "Stone" }, aliases: [] },
 ]);
 const rejected = () => ({ kind: "not_found", stage: "fuzzy_below_threshold", candidates: [] });
-const CORPUS_SELECTION_RECORD_V1 = Object.freeze({
-  artifactKind: "stardew_navigation_p4c_redacted_corpus_selection",
-  schemaVersion: 1,
-  selectionVersion: "p4c-real-selection-v1",
-  targetVersion: "1.6.15.24356",
-  inputDigest: "sha256:selection-input-withheld",
-  provenance: "target-version-derived labels are private checker input only",
-  localeCategoryCaseCounts: Object.freeze({
-    "en-US": { exact: 0, fuzzy: 0, ambiguous: 0 },
-    "zh-CN": { exact: 0, fuzzy: 0, ambiguous: 0 },
-    "ja-JP": { exact: 0, fuzzy: 0, ambiguous: 0 },
-  }),
-  comparisonAggregates: Object.freeze({ belowThreshold: 0, thresholdPassLowMargin: 0, thresholdPassClearMargin: 0 }),
-  policy: "threshold_not_found_then_low_margin_candidates",
-  rationale: "avoid resolving a threshold-passing result without sufficient separation",
-  syntheticPolicyCases: true,
-  nonClaim:
-    "Synthetic cases validate lexical policy only; they do not prove product search. Private target-derived labels are required for real-selection evidence.",
-});
 const LOCALES = Object.freeze(["en-US", "zh-CN", "ja-JP"]);
 const CATEGORIES = Object.freeze([
   "exact",

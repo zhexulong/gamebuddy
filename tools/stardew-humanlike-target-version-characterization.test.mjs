@@ -6,7 +6,6 @@ import test from "node:test";
 import {
   characterizeStardewTargetVersion,
   EXPECTED_ASSEMBLY_VERSION,
-  EXPECTED_SMAPI_VERSION,
   parseCliArgs,
   redactValue,
   SCHEMA,
