@@ -20,7 +20,7 @@
  * Idempotent: if the current link already points at the vendor, it is left
  * untouched; otherwise the existing node_modules entry is replaced.
  */
-import { lstat, readlink, symlink, unlink, rm } from "node:fs/promises";
+import { lstat, readlink, rm, symlink } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -59,6 +59,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`vendor-link failed: ${error && error.message ? error.message : String(error)}\n`);
+  process.stderr.write(`vendor-link failed: ${error?.message ? error.message : String(error)}\n`);
   process.exit(1);
 });

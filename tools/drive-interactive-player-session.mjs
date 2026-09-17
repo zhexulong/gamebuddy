@@ -1,9 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 const CHAT_LIVE_OUTPUT_ROOT = "D:\\GameBuddy-chat-live-tmp";
 const CHAT_LIVE_ENTRY = "dialogue-web-main.js";
@@ -145,8 +144,6 @@ export class InteractivePlayerSession {
     const snapshotBefore = await stateRes.json();
     const selectionGeneration = snapshotBefore?.selection?.generation ?? 1;
     const draftRevision = snapshotBefore?.draft?.revision ?? snapshotBefore?.chat?.draft?.revision ?? 0;
-    const preTranscript = snapshotBefore?.transcript ?? snapshotBefore?.chat?.transcript ?? [];
-    const preTranscriptLength = preTranscript.length;
 
     // 2. Submit player message
     const msgRes = await deadlineFetch(`${this.origin}/api/tavern/v1/messages`, {

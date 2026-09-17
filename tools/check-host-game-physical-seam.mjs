@@ -9,12 +9,6 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 const IGNORED_DIRECTORIES = new Set([".worktrees", "dist", "dist-test", "node_modules", "fixtures", "test-support", "test-fixtures", "__fixtures__", "fixture", "generated"]);
 const GENERIC_LAYERS = new Set(["bootstrap", "containment", "composition"]);
-// The lifecycle may consume only these published, non-platform contracts from
-// generic layers: authenticated containment and Stardew artifact provenance.
-const ALLOWED_GENERIC_MODULES = new Set([
-  "containment/auth/desktop-guardian-session.internal",
-  "bootstrap/roots/stardew-private-mod-profile-staging",
-]);
 const STARDew_PROCESS_IMPLEMENTATIONS = "games/stardew/lifecycle/stardew-process-implementations";
 const STARDew_REGISTRATION = "stardew-installation-registration.internal";
 const STARDew_REGISTRATION_OWNER = "games/stardew/lifecycle/stardew-private-bootstrap-composer.core";
@@ -77,7 +71,6 @@ function layer(path, root) { return relative(resolve(root, "host/src"), path).re
 function gamePath(path, root) { const p = relative(resolve(root, "host/src"), path).replaceAll("\\", "/"); return p === "games" || p.startsWith("games/"); }
 function genericPath(path, root) { return GENERIC_LAYERS.has(layer(path, root)); }
 function sourcePath(path, root) { return relative(resolve(root, "host/src"), path).replaceAll("\\", "/").replace(/\.[^.]+$/, ""); }
-function isStardewLifecycleImporter(path, root) { return sourcePath(path, root).startsWith("games/stardew/lifecycle/"); }
 function isStardewProcessImplementation(path, root) { return sourcePath(path, root) === STARDew_PROCESS_IMPLEMENTATIONS; }
 function isStardewRegistration(path, root) { return sourcePath(path, root) === STARDew_REGISTRATION; }
 function isStardewRegistrationOwner(path, root) { return sourcePath(path, root) === STARDew_REGISTRATION_OWNER; }

@@ -248,44 +248,6 @@ export function deriveNavigationCharacterization(probe) {
   });
 }
 
-const P4D_STRING_ENVELOPE_CONTRACT_V1 = Object.freeze({
-  artifactKind: "stardew_navigation_p4d_opaque_handle_characterization",
-  schemaVersion: 2,
-  carrier: Object.freeze({
-    type: "string",
-    minimumLength: 1,
-    maximumLength: 512,
-    opaqueToCaller: true,
-    callerParsingForbidden: true,
-  }),
-  reasonTaxonomy: Object.freeze([
-    "ref_malformed",
-    "ref_forged",
-    "ref_wrong_issuer",
-    "ref_wrong_kind",
-    "ref_expired",
-    "ref_scope",
-    "ref_owner_drift",
-    "ref_canonical_drift",
-    "ref_content_generation_drift",
-    "ref_replay_transition",
-  ]),
-  bindingInvariants: Object.freeze([
-    "runtime_instance",
-    "scope_save_world_player_companion",
-    "content_owner",
-    "canonical_identity",
-    "world_generation",
-    "content_generation",
-    "observation_sequence",
-    "execution_correlation",
-    "expiry",
-  ]),
-  observationAdvance:
-    "a find-issued handle may first bind to a later trusted navigation execution; only an issuer-trusted execution-local observation may advance it",
-  nonClaim:
-    "Characterization-only issuer; it grants no navigation permission, route, movement, action, production reference, or protocol.",
-});
 function validateP4DStringEnvelope(value) {
   return typeof value !== "string" || value.length < 1 || value.length > 512
     ? "ref_malformed"

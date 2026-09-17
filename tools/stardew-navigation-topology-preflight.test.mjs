@@ -11,9 +11,6 @@ import {
   NAVIGATION_SOURCES,
   runTopologyPreflight,
 } from "./stardew-navigation-topology-preflight.mjs";
-import {
-  OBSERVATION_SCOPE,
-} from "./stardew-navigation-multisource-characterization-validator.mjs";
 import { createHash } from "node:crypto";
 import { createTestMultiSourceReceiptLedger } from "./stardew-navigation-multisource-receipt-ledger.mjs";
 
@@ -228,7 +225,6 @@ test("topology: a wrong target build version is a blocker", async () => {
 });test("topology: a missing bundle file is a blocker", async () => {
   const t = makeFixture();
   try {
-    const { rmSync: rm } = t;
     rmSync(join(t.release, "GameBuddy.Stardew.dll"), { force: true });
     const report = await runTopologyPreflight(opts(t));
     assert.equal(report.state, "BLOCKED");

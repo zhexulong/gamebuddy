@@ -1,6 +1,5 @@
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
-import assert from "node:assert";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const vendorPluginDist = resolve(repoRoot, "vendor/magic-context/packages/pi-plugin/dist");

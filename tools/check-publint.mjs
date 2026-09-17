@@ -137,7 +137,7 @@ async function main() {
 
   const blocked = [];
   const ignored = [];
-  const lines = (stdout + "\n" + stderr).split("\n");
+  const lines = (`${stdout}\n${stderr}`).split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
@@ -169,6 +169,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`check-publint failed: ${error && error.message ? error.message : String(error)}\n`);
+  process.stderr.write(`check-publint failed: ${error?.message ? error.message : String(error)}\n`);
   process.exit(1);
 });

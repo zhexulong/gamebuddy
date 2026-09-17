@@ -3,10 +3,6 @@ import test from "node:test";
 import {
   validateMultiSourceTransitionCharacterization,
   allowsMultiHopTopologyImplementation,
-  SCHEMA_VERSION,
-  TARGET_BUILD,
-  OBSERVATION_SCOPE,
-  PASS_PREDICATE,
   BLOCK_PREDICATES,
 } from "./stardew-navigation-multisource-characterization-validator.mjs";
 

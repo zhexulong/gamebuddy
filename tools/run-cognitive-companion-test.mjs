@@ -98,7 +98,7 @@ async function runCognitiveTurn(testName, userMessage, sensoryContext) {
   let firstTokenTime = 0;
   let fullReasoning = "";
   let fullContent = "";
-  let toolCallsAccumulator = [];
+  const toolCallsAccumulator = [];
 
   const response = await fetch(`${API_BASE}/chat/completions`, {
     method: "POST",
@@ -162,7 +162,7 @@ async function runCognitiveTurn(testName, userMessage, sensoryContext) {
             if (tc.function?.arguments) toolCallsAccumulator[index].arguments += tc.function.arguments;
           }
         }
-      } catch (e) {}
+      } catch {}
     }
   }
 

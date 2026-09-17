@@ -77,7 +77,7 @@ export async function runAgentLivePreflightTestHarness(options = {}) {
   let exportsReady = false;
   if (missing.length === 0) {
     try {
-      const source = await read(TOOLS_DIR + "lib/stardew-native-local-player-fixture.mjs");
+      const source = await read(`${TOOLS_DIR}lib/stardew-native-local-player-fixture.mjs`);
       exportsReady = FIXTURE_LIB_EXPORTS.every((expected) => source.includes(expected));
     } catch {
       exportsReady = false;

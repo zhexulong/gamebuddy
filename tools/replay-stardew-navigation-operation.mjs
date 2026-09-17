@@ -116,7 +116,7 @@ export function replayNavigationOperation(frames, options = {}) {
       return blocked("invalid_receipt_identity", { index }, items);
     if (payload.actionId !== NAVIGATION_ACTION)
       return blocked("receipt_not_navigation_action", { index, actionId: payload.actionId }, items);
-    pairSet.add(payload.requestId + "|" + payload.executionId);
+    pairSet.add(`${payload.requestId}|${payload.executionId}`);
   }
   if (pairSet.size !== 1) return blocked("correlation_mismatch", { distinctPairs: pairSet.size }, items);
   const firstPayload = receipts[0].payload;
@@ -162,6 +162,6 @@ async function cliMain() {
   console.log(JSON.stringify({ state: report.state, blocker: report.blocker?.code ?? null, validation: report.validation, terminal: report.terminal }));
   process.exitCode = report.ok ? 0 : 1;
 }
-if (process.argv[1] && new URL("file:" + process.argv[1]).href === import.meta.url) {
+if (process.argv[1] && new URL(`file:${process.argv[1]}`).href === import.meta.url) {
   cliMain().catch((error) => { console.error(String(error?.message || error)); process.exitCode = 1; });
 }
