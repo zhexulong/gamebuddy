@@ -57,10 +57,6 @@ const CONTRACTS = Object.freeze([
     id: "capability-publication-contract",
     successReceipt: "Farmhand capability publication identity/path/digest contract passed.",
   }),
-  Object.freeze({
-    id: "portfolio-mine-elevator-projection-contract",
-    successReceipt: "Portfolio mine projection and direct ladder structural contract passed.",
-  }),
 ]);
 const CONTRACT_FLAG_MOD_SHA256 = "--expected-mod-sha256";
 const CONTRACT_FLAG_CORE_SHA256 = "--expected-core-sha256";
@@ -294,14 +290,6 @@ function contractArguments(manifest, contractId) {
   const mod = byId.get("gamebuddy-stardew-mod");
   const core = byId.get("gamebuddy-stardew-core");
   const contract = byId.get(contractId);
-  if (contractId === "portfolio-mine-elevator-projection-contract") {
-    return freeze([
-      resolveArtifactPath(manifest.artifactRoot, contract.relativePath),
-      "--expected-sha256",
-      mod.sha256,
-      resolveArtifactPath(manifest.artifactRoot, mod.relativePath),
-    ]);
-  }
   return freeze([
     resolveArtifactPath(manifest.artifactRoot, contract.relativePath),
     CONTRACT_FLAG_MOD_SHA256,

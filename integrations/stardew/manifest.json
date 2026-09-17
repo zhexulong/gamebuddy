@@ -2,7 +2,7 @@
   "Name": "GameBuddy",
   "Author": "GameBuddy contributors",
   "Version": "0.1.0",
-  "Description": "GameBuddy Stardew integration with isolated Farmhand and single-player Portfolio topologies.",
+  "Description": "GameBuddy Stardew integration with isolated Farmhand topology.",
   "UniqueID": "zhexulong.GameBuddy",
   "EntryDll": "GameBuddy.Stardew.dll",
   "MinimumApiVersion": "4.0.0",

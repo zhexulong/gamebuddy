@@ -12,8 +12,8 @@ using GameBuddy.Stardew.Core.Protocol;
 /// that exact generation-bound frame. A stale pre-connect frame, a frame that
 /// cannot be flushed when its connection disconnects, and a frame still queued
 /// when the bridge is disposed all resolve false; only a frame flushed to the
-/// live connection resolves true. No Stardew game, Host receiver, schema, or
-/// Portfolio transport is involved.
+/// live connection resolves true. No Stardew game, Host receiver, or schema
+/// is involved.
 ///
 /// The same admission-is-not-delivery contract is pinned for terminal receipt
 /// publication: ModEntry.TerminalReceiptDeliveryTracker keeps an admitted

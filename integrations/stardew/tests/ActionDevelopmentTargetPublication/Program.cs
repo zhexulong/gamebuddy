@@ -21,8 +21,6 @@ try
         DeriveAssembly("gamebuddy-stardew-core", "core", "GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.Core", root),
         DeriveAssembly("capability-publication-contract", "contract", "FarmhandCapabilityPublicationProjection.Contract.dll", "FarmhandCapabilityPublicationProjection.Contract", root),
         DeriveRuntimeConfig("capability-publication-contract-runtime", "support", "FarmhandCapabilityPublicationProjection.Contract.runtimeconfig.json", "Microsoft.NETCore.App@6.0.0", root),
-        DeriveAssembly("portfolio-mine-elevator-projection-contract", "contract", "PortfolioMineElevatorProjection.Contract.dll", "PortfolioMineElevatorProjection.Contract", root),
-        DeriveRuntimeConfig("portfolio-mine-elevator-projection-contract-runtime", "support", "PortfolioMineElevatorProjection.Contract.runtimeconfig.json", "Microsoft.NETCore.App@6.0.0", root),
     ];
     string joined = string.Join('|', requirements.Select(value => $"{value.id}:{value.sha256}"));
     string buildId = $"closure-{Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(joined))).ToLowerInvariant()[..16]}";
