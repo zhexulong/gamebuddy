@@ -507,6 +507,12 @@ export type ExecutionReceipt = Readonly<{
   revision: number;
   evidence: Readonly<Record<string, unknown>> | null;
   observation?: LocalObservation | null;
+  /**
+   * Optional bounded destination scene attached to a succeeded Navigation
+   * receipt. Host only forwards it; it never resolves/creates observation
+   * identity or refs inside it.
+   */
+  piggybackedScene?: ObserveSceneResult | null;
 }>;
 
 export interface WorldFactPayload {
@@ -2018,9 +2024,9 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
-  const allowedKeys = "observation" in value
-    ? ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence", "observation"]
-    : ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"];
+  const allowedKeys = ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"];
+  if ("observation" in value) allowedKeys.push("observation");
+  if ("piggybackedScene" in value) allowedKeys.push("piggybackedScene");
   return hasExactKeys(value, allowedKeys) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
@@ -2031,7 +2037,8 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     isReasonCode(value.reasonCode) &&
     Number.isSafeInteger(value.revision) &&
     (value.evidence === null || isRecord(value.evidence)) &&
-    (!("observation" in value) || value.observation === null || validateLocalObservation(value.observation) === null)
+    (!("observation" in value) || value.observation === null || validateLocalObservation(value.observation) === null) &&
+    (!("piggybackedScene" in value) || value.piggybackedScene === null || validateObserveSceneResult(value.piggybackedScene) === null)
     ? null
     : "invalid_receipt";
 }

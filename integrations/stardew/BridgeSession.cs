@@ -113,6 +113,72 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
             this.scope,
             this.navigationSetProvider,
             new Game1NavigationWorldSource()));
+        // Optional piggybackedScene attachment: a successful Navigation terminal
+        // may attach the fresh destination scene via the same bounded projection
+        // pipeline (minted observation identity and refs). Attachment failure
+        // never revokes the already-completed navigation.
+        this.executions.SetNavigationPiggybackedSceneProvider(this.TryCreatePiggybackedSceneForNavigation);
+    }
+
+    /// <summary>
+    /// Game-thread bounded scene projection for a Navigation success attachment.
+    /// Reuses the observe_scene pipeline so identity/ref lifecycle rules hold;
+    /// any failure yields null (attachment is optional).
+    /// </summary>
+    private ObserveSceneResultPayload? TryCreatePiggybackedSceneForNavigation()
+    {
+        if (!this.actionRouter.IsOnOwnerThread)
+            return null;
+        SceneObservationInput? input;
+        try
+        {
+            input = this.sceneObservationProvider();
+        }
+        catch
+        {
+            return null;
+        }
+        if (input is null || !input.IsValid)
+            return null;
+
+        string locationName = input.CurrentRegion;
+        bool moved = this.sceneLocationName is not null
+            && (!string.Equals(this.sceneLocationName, locationName, StringComparison.Ordinal)
+                || this.sceneActorTileX != input.ActorTileX
+                || this.sceneActorTileY != input.ActorTileY);
+        if (moved)
+            this.sceneMovementSequence++;
+        if (moved || this.sceneLocationName is null)
+            this.sceneObservations.InvalidateForMove(this.navigationRuntimeInstanceId, this.scope, locationName, this.sceneMovementSequence);
+        this.sceneLocationName = locationName;
+        this.sceneActorTileX = input.ActorTileX;
+        this.sceneActorTileY = input.ActorTileY;
+
+        SceneObservationContext context = new(
+            this.navigationRuntimeInstanceId,
+            this.scope,
+            locationName,
+            this.sceneMovementSequence,
+            ++this.sceneObservationSequence);
+        SceneObservationProjectionResult projection = this.sceneObservationProjection.Observe(context, input, SceneObservationProjection.DefaultRadius);
+        if (!projection.IsValid)
+            return null;
+
+        this.sceneObservationId = projection.ObservationId;
+        return new ObserveSceneResultPayload(
+            projection.ObservationId,
+            projection.CurrentLocation,
+            projection.CurrentRegion,
+            projection.Affordances.Select(affordance => new ObserveSceneAffordancePayload(
+                affordance.Ref,
+                affordance.Kind,
+                affordance.Name,
+                affordance.Distance,
+                affordance.Direction,
+                affordance.ActionHint)).ToArray(),
+            projection.Summary,
+            projection.IsPartial,
+            projection.TruncatedReason);
     }
 
     internal bool TryAuthenticate(long generation, BridgeEnvelope<BridgeHello>? envelope, out BridgeEnvelope<BridgeHelloAck>? acknowledgement, out string reasonCode)
@@ -1285,7 +1351,8 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
             receipt.ReasonCode,
             receipt.Revision,
             receipt.Evidence is null ? null : new Dictionary<string, string> { ["detail"] = receipt.Evidence },
-            receipt.Observation);
+            receipt.Observation,
+            receipt.PiggybackedScene);
         return true;
     }
 

@@ -79,6 +79,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private LocalNavigateSpec? activeNavigate;
     private AcceptedNavigationExecution? activeNavigationCoordinator;
     private Func<string?, string?>? navigationShopPreflight;
+    private Func<ObserveSceneResultPayload?>? navigationPiggybackedSceneProvider;
     private Func<bool>? navigationLifecycleTestAuthorization;
     private NavigationApproachNative? navigationApproachNative;
     private Func<bool>? navigationPlayerActionableProbe;
@@ -148,6 +149,38 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     internal void SetNavigationRuntimeFactory(Func<NavigationRuntimeSnapshot?> navigationRuntimeFactory)
     {
         this.navigationRuntimeFactory = navigationRuntimeFactory ?? throw new ArgumentNullException(nameof(navigationRuntimeFactory));
+    }
+
+    /// <summary>
+    /// Wires the optional piggybacked-scene producer. Production sets this to a
+    /// game-thread bounded scene projection (the same observe_scene pipeline
+    /// minted observation identity), so a successful Navigation terminal can
+    /// attach the fresh destination scene to its receipt. This attachment is
+    /// optional: a null/exception producer result must never revoke an already
+    /// completed navigation.
+    /// </summary>
+    internal void SetNavigationPiggybackedSceneProvider(Func<ObserveSceneResultPayload?>? provider)
+    {
+        this.navigationPiggybackedSceneProvider = provider;
+    }
+
+    /// <summary>
+    /// Best-effort destination scene attachment for a succeeded Navigation
+    /// terminal. Returns null when the producer is absent, fails, or returns an
+    /// invalid payload; the already-settled navigation keeps its success.
+    /// </summary>
+    private ObserveSceneResultPayload? TryCreatePiggybackedScene()
+    {
+        if (this.navigationPiggybackedSceneProvider is null)
+            return null;
+        try
+        {
+            return this.navigationPiggybackedSceneProvider();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -2578,7 +2611,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.activeNavigate = null;
         this.activeNavigationCoordinator = null;
         this.revision++;
-        LocalExecutionReceipt receipt = new(navigation.ExecutionId, navigation.RequestId, state, reasonCode, this.revision, evidence);
+        ObserveSceneResultPayload? piggybackedScene =
+            state == ExecutionState.Succeeded && reasonCode == "navigation_completed"
+                ? this.TryCreatePiggybackedScene()
+                : null;
+        LocalExecutionReceipt receipt = new(navigation.ExecutionId, navigation.RequestId, state, reasonCode, this.revision, evidence, PiggybackedScene: piggybackedScene);
         this.Remember(receipt);
         this.AddTrace(receipt);
         this.PublishIdleAfterRelease(navigation.ExecutionId, navigation.RequestId);

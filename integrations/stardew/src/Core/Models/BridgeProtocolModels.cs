@@ -77,7 +77,8 @@ public sealed record LocalExecutionReceipt(
     long Revision,
     string? Evidence,
     string? ActionId = null,
-    BridgeLocalObservation? Observation = null
+    BridgeLocalObservation? Observation = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null
 );
 
 public sealed record BridgeScope(string IntegrationId, string SaveId, string WorldId, string PlayerId, string CompanionId)
@@ -311,7 +312,8 @@ public sealed record BridgeReceipt(
     string ReasonCode,
     long Revision,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeLocalObservation? Observation = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeLocalObservation? Observation = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null
 );
 
 public sealed record BridgeError(string ReasonCode);
