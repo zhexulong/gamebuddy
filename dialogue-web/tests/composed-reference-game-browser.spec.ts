@@ -994,3 +994,228 @@ test("resume-phase syncing projection passes the browser gate, visualizes sync, 
   await expect(panel).not.toContainText("connected_idle");
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
 });
+test("ready-actions-paused renders the Resume actions control and converges on the authoritative reopened projection", async ({ page }) => {
+  let reopenRequests = 0;
+  let stateRequests = 0;
+  let tavernMutationRequests = 0;
+  const pausedGame = {
+    ...game,
+    game: {
+      ...game.game,
+      attachment: { status: "attached", generation: 1 },
+      connectionStatus: "connected_idle",
+      actionAuthority: "paused",
+    },
+  };
+  const reopenedGame = {
+    ...pausedGame,
+    game: { ...pausedGame.game, actionAuthority: "active" },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: pausedGame }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/reopen", async (route) => {
+    reopenRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    expect(route.request().postDataJSON()).toEqual({
+      apiVersion: 1,
+      idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+      expectedAttachmentGeneration: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "reopened" }) });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateRequests += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: reopenedGame }) });
+  });
+  await page.route("**/api/tavern/v1/bootstrap", async (route) => {
+    tavernMutationRequests += 1;
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
+  });
+  await page.route("**/api/tavern/v1/messages**", async (route) => {
+    tavernMutationRequests += 1;
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
+  });
+  await page.route("**/api/tavern/v1/turns/*/cancel", async (route) => {
+    tavernMutationRequests += 1;
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
+  });
+  await page.route("**/api/tavern/v1/message-submission-status", async (route) => {
+    tavernMutationRequests += 1;
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  await expect(panel).toContainText("Connectionconnected_idle");
+  const reopen = panel.getByRole("button", { name: "Resume actions", exact: true });
+  await expect(reopen).toBeVisible();
+  await expect(panel.getByText("Game actions are paused.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await reopen.dblclick();
+  await expect.poll(() => reopenRequests).toBe(1);
+  // The strict `reopened` result is never projected as synthetic success; the
+  // composed authoritative Game projection must converge to actionAuthority
+  // active at the same attachment generation before the drawer updates.
+  await expect.poll(() => stateRequests).toBeGreaterThanOrEqual(1);
+  await expect(reopen).toHaveCount(0);
+  await expect(panel.getByText("Game actions are paused.")).toHaveCount(0);
+  await expect(panel).not.toContainText("could not be resumed");
+  await expect(panel).not.toContainText("reopened");
+  await expect(page.getByText("A durable delegated draft.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("The game projection is read-only.");
+  expect(tavernMutationRequests).toBe(0);
+});
+
+test("Resume actions stays hidden outside the ready-actions-paused projection", async ({ page }) => {
+  const scenarios = [
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "connected_idle", actionAuthority: "active" }, connectionText: "connected_idle" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "connected_idle", actionAuthority: "unavailable" }, connectionText: "connected_idle" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "syncing", actionAuthority: "paused" }, connectionText: "syncing" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "reconnecting", actionAuthority: "paused" }, connectionText: "reconnecting" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "failed", actionAuthority: "paused" }, connectionText: "failed" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "disconnected", actionAuthority: "paused" }, connectionText: "disconnected" },
+    { overrides: {}, connectionText: "none" },
+  ];
+  let currentGame = game;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: currentGame }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  for (const [scenarioIndex, scenario] of scenarios.entries()) {
+    currentGame = { ...game, game: { ...game.game, ...scenario.overrides } };
+    // A fresh query keeps every iteration a real document navigation: the app
+    // strips the boot token from the hash on first mount, so fragment-only
+    // gotos would skip the bootstrap fetch and replay the previous projection.
+    await page.goto(`/?scenario=${scenarioIndex}#profile=composed-reference-game&boot=${token}`);
+    const panel = page.getByRole("region", { name: "Game state" });
+    await expect(panel).toContainText(`Connection${scenario.connectionText}`);
+    await expect(panel.getByRole("button", { name: "Resume actions", exact: true })).toHaveCount(0);
+    await expect(panel.getByText("Game actions are paused.")).toHaveCount(0);
+  }
+});
+
+test("failed Game reopen renders no synthetic success and preserves its generation key for an idempotent exact replay", async ({ page }) => {
+  const pausedGame = {
+    ...game,
+    game: {
+      ...game.game,
+      attachment: { status: "attached", generation: 2 },
+      connectionStatus: "connected_idle",
+      actionAuthority: "paused",
+    },
+  };
+  const keys: string[] = [];
+  let stateRequests = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: pausedGame }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/reopen", async (route) => {
+    const command = route.request().postDataJSON() as { idempotencyKey: string; expectedAttachmentGeneration: number };
+    keys.push(command.idempotencyKey);
+    expect(command.expectedAttachmentGeneration).toBe(2);
+    await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "state_unavailable" }) });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateRequests += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: pausedGame }) });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const reopen = panel.getByRole("button", { name: "Resume actions", exact: true });
+  await reopen.click();
+  await expect.poll(() => keys.length).toBe(1);
+  await expect.poll(() => stateRequests).toBe(1);
+  // Fail closed: the failure is presented, the authoritative paused projection
+  // is retained, and no synthetic reopened success is ever projected.
+  await expect(panel).toContainText("The game actions could not be resumed");
+  await expect(panel.getByText("Game actions are paused.")).toBeVisible();
+  await expect(panel).not.toContainText("reopened");
+  await expect(reopen).toBeVisible();
+  // A player retry replays the exact same idempotent envelope at the same
+  // generation because no side effect or success was ever established.
+  await reopen.click();
+  await expect.poll(() => keys.length).toBe(2);
+  expect(keys[1]).toBe(keys[0]);
+  await expect.poll(() => stateRequests).toBe(2);
+  await expect(panel).toContainText("The game actions could not be resumed");
+  await page.waitForTimeout(50);
+  expect(keys).toHaveLength(2);
+});
+
+test("stale-generation Game reopen rereads a newer attachment without mutating or failing it", async ({ page }) => {
+  const pausedGame = {
+    ...game,
+    game: {
+      ...game.game,
+      attachment: { status: "attached", generation: 1 },
+      connectionStatus: "connected_idle",
+      actionAuthority: "paused",
+    },
+  };
+  const newerGame = {
+    ...pausedGame,
+    game: { ...pausedGame.game, attachment: { status: "attached", generation: 2 } },
+  };
+  const keys: string[] = [];
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: pausedGame }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/reopen", async (route) => {
+    const command = route.request().postDataJSON() as { idempotencyKey: string; expectedAttachmentGeneration: number };
+    keys.push(command.idempotencyKey);
+    if (keys.length === 1) {
+      expect(command.expectedAttachmentGeneration).toBe(1);
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "game_attachment_conflict" }) });
+      return;
+    }
+    expect(command.expectedAttachmentGeneration).toBe(2);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "reopened" }) });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: newerGame }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const reopen = panel.getByRole("button", { name: "Resume actions", exact: true });
+  await reopen.click();
+  await expect.poll(() => keys.length).toBe(1);
+  await expect(panel).not.toContainText("The game actions could not be resumed");
+  // The newer attached generation stays paused and connected, so the drawer
+  // keeps offering the exact generation-bound Reopen with a fresh key.
+  const newerReopen = panel.getByRole("button", { name: "Resume actions", exact: true });
+  await expect(newerReopen).toBeVisible();
+  await newerReopen.click();
+  await expect.poll(() => keys.length).toBe(2);
+  expect(keys[1]).not.toBe(keys[0]);
+  await expect(panel).not.toContainText("The game actions could not be resumed");
+  await page.waitForTimeout(50);
+  expect(keys).toHaveLength(2);
+});
