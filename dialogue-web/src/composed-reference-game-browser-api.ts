@@ -50,6 +50,7 @@ const CONNECTION_STATUSES = [
   "active",
   "stopping",
   "reconnecting",
+  "syncing",
   "stopped",
   "failed",
   "disconnected",

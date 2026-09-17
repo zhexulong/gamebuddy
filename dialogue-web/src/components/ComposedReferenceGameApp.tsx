@@ -800,6 +800,9 @@ export function ComposedReferenceGameApp() {
     view.root.game.game.attachment.generation > 0 &&
     RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus);
   const gameResumeInFlight = gameResumeActiveRef.current || gameResumeActive;
+  const gameSyncing = view.kind === "ready" &&
+    view.root.game !== null &&
+    view.root.game.game.connectionStatus === "syncing";
   const terminalTurnNotice = view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
     ? labels().chatStopped
     : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed" ? labels().chatFailed : null;
@@ -832,6 +835,7 @@ export function ComposedReferenceGameApp() {
              </section>
               <section className="composed-game-drawer" aria-label={labels().gameState}>
                   <GameProjection game={view.root.game} />
+                  {gameSyncing && <p role="status">{labels().gameSyncing}</p>}
                   {gameSetupAvailable && (
                     <button type="button" disabled={gameSetupActive} onClick={() => void handleGameSetup()}>
                       {labels().gameSetup}

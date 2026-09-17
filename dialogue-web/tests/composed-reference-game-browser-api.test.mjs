@@ -146,6 +146,25 @@ test("composed validator is closed and binds nested Chat and Game to one browser
   );
 });
 
+test("composed Game projection admits the resume-phase syncing status while staying closed to unknown statuses", () => {
+  // reconnecting → syncing → connected_idle are the coordinator resume-phase
+  // projections; the browser gate must admit syncing instead of failing closed.
+  assert.equal(
+    validateComposedReferenceGameRoot(root(gameSnapshot({ connectionStatus: "syncing" }))).game.game.connectionStatus,
+    "syncing",
+  );
+  assert.equal(
+    validateComposedReferenceGameRoot(root(gameSnapshot({ connectionStatus: "reconnecting" }))).game.game.connectionStatus,
+    "reconnecting",
+  );
+  for (const connectionStatus of ["connected", "resuming", "syncing_idle", "SYNCING"]) {
+    assert.throws(
+      () => validateComposedReferenceGameRoot(root(gameSnapshot({ connectionStatus }))),
+      ComposedReferenceGameProtocolError,
+    );
+  }
+});
+
 test("composed client reports bounded server problems without accepting additive fields", async () => {
   const unavailable = transport(jsonResponse({ code: "state_unavailable" }, 409));
   await assert.rejects(
