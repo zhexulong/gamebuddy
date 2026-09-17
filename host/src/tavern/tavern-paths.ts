@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
-import type { CompanionIdentity, RuntimePaths } from "../runtime.js";
-import { identityKey } from "../runtime.js";
+import {
+  identityKey,
+  type CompanionIdentity,
+  type RuntimePaths,
+} from "../runtime-identity.js";
 
 export type TavernPaths = Readonly<{
   root: string;
