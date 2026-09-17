@@ -36,6 +36,8 @@ export type StreamingSpeechPipeline = Readonly<{
   flush(): Promise<void>;
   /** Advance playback by one 20ms micro-chunk; false when the queue is empty. */
   pump(): boolean;
+  /** Like pump(), but awaits the underlying mixer write (real-device backpressure). */
+  pumpAwait(): Promise<boolean>;
   /** Fade the sounding tail (5ms raised cosine) and pad 10ms silence; drop the unplayed queue. */
   cancelSpeech(): Promise<void>;
   close(): Promise<void>;
@@ -108,6 +110,13 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
       if (microChunk === undefined) return false;
       const result = options.mixer.play("pipeline", 0, microChunk);
       if (result instanceof Promise) void result.catch(() => undefined);
+      return true;
+    },
+    async pumpAwait(): Promise<boolean> {
+      if (closed) return false;
+      const microChunk = microQueue.shift();
+      if (microChunk === undefined) return false;
+      await options.mixer.play("pipeline", 0, microChunk);
       return true;
     },
     async cancelSpeech() {
