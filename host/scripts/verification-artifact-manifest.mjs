@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,8 +13,14 @@ const slash = (value) => value.replaceAll("\\", "/");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const repositoryRoot = resolve(hostRoot, "..");
 
-function manifestError(code) {
-  return new Error(`host_verification_artifact_${code}`);
+function manifestError(code, details = undefined) {
+  return new Error(`host_verification_artifact_${code}${details === undefined ? "" : `: ${details}`}`);
+}
+
+/** Relative-to-repository path for operator-facing diagnostics; never absolute or secret-bearing. */
+function diagnosticPath(path) {
+  const value = relative(repositoryRoot, path) || ".";
+  return slash(value === ".." ? `${value}${sep}${basename(path)}` : value);
 }
 
 function assertInside(root, candidate, code) {
@@ -88,22 +94,28 @@ function optionalDependencyNames(packageJson) {
 
 async function resolveDependencyPackage(packageDirectory, name) {
   let directory = packageDirectory;
+  const attempted = [];
   for (;;) {
     const candidate = resolve(directory, "node_modules", name);
+    attempted.push(diagnosticPath(candidate));
     try {
       const target = await realpath(candidate);
       const targetRelative = relative(repositoryRoot, target);
-      if (isAbsolute(targetRelative) || targetRelative.startsWith(`..${sep}`) || targetRelative === "..") throw manifestError("dependency_outside_repository");
+      if (isAbsolute(targetRelative) || targetRelative.startsWith(`..${sep}`) || targetRelative === "..")
+        throw manifestError("dependency_outside_repository", `package=${name}; resolved=${diagnosticPath(target)}`);
       await regularDirectory(target, "dependency_tree_invalid");
       return target;
     } catch (error) {
-      if (error?.code !== "ENOENT" && !String(error?.message ?? error).startsWith("host_verification_artifact_")) throw error;
+      // Only a missing candidate should continue the upward search; an
+      // outside-repository target or an invalid tree is a distinct hard
+      // failure and must not be masked as a generic missing dependency.
+      if (error?.code !== "ENOENT") throw error;
     }
     const parent = resolve(directory, "..");
     if (parent === directory) break;
     directory = parent;
   }
-  throw manifestError("dependency_missing");
+  throw manifestError("dependency_missing", `package=${name}; searched=${attempted.join(",")}`);
 }
 
 async function dependencySnapshot(root) {
@@ -111,7 +123,7 @@ async function dependencySnapshot(root) {
   let lockPath;
   for (const candidate of lockCandidates) {
     try { await regularFile(candidate, "dependency_lock_missing"); lockPath = candidate; break; } catch (error) {
-      if (!String(error?.message ?? error).endsWith("dependency_lock_missing")) throw error;
+      if (!String(error?.message ?? error).startsWith("host_verification_artifact_dependency_lock_missing")) throw error;
     }
   }
   if (lockPath === undefined) throw manifestError("dependency_lock_missing");
@@ -129,7 +141,7 @@ async function dependencySnapshot(root) {
     const optional = optionalDependencyNames(packageJson);
     for (const dependency of dependencyNames(packageJson)) {
       try { await visit(await resolveDependencyPackage(target, dependency), dependency); }
-      catch (error) { if (!optional.has(dependency) || !String(error?.message ?? error).endsWith("dependency_missing")) throw error; }
+      catch (error) { if (!optional.has(dependency) || !String(error?.message ?? error).startsWith("host_verification_artifact_dependency_missing")) throw error; }
     }
   }
   const hostPackagePath = resolve(root, "package.json");
