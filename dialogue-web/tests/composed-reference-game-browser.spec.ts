@@ -959,3 +959,37 @@ test("stale-generation Game Resume rereads a newer attachment without mutating o
   await page.waitForTimeout(50);
   expect(keys).toHaveLength(2);
 });
+
+test("resume-phase syncing projection passes the browser gate, visualizes sync, and never claims connected or resumable", async ({ page }) => {
+  const syncingGame = {
+    ...game,
+    game: {
+      ...game.game,
+      attachment: { status: "attached", generation: 1 },
+      connectionStatus: "syncing",
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: syncingGame }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  // The syncing resume-phase status passes the browser gate: the authoritative
+  // projection renders instead of failing closed.
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(panel).toContainText("Connectionsyncing");
+  await expect(panel.getByRole("status")).toContainText("Syncing the game connection...");
+  // syncing is neither resumable nor connected, so no Resume/Stop control is
+  // offered and the connected vocabulary is never claimed.
+  await expect(panel.getByRole("button", { name: "Resume game" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Stop game" })).toHaveCount(0);
+  await expect(panel).not.toContainText("connected_idle");
+  await expect(page.getByText("A durable delegated draft.")).toBeVisible();
+});
