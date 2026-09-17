@@ -24,16 +24,16 @@ const proof = Object.freeze({
   claimScope: "native-local-equip-tool-v1",
   receipt: Object.freeze({
     state: "succeeded",
-    reasonCode: "tool_selected",
+    reasonCode: "tool_equipped",
     hasEvidence: true,
-    request: Object.freeze({ requestId: "req", idempotencyKey: "idem", action: "equip_tool", args: Object.freeze({ slot: 1 }), expectedRevision: 4 }),
+    request: Object.freeze({ requestId: "req", idempotencyKey: "idem", action: "equip_tool", args: Object.freeze({ tool: "hoe" }), expectedRevision: 4 }),
     accepted: Object.freeze({ requestId: "req", executionId: "exec" }),
-    terminal: Object.freeze({ requestId: "req", executionId: "exec", state: "succeeded", reasonCode: "tool_selected", revision: 5 }),
-    evidence: Object.freeze({ slot: 1, before: "Hoe", expected: "Axe", after: "Axe" }),
+    terminal: Object.freeze({ requestId: "req", executionId: "exec", state: "succeeded", reasonCode: "tool_equipped", revision: 5 }),
+    evidence: Object.freeze({ tool: "hoe", before: "Hoe", expected: "Axe", after: "Axe" }),
   }),
-  postcondition: Object.freeze({ revision: 5, currentTool: "Axe", expectedTool: "Axe", selected: Object.freeze({ slot: 1, label: "Axe" }) }),
+  postcondition: Object.freeze({ revision: 5, currentTool: "Axe", expectedTool: "Axe", selected: Object.freeze({ tool: "hoe", resolvedLabel: "Axe" }) }),
   verdict: "passed",
-  reasonCode: "tool_selected",
+  reasonCode: "tool_equipped",
 });
 
 const BUNDLE_CONTENTS = Object.freeze({

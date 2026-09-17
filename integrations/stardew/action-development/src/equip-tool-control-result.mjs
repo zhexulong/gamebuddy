@@ -7,13 +7,26 @@ const PROOF_DATA_KEYS = new Set([
   "reasonCode",
   "expectedRevision",
   "terminalRevision",
-  "slot",
+  "tool",
   "before",
   "expected",
   "after",
 ]);
 const LABEL_MAX_BYTES = 256;
-const EQUIP_TOOL_MAX_SLOT = 36;
+// Canonical equip_tool/v2 semantic tool selectors; slot stays Mod-private.
+const TOOL_SELECTOR_VALUES = new Set([
+  "axe",
+  "pickaxe",
+  "hoe",
+  "watering_can",
+  "fishing_rod",
+  "weapon",
+  "scythe",
+  "shears",
+  "milk_pail",
+  "pan",
+]);
+const SUCCESS_REASON_CODES = new Set(["tool_equipped", "already_equipped"]);
 
 function fail(code) {
   throw new Error(`stardew_equip_tool_control_result_${code}`);
@@ -35,8 +48,8 @@ function revision(value, code) {
   return value;
 }
 
-function slot(value, code) {
-  if (!Number.isSafeInteger(value) || value < 0 || value > EQUIP_TOOL_MAX_SLOT) fail(code);
+function toolSelector(value, code) {
+  if (typeof value !== "string" || !TOOL_SELECTOR_VALUES.has(value)) fail(code);
   return value;
 }
 
@@ -62,11 +75,11 @@ export function verifyEquipToolControlProof({ start, result } = {}) {
   const { binding, data } = validatedResult.proof;
   if (binding.actionId !== "equip_tool") fail("action_mismatch");
   exactRecord(data, PROOF_DATA_KEYS, "invalid_proof_data");
-  if (data.reasonCode !== "tool_selected") fail("reason_code_mismatch");
+  if (data.reasonCode !== "tool_equipped" && data.reasonCode !== "already_equipped") fail("reason_code_mismatch");
 
   const expectedRevision = revision(data.expectedRevision, "invalid_expected_revision");
   const terminalRevision = revision(data.terminalRevision, "invalid_terminal_revision");
-  const selectedSlot = slot(data.slot, "invalid_slot");
+  const selectedTool = toolSelector(data.tool, "invalid_tool");
   const before = label(data.before, "invalid_before");
   const expected = label(data.expected, "invalid_expected");
   const after = label(data.after, "invalid_after");
@@ -76,7 +89,7 @@ export function verifyEquipToolControlProof({ start, result } = {}) {
   // The verifier consumes the binding to ensure Host-minted action identities
   // exist and are non-empty (the protocol validates them), but does not project
   // them across the Stardew adapter boundary.
-  if (binding.requestId.length === 0 || binding.executionId.length === 0 || selectedSlot < 0) fail("invalid_proof_binding");
+  if (binding.requestId.length === 0 || binding.executionId.length === 0 || !TOOL_SELECTOR_VALUES.has(selectedTool)) fail("invalid_proof_binding");
 
   return Object.freeze({
     actionId: "equip_tool",

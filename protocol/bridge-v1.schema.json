@@ -1659,7 +1659,29 @@
       }
     },
     "xyArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } } },
-    "slotArgs": { "type": "object", "additionalProperties": false, "required": ["slot"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 } } },
+    "toolArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool"
+      ],
+      "properties": {
+        "tool": {
+          "enum": [
+            "axe",
+            "pickaxe",
+            "hoe",
+            "watering_can",
+            "fishing_rod",
+            "weapon",
+            "scythe",
+            "shears",
+            "milk_pail",
+            "pan"
+          ]
+        }
+      }
+    },
     "xyTargetArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedTargetId"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "xyQualifiedTargetArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "pickupForageArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" }, "sceneTarget": { "$ref": "#/$defs/observationBinding" } } },
@@ -1760,7 +1782,7 @@
         { "if": { "required": ["action"], "properties": { "action": { "const": "chop_tree_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/treeChopSourceArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["move_to_tile", "travel", "enter_exit", "till_soil"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "navigate_to_destination" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/navigationDestinationArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "equip_tool" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "equip_tool" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/toolArgs" } } } },
          { "if": { "required": ["action"], "properties": { "action": { "const": "pickup_forage" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/pickupForageArgs" } } } },
          { "if": { "required": ["action"], "properties": { "action": { "enum": ["pickup_item", "harvest_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyQualifiedTargetArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["water_crop", "machine_inspect", "machine_collect_output", "npc_relationship", "pet_animal"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
