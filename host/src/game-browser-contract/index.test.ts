@@ -14,6 +14,8 @@ import {
   GameStopCommandV1Schema,
   GameResumeCommandV1Schema,
   GameResumeResultV1Schema,
+  GameReopenActionAuthorityCommandV1Schema,
+  GameReopenActionAuthorityResultV1Schema,
   GameDisconnectCommandV1Schema,
   GamePrerequisitesSetupCommandV1Schema,
   GameBrowserStateV1Schema,
@@ -470,6 +472,44 @@ test("game.resume result is strict, redacted, and covers the exact frozen status
   }
 });
 
+test("game.reopen carries idempotency key, expected attachment generation, and a strict frozen result", () => {
+  const commandValidator = Compile(GameReopenActionAuthorityCommandV1Schema);
+  assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2 }), true);
+  assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 0 }), false);
+  assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey }), false);
+  assert.equal(commandValidator.Check({ apiVersion: 1, expectedAttachmentGeneration: 1 }), false);
+  // Rejects extra fields
+  assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1, extra: true }), false);
+  const resultValidator = Compile(GameReopenActionAuthorityResultV1Schema);
+  assert.equal(resultValidator.Check({ apiVersion: 1, status: "reopened" }), true);
+  // The aggregate validators expose the exact same compiled schema.
+  assert.equal(GameBrowserValidatorsV1.GameReopenActionAuthorityResultV1Schema.Check({ apiVersion: 1, status: "reopened" }), true);
+  // Rejects invented statuses.
+  assert.equal(resultValidator.Check({ apiVersion: 1, status: "invented" }), false);
+  assert.equal(resultValidator.Check({ apiVersion: 1 }), false);
+  assert.equal(resultValidator.Check({ status: "reopened" }), false);
+  assert.equal(resultValidator.Check({ apiVersion: 2, status: "reopened" }), false);
+  // Rejects extra fields: session/launch/process/token/generation/lease/digest/receipt/attestation.
+  for (const extra of [
+    "sessionId",
+    "processPath",
+    "pipeEndpoint",
+    "controlToken",
+    "launchGeneration",
+    "lease",
+    "digest",
+    "receipt",
+    "attestation",
+    "extraneous",
+  ]) {
+    assert.equal(resultValidator.Check({ apiVersion: 1, status: "reopened", [extra]: "forbidden" }), false, extra);
+  }
+});
+
+test("game.reopen is a declared operation id", () => {
+  assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes("game.reopen"));
+});
+
 test("game.disconnect carries idempotency key and expected attachment generation", () => {
   const validator = Compile(GameDisconnectCommandV1Schema);
   assert.equal(validator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1 }), true);
@@ -754,6 +794,8 @@ test("GameBrowserContractV1 preserves the exact versioned aggregate schema bound
     "GamePrerequisitesReadCommandV1Schema",
     "GamePrerequisitesSetupCommandV1Schema",
     "GameProblemV1Schema",
+    "GameReopenActionAuthorityCommandV1Schema",
+    "GameReopenActionAuthorityResultV1Schema",
     "GameResumeCommandV1Schema",
     "GameResumeResultV1Schema",
     "GameStateReadCommandV1Schema",

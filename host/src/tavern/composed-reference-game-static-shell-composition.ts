@@ -59,6 +59,7 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
     ) => Promise<unknown>;
     stopGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameStop"]>;
     disconnectGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameDisconnect"]>;
+    reopenActionAuthority?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameReopen"]>;
   }>;
 }>;
 
@@ -107,6 +108,7 @@ export async function startComposedReferenceGameStaticShellComposition(
         },
     gameStop: options.lifecycleActivationBindingSink?.stopGame?.bind(options.lifecycleActivationBindingSink),
     gameDisconnect: options.lifecycleActivationBindingSink?.disconnectGame?.bind(options.lifecycleActivationBindingSink),
+    gameReopen: options.lifecycleActivationBindingSink?.reopenActionAuthority?.bind(options.lifecycleActivationBindingSink),
     stardewCabins:
       options.lifecycleActivationBindingSink?.readCabinChoices !== undefined &&
       options.lifecycleActivationBindingSink.confirmCabinChoice !== undefined
