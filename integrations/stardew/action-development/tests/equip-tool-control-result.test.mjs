@@ -32,10 +32,10 @@ const result = Object.freeze({
       actionId: "equip_tool",
     }),
     data: Object.freeze({
-      reasonCode: "tool_selected",
+      reasonCode: "tool_equipped",
       expectedRevision: 4,
       terminalRevision: 5,
-      slot: 1,
+      tool: "hoe",
       before: "Axe",
       expected: "Hoe",
       after: "Hoe",
@@ -70,10 +70,11 @@ test("rejects Host proof data that is incomplete, mismatched, or attempts to car
   const proofWith = (data) => ({ ...result.proof, data });
   for (const data of [
     { ...result.proof.data, requestId: "smuggled" },
-    { ...result.proof.data, reasonCode: "other" },
+    { ...result.proof.data, reasonCode: "tool_selected" },
     { ...result.proof.data, terminalRevision: 4 },
     { ...result.proof.data, after: "Axe" },
     { ...result.proof.data, before: "Hoe" },
+    { ...result.proof.data, tool: "bogus" },
     { ...result.proof.data, slot: 37 },
   ]) {
     assert.throws(
@@ -87,11 +88,13 @@ test("rejects Host proof data that is incomplete, mismatched, or attempts to car
   );
 });
 
-test("accepts the published equip_tool upper slot boundary", () => {
-  const upperBoundResult = resultWith({
-    proof: { ...result.proof, data: { ...result.proof.data, slot: 36 } },
-  });
-  assert.equal(verifyEquipToolControlProof({ start, result: upperBoundResult }).verified, true);
+test("accepts every canonical equip_tool tool selector", () => {
+  for (const tool of ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan"]) {
+    const canonicalResult = resultWith({
+      proof: { ...result.proof, data: { ...result.proof.data, tool } },
+    });
+    assert.equal(verifyEquipToolControlProof({ start, result: canonicalResult }).verified, true, tool);
+  }
 });
 
 test("separates action, harness, and cleanup outcomes without treating settlement as action success", () => {

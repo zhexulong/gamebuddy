@@ -36,16 +36,16 @@ function exactProof(runId) {
     claimScope: "native-local-equip-tool-v1",
     receipt: Object.freeze({
       state: "succeeded",
-      reasonCode: "tool_selected",
+      reasonCode: "tool_equipped",
       hasEvidence: true,
-      request: Object.freeze({ requestId, idempotencyKey: "equip-idem", action: "equip_tool", args: Object.freeze({ slot: 1 }), expectedRevision: 4 }),
+      request: Object.freeze({ requestId, idempotencyKey: "equip-idem", action: "equip_tool", args: Object.freeze({ tool: "hoe" }), expectedRevision: 4 }),
       accepted: Object.freeze({ requestId, executionId }),
-      terminal: Object.freeze({ requestId, executionId, state: "succeeded", reasonCode: "tool_selected", revision: 5 }),
-      evidence: Object.freeze({ slot: 1, before: "Axe", expected: "Hoe", after: "Hoe" }),
+      terminal: Object.freeze({ requestId, executionId, state: "succeeded", reasonCode: "tool_equipped", revision: 5 }),
+      evidence: Object.freeze({ tool: "hoe", before: "Axe", expected: "Hoe", after: "Hoe" }),
     }),
-    postcondition: Object.freeze({ revision: 5, currentTool: "Hoe", expectedTool: "Hoe", selected: Object.freeze({ slot: 1, label: "Hoe" }) }),
+    postcondition: Object.freeze({ revision: 5, currentTool: "Hoe", expectedTool: "Hoe", selected: Object.freeze({ tool: "hoe", resolvedLabel: "Hoe" }) }),
     verdict: "passed",
-    reasonCode: "tool_selected",
+    reasonCode: "tool_equipped",
   });
 }
 
@@ -128,7 +128,7 @@ test("run-live binds unique run identity and finalizes only after lifecycle, sta
       receipt: exactProof("ar1_first").receipt,
       postcondition: exactProof("ar1_first").postcondition,
       cleanup: { lifecycle: true, immutableStaging: true, runtimeLease: true },
-      reasonCode: "tool_selected",
+      reasonCode: "tool_equipped",
     },
   });
   assert.deepEqual(fake.order, [
@@ -139,7 +139,7 @@ test("run-live binds unique run identity and finalizes only after lifecycle, sta
   const metadata = fake.finalizations[0].metadata;
   assert.equal(metadata.runId, "ar1_first");
   assert.equal(metadata.request.action, "equip_tool");
-  assert.deepEqual(metadata.evidence, { slot: 1, before: "Axe", expected: "Hoe", after: "Hoe" });
+  assert.deepEqual(metadata.evidence, { tool: "hoe", before: "Axe", expected: "Hoe", after: "Hoe" });
   assert.deepEqual(metadata.cleanup, { lifecycle: true, immutableStaging: true, runtimeLease: true });
 });
 

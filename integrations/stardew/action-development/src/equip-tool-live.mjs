@@ -182,7 +182,8 @@ export function verifyEquipToolReceiptEvidencePostcondition({ actionId, invocati
   if (!result || result.gameId !== "stardew" || result.actionId !== actionId || result.runId !== invocation.runId) fail("verification_identity_mismatch");
   if (result.state !== "PASSED" || result.evidenceStatus !== "complete" || result.verdict !== "passed") fail("receipt_evidence_postcondition_invalid");
   const verification = result.verification;
-  if (!verification || typeof verification !== "object" || verification.reasonCode !== "tool_selected") fail("receipt_evidence_postcondition_invalid");
+  if (!verification || typeof verification !== "object" || (verification.reasonCode !== "tool_equipped" && verification.reasonCode !== "already_equipped"))
+    fail("receipt_evidence_postcondition_invalid");
   try {
     validateEquipToolScenarioProof({
       verdict: result.verdict,
