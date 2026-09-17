@@ -69,6 +69,7 @@ $duration = if ($Mode -eq 'probe') { 250 } else { $MaxDurationMs }
 $ready = if ($Mode -eq 'capture') { $ReadyPath } else { [IO.Path]::GetTempFileName() }
 try { $capture=[GameBuddyWaveIn.Native]::Capture($deviceId,$event,$ready,$duration) }
 finally { if ($Mode -eq 'probe') { Remove-Item -LiteralPath $ready -Force -ErrorAction SilentlyContinue } }
-$receipt=[pscustomobject]@{state='passed';mode=$Mode;device=$Device;resolvedDeviceId=("wavein:"+$capture.DeviceId);resolvedDeviceName=$capture.DeviceName;pcm16Bytes=$capture.Bytes.Length}
+$receiptDeviceId = if ($capture.DeviceId -eq 4294967295) { 'wavein:default' } else { "wavein:"+$capture.DeviceId }
+$receipt=[pscustomobject]@{state='passed';mode=$Mode;device=$Device;resolvedDeviceId=$receiptDeviceId;resolvedDeviceName=$capture.DeviceName;pcm16Bytes=$capture.Bytes.Length}
 if ($Mode -eq 'capture') { [IO.File]::WriteAllBytes($PcmPath,$capture.Bytes); [IO.File]::WriteAllText($ReceiptPath,($receipt|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false)) }
 $receipt|ConvertTo-Json -Compress

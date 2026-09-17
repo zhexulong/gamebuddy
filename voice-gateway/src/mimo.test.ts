@@ -51,7 +51,9 @@ test("MiMo adapter sends v2.5 pcm16 streaming request and consumes only SSE audi
     const provider = new MimoTtsProvider(options({ styleByProfile: { "companion.default": "short warm reply" } }));
     const chunks: Uint8Array[] = [];
     for await (const chunk of provider.synthesize(job, new AbortController().signal)) chunks.push(chunk);
-    assert.deepEqual([...chunks[0]!], [1, 2, 3, 4]);
+    // The wire is frozen at 16 kHz: the provider's native 24 kHz chunk
+    // (4 bytes = 2 samples here) is resampled to 16 kHz (2 bytes = 1 sample).
+    assert.deepEqual([...chunks[0]!], [1, 2]);
     assert.equal(provider.modelRevision, MIMO_TTS_MODEL);
     assert.equal(request?.url, MIMO_TTS_ENDPOINT);
     assert.equal(request?.headers.get("api-key"), "mimo_key_1234567890");

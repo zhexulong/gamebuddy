@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('list', 'probe', 'play')]
+    [ValidateSet('list', 'probe', 'play', 'stream')]
     [string]$Mode,
     [string]$Device = 'default',
     [string]$PcmPath
@@ -49,6 +49,53 @@ namespace GameBuddyWaveOut {
       for (uint i=0;i<count;i++) { WAVEOUTCAPS caps; Check(waveOutGetDevCaps((IntPtr)i,out caps,(uint)Marshal.SizeOf(typeof(WAVEOUTCAPS))),"waveout_get_caps"); values[i] = "waveout:"+i+"|"+(caps.szPname ?? "unknown"); }
       return values;
     }
+    static bool ReadExact(Stream input, byte[] buffer, int count) {
+      int offset = 0;
+      while (offset < count) {
+        int read = input.Read(buffer, offset, count - offset);
+        if (read <= 0) return false;
+        offset += read;
+      }
+      return true;
+    }
+    // Resident-stream render: the device opens once and stays open while PCM
+    // frames arrive on stdin as [4-byte LE length][PCM16 bytes]. A length of 0
+    // signals stop: the device is reset and released. This is the structure
+    // reference repos use (devices stay open; frames stream in), which makes
+    // 20ms micro-chunk playback and prompt barge-in physically possible.
+    public static void Stream(int deviceId, Stream input) {
+      IntPtr hwo = IntPtr.Zero;
+      var format = Format();
+      Check(waveOutOpen(out hwo, deviceId, ref format, IntPtr.Zero, IntPtr.Zero, 0), "waveout_stream_open");
+      try {
+        byte[] lengthBytes = new byte[4];
+        for (;;) {
+          if (!ReadExact(input, lengthBytes, 4)) break; // EOF = stop
+          int length = BitConverter.ToInt32(lengthBytes, 0);
+          if (length == 0) break; // explicit stop frame
+          if (length < 0 || length % 2 != 0 || length > 1920000) throw new InvalidOperationException("invalid_pcm16_frame");
+          byte[] audio = new byte[length];
+          if (!ReadExact(input, audio, length)) throw new InvalidOperationException("truncated_pcm16_frame");
+          GCHandle handle = GCHandle.Alloc(audio, GCHandleType.Pinned);
+          WAVEHDR header = new WAVEHDR();
+          bool prepared = false;
+          try {
+            header.lpData = handle.AddrOfPinnedObject();
+            header.dwBufferLength = (uint)audio.Length;
+            Check(waveOutPrepareHeader(hwo, ref header, (uint)Marshal.SizeOf(typeof(WAVEHDR))), "waveout_stream_prepare");
+            prepared = true;
+            Check(waveOutWrite(hwo, ref header, (uint)Marshal.SizeOf(typeof(WAVEHDR))), "waveout_stream_write");
+            var deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(5000, (audio.Length / 32) + 3000));
+            while ((header.dwFlags & WHDR_DONE) == 0 && DateTime.UtcNow < deadline) System.Threading.Thread.Sleep(5);
+            if ((header.dwFlags & WHDR_DONE) == 0) throw new TimeoutException("waveout_stream_playback_timeout");
+          } finally {
+            if (hwo != IntPtr.Zero) { if (prepared) waveOutUnprepareHeader(hwo, ref header, (uint)Marshal.SizeOf(typeof(WAVEHDR))); if (handle.IsAllocated) handle.Free(); }
+          }
+        }
+      } finally {
+        if (hwo != IntPtr.Zero) { waveOutReset(hwo); waveOutClose(hwo); }
+      }
+    }
     public static void ProbeOrPlay(int deviceId, string path, bool probe) {
       byte[] audio = probe ? new byte[320] : File.ReadAllBytes(path);
       if (audio.Length == 0 || audio.Length % 2 != 0 || audio.Length > 1920000) throw new InvalidOperationException("invalid_pcm16_audio");
@@ -76,6 +123,13 @@ if ($Mode -eq 'list') {
         $id, $name = $_ -split '\|', 2
         [pscustomobject]@{ id = $id; name = $name }
     } | ConvertTo-Json -Compress
+    exit 0
+}
+
+if ($Mode -eq 'stream') {
+    $stdin = [Console]::OpenStandardInput()
+    [GameBuddyWaveOut.Native]::Stream($deviceId, $stdin)
+    [pscustomobject]@{ state = 'stopped'; mode = 'stream'; device = $Device } | ConvertTo-Json -Compress
     exit 0
 }
 

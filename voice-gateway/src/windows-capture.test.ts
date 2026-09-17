@@ -99,6 +99,44 @@ test("capture accepts only its terminal native JSON receipt and records the reso
   }
 });
 
+test("capture accepts the WAVE_MAPPER receipt id when Windows resolves the default device", async () => {
+  // When the device is "default", waveInGetID returns 0xFFFFFFFF (4294967295);
+  // the native receipt must normalize that to wavein:default so a real
+  // Microsoft Sound Mapper capture never fails its own receipt validation.
+  const directory = await import("node:fs/promises").then(({ mkdtemp }) => mkdtemp("windows-capture-test-"));
+  const fs = await import("node:fs/promises");
+  let invocation = 0;
+  let releaseCompletion!: () => void;
+  const completion = new Promise<string>((resolvePromise) => {
+    releaseCompletion = () => resolvePromise("native informational line");
+  });
+  const capture = new WindowsPttCapture("default", async (arguments_) => {
+    invocation++;
+    if (invocation === 1) {
+      const pcmPath = arguments_[arguments_.indexOf("-PcmPath") + 1]!;
+      const readyPath = arguments_[arguments_.indexOf("-ReadyPath") + 1]!;
+      const receiptPath = arguments_[arguments_.indexOf("-ReceiptPath") + 1]!;
+      await fs.writeFile(readyPath, "ready");
+      await fs.writeFile(pcmPath, Buffer.from([0, 0]));
+      await fs.writeFile(
+        receiptPath,
+        "{\"state\":\"passed\",\"resolvedDeviceId\":\"wavein:default\",\"resolvedDeviceName\":\"Microsoft Sound Mapper\"}",
+      );
+      return await completion;
+    }
+    releaseCompletion();
+    return '{"state":"stopped"}';
+  });
+  try {
+    await capture.start();
+    assert.deepEqual(await capture.stop(), new Uint8Array([0, 0]));
+    assert.deepEqual(capture.lastResolvedDevice, { id: "wavein:default", name: "Microsoft Sound Mapper" });
+  } finally {
+    await capture.cancel();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("cancel during mkdtemp linearizes startup before native launch", async () => {
   let releaseMkdtemp!: (directory: string) => void;
   const pendingMkdtemp = new Promise<string>((resolve) => {
