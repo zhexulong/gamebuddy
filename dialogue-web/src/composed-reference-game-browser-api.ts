@@ -1,6 +1,5 @@
 import {
   type TavernStateSnapshotV1,
-  TavernProtocolError,
   validateSnapshot,
 } from "./reference-pipeline-api.js";
 
