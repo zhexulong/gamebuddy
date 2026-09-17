@@ -83,9 +83,9 @@ function createFakeClient({ landingTile = FIRST_APPROACH, removeOnLastHit = true
         return accepted;
       }
       if (request.action === "equip_tool") {
-        assert.deepEqual(request.args, { slot: PICKAXE.slot });
+        assert.deepEqual(request.args, { tool: "pickaxe" });
         sequence += 1;
-        return { ...accepted, state: "succeeded", reasonCode: "tool_selected" };
+        return { ...accepted, state: "succeeded", reasonCode: "tool_equipped" };
       }
       if (request.action === "move_to_tile") {
         assert.deepEqual(request.args, FIRST_APPROACH);

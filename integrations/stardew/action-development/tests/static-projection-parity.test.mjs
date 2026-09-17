@@ -73,8 +73,8 @@ test("observe_scene ratification remains outside the generated Agent-facing pari
     "partial",
     "truncatedReason",
   ]);
-  assert.equal(snapshot.surface.actions.some(({ actionId }) => actionId === "observe_scene"), false);
-  assert.equal(snapshot.lifecycle.readOnlyActionIds.includes("observe_scene"), false);
+  assert.equal(snapshot.surface.actions.some(({ actionId }) => actionId === "observe_scene"), true);
+  assert.equal(snapshot.lifecycle.readOnlyActionIds.includes("observe_scene"), true);
   assert.equal(snapshot.lifecycle.executableActionIds.includes("observe_scene"), false);
   assert.equal(snapshot.ownership.nativeActionIds.includes("observe_scene"), false);
   assert.equal(snapshot.ownership.localFixtureOwnedActionIds.includes("observe_scene"), false);

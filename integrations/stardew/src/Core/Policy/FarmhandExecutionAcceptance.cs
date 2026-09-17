@@ -70,6 +70,7 @@ public static class FarmhandExecutionAcceptance
         bool destination = args.Destination is not null;
         bool emote = args.Emote is not null;
         bool direction = args.Direction is not null;
+        bool tool = args.Tool is not null;
         return x == HasArgument(descriptor, "x")
             && y == HasArgument(descriptor, "y")
             && slot == HasArgument(descriptor, "slot")
@@ -78,7 +79,8 @@ public static class FarmhandExecutionAcceptance
             && sceneTarget == (descriptor.SceneTarget is not null)
             && destination == HasArgument(descriptor, "destination")
             && emote == HasArgument(descriptor, "emote")
-            && direction == HasArgument(descriptor, "direction");
+            && direction == HasArgument(descriptor, "direction")
+            && tool == HasArgument(descriptor, "tool");
     }
 
     private static bool HasArgument(FarmhandActionDescriptor descriptor, string name) =>
@@ -103,6 +105,8 @@ public static class FarmhandExecutionAcceptance
             && emoteEnum.Any(value => string.Equals(value, args.Emote, StringComparison.Ordinal)),
         "direction" => !string.IsNullOrWhiteSpace(args.Direction) && argument.Enum is { } directionEnum
             && directionEnum.Any(value => string.Equals(value, args.Direction, StringComparison.Ordinal)),
+        "tool" => !string.IsNullOrWhiteSpace(args.Tool) && argument.Enum is { } toolEnum
+            && toolEnum.Any(value => string.Equals(value, args.Tool, StringComparison.Ordinal)),
         _ => false,
     };
 

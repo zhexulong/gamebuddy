@@ -38,8 +38,8 @@
         "lifecycle": "published",
         "kind": "execution",
         "argumentSchema": {
-          "slot": {
-            "type": "integer"
+          "tool": {
+            "type": "string"
           }
         },
         "outputFacts": {},
@@ -833,6 +833,21 @@
         }
       },
       {
+        "actionId": "observe_scene",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "read_only",
+        "argumentSchema": {},
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": []
+        },
+        "effect": "read",
+        "postcondition": {
+          "name": "observation_complete"
+        }
+      },
+      {
         "actionId": "navigate_to_destination",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -1036,7 +1051,8 @@
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
-      "find_destination"
+      "find_destination",
+      "observe_scene"
     ],
     "experimentalActionIds": [
       "clear_debris",
@@ -1049,9 +1065,9 @@
   "protocol": {
     "schemas": [
       "gamebuddy-action-descriptors/v1",
-      "gamebuddy-action-work-brief/v1",
+      "gamebuddy-action-work-brief/v2",
       "gamebuddy-stardew-action-preflight-brief/v1",
-      "gamebuddy-stardew-static-action-descriptor/v1",
+      "gamebuddy-stardew-static-action-descriptor/v2",
       "gamebuddy-stardew-static-action-projection/v1",
       "gamebuddy-stardew-tool-inventory/v1"
     ],
@@ -1062,14 +1078,14 @@
   },
   "ownership": {
     "localFixtureOwnedActionIds": [
-      "equip_tool"
+      "equip_tool",
+      "pickup_forage"
     ],
     "nativeActionIds": [
       "move_to_tile",
       "travel",
       "enter_exit",
       "till_soil",
-      "pickup_forage",
       "pickup_item",
       "water_crop",
       "plant_seed",

@@ -111,8 +111,8 @@
           "lifecycle": "published",
           "kind": "execution",
           "argumentSchema": {
-            "slot": {
-              "type": "integer"
+            "tool": {
+              "type": "string"
             }
           },
           "outputFacts": {},
@@ -1083,6 +1083,28 @@
         "handlerGroup": null
       },
       {
+        "actionId": "observe_scene",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "read_only",
+        "descriptor": {
+          "actionId": "observe_scene",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "read_only",
+          "argumentSchema": {},
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": []
+          },
+          "effect": "read",
+          "postcondition": {
+            "name": "observation_complete"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "navigate_to_destination",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -1350,7 +1372,8 @@
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
-      "find_destination"
+      "find_destination",
+      "observe_scene"
     ],
     "experimentalActionIds": [
       "clear_debris",
@@ -1561,9 +1584,14 @@
       "observe_request",
       "navigation_read_request",
       "navigation_read_result",
+      "observe_scene_request",
+      "observe_scene_result",
       "snapshot",
       "catalog_update",
       "execution_request",
+      "body_node_admission_challenge",
+      "body_node_admission_grant",
+      "body_node_admission_result",
       "execution_receipt_query",
       "cancel_request",
       "companion_presentation_request",
@@ -1607,11 +1635,16 @@
       "hello",
       "hello_ack",
       "observe_request",
+      "observe_scene_request",
+      "observe_scene_result",
       "navigation_read_request",
       "navigation_read_result",
       "snapshot",
       "catalog_update",
       "execution_request",
+      "body_node_admission_challenge",
+      "body_node_admission_grant",
+      "body_node_admission_result",
       "execution_receipt_query",
       "cancel_request",
       "companion_presentation_request",

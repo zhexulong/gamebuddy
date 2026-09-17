@@ -62,9 +62,9 @@ test("water-crop runner uses shared dispatch and stable fresh postcondition", as
           requestId: request.requestId,
           executionId: "equip-execution",
           state: "succeeded",
-          reasonCode: "tool_selected",
+          reasonCode: "tool_equipped",
           revision: 6,
-          evidence: { detail: "slot=1;before=Axe;expected=Watering Can;after=Watering Can" },
+          evidence: { detail: "tool=watering_can;before=Axe;expected=Watering Can;after=Watering Can" },
         };
       }
       if (request.action === "water_crop") {
@@ -110,9 +110,9 @@ test("water-crop runner fails closed on a stale post-terminal revision", async (
           requestId: request.requestId,
           executionId: "equip-execution",
           state: "succeeded",
-          reasonCode: "tool_selected",
+          reasonCode: "tool_equipped",
           revision: 6,
-          evidence: { detail: "slot=1;before=Axe;expected=Watering Can;after=Watering Can" },
+          evidence: { detail: "tool=watering_can;before=Axe;expected=Watering Can;after=Watering Can" },
         };
       }
       if (request.action === "water_crop") {

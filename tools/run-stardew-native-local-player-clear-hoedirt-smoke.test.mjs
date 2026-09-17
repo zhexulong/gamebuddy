@@ -64,7 +64,7 @@ function createFake({ evidenceDetail = EVIDENCE } = {}) {
       const executionId = `execution-${action}`;
       if (action === "equip_tool") {
         revision += 1;
-        return { requestId, executionId, state: "succeeded", reasonCode: "tool_selected", revision };
+        return { requestId, executionId, state: "succeeded", reasonCode: "tool_equipped", revision };
       }
       if (action === "clear_hoedirt") {
         revision += 1;

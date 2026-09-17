@@ -68,16 +68,16 @@ test("dig-artifact-spot runner uses shared dispatch and exact terminal receipt",
     execute: async (request) => {
       calls.push(request.action);
       if (request.action === "equip_tool") {
-        assert.deepEqual(request.args, { slot: 0 });
+        assert.deepEqual(request.args, { tool: "hoe" });
         snapshot = baseSnapshot(6);
         client.state.snapshot = snapshot;
         return {
           requestId: request.requestId,
           executionId: "equip-execution",
           state: "succeeded",
-          reasonCode: "tool_selected",
+          reasonCode: "tool_equipped",
           revision: 6,
-          evidence: { detail: "slot=0;before=Axe;expected=(T)Hoe;after=(T)Hoe" },
+          evidence: { detail: "tool=hoe;before=Axe;expected=(T)Hoe;after=(T)Hoe" },
         };
       }
       if (request.action === "dig_artifact_spot") {
@@ -128,9 +128,9 @@ test("dig-artifact-spot runner fails closed when the fresh target changes after 
           requestId: request.requestId,
           executionId: "equip-execution",
           state: "succeeded",
-          reasonCode: "tool_selected",
+          reasonCode: "tool_equipped",
           revision: 6,
-          evidence: { detail: "slot=0;before=Axe;expected=(T)Hoe;after=(T)Hoe" },
+          evidence: { detail: "tool=hoe;before=Axe;expected=(T)Hoe;after=(T)Hoe" },
         };
       }
       throw new Error(`unexpected_action:${request.action}`);
@@ -155,9 +155,9 @@ test("dig-artifact-spot runner fails closed on stamina evidence mismatch", async
           requestId: request.requestId,
           executionId: "equip-execution",
           state: "succeeded",
-          reasonCode: "tool_selected",
+          reasonCode: "tool_equipped",
           revision: 6,
-          evidence: { detail: "slot=0;before=Axe;expected=(T)Hoe;after=(T)Hoe" },
+          evidence: { detail: "tool=hoe;before=Axe;expected=(T)Hoe;after=(T)Hoe" },
         };
       }
       if (request.action === "dig_artifact_spot") {

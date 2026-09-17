@@ -133,7 +133,7 @@ test("protocol/schema drift restricts the executable intersection", () => {
 
 test("gate metadata does not suppress Host-supported executable actions", () => {
   const withoutEquipGate = sources.gate_descriptors.replace(
-    '  gate("equip_tool", 1, "run-stardew-native-local-player-equip-tool-smoke.mjs", "tool_selected"),\n',
+    '  gate("equip_tool", 1, "run-stardew-native-local-player-equip-tool-smoke.mjs", "tool_equipped"),\n',
     "",
   );
   assert.notEqual(withoutEquipGate, sources.gate_descriptors, "equip_tool gate anchor must match");

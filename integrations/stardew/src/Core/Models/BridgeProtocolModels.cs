@@ -357,6 +357,9 @@ public sealed class BridgeExecutionArgs
     public float? X { get; init; }
     public float? Y { get; init; }
     public int? Slot { get; init; }
+    /// <summary>Semantic tool selector (equip_tool/v2): a canonical category that the
+    /// Mod resolves deterministically on the game thread; slot stays Mod-private.</summary>
+    public string? Tool { get; init; }
     public string? ExpectedQualifiedItemId { get; init; }
     public string? ExpectedTargetId { get; init; }
     public ObservationBindingV1? SceneTarget { get; init; }

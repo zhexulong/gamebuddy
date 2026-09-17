@@ -1147,6 +1147,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                         || emote.ValueKind != JsonValueKind.String
                         || emote.GetString() is not { } emoteStr
                         || !FarmhandActionCatalog.EmoteEnum.Contains(emoteStr, StringComparer.Ordinal)))
+                || (action.GetString() == "equip_tool"
+                    && (!args.TryGetProperty("tool", out JsonElement tool)
+                        || tool.ValueKind != JsonValueKind.String
+                        || tool.GetString() is not { } toolStr
+                        || !FarmhandActionCatalog.ToolEnum.Contains(toolStr, StringComparer.Ordinal)))
                 || (action.GetString() == "face_direction"
                     && (!args.TryGetProperty("direction", out JsonElement direction)
                         || direction.ValueKind != JsonValueKind.String
@@ -1780,8 +1785,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
     public static string[]? ExecutionArgumentProperties(string? action) => action switch
     {
-        "move_to_tile" or "enter_exit" or "travel" or "till_soil" => new[] { "x", "y" },
-        "equip_tool" => new[] { "slot" },
+            "move_to_tile" or "enter_exit" or "travel" or "till_soil" => new[] { "x", "y" },
+            "equip_tool" => new[] { "tool" },
         "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
         "water_crop" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" => new[] { "x", "y", "expectedTargetId" },

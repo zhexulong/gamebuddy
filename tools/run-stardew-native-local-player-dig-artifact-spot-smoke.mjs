@@ -40,8 +40,8 @@ export async function runDigArtifactSpotSmoke(
       throw new Error(`dig_artifact_spot_initial_farm_source_count:${initialSourceCount}`);
     const target = chooseTarget(before);
     const hoe = chooseHoe(before);
-    const equipped = await execute(client, trace, "equip_hoe", "equip_tool", { slot: hoe.slot }, before);
-    if (equipped.state !== "succeeded" || equipped.reasonCode !== "tool_selected")
+    const equipped = await execute(client, trace, "equip_hoe", "equip_tool", { tool: "hoe" }, before);
+    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
       throw new Error(`hoe_equip_failed:${equipped.reasonCode}`);
     const fresh = await observeFresh(client, { actionable: true });
     const preCount = fresh.artifactSpotFarmSourceCount;

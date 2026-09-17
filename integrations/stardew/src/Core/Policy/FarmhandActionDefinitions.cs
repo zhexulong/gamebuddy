@@ -43,6 +43,13 @@ public static class FarmhandActionCatalog
         "up", "right", "down", "left"
     });
 
+    /// <summary>Semantic tool selector for equip_tool/v2. Mod resolves a canonical
+    /// category to the deterministically best owned item; slot stays private.</summary>
+    public static readonly IReadOnlyList<string> ToolEnum = Array.AsReadOnly(new[]
+    {
+        "axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan"
+    });
+
     private static readonly IReadOnlyList<FarmhandActionResourceTemplateClaim> EmbodiedActorResource = Array.AsReadOnly(new[]
     {
         new FarmhandActionResourceTemplateClaim("embodied_actor", FarmhandResourceTemplateValue.ScopePlayer),
@@ -51,7 +58,7 @@ public static class FarmhandActionCatalog
     public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
     {
         E("move_to_tile", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
-        E("equip_tool", "body_tools", FarmhandActionHandlerGroup.ResourceTools, A(null, null, "native_action_postcondition", ("slot","integer"))),
+        E("equip_tool", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("tool", "string", ToolEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition", "Game1.player.CurrentToolIndex")),
         E("travel", "transport_warps", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),

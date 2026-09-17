@@ -47,8 +47,8 @@ export async function runChopTreeSourceSmoke(
     snapshot = await moveToReachableChopTree(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs);
     const target = chooseChopTree(snapshot);
     const axe = chooseAxe(snapshot);
-    const equipped = await execute(client, trace, "equip_axe", "equip_tool", { slot: axe.slot }, snapshot);
-    if (equipped.state !== "succeeded" || equipped.reasonCode !== "tool_selected")
+    const equipped = await execute(client, trace, "equip_axe", "equip_tool", { tool: "axe" }, snapshot);
+    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
       throw new Error(`axe_equip_failed:${equipped.reasonCode}`);
     snapshot = await observeFresh(client, { actionable: true });
     const freshTarget = findSameChopTree(snapshot, target);

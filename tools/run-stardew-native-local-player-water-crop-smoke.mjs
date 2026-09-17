@@ -51,13 +51,13 @@ export async function runWaterCropSmoke(
       trace,
       "equip_watering_can",
       "equip_tool",
-      { slot: wateringCan.slot },
+      { tool: "watering_can" },
       snapshot,
     );
     const equipTerminal = await waitForTerminal(receipts, equipped, terminalTimeoutMs);
-    if (equipTerminal.state !== "succeeded" || equipTerminal.reasonCode !== "tool_selected")
+    if (equipTerminal.state !== "succeeded" || (equipTerminal.reasonCode !== "tool_equipped" && equipTerminal.reasonCode !== "already_equipped"))
       throw new Error(`watering_can_equip_failed:${equipTerminal.reasonCode}`);
-    const equipEvidence = parseEvidence(equipTerminal.evidence, ["after", "before", "expected", "slot"]);
+    const equipEvidence = parseEvidence(equipTerminal.evidence, ["after", "before", "expected", "tool"]);
     if (equipEvidence.expected !== wateringCan.label || equipEvidence.after !== wateringCan.label)
       throw new Error("watering_can_equip_evidence_mismatch");
 
