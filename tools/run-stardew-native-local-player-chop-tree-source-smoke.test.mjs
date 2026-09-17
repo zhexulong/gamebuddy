@@ -99,7 +99,7 @@ function createFake({ startAtFarmHouse = true } = {}) {
       }
       if (action === "equip_tool") {
         revision += 1;
-        return { requestId, executionId, state: "succeeded", reasonCode: "tool_selected", revision };
+        return { requestId, executionId, state: "succeeded", reasonCode: "tool_equipped", revision };
       }
       if (action === "chop_tree_source") {
         revision += 1;

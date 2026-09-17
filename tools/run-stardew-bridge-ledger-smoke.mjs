@@ -38,7 +38,7 @@ try {
       requestId: "ledger_stale_01",
       idempotencyKey: "ledger_stale_idem_01",
       action: "equip_tool",
-      args: { slot: 0 },
+      args: { tool: "axe" },
       expectedRevision: Math.max(0, initial.revision - 1),
       deadlineMs: Date.now() + 30_000,
     });
@@ -53,11 +53,11 @@ try {
     requestId: "ledger_conflict_01",
     idempotencyKey: "ledger_conflict_idem_01",
     action: "equip_tool",
-    args: { slot: 0 },
+    args: { tool: "axe" },
     expectedRevision: beforeValid.revision,
     deadlineMs: Date.now() + 30_000,
   });
-  if (first.state !== "succeeded" || first.reasonCode !== "tool_selected" || !hasToolEvidence(first.evidence))
+  if (first.state !== "succeeded" || (first.reasonCode !== "tool_equipped" && first.reasonCode !== "already_equipped") || !hasToolEvidence(first.evidence))
     failures.push("first_idempotent_request_not_succeeded");
 
   const beforeConflict = await client.observe();
@@ -66,7 +66,7 @@ try {
       requestId: "ledger_conflict_02",
       idempotencyKey: "ledger_conflict_idem_01",
       action: "equip_tool",
-      args: { slot: 3 },
+      args: { tool: "axe" },
       expectedRevision: beforeConflict.revision,
       deadlineMs: Date.now() + 30_000,
     });
@@ -81,11 +81,11 @@ try {
     requestId: "ledger_restore_01",
     idempotencyKey: "ledger_restore_idem_01",
     action: "equip_tool",
-    args: { slot: 3 },
+    args: { tool: "hoe" },
     expectedRevision: beforeRestore.revision,
     deadlineMs: Date.now() + 30_000,
   });
-  if (restored.state !== "succeeded" || restored.reasonCode !== "tool_selected" || !hasToolEvidence(restored.evidence))
+  if (restored.state !== "succeeded" || (restored.reasonCode !== "tool_equipped" && restored.reasonCode !== "already_equipped") || !hasToolEvidence(restored.evidence))
     failures.push("restore_not_succeeded");
 
   console.log(
@@ -108,5 +108,5 @@ try {
 
 function hasToolEvidence(evidence) {
   if (evidence === null || typeof evidence !== "object" || typeof evidence.detail !== "string") return false;
-  return /(?:^|;)before=[^;]+;expected=[^;]+;after=[^;]+(?:;|$)/.test(evidence.detail);
+  return /(?:^|;)tool=[^;]+;before=[^;]+;expected=[^;]+;after=[^;]+(?:;|$)/.test(evidence.detail);
 }

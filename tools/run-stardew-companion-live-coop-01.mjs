@@ -257,7 +257,7 @@ export async function runCompanionLiveCoop01(options = {}) {
     // Pause 2.5s so human eye clearly sees the happy emote bubble animate over head
     await new Promise((r) => setTimeout(r, 2500));
 
-    // Step 5a: action_dispatch equip_tool (switch from slot 0 Axe to slot 1 Pickaxe)
+    // Step 5a: action_dispatch equip_tool (switch from held Axe to Pickaxe)
     const equipPickaxeReqId = `req_equip_pickaxe_${Date.now()}`;
     const equipPickaxeIdem = `idem_equip_pickaxe_${Date.now()}`;
     events.push({
@@ -266,7 +266,7 @@ export async function runCompanionLiveCoop01(options = {}) {
       actionId: "equip_tool",
       requestId: equipPickaxeReqId,
       idempotencyKey: equipPickaxeIdem,
-      args: { slot: 1 },
+      args: { tool: "pickaxe" },
     });
 
     const snapBeforeEquipPickaxe = await client.observe();
@@ -274,7 +274,7 @@ export async function runCompanionLiveCoop01(options = {}) {
       requestId: equipPickaxeReqId,
       idempotencyKey: equipPickaxeIdem,
       action: "equip_tool",
-      args: { slot: 1 },
+      args: { tool: "pickaxe" },
       expectedRevision: snapBeforeEquipPickaxe.revision,
       deadlineMs: Date.now() + 10000,
     });
@@ -291,7 +291,7 @@ export async function runCompanionLiveCoop01(options = {}) {
     // Pause 2s so user clearly sees the held tool change from Axe to Pickaxe
     await new Promise((r) => setTimeout(r, 2000));
 
-    // Step 5b: action_dispatch equip_tool (switch back to slot 0 Axe)
+    // Step 5b: action_dispatch equip_tool (switch back to Axe)
     const equipAxeReqId = `req_equip_axe_${Date.now()}`;
     const equipAxeIdem = `idem_equip_axe_${Date.now()}`;
     events.push({
@@ -300,7 +300,7 @@ export async function runCompanionLiveCoop01(options = {}) {
       actionId: "equip_tool",
       requestId: equipAxeReqId,
       idempotencyKey: equipAxeIdem,
-      args: { slot: 0 },
+      args: { tool: "axe" },
     });
 
     const snapBeforeEquipAxe = await client.observe();
@@ -308,7 +308,7 @@ export async function runCompanionLiveCoop01(options = {}) {
       requestId: equipAxeReqId,
       idempotencyKey: equipAxeIdem,
       action: "equip_tool",
-      args: { slot: 0 },
+      args: { tool: "axe" },
       expectedRevision: snapBeforeEquipAxe.revision,
       deadlineMs: Date.now() + 10000,
     });

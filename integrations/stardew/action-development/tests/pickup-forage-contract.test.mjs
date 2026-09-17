@@ -15,7 +15,7 @@ test("validates the checked-in pickup_forage v2 contract", () => {
   assert.deepEqual(validated.args.requiredProperties, ["x", "y", "expectedQualifiedItemId", "expectedTargetId"]);
   assert.deepEqual(validated.args.sceneTarget, { type: "ObservationBinding", version: 1, required: true, requiredProperties: ["observationId", "ref"] });
   assert.deepEqual(validated.terminal.successReasonCodes, ["forage_picked_up"]);
-  assert.deepEqual(validated.terminal.evidenceFields, ["location", "tile", "item", "removed", "inventory_before", "inventory_after"]);
+  assert.deepEqual(validated.terminal.evidenceFields, ["location", "targetIdentity", "tile", "item", "removed", "inventory_before", "inventory_after"]);
 });
 
 test("requires sceneTarget and rejects fallback-shaped variants", () => {

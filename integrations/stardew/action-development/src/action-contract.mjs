@@ -75,7 +75,7 @@ export function validateActionContractPickupForage(contract) {
   if (JSON.stringify(validated.args.sceneTarget) !== JSON.stringify({ type: "ObservationBinding", version: 1, required: true, requiredProperties: ["observationId", "ref"] })) fail("wrong_scene_target");
   if (JSON.stringify(validated.terminal.acceptableStates) !== JSON.stringify(["succeeded", "uncertain"])) fail("wrong_acceptable_states");
   if (JSON.stringify(validated.terminal.successReasonCodes) !== JSON.stringify(["forage_picked_up"])) fail("wrong_reason_codes");
-  if (JSON.stringify(validated.terminal.evidenceFields) !== JSON.stringify(["location", "tile", "item", "removed", "inventory_before", "inventory_after"])) fail("wrong_evidence_fields");
+  if (JSON.stringify(validated.terminal.evidenceFields) !== JSON.stringify(["location", "targetIdentity", "tile", "item", "removed", "inventory_before", "inventory_after"])) fail("wrong_evidence_fields");
   if (validated.terminal.evidenceRelation !== "inventory_after_equals_inventory_before_plus_removed") fail("wrong_evidence_relation");
   return validated;
 }

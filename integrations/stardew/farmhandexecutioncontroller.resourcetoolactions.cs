@@ -192,7 +192,13 @@ internal sealed partial class ExecutionManager
         return receipt;
     }
 
-    public LocalExecutionReceipt RequestLocalEquipTool(string requestId, int slot)
+    /// <summary>
+    /// equip_tool/v2: resolves one canonical semantic tool category to the
+    /// deterministically best owned item on the game thread, switches to that
+    /// slot, and proves it with a ReferenceEquals postcondition. slot stays
+    /// Mod-private and is never accepted from the wire.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalEquipTool(string requestId, string? requestedTool)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
             return existing;
@@ -209,20 +215,80 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_cannot_move", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
-        if (slot < 0 || slot >= Game1.player.Items.Count)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_tool_slot", null);
-        Tool? selectedTool = Game1.player.Items[slot] as Tool;
+        if (requestedTool is null || !FarmhandActionCatalog.ToolEnum.Contains(requestedTool, StringComparer.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_tool_selector", requestedTool is null ? null : $"tool={requestedTool}");
+
+        int? slot = SelectToolSlot(Game1.player, requestedTool);
+        if (slot is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_found", $"tool={requestedTool}");
+        Tool? selectedTool = Game1.player.Items[slot.Value] as Tool;
         if (selectedTool is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_owned_in_slot", $"slot={slot}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_found", $"tool={requestedTool};slot={slot.Value}");
+
+        // already_equipped is a deterministic success when the resolved best
+        // item is already the held tool: no further switch is required.
+        if (ReferenceEquals(Game1.player.CurrentTool, selectedTool))
+        {
+            string? heldToolName = DescribeTool(Game1.player.CurrentTool);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "already_equipped", $"tool={requestedTool};before={heldToolName ?? "none"};expected={heldToolName ?? "none"};after={heldToolName ?? "none"}");
+        }
 
         string? expectedTool = DescribeTool(selectedTool);
         string? previousTool = DescribeTool(Game1.player.CurrentTool);
-        Game1.player.CurrentToolIndex = slot;
+        Game1.player.CurrentToolIndex = slot.Value;
         string? currentTool = DescribeTool(Game1.player.CurrentTool);
         if (!string.Equals(currentTool, expectedTool, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tool_selection_postcondition_unavailable", $"before={previousTool ?? "none"};expected={expectedTool ?? "none"};actual={currentTool ?? "none"}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tool_selection_postcondition_unavailable", $"tool={requestedTool};before={previousTool ?? "none"};expected={expectedTool ?? "none"};actual={currentTool ?? "none"}");
 
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_selected", $"slot={slot};before={previousTool ?? "none"};expected={expectedTool};after={currentTool}");
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_equipped", $"tool={requestedTool};before={previousTool ?? "none"};expected={expectedTool};after={currentTool}");
+    }
+
+    /// <summary>
+    /// Deterministic game-thread selection of the best owned item for one
+    /// canonical tool category. Regular tools and scythe pick the highest
+    /// UpgradeLevel (ties to the smallest slot); weapons pick the highest
+    /// MeleeWeapon.getItemLevel(). Returns null when no item matches.
+    /// </summary>
+    private static int? SelectToolSlot(Farmer player, string tool)
+    {
+        int bestSlot = -1;
+        int bestRank = -1;
+        for (int slot = 0; slot < player.Items.Count; slot++)
+        {
+            if (player.Items[slot] is not Tool item)
+                continue;
+            if (!MatchesToolCategory(item, tool))
+                continue;
+            int rank = tool == "weapon" ? ItemRankForWeapon(item) : item.UpgradeLevel;
+            if (rank > bestRank || (rank == bestRank && (bestSlot < 0 || slot < bestSlot)))
+            {
+                bestRank = rank;
+                bestSlot = slot;
+            }
+        }
+        return bestSlot < 0 ? null : bestSlot;
+    }
+
+    private static bool MatchesToolCategory(Tool item, string tool) => tool switch
+    {
+        "axe" => item is Axe,
+        "pickaxe" => item is Pickaxe,
+        "hoe" => item is Hoe,
+        "watering_can" => item is WateringCan,
+        "fishing_rod" => item is FishingRod,
+        "weapon" => item is MeleeWeapon or Slingshot,
+        "scythe" => item is MeleeWeapon weapon && weapon.isScythe(),
+        "shears" => item is Shears,
+        "milk_pail" => item is MilkPail,
+        "pan" => item is Pan,
+        _ => false,
+    };
+
+    private static int ItemRankForWeapon(Tool item)
+    {
+        if (item is MeleeWeapon melee)
+            return melee.getItemLevel();
+        return item is Slingshot ? 1 : 0;
     }
 
 }

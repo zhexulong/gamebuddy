@@ -1030,15 +1030,15 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest(valid, { ...snapshot, actionable: false }, now), "player_not_actionable");
-  const equip = { ...valid, action: "equip_tool", args: { slot: 2 } };
+  const equip = { ...valid, action: "equip_tool", args: { tool: "axe" } };
   assert.equal(validateExecutionRequest(equip, snapshot, now), "capability_not_declared");
   assert.equal(
     validateExecutionRequest(
-      { ...equip, args: { slot: 37 } },
+      { ...equip, args: { tool: "bogus" } },
       { ...snapshot, capabilities: [...snapshot.capabilities, "equip_tool"] },
       now,
     ),
-    "invalid_tool_slot",
+    "invalid_tool_selector",
   );
   assert.equal(
     validateExecutionRequest(

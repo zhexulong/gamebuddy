@@ -853,7 +853,7 @@ const SNAPSHOT_KEYS = [
 const EXECUTION_ACTION_ARGUMENT_KEYS: Readonly<Record<ExecutionRequest["action"], readonly string[]>> = {
   move_to_tile: ["x", "y"],
   navigate_to_destination: ["destination"],
-  equip_tool: ["slot"],
+  equip_tool: ["tool"],
   travel: ["x", "y"],
   enter_exit: ["x", "y"],
   till_soil: ["x", "y"],
@@ -1222,7 +1222,7 @@ function validateObserveSceneResult(value: Record<string, unknown>): string | nu
 }
 
 function boundedSceneText(value: unknown, maximumLength: number): value is string {
-  return typeof value === "string" && value.length >= 1 && value.length <= maximumLength && !/[\\u0000-\\u001f\\u007f\\u0080-\\u009f]/u.test(value);
+  return typeof value === "string" && value.length >= 1 && value.length <= maximumLength && !/[\u0000-\u001f\u007f\u0080-\u009f]/u.test(value);
 }
 
 function isSceneReference(value: unknown): value is string {
@@ -1376,7 +1376,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   } else if (value.action === "navigate_to_destination") {
     if (!isExecutionNavigationDestinationSelector(value.args.destination)) return "invalid_navigation_destination";
   } else if (value.action === "equip_tool") {
-    if (!isToolSlot(value.args.slot)) return "invalid_tool_slot";
+    if (!isToolSelector(value.args.tool)) return "invalid_tool_selector";
   } else if (value.action === "travel") {
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_warp_source";
   } else if (value.action === "enter_exit") {
@@ -3165,4 +3165,22 @@ function isTileCoordinate(value: unknown): value is number {
 }
 function isToolSlot(value: unknown): value is number {
   return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 36;
+}
+
+const TOOL_SELECTOR_VALUES = new Set([
+  "axe",
+  "pickaxe",
+  "hoe",
+  "watering_can",
+  "fishing_rod",
+  "weapon",
+  "scythe",
+  "shears",
+  "milk_pail",
+  "pan",
+]);
+
+/** equip_tool/v2 semantic category selector; slot stays Mod-private. */
+function isToolSelector(value: unknown): value is string {
+  return typeof value === "string" && TOOL_SELECTOR_VALUES.has(value);
 }

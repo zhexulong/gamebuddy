@@ -474,7 +474,9 @@ export function deriveActionSourceProjection(sources) {
     return registration?.descriptor?.resourceTemplate?.claims?.some((claim) => claim.key === "embodied_actor");
   });
   const readOnlyActionIds = assertUnique(
-    registrations.filter((registration) => registration.kind === "read_only").map((registration) => registration.actionId),
+    registrations
+      .filter((registration) => registration.lifecycle === "published" && registration.kind === "read_only")
+      .map((registration) => registration.actionId),
     "readonly_partition_duplicates",
   );
   const experimentalActionIds = assertUnique(

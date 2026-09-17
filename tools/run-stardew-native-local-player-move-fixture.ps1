@@ -10,7 +10,7 @@ param(
     [Parameter(Mandatory = $true)][string]$LifecycleResultFile,
     [string]$ScenarioIdentity,
     [string]$Action = "move_to_tile",
-    [ValidateSet("visible", "hidden", "foreground", "minimized", "background")][string]$WindowMode = "visible",
+    [string]$WindowMode = "visible",
     [switch]$BootstrapNativeSave,
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 120
 )
@@ -33,6 +33,7 @@ $stardewSaveRoot = Join-Path $env:APPDATA "StardewValley\Saves"
 $pipeReadinessHelper = Join-Path $PSScriptRoot "lib/stardew-named-pipe-readiness.ps1"
 . $pipeReadinessHelper
 $runnerResolver = Join-Path $PSScriptRoot "resolve-stardew-action-gate-runner.mjs"
+$liveRunTool = Join-Path $PSScriptRoot "lib/stardew-live-run.mjs"
 
 function Publish-FailureLifecycleResult([string]$Phase) {
     try {
@@ -226,12 +227,16 @@ try {
         $workingSavePrepared = $true
     }
     $phase = "smapi_launch"
+    # Window-mode vocabulary/validation lives in tools/lib/stardew-live-run.mjs
+    # (mirror of host/src/live-run/window-mode.ts); the fixture reads the
+    # single-authority JSON map instead of re-declaring the 5-mode switch.
+    $windowMapText = node $liveRunTool --print-map 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($windowMapText)) { throw "Native-local fixture could not resolve the window-mode map." }
+    $windowMap = $windowMapText | ConvertFrom-Json
+    $windowEntry = $windowMap.windowModes.$WindowMode
+    if ($null -eq $windowEntry) { throw "Native-local fixture window mode '$WindowMode' is not in the single-authority window-mode contract." }
+    $windowStyle = [string]$windowEntry.style
     $env:GAMEBUDDY_WINDOW_MODE = $WindowMode
-    $windowStyle = switch ($WindowMode) {
-        "hidden" { "Hidden" }
-        "background" { "Hidden" }
-        Default { "Normal" }
-    }
     # Start-Process joins ArgumentList tokens itself. Quote the custom path so its
     # embedded `Stardew Valley` space cannot truncate SMAPI's --mods-path value.
     if (Test-IsIsolatedDesktop) {

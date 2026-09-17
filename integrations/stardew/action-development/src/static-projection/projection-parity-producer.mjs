@@ -18,7 +18,7 @@ import {
 
 const ERROR_PREFIX = "stardew_projection_parity_producer";
 const PACKAGE_DIRECTORY = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-const STATIC_DESCRIPTOR_SCHEMA = "gamebuddy-stardew-static-action-descriptor/v1";
+const STATIC_DESCRIPTOR_SCHEMA = "gamebuddy-stardew-static-action-descriptor/v2";
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
 const SCHEMA_ID = /^[a-z0-9][a-z0-9._-]*\/v[1-9][0-9]*$/;
 const JSON_NAME = /^[a-z0-9][a-z0-9._-]*\.json$/;
@@ -73,7 +73,7 @@ export async function produceProjectionParitySnapshot() {
     .filter((action) => action.lifecycle === "published" && action.kind === "execution")
     .map((action) => action.actionId);
   const readOnlyActionIds = actions
-    .filter((action) => action.kind === "read_only")
+    .filter((action) => action.lifecycle === "published" && action.kind === "read_only")
     .map((action) => action.actionId);
   const experimentalActionIds = actions
     .filter((action) => action.lifecycle === "experimental")

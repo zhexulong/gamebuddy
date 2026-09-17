@@ -42,12 +42,12 @@ export async function runTillSoilSmoke(
   try {
     let snapshot = await observeFresh(client);
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
-    const hoeSlot = snapshot.toolSlots?.find(
+    const hasHoe = (snapshot.toolSlots ?? []).some(
       (entry) => typeof entry.label === "string" && entry.label.toLowerCase().includes("hoe"),
-    )?.slot;
-    if (!Number.isInteger(hoeSlot)) throw new Error("hoe_not_found_in_live_tool_slots");
-    const equipped = await execute("equip_hoe", "equip_tool", { slot: hoeSlot }, snapshot, trace, client);
-    if (equipped.state !== "succeeded" || equipped.reasonCode !== "tool_selected")
+    );
+    if (!hasHoe) throw new Error("hoe_not_found_in_live_tool_slots");
+    const equipped = await execute("equip_hoe", "equip_tool", { tool: "hoe" }, snapshot, trace, client);
+    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
       throw new Error(`hoe_equip_failed:${equipped.reasonCode}`);
     snapshot = await observeFresh(client);
     if (!snapshot.currentTool?.toLowerCase().includes("hoe")) throw new Error("hoe_postcondition_missing");

@@ -64,9 +64,9 @@ function scriptedBridge({ postconditionRefilled = true, capabilities = EXPECTED_
           requestId: request.requestId,
           executionId,
           state: "succeeded",
-          reasonCode: "tool_selected",
+          reasonCode: "tool_equipped",
           revision,
-          evidence: { detail: "expected=Watering Can;after=Watering Can" },
+          evidence: { detail: "tool=watering_can;expected=Watering Can;after=Watering Can" },
         });
         snapshot = { ...snapshot, revision };
       } else {
@@ -111,7 +111,7 @@ test("refill-watering-can runner uses shared dispatch, exact terminal correlatio
   assert.equal(result.reasonCode, "watering_can_refilled");
   // Typed dispatch with revision-bound requests.
   assert.equal(calls[0].action, "equip_tool");
-  assert.deepEqual(calls[0].args, { slot: 0 });
+  assert.deepEqual(calls[0].args, { tool: "watering_can" });
   assert.equal(calls[0].expectedRevision, 1);
   assert.equal(calls[1].action, "refill_watering_can");
   assert.deepEqual(calls[1].args, { slot: 0, x: 2, y: 2, expectedTargetId: "refill-1" });

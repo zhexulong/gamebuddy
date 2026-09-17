@@ -45,9 +45,9 @@ export async function runRefillWateringCanSmoke(
     const target = chooseTarget(snapshot);
     if (!adjacent(snapshot.tile, target))
       snapshot = await move(client, receipts, snapshot, target, trace, stabilizeTimeoutMs, moveTimeoutMs);
-    const equipped = await execute(client, trace, "equip", "equip_tool", { slot: can.slot }, snapshot);
+    const equipped = await execute(client, trace, "equip", "equip_tool", { tool: "watering_can" }, snapshot);
     const equipTerminal = await waitForTerminal(receipts, equipped, terminalTimeoutMs);
-    if (equipTerminal.state !== "succeeded" || equipTerminal.reasonCode !== "tool_selected")
+    if (equipTerminal.state !== "succeeded" || (equipTerminal.reasonCode !== "tool_equipped" && equipTerminal.reasonCode !== "already_equipped"))
       throw new Error(`equip_failed:${equipTerminal.reasonCode}`);
 
     // The request binds fresh opaque target facts from the snapshot that

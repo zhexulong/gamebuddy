@@ -30,8 +30,8 @@ export async function runClearDebrisSmoke(client, receipts, config) {
     const initialTarget = chooseFixtureTarget(snapshot);
     if (initialTarget.health !== 8) throw new Error("clear_debris_fixture_health_not_intact");
     const pickaxe = choosePickaxe(snapshot);
-    const equipped = await execute(client, trace, "equip_pickaxe", "equip_tool", { slot: pickaxe.slot }, snapshot);
-    if (equipped.state !== "succeeded" || equipped.reasonCode !== "tool_selected")
+    const equipped = await execute(client, trace, "equip_pickaxe", "equip_tool", { tool: "pickaxe" }, snapshot);
+    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
       throw new Error(`pickaxe_equip_failed:${equipped.reasonCode}`);
 
     let expectedHealth = 8;
