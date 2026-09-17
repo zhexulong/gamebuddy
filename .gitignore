@@ -122,3 +122,7 @@ tmp_*
 dialogue-web/test-results/
 dialogue-web/playwright-report/
 
+
+# Voice live-gate run artifacts are machine-local evidence, not sources.
+/voice-gateway/scripts/pipeline-live-gate.json
+
