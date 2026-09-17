@@ -361,6 +361,22 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
+  /**
+   * Per-activation fresh connection/launch authority. Re-arms the one-shot
+   * Farmhand bridge connection and AI-client launch reservation only after the
+   * previous activation fully ended (connection consumed and AI launch
+   * claimed): the ended AI is stopped, a fresh launch generation is reserved
+   * and durably rotated, and both states re-arm. Deferred-error vocabulary
+   * matches `consumeOwnedFarmhandBridgeConnection`.
+   */
+  prepareFreshFarmhandAiClientActivation(
+    owner: StardewOwnedPlayerHostBootstrap,
+  ): Promise<{ launchGeneration: string }>;
+  /**
+   * Rolls a re-armed-but-not-yet-attached fresh activation back to the fully
+   * consumed base so a later resume can prepare a new generation again.
+   */
+  abandonFarmhandAiClientActivation(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   launchStagedPlayerHost(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
@@ -430,6 +446,8 @@ export function createStardewPrivateBootstrapProductionCore(
     launchMaterializedAiClient: closed.launchMaterializedAiClient,
     launchMaterializedAiClientContained: closed.launchMaterializedAiClientContained,
     consumeOwnedFarmhandBridgeConnection: closed.consumeOwnedFarmhandBridgeConnection,
+    prepareFreshFarmhandAiClientActivation: closed.prepareFreshFarmhandAiClientActivation,
+    abandonFarmhandAiClientActivation: closed.abandonFarmhandAiClientActivation,
     launchStagedPlayerHost: closed.launchStagedPlayerHost,
     launchStagedPlayerHostContained: closed.launchStagedPlayerHostContained,
     replaceStagedInstallationLocator: closed.replaceStagedInstallationLocator,
@@ -495,6 +513,22 @@ export function createStardewPrivateBootstrapTestCore(
     owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
+  /**
+   * Per-activation fresh connection/launch authority. Re-arms the one-shot
+   * Farmhand bridge connection and AI-client launch reservation only after the
+   * previous activation fully ended (connection consumed and AI launch
+   * claimed): the ended AI is stopped, a fresh launch generation is reserved
+   * and durably rotated, and both states re-arm. Deferred-error vocabulary
+   * matches `consumeOwnedFarmhandBridgeConnection`.
+   */
+  prepareFreshFarmhandAiClientActivation(
+    owner: StardewOwnedPlayerHostBootstrap,
+  ): Promise<{ launchGeneration: string }>;
+  /**
+   * Rolls a re-armed-but-not-yet-attached fresh activation back to the fully
+   * consumed base so a later resume can prepare a new generation again.
+   */
+  abandonFarmhandAiClientActivation(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   launchStagedPlayerHost(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
@@ -570,6 +604,12 @@ export function createStardewPrivateBootstrapTestCore(
     },
     consumeOwnedFarmhandBridgeConnection(owner, callback) {
       return base.consumeOwnedFarmhandBridgeConnection(owner, callback);
+    },
+    prepareFreshFarmhandAiClientActivation(owner) {
+      return base.prepareFreshFarmhandAiClientActivation(owner);
+    },
+    abandonFarmhandAiClientActivation(owner) {
+      return base.abandonFarmhandAiClientActivation(owner);
     },
     launchStagedPlayerHost(owner, installation) {
       // Composition-bound test-only staged Player Host launch: the base closed
@@ -655,6 +695,22 @@ type ClosedBootstrapCore = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
+  /**
+   * Per-activation fresh connection/launch authority. Re-arms the one-shot
+   * Farmhand bridge connection and AI-client launch reservation only after the
+   * previous activation fully ended (connection consumed and AI launch
+   * claimed): the ended AI is stopped, a fresh launch generation is reserved
+   * and durably rotated, and both states re-arm. Deferred-error vocabulary
+   * matches `consumeOwnedFarmhandBridgeConnection`.
+   */
+  prepareFreshFarmhandAiClientActivation(
+    owner: StardewOwnedPlayerHostBootstrap,
+  ): Promise<{ launchGeneration: string }>;
+  /**
+   * Rolls a re-armed-but-not-yet-attached fresh activation back to the fully
+   * consumed base so a later resume can prepare a new generation again.
+   */
+  abandonFarmhandAiClientActivation(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   launchStagedPlayerHost(
     owner: StardewOwnedPlayerHostBootstrap,
     installation: AdmittedStardewInstallation,
@@ -888,7 +944,7 @@ function createClosedComposition(
         compositionIdentity,
       );
       const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
-      facts.stagingDependencies = stagingDependencies;
+      if (stagingDependencies !== undefined) facts.stagingDependencies = stagingDependencies;
       return owner;
     },
   });
@@ -921,13 +977,29 @@ function createClosedComposition(
        consumeOwnedFarmhandBridgeConnection: <T extends Readonly<{ close(): void | Promise<void> }>>(
          owner: StardewOwnedPlayerHostBootstrap,
          callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
-        ): Promise<T> => consumeOwnedFarmhandBridgeConnection(
-          owner,
-          callback,
-          compositionIdentity,
-          () => aiClientProcessOwner.readStatus(),
-        ),
-        launchStagedPlayerHost: (
+    ): Promise<T> => consumeOwnedFarmhandBridgeConnection(
+      owner,
+      callback,
+      compositionIdentity,
+      () => aiClientProcessOwner.readStatus(),
+    ),
+    prepareFreshFarmhandAiClientActivation: (owner: StardewOwnedPlayerHostBootstrap) =>
+      prepareFreshFarmhandAiClientActivation(
+        owner,
+        compositionIdentity,
+        () => {
+          const capability = aiClientProcessOwner.reserveAiClientLaunch();
+          const registration = aiLaunches.get(capability);
+          if (registration === undefined)
+            throw new Error("stardew_ai_client_launch_not_registered");
+          return registration.registration;
+        },
+        () => aiClientProcessOwner.readStatus(),
+        () => aiClientProcessOwner.stopOwnedAiClient(),
+      ),
+    abandonFarmhandAiClientActivation: (owner: StardewOwnedPlayerHostBootstrap) =>
+      abandonFarmhandAiClientActivation(owner, compositionIdentity),
+    launchStagedPlayerHost: (
         owner: StardewOwnedPlayerHostBootstrap,
         installation: AdmittedStardewInstallation,
       ): Promise<StardewOwnedPlayerHostStageCResult> =>
@@ -1377,7 +1449,8 @@ type OwnedPlayerHostBootstrapFacts = {
   readonly immutableFence: StardewOwnerImmutableFence;
   readonly durableOwner: DurableOwner;
   readonly playerHostRegistration: StardewPlayerHostLaunchRegistration;
-  readonly aiClientRegistration: StardewAiClientLaunchRegistration;
+  /** Replaced by `prepareFreshFarmhandAiClientActivation` for each fresh activation. */
+  aiClientRegistration: StardewAiClientLaunchRegistration;
   readonly expiresAtMs: number;
   readonly readClock: () => number;
   readonly launchStates: { playerHost: LaunchState; aiClient: LaunchState };
@@ -2207,6 +2280,108 @@ async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close()
   }
 }
 
+/**
+ * Rotates the durable owner record's AI-client launch generation to a fresh
+ * per-activation generation under the exact path lock. The fresh v4 record is
+ * write-verified, so disk and the in-memory record agree before any state
+ * re-arms; a failure leaves the previous generation untouched.
+ */
+async function rotateAiClientLaunchGeneration(
+  facts: OwnedPlayerHostBootstrapFacts,
+  launchGeneration: string,
+): Promise<void> {
+  const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
+  const authorityRoot = dirname(dirname(transactionDirectory));
+  const ownerPath = join(transactionDirectory, OWNER_FILE);
+  const expected = facts.durableOwner.record;
+  let rotated: StardewPrivateBootstrapOwnerRecord | undefined;
+  await withPathLock(ownerPath, async () => {
+    const current = await readAndValidateOwner(ownerPath, authorityRoot);
+    if (
+      current.bootstrapId !== expected.bootstrapId ||
+      JSON.stringify(current) !== JSON.stringify(expected) ||
+      current.state !== "reserved" ||
+      JSON.stringify(current.managedPaths) !== JSON.stringify(C1_MANAGED_PATHS)
+    ) throw new Error("stardew_farmhand_bridge_owner_invalid");
+    rotated = freezeRecord({ ...current, aiClient: { kind: "launch_reserved" as const, launchGeneration } });
+    await atomicWriteFile(ownerPath, `${JSON.stringify(rotated)}\n`, authorityRoot);
+    const reread = await readAndValidateOwner(ownerPath, authorityRoot);
+    if (JSON.stringify(reread) !== JSON.stringify(rotated))
+      throw new Error("stardew_farmhand_bridge_generation_rotation_reread_mismatch");
+  }, { containmentRoot: authorityRoot });
+  if (rotated === undefined) throw new Error("stardew_farmhand_bridge_generation_rotation_missing");
+  facts.durableOwner.replaceRecord(rotated);
+}
+
+/**
+ * Per-activation fresh connection/launch authority: re-arms the one-shot
+ * Farmhand bridge connection and AI-client launch reservation for a NEW
+ * activation, but only after the previous activation fully ended (its bridge
+ * connection was consumed and its AI launch was claimed). It ends the previous
+ * activation's AI (fail closed when the terminal identity is uncertain),
+ * reserves a fresh launch generation, durably rotates the record generation,
+ * and only then swaps the fresh registration in and re-arms both states. The
+ * fresh authenticated scope/policy/revision/deadline validation still runs at
+ * new-connection creation time (connect/hello), never here.
+ */
+async function prepareFreshFarmhandAiClientActivation(
+  owner: StardewOwnedPlayerHostBootstrap,
+  compositionIdentity: object,
+  reserveAiClientLaunch: () => StardewAiClientLaunchRegistration,
+  readAiClientStatus: () => StardewAiClientProcessStatus,
+  stopOwnedAiClient: () => StopOwnedAiClientResult,
+): Promise<{ launchGeneration: string }> {
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+  if (facts.bindingState.value !== "bound" || facts.aiClientProfileState.value !== "materialized")
+    throw new Error("stardew_farmhand_bridge_profile_not_materialized");
+  if (facts.quarantine.started) throw new Error("stardew_owned_player_host_bootstrap_owner_quarantined");
+  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
+  // A fresh generation may be claimed only after an ended activation: a never
+  // consumed or still-binding machine has no ended activation to supersede.
+  if (facts.bridgeConnectionState.value !== "consumed" || facts.launchStates.aiClient !== "consumed")
+    throw new Error("stardew_farmhand_bridge_connection_not_available");
+  if (facts.privateBridgeMaterial.value === null)
+    throw new Error("stardew_ai_client_bridge_material_unavailable");
+
+  const oldStatus = readAiClientStatus();
+  if (oldStatus.kind === "ai_client_launch_pending")
+    throw new Error("stardew_farmhand_bridge_ai_client_launch_pending");
+  if (oldStatus.kind === "awaiting_ai_client_attestation") {
+    const stop = stopOwnedAiClient();
+    if (stop.kind !== "terminated" && stop.kind !== "already_stopped" && stop.kind !== "no_owned_ai_client")
+      throw new Error("stardew_farmhand_bridge_ai_client_stop_failed");
+  }
+
+  const registration = reserveAiClientLaunch();
+  try {
+    await rotateAiClientLaunchGeneration(facts, registration.launchGeneration);
+  } catch (error) {
+    try { registration.revoke(); } catch { /* rotation failure remains primary */ }
+    throw error;
+  }
+  facts.aiClientRegistration = registration;
+  facts.launchStates.aiClient = "available";
+  facts.bridgeConnectionState.value = "available";
+  return Object.freeze({ launchGeneration: registration.launchGeneration });
+}
+
+/**
+ * Rolls a re-armed-but-not-yet-attached fresh activation back to the fully
+ * consumed base so a later resume can prepare a new generation again. Used by
+ * the coordinator when the fresh AI launch or bridge consume of a resume
+ * attempt failed; revoking the registration is idempotent when the claim
+ * already consumed it, and both per-activation states close.
+ */
+async function abandonFarmhandAiClientActivation(
+  owner: StardewOwnedPlayerHostBootstrap,
+  compositionIdentity: object,
+): Promise<void> {
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+  try { facts.aiClientRegistration.revoke(); } catch { /* an earlier claim already consumed it */ }
+  facts.launchStates.aiClient = "consumed";
+  facts.bridgeConnectionState.value = "consumed";
+}
+
 async function stageAiClientProfile(
   owner: StardewOwnedPlayerHostBootstrap,
   admission: ManifestHandoffAdmissionFacts,
@@ -2577,6 +2752,13 @@ function composeOwnedPlayerHostOwner(
   let aiClientLaunchState: LaunchState = "available";
   let quarantineStarted = false;
   let quarantinePromise: Promise<void> | null = null;
+  // Per-activation registration holder: each fresh activation replaces the
+  // exact AI-client registration (fresh reservation/launch generation). The
+  // launch/revoke closures and the facts surface always observe the CURRENT
+  // registration, never the initial-activation one.
+  const aiClientRegistrationHolder: { registration: StardewAiClientLaunchRegistration } = {
+    registration: aiClientRegistration,
+  };
 
   const revokePlayerHostLaunch = (): void => {
     if (playerHostLaunchState === "revoked") return;
@@ -2586,7 +2768,7 @@ function composeOwnedPlayerHostOwner(
   const revokeAiClientLaunch = (): void => {
     if (aiClientLaunchState === "revoked") return;
     aiClientLaunchState = "revoked";
-    aiClientRegistration.revoke();
+    aiClientRegistrationHolder.registration.revoke();
   };
 
   const consumeLaunch = <TLaunchInput, TLaunchResult, T>(input: Readonly<{
@@ -2639,7 +2821,10 @@ function composeOwnedPlayerHostOwner(
     immutableFence: immutableFenceFor(durableOwner.record),
     durableOwner,
     playerHostRegistration,
-    aiClientRegistration,
+    get aiClientRegistration() { return aiClientRegistrationHolder.registration; },
+    set aiClientRegistration(value: StardewAiClientLaunchRegistration) {
+      aiClientRegistrationHolder.registration = value;
+    },
     expiresAtMs,
     readClock,
     launchStates: {
@@ -2685,7 +2870,7 @@ function composeOwnedPlayerHostOwner(
       callback,
       getState: () => aiClientLaunchState,
       setState: (state) => { aiClientLaunchState = state; },
-      launch: (launchInput) => aiClientRegistration.launch(launchInput),
+      launch: (launchInput) => aiClientRegistrationHolder.registration.launch(launchInput),
       revoke: revokeAiClientLaunch,
     }),
     // Contained variant: committing the claim marks the process owner awaiting
@@ -2696,7 +2881,7 @@ function composeOwnedPlayerHostOwner(
       callback,
       getState: () => aiClientLaunchState,
       setState: (state) => { aiClientLaunchState = state; },
-      launch: () => aiClientRegistration.containedLaunch(),
+      launch: () => aiClientRegistrationHolder.registration.containedLaunch(),
       revoke: revokeAiClientLaunch,
     }),
     quarantineOwner: () => {
@@ -2954,7 +3139,7 @@ function createPlayerHostProcessOwner(
     validatePlayerHostLaunchInput(input);
 
     const spawned = rawSpawn(input.executable, [...input.args], {
-      cwd: input.cwd,
+      ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
       shell: false,
       windowsHide: true,
       env: createStardewChildEnvironment(launchGeneration),
@@ -3080,7 +3265,7 @@ function createAiClientProcessOwner(
     validateLaunchInput(input);
 
     const spawned = rawSpawn(input.executable, [...input.args], {
-      cwd: input.cwd,
+      ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
       shell: false,
       windowsHide: true,
       env: createStardewChildEnvironment(launchGeneration),
@@ -3181,9 +3366,13 @@ function createAiClientProcessOwner(
       if (state.kind === "ai_client_stopped") return { kind: "already_stopped", killed: false };
       // Contained launch: the Host holds no pid/kill handle. The Guardian
       // kill-on-close Job terminates the native process at platform close, so
-      // a direct stop is a success no-op and never probes an invented pid.
-      if (state.kind === "awaiting_ai_client_attestation" && state.owned === null)
+      // a direct stop is a success no-op and never probes an invented pid. The
+      // exact state still advances to `ai_client_stopped` so the ended
+      // activation can be superseded by a fresh per-activation reservation.
+      if (state.kind === "awaiting_ai_client_attestation" && state.owned === null) {
+        state = { kind: "ai_client_stopped" };
         return { kind: "already_stopped", killed: false };
+      }
 
       const { owned } = state;
       const probeResult = rawProbe(owned.pid);

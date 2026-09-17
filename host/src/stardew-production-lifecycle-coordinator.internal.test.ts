@@ -347,6 +347,8 @@ async function createFixture(input: Readonly<{
   playerSpawnFailure?: boolean;
   playerProbeFailure?: boolean;
   aiSpawnFailure?: boolean;
+  /** 1-based AI-client spawn call index that fails (fresh-resume launch failure). */
+  aiSpawnFailureAt?: number;
   aiProbeFailure?: boolean;
   playerKillResults?: readonly boolean[];
   gameRuntimeBindingCloseResults?: readonly boolean[];
@@ -408,10 +410,16 @@ async function createFixture(input: Readonly<{
   let gameRuntimeTaskCancelCalls = 0;
   const gameStopCalls: RecordedGameStop[] = [];
   let packageReadCount = 0;
+  // Per-reservation AI-client launch generations: the first activation claims
+  // `ai-generation-1`; each fresh resume activation claims the next one, so a
+  // second resume's spawn/connect generation is observably distinct.
+  let aiClientLaunchGenerationIndex = 0;
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
     rawSpawn(executable, args, options) {
       spawnCalls.push(Object.freeze({ executable, args: Object.freeze([...args]), options }));
       if (input.aiSpawnFailure) throw new Error("controlled-ai-spawn-failure");
+      if (input.aiSpawnFailureAt !== undefined && spawnCalls.length === input.aiSpawnFailureAt)
+        throw new Error("controlled-ai-spawn-failure");
       return Object.freeze({ pid: 4101, kill: () => {
         lifecycleOrder.push("ai");
         aiKillCalls.push(4101);
@@ -440,7 +448,7 @@ async function createFixture(input: Readonly<{
     createGuardianLeaseName: () => "Local\\GameBuddy-Coordinator-Lease-1",
     createGuardianPlayerJobName: () => "Local\\GameBuddy-Coordinator-Player-1",
     createGuardianAiJobName: () => "Local\\GameBuddy-Coordinator-Ai-1",
-    createLaunchGeneration: () => "ai-generation-1",
+    createLaunchGeneration: () => `ai-generation-${++aiClientLaunchGenerationIndex}`,
     createPlayerHostLaunchGeneration: () => "player-generation-1",
     createBridgePipeName: () => "gamebuddy-stardew-coordinator-bridge",
     createBridgeToken: () => "coordinator-bridge-token-0123456789",
@@ -2739,7 +2747,7 @@ test("slice 2: resume rejects while a live healthy attachment is attached withou
   }
 });
 
-test("slice 2: resume closes a stale failed attachment through the shared teardown and admits the fresh generation as accepted", async () => {
+test("slice 2: resume closes a stale failed attachment through the shared teardown and truly re-attaches the fresh generation", async () => {
   // The gen-1 facade close fails once (stale failed attachment), then succeeds
   // when the resume reuses the exact teardown machinery.
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
@@ -2766,24 +2774,30 @@ test("slice 2: resume closes a stale failed attachment through the shared teardo
       fixture.broker.issue("game_resume"),
       { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
     );
-    assert.deepEqual(result, { apiVersion: 1, status: "accepted" });
+    assert.deepEqual(result, { apiVersion: 1, status: "attached" });
     assert.equal(GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result), true);
     // The stale gen-1 activation was torn down through the shared teardown
     // timing (prompt-task cancel + exact facade close), so no old-activation
     // in-memory objects outlive the fresh claim.
     assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
     assert.equal(fixture.gameRuntimeTaskCancelCalls(), 2);
-    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
-    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 1);
+    // Producer: fresh per-activation prepare stopped the ended AI and armed a
+    // fresh generation. Consumer: fresh AI launch + bridge consume + enter ran
+    // end-to-end. Verifier: second spawn/connect used ai-generation-2 while
+    // the scope stayed the registered world binding.
+    assert.equal(fixture.aiKillCalls.length, 1);
+    assert.equal(fixture.spawnCalls.length, 2);
+    assert.equal(fixture.spawnCalls[1]!.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "ai-generation-2");
+    assert.equal(fixture.bridgeConnectCalls.length, 2);
+    assert.equal(fixture.bridgeConnectCalls[1]!.launchGeneration, "ai-generation-2");
+    assert.deepEqual(fixture.bridgeConnectCalls[1]!.scope, fixture.bridgeConnectCalls[0]!.scope);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 2);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 2);
+    assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), 2);
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
-      status: "attached", generation: 2, connectionStatus: "reconnecting",
+      status: "attached", generation: 2, connectionStatus: "connected_idle",
     });
     assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
-    // The fresh attach did not replay the old task or mint a second native
-    // attachment in this instance: the one-shot bridge/owner seam belongs to
-    // the initial activation, so the attempt stays accepted.
-    assert.equal(fixture.bridgeConnectCalls.length, 1);
-    assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), 1);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
@@ -2826,7 +2840,7 @@ test("slice 2: resume fails closed when the stale attachment teardown itself fai
   }
 });
 
-test("slice 2: resume after a clean disconnect admits the fresh generation paused with no stale objects and no replayed task", async () => {
+test("slice 2: resume after a clean disconnect truly re-attaches the fresh generation with a new AI launch and connection", async () => {
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
       worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
@@ -2847,20 +2861,147 @@ test("slice 2: resume after a clean disconnect admits the fresh generation pause
       fixture.broker.issue("game_resume"),
       { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
     );
-    assert.deepEqual(result, { apiVersion: 1, status: "accepted" });
+    assert.deepEqual(result, { apiVersion: 1, status: "attached" });
     assert.equal(GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result), true);
+    // Producer: fresh per-activation prepare ends the previous AI and arms a
+    // fresh generation. Consumer: fresh AI launch + bridge consume + enter
+    // ran end-to-end. Verifier: second spawn/connect used ai-generation-2
+    // while the scope stayed the registered world binding, no old task or
+    // stale objects survived (enter #2, ingress #2, ready-actions-paused).
+    assert.deepEqual(fixture.aiKillCalls, [4101]);
+    assert.equal(fixture.spawnCalls.length, 2);
+    assert.equal(fixture.spawnCalls[1]!.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "ai-generation-2");
+    assert.equal(fixture.bridgeConnectCalls.length, 2);
+    assert.equal(fixture.bridgeConnectCalls[1]!.launchGeneration, "ai-generation-2");
+    assert.deepEqual(fixture.bridgeConnectCalls[1]!.scope, fixture.bridgeConnectCalls[0]!.scope);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 2);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 2);
+    assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), 2);
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
-      status: "attached", generation: 2, connectionStatus: "reconnecting",
+      status: "attached", generation: 2, connectionStatus: "connected_idle",
     });
     assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
-    // No fresh bridge connect/enter/ingress: the one-shot owner/bridge seam
-    // stays consumed by the ended activation, so the accepted attempt defers
-    // the real attach to the fresh connection/launch authority of the next
-    // layer (no second native attachment is minted here).
-    assert.equal(fixture.bridgeConnectCalls.length, 1);
-    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
-    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 1);
     assert.equal(fixture.gameRuntimeTaskCancelCalls(), 1);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("slice 2: every resume mints a fresh generation — consecutive resume cycles each truly attach", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "connected_idle",
+    });
+    // Cycle 1: disconnect, then resume -> genuinely attached at generation 2.
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "cycle1-disconnect", expectedAttachmentGeneration: 1 },
+    );
+    const firstResume = await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "cycle1-resume", expectedAttachmentGeneration: 2 },
+    );
+    assert.deepEqual(firstResume, { apiVersion: 1, status: "attached" });
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "connected_idle",
+    });
+    // Cycle 2: the per-activation machine arms a THIRD launch generation; the
+    // second resume never reuses the first resume's connection/callback/lease.
+    // The coordinator attachment generation is per-attachment (restarts at >= 2
+    // after a full teardown), while the underlying AI launch/bridge generations
+    // strictly increase and prove the fresh mint.
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "cycle2-disconnect", expectedAttachmentGeneration: 2 },
+    );
+    const secondResume = await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "cycle2-resume", expectedAttachmentGeneration: 2 },
+    );
+    assert.deepEqual(secondResume, { apiVersion: 1, status: "attached" });
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "connected_idle",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+    // Producer -> consumer -> verifier across both cycles: exactly three
+    // native AI spawns and three bridge connects, each with its own generation
+    // (never reused), and every ended AI was stopped before the next
+    // activation; the old task was never replayed.
+    assert.deepEqual(fixture.aiKillCalls, [4101, 4101]);
+    assert.deepEqual(
+      fixture.spawnCalls.map((call) => call.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION),
+      ["ai-generation-1", "ai-generation-2", "ai-generation-3"],
+    );
+    assert.deepEqual(
+      fixture.bridgeConnectCalls.map((call) => call.launchGeneration),
+      ["ai-generation-1", "ai-generation-2", "ai-generation-3"],
+    );
+    assert.equal(new Set(fixture.bridgeConnectCalls.map((call) => call.launchGeneration)).size, 3);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 3);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 3);
+    assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), 3);
+    assert.deepEqual(fixture.bridgeCloseCalls, ["bridge", "bridge"]);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("slice 2: a failed fresh resume launch is abandoned and the next resume truly attaches with a newer generation", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    aiSpawnFailureAt: 2,
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "retry-disconnect", expectedAttachmentGeneration: 1 },
+    );
+    // The fresh resume launch itself fails (second spawn attempt): the attempt
+    // fails closed and abandons the armed activation so a later resume can
+    // prepare a new generation again.
+    await assert.rejects(
+      fixture.coordinator.activationOwner.resume(
+        fixture.broker.issue("game_resume"),
+        { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "retry-resume-1", expectedAttachmentGeneration: 2 },
+      ),
+      /controlled-ai-spawn-failure/,
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "failed",
+    });
+    assert.equal(fixture.bridgeConnectCalls.length, 1);
+    // The retry arms yet another generation and genuinely attaches.
+    const retried = await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "retry-resume-2", expectedAttachmentGeneration: 3 },
+    );
+    assert.deepEqual(retried, { apiVersion: 1, status: "attached" });
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 3, connectionStatus: "connected_idle",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+    // Producer -> consumer -> verifier: spawns #1 (initial) and #3 (retry)
+    // are the only live AI launches; the failed #2 never connected, and the
+    // retry consumed a fresh generation (ai-generation-3), never the failed
+    // attempt's generation 2.
+    assert.equal(fixture.spawnCalls.length, 3);
+    assert.equal(fixture.spawnCalls[2]!.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "ai-generation-3");
+    assert.deepEqual(
+      fixture.bridgeConnectCalls.map((call) => call.launchGeneration),
+      ["ai-generation-1", "ai-generation-3"],
+    );
+    assert.deepEqual(fixture.aiKillCalls, [4101]);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
