@@ -33,9 +33,13 @@ import {
   type StardewManifestHandoffChoice,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import type {
+  GameCreateCommandV1,
+  GameCreateResultV1,
   GameDisconnectCommandV1,
   GamePrerequisitesSetupCommandV1,
   GameLaunchCommandV1,
+  GameResumeCancelCommandV1,
+  GameResumeCancelResultV1,
   GameResumeResultV1,
   GameReopenActionAuthorityCommandV1,
   GameReopenActionAuthorityResultV1,
@@ -48,9 +52,19 @@ import type {
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import {
   createStardewWorldBindingResolverFromGameAuthority,
+  type CreateWorldBindingSeam,
+  STARDEW_GAME_INTEGRATION_ID,
   type StardewWorldBindingResolver,
 } from "./stardew-owned-farmhand-game-world-binding-resolver.internal.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type {
+  ProductionGameSessionBindingInput,
+  ProductionGameSessionCreateInput,
+  ProductionGameSessionMetadata,
+  ProductionGameSessionWorldBinding,
+  ProductionGameSessionWorldBindingInput,
+  ProductionGameSessionWorldBindingTerminalInput,
+} from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
 import {
   createStardewRoleLifecycleFacade,
@@ -89,11 +103,25 @@ export type StardewGameSurfaceAttachmentView = Readonly<{
    * (ready-actions-paused; see the action authority view). The browser-facing
    * layer maps this vocabulary onto its schema in the projection slice.
    */
-  connectionStatus: "none" | "connected_idle" | "reconnecting" | "syncing" | "stopping" | "stopped" | "failed";
+  connectionStatus: "none" | "connected_idle" | "reconnecting" | "syncing" | "stopping" | "stopped" | "failed" | "disconnected";
 }>;
 
 export type StardewGameSurfaceAttachmentReader = Readonly<{
   readAttachmentView(): StardewGameSurfaceAttachmentView;
+}>;
+
+/**
+ * Narrow durable consumer surface for `game.create` (boundary card D2/D6): the
+ * Slice-0 store facade slice the lifecycle owner needs to persist the binding
+ * intent and transition the session state. It is a structural pick of
+ * `SemanticGameProductionAuthority`; no second store or authority is created.
+ */
+export type StardewGameSessionCreationAuthority = Readonly<{
+  createGameSessionMetadata(input: ProductionGameSessionCreateInput): Promise<ProductionGameSessionMetadata>;
+  registerGameSessionWorldBinding(input: ProductionGameSessionWorldBindingInput): Promise<ProductionGameSessionWorldBinding>;
+  completeGameSessionBinding(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
+  failGameSessionCreation(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
+  markGameSessionWorldBindingTerminal(input: ProductionGameSessionWorldBindingTerminalInput): Promise<ProductionGameSessionWorldBinding>;
 }>;
 
 /**
@@ -168,6 +196,37 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameSessionResumeCommandV1,
   ): Promise<GameResumeResultV1>;
+  /**
+   * Coordinator-owned `game.create` seam (boundary card D1/D2). A new Game
+   * session/world binding is created in two phases: persist the binding intent
+   * (pending), then have the selected integration's private createWorldBinding
+   * seam produce an opaque bindingRef, register it, complete the session, and
+   * run the first activation (generation 1, actions paused until a fresh
+   * explicit Game instruction reopens them). Typed outcomes: `attached` only
+   * after the first activation completed, `accepted` when the durable session
+   * is bound but the attach is still pending inside this instance,
+   * `unavailable` when the create failed without any resumable half-record
+   * (failure paths are mutually exclusive and store-enforced). It never
+   * fabricates an attached result and never touches the Player world.
+   */
+  createGameSession(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameCreateCommandV1,
+  ): Promise<GameCreateResultV1>;
+  /**
+   * Coordinator-owned `game.resume.cancel` seam (boundary card D3). It
+   * terminates only the exact in-flight reconnect epoch (matching generation):
+   * the resume retry loop stops, the armed AI activation is abandoned, a
+   * partial facade is closed, and the projection becomes disconnected/
+   * unavailable while the attachment generation keeps its armed value (a
+   * retry mints a fresh attempt identity). The Player world and the durable
+   * session state are never touched; the session stays resumable. Fail-closed
+   * when no in-flight resume matches.
+   */
+  cancelResume(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameResumeCancelCommandV1,
+  ): Promise<GameResumeCancelResultV1>;
   /**
    * Coordinator-owned action-authority reopen seam. A new explicit Game
    * instruction is the only path that reopens the paused authority to active;
@@ -347,6 +406,11 @@ function isResumeAttachDeferredError(error: unknown): boolean {
   );
 }
 
+/** The resume cancel epoch terminated the in-flight attach; the cancel seam owns its teardown and projection. */
+function isResumeCancelledError(error: unknown): boolean {
+  return error instanceof Error && error.message === "stardew_game_resume_cancelled";
+}
+
 async function waitForFarmhandBridgeRetry(deadlineMs: number): Promise<void> {
   const remainingMs = deadlineMs - Date.now();
   if (remainingMs <= 0) throw new Error("bridge_connect_deadline_exceeded");
@@ -362,6 +426,8 @@ function createCoordinator(
   worldBindingResolver: StardewWorldBindingResolver,
   playerHostLaunch: StardewLifecyclePlayerHostLaunch,
   aiClientLaunch: StardewLifecycleAiClientLaunch,
+  gameSessionCreationAuthority?: StardewGameSessionCreationAuthority,
+  createWorldBindingSeam?: CreateWorldBindingSeam,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
@@ -414,6 +480,29 @@ function createCoordinator(
     promise: Promise<GameResumeResultV1>;
   }>>();
   let resumePromise: Promise<GameResumeResultV1> | undefined;
+  /**
+   * Resume cancel epoch (boundary card D3): set only by an admitted cancel,
+   * reset only when a genuinely new resume attempt starts. The attach machinery
+   * checks it at safe points (before every retry wait and before committing the
+   * ingress) so no stale reconnect can complete after a cancel.
+   */
+  let resumeCancelRequested = false;
+  const gameResumeCancels = new Map<string, Readonly<{
+    browserSessionId: string;
+    expectedAttachmentGeneration: number;
+    promise: Promise<GameResumeCancelResultV1>;
+  }>>();
+  const gameCreates = new Map<string, Readonly<{
+    browserSessionId: string;
+    integrationId: string;
+    continuityIdentityId: string | null;
+    /** Store-level creation request identity minted inside the coordinator's idempotency slot. */
+    creationRequestId: string;
+    /** Store-level world binding operation identity minted by the coordinator and retained for the terminal path. */
+    operationId: string;
+    promise: Promise<GameCreateResultV1>;
+  }>>();
+  let createPromise: Promise<GameCreateResultV1> | undefined;
   const gameReopens = new Map<string, Readonly<{
     browserSessionId: string;
     expectedAttachmentGeneration: number;
@@ -654,7 +743,7 @@ function createCoordinator(
 
   const consumeBrowserAdmission = <T>(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_reopen" | "game_disconnect",
+    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -1039,11 +1128,17 @@ function createCoordinator(
    * (ending the previous activation's AI, never reusing its connection,
    * callback, lease, or attachment), then relaunches the AI client under the
    * existing launch authority before consuming the freshly armed connection.
+   * `isCancelRequested` lets a resume cancel epoch terminate the retry loop at
+   * every safe point and prevent any stale reconnect from completing; the
+   * create path passes a never-requested check (create is not cancellable).
    * Returns true when the attach completed, false when the attempt stays
    * accepted because the attach cannot be built inside this instance (the
    * profile was never materialized or no prior activation exists to supersede).
    */
-  const attachResumedWorld = async (deadlineMs: number): Promise<boolean> => {
+  const attachResumedWorld = async (
+    deadlineMs: number,
+    isCancelRequested: () => boolean,
+  ): Promise<boolean> => {
     const owner = exactOwner;
     if (owner === undefined) return false;
     attachmentConnectionStatus = "syncing";
@@ -1056,14 +1151,18 @@ function createCoordinator(
         // accepted; every other failure abandons the armed activation so a
         // later resume can prepare a new generation again.
         await internal.prepareFreshFarmhandAiClientActivation(owner);
+        if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
         try {
           await withFreshRegisteredInstallation((installation) => aiClientLaunch(owner, installation));
+          if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
         } catch (error) {
+          if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
           await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
           throw error;
         }
         while (farmhandGameRuntimeFacade === undefined) {
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
           try {
             farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
               owner,
@@ -1081,8 +1180,15 @@ function createCoordinator(
               await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
               throw error;
             }
+            // Cancel epoch check before every retry wait (card D3.3): a cancel
+            // terminates the retry loop instead of letting it continue.
+            if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
             await waitForFarmhandBridgeRetry(deadlineMs);
           }
+        }
+        if (isCancelRequested()) {
+          await closePartialAttachment();
+          throw new Error("stardew_game_resume_cancelled");
         }
       }
     } catch (error) {
@@ -1097,6 +1203,12 @@ function createCoordinator(
     const enteredLease = await farmhandGameRuntimeFacade.runEnter();
     farmhandGameRuntimeLease = enteredLease;
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    if (isCancelRequested()) {
+      // The reconnect epoch is terminated before its ingress commits; only a
+      // partial facade (never a committed attachment) is closed here.
+      await closePartialAttachment();
+      throw new Error("stardew_game_resume_cancelled");
+    }
     enteredLease.host.attachVoiceStopper(async () => undefined);
     enteredLease.activateCommittedIngress();
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
@@ -1119,7 +1231,8 @@ function createCoordinator(
       ) throw new Error("stardew_game_resume_idempotency_conflict");
       return prior.promise;
     }
-    if (resumePromise !== undefined) throw new Error("stardew_game_resume_in_progress");
+    if (resumePromise !== undefined || createPromise !== undefined)
+      throw new Error("stardew_game_resume_in_progress");
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
     // Resume is the recovery seam over a previously ended activation. A live,
     // healthy attached runtime is still a single-activation authority, so a
@@ -1137,6 +1250,9 @@ function createCoordinator(
     if (command.expectedAttachmentGeneration !== nextGeneration)
       throw new Error("stardew_game_attachment_generation_conflict");
     const resumeDeadlineMs = Math.min(sessionExpiryMs, Date.now() + 60_000);
+    // A genuinely new attempt resets the cancel epoch; a cancel is only
+    // admitted while THIS attempt is in flight, so no stale flag survives.
+    resumeCancelRequested = false;
     let attempt!: Promise<GameResumeResultV1>;
     attempt = (async (): Promise<GameResumeResultV1> => {
       try {
@@ -1157,14 +1273,22 @@ function createCoordinator(
         attachmentGeneration = nextGeneration;
         attachmentConnectionStatus = "reconnecting";
         actionAuthorityStatus = "paused";
-        const attached = await attachResumedWorld(resumeDeadlineMs);
+        const attached = await attachResumedWorld(resumeDeadlineMs, () => resumeCancelRequested);
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        // A cancel epoch that terminated the attempt (deferred path) must
+        // never surface as a successful accepted result.
+        if (resumeCancelRequested) throw new Error("stardew_game_resume_cancelled");
         return Object.freeze({
           apiVersion: 1,
           status: attached ? "attached" : "accepted",
         });
       } catch (error) {
         if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
+        if (isResumeCancelledError(error)) {
+          // The cancel seam owns the reconnect teardown and the disconnected
+          // projection; the failed-attachment projection must not overwrite it.
+          throw error;
+        }
         attachmentConnectionStatus = "failed";
         // A partial facade created before its lease entered must not outlive
         // the failed attempt; a facade+lease pair is retained for the shared
@@ -1189,6 +1313,219 @@ function createCoordinator(
       promise: attempt,
     }));
     return attempt;
+  });
+
+  /**
+   * Coordinator-owned start-new-game seam (boundary card D1/D2). Admitted
+   * creates persist the binding intent (pending rev1), invoke the selected
+   * integration's private createWorldBinding seam, register the world binding
+   * (registered rev1), complete the session (resumable rev2), and run the
+   * first activation (generation 1) with actions paused (ready-actions-paused;
+   * only game.reopen reopens). The two failure paths are mutually exclusive
+   * and store-enforced: before registration the pending intent fails closed to
+   * failed rev2 with no binding row; after registration the binding goes
+   * terminal (rev2) with the metadata failed (rev3) in one transaction. The
+   * result is never `attached` unless the first activation completed; a
+   * closed/unmounted createWorldBinding seam or any phase failure yields
+   * `unavailable` with a null gameSessionId.
+   */
+  const createGameSession: StardewProductionLifecycleActivationOwner["createGameSession"] = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameCreateCommandV1,
+  ): Promise<GameCreateResultV1> => consumeBrowserAdmission(admission, "game_create", (browserSessionId, sessionExpiryMs) => {
+    const prior = gameCreates.get(command.idempotencyKey);
+    if (prior !== undefined) {
+      if (
+        prior.browserSessionId !== browserSessionId ||
+        prior.integrationId !== command.integrationId ||
+        prior.continuityIdentityId !== command.continuityIdentityId
+      ) throw new Error("stardew_game_create_idempotency_conflict");
+      return prior.promise;
+    }
+    if (createPromise !== undefined || resumePromise !== undefined)
+      throw new Error("stardew_game_create_in_progress");
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    // Single-activation authority (card D4): a live healthy attachment is a
+    // live world; create is a Start-new-game operation for the post-resume
+    // surface and never mints on top of one.
+    if (farmhandGameRuntimeLease !== undefined && attachmentConnectionStatus !== "failed")
+      throw new Error("stardew_game_runtime_unavailable");
+    // Card D6: integrationId must be the coordinator's own published
+    // integration; anything else would register a session this surface could
+    // never attach (cross-session/world misconnect prevention).
+    if (command.integrationId !== STARDEW_GAME_INTEGRATION_ID)
+      throw new Error("stardew_game_create_integration_conflict");
+    // The store-level creation request and world binding operation identities
+    // are minted inside the coordinator's idempotency slot and retained in it
+    // for the terminal failure path (card D1 decision 3 / D2).
+    const creationRequestId = randomBytes(32).toString("base64url");
+    const operationId = randomBytes(32).toString("base64url");
+    const createDeadlineMs = Math.min(sessionExpiryMs, Date.now() + 60_000);
+    let attempt!: Promise<GameCreateResultV1>;
+    attempt = (async (): Promise<GameCreateResultV1> => {
+      let metadata: ProductionGameSessionMetadata | null = null;
+      let bindingRegistered = false;
+      try {
+        const authority = gameSessionCreationAuthority;
+        const seam = createWorldBindingSeam;
+        // A closed/unmounted integration seam fails the create before any
+        // durable write: never a fabricated attached result, never a resumable
+        // half-record (the Stardew implementation is a later integration
+        // task; the fake second integration implements the same seam).
+        if (authority === undefined || seam === undefined)
+          throw new Error("stardew_game_world_creation_unavailable");
+        // Phase 1: persist the binding intent (pending rev1 + store-minted
+        // gameSessionId). The id is opaque; every later durable step re-verifies
+        // it through the store's own CAS checks.
+        metadata = await authority.createGameSessionMetadata({
+          creationRequestId,
+          integrationId: command.integrationId,
+          continuityIdentityId: command.continuityIdentityId,
+        });
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        // Phase 2a: the selected integration creates the actual world and only
+        // then returns an opaque bindingRef.
+        const world = await seam.createWorldBinding({
+          gameSessionId: metadata.gameSessionId,
+          integrationId: command.integrationId,
+          // No integration-private world request exists on this wire; the
+          // generic seam consumes it as an opaque payload for later tasks.
+          worldRequest: Object.freeze({}),
+        });
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        // Phase 2b: register the world binding under the coordinator-minted
+        // operation identity (registered rev1).
+        await authority.registerGameSessionWorldBinding({
+          gameSessionId: metadata.gameSessionId,
+          integrationId: command.integrationId,
+          bindingRef: world.bindingRef,
+          operationId,
+        });
+        bindingRegistered = true;
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        // Phase 2c: complete the session (resumable rev2).
+        await authority.completeGameSessionBinding({
+          creationRequestId,
+          gameSessionId: metadata.gameSessionId,
+          expectedRevision: 1,
+        });
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        // Phase 2d: first activation (generation 1 from a clean surface, else
+        // strictly incrementing). This is a new world session, not a resume:
+        // the previous resume lineage's in-memory guard is cleared so it can
+        // never shadow the new session, and actions stay paused until a fresh
+        // explicit Game instruction reopens them.
+        resumedGameSessionId = undefined;
+        await closeStaleAttachment();
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        attachmentGeneration = Math.max(attachmentGeneration + 1, 1);
+        attachmentConnectionStatus = "reconnecting";
+        actionAuthorityStatus = "paused";
+        const attached = await attachResumedWorld(createDeadlineMs, () => false);
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        return Object.freeze({
+          apiVersion: 1,
+          status: attached ? "attached" : "accepted",
+          gameSessionId: metadata.gameSessionId,
+        });
+      } catch (error) {
+        if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
+        try {
+          // Card D2 failure matrix: before registration the pending intent
+          // fails closed (failed rev2, no binding row); after registration the
+          // binding goes terminal with the metadata failed in one transaction.
+          if (bindingRegistered) {
+            await gameSessionCreationAuthority!.markGameSessionWorldBindingTerminal({
+              gameSessionId: metadata!.gameSessionId,
+              integrationId: command.integrationId,
+              expectedRevision: 1,
+              operationId,
+            });
+          } else if (metadata !== null) {
+            await gameSessionCreationAuthority!.failGameSessionCreation({
+              creationRequestId,
+              gameSessionId: metadata.gameSessionId,
+              expectedRevision: 1,
+            });
+          }
+        } catch (failureError) {
+          // A failure path that cannot be durably applied must never be
+          // reported as a clean unavailable outcome.
+          throw new Error("stardew_game_create_failed", { cause: failureError });
+        }
+        return Object.freeze({ apiVersion: 1, status: "unavailable", gameSessionId: null });
+      } finally {
+        if (createPromise === attempt) createPromise = undefined;
+      }
+    })();
+    createPromise = attempt;
+    gameCreates.set(command.idempotencyKey, Object.freeze({
+      browserSessionId,
+      integrationId: command.integrationId,
+      continuityIdentityId: command.continuityIdentityId,
+      creationRequestId,
+      operationId,
+      promise: attempt,
+    }));
+    return attempt;
+  });
+
+  /**
+   * Coordinator-owned resume cancel seam (boundary card D3). Only an in-flight
+   * resume attempt whose armed generation matches exactly is cancellable; a
+   * stale or absent epoch fails closed. The cancel epoch stops the attach
+   * retry loop at its safe points, the armed AI activation is abandoned, a
+   * partial facade is closed, and the projection becomes disconnected/
+   * unavailable while the attachment generation keeps its armed value (a
+   * retry mints a fresh attempt identity). The Player world and the durable
+   * session state are never touched: no endgame, no terminal binding, no
+   * metadata change, the session stays resumable.
+   */
+  const cancelResume: StardewProductionLifecycleActivationOwner["cancelResume"] = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameResumeCancelCommandV1,
+  ): Promise<GameResumeCancelResultV1> => consumeBrowserAdmission(admission, "game_resume_cancel", (browserSessionId) => {
+    const prior = gameResumeCancels.get(command.idempotencyKey);
+    if (prior !== undefined) {
+      if (prior.browserSessionId !== browserSessionId || prior.expectedAttachmentGeneration !== command.expectedAttachmentGeneration)
+        throw new Error("stardew_game_resume_cancel_idempotency_conflict");
+      return prior.promise;
+    }
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    const inFlight = resumePromise;
+    if (inFlight === undefined) throw new Error("stardew_game_resume_cancel_unavailable");
+    if (command.expectedAttachmentGeneration !== attachmentGeneration)
+      throw new Error("stardew_game_attachment_generation_conflict");
+    resumeCancelRequested = true;
+    const owner = exactOwner;
+    const promise = (async (): Promise<GameResumeCancelResultV1> => {
+      // Terminate the armed AI activation and close any partial facade of the
+      // reconnect epoch. Both are idempotent against the attempt's own
+      // cancelled cleanup and never touch the Player world or durable state.
+      if (owner !== undefined) {
+        await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
+      }
+      await closePartialAttachment().catch(() => undefined);
+      // The attempt settles at its next safe point; no stale reconnect can
+      // complete afterward.
+      await inFlight.catch(() => undefined);
+      // If the reconnect epoch committed before the cancel epoch landed, the
+      // cancel fails closed instead of tearing down a live attachment (cancel
+      // is not disconnect).
+      if (farmhandGameRuntimeLease !== undefined && attachmentConnectionStatus === "connected_idle")
+        throw new Error("stardew_game_resume_cancel_conflict");
+      // Card D3.6: disconnected/unavailable projection; the generation keeps
+      // its armed value so Retry mints the next attempt identity (G+1).
+      attachmentConnectionStatus = "disconnected";
+      actionAuthorityStatus = "unavailable";
+      return Object.freeze({ apiVersion: 1, status: "cancelled" });
+    })();
+    gameResumeCancels.set(command.idempotencyKey, Object.freeze({
+      browserSessionId,
+      expectedAttachmentGeneration: command.expectedAttachmentGeneration,
+      promise,
+    }));
+    return promise;
   });
 
   /**
@@ -1238,6 +1575,8 @@ function createCoordinator(
     readCabinChoices,
     confirmCabinChoice,
     resume,
+    createGameSession,
+    cancelResume,
     reopenActionAuthority,
     stopGame,
     disconnectGame,
@@ -1254,6 +1593,8 @@ function createCoordinator(
     if (launch !== undefined) await launch.catch(() => undefined);
     const resume = resumePromise;
     if (resume !== undefined) await resume.catch(() => undefined);
+    const create = createPromise;
+    if (create !== undefined) await create.catch(() => undefined);
     const confirmationKey = cabinConfirmationKey;
     if (confirmationKey !== undefined) {
       await cabinConfirmations.get(confirmationKey)?.promise.catch(() => undefined);
@@ -1319,10 +1660,12 @@ function createCoordinator(
     actionAuthorityStatus = "unavailable";
     resumedGameSessionId = undefined;
     gameResumes.clear();
+    gameResumeCancels.clear();
     gameReopens.clear();
     gameSetups.clear();
     gameStops.clear();
     gameDisconnects.clear();
+    gameCreates.clear();
     transition("closed");
   };
 
@@ -1357,6 +1700,8 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
     internal.launchStagedPlayerHost(owner, installation),
   aiClientLaunch: StardewLifecycleAiClientLaunch = (owner, installation) =>
     internal.launchMaterializedAiClient(owner, installation),
+  gameSessionCreationAuthority?: StardewGameSessionCreationAuthority,
+  createWorldBindingSeam?: CreateWorldBindingSeam,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
 ): StardewProductionLifecycleCoordinator {
   return createCoordinator(
@@ -1371,6 +1716,8 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
     // select the contained runtime launch strategy instead.
     playerHostLaunch,
     aiClientLaunch,
+    gameSessionCreationAuthority,
+    createWorldBindingSeam,
     containedRuntimeTeardown,
   );
 }
@@ -1414,6 +1761,12 @@ export function createStardewProductionLifecycleCoordinator(
     createStardewWorldBindingResolverFromGameAuthority(game),
     playerHostLaunch,
     aiClientLaunch,
+    // Create consumes the injected Slice-0 store facade slice; the Stardew
+    // createWorldBinding implementation (new world/save creation) is a later
+    // integration task, so the seam stays unmounted and every create fails
+    // closed as unavailable — never a fabricated attached result.
+    game,
+    undefined,
     containedRuntimeTeardown,
   );
 }

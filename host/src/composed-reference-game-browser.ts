@@ -13,9 +13,13 @@ import {
 import {
   GameBrowserValidatorsV1,
   type GameBrowserStateV1,
+  type GameCreateCommandV1,
+  type GameCreateResultV1,
   type GameDisconnectCommandV1,
   type GameLaunchCommandV1,
   type GamePrerequisitesSetupCommandV1,
+  type GameResumeCancelCommandV1,
+  type GameResumeCancelResultV1,
   type GameResumeCommandV1,
   type GameResumeResultV1,
   type GameReopenActionAuthorityCommandV1,
@@ -56,6 +60,14 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameResumeCommandV1,
   ) => Promise<GameResumeResultV1>;
+  gameResumeCancel?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameResumeCancelCommandV1,
+  ) => Promise<GameResumeCancelResultV1>;
+  gameCreate?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameCreateCommandV1,
+  ) => Promise<GameCreateResultV1>;
   gameReopen?: (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameReopenActionAuthorityCommandV1,
@@ -94,8 +106,10 @@ const GAME_SETUP_PATH = `${GAME_PATH}/prerequisites/setup`;
 const GAME_LAUNCH_PATH = `${GAME_PATH}/launch`;
 const GAME_STOP_PATH = `${GAME_PATH}/stop`;
 const GAME_RESUME_PATH = `${GAME_PATH}/resume`;
+const GAME_RESUME_CANCEL_PATH = `${GAME_PATH}/resume/cancel`;
 const GAME_REOPEN_PATH = `${GAME_PATH}/reopen`;
 const GAME_DISCONNECT_PATH = `${GAME_PATH}/disconnect`;
+const GAME_CREATE_PATH = `${GAME_PATH}/create`;
 const LIFECYCLE_ACTIVATE_PATH = "/api/composed-reference-game/v1/lifecycle/activate";
 const STARDEW_CABINS_PATH = "/api/composed-reference-game/v1/game/stardew/cabins";
 const STARDEW_CABINS_CONFIRM_PATH = `${STARDEW_CABINS_PATH}/confirm`;
@@ -237,7 +251,47 @@ function gameResumeProblemCode(error: unknown): string {
     case "stardew_game_resume_idempotency_conflict":
       return "idempotency_conflict";
     case "stardew_game_resume_in_progress":
+    case "stardew_game_create_in_progress":
       return "game_operation_in_progress";
+    case "stardew_game_resume_cancelled":
+      return "game_operation_in_progress";
+    default:
+      return "state_unavailable";
+  }
+}
+
+function gameResumeCancelProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  switch (error.message) {
+    case "stardew_game_resume_cancel_idempotency_conflict":
+      return "idempotency_conflict";
+    case "stardew_game_resume_cancel_unavailable":
+      return "game_unavailable";
+    case "stardew_game_resume_cancel_conflict":
+    case "stardew_game_attachment_generation_conflict":
+      return "game_attachment_conflict";
+    case "stardew_lifecycle_closing":
+      return "game_unavailable";
+    default:
+      return "state_unavailable";
+  }
+}
+
+function gameCreateProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  switch (error.message) {
+    case "stardew_game_create_idempotency_conflict":
+      return "idempotency_conflict";
+    case "stardew_game_create_in_progress":
+      return "game_operation_in_progress";
+    case "stardew_game_runtime_unavailable":
+      return "game_runtime_unavailable";
+    case "stardew_game_create_integration_conflict":
+      return "game_unavailable";
+    case "stardew_game_create_failed":
+      return "game_storage_unavailable";
+    case "stardew_lifecycle_closing":
+      return "game_unavailable";
     default:
       return "state_unavailable";
   }
@@ -411,8 +465,10 @@ type LifecycleAdmissionOperation =
   | "game_launch"
   | "game_stop"
   | "game_resume"
+  | "game_resume_cancel"
   | "game_reopen"
-  | "game_disconnect";
+  | "game_disconnect"
+  | "game_create";
 
 type LifecycleActivationAdmissionState = {
   readonly issuer: object;
@@ -551,10 +607,14 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
     operation = "game_stop";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_RESUME_PATH) {
     operation = "game_resume";
+  } else if (request.method === "POST" && requestUrl.pathname === GAME_RESUME_CANCEL_PATH) {
+    operation = "game_resume_cancel";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_REOPEN_PATH) {
     operation = "game_reopen";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_DISCONNECT_PATH) {
     operation = "game_disconnect";
+  } else if (request.method === "POST" && requestUrl.pathname === GAME_CREATE_PATH) {
+    operation = "game_create";
   } else {
     return null;
   }
@@ -683,6 +743,14 @@ export function createComposedReferenceGameBrowserRequestHandler(
   const gameResumeMounted = options.profile.gameProfile?.operationIds.includes("game.resume") === true;
   if (gameResumeMounted !== (options.gameResume !== undefined)) {
     throw new Error("Composed reference-game resume operation is mismounted");
+  }
+  const gameResumeCancelMounted = options.profile.gameProfile?.operationIds.includes("game.resume.cancel") === true;
+  if (gameResumeCancelMounted !== (options.gameResumeCancel !== undefined)) {
+    throw new Error("Composed reference-game resume cancel operation is mismounted");
+  }
+  const gameCreateMounted = options.profile.gameProfile?.operationIds.includes("game.create") === true;
+  if (gameCreateMounted !== (options.gameCreate !== undefined)) {
+    throw new Error("Composed reference-game create operation is mismounted");
   }
   const gameReopenMounted = options.profile.gameProfile?.operationIds.includes("game.reopen") === true;
   if (gameReopenMounted !== (options.gameReopen !== undefined)) {
@@ -973,6 +1041,50 @@ export function createComposedReferenceGameBrowserRequestHandler(
         if (!GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result)) throw new ControlledStateError();
         sendJson(response, 200, result);
       } catch (error) { sendProblem(response, 409, gameResumeProblemCode(error)); }
+      return;
+    }
+
+    if (requestUrl.pathname === GAME_RESUME_CANCEL_PATH && request.method === "POST") {
+      if (!isEmptyQuery(requestUrl) || options.gameResumeCancel === undefined) {
+        sendProblem(response, options.gameResumeCancel === undefined ? 404 : 409, options.gameResumeCancel === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      let body: Buffer;
+      try { body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      let command: unknown;
+      try { command = JSON.parse(body.toString("utf8")); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      if (!GameBrowserValidatorsV1.GameResumeCancelCommandV1Schema.Check(command)) {
+        sendProblem(response, 409, "malformed_request"); return;
+      }
+      try {
+        const result = await options.gameResumeCancel(admission, command as GameResumeCancelCommandV1);
+        if (!GameBrowserValidatorsV1.GameResumeCancelResultV1Schema.Check(result)) throw new ControlledStateError();
+        sendJson(response, 200, result);
+      } catch (error) { sendProblem(response, 409, gameResumeCancelProblemCode(error)); }
+      return;
+    }
+
+    if (requestUrl.pathname === GAME_CREATE_PATH && request.method === "POST") {
+      if (!isEmptyQuery(requestUrl) || options.gameCreate === undefined) {
+        sendProblem(response, options.gameCreate === undefined ? 404 : 409, options.gameCreate === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      let body: Buffer;
+      try { body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      let command: unknown;
+      try { command = JSON.parse(body.toString("utf8")); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      if (!GameBrowserValidatorsV1.GameCreateCommandV1Schema.Check(command)) {
+        sendProblem(response, 409, "malformed_request"); return;
+      }
+      try {
+        const result = await options.gameCreate(admission, command as GameCreateCommandV1);
+        if (!GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result)) throw new ControlledStateError();
+        sendJson(response, 200, result);
+      } catch (error) { sendProblem(response, 409, gameCreateProblemCode(error)); }
       return;
     }
 

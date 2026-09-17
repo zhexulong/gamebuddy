@@ -101,7 +101,7 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
   const gameProfile = composeGameProfile({
     profileId: "gamebuddy.game.preview",
     releaseTier: "game_preview",
-    operationIds: ["game.state.read", "game.prerequisites.setup", "game.launch", "game.stop", "game.resume", "game.reopen", "game.disconnect", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
+    operationIds: ["game.state.read", "game.prerequisites.setup", "game.launch", "game.stop", "game.resume", "game.resume.cancel", "game.reopen", "game.disconnect", "game.create", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
     navigationItemIds: ["game"],
   });
   const profile = composeReferenceGameBrowserProfile({ tavernProfile, gameProfile });

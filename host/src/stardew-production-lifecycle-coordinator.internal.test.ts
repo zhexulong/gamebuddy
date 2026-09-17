@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { EventEmitter } from "node:events";
@@ -30,8 +30,15 @@ import {
   createStardewProductionLifecycleCoordinatorForTesting,
   type StardewLifecycleCoordinatorTestingOverrides,
 } from "./stardew-production-lifecycle-coordinator.test-support-internal.js";
-import { createStardewProductionLifecycleCoordinator } from "./stardew-production-lifecycle-coordinator.internal.js";
+import {
+  createStardewProductionLifecycleCoordinator,
+  type StardewGameSessionCreationAuthority,
+} from "./stardew-production-lifecycle-coordinator.internal.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type {
+  ProductionGameSessionMetadata,
+  ProductionGameSessionWorldBinding,
+} from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import type { DesktopGuardianSession, GuardianAck } from "./containment/auth/desktop-guardian-session.internal.js";
 import {
@@ -277,7 +284,7 @@ async function createAdmissionBroker() {
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
   const root = await bootstrap.json() as { chat: { csrfToken: string } };
-  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_reopen" | "game_disconnect"): IncomingMessage => {
+  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create"): IncomingMessage => {
     const originUrl = new URL(origin);
     const method = operation === "cabin_read" ? "GET" : "POST";
     const url = operation === "lifecycle_activation"
@@ -294,9 +301,13 @@ async function createAdmissionBroker() {
                  ? "/api/composed-reference-game/v1/game/stop"
                  : operation === "game_resume"
                    ? "/api/composed-reference-game/v1/game/resume"
-                   : operation === "game_reopen"
-                     ? "/api/composed-reference-game/v1/game/reopen"
-                     : "/api/composed-reference-game/v1/game/disconnect";
+                   : operation === "game_resume_cancel"
+                     ? "/api/composed-reference-game/v1/game/resume/cancel"
+                     : operation === "game_reopen"
+                       ? "/api/composed-reference-game/v1/game/reopen"
+                       : operation === "game_disconnect"
+                         ? "/api/composed-reference-game/v1/game/disconnect"
+                         : "/api/composed-reference-game/v1/game/create";
     return {
       method,
       url,
@@ -310,7 +321,7 @@ async function createAdmissionBroker() {
     } as unknown as IncomingMessage;
   };
   const issue = (
-    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_reopen" | "game_disconnect" = "lifecycle_activation",
+    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create" = "lifecycle_activation",
   ): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       handler.lifecycleActivationIssuer,
@@ -1835,6 +1846,112 @@ async function confirmFirstCabin(fixture: Awaited<ReturnType<typeof prepareCabin
   return confirmation;
 }
 
+/**
+ * Deterministic Slice-0 store stand-in for create tests: it enforces the same
+ * pending→resumable / pending→failed / binding-terminal state machine as the
+ * fresh-root production store, records every exact input (so the store-minted
+ * gameSessionId can be verified across all durable steps), and exposes the
+ * session rows for assertions.
+ */
+function fakeGameSessionCreationAuthority() {
+  const bySession = new Map<string, ProductionGameSessionMetadata>();
+  const byRequest = new Map<string, Readonly<{ metadata: ProductionGameSessionMetadata }>>();
+  const bindings = new Map<string, ProductionGameSessionWorldBinding>();
+  const operationBySession = new Map<string, string>();
+  const inputs: unknown[] = [];
+  const authority: StardewGameSessionCreationAuthority = {
+    async createGameSessionMetadata(input) {
+      inputs.push("create");
+      const existing = byRequest.get(input.creationRequestId);
+      if (existing !== undefined) {
+        const row = existing.metadata;
+        if (row.integrationId !== input.integrationId || row.continuityIdentityId !== input.continuityIdentityId)
+          throw new Error("game_session_creation_conflict");
+        return row;
+      }
+      const metadata: ProductionGameSessionMetadata = Object.freeze({
+        gameSessionId: randomUUID().replaceAll("-", ""),
+        integrationId: input.integrationId,
+        continuityIdentityId: input.continuityIdentityId,
+        status: "pending",
+        revision: 1,
+      });
+      bySession.set(metadata.gameSessionId, metadata);
+      byRequest.set(input.creationRequestId, Object.freeze({ metadata }));
+      return metadata;
+    },
+    async registerGameSessionWorldBinding(input) {
+      inputs.push("register");
+      const row = bySession.get(input.gameSessionId);
+      if (row === undefined) throw new Error("game_session_world_binding_session_missing");
+      if (row.status !== "pending" || row.integrationId !== input.integrationId || bindings.has(input.gameSessionId))
+        throw new Error("game_session_world_binding_conflict");
+      const binding: ProductionGameSessionWorldBinding = Object.freeze({
+        gameSessionId: input.gameSessionId,
+        integrationId: input.integrationId,
+        bindingRef: input.bindingRef,
+        status: "registered",
+        revision: 1,
+      });
+      bindings.set(input.gameSessionId, binding);
+      operationBySession.set(input.gameSessionId, input.operationId);
+      return binding;
+    },
+    async completeGameSessionBinding(input) {
+      inputs.push("complete");
+      const row = bySession.get(input.gameSessionId);
+      const binding = bindings.get(input.gameSessionId);
+      if (row === undefined || byRequest.get(input.creationRequestId)?.metadata.gameSessionId !== input.gameSessionId || row.revision !== input.expectedRevision)
+        throw new Error("game_session_metadata_conflict");
+      if (binding === undefined || binding.integrationId !== row.integrationId || binding.status !== "registered")
+        throw new Error("game_session_world_binding_missing");
+      const updated = Object.freeze({ ...row, status: "resumable" as const, revision: row.revision + 1 });
+      bySession.set(input.gameSessionId, updated);
+      return updated;
+    },
+    async failGameSessionCreation(input) {
+      inputs.push("fail");
+      const row = bySession.get(input.gameSessionId);
+      if (row === undefined || byRequest.get(input.creationRequestId)?.metadata.gameSessionId !== input.gameSessionId || row.revision !== input.expectedRevision)
+        throw new Error("game_session_metadata_conflict");
+      if (bindings.has(input.gameSessionId)) throw new Error("game_session_metadata_conflict");
+      const updated = Object.freeze({ ...row, status: "failed" as const, revision: row.revision + 1 });
+      bySession.set(input.gameSessionId, updated);
+      return updated;
+    },
+    async markGameSessionWorldBindingTerminal(input) {
+      inputs.push("terminal");
+      const binding = bindings.get(input.gameSessionId);
+      const row = bySession.get(input.gameSessionId);
+      if (binding === undefined || binding.integrationId !== input.integrationId || operationBySession.get(input.gameSessionId) !== input.operationId || binding.status !== "registered" || binding.revision !== input.expectedRevision)
+        throw new Error("game_session_world_binding_conflict");
+      if (row === undefined || row.status !== "resumable" || row.revision !== 2)
+        throw new Error("game_session_world_binding_conflict");
+      const terminal: ProductionGameSessionWorldBinding = Object.freeze({ ...binding, status: "terminal", revision: binding.revision + 1 });
+      bindings.set(input.gameSessionId, terminal);
+      bySession.set(input.gameSessionId, Object.freeze({ ...row, status: "failed", revision: row.revision + 1 }));
+      return terminal;
+    },
+  };
+  return Object.freeze({
+    authority,
+    readMetadata: (gameSessionId: string): ProductionGameSessionMetadata | null => bySession.get(gameSessionId) ?? null,
+    readBinding: (gameSessionId: string): ProductionGameSessionWorldBinding | null => bindings.get(gameSessionId) ?? null,
+    listResumable: (): readonly ProductionGameSessionMetadata[] =>
+      Object.freeze([...bySession.values()].filter((row) => row.status === "resumable" && bindings.get(row.gameSessionId)?.status === "registered")),
+    inputs: (): readonly unknown[] => Object.freeze([...inputs]),
+    sessions: (): readonly ProductionGameSessionMetadata[] => Object.freeze([...bySession.values()]),
+  });
+}
+
+async function waitFor(condition: () => boolean, attempts = 200): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (condition()) return;
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 5));
+  }
+  throw new Error("wait_for_condition_timeout");
+}
+
 test("attached semantic Game STOP is generation-bound, idempotent, settled, and does not detach", async () => {
   const stopGate = deferredVoid();
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, { gameStopSettled: stopGate.promise });
@@ -3194,6 +3311,600 @@ test("reopenActionAuthority stays paused after teardown, then reopens the fresh 
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
       status: "attached", generation: 2, connectionStatus: "connected_idle",
     });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});// ─── Slice 3: game.create two-phase flow and failure/terminal discipline ────
+
+test("game.create persists pending intent, registers + completes the world binding, and returns the store-minted gameSessionId", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await createFixture({
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  try {
+    // Producer: the two-phase create over the store-minted id; no prior
+    // lifecycle activation exists, so no native attach can be built inside
+    // this instance and the durable session reports as accepted.
+    const result = await fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
+    assert.equal(result.status, "accepted");
+    assert.match(result.gameSessionId ?? "", /^[A-Za-z0-9_-]{32}$/);
+    // Consumer: every durable step re-verifies the identical store-minted id
+    // (register, complete) — no synthesized id is ever used.
+    const sessionId = result.gameSessionId!;
+    assert.deepEqual(fake.readMetadata(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "resumable", revision: 2,
+    });
+    assert.deepEqual(fake.readBinding(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", bindingRef: `world-${sessionId.slice(0, 8)}`, status: "registered", revision: 1,
+    });
+    assert.deepEqual(fake.listResumable(), [fake.readMetadata(sessionId)]);
+    assert.deepEqual(fake.inputs(), ["create", "register", "complete"]);
+    // Verifier: no resumable half-record, no native/attachment work without an
+    // activation, and the fresh session projection is armed at generation 1
+    // with actions paused (ready-actions-paused).
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "reconnecting",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+    assert.deepEqual(fixture.spawnCalls, []);
+    assert.deepEqual(fixture.playerSpawnCalls, []);
+    assert.deepEqual(fixture.bridgeConnectCalls, []);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 0);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 0);
+    assert.equal(fixture.gameRuntimeTaskCancelCalls(), 0);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.create fails closed as unavailable with a failed pending row when world creation is unavailable or fails", async () => {
+  for (const seamMode of ["absent", "throwing"] as const) {
+    const fake = fakeGameSessionCreationAuthority();
+    const fixture = await createFixture({
+      overrides: seamMode === "absent"
+        ? {}
+        : {
+            gameSessionCreationAuthority: fake.authority,
+            createWorldBinding: async () => { throw new Error("controlled-world-creation-failure"); },
+          },
+    });
+    try {
+      const result = await fixture.coordinator.activationOwner.createGameSession(
+        fixture.broker.issue("game_create"),
+        { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+      );
+      assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+      assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
+      if (seamMode === "absent") {
+        // A sealed/unmounted seam fails before any durable write: no rows at all.
+        assert.deepEqual(fake.sessions(), []);
+        assert.deepEqual(fake.inputs(), []);
+      } else {
+        // An attempted world creation failure follows the D2 failure table:
+        // pending → failed rev2, no binding row, never resumable.
+        const legacy = fake.sessions();
+        assert.equal(legacy.length, 1);
+        assert.deepEqual(legacy[0], {
+          gameSessionId: legacy[0]!.gameSessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 2,
+        });
+        assert.equal(fake.readBinding(legacy[0]!.gameSessionId), null);
+        assert.deepEqual(fake.listResumable(), []);
+        assert.deepEqual(fake.inputs(), ["create", "fail"]);
+        // The failure path re-verifies the store-minted id for the CAS.
+        assert.ok(fake.inputs().includes("fail"));
+      }
+      assert.deepEqual(fixture.spawnCalls, []);
+      assert.deepEqual(fixture.playerSpawnCalls, []);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  }
+});
+
+test("game.create rejects a foreign integrationId before any durable write (published-registry guard)", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await createFixture({
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async () => Object.freeze({ bindingRef: "opaque-world-ref" }),
+    },
+  });
+  try {
+    assert.throws(
+      () => fixture.coordinator.activationOwner.createGameSession(
+        fixture.broker.issue("game_create"),
+        { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "another-game", continuityIdentityId: null },
+      ),
+      /stardew_game_create_integration_conflict/,
+    );
+    assert.deepEqual(fake.sessions(), []);
+    assert.deepEqual(fake.inputs(), []);
+    // No attachment or launch projection changed.
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.create replays the same idempotency key with the same session and rejects a changed tuple", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await createFixture({
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  try {
+    const command = { apiVersion: 1 as const, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null };
+    const first = fixture.coordinator.activationOwner.createGameSession(fixture.broker.issue("game_create"), command);
+    const replay = fixture.coordinator.activationOwner.createGameSession(fixture.broker.issue("game_create"), command);
+    assert.equal(replay, first);
+    const result = await first;
+    assert.equal(result.status, "accepted");
+    // Exactly one durable lineage was created for both requests.
+    assert.equal(fake.sessions().length, 1);
+    assert.deepEqual(fake.inputs(), ["create", "register", "complete"]);
+    // A changed tuple under the same key fails closed.
+    assert.throws(
+      () => fixture.coordinator.activationOwner.createGameSession(
+        fixture.broker.issue("game_create"),
+        { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: "continuity-1" },
+      ),
+      /stardew_game_create_idempotency_conflict/,
+    );
+    assert.throws(
+      () => fixture.coordinator.activationOwner.createGameSession(
+        fixture.broker.issue("game_create"),
+        { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "another-game", continuityIdentityId: null },
+      ),
+      /stardew_game_create_idempotency_conflict/,
+    );
+    // No second durable lineage appeared after the rejected tuples.
+    assert.equal(fake.sessions().length, 1);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.create enforces the single-activation mutual exclusion for live attachments and in-flight operations", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "connected_idle",
+    });
+    // A live healthy attachment is a live world: create is refused without
+    // disturbing it (card D4).
+    assert.throws(
+      () => fixture.coordinator.activationOwner.createGameSession(
+        fixture.broker.issue("game_create"),
+        { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+      ),
+      /stardew_game_runtime_unavailable/,
+    );
+    assert.deepEqual(fixture.bridgeCloseCalls, []);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "connected_idle",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+
+  // In-flight resume blocks create; the create admission rejects synchronously
+  // without touching the store or the attempt.
+  const resumeBlocked = fakeGameSessionCreationAuthority();
+  const resumeFixture = await createFixture({
+    overrides: {
+      gameSessionCreationAuthority: resumeBlocked.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  try {
+    const resuming = resumeFixture.coordinator.activationOwner.resume(
+      resumeFixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-absent", idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+    );
+    assert.throws(
+      () => resumeFixture.coordinator.activationOwner.createGameSession(
+        resumeFixture.broker.issue("game_create"),
+        { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+      ),
+      /stardew_game_create_in_progress/,
+    );
+    assert.deepEqual(resumeBlocked.sessions(), []);
+    assert.deepEqual(await resuming, { apiVersion: 1, status: "unavailable" });
+  } finally {
+    await resumeFixture.coordinator.close();
+    await resumeFixture.broker.close();
+  }
+
+  // In-flight create blocks resume; the resume admission rejects synchronously.
+  const createBlocked = fakeGameSessionCreationAuthority();
+  const createFixtureGate = await createFixture({
+    overrides: {
+      gameSessionCreationAuthority: createBlocked.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+      connectFarmhandGameRuntimeFacade: async () => { throw new Error("blocked-attach-until-close"); },
+    },
+  });
+  try {
+    const creating = createFixtureGate.coordinator.activationOwner.createGameSession(
+      createFixtureGate.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    assert.throws(
+      () => createFixtureGate.coordinator.activationOwner.resume(
+        createFixtureGate.broker.issue("game_resume"),
+        { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+      ),
+      /stardew_game_resume_in_progress/,
+    );
+    // The create attempt stays admitted with a durable resumable session
+    // (no lifecycle activation exists, so the first activation stays pending
+    // inside this instance); it never blocks the resume guard again after
+    // settling.
+    const createOutcome = await creating;
+    assert.equal(createOutcome.status, "accepted");
+    assert.match(createOutcome.gameSessionId ?? "", /^[A-Za-z0-9_-]{32}$/);
+    const blockedSessions = createBlocked.sessions();
+    assert.equal(blockedSessions.length, 1);
+    assert.equal(blockedSessions[0]!.status, "resumable");
+    assert.equal(createBlocked.readBinding(blockedSessions[0]!.gameSessionId)?.status, "registered");
+  } finally {
+    await createFixtureGate.coordinator.close();
+    await createFixtureGate.broker.close();
+  }
+});
+
+test("game.create after a clean disconnect attaches the first activation at generation 1 with actions paused", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "create-clean-disconnect", expectedAttachmentGeneration: 1 },
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    // Producer: the full two-phase create, then the first activation reuses
+    // the fresh-attach machinery (arm AI → launch → bridge → materialize →
+    // runEnter → committed ingress). Consumer: register/complete settle the
+    // durable rows before the attach. Verifier: result attached, generation 1,
+    // actions paused, fresh per-activation launch generation, rows resumable.
+    const result = await fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
+    assert.equal(result.status, "attached");
+    assert.match(result.gameSessionId ?? "", /^[A-Za-z0-9_-]{32}$/);
+    const sessionId = result.gameSessionId!;
+    assert.deepEqual(fake.readMetadata(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "resumable", revision: 2,
+    });
+    assert.deepEqual(fake.readBinding(sessionId)?.status, "registered");
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "connected_idle",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+    assert.equal(fixture.spawnCalls.length, 2);
+    assert.equal(fixture.spawnCalls[1]!.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "ai-generation-2");
+    assert.equal(fixture.bridgeConnectCalls.length, 2);
+    assert.equal(fixture.bridgeConnectCalls[1]!.launchGeneration, "ai-generation-2");
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 2);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 2);
+    assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), 2);
+    assert.deepEqual(fixture.aiKillCalls, [4101]);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.create attach failure after registration goes terminal binding + failed metadata in one durable outcome", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    aiSpawnFailureAt: 2,
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "create-terminal-disconnect", expectedAttachmentGeneration: 1 },
+    );
+    // The first activation's AI launch fails after the binding was registered
+    // and the session completed: the D2 post-registration failure path applies
+    // (binding terminal rev2 + metadata failed rev3), never a resumable
+    // half-record, and the wire reports unavailable with no session handle.
+    const result = await fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
+    const sessions = fake.sessions();
+    assert.equal(sessions.length, 1);
+    const sessionId = sessions[0]!.gameSessionId;
+    assert.deepEqual(fake.readBinding(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", bindingRef: `world-${sessionId.slice(0, 8)}`, status: "terminal", revision: 2,
+    });
+    assert.deepEqual(fake.readMetadata(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 3,
+    });
+    assert.deepEqual(fake.listResumable(), []);
+    // Verifier: the attachment never completed; generation was not left armed
+    // beyond the failed epoch and no player-world process was touched.
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 1);
+    assert.deepEqual(fixture.playerKillCalls, []);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.create clears the previous resume lineage so the new session can be resumed without cross-session conflicts", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    aiSpawnFailureAt: 2,
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "create-lineage-disconnect", expectedAttachmentGeneration: 1 },
+    );
+    // A failed resume of the old lineage leaves its resumed-session guard set
+    // with the armed generation retained (same as the failed-resume retry test).
+    await assert.rejects(
+      fixture.coordinator.activationOwner.resume(
+        fixture.broker.issue("game_resume"),
+        { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "lineage-resume-fail", expectedAttachmentGeneration: 2 },
+      ),
+      /controlled-ai-spawn-failure/,
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "failed",
+    });
+    // Start new game creates a NEW session; the old lineage's in-memory guard
+    // must not shadow the fresh session's retry/resume admission.
+    const created = await fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "lineage-create", integrationId: "stardew", continuityIdentityId: null },
+    );
+    assert.equal(created.status, "attached");
+    const newSessionId = created.gameSessionId!;
+    assert.equal(newSessionId === "session-abc", false);
+    assert.deepEqual(fake.readMetadata(newSessionId)?.status, "resumable");
+    // The new session's world is live, so its resume is admitted after a
+    // clean disconnect: the previous lineage guard was cleared, otherwise the
+    // resume would fail with a cross-session conflict.
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "lineage-disconnect-new", expectedAttachmentGeneration: 3 },
+    );
+    const resumed = await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: newSessionId, idempotencyKey: "lineage-resume-new", expectedAttachmentGeneration: 2 },
+    );
+    assert.deepEqual(resumed, { apiVersion: 1, status: "attached" });
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "connected_idle",
+    });
+    assert.deepEqual(
+      fixture.spawnCalls.map((call) => call.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION),
+      ["ai-generation-1", "ai-generation-2", "ai-generation-3", "ai-generation-4"],
+    );
+    assert.deepEqual(fixture.playerKillCalls, []);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+// ─── Slice 3: game.resume.cancel epoch termination ──────────────────────────
+
+test("game.resume.cancel fails closed without an in-flight resume or on a stale generation", async () => {
+  const fixture = await createFixture();
+  try {
+    assert.throws(
+      () => fixture.coordinator.activationOwner.cancelResume(
+        fixture.broker.issue("game_resume_cancel"),
+        { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 },
+      ),
+      /stardew_game_resume_cancel_unavailable/,
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "unavailable" });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.resume.cancel terminates the reconnect epoch, keeps the armed generation, and the retry mints a new attempt identity", async () => {
+  let allowAttach = false;
+  let connectChainCalls = 0;
+  let resumeConnectCalls = 0;
+  let enterCalls = 0;
+  let ingressCalls = 0;
+  let voiceStopperCalls = 0;
+  const recordedConnectGenerations: string[] = [];
+  const recordConnect = (connection: Parameters<NonNullable<StardewLifecycleCoordinatorTestingOverrides["connectFarmhandGameRuntimeFacade"]>>[0]) => {
+    recordedConnectGenerations.push(connection.launchGeneration);
+  };
+  const semanticFacadeFixture = () => Object.freeze({
+    authority: "SEMANTIC" as const,
+    runEnter: async () => {
+      enterCalls += 1;
+      return connectedSemanticGameLeaseFixture({
+        onAttachVoiceStopper: () => { voiceStopperCalls += 1; },
+        onActivate: () => { ingressCalls += 1; },
+      });
+    },
+    recoverDeadOwner: async () => undefined,
+    close: async () => undefined,
+  });
+  const transientError = Object.assign(new Error("bridge-not-ready"), { code: "ECONNREFUSED" });
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      worldBindingResolver: async () => ({ gameSessionId: "session-abc", integrationId: "stardew", bindingRef: "opaque-world-ref", status: "registered" as const, revision: 1 }),
+      connectFarmhandGameRuntimeFacade: async (connection) => {
+        connectChainCalls += 1;
+        recordConnect(connection);
+        if (connectChainCalls > 1) {
+          resumeConnectCalls += 1;
+          if (!allowAttach) throw transientError;
+        }
+        return semanticFacadeFixture();
+      },
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "cancel-disconnect", expectedAttachmentGeneration: 1 },
+    );
+    // Producer: an in-flight resume attempt is parked in the bridge retry loop
+    // (generation 2 armed, AI freshly launched).
+    const resuming = fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "cancel-resume-attempt", expectedAttachmentGeneration: 2 },
+    );
+    resuming.catch(() => undefined);
+    await waitFor(() => resumeConnectCalls >= 1);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "syncing",
+    });
+    // A stale cancel epoch for the wrong generation fails closed without
+    // disturbing the attempt.
+    assert.throws(
+      () => fixture.coordinator.activationOwner.cancelResume(
+        fixture.broker.issue("game_resume_cancel"),
+        { apiVersion: 1, idempotencyKey: "cancel-stale-gen", expectedAttachmentGeneration: 3 },
+      ),
+      /stardew_game_attachment_generation_conflict/,
+    );
+    // Consumer: the exact in-flight epoch is cancelled; the retry loop stops,
+    // the armed activation is abandoned, the partial facade (none here) is
+    // closed, and the projection becomes disconnected/unavailable while the
+    // generation keeps its armed value.
+    const cancelled = await fixture.coordinator.activationOwner.cancelResume(
+      fixture.broker.issue("game_resume_cancel"),
+      { apiVersion: 1, idempotencyKey: "cancel-attempt-2", expectedAttachmentGeneration: 2 },
+    );
+    assert.deepEqual(cancelled, { apiVersion: 1, status: "cancelled" });
+    assert.equal(GameBrowserValidatorsV1.GameResumeCancelResultV1Schema.Check(cancelled), true);
+    await assert.rejects(resuming, /stardew_game_resume_cancelled/);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "disconnected",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "unavailable" });
+    // Replay of the same cancel key returns the same cancelled result; a
+    // changed tuple fails closed.
+    const replay = await fixture.coordinator.activationOwner.cancelResume(
+      fixture.broker.issue("game_resume_cancel"),
+      { apiVersion: 1, idempotencyKey: "cancel-attempt-2", expectedAttachmentGeneration: 2 },
+    );
+    assert.deepEqual(replay, { apiVersion: 1, status: "cancelled" });
+    assert.throws(
+      () => fixture.coordinator.activationOwner.cancelResume(
+        fixture.broker.issue("game_resume_cancel"),
+        { apiVersion: 1, idempotencyKey: "cancel-attempt-2", expectedAttachmentGeneration: 3 },
+      ),
+      /stardew_game_resume_cancel_idempotency_conflict/,
+    );
+    // No stale reconnect completes after the cancel: even with the attach
+    // gate open, no further cancelled-epoch connect attempt runs and nothing
+    // attaches until a fresh resume attempt starts.
+    const cancelledEpochAttempts = recordedConnectGenerations.filter((generation) => generation === "ai-generation-2").length;
+    assert.ok(cancelledEpochAttempts >= 1);
+    allowAttach = true;
+    await new Promise<void>((resolveSleep) => setTimeout(resolveSleep, 80));
+    assert.equal(recordedConnectGenerations.filter((generation) => generation === "ai-generation-2").length, cancelledEpochAttempts);
+    assert.equal(enterCalls, 1);
+    assert.equal(ingressCalls, 1);
+    assert.equal(voiceStopperCalls, 1);
+    // Verifier: Player world untouched; only the armed AI activation was
+    // abandoned (the retry below stops it via the per-activation prepare).
+    assert.equal(fixture.playerSpawnCalls.length, 1);
+    assert.deepEqual(fixture.playerKillCalls, []);
+    assert.deepEqual(fixture.aiKillCalls, [4101]);
+    // Retry: a fresh attempt identity (generation G+1) re-attaches through the
+    // resume pipeline without reusing the cancelled attempt's launch identity.
+    const retried = await fixture.coordinator.activationOwner.resume(
+      fixture.broker.issue("game_resume"),
+      { apiVersion: 1, gameSessionId: "session-abc", idempotencyKey: "cancel-retry-attempt", expectedAttachmentGeneration: 3 },
+    );
+    assert.deepEqual(retried, { apiVersion: 1, status: "attached" });
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 3, connectionStatus: "connected_idle",
+    });
+    assert.deepEqual(fixture.spawnCalls.map((call) => call.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION), [
+      "ai-generation-1", "ai-generation-2", "ai-generation-3",
+    ]);
+    // The initial cabin attach and the retry consumed fresh launch identities;
+    // the cancelled epoch consumed only its own generation and the retry
+    // minted a strictly newer one — the cancelled identity is never reused.
+    assert.deepEqual(new Set(recordedConnectGenerations), new Set([
+      "ai-generation-1", "ai-generation-2", "ai-generation-3",
+    ]));
+    assert.equal(recordedConnectGenerations.at(-1), "ai-generation-3");
+    assert.equal(enterCalls, 2);
+    assert.equal(ingressCalls, 2);
+    assert.equal(voiceStopperCalls, 2);
+    // The retry is the next attempt identity; the old cancelled one is terminal.
+    assert.deepEqual(fixture.aiKillCalls, [4101, 4101]);
+    assert.deepEqual(fixture.playerKillCalls, []);
+    assert.equal(fixture.playerSpawnCalls.length, 1);
+    // A cancel after the resume settled is stale and fails closed.
+    assert.throws(
+      () => fixture.coordinator.activationOwner.cancelResume(
+        fixture.broker.issue("game_resume_cancel"),
+        { apiVersion: 1, idempotencyKey: "cancel-stale-after-settle", expectedAttachmentGeneration: 3 },
+      ),
+      /stardew_game_resume_cancel_unavailable/,
+    );
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();

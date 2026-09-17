@@ -1,8 +1,25 @@
 import type { ProductionGameSessionWorldBinding } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 
-const INTEGRATION_ID = "stardew";
+/** The one published integration identity owned by this Stardew lifecycle surface. */
+export const STARDEW_GAME_INTEGRATION_ID = "stardew";
+const INTEGRATION_ID = STARDEW_GAME_INTEGRATION_ID;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * Integration-private narrow world-creation seam (boundary card D6, frozen
+ * draft). It consumes only opaque `(gameSessionId, integrationId, worldRequest)`
+ * and outputs an opaque bindingRef (`[A-Za-z0-9_-]{1,256}`). The Stardew
+ * implementation (creating a new world/save and only then returning a legal
+ * binding ref) is a later integration task; until then this seam is declared
+ * but never mounted, and any create that needs it fails closed. A fake second
+ * integration must implement the same seam.
+ */
+export type CreateWorldBindingSeam = Readonly<{
+  createWorldBinding(
+    input: Readonly<{ gameSessionId: string; integrationId: string; worldRequest: unknown }>,
+  ): Promise<Readonly<{ bindingRef: string }>>;
+}>;
 
 /**
  * Integration-private reader contract for world binding resolution.
