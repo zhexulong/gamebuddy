@@ -47,7 +47,7 @@
     "check:host-production-import-boundary": "node tools/check-host-production-import-boundary.mjs",
     "check:host-game-physical-seam": "node tools/check-host-game-physical-seam.mjs",
     "test:host-game-physical-seam": "node --test tools/check-host-game-physical-seam.test.mjs",
-    "check:host-module-graph": "depcruise --config .dependency-cruiser.host-production.cjs host/src/main.ts host/src/dialogue-web-main.ts host/src/stardew-attachment.ts host/src/farmhand-companion-preview.ts host/src/composition/desktop-host-composition.ts",
+    "check:host-module-graph": "depcruise --config .dependency-cruiser.host-production.cjs host/src/main.ts host/src/stardew-attachment.ts host/src/farmhand-companion-preview.ts host/src/composition/desktop-host-composition.ts",
     "test:stardew-fixture-profile": "node --test tools/stardew-fixture-profile.test.mjs",
     "test:stardew-fixture-transaction-inspector": "node --test tools/stardew-fixture-transaction-inspector.test.mjs",
     "inspect:stardew-fixture-transaction": "node tools/inspect-stardew-fixture-transaction.mjs",

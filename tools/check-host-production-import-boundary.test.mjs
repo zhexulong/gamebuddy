@@ -29,7 +29,7 @@ async function withFixture(files, run) {
     await rm(root, { recursive: true, force: true });
   }
 }
-const roots = ["host/src/main.ts", "host/src/dialogue-web-main.ts"];
+const roots = ["host/src/main.ts", "host/src/farmhand-companion-preview.ts"];
 
 test("requires a clean report without an expected blocked baseline", () => {
   assert.deepEqual(validateHostProductionImportBoundaryBaseline({ verdict: "passed", violations: [] }), {
@@ -46,7 +46,7 @@ test("follows static relative imports and re-exports, reporting each banned lega
   await withFixture(
     {
       "host/src/main.ts": 'import "./safe";\n',
-      "host/src/dialogue-web-main.ts": 'export { value } from "./relay";\n',
+      "host/src/farmhand-companion-preview.ts": 'export { value } from "./relay";\n',
       "host/src/safe.ts": 'export * from "./continuity-authority-coordinator/worker";\n',
       "host/src/relay.ts": 'export { value } from "./game-origin-authority/origin";\n',
       "host/src/continuity-authority-coordinator/worker.ts": "export const value = 1;\n",
@@ -97,7 +97,7 @@ test("allows declared external package roots and slash subpaths without acceptin
         'import "typeboxx/compile";',
         'import "@scope/sibling";',
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
@@ -130,7 +130,7 @@ test("allows only declared external packages and exact declared Magic Context dy
         "const bridge = await import(pathToFileURL(magicContextEntry).href);",
         "void bridge;",
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
@@ -143,7 +143,7 @@ test("fails closed on unresolved relative and arbitrary dynamic imports with imp
   await withFixture(
     {
       "host/src/main.ts": 'import "./missing";\nconst later = import(arbitrarySpecifier);\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
@@ -180,12 +180,12 @@ test("fails closed on non-relative static imports without traversing unsafe spec
         'import { readFileSync } from "node:fs";',
         "void readFileSync;",
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
       assert.equal(report.verdict, "blocked");
-      assert.deepEqual(report.inspectedFiles, ["host/src/dialogue-web-main.ts", "host/src/main.ts"]);
+      assert.deepEqual(report.inspectedFiles, ["host/src/farmhand-companion-preview.ts", "host/src/main.ts"]);
       assert.deepEqual(report.violations, [
         {
           kind: "unresolved_nonrelative_import",
@@ -234,12 +234,12 @@ test("blocks relative paths that escape canonical host/src before traversal, inc
         'import "../../node_modules/external/index.js";',
         'import "..\\\\..\\\\node_modules\\\\external\\\\index.js";',
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "node_modules/external/index.js": "export {};\n",
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
-      assert.deepEqual(report.inspectedFiles, ["host/src/dialogue-web-main.ts", "host/src/main.ts"]);
+      assert.deepEqual(report.inspectedFiles, ["host/src/farmhand-companion-preview.ts", "host/src/main.ts"]);
       assert.deepEqual(report.violations, [
         {
           kind: "relative_import_escapes_host_source",
@@ -269,7 +269,7 @@ test("applies the same relative and builtin policy to TypeScript import-equals r
         'import builtin = require("node:fs");',
         "void internal; void bare; void builtin;",
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity.ts": "export {};\n",
     },
     (root) => {
@@ -299,7 +299,7 @@ test("blocks unbound direct require literals under the static reference policy",
     {
       "host/src/main.ts":
         'require("./continuity");\nrequire("node:fs");\nrequire("external-package");\nrequire(dynamicSpecifier);\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity.ts": "export {};\n",
     },
     (root) => {
@@ -345,7 +345,7 @@ test("blocks createRequire assignment aliases without mistaking ordinary text", 
         'const text = "require(\\"external-package\\")";',
         'const api = { require() {} }; api.require("external-package");',
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity.ts": "export {};\n",
     },
     (root) => {
@@ -389,7 +389,7 @@ test("blocks CommonJS module and createRequire ingress variants while allowing a
         "module.require(dynamicSpecifier);",
         "class NotAnIngress { require() {} }",
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity.ts": "export {};\n",
     },
     (root) => {
@@ -447,7 +447,7 @@ test("blocks module.require aliases in direct CommonJS sources while allowing bu
         'const text = "const load = module.require; load(\\"./continuity\\")";',
         'const api = { require() {} }; api.require("./continuity");',
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity.ts": "export {};\n",
     },
     (root) => {
@@ -501,7 +501,7 @@ test("blocks module namespace createRequire aliases from ESM and CommonJS ingres
         'const text = "CommonJsModule.createRequire(import.meta.url)(\\"./continuity\\")";',
         'const api = { createRequire() {} }; api.createRequire(import.meta.url)("./continuity");',
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity.ts": "export {};\n",
     },
     (root) => {
@@ -548,7 +548,7 @@ test("blocks default node:module createRequire imports while allowing node built
         'Module.createRequire(import.meta.url)("./continuity");',
         'Module.createRequire(import.meta.url)("node:fs");',
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity.ts": "export {};\n",
     },
     (root) => {
@@ -570,7 +570,7 @@ test("traverses default node:module createRequire imports in transitive sources"
   await withFixture(
     {
       "host/src/main.ts": 'import "./relay";\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/relay.ts": [
         'import Module from "node:module";',
         'Module.createRequire(import.meta.url)("./nested");',
@@ -591,7 +591,7 @@ test("traverses default node:module createRequire imports in transitive sources"
       ]);
       assert.deepEqual(report.inspectedFiles, [
         "host/src/continuity.ts",
-        "host/src/dialogue-web-main.ts",
+        "host/src/farmhand-companion-preview.ts",
         "host/src/main.ts",
         "host/src/nested.ts",
         "host/src/relay.ts",
@@ -604,7 +604,7 @@ test("traverses factory-produced CommonJS relative imports in transitive sources
   await withFixture(
     {
       "host/src/main.ts": 'require("./relay");\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/relay.ts": [
         'const Module = require("node:module");',
         "const { createRequire: factory } = Module;",
@@ -626,7 +626,7 @@ test("traverses factory-produced CommonJS relative imports in transitive sources
       ]);
       assert.deepEqual(report.inspectedFiles, [
         "host/src/continuity.ts",
-        "host/src/dialogue-web-main.ts",
+        "host/src/farmhand-companion-preview.ts",
         "host/src/main.ts",
         "host/src/nested.ts",
         "host/src/relay.ts",
@@ -639,7 +639,7 @@ test("blocks module.require aliases in transitive CommonJS sources", async () =>
   await withFixture(
     {
       "host/src/main.ts": 'require("./relay");\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/relay.ts": [
         "const Module = module;",
         "const { require: load } = Module;",
@@ -660,7 +660,7 @@ test("blocks module.require aliases in transitive CommonJS sources", async () =>
       ]);
       assert.deepEqual(report.inspectedFiles, [
         "host/src/continuity.ts",
-        "host/src/dialogue-web-main.ts",
+        "host/src/farmhand-companion-preview.ts",
         "host/src/main.ts",
         "host/src/relay.ts",
       ]);
@@ -672,7 +672,7 @@ test("ignores erased import type authority contracts but rejects runtime authori
   await withFixture(
     {
       "host/src/main.ts": 'import "./consumer";\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/consumer.ts": [
         'import type { SemanticStore } from "./continuity-semantic-store/continuity-semantic-production-store";',
         'import { semanticStore } from "./continuity-semantic-store/continuity-semantic-production-store";',
@@ -715,7 +715,7 @@ test("excludes erased TypeScript type references while retaining mixed runtime a
   const authority = "host/src/continuity-semantic-store/continuity-semantic-production-store.ts";
   const erasedOnly = {
     "host/src/main.ts": 'import "./consumer";\n',
-    "host/src/dialogue-web-main.ts": "export {};\n",
+    "host/src/farmhand-companion-preview.ts": "export {};\n",
     "host/src/consumer.ts": [
       'type Direct = import("./continuity-semantic-store/continuity-semantic-production-store").SemanticStore;',
       'type Query = typeof import("./continuity-semantic-store/continuity-semantic-production-store");',
@@ -730,7 +730,7 @@ test("excludes erased TypeScript type references while retaining mixed runtime a
     assert.equal(report.verdict, "passed", JSON.stringify(report.violations));
     assert.deepEqual(report.inspectedFiles, [
       "host/src/consumer.ts",
-      "host/src/dialogue-web-main.ts",
+      "host/src/farmhand-companion-preview.ts",
       "host/src/main.ts",
     ]);
   });
@@ -770,7 +770,7 @@ test("treats runtime dynamic-import member access as an ingress, not an erased t
   await withFixture(
     {
       "host/src/main.ts": 'import "./consumer";\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/consumer.ts":
         'import("./tavern/chat-thread-store").then(({ acceptP4MountedPlayerMessage }) => void acceptP4MountedPlayerMessage);\n',
       "host/src/tavern/chat-thread-store.ts": "export const acceptP4MountedPlayerMessage = 1;\n",
@@ -801,7 +801,7 @@ test("recognizes all current erased import-type forms but never erases executabl
         'const value: import("./legacy").Thing | null = null;',
         'void import("./legacy").then(() => undefined);',
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/legacy.ts": "export type Thing = string;\n",
     },
     (root) => {
@@ -833,7 +833,7 @@ test("does not mistake private methods named require for CommonJS ingress, but f
         "}",
         "void Ledger; void CommonJsHolder;",
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity.ts": "export {};\n",
     },
     (root) => {
@@ -861,7 +861,7 @@ test("does not mistake member calls or class/object methods named import for dyn
         "new Loader().import();",
         "export {};",
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
@@ -884,7 +884,7 @@ test("does not mistake the st-card async import method declaration for a dynamic
         "  protected async import<T extends string>(id: T): Promise<T> { return id; }",
         "}",
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
@@ -898,7 +898,7 @@ test("fails closed on dynamic imports within template interpolation expressions"
   await withFixture(
     {
       "host/src/main.ts": 'const request = `load ${import("./lazy")}`;\nexport {};\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
@@ -919,7 +919,7 @@ test("detects explicit legacy adoption functions only in the transitive producti
   await withFixture(
     {
       "host/src/main.ts": 'import { run } from "./reachable"; run();\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/reachable.ts": "export const run = () => adoptLegacyPartition();\n",
       "host/src/unused.ts": "adoptLegacyPartition();\n",
     },
@@ -943,14 +943,14 @@ test("does not mistake comments, ordinary strings, or unrooted tests for imports
     {
       "host/src/main.ts":
         '// import "./continuity"; adoptLegacyPartition()\nconst text = "import(\\"./missing\\") game-surface-lease";\nexport {};\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/ignored.test.ts": 'import "./continuity"; adoptLegacyPartition();\n',
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
       assert.equal(report.verdict, "passed");
       assert.deepEqual(report.violations, []);
-      assert.deepEqual(report.inspectedFiles, ["host/src/dialogue-web-main.ts", "host/src/main.ts"]);
+      assert.deepEqual(report.inspectedFiles, ["host/src/farmhand-companion-preview.ts", "host/src/main.ts"]);
     },
   );
 });
@@ -959,7 +959,7 @@ test("rejects supplied roots outside canonical host/src without traversal", asyn
   await withFixture(
     {
       "host/src/main.ts": "export {};\n",
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "outside.ts": 'import "./host/src/continuity";\n',
     },
     (root) => {
@@ -1002,7 +1002,7 @@ test("allows semantic provisioning and store imports only from coordinator inter
     {
       "host/src/main.ts":
         'import "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator";\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.ts":
         'import "./continuity-semantic-production-coordinator.internal";\n',
       "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts":
@@ -1024,7 +1024,7 @@ test("allows only the public coordinator to import its shared internal implement
     {
       "host/src/main.ts":
         'import "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator";\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.ts":
         'import "./continuity-semantic-production-coordinator.internal";\n',
       "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts":
@@ -1041,7 +1041,7 @@ test("blocks production closure imports of test-only coordinator support and dir
   await withFixture(
     {
       "host/src/main.ts": 'import "./consumer";\n',
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/consumer.ts": [
         'import "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.test-support";',
         'import "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal";',
@@ -1088,7 +1088,7 @@ test("enforces the generic mounted-turn facade, coordinator, authority, store, a
   const store = "host/src/tavern/chat-thread-store.ts";
   const intended = {
     "host/src/main.ts": "export {};\n",
-    "host/src/dialogue-web-main.ts": "export {};\n",
+    "host/src/farmhand-companion-preview.ts": "export {};\n",
     [acceptanceFacade]: 'import "./player-turn-acceptance.internal";\n',
     [acceptanceBridge]: [
       'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
@@ -1171,7 +1171,7 @@ test("blocks non-coordinator semantic authority imports, the semantic backend, a
         'import "./consumer";',
         'import "./continuity-semantic-backend/continuity-semantic-backend";',
       ].join("\n"),
-      "host/src/dialogue-web-main.ts": "export {};\n",
+      "host/src/farmhand-companion-preview.ts": "export {};\n",
       "host/src/consumer.ts": [
         'import "./continuity-semantic-provisioning/continuity-semantic-provisioning";',
         'export { value } from "./continuity-semantic-store/continuity-semantic-production-store";',

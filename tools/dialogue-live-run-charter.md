@@ -14,7 +14,7 @@ This charter was derived independently from public methodology, without copying 
 
 ## Execution discipline
 
-1. Use only `pnpm --filter @gamebuddy/companion-host start:dialogue <operator-config>` and the printed one-time loopback URL. Do **not** launch or modify a system `pi` CLI or any user Pi configuration/session.
+1. Use only the Desktop composition bootstrap (`tools/desktop-composition-launch.mjs` surface=chat-only/management, or the launcher-owned desktop product) and the printed one-time loopback URL. Do **not** launch or modify a system `pi` CLI or any user Pi configuration/session.
 2. Create a new opaque `continuityId` and a GameBuddy-owned `runtimeRoot` outside the repository for every clean run. Record only opaque IDs, model configuration, run time, scenario IDs, outcome categories, and evidence IDs.
 3. Use the exact same locked model/provider configuration for baseline and comparison runs. Do not hot-swap an `IdentityProfile` inside an existing session; start a new continuity when changing its profile.
 4. Browser-visible evidence is limited to player input, explicit `companion_text` bubbles, neutral lifecycle/error states, and the current surface session selection. Never capture/display prompts, Pi JSONL, Magic Context blocks, thinking, tool/result payloads, receipts, provider payloads, credentials, or hidden traces.

@@ -1,6 +1,6 @@
 {
   "schema": "gamebuddy-host-production-artifact-config/v3",
-  "entryRoots": ["main.js", "dialogue-web-main.js", "stardew-attachment.js", "farmhand-companion-preview.js"],
+  "entryRoots": ["main.js", "stardew-attachment.js", "farmhand-companion-preview.js"],
   "bundledRuntime": {
     "kind": "verified_host_bundled_node_runtime",
     "sourceUrl": "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip",

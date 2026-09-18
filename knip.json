@@ -34,7 +34,6 @@
         "src/main.ts!",
         "src/runtime-core.internal.ts!",
         "src/voice-gateway-client.ts!",
-        "src/dialogue-web-main.ts!",
         "src/stardew-attachment.ts!",
         "src/farmhand-companion-preview.ts!",
         "src/tavern/player-turn-acceptance.ts!",
