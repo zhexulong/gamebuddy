@@ -1767,8 +1767,8 @@ test("expiry while waiting under an occupied lock fails closed before owner writ
 test("Player Host profile staging staging creates only the Player Host bootstrap without consuming either launch", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
   await mkdir(packageRoot);
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -1825,7 +1825,6 @@ test("Player Host profile staging staging creates only the Player Host bootstrap
     "player-host/Mods/GameBuddy/GameBuddy.Stardew.Core.dll",
     "player-host/Mods/GameBuddy/GameBuddy.Stardew.deps.json",
     "player-host/Mods/GameBuddy/GameBuddy.Stardew.dll",
-    "player-host/Mods/GameBuddy/Raffinert.FuzzySharp.dll",
     "player-host/Mods/GameBuddy/manifest.json",
   ]);
   assert.deepEqual(ownerTestView(owner).record.playerHost, {
@@ -1845,8 +1844,8 @@ test("Player Host profile staging staging creates only the Player Host bootstrap
 test("partial Player Host package write rolls back without AI artifacts or launch consumption", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-rollback");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
   await mkdir(packageRoot);
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   for (const entry of entries) {
     await writeFile(join(packageRoot, entry), entry === "GameBuddy.Stardew.dll" ? "" : `fixed-${entry}`, "utf8");
   }
@@ -1895,7 +1894,7 @@ test("partial Player Host package write rolls back without AI artifacts or launc
 test("second package reread holds the owner lock through rollback before quarantine", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-reread-failure");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   const stagedFiles = ["config.json", ...entries];
   await mkdir(packageRoot);
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
@@ -1976,8 +1975,8 @@ test("second package reread holds the owner lock through rollback before quarant
 test("final post recheck after actual Player Host profile staging write quarantines durable owner and terminalizes binding", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-final-post");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
   await mkdir(packageRoot);
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -2076,11 +2075,11 @@ test("final post failure terminalizes owner after quarantine persistence failure
 test("Player Host profile staging staging occupied and expiry failures quarantine the owner without launch", async () => {
   for (const mode of ["occupied", "expired"] as const) {
     const root = await createRoot();
-    const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
     const harness = createHarness({
       staging: {
         readPackage: async () => {
           const packageRoot = join(root, `package-${mode}`);
+          const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
           await mkdir(packageRoot, { recursive: true });
           for (const entry of entries) await writeFile(join(packageRoot, entry), entry);
           return { root: packageRoot, entries };
@@ -2177,8 +2176,8 @@ test("owned attachment factory rejects quarantined owners", async () => {
 test("staged Player Host profile staging owner is consumed exactly once with no launch or durable mutation", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-consume");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
   await mkdir(packageRoot);
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -2215,8 +2214,8 @@ test("staged Player Host profile staging owner is consumed exactly once with no 
 test("staged Player Host profile staging consume is composition-bound: foreign consume rejects before side effects, own consumes once, replay drains", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-composition-bound");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
   await mkdir(packageRoot);
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const left = createHarness({
     staging: {
@@ -2262,8 +2261,8 @@ test("staged Player Host profile staging consume is composition-bound: foreign c
 test("staged Player Host profile staging consumption rejects a bound owner that never staged", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-nonstaged");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
   await mkdir(packageRoot);
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -2283,8 +2282,8 @@ test("staged Player Host profile staging consumption rejects a bound owner that 
 test("staged Player Host profile staging consumption rejects expired owners", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-expired-consume");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
   await mkdir(packageRoot);
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -2308,8 +2307,8 @@ test("staged Player Host profile staging consumption rejects expired owners", as
 test("staged Player Host profile staging consumption rejects quarantined owners", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-quarantined-consume");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
   await mkdir(packageRoot);
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -2342,8 +2341,8 @@ test("staged Player Host profile staging consumption rejects forged and failed-s
 
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-consume-failure");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
   await mkdir(packageRoot);
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   for (const entry of entries) {
     await writeFile(join(packageRoot, entry), entry === "GameBuddy.Stardew.dll" ? "" : `fixed-${entry}`, "utf8");
   }
@@ -2811,8 +2810,7 @@ test("C1 materialization admits genuine manifest and writes exact AI-client prof
   });
   assert.deepEqual((await readdir(join(transaction, "ai-client"))).sort(), ["Mods"]);
   assert.deepEqual((await readdir(join(transaction, "ai-client", "Mods"))).sort(), ["GameBuddy"]);
-  assert.deepEqual((await readdir(aiModDirectory)).sort(), ["config.json", ...["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"]].sort());
-  assert.deepEqual(fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record.managedPaths.slice(-9), [
+  assert.deepEqual(fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record.managedPaths.slice(-8), [
     "ai-client",
     "ai-client/Mods",
     "ai-client/Mods/GameBuddy",
@@ -2820,7 +2818,6 @@ test("C1 materialization admits genuine manifest and writes exact AI-client prof
     "ai-client/Mods/GameBuddy/GameBuddy.Stardew.Core.dll",
     "ai-client/Mods/GameBuddy/GameBuddy.Stardew.deps.json",
     "ai-client/Mods/GameBuddy/GameBuddy.Stardew.dll",
-    "ai-client/Mods/GameBuddy/Raffinert.FuzzySharp.dll",
     "ai-client/Mods/GameBuddy/manifest.json",
   ]);
   assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });

@@ -39,7 +39,6 @@ const proof = Object.freeze({
 const BUNDLE_CONTENTS = Object.freeze({
   "GameBuddy.Stardew.dll": "mod",
   "GameBuddy.Stardew.Core.dll": "core",
-  "Raffinert.FuzzySharp.dll": "fuzzy",
   "GameBuddy.Stardew.deps.json": "{}",
   "manifest.json": JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" }),
 });

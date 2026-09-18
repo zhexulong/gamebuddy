@@ -9,7 +9,6 @@ import { createImmutableReleaseBundleBinding, IMMUTABLE_RELEASE_BUNDLE_FILES, in
 const CONTENTS = Object.freeze({
   "GameBuddy.Stardew.dll": "mod",
   "GameBuddy.Stardew.Core.dll": "core",
-  "Raffinert.FuzzySharp.dll": "fuzzy",
   "manifest.json": JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" }),
   "GameBuddy.Stardew.deps.json": "{}",
 });
@@ -74,11 +73,10 @@ test("accepts physically separate release and runtime roots on different volumes
   }
 });
 
-test("successful exact five-file binding stages every canonical entry and lifecycle-only", async () => context(async (options) => {
+test("successful exact four-file binding stages every canonical entry and lifecycle-only", async () => context(async (options) => {
   assert.deepEqual(IMMUTABLE_RELEASE_BUNDLE_FILES, [
     "GameBuddy.Stardew.dll",
     "GameBuddy.Stardew.Core.dll",
-    "Raffinert.FuzzySharp.dll",
     "manifest.json",
     "GameBuddy.Stardew.deps.json",
   ]);
@@ -127,17 +125,17 @@ test("incomplete lifecycle preserves staging and prevents close", async () => co
   await assert.rejects(binding.close(), errorCode("close_before_restore"));
 }));
 
-test("includes Raffinert.FuzzySharp.dll in the exact-bundle digest", async () => context(async (options) => {
+test("includes GameBuddy.Stardew.Core.dll in the exact-bundle digest", async () => context(async (options) => {
   const original = await inspectExactReleaseBundle(options);
-  await writeFile(path.join(options.releaseDir, "Raffinert.FuzzySharp.dll"), "changed-fuzzy");
+  await writeFile(path.join(options.releaseDir, "GameBuddy.Stardew.Core.dll"), "changed-core");
   const changed = await inspectExactReleaseBundle(options);
-  assert.equal(original.files, 5);
-  assert.equal(changed.files, 5);
+  assert.equal(original.files, 4);
+  assert.equal(changed.files, 4);
   assert.notEqual(changed.digest, original.digest);
 }));
 
-test("rejects a four-file source missing Raffinert.FuzzySharp.dll", async () => context(async (options) => {
-  await unlink(path.join(options.releaseDir, "Raffinert.FuzzySharp.dll"));
+test("rejects a three-file source missing GameBuddy.Stardew.dll", async () => context(async (options) => {
+  await unlink(path.join(options.releaseDir, "GameBuddy.Stardew.dll"));
   await assert.rejects(createImmutableReleaseBundleBinding(options), errorCode("source_untrusted"));
   assert.deepEqual(await readdir(options.runRoot), []);
 }));
@@ -190,7 +188,7 @@ test("exclusive package/run ownership rejects staging replay", async () => conte
 }));
 
 test("untrusted source yields a bounded error with no cause/errors leak", async () => context(async (options) => {
-  await unlink(path.join(options.releaseDir, "Raffinert.FuzzySharp.dll"));
+  await unlink(path.join(options.releaseDir, "GameBuddy.Stardew.dll"));
   await assert.rejects(createImmutableReleaseBundleBinding(options), (error) => {
     assert.strictEqual(error.message, "stardew_immutable_release_bundle_source_untrusted");
     assert.strictEqual(Object.hasOwn(error, "cause"), false);

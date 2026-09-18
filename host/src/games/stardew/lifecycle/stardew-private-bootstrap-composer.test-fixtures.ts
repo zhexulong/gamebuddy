@@ -347,7 +347,7 @@ export async function createAttachmentFactoryFixture(processOverrides: Readonly<
 }> = {}) {
   const root = await createRoot("gamebuddy-attachment-factory-");
   const packageRoot = join(root, "verified-package");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
+  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
   await mkdir(packageRoot);
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const sessionToken = "session-secret-stagec-012345";
@@ -375,7 +375,6 @@ export function defaultStagingDependencies(): StardewPrivateModProfileStagingTes
     "GameBuddy.Stardew.Core.dll",
     "GameBuddy.Stardew.deps.json",
     "GameBuddy.Stardew.dll",
-    "Raffinert.FuzzySharp.dll",
     "manifest.json",
   ]);
   let packagePromise: Promise<Readonly<{ root: string; entries: readonly string[] }>> | undefined;
@@ -665,7 +664,6 @@ export async function createStageBPackage(): Promise<Readonly<{ root: string; en
     "GameBuddy.Stardew.Core.dll",
     "GameBuddy.Stardew.deps.json",
     "GameBuddy.Stardew.dll",
-    "Raffinert.FuzzySharp.dll",
     "manifest.json",
   ];
   for (const entry of entries) await writeFile(join(root, entry), `stagec-${entry}`, "utf8");
