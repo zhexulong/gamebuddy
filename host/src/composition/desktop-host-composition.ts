@@ -1,3 +1,7 @@
+import { randomBytes } from "node:crypto";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import type { DesktopGuardianSession } from "../containment/auth/desktop-guardian-session.internal.js";
 import {
   createChatSemanticFacadeFromSharedAuthority,
@@ -5,7 +9,13 @@ import {
 } from "../continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.js";
 import { createSharedSemanticProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import type { GameLifecycleProviderCapability } from "../integration-catalog.js";
 import { PRODUCT_INTEGRATION_CATALOG } from "../integration-catalog-product.js";
+import { createChatEventStream } from "../tavern/chat-event-stream.js";
+import {
+  startDesktopPresentationAdmission,
+  type DesktopPresentationAdmission,
+} from "./desktop-presentation-admission-owner.js";
 
 /**
  * Narrow lifecycle contract shared by composition-owned children. The child
@@ -68,10 +78,12 @@ export type DesktopHostAssemblyInput = Readonly<{
 
 /**
  * Builds the one long-lived Desktop Host product composition. The returned
- * facade deliberately exposes only lifecycle; all semantic, Chat, and Stardew
- * owners remain in this closure and close before the authenticated Desktop
- * session. Chat and Game are independent composition children sharing one
- * semantic authority; neither surface owns, pauses, or closes the other.
+ * facade deliberately exposes only lifecycle; all semantic, Chat, Stardew, and
+ * presentation owners remain in this closure and close before the authenticated
+ * Desktop session. Chat and Game are independent composition children sharing
+ * one semantic authority; neither surface owns, pauses, or closes the other,
+ * and the presentation admission owner serves the composed browser surface
+ * over both without becoming a third authority.
  */
 export async function createDesktopProductComposition(
   rootLayoutCapability: DesktopRootLayoutCapability,
@@ -81,7 +93,8 @@ export async function createDesktopProductComposition(
   let shared: Awaited<ReturnType<typeof createSharedSemanticProductionAuthorityFromDeploymentManifest>> | undefined;
   let chatFacade: ConstructedUnmountedChatSemanticFacade | undefined;
   let chatRuntime: { close(): Promise<void> } | undefined;
-  let lifecycleCoordinator: { close(): Promise<void> } | undefined;
+  let lifecycleCoordinator: GameLifecycleProviderCapability | undefined;
+  let presentationAdmission: DesktopPresentationAdmission | undefined;
   try {
     shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(input.manifest, input.gameSessionMode);
     // The mounted Chat runtime is a sibling composition child of the Stardew
@@ -107,11 +120,35 @@ export async function createDesktopProductComposition(
       game: shared.game,
       session,
     });
-    // Children close in reverse registration order: the Chat runtime first,
-    // then the Stardew lifecycle owner, then the shared semantic authority,
-    // matching the reference entry's facade -> coordinator -> shared order.
-    return createDesktopPrivateHostComposition(rootLayoutCapability, session, [shared, lifecycleCoordinator, chatRuntime]);
+    const presentation = lifecycleCoordinator.presentation;
+    if (presentation === undefined) throw new Error("game_integration_presentation_projection_unavailable");
+    // The presentation admission child is the last sibling: it serves the
+    // composed reference-game surface over the mounted Chat lane and the Game
+    // projection, so it must drain before both of them close.
+    presentationAdmission = await startDesktopPresentationAdmission({
+      manifest: input.manifest,
+      hostArtifactRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
+      bootstrapToken: randomBytes(32).toString("base64url"),
+      eventStream: createChatEventStream(),
+      lease: mountedLease,
+      presentation,
+    });
+    // Children close in reverse registration order: the presentation admission
+    // first, then the Chat runtime, then the Stardew lifecycle owner, then the
+    // shared semantic authority, matching the reference entry's server ->
+    // facade -> coordinator -> shared order.
+    return createDesktopPrivateHostComposition(rootLayoutCapability, session, [
+      shared,
+      lifecycleCoordinator,
+      chatRuntime,
+      presentationAdmission,
+    ]);
   } catch (error) {
+    try {
+      await presentationAdmission?.close();
+    } catch {
+      // Preserve the product construction failure.
+    }
     try {
       if (chatRuntime !== undefined) await chatRuntime.close();
       else await chatFacade?.close();

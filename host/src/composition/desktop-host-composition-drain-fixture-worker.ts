@@ -17,7 +17,7 @@ import type { DesktopRootLayoutCapability } from "./desktop-host-composition.js"
  */
 
 const scenario = process.argv[2] ?? "";
-const counts = { shared: 0, lease: 0, facade: 0, session: 0 };
+const counts = { shared: 0, lease: 0, facade: 0, session: 0, coordinator: 0, presentationStarts: 0, presentationCloses: 0 };
 const constructionFailure = new Error("game_owner_construction_failed");
 
 const sharedAuthority = Object.freeze({
@@ -47,6 +47,15 @@ const catalog = Object.freeze({
     return Object.freeze({
       createLifecycleCoordinator: async () => {
         if (scenario === "coordinator-failure") throw constructionFailure;
+        if (scenario === "presentation-missing") {
+          return Object.freeze({ close: async () => { counts.coordinator += 1; } });
+        }
+        if (scenario === "presentation-failure") {
+          return Object.freeze({
+            close: async () => { counts.coordinator += 1; },
+            presentation: Object.freeze({}),
+          });
+        }
         throw new Error("unexpected_coordinator_success");
       },
     });
@@ -83,15 +92,29 @@ async function main(): Promise<void> {
       PRODUCT_INTEGRATION_CATALOG: catalog,
     },
   });
+  await mock.module(pathToFileURL(join(moduleDirectory, "desktop-presentation-admission-owner.js")).href, {
+    namedExports: {
+      startDesktopPresentationAdmission: async () => {
+        if (scenario === "presentation-failure") throw constructionFailure;
+        counts.presentationStarts += 1;
+        return Object.freeze({
+          launchUrl: "http://127.0.0.1:1/#profile=composed-reference-game&boot=fixture",
+          close: async () => { counts.presentationCloses += 1; },
+        });
+      },
+    },
+  });
   const { createDesktopProductComposition } = await import(pathToFileURL(join(moduleDirectory, "desktop-host-composition.js")).href);
   let outcome: "unexpected_success" | "original_failure_propagated" | "different_failure";
+  let errorMessage: string | undefined;
   try {
     await createDesktopProductComposition(rootLayoutCapability, session, input);
     outcome = "unexpected_success";
   } catch (error) {
     outcome = error === constructionFailure ? "original_failure_propagated" : "different_failure";
+    errorMessage = error instanceof Error ? error.message : String(error);
   }
-  process.stdout.write(`${JSON.stringify({ scenario, outcome, ...counts })}\n`, () => process.exit(0));
+  process.stdout.write(`${JSON.stringify({ scenario, outcome, errorMessage, ...counts })}\n`, () => process.exit(0));
 }
 
 main().catch((error: unknown) => {

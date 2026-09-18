@@ -22,9 +22,12 @@ type HasExactKeys<T, TKeys extends PropertyKey> =
       ? true
       : false
     : false;
-type _DesktopPrivateHostCompositionHasOnlyLifecycle = Assert<
+type DesktopPrivateHostCompositionHasOnlyLifecycle = Assert<
   HasExactKeys<DesktopPrivateHostComposition, "close">
 >;
+// The compile-time facade assertion above is only meaningful if it is
+// evaluated; this binding keeps it in the emitted type check.
+const facadeHasOnlyLifecycle: DesktopPrivateHostCompositionHasOnlyLifecycle = true;
 
 test("desktop product composition builds the Stardew game owner only through the registered catalog provider", async () => {
   const sourcePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts");
@@ -54,6 +57,7 @@ test("desktop product composition builds the Stardew game owner only through the
   assert.deepEqual(Object.keys(composition), ["close"]);
   assert.deepEqual(Reflect.ownKeys(composition), ["close"]);
   assert.equal("stardewBootstrapGuardianOwnerFactory" in composition, false);
+  assert.equal(facadeHasOnlyLifecycle, true);
   const typedComposition: DesktopPrivateHostComposition = composition;
   assert.equal(typeof typedComposition.close, "function");
   await Promise.all([composition.close(), composition.close()]);
@@ -125,16 +129,26 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   // a coordinator construction failure still drains the started Chat runtime
   // (not just the unmounted facade) alongside the shared owner.
   assert.match(source, /await mountedFacade\.startMountedChatRuntime\(\);[\s\S]*?lifecycleCoordinator = await provider\.createLifecycleCoordinator/);
-  // Chat is registered after the Game owner and the shared authority so the
-  // reverse-order aggregation closes the Chat runtime first, mirroring the
-  // reference entry's facade -> coordinator -> shared close order.
-  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[shared, lifecycleCoordinator, chatRuntime\]\)/);
+  // The presentation admission owner is built from the provider's presentation
+  // projection after the lifecycle owner; a provider that exposes no projection
+  // fails closed rather than inventing one, and the projection is consumed only
+  // as the Host-owned assembly input of the presentation child.
+  assert.match(source, /const presentation = lifecycleCoordinator\.presentation;\s*if \(presentation === undefined\) throw new Error\("game_integration_presentation_projection_unavailable"\);/);
+  assert.match(source, /presentationAdmission = await startDesktopPresentationAdmission\(\{\s*manifest: input\.manifest,\s*hostArtifactRoot: resolve\(dirname\(fileURLToPath\(import\.meta\.url\)\), "\.\."\),\s*bootstrapToken: randomBytes\(32\)\.toString\("base64url"\),\s*eventStream: createChatEventStream\(\),\s*lease: mountedLease,\s*presentation,\s*\}\)/s);
+  // The presentation child is registered after the Game owner, the Chat runtime,
+  // and the shared authority, so the reverse-order aggregation closes the one
+  // listener before the Chat runtime, the Game owner, and the shared authority
+  // it serves, mirroring the reference entry's server -> facade -> coordinator ->
+  // shared close order.
+  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*shared,\s*lifecycleCoordinator,\s*chatRuntime,\s*presentationAdmission,\s*\]\)/);
+  assert.match(source, /await presentationAdmission\?\.close\(\)/);
   assert.match(source, /await lifecycleCoordinator\?\.close\(\)/);
   assert.match(source, /await shared\?\.close\(\)/);
-  // A construction failure drains the Chat child (or its unmounted facade when
-  // the mount never completed) before the lifecycle owner, the shared
-  // authority, and the authenticated session, preserving the construction error.
-  assert.match(source, /if \(chatRuntime !== undefined\) await chatRuntime\.close\(\);\s*else await chatFacade\?\.close\(\);[\s\S]*?await lifecycleCoordinator\?\.close\(\);[\s\S]*?await shared\?\.close\(\);[\s\S]*?await session\.close\(\);/);
+  // A construction failure drains the presentation child first, then the Chat
+  // child (or its unmounted facade when the mount never completed), before the
+  // lifecycle owner, the shared authority, and the authenticated session,
+  // preserving the construction error.
+  assert.match(source, /await presentationAdmission\?\.close\(\);\s*\}\s*catch \{\s*\/\/ Preserve the product construction failure\.\s*\}\s*try \{\s*if \(chatRuntime !== undefined\) await chatRuntime\.close\(\);\s*else await chatFacade\?\.close\(\);[\s\S]*?await lifecycleCoordinator\?\.close\(\);[\s\S]*?await shared\?\.close\(\);[\s\S]*?await session\.close\(\);/);
   // The generic composition never constructs the Stardew launch assemblies or
   // imports game modules directly; the provider owns them.
   assert.doesNotMatch(source, /createStardewProductionLifecycleCoordinator\(/);
@@ -148,16 +162,18 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   assert.doesNotMatch(source, /export\s+(?:type|interface|function|const)\s+(?:createSharedSemanticProductionAuthorityFromDeploymentManifest|createStardewProductionLifecycleCoordinator|DesktopGuardianSession|DesktopGuardianSessionBinding)/);
 });
 
-test("composition facade close runs the Chat, Game, and shared children exactly once in reverse registration order", async () => {
+test("composition facade close runs the presentation, Chat, Game, and shared children exactly once in reverse registration order", async () => {
   const calls: string[] = [];
   let chatCloseCalls = 0;
   let coordinatorCloseCalls = 0;
   let sharedCloseCalls = 0;
+  let presentationCloseCalls = 0;
   let sessionCloseCalls = 0;
   const children: HostChildLifecycle[] = [
     { close: async () => { sharedCloseCalls += 1; calls.push("shared"); } },
     { close: async () => { coordinatorCloseCalls += 1; calls.push("coordinator"); } },
     { close: async () => { chatCloseCalls += 1; calls.push("chat"); } },
+    { close: async () => { presentationCloseCalls += 1; calls.push("presentation"); } },
   ];
   const session = Object.freeze({
     arm: async () => { throw new Error("unused"); },
@@ -170,10 +186,12 @@ test("composition facade close runs the Chat, Game, and shared children exactly 
   assert.deepEqual(Reflect.ownKeys(composition), ["close"]);
   await Promise.all([composition.close(), composition.close()]);
   // Chat and Game stay independent surfaces: the single facade close entry
-  // invokes each child's own close once and only once - Chat before the Game
-  // lifecycle owner and the shared authority last - so closing one surface
-  // never touches the other's runtime.
-  assert.deepEqual(calls, ["chat", "coordinator", "shared"]);
+  // invokes each child's own close once and only once - the presentation
+  // admission (its listener and admitted Chat work) before the Chat runtime,
+  // then the Game lifecycle owner, and the shared authority last - so closing
+  // one surface never touches the other's runtime.
+  assert.deepEqual(calls, ["presentation", "chat", "coordinator", "shared"]);
+  assert.equal(presentationCloseCalls, 1);
   assert.equal(chatCloseCalls, 1);
   assert.equal(coordinatorCloseCalls, 1);
   assert.equal(sharedCloseCalls, 1);
@@ -187,9 +205,19 @@ type CompositionDrainFixtureResult = Readonly<{
   lease: number;
   facade: number;
   session: number;
+  coordinator: number;
+  presentationStarts: number;
+  presentationCloses: number;
+  errorMessage?: string;
 }>;
 
-function runCompositionDrainFixture(scenario: "coordinator-failure" | "mount-failure"): Promise<CompositionDrainFixtureResult> {
+type CompositionDrainFixtureScenario =
+  | "coordinator-failure"
+  | "mount-failure"
+  | "presentation-failure"
+  | "presentation-missing";
+
+function runCompositionDrainFixture(scenario: CompositionDrainFixtureScenario): Promise<CompositionDrainFixtureResult> {
   const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), "desktop-host-composition-drain-fixture-worker.js");
   return new Promise<CompositionDrainFixtureResult>((resolveResult, rejectResult) => {
     const child = spawn(process.execPath, ["--experimental-test-module-mocks", fixturePath, scenario], {
@@ -231,6 +259,11 @@ test("desktop product composition drains the Chat child, shared owner, and sessi
     assert.equal(result.outcome, "original_failure_propagated");
     assert.equal(result.shared, 1);
     assert.equal(result.session, 1);
+    // Neither scenario reaches the presentation child, so no lifecycle owner
+    // and no presentation admission was ever constructed.
+    assert.equal(result.coordinator, 0);
+    assert.equal(result.presentationStarts, 0);
+    assert.equal(result.presentationCloses, 0);
     if (scenario === "coordinator-failure") {
       // The mounted Chat child is drained through its lease and facade close.
       assert.equal(result.lease, 1);
@@ -241,4 +274,36 @@ test("desktop product composition drains the Chat child, shared owner, and sessi
       assert.equal(result.facade, 1);
     }
   }
+});
+
+test("desktop product composition drains the presentation, Chat, Game, and shared children when presentation construction fails", async () => {
+  // The lifecycle owner is live and the presentation admission owner is mocked
+  // to fail; the composition must drain the Chat runtime, the lifecycle owner,
+  // the shared authority, and the authenticated session in that order while
+  // propagating the original presentation failure.
+  const result = await runCompositionDrainFixture("presentation-failure");
+  assert.equal(result.outcome, "original_failure_propagated");
+  assert.equal(result.presentationStarts, 0);
+  assert.equal(result.presentationCloses, 0);
+  assert.equal(result.lease, 1);
+  assert.equal(result.facade, 1);
+  assert.equal(result.coordinator, 1);
+  assert.equal(result.shared, 1);
+  assert.equal(result.session, 1);
+});
+
+test("desktop product composition fails closed when the registered provider exposes no presentation projection", async () => {
+  // A provider capability without a presentation projection is never replaced
+  // by a composition-invented surface: construction fails with the fixed
+  // category while every already-succeeded child still drains.
+  const result = await runCompositionDrainFixture("presentation-missing");
+  assert.equal(result.outcome, "different_failure");
+  assert.equal(result.errorMessage, "game_integration_presentation_projection_unavailable");
+  assert.equal(result.presentationStarts, 0);
+  assert.equal(result.presentationCloses, 0);
+  assert.equal(result.lease, 1);
+  assert.equal(result.facade, 1);
+  assert.equal(result.coordinator, 1);
+  assert.equal(result.shared, 1);
+  assert.equal(result.session, 1);
 });

@@ -6,7 +6,10 @@ import {
   bindIntegrationIdentity,
   type ConfigurableIntegrationLauncher,
   createIntegrationCatalog,
+  type GameLifecycleProviderCapability,
+  type GamePresentationProjection,
 } from "./integration-catalog.js";
+import { GameBrowserFixtureV1, composeGameProfile } from "./game-browser-contract/index.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import { parseStardewOperatorConfig, STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
 
@@ -141,4 +144,55 @@ test("Stardew adapter alone parses Stardew operator config", () => {
     /invalid_stardew_operator_config/,
   );
   assert.equal(STARDEW_INTEGRATION_LAUNCHER.integrationId, "stardew");
+});
+
+
+type Assert<T extends true> = T;
+type HasExactKeys<T, TKeys extends PropertyKey> =
+  Exclude<keyof T, TKeys> extends never
+    ? Exclude<TKeys, keyof T> extends never
+      ? true
+      : false
+    : false;
+/** The generic provider capability stays exactly close + the optional presentation projection. */
+type GameLifecycleProviderCapabilityHasOnlyCloseAndPresentation = Assert<
+  HasExactKeys<GameLifecycleProviderCapability, "close" | "presentation">
+>;
+/** The projection stays exactly the game profile, the game read, and the activation binding sink. */
+type GamePresentationProjectionHasOnlyTheGameSeams = Assert<
+  HasExactKeys<GamePresentationProjection, "gameProfile" | "readGame" | "lifecycleActivationBindingSink">
+>;
+
+// The two compile-time seam assertions above are only meaningful if they are
+// evaluated; these bindings keep them in the emitted type check.
+const capabilityHasOnlyCloseAndPresentation: GameLifecycleProviderCapabilityHasOnlyCloseAndPresentation = true;
+const projectionHasOnlyTheGameSeams: GamePresentationProjectionHasOnlyTheGameSeams = true;
+
+test("game presentation projection is the generic seam a provider exposes without any game module crossing it", async () => {
+  const projection: GamePresentationProjection = {
+    gameProfile: composeGameProfile({
+      profileId: "gamebuddy.game.preview",
+      releaseTier: "game_preview",
+      operationIds: ["game.state.read"],
+      navigationItemIds: ["game"],
+    }),
+    readGame: async () => GameBrowserFixtureV1.state(),
+    // The narrowest sink is the admission issuer binding alone; a provider adds
+    // only the lifecycle command seams its own activation owner implements.
+    lifecycleActivationBindingSink: { bindBrowserAdmissionIssuer: () => undefined },
+  };
+  const capability: GameLifecycleProviderCapability = {
+    close: async () => undefined,
+    presentation: projection,
+  };
+
+  assert.deepEqual(Object.keys(capability).sort(), ["close", "presentation"]);
+  assert.deepEqual(
+    Object.keys(projection).sort(),
+    ["gameProfile", "lifecycleActivationBindingSink", "readGame"],
+  );
+  assert.equal(capability.presentation, projection);
+  assert.equal(capabilityHasOnlyCloseAndPresentation && projectionHasOnlyTheGameSeams, true);
+  const state = await projection.readGame({ csrfToken: "A".repeat(43), browserSessionExpiresAtMs: 1 });
+  assert.equal(state.build.profileId, "gamebuddy.game.preview");
 });

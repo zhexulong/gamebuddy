@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import {
   createComposedReferenceGameBrowserRequestHandler,
   type ComposedReferenceGameBrowserLifecycleActivationAdmission,
-  type ComposedReferenceGameBrowserLifecycleActivationIssuer,
+  type ComposedReferenceGameBrowserLifecycleActivationBindingSink,
   type ComposedReferenceGameBrowserReadContext,
 } from "../composed-reference-game-browser.js";
 import {
@@ -53,32 +53,7 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
   eventStream?: ChatEventStream;
   artifactRoot: string;
   inspector?: WindowsReparseInspectorCapability;
-  lifecycleActivationBindingSink?: Readonly<{
-    bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
-    readCabinChoices?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["stardewCabins"]>["read"];
-    confirmCabinChoice?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["stardewCabins"]>["confirm"];
-    setupPlayerHost?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameSetup"]>;
-    /** The lifecycle owner may return a private snapshot; the browser callback discards it. */
-    launchPlayerHost?: (
-      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-      command: GameLaunchCommandV1,
-    ) => Promise<unknown>;
-    stopGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameStop"]>;
-    disconnectGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameDisconnect"]>;
-    reopenActionAuthority?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameReopen"]>;
-    /**
-     * Coordinator-owned resume seam (session-keyed; the composed browser wire
-     * stays session-less, so the wired adapter passes the strict command and
-     * the coordinator fails closed on the missing session handle until the
-     * Slice 3 B-path session selection exists).
-     */
-    resume?: (
-      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-      command: GameSessionResumeCommandV1,
-    ) => Promise<GameResumeResultV1>;
-    createGameSession?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameCreate"]>;
-    cancelResume?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameResumeCancel"]>;
-  }>;
+  lifecycleActivationBindingSink?: ComposedReferenceGameBrowserLifecycleActivationBindingSink;
 }>;
 
 export type ComposedReferenceGameStaticShellComposition = Readonly<{
@@ -114,45 +89,73 @@ export async function startComposedReferenceGameStaticShellComposition(
     profile: options.profile,
     bootstrapToken: options.bootstrapToken,
     readChat,
-    readGame: options.readGame,
-    gameSetup: options.lifecycleActivationBindingSink?.setupPlayerHost?.bind(options.lifecycleActivationBindingSink),
-    gameLaunch: options.lifecycleActivationBindingSink?.launchPlayerHost === undefined
-      ? undefined
-      : async (
-          admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-          command: GameLaunchCommandV1,
-        ): Promise<void> => {
-          await options.lifecycleActivationBindingSink!.launchPlayerHost!(admission, command);
-        },
-    gameStop: options.lifecycleActivationBindingSink?.stopGame?.bind(options.lifecycleActivationBindingSink),
-    gameDisconnect: options.lifecycleActivationBindingSink?.disconnectGame?.bind(options.lifecycleActivationBindingSink),
-    gameReopen: options.lifecycleActivationBindingSink?.reopenActionAuthority?.bind(options.lifecycleActivationBindingSink),
-    gameResume: options.lifecycleActivationBindingSink?.resume === undefined
-      ? undefined
-      : async (
-          admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-          command: GameResumeCommandV1,
-        ): Promise<GameResumeResultV1> =>
-          options.lifecycleActivationBindingSink!.resume!(
-            admission,
-            command as unknown as GameSessionResumeCommandV1,
-          ),
-    gameCreate: options.lifecycleActivationBindingSink?.createGameSession?.bind(options.lifecycleActivationBindingSink),
-    gameResumeCancel: options.lifecycleActivationBindingSink?.cancelResume?.bind(options.lifecycleActivationBindingSink),
-    stardewCabins:
-      options.lifecycleActivationBindingSink?.readCabinChoices !== undefined &&
-      options.lifecycleActivationBindingSink.confirmCabinChoice !== undefined
-        ? Object.freeze({
+    ...(options.readGame === undefined ? {} : { readGame: options.readGame }),
+    ...(options.lifecycleActivationBindingSink?.setupPlayerHost === undefined
+      ? {}
+      : { gameSetup: options.lifecycleActivationBindingSink.setupPlayerHost.bind(options.lifecycleActivationBindingSink) }),
+    ...(options.lifecycleActivationBindingSink?.launchPlayerHost === undefined
+      ? {}
+      : {
+          gameLaunch: async (
+            admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+            command: GameLaunchCommandV1,
+          ): Promise<void> => {
+            await options.lifecycleActivationBindingSink!.launchPlayerHost!(admission, command);
+          },
+        }),
+    ...(options.lifecycleActivationBindingSink?.stopGame === undefined
+      ? {}
+      : { gameStop: options.lifecycleActivationBindingSink.stopGame.bind(options.lifecycleActivationBindingSink) }),
+    ...(options.lifecycleActivationBindingSink?.disconnectGame === undefined
+      ? {}
+      : { gameDisconnect: options.lifecycleActivationBindingSink.disconnectGame.bind(options.lifecycleActivationBindingSink) }),
+    ...(options.lifecycleActivationBindingSink?.reopenActionAuthority === undefined
+      ? {}
+      : { gameReopen: options.lifecycleActivationBindingSink.reopenActionAuthority.bind(options.lifecycleActivationBindingSink) }),
+    // The composed wire command is strictly session-less; the coordinator resume
+    // seam is session-keyed (GameSessionResumeCommandV1). Without a session
+    // handle on the wire the coordinator resolves no registered world binding
+    // and fails closed as unavailable; the session-selected resume wiring is
+    // the Slice 3 B-path work. Wiring the adapter is still mandatory so the
+    // profile declaration and the handler options stay consistent (mismount
+    // guard), and it bridges the current declared-but-unwired gap.
+    ...(options.lifecycleActivationBindingSink?.resume === undefined
+      ? {}
+      : {
+          gameResume: async (
+            admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+            command: GameResumeCommandV1,
+          ): Promise<GameResumeResultV1> =>
+            options.lifecycleActivationBindingSink!.resume!(
+              admission,
+              command as unknown as GameSessionResumeCommandV1,
+            ),
+        }),
+    ...(options.lifecycleActivationBindingSink?.createGameSession === undefined
+      ? {}
+      : {
+          gameCreate: options.lifecycleActivationBindingSink.createGameSession.bind(options.lifecycleActivationBindingSink),
+        }),
+    ...(options.lifecycleActivationBindingSink?.cancelResume === undefined
+      ? {}
+      : {
+          gameResumeCancel: options.lifecycleActivationBindingSink.cancelResume.bind(options.lifecycleActivationBindingSink),
+        }),
+    ...(options.lifecycleActivationBindingSink?.readCabinChoices === undefined ||
+    options.lifecycleActivationBindingSink.confirmCabinChoice === undefined
+      ? {}
+      : {
+          stardewCabins: Object.freeze({
             read: options.lifecycleActivationBindingSink.readCabinChoices.bind(options.lifecycleActivationBindingSink),
             confirm: options.lifecycleActivationBindingSink.confirmCabinChoice.bind(options.lifecycleActivationBindingSink),
-          })
-        : undefined,
+          }),
+        }),
   });
   const referenceHandler = createReferencePipelineDialogueWebDelegatedHandler({
     profile: options.profile.tavernProfile,
     referenceStateFacade: options.referenceStateFacade,
-    pipelineService: options.pipelineService,
-    eventStream: options.eventStream,
+    ...(options.pipelineService === undefined ? {} : { pipelineService: options.pipelineService }),
+    ...(options.eventStream === undefined ? {} : { eventStream: options.eventStream }),
     capability: composedHandler.delegatedAuthCapability,
   });
   try {

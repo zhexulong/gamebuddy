@@ -12,9 +12,11 @@ import {
 } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import { type HostDeploymentManifest, loadHostDeploymentManifest } from "./deployment-manifest.js";
 import { parseDialogueLaunchMode } from "./dialogue-launch-mode.js";
-import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
-import { composeGameProfile } from "./game-browser-contract/index.js";
-import { createGameBrowserStateProvider } from "./game-browser/game-browser-state-provider.js";
+import {
+  startDesktopPresentationAdmission,
+  type DesktopPresentationAdmission,
+} from "./composition/desktop-presentation-admission-owner.js";
+import { createStardewGamePresentationProjection } from "./games/stardew/provider.js";
 import { createStardewProductionLifecycleCoordinator } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { composeTavernProfile } from "./tavern/browser-contract/index.js";
 import { createChatEventStream } from "./tavern/chat-event-stream.js";
@@ -24,7 +26,6 @@ import { createMemoryManagementService } from "./tavern/memory-management/memory
 import { closeReferencePipelineRuntime } from "./tavern/reference-pipeline-runtime-lifecycle.js";
 import { createReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
 import { startReferencePipelineStaticShellComposition } from "./tavern/reference-pipeline-static-shell-composition.js";
-import { startComposedReferenceGameStaticShellComposition } from "./tavern/composed-reference-game-static-shell-composition.js";
 import { createTavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import { startTavernManagementStaticShellComposition } from "./tavern/tavern-management-static-shell-composition.js";
 import { createWorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
@@ -46,6 +47,10 @@ if (launch.profile === "management") {
 }
 
 async function runReferenceProfile(manifest: HostDeploymentManifest, mode: "fresh" | "known"): Promise<void> {
+  // MIGRATION-ERA (browser/product helper): this Chat-only preview profile still
+  // assembles its own reference-pipeline listener and Chat-lane services. The
+  // composition-owned presentation admission owner is the production owner of
+  // that startup; this profile goes away with this entry (Lane E).
   const launchOptions =
     launch.tavernNarrativeGateNonceSha256 === undefined
       ? undefined
@@ -86,25 +91,16 @@ async function runReferenceProfile(manifest: HostDeploymentManifest, mode: "fres
     process.stdout.write(`GameBuddy Dialogue is ready at ${server.launchUrl}\n`);
     await waitForSignal();
   } finally {
-    await closeReferencePipelineRuntime({ server, pipelineService, lease, facade });
+    await closeReferencePipelineRuntime({
+      ...(server === undefined ? {} : { server }),
+      ...(pipelineService === undefined ? {} : { pipelineService }),
+      ...(lease === undefined ? {} : { lease }),
+      facade,
+    });
   }
 }
 
 async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "fresh" | "known"): Promise<void> {
-  const tavernProfile = composeTavernProfile({
-    profileId: "gamebuddy.chat-core.reference-pipeline",
-    releaseTier: "chat_core",
-    routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status", "events"],
-    operationIds: ["chat.submit", "chat.cancel"],
-    navigationItemIds: ["chat"],
-  });
-  const gameProfile = composeGameProfile({
-    profileId: "gamebuddy.game.preview",
-    releaseTier: "game_preview",
-    operationIds: ["game.state.read", "game.prerequisites.setup", "game.launch", "game.stop", "game.resume", "game.resume.cancel", "game.reopen", "game.disconnect", "game.create", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
-    navigationItemIds: ["game"],
-  });
-  const profile = composeReferenceGameBrowserProfile({ tavernProfile, gameProfile });
   const bootstrapToken = randomBytes(32).toString("base64url");
   const eventStream = createChatEventStream();
   const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
@@ -112,8 +108,7 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
   let facade: ConstructedUnmountedChatSemanticFacade | undefined;
   let lifecycleCoordinator: ReturnType<typeof createStardewProductionLifecycleCoordinator> | undefined;
   let lease: Awaited<ReturnType<ConstructedUnmountedChatSemanticFacade["startMountedChatRuntime"]>> | undefined;
-  let pipelineService: ReturnType<typeof createChatPipelineService> | undefined;
-  let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>> | undefined;
+  let presentation: DesktopPresentationAdmission | undefined;
   try {
     // The reference-game profile shares one semantic SQLite authority (one
     // provision and one root mutex/broker) between the mounted Chat runtime and
@@ -121,8 +116,8 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
     // Game projection; neither Chat nor Stardew constructs a second authority,
     // and the materializer consumes the injected Game projection directly.
     // Every construction step is inside this try so a failure at any point
-    // drains only what already succeeded: the shared owner, then the Chat
-    // facade, then the lifecycle coordinator, in the existing close order.
+    // drains only what already succeeded: the presentation admission, then the
+    // Chat facade, then the lifecycle coordinator, in the existing close order.
     shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest, mode);
     facade = await createChatSemanticFacadeFromSharedAuthority(shared.chat);
     const folderPicker = await createPublishedWindowsStardewFolderPicker(hostArtifactRoot);
@@ -133,44 +128,48 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
     // passed, so both role launches fail closed at the coordinator with
     // stardew_*_launch_runtime_unavailable — never a silent raw spawn. The
     // formal Desktop composition is the sole production launch authority; this
-    // entry and its imports are removed when presentation wiring moves into
-    // the composition-owned startup (design ADR-0007 Phase 1/2).
+    // entry and its imports are removed when the composition-owned startup
+    // replaces this browser preview (design ADR-0007 Phase 1/2).
     lifecycleCoordinator = createStardewProductionLifecycleCoordinator(manifest, folderPicker, shared.game);
     lease = await facade.startMountedChatRuntime();
-    const referenceStateFacade = await createReferencePipelineStateFacade(manifest, lease, tavernProfile, eventStream);
-    pipelineService = createChatPipelineService({ manifest, lease, profile: tavernProfile, eventStream });
-    const gameStateProvider = createGameBrowserStateProvider(
-      gameProfile,
-      lifecycleCoordinator.lifecycleReader,
-      lifecycleCoordinator.attachmentReader,
-      lifecycleCoordinator.launchReadinessReader,
-      lifecycleCoordinator.actionAuthorityReader,
-    );
-    const artifactRoot = hostArtifactRoot;
     const inspector = process.env.GAMEBUDDY_CHAT_LIVE_ARTIFACT === "gamebuddy.chat-live.v1"
-    ? await createChatLiveWindowsReparseInspector(artifactRoot)
-    : await createPublishedWindowsReparseInspector(artifactRoot);
-    server = await startComposedReferenceGameStaticShellComposition({
-      profile,
+    ? await createChatLiveWindowsReparseInspector(hostArtifactRoot)
+    : await createPublishedWindowsReparseInspector(hostArtifactRoot);
+    // MIGRATION-ERA (browser/product helper): the reference-game profile now
+    // consumes the composition-owned presentation admission owner instead of
+    // assembling the listener, Chat state facade, pipeline service, and composed
+    // profile itself; the formal Desktop composition is the production owner of
+    // that same startup.
+    presentation = await startDesktopPresentationAdmission({
+      manifest,
+      hostArtifactRoot,
       bootstrapToken,
-      referenceStateFacade,
-      pipelineService,
       eventStream,
-      readGame: gameStateProvider.readState,
-      lifecycleActivationBindingSink: lifecycleCoordinator.activationOwner,
+      lease,
       inspector,
-      artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
+      presentation: createStardewGamePresentationProjection(lifecycleCoordinator),
     });
-    process.stdout.write(`GameBuddy Reference Game is ready at ${server.launchUrl}\n`);
+    process.stdout.write(`GameBuddy Reference Game is ready at ${presentation.launchUrl}\n`);
     await waitForSignal();
   } finally {
     let failure: unknown;
     try {
-      // Chat runtime (lease/runtime authority) closes first. The facade drains
+      // The presentation admission closes first: the one listener drains its
+      // delegated Chat admission and the Chat pipeline service behind it while
+      // the mounted lease stays live for the Chat-lane drain below.
+      await presentation?.close();
+    } catch (error) {
+      failure ??= error;
+    }
+    try {
+      // Chat runtime (lease/runtime authority) closes next. The facade drains
       // its mounted Chat runtime projection even when the lease never started;
       // without a facade no Chat-lane resource was constructed.
       if (facade !== undefined) {
-        await closeReferencePipelineRuntime({ server, pipelineService, lease, facade });
+        await closeReferencePipelineRuntime({
+          ...(lease === undefined ? {} : { lease }),
+          facade,
+        });
       }
     } catch (error) {
       failure ??= error;
@@ -193,6 +192,10 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
 }
 
 async function runManagementProfile(manifest: HostDeploymentManifest, mode: "fresh" | "known"): Promise<void> {
+  // MIGRATION-ERA (browser/product helper): this Tavern-management preview profile
+  // still assembles its own management listener, management/memory/world-info
+  // services, and state facade. It is not yet covered by the composition-owned
+  // presentation admission owner; this profile goes away with this entry (Lane E).
   const profile = composeTavernProfile({
     profileId: "gamebuddy.tavern-management.chat-list-title",
     releaseTier: "tavern_management",
@@ -250,9 +253,9 @@ async function runManagementProfile(manifest: HostDeploymentManifest, mode: "fre
     await waitForSignal();
   } finally {
     await closeReferencePipelineRuntime({
-      server,
-      pipelineService: managementService,
-      lease,
+      ...(server === undefined ? {} : { server }),
+      ...(managementService === undefined ? {} : { pipelineService: managementService }),
+      ...(lease === undefined ? {} : { lease }),
       facade,
     });
   }
