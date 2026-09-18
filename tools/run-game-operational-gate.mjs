@@ -271,7 +271,7 @@ export async function runOperationalGateIpc({
       finish(blocked(phase === "awaiting_ready" ? "game_task_ready_unavailable" : "production_wrapper_exited_before_terminal"));
       return;
     }
-    if (outcome?.state === "PASSED" && (code !== 0 || signal !== null)) outcome = blocked("teardown_failure");
+    if (outcome?.state === "PASSED" && !terminationStarted && (code !== 0 || signal !== null)) outcome = blocked("teardown_failure");
     finish(outcome ?? blocked("teardown_failure"));
   };
 
