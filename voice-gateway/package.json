@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.13.0 <25" },
+  "engines": {
+    "node": ">=24.13.0 <25"
+  },
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "test": "pnpm run build && node --test dist/**/*.test.js",
@@ -11,8 +13,14 @@
     "start": "node --use-env-proxy dist/main.js",
     "live-gate": "node scripts/run-pipeline-live-gate.mjs",
     "check:funasr-baseline": "node ../tools/run-funasr-offline-baseline.mjs",
-    "probe:groq": "node --use-env-proxy ../tools/run-groq-asr-probe.mjs"
+    "probe:groq": "node --use-env-proxy ../tools/run-groq-asr-probe.mjs",
+    "v2-wire-rehearsal": "node --use-env-proxy scripts/run-v2-wire-rehearsal.mjs"
   },
-  "dependencies": { "@gamebuddy/voice-protocol": "workspace:*" },
-  "devDependencies": { "@types/node": "24.10.1", "typescript": "5.9.3" }
+  "dependencies": {
+    "@gamebuddy/voice-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
 }
