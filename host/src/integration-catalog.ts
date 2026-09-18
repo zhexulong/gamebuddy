@@ -3,6 +3,11 @@ import type { GameCompanionIdentity } from "./runtime.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { DesktopGuardianSession } from "./containment/auth/desktop-guardian-session.internal.js";
+import type {
+  ComposedReferenceGameBrowserLifecycleActivationBindingSink,
+  ComposedReferenceGameBrowserReadContext,
+} from "./composed-reference-game-browser.js";
+import type { ComposedGameProfile, GameBrowserStateV1 } from "./game-browser-contract/index.js";
 
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -36,6 +41,26 @@ export type ConfigurableIntegrationLauncher = IntegrationLauncher &
  */
 export type GameLifecycleProviderCapability = Readonly<{
   close(): Promise<void>;
+  /**
+   * Game-owned presentation projection. The composition-owned presentation
+   * admission owner consumes it to serve the composed reference-game browser
+   * surface; a provider without a browser presentation surface omits it, and
+   * the composition then fails closed instead of inventing one.
+   */
+  presentation?: GamePresentationProjection;
+}>;
+
+/**
+ * The game-owned projection of one lifecycle owner's browser presentation: the
+ * game surface declaration, the game-state read over the owner's own readers,
+ * and the activation owner bound to the composed binding sink. No game module,
+ * coordinator object, private activation fact, or launch authority crosses this
+ * generic seam.
+ */
+export type GamePresentationProjection = Readonly<{
+  gameProfile: ComposedGameProfile;
+  readGame(context: ComposedReferenceGameBrowserReadContext): Promise<GameBrowserStateV1>;
+  lifecycleActivationBindingSink: ComposedReferenceGameBrowserLifecycleActivationBindingSink;
 }>;
 
 /**

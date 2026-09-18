@@ -22,6 +22,7 @@ import {
   type GameResumeCancelResultV1,
   type GameResumeCommandV1,
   type GameResumeResultV1,
+  type GameSessionResumeCommandV1,
   type GameReopenActionAuthorityCommandV1,
   type GameReopenActionAuthorityResultV1,
   type GameStopCommandV1,
@@ -83,6 +84,40 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
       command: StardewCabinConfirmCommandV1,
     ): Promise<StardewCabinConfirmResultV1>;
   }>;
+}>;
+
+/**
+ * The lifecycle activation binding one lifecycle owner supplies to the composed
+ * reference-game browser surface: the admission issuer binding plus the exact
+ * lifecycle command seams the composed handler exposes. A game integration
+ * provider projects its private lifecycle activation owner into this shape, so
+ * the composed static shell composition binds an owner whose game types and
+ * coordinator object never cross the composition boundary.
+ */
+export type ComposedReferenceGameBrowserLifecycleActivationBindingSink = Readonly<{
+  bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
+  setupPlayerHost?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameSetup"]>;
+  /** The lifecycle owner may return a private snapshot; the browser callback discards it. */
+  launchPlayerHost?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameLaunchCommandV1,
+  ) => Promise<unknown>;
+  stopGame?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameStop"]>;
+  disconnectGame?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameDisconnect"]>;
+  reopenActionAuthority?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameReopen"]>;
+  /**
+   * Lifecycle-owner resume seam (session-keyed; the composed browser wire stays
+   * session-less, so the wired adapter passes the strict command and the owner
+   * fails closed on a missing session handle).
+   */
+  resume?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameSessionResumeCommandV1,
+  ) => Promise<GameResumeResultV1>;
+  createGameSession?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameCreate"]>;
+  cancelResume?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameResumeCancel"]>;
+  readCabinChoices?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewCabins"]>["read"];
+  confirmCabinChoice?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewCabins"]>["confirm"];
 }>;
 
 type BrowserSession = Readonly<{
