@@ -51,6 +51,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["machine_target_id"] = "expectedTargetId",
+            ["arrival"] = "destination",
         });
 
     public RouteReenteringBodyProgramExecutor(
@@ -101,6 +102,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         string? expectedTargetId = null;
         string? emote = null;
         string? direction = null;
+        BridgeNavigationDestinationSelector? destination = null;
         foreach (KeyValuePair<string, BodyProgramCanonicalValue> pair in grant.CanonicalArguments)
         {
             BodyProgramCanonicalValue value = pair.Value;
@@ -127,7 +129,22 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 case "direction" when value.Kind == BodyProgramArgumentKind.String:
                     direction = value.CanonicalValue;
                     break;
+                case "destination" when value.Kind == BodyProgramArgumentKind.DestinationSelector && value.Destination is not null:
+                    destination = value.Destination.Kind switch
+                    {
+                        "label" when BodyProgramValidation.IsValidSelector(value.Destination) => new BridgeNavigationDestinationSelector(value.Destination.Kind, value.Destination.Label, null),
+                        "ref" when BodyProgramValidation.IsValidSelector(value.Destination) => new BridgeNavigationDestinationSelector(value.Destination.Kind, null, value.Destination.Ref),
+                        _ => null,
+                    };
+                    break;
             }
+        }
+
+        if (destination is null && grant.CanonicalArguments.ContainsKey("destination"))
+        {
+            request = null;
+            reasonCode = "invalid_destination_selector";
+            return false;
         }
 
         request = new BridgeExecutionRequest(
@@ -143,6 +160,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 ExpectedTargetId = expectedTargetId,
                 Emote = emote,
                 Direction = direction,
+                Destination = destination,
             },
             /* ExpectedRevision */ 1,
             grant.DeadlineMs);
@@ -190,11 +208,14 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
 
     /// <summary>
     /// Produces exactly the descriptor-declared output facts, each keyed by its
-    /// own name with exact {ProgramId,NodeId,NodeAttempt} provenance, value from
-    /// the action-validated canonical argument named by the fact source table.
-    /// Never parses evidence. A declared output fact without a declared source
-    /// (or without a matching canonical argument) is not fabricated — the
-    /// authority's ValidFactSet then fails closed on the missing fact.
+    /// own name with exact {ProgramId,NodeId,NodeAttempt} provenance. Values come
+    /// from the action-validated canonical arguments named by the fact source
+    /// table: string facts copy the source scalar value, while a
+    /// <c>destination_arrival</c> fact copies the validated destination selector
+    /// as a typed arrival at that destination. Never parses evidence. A declared
+    /// output fact without a declared source (or without a matching canonical
+    /// argument) is not fabricated — the authority's ValidFactSet then fails
+    /// closed on the missing fact.
     /// </summary>
     private IReadOnlyList<RuntimeFact>? BuildDeclaredFacts(HostAdmissionGrant grant, NodeExecutionBinding execution)
     {
@@ -207,9 +228,42 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         foreach (KeyValuePair<string, string> outputFact in descriptor.OutputFacts)
         {
             if (!this.outputFactArgumentSources.TryGetValue(outputFact.Key, out string? sourceArgument)
-                || !grant.CanonicalArguments.TryGetValue(sourceArgument, out BodyProgramCanonicalValue? sourceValue)
-                || sourceValue.Kind != BodyProgramArgumentKind.String
-                || sourceValue.CanonicalValue is null)
+                || !grant.CanonicalArguments.TryGetValue(sourceArgument, out BodyProgramCanonicalValue? sourceValue))
+                return Array.Empty<RuntimeFact>();
+            BodyProgramArgumentKind declaredKind = outputFact.Value switch
+            {
+                "destination_arrival" => BodyProgramArgumentKind.DestinationArrival,
+                "integer" => BodyProgramArgumentKind.Integer,
+                "boolean" => BodyProgramArgumentKind.Boolean,
+                "string" => BodyProgramArgumentKind.String,
+                _ => BodyProgramArgumentKind.String,
+            };
+            if (declaredKind == BodyProgramArgumentKind.DestinationArrival)
+            {
+                if (sourceValue.Kind != BodyProgramArgumentKind.DestinationSelector || sourceValue.Destination is null
+                    || !BodyProgramValidation.IsValidSelector(sourceValue.Destination)
+                    || sourceValue.Destination.Kind != "label"
+                    || sourceValue.Destination.Label is null)
+                    return Array.Empty<RuntimeFact>();
+                facts.Add(new RuntimeFact(
+                    execution.ProgramId,
+                    execution.NodeId,
+                    execution.NodeAttempt,
+                    outputFact.Key,
+                    new ReadOnlyDictionary<string, BodyProgramCanonicalValue>(
+                        new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal)
+                        {
+                            [outputFact.Key] = new BodyProgramCanonicalValue(
+                                BodyProgramArgumentKind.DestinationArrival,
+                                null,
+                                null,
+                                new BodyProgramDestinationArrival(
+                                    "destination_arrived",
+                                    new BodyProgramArrivalDestination(sourceValue.Destination.Label, null))),
+                        })));
+                continue;
+            }
+            if (sourceValue.Kind != BodyProgramArgumentKind.String || sourceValue.CanonicalValue is null)
                 return Array.Empty<RuntimeFact>();
             facts.Add(new RuntimeFact(
                 execution.ProgramId,

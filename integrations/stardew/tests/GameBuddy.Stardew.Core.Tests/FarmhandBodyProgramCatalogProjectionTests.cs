@@ -37,14 +37,17 @@ public sealed class FarmhandBodyProgramCatalogProjectionTests
     }
 
     [Fact]
-    public void NavigateRemainsWithdrawnWhenItsTypedObjectContractIsUnavailable()
+    public void NavigateProjectsTypedDestinationContractIntoExecutionCatalog()
     {
         FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
 
-        result.Rejections.Should().Contain(rejection =>
-            rejection.ActionId == "navigate_to_destination"
-            && rejection.Code == "object_or_unsupported_argument");
-        result.Catalog!.TryGetAction("navigate_to_destination", out _).Should().BeFalse();
+        result.IsPublished.Should().BeTrue();
+        result.Rejections.Should().NotContain(rejection =>
+            rejection.ActionId == "navigate_to_destination");
+        result.Catalog!.TryGetAction("navigate_to_destination", out BodyProgramActionDescriptor? navigate).Should().BeTrue();
+        navigate!.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("destination", BodyProgramArgumentKind.DestinationSelector));
+        navigate.OutputFacts.Should().Contain(new BodyProgramFactDescriptor("arrival", BodyProgramArgumentKind.DestinationArrival));
+        navigate.Metadata.Should().Be(new BodyProgramActionMetadata("published", "execution", "write", "arrived_at_destination"));
     }
 
     [Fact]

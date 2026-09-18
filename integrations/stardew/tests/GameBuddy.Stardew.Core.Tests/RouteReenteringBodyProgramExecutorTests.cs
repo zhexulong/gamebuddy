@@ -232,6 +232,149 @@ public sealed class RouteReenteringBodyProgramExecutorTests
         }
     }
 
+    /// <summary>
+    /// Mirrors the navigate dispatch shape: reads the typed destination selector
+    /// from the wire args and settles Succeeded/navigation_completed with
+    /// target-version live-state evidence, exactly like the native navigation
+    /// producer.
+    /// </summary>
+    private sealed class NavigateStubHandler : IFarmhandActionHandler
+    {
+        public BridgeNavigationDestinationSelector? SeenDestination { get; private set; }
+
+        public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
+        {
+            this.SeenDestination = request.Args.Destination;
+            string executionId = ledger is IDispatchExecutionLedger dispatchLedger
+                && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
+                ? boundExecutionId
+                : "exec_unbound";
+            return ledger.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Succeeded,
+                "navigation_completed",
+                "destination=Town;location=Town;arrived=true;postcondition=true");
+        }
+    }
+
+    private static FarmhandActionRegistration NavigateRegistration() =>
+        FarmhandActionCatalog.Registrations.First(registration => string.Equals(registration.ActionId, "navigate_to_destination", StringComparison.Ordinal));
+
+    private static (FarmhandActionRouter Router, StubLedger Ledger, NavigateStubHandler Handler) RouterWithNavigate()
+    {
+        var handler = new NavigateStubHandler();
+        var router = new FarmhandActionRouter();
+        router.Register(NavigateRegistration(), handler);
+        return (router, new StubLedger(), handler);
+    }
+
+    private static HostAdmissionGrant NavigateGrant(string programId = "program", string nodeId = "navigate") => new(
+        programId,
+        nodeId,
+        NodeAttempt: 1,
+        AdmissionAttempt: 1,
+        StopEpoch: 0,
+        CatalogRevision: 7,
+        Policy,
+        "navigate_to_destination",
+        new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal)
+        {
+            ["destination"] = new(BodyProgramArgumentKind.DestinationSelector, null, new BodyProgramDestinationSelector("label", "Town", null)),
+        },
+        new Dictionary<string, string>(StringComparer.Ordinal),
+        DeadlineMs: 1000,
+        GrantId: "grant-navigate-1",
+        AttachmentGeneration: "attachment_01",
+        PolicyRevision: "host-policy_01",
+        ExecutionBinding: Binding(programId, nodeId));
+
+    [Fact]
+    public void Navigate_ProjectsTypedDestinationSelectorOntoWireArgs()
+    {
+        (FarmhandActionRouter router, StubLedger ledger, NavigateStubHandler handler) = RouterWithNavigate();
+        var executor = new RouteReenteringBodyProgramExecutor(router, ledger);
+        HostAdmissionGrant grant = NavigateGrant();
+        NodeExecutionBinding binding = Binding("program", "navigate");
+
+        BodyProgramTerminalResult? terminal = executor.Execute(grant, binding);
+
+        terminal.Should().NotBeNull();
+        terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded);
+        handler.SeenDestination.Should().NotBeNull();
+        handler.SeenDestination!.Kind.Should().Be("label");
+        handler.SeenDestination.Label.Should().Be("Town");
+        handler.SeenDestination.Ref.Should().BeNull();
+    }
+
+    [Fact]
+    public void Navigate_EmitsTypedArrivalFactFromValidatedSelector()
+    {
+        (FarmhandActionRouter router, StubLedger ledger, _) = RouterWithNavigate();
+        var executor = new RouteReenteringBodyProgramExecutor(router, ledger);
+        HostAdmissionGrant grant = NavigateGrant();
+        NodeExecutionBinding binding = Binding("program", "navigate");
+
+        BodyProgramTerminalResult? terminal = executor.Execute(grant, binding);
+
+        terminal.Should().NotBeNull();
+        RuntimeFact fact = terminal!.Facts.Should().ContainSingle().Subject;
+        fact.FactName.Should().Be("arrival");
+        fact.Values["arrival"].Kind.Should().Be(BodyProgramArgumentKind.DestinationArrival);
+        fact.Values["arrival"].Destination.Should().BeNull();
+        fact.Values["arrival"].Arrival.Should().NotBeNull();
+        fact.Values["arrival"].Arrival!.Reason.Should().Be("destination_arrived");
+        fact.Values["arrival"].Arrival!.Destination.Label.Should().Be("Town");
+    }
+
+    [Fact]
+    public void Navigate_RefSelectorWithoutLabel_FailsClosedNoFact()
+    {
+        (FarmhandActionRouter router, StubLedger ledger, NavigateStubHandler handler) = RouterWithNavigate();
+        var executor = new RouteReenteringBodyProgramExecutor(router, ledger);
+        HostAdmissionGrant grant = new(
+            "program", "navigate", 1, 1, 0, 7, Policy, "navigate_to_destination",
+            new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal)
+            {
+                ["destination"] = new(BodyProgramArgumentKind.DestinationSelector, null, new BodyProgramDestinationSelector("ref", null, "dr1_AAAAAAAAAAAAAAAAAAAAAA")),
+            },
+            new Dictionary<string, string>(StringComparer.Ordinal), 1000,
+            "grant-navigate-ref", "attachment_01", "host-policy_01", Binding("program", "navigate"));
+
+        // An opaque ref selector is not a label; the wire projection passes the
+        // ref through (runtime navigation resolves it), but the typed arrival
+        // fact requires a stable label and must not fabricate one.
+        BodyProgramTerminalResult? terminal = executor.Execute(grant, Binding("program", "navigate"));
+
+        terminal.Should().NotBeNull();
+        terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded);
+        handler.SeenDestination.Should().NotBeNull();
+        handler.SeenDestination!.Kind.Should().Be("ref");
+        terminal.Facts.Should().BeSameAs(Array.Empty<RuntimeFact>(), "an unavailable label must not be fabricated into an arrival fact");
+    }
+
+    [Fact]
+    public void Navigate_InvalidDestinationSelector_FailsClosedBeforeDispatch()
+    {
+        (FarmhandActionRouter router, StubLedger ledger, NavigateStubHandler handler) = RouterWithNavigate();
+        var executor = new RouteReenteringBodyProgramExecutor(router, ledger);
+        HostAdmissionGrant grant = new(
+            "program", "navigate", 1, 1, 0, 7, Policy, "navigate_to_destination",
+            new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal)
+            {
+                ["destination"] = new(BodyProgramArgumentKind.DestinationSelector, null, new BodyProgramDestinationSelector("label", null, null)),
+            },
+            new Dictionary<string, string>(StringComparer.Ordinal), 1000,
+            "grant-navigate-bad", "attachment_01", "host-policy_01", Binding("program", "navigate"));
+
+        BodyProgramTerminalResult? terminal = executor.Execute(grant, Binding("program", "navigate"));
+
+        terminal.Should().NotBeNull();
+        terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Failed);
+        terminal.Facts.Should().BeNull();
+        handler.SeenDestination.Should().BeNull("the invalid selector must never reach the native dispatch");
+    }
+
     [Fact]
     public void NonTerminalReceipt_ReRouting_ReturnsSameReceiptWithoutReExecuting()
     {

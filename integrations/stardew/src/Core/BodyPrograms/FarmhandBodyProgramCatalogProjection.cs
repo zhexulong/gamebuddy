@@ -148,12 +148,30 @@ public static class FarmhandBodyProgramCatalogProjection
             "integer" => BodyProgramArgumentKind.Integer,
             "string" => BodyProgramArgumentKind.String,
             "boolean" => BodyProgramArgumentKind.Boolean,
+            "destination_selector" => BodyProgramArgumentKind.DestinationSelector,
             _ => default,
         };
-        return type is "integer" or "string" or "boolean";
+        return type is "integer" or "string" or "boolean" or "destination_selector";
     }
 
-    private static bool TryMapOutput(string type, out BodyProgramArgumentKind kind) => TryMapInput(type, out kind);
+    /// <summary>
+    /// Output facts admit the typed arrival value; a destination selector is an
+    /// input shape, never an output fact. The frozen argument-kind guard in
+    /// <see cref="BodyProgramValidation.IsValidActionDescriptor"/> keeps
+    /// DestinationArrival out of arguments and DestinationSelector out of facts.
+    /// </summary>
+    private static bool TryMapOutput(string type, out BodyProgramArgumentKind kind)
+    {
+        kind = type switch
+        {
+            "integer" => BodyProgramArgumentKind.Integer,
+            "string" => BodyProgramArgumentKind.String,
+            "boolean" => BodyProgramArgumentKind.Boolean,
+            "destination_arrival" => BodyProgramArgumentKind.DestinationArrival,
+            _ => default,
+        };
+        return type is "integer" or "string" or "boolean" or "destination_arrival";
+    }
 
     private static IReadOnlyList<FarmhandBodyProgramCatalogProjectionRejection> Freeze(
         IEnumerable<FarmhandBodyProgramCatalogProjectionRejection> values) =>

@@ -29,7 +29,7 @@ export const ACTION_SURFACE_MAX_ARRAY_ITEMS = 128;
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
 const LIFECYCLES = new Set(["published", "experimental"]);
 const KINDS = new Set(["execution", "read_only"]);
-const ACTION_VALUE_TYPES = new Set(["integer", "string", "boolean", "object"]);
+const ACTION_VALUE_TYPES = new Set(["integer", "string", "boolean", "object", "destination_selector", "destination_arrival"]);
 const DYNAMIC_PUBLICATION_FIELDS = new Set([
   "advertised",
   "available",
