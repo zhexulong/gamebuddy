@@ -55,6 +55,9 @@ type ActiveSpeech = { job: SpeechJob; controller: AbortController; cancelled: bo
  * imports. All providers receive an AbortSignal and stale callbacks are ignored.
  */
 export class VoiceGatewayCore {
+  readonly #asr: AsrProvider;
+  readonly #tts: TtsProvider;
+  readonly #mixer: Mixer;
   #capture: Capture | undefined;
   #finalizing = new Map<string, Capture>();
   #activeSpeech = new Map<string, ActiveSpeech>();
@@ -64,13 +67,22 @@ export class VoiceGatewayCore {
   readonly #events: GatewayEvent[] = [];
   #eventBase = 0;
 
-  public constructor(
-    private readonly asr: AsrProvider,
-    private readonly tts: TtsProvider,
-    private readonly mixer: Mixer,
-  ) {}
+  public constructor(asr: AsrProvider, tts: TtsProvider, mixer: Mixer) {
+    this.#asr = asr;
+    this.#tts = tts;
+    this.#mixer = mixer;
+  }
   public get epoch(): number {
     return this.#epoch;
+  }
+  public get tts(): TtsProvider {
+    return this.#tts;
+  }
+  public get mixer(): Mixer {
+    return this.#mixer;
+  }
+  public get asr(): AsrProvider {
+    return this.#asr;
   }
   public get events(): readonly GatewayEvent[] {
     return this.#events;
@@ -121,18 +133,18 @@ export class VoiceGatewayCore {
   public supportsVoiceProfile(voiceProfile: string): boolean {
     return (
       voiceProfile.length > 0 &&
-      (this.tts.supportsVoiceProfile === undefined || this.tts.supportsVoiceProfile(voiceProfile))
+      (this.#tts.supportsVoiceProfile === undefined || this.#tts.supportsVoiceProfile(voiceProfile))
     );
   }
 
   public get capabilities(): VoiceGatewayCapabilities {
     return Object.freeze({
-      providerId: this.tts.providerId,
-      modelRevision: this.tts.modelRevision,
-      perUtteranceDirection: this.tts.capabilities?.perUtteranceDirection === true,
+      providerId: this.#tts.providerId,
+      modelRevision: this.#tts.modelRevision,
+      perUtteranceDirection: this.#tts.capabilities?.perUtteranceDirection === true,
       // Readiness is affirmative: omitted provider/device state is not a
       // usable player-facing audio surface.
-      ready: this.tts.ready === true && this.mixer.ready === true,
+      ready: this.#tts.ready === true && this.#mixer.ready === true,
       epoch: this.#epoch,
     });
   }
@@ -195,7 +207,7 @@ export class VoiceGatewayCore {
       actualFormat: REQUIRED_PCM_FORMAT,
     });
     try {
-      const text = await this.asr.transcribe(concat(capture.chunks), capture.locale, capture.controller.signal);
+      const text = await this.#asr.transcribe(concat(capture.chunks), capture.locale, capture.controller.signal);
       if (capture.controller.signal.aborted || capture.epoch !== this.#epoch) return null;
       if (capture.terminalState !== undefined) return null;
       capture.terminalState = "final_transcript";
@@ -206,8 +218,8 @@ export class VoiceGatewayCore {
         inputId: capture.inputId,
         text,
         locale: capture.locale,
-        providerId: this.asr.providerId,
-        modelRevision: this.asr.modelRevision,
+        providerId: this.#asr.providerId,
+        modelRevision: this.#asr.modelRevision,
         timestampMs,
         actualFormat: REQUIRED_PCM_FORMAT,
       });
@@ -230,8 +242,8 @@ export class VoiceGatewayCore {
           sessionId: capture.sessionId,
           inputId: capture.inputId,
           locale: capture.locale,
-          providerId: this.asr.providerId,
-          modelRevision: this.asr.modelRevision,
+          providerId: this.#asr.providerId,
+          modelRevision: this.#asr.modelRevision,
           reasonCode,
           timestampMs,
         });
@@ -274,7 +286,7 @@ export class VoiceGatewayCore {
     if (active?.job.interruptible && !active.cancelled) {
       active.cancelled = true;
       active.controller.abort(reasonCode);
-      this.mixer.stop();
+      this.#mixer.stop();
       this.speech(active.job, "cancelled", reasonCode);
     }
   }
@@ -298,7 +310,7 @@ export class VoiceGatewayCore {
       let first = true;
       let audioBytes = 0;
       try {
-        for await (const pcm16 of this.tts.synthesize(job, active.controller.signal)) {
+        for await (const pcm16 of this.#tts.synthesize(job, active.controller.signal)) {
           if (active.controller.signal.aborted || active.cancelled || job.epoch !== this.#epoch) break;
           if (pcm16.byteLength === 0) throw new Error("empty_tts_audio_chunk");
           audioBytes += pcm16.byteLength;
@@ -307,7 +319,7 @@ export class VoiceGatewayCore {
             first = false;
             this.speech(job, "first_audio", "first_audio");
           }
-          await this.mixer.play(job.jobId, job.epoch, pcm16);
+          await this.#mixer.play(job.jobId, job.epoch, pcm16);
         }
         if (!active.cancelled && !active.controller.signal.aborted && job.epoch === this.#epoch) {
           if (first) this.speech(job, "failed", "tts_no_audio");
@@ -333,7 +345,7 @@ export class VoiceGatewayCore {
       this.speech(active.job, "cancelled", reasonCode);
     }
     for (const job of this.#queue.splice(0)) this.speech(job, "cancelled", reasonCode);
-    this.mixer.stop();
+    this.#mixer.stop();
   }
 
   private capture(): Capture {
