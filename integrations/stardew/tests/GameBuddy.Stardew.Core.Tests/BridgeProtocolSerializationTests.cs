@@ -25,6 +25,43 @@ public sealed class BridgeProtocolSerializationTests
     private static BridgeEnvelope<BodyNodeAdmissionChallengeWire> AdmissionEnvelope() =>
         new(1, "message_1", "correlation_1", 1000, SampleScope, "body_node_admission_challenge", BridgeProtocol.ProjectBodyNodeAdmissionChallenge(AdmissionChallenge()));
 
+    private static BridgeEnvelope<BodyNodeAdmissionResultWire> AdmissionResultEnvelope(BodyNodeAdmissionResultWire result) =>
+        new(1, "message_1", "correlation_1", 1000, SampleScope, "body_node_admission_result", result);
+
+    [Fact]
+    public void AdmissionUnavailable_ProjectsIndependentDiscriminatorAndRoundTripsWire()
+    {
+        BodyNodeAdmissionUnavailableResultWire wire = (BodyNodeAdmissionUnavailableResultWire)BridgeProtocol.ProjectBodyNodeAdmissionResult(
+            new BodyNodeAdmissionUnavailableResult(AdmissionChallenge()));
+        wire.Result.Should().Be("unavailable");
+        wire.Code.Should().Be("admission_unavailable");
+
+        BridgeProtocol.TrySerialize(AdmissionResultEnvelope(wire), out string json, out string serializeReason).Should().BeTrue(serializeReason);
+        json.Should().Contain("\"result\":\"unavailable\"").And.NotContain("\"result\":\"rejected\"");
+        BridgeProtocol.TryDeserializeBodyNodeAdmissionResult(json, out var parsed, out string deserializeReason).Should().BeTrue(deserializeReason);
+        parsed!.Payload.Should().BeOfType<BodyNodeAdmissionUnavailableResult>();
+        BridgeProtocol.ProjectBodyNodeAdmissionResult(parsed.Payload).Should().BeEquivalentTo(wire);
+
+        BridgeProtocol.TrySerialize(AdmissionResultEnvelope(BridgeProtocol.ProjectBodyNodeAdmissionResult(parsed.Payload)), out string roundTripJson, out _).Should().BeTrue();
+        roundTripJson.Should().Contain("\"result\":\"unavailable\"");
+    }
+
+    [Fact]
+    public void AdmissionResultWire_UsesDiscriminatorSpecificConcreteType()
+    {
+        BodyNodeAdmissionUnavailableResultWire unavailable = (BodyNodeAdmissionUnavailableResultWire)BridgeProtocol.ProjectBodyNodeAdmissionResult(
+            new BodyNodeAdmissionUnavailableResult(AdmissionChallenge()));
+        BodyNodeAdmissionRejectedResultWire rejected = (BodyNodeAdmissionRejectedResultWire)BridgeProtocol.ProjectBodyNodeAdmissionResult(
+            new BodyNodeAdmissionRejectedResult(AdmissionChallenge(), "policy_mismatch"));
+
+        BridgeProtocol.TrySerialize(AdmissionResultEnvelope(unavailable), out string unavailableJson, out _).Should().BeTrue();
+        BridgeProtocol.TrySerialize(AdmissionResultEnvelope(rejected), out string rejectedJson, out _).Should().BeTrue();
+        BridgeProtocol.TryDeserializeBodyNodeAdmissionResult(unavailableJson, out var unavailableParsed, out _).Should().BeTrue();
+        BridgeProtocol.TryDeserializeBodyNodeAdmissionResult(rejectedJson, out var rejectedParsed, out _).Should().BeTrue();
+        unavailableParsed!.Payload.Should().BeOfType<BodyNodeAdmissionUnavailableResult>();
+        rejectedParsed!.Payload.Should().BeOfType<BodyNodeAdmissionRejectedResult>();
+    }
+
     [Fact]
     public void AdmissionChallenge_ProjectsDestinationAndRoundTripsCore()
     {
@@ -374,7 +411,10 @@ public sealed class BridgeProtocolSerializationTests
         yield return Result(new("candidates", "ambiguous_exact", null, null, Array.Empty<BridgeDestinationSearchCandidate>(), null, null));
         yield return Result(new("candidates", "fuzzy_match", null, null, new[] { Candidate("A"), Candidate("B"), Candidate("C"), Candidate("D") }, null, null));
         yield return Result(new("candidates", "fuzzy_match", null, null, new[] { Candidate("Farm") }, new("label", "Farm", null), null));
-        yield return Result(new("candidates", "fuzzy_match", null, null, new[] { Candidate("Farm", new("ref", null, "dr1_AAAAAAAAAAAAAAAAAAAAAA")) }, null, null));
+        // A candidate selector without an opaque ref is not resolvable by the
+        // Agent: the Mod mints dr1_ refs for every opaque candidate.
+        yield return Result(new("candidates", "fuzzy_match", null, null, new[] { Candidate("Farm", new("ref", null, null)) }, null, null));
+        yield return Result(new("candidates", "fuzzy_match", null, null, new[] { Candidate("Farm", new("ref", null, "invalid")) }, null, null));
         yield return Result(new("not_found", "destination_not_found", null, null, new[] { Candidate("Farm") }, null, null));
         yield return Result(new("blocked", "wrong_reason", null, null));
         yield return Result(new("succeeded", "world_map_observed", Enumerable.Range(0, 21).Select(index => new BridgeWorldMapEntry($"Entry {index}", null, null, null)).ToArray(), null));
@@ -383,7 +423,7 @@ public sealed class BridgeProtocolSerializationTests
     private static object[] Result(BridgeNavigationReadResult result) => new object[] { result };
 
     private static BridgeDestinationSearchCandidate Candidate(string label, BridgeNavigationDestinationSelector? selector = null) =>
-        new(label, null, selector ?? new("ref", null, null), "unknown");
+        new(label, null, selector ?? new("ref", null, "dr1_AAAAAAAAAAAAAAAAAAAAAA"), "unknown");
 
     [Fact]
     public void TrySerialize_SnapshotWireParityFixture_WritesHostWireParityFixtureWhenRequested()

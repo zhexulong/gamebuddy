@@ -398,7 +398,7 @@ public static class BridgeProtocol
         && candidate.UnlockState == "unknown"
         && candidate.Destination.Kind == "ref"
         && candidate.Destination.Label is null
-        && candidate.Destination.Ref is null;
+        && IsNavigationHandle(candidate.Destination.Ref, "dr1_");
 
     private static bool IsValidWorldMapEntry(BridgeWorldMapEntry entry)
     {
