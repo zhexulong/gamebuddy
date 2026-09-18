@@ -38,9 +38,16 @@ const CONFIG_KEYS = Object.freeze([
   "sharedIdentity",
   "foreignIdentity",
   "surfaceSessions",
-  "gameOperatorConfigPath",
+  "deploymentManifestRef",
   "taskFixturePath",
+  "windowMode",
 ]);
+const WINDOW_MODES = Object.freeze(["visible", "foreground", "minimized", "hidden", "background"]);
+
+/** Single-authority gate window-mode validation (mirror of the live-run contract). */
+export function validateGateWindowMode(value) {
+  return typeof value === "string" && WINDOW_MODES.includes(value);
+}
 const FIXTURE_KEYS = Object.freeze(["schema", "task", "targetVersion", "profile", "environment"]);
 const FORBIDDEN_FIXTURE_FIELD = /^(?:actions?|routes?|tools?|capability(?:Subset|Set|Allowlist)?|(?:turn|tool|action|wallClock|model|runtime|execution|gameplay)?Budget|quotas?|limits?)$/i;
 
@@ -327,17 +334,23 @@ export async function terminateOwnedProcessTree(
 
 /** Starts exactly the reviewed production launcher and binds its IPC stream. */
 export async function runProductionOperationalGate({ config, task, nonceSha256, timeoutMs = OPERATIONAL_GATE_TIMEOUT_MS, spawnProcess = spawn }) {
-  if (!config || typeof config !== "object" || !isAbsolute(config.gameOperatorConfigPath))
-    return blocked("game_operator_config_invalid");
+  if (!config || typeof config !== "object" || !isAbsolute(config.deploymentManifestRef))
+    return blocked("deployment_manifest_ref_invalid");
   let child;
   try {
-    child = spawnProcess(process.execPath, [PRODUCTION_LAUNCHER, "main.js", config.gameOperatorConfigPath], {
+    child = spawnProcess(process.execPath, [
+      PRODUCTION_LAUNCHER,
+      "main.js",
+      "--deployment-manifest-ref",
+      config.deploymentManifestRef,
+      "--operational-nonce",
+      nonceSha256,
+    ], {
       stdio: ["ignore", "pipe", "pipe", "ipc"],
       windowsHide: true,
       detached: process.platform !== "win32",
       env: Object.freeze({
         ...process.env,
-        GAMEBUDDY_GAME_OPERATIONAL_GATE_NONCE_SHA256: nonceSha256,
       }),
     });
   } catch {
@@ -476,8 +489,13 @@ async function loadConfig(path, nonceSha256) {
     throw new Error("operational_gate_config_unreadable");
   }
   if (!exactRecord(parsed, CONFIG_KEYS)) throw new Error("operational_gate_config_shape_invalid");
-  if (!isAbsoluteString(parsed.gameOperatorConfigPath) || !isAbsoluteString(parsed.taskFixturePath))
-    throw new Error("game_operator_or_fixture_path_invalid");
+  if (!isAbsoluteString(parsed.deploymentManifestRef) || !isAbsoluteString(parsed.taskFixturePath))
+    throw new Error("deployment_manifest_or_fixture_path_invalid");
+  // The single-authority window-mode vocabulary comes from the live-run tool
+  // contract (mirror of host/src/live-run/window-mode.ts); the gate accepts
+  // only the frozen five modes and fails closed on anything else.
+  if (!validateGateWindowMode(parsed.windowMode))
+    throw new Error("operational_gate_config_window_mode_invalid");
   // The preflight module remains pure. Its nonce field is supplied by this
   // attempt, never accepted from configuration, so every launch is unique.
   const preflight = validateGameOperationalGatePreflight({
@@ -491,8 +509,9 @@ async function loadConfig(path, nonceSha256) {
   return Object.freeze({
     ...preflight,
     nonceSha256,
-    gameOperatorConfigPath: parsed.gameOperatorConfigPath,
+    deploymentManifestRef: parsed.deploymentManifestRef,
     taskFixturePath: parsed.taskFixturePath,
+    windowMode: parsed.windowMode,
   });
 }
 
@@ -595,7 +614,12 @@ export async function writeOperationalGateReport(path, report) {
 async function productionArtifactIdentity() {
   try {
     const pointer = JSON.parse(await readFile(join(HOST_ROOT, "dist", "current.json"), "utf8"));
-    if (!exactRecord(pointer, ["generation", "inventoryDigest"]) || !OPAQUE_ID.test(pointer.generation) || !SHA256.test(pointer.inventoryDigest)) throw new Error("invalid");
+    // current.json may be v1 (generation+inventoryDigest) or v2 (adds schema+
+    // runtimeAdmissionSha256); the gate consumes only the identity fields and
+    // must not reject the v2 shape.
+    if (pointer === null || typeof pointer !== "object" || Array.isArray(pointer)
+      || typeof pointer.generation !== "string" || typeof pointer.inventoryDigest !== "string"
+      || !OPAQUE_ID.test(pointer.generation) || !SHA256.test(pointer.inventoryDigest)) throw new Error("invalid");
     return Object.freeze({ generation: pointer.generation, inventoryDigest: pointer.inventoryDigest });
   } catch {
     throw new Error("production_artifact_identity_unavailable");
