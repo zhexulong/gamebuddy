@@ -67,6 +67,7 @@ const PROBLEM_CODES = [
   "game_unavailable",
   "game_instance_not_found",
   "game_prerequisites_missing",
+  "game_storage_unavailable",
   STALE_CABIN_HANDOFF_CODE,
   ...CABIN_CONFLICT_CODES,
   UNCERTAIN_CABIN_HANDOFF_CODE,
@@ -237,6 +238,30 @@ export type GameReopenResultV1 = Readonly<{
   status: "reopened";
 }>;
 
+export type GameCreateRequestV1 = Readonly<{
+  apiVersion: 1;
+  idempotencyKey: string;
+  integrationId: string;
+  continuityIdentityId: string | null;
+}>;
+
+export type GameCreateResultV1 = Readonly<{
+  apiVersion: 1;
+  status: "accepted" | "attached" | "unavailable";
+  gameSessionId: string | null;
+}>;
+
+export type GameResumeCancelRequestV1 = Readonly<{
+  apiVersion: 1;
+  idempotencyKey: string;
+  expectedAttachmentGeneration: number;
+}>;
+
+export type GameResumeCancelResultV1 = Readonly<{
+  apiVersion: 1;
+  status: "cancelled";
+}>;
+
 type StardewCabinConfirmationV1 = Readonly<{
   apiVersion: 1;
   status: "manifest_admitted";
@@ -251,6 +276,8 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   disconnectGame(request: GameDisconnectRequestV1): Promise<void>;
   resumeGame(request: GameResumeRequestV1): Promise<GameResumeResultV1>;
   reopenGame(request: GameReopenRequestV1): Promise<GameReopenResultV1>;
+  createGameSession(request: GameCreateRequestV1): Promise<GameCreateResultV1>;
+  cancelResume(request: GameResumeCancelRequestV1): Promise<GameResumeCancelResultV1>;
   readStardewCabins(): Promise<StardewCabinChoicesV1>;
   confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1>;
 }>;
@@ -309,6 +336,10 @@ function isIdempotencyKey(value: unknown): value is string {
   return isCanonicalBase64UrlBytes(value, 16);
 }
 
+function isSafeId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
 function isNullableLabel(value: unknown, maximum: number): value is string | null {
   return value === null || isBoundedString(value, 1, maximum);
 }
@@ -365,6 +396,34 @@ function validateGameReopenResult(value: unknown): GameReopenResultV1 {
     throw new ComposedReferenceGameProtocolError("invalid_game_reopen_result");
   }
   return Object.freeze({ apiVersion: 1, status: "reopened" });
+}
+
+function validateGameCreateResult(value: unknown): GameCreateResultV1 {
+  if (!isRecord(value) ||
+      !hasExactKeys(value, ["apiVersion", "status", "gameSessionId"]) ||
+      value.apiVersion !== 1) {
+    throw new ComposedReferenceGameProtocolError("invalid_game_create_result");
+  }
+  if (value.status === "unavailable" && value.gameSessionId === null) {
+    return Object.freeze({ apiVersion: 1, status: "unavailable", gameSessionId: null });
+  }
+  if (
+    (value.status === "accepted" || value.status === "attached") &&
+    isSafeId(value.gameSessionId)
+  ) {
+    return Object.freeze({ apiVersion: 1, status: value.status, gameSessionId: value.gameSessionId });
+  }
+  throw new ComposedReferenceGameProtocolError("invalid_game_create_result");
+}
+
+function validateGameResumeCancelResult(value: unknown): GameResumeCancelResultV1 {
+  if (!isRecord(value) ||
+      !hasExactKeys(value, ["apiVersion", "status"]) ||
+      value.apiVersion !== 1 ||
+      value.status !== "cancelled") {
+    throw new ComposedReferenceGameProtocolError("invalid_game_resume_cancel_result");
+  }
+  return Object.freeze({ apiVersion: 1, status: "cancelled" });
 }
 
 function isGameProjection(value: unknown): value is GameBrowserStateV1 {
@@ -653,6 +712,45 @@ export function createComposedReferenceGameBrowserApi(
           body: JSON.stringify(request),
         },
         validateGameReopenResult,
+      );
+    },
+    async cancelResume(request: GameResumeCancelRequestV1): Promise<GameResumeCancelResultV1> {
+      if (
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey) ||
+        !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
+        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration"])
+      ) throw new ComposedReferenceGameProtocolError("invalid_game_resume_cancel_request");
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/resume/cancel",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify(request),
+        },
+        validateGameResumeCancelResult,
+      );
+    },
+    async createGameSession(request: GameCreateRequestV1): Promise<GameCreateResultV1> {
+      if (
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey) ||
+        !isSafeId(request.integrationId) ||
+        !(request.continuityIdentityId === null || isSafeId(request.continuityIdentityId)) ||
+        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "integrationId", "continuityIdentityId"])
+      ) throw new ComposedReferenceGameProtocolError("invalid_game_create_request");
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/create",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify(request),
+        },
+        validateGameCreateResult,
       );
     },
     async readStardewCabins(): Promise<StardewCabinChoicesV1> {
