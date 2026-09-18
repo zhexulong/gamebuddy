@@ -119,41 +119,42 @@ async function rehearsal() {
   const played = { sentences: 0, microChunks: 0 };
   try {
     const sentences = ["你好，这是第一条合成语音。", "第二条用于验证分句与微块播放。", "第三条结束后会被平滑淡出。"];
+    // Parallel pre-synthesis: enqueue all sentences, then pump continuously
+    // while the background worker synthesizes — chunk N plays while N+1 is
+    // still being generated, so MiMo's network latency never gaps playback.
     for (const sentence of sentences) {
       await pipeline.pushText(sentence, Date.now());
-      await pipeline.flush();
-      // Resident stream: each 20ms micro-chunk is written straight to the open device.
-      while (await pipeline.pumpAwait()) played.microChunks += 1;
       played.sentences += 1;
-      if (mixer.ready !== true) {
-        await writeFile(
-          artifactPath,
-          JSON.stringify(report({ passed: false, reason: `output_revoked: ${mixer.failureReason ?? "unknown"}` }), null, 2),
-        );
-        console.error(`voice_gate_output_revoked: ${mixer.failureReason ?? "unknown"}`);
-        process.exit(1);
-      }
+    }
+    await pipeline.flush();
+    await pipeline.pumpToIdle();
+    if (mixer.ready !== true) {
+      await writeFile(
+        artifactPath,
+        JSON.stringify(report({ passed: false, reason: `output_revoked: ${mixer.failureReason ?? "unknown"}` }), null, 2),
+      );
+      console.error(`voice_gate_output_revoked: ${mixer.failureReason ?? "unknown"}`);
+      process.exit(1);
     }
     // Cancel path: a queued utterance is faded by the sink and the unplayed
     // audio is dropped before it ever reaches the resident stream device.
     await pipeline.pushText("这条语音会被取消，用于验证未提交的音频永远不会到达设备。", Date.now());
     await pipeline.flush();
-    for (let index = 0; index < 4 && (await pipeline.pumpAwait()); index += 1) played.microChunks += 1;
+    for (let index = 0; index < 4 && (await pipeline.pumpAwait()); index += 1);
     await pipeline.cancelSpeech();
-    while (await pipeline.pumpAwait()) played.microChunks += 1;
+    await pipeline.pumpToIdle();
     const summary = report({
       passed: true,
       stage: "rehearsal",
       mixerReady: mixer.ready === true,
-      playedMicroChunks: played.microChunks,
-      committedSentences: played.sentences,
+      playedSentences: played.sentences,
       cancelExercised: true,
       ttsProvider: ttsForReport.providerId,
       // Phase 2 render path: device opens once and micro-chunks stride stdin.
       renderPath: "winmm_resident_stream",
     });
     await writeFile(artifactPath, JSON.stringify(summary, null, 2));
-    console.log(`voice_gate_passed: ${played.sentences} sentences / ${played.microChunks} micro-chunks on ${outputDevice} (tts=${ttsForReport.providerId}, render=winmm_resident_stream)`);
+    console.log(`voice_gate_passed: ${played.sentences} sentences on ${outputDevice} (tts=${ttsForReport.providerId}, render=winmm_resident_stream)`);
   } finally {
     await pipeline.close();
     await mixer.close();
@@ -251,7 +252,7 @@ async function live() {
     process.exit(2);
   }
   const capture = new WindowsPttCapture(inputDevice);
-  const mixer = await createWindowsAudioMixer(outputDevice);
+  const mixer = await createStreamingWindowsAudioMixer(outputDevice);
   if (mixer.ready !== true) {
     console.error(`voice_gate_output_unavailable: ${mixer.failureReason ?? "unknown"}`);
     process.exit(1);
@@ -267,36 +268,26 @@ async function live() {
   console.log(`转录结果: ${text}`);
 
   const tts = await configuredLiveTts();
-  // WinMM commits one PowerShell play() per call, so 20ms micro-chunks cannot
-  // stride the device boundary individually (observed live: each chunk spawns
-  // a process and the gate times out after the first seconds — the "pulsing
-  // noise" the operator heard). Accumulate micro-chunks and commit bounded
-  // ~4s segments with one real device write each; the physical granularity
-  // limit is recorded, not faked.
-  const sentenceMixer = createSentenceCommittingMixer(mixer, 4_000);
-  const pipeline = await createStreamingSpeechPipeline({ tts, mixer: sentenceMixer });
+  // Resident-stream render: the device opens once and 20ms micro-chunks stride
+  // stdin, so the pipeline pumps them directly (no sentence batching).
+  const pipeline = await createStreamingSpeechPipeline({ tts, mixer });
   try {
     await pipeline.pushText(text, Date.now());
     await pipeline.flush();
-    let chunks = 0;
-    while (pipeline.pump()) {
-      chunks += 1;
-      await sentenceMixer.commitMaybe();
-      if (mixer.ready !== true) throw new Error(`output_revoked: ${mixer.failureReason ?? "unknown"}`);
-    }
-    await sentenceMixer.commit();
+    await pipeline.pumpToIdle();
+    if (mixer.ready !== true) throw new Error(`output_revoked: ${mixer.failureReason ?? "unknown"}`);
     const summary = report({
       passed: true,
       stage: "live",
       transcript: text,
-      playedMicroChunks: chunks,
       ttsProvider: ttsForReport.providerId,
+      renderPath: "winmm_resident_stream",
     });
     await writeFile(artifactPath, JSON.stringify(summary, null, 2));
-    console.log(`voice_gate_passed: "${text}" played back in ${chunks} micro-chunks (tts=${ttsForReport.providerId})`);
+    console.log(`voice_gate_passed: "${text}" played back (tts=${ttsForReport.providerId}, render=winmm_resident_stream)`);
   } finally {
     await pipeline.close();
-    mixer.stop();
+    await mixer.close();
   }
 }
 

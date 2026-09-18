@@ -58,42 +58,72 @@ namespace GameBuddyWaveOut {
       }
       return true;
     }
-    // Resident-stream render: the device opens once and stays open while PCM
-    // frames arrive on stdin as [4-byte LE length][PCM16 bytes]. A length of 0
-    // signals stop: the device is reset and released. This is the structure
-    // reference repos use (devices stay open; frames stream in), which makes
-    // 20ms micro-chunk playback and prompt barge-in physically possible.
+    // Resident-stream render (double-buffered): the device opens once and PCM
+    // frames arrive on stdin as [4-byte LE length][PCM16 bytes]. Two WAVEHDR
+    // slots keep the device queue full — while the current frame plays, the
+    // next frame is read and queued; the completed slot is recycled, so
+    // playback is continuous with no per-frame submit gap. A length of 0 (or
+    // EOF) is consumed exactly once as the stop signal.
     public static void Stream(int deviceId, Stream input) {
       IntPtr hwo = IntPtr.Zero;
       var format = Format();
       Check(waveOutOpen(out hwo, deviceId, ref format, IntPtr.Zero, IntPtr.Zero, 0), "waveout_stream_open");
+      int slots = 2;
+      byte[][] audio = new byte[slots][];
+      GCHandle[] pins = new GCHandle[slots];
+      WAVEHDR[] headers = new WAVEHDR[slots];
+      bool[] active = new bool[slots];
       try {
         byte[] lengthBytes = new byte[4];
-        for (;;) {
-          if (!ReadExact(input, lengthBytes, 4)) break; // EOF = stop
+        bool stopSeen = false;
+        // Block until a playable frame is available; consumes the stop marker
+        // exactly once (side effect: stopSeen). True when a frame was queued.
+        Func<int, bool> readNext = slot => {
+          if (stopSeen) return false;
+          if (!ReadExact(input, lengthBytes, 4)) { stopSeen = true; return false; }
           int length = BitConverter.ToInt32(lengthBytes, 0);
-          if (length == 0) break; // explicit stop frame
+          if (length == 0) { stopSeen = true; return false; }
           if (length < 0 || length % 2 != 0 || length > 1920000) throw new InvalidOperationException("invalid_pcm16_frame");
-          byte[] audio = new byte[length];
-          if (!ReadExact(input, audio, length)) throw new InvalidOperationException("truncated_pcm16_frame");
-          GCHandle handle = GCHandle.Alloc(audio, GCHandleType.Pinned);
-          WAVEHDR header = new WAVEHDR();
-          bool prepared = false;
-          try {
-            header.lpData = handle.AddrOfPinnedObject();
-            header.dwBufferLength = (uint)audio.Length;
-            Check(waveOutPrepareHeader(hwo, ref header, (uint)Marshal.SizeOf(typeof(WAVEHDR))), "waveout_stream_prepare");
-            prepared = true;
-            Check(waveOutWrite(hwo, ref header, (uint)Marshal.SizeOf(typeof(WAVEHDR))), "waveout_stream_write");
-            var deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(5000, (audio.Length / 32) + 3000));
-            while ((header.dwFlags & WHDR_DONE) == 0 && DateTime.UtcNow < deadline) System.Threading.Thread.Sleep(5);
-            if ((header.dwFlags & WHDR_DONE) == 0) throw new TimeoutException("waveout_stream_playback_timeout");
-          } finally {
-            if (hwo != IntPtr.Zero) { if (prepared) waveOutUnprepareHeader(hwo, ref header, (uint)Marshal.SizeOf(typeof(WAVEHDR))); if (handle.IsAllocated) handle.Free(); }
-          }
+          audio[slot] = new byte[length];
+          if (!ReadExact(input, audio[slot], length)) { stopSeen = true; throw new InvalidOperationException("truncated_pcm16_frame"); }
+          pins[slot] = GCHandle.Alloc(audio[slot], GCHandleType.Pinned);
+          headers[slot] = new WAVEHDR();
+          headers[slot].lpData = pins[slot].AddrOfPinnedObject();
+          headers[slot].dwBufferLength = (uint)length;
+          Check(waveOutPrepareHeader(hwo, ref headers[slot], (uint)Marshal.SizeOf(typeof(WAVEHDR))), "waveout_stream_prepare");
+          Check(waveOutWrite(hwo, ref headers[slot], (uint)Marshal.SizeOf(typeof(WAVEHDR))), "waveout_stream_write");
+          active[slot] = true;
+          return true;
+        };
+        if (!readNext(0)) return; // nothing at all to play
+        int activeCount = 1;
+        int playing = 0;      // slot whose frame is currently sounding
+        int prefetch = 1;     // slot to receive the next frame
+        if (readNext(prefetch)) activeCount = 2; // queue the next frame behind
+        while (activeCount > 0) {
+          // Wait for the sounding frame to finish.
+          var deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(5000, (audio[playing].Length / 32) + 3000));
+          while ((headers[playing].dwFlags & WHDR_DONE) == 0 && DateTime.UtcNow < deadline) System.Threading.Thread.Sleep(2);
+          if ((headers[playing].dwFlags & WHDR_DONE) == 0) throw new TimeoutException("waveout_stream_playback_timeout");
+          waveOutUnprepareHeader(hwo, ref headers[playing], (uint)Marshal.SizeOf(typeof(WAVEHDR)));
+          pins[playing].Free();
+          active[playing] = false;
+          activeCount--;
+          // Refill the just-finished slot with the next frame (non-blocking when
+          // stopSeen is already set; otherwise the caller must keep audio coming
+          // at device pace — this is the streaming contract).
+          if (readNext(playing)) activeCount++;
+          playing = prefetch;
+          prefetch = playing == 0 ? 1 : 0;
         }
       } finally {
         if (hwo != IntPtr.Zero) { waveOutReset(hwo); waveOutClose(hwo); }
+        for (int slot = 0; slot < slots; slot++) {
+          if (active[slot]) {
+            try { waveOutUnprepareHeader(hwo, ref headers[slot], (uint)Marshal.SizeOf(typeof(WAVEHDR))); } catch { }
+            if (pins[slot].IsAllocated) pins[slot].Free();
+          }
+        }
       }
     }
     public static void ProbeOrPlay(int deviceId, string path, bool probe) {

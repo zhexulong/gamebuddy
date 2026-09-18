@@ -35,6 +35,7 @@ export class MicroChunkRenderSink {
   readonly #silenceSamples: number;
   readonly #fadeWindow: readonly number[];
   #buffer: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+  #lastSounded: Uint8Array<ArrayBufferLike> | undefined;
   #stopped = false;
 
   public constructor(play: PcmSink, sampleRate = DEFAULT_SAMPLE_RATE) {
@@ -66,25 +67,37 @@ export class MicroChunkRenderSink {
     while (this.#buffer.byteLength >= this.#microChunkSamples * 2) {
       const microChunk = this.#buffer.subarray(0, this.#microChunkSamples * 2);
       this.#buffer = this.#buffer.subarray(this.#microChunkSamples * 2);
+      this.#lastSounded = microChunk;
       await this.#play(ensureOwn(microChunk));
     }
   }
 
   /**
    * Immediately fade the remaining buffered audio to silence, pad silence, and
-   * release the tail. Subsequent play() calls are ignored until reset().
+   * release the tail. If the buffer is already drained (all audio was emitted as
+   * full micro-chunks), the tail of the last sounded chunk is faded instead so
+   * the device never hears a hard step into the silence pad. Subsequent play()
+   * calls are ignored until reset().
    */
   public async stop(): Promise<void> {
     if (this.#stopped) return;
     this.#stopped = true;
-    await this.#play(applyFade(this.#buffer, this.#fadeWindow, this.#fadeSamples));
+    const tailSource =
+      this.#buffer.byteLength > 0
+        ? this.#buffer
+        : this.#lastSounded === undefined
+          ? new Uint8Array(0)
+          : this.#lastSounded;
+    await this.#play(applyFade(tailSource, this.#fadeWindow, this.#fadeSamples));
     await this.#play(new Uint8Array(this.#silenceSamples * 2));
     this.#buffer = new Uint8Array(0);
+    this.#lastSounded = undefined;
   }
 
   /** Re-arm after a stop so a later utterance can play again. */
   public reset(): void {
     this.#buffer = new Uint8Array(0);
+    this.#lastSounded = undefined;
     this.#stopped = false;
   }
 }
