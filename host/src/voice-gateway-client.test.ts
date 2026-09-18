@@ -836,3 +836,63 @@ test("v2 streaming lane sends stream_speech_chunk and receives pushed playback o
     await close(server);
   }
 });
+
+test("quarantined gateway_state revokes audio admission for graceful text fallback", async () => {
+  let peer: Socket | undefined;
+  const server = await listen((socket) => {
+    peer = socket;
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) return;
+        const request = JSON.parse(buffer.slice(0, newline)) as { type: string; requestId: string };
+        buffer = buffer.slice(newline + 1);
+        if (request.type === "hello") reply(socket, request.requestId, { type: "hello_ack", protocolVersion: 1 });
+        else if (request.type === "health")
+          reply(socket, request.requestId, {
+            type: "health",
+            protocolVersion: 1,
+            status: "ready",
+            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 4 },
+          });
+        else if (request.type === "speech_enqueue") reply(socket, request.requestId, { type: "accepted", value: true });
+      }
+    });
+  });
+  try {
+    const client = await LocalVoiceGatewayClient.connect({ port: port(server), token: "voice_token_1234567890" });
+    await client.health();
+    const admission = client.createAudioEpochAdmission();
+    const binding = admission.capture();
+    const enqueueAdmission = audioEnqueueAdmission(admission, binding);
+    await client.enqueue(expression(), enqueueAdmission); // healthy path works
+
+    // The gateway pushes a quarantined state on the same socket; the client
+    // must revoke the audio admission so later enqueue calls fail closed.
+    socketPush(peer!, {
+      protocolVersion: 2,
+      sessionId: "gateway",
+      connectionEpoch: 4,
+      timestampMs: Date.now(),
+      type: "gateway_state",
+      state: { ready: false, capture: "unavailable", speech: "ready", reasonCode: "quarantined" },
+    });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    await assert.rejects(
+      () => client.enqueue(expression(), enqueueAdmission),
+      /voice_audio_epoch_stale/,
+      "a quarantined gateway must revoke audio admission (graceful text fallback)",
+    );
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+function socketPush(socket: Socket, value: unknown): void {
+  socket.write(`${JSON.stringify(value)}\n`);
+}
