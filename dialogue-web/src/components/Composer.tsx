@@ -1,6 +1,9 @@
-import { SendHorizontal, Square } from "lucide-react";
+import { Mic, MicOff, SendHorizontal, Square } from "lucide-react";
 import { type ChangeEvent, type KeyboardEvent, useEffect, useRef } from "react";
 import type { Messages } from "../i18n";
+
+/** Voice surface narrow state from the additive optional snapshot field. */
+export type VoiceSurfaceStateV1 = Readonly<{ state: "unavailable" | "ready" | "speaking" }>;
 
 export function Composer({
   value,
@@ -10,6 +13,7 @@ export function Composer({
   isGenerating,
   disabled,
   labels,
+  voice,
 }: {
   value: string;
   onChange: (text: string) => void;
@@ -18,6 +22,8 @@ export function Composer({
   isGenerating: boolean;
   disabled?: boolean;
   labels: Messages;
+  /** Additive optional voice surface; absent null renders no mic icon. */
+  voice?: VoiceSurfaceStateV1 | null;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -53,6 +59,27 @@ export function Composer({
           aria-label={labels.typeMessagePlaceholder}
         />
         <div className="composer-actions">
+          {voice !== undefined && voice !== null && (
+            <span
+              className={
+                voice.state === "speaking"
+                  ? "voice-status-dot voice-status-speaking"
+                  : voice.state === "ready"
+                    ? "voice-status-dot voice-status-ready"
+                    : "voice-status-dot voice-status-unavailable"
+              }
+              title={labels.voiceReady}
+              aria-label={
+                voice.state === "speaking"
+                  ? labels.voiceSpeaking
+                  : voice.state === "ready"
+                    ? labels.voiceReady
+                    : labels.voiceUnavailable
+              }
+            >
+              {voice.state === "unavailable" ? <MicOff size={16} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
+            </span>
+          )}
           {isGenerating ? (
             <button
               type="button"

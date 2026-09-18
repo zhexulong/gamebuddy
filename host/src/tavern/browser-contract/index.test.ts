@@ -336,6 +336,23 @@ test("memory state requires a read-backed opaque projection revision before it c
   assert.equal(state.memory.mutationAvailable, false);
   assert.equal(state.memory.projectionRevision, null);
   assert.equal(TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check(state), true);
+  // Additive optional voice surface: absent (old shell) and the three states
+  // validate; a forged extra field or unknown state is rejected.
+  assert.equal(TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: null }), true);
+  assert.equal(
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "unavailable" } }),
+    true,
+  );
+  assert.equal(TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "ready" } }), true);
+  assert.equal(
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "speaking" } }),
+    true,
+  );
+  assert.equal(TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "bogus" } }), false);
+  assert.equal(
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "ready", extra: 1 } }),
+    false,
+  );
   // When a projectionRevision is available, readAvailable must be true.
   assert.equal(
     TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({

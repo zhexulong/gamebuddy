@@ -304,6 +304,20 @@ test("validateSnapshot accepts the canonical reference-profile literal", () => {
   assert.equal(withProblemTurn.chat.turn.problemCode, "runtime_unavailable");
 });
 
+test("validateSnapshot accepts the additive optional voice surface", () => {
+  // Absent (old shell) and null both validate; no voice equals no mic icon.
+  assert.doesNotThrow(() => validateSnapshot(snapshot()));
+  assert.doesNotThrow(() => validateSnapshot(snapshot({ voice: null })));
+  for (const state of ["unavailable", "ready", "speaking"]) {
+    const parsed = validateSnapshot(snapshot({ voice: { state } }));
+    assert.equal(parsed.voice?.state, state);
+  }
+  // A forged/extra/malformed voice shape must be rejected, additive or not.
+  assert.throws(() => validateSnapshot(snapshot({ voice: { state: "broken" } })), TavernProtocolError);
+  assert.throws(() => validateSnapshot(snapshot({ voice: { state: "ready", extra: true } })), TavernProtocolError);
+  assert.throws(() => validateSnapshot(snapshot({ voice: {} })), TavernProtocolError);
+});
+
 test("validateSnapshot rejects extra and missing fields", async () => {
   const cases = [
     snapshot({ extra: true }),

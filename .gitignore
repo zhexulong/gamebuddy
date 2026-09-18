@@ -129,3 +129,6 @@ dialogue-web/playwright-report/
 
 # voice v2 wire rehearsal artifact
 voice-gateway/scripts/pipeline-v2-rehearsal.json
+
+# voice surface rehearsal artifact
+voice-gateway/scripts/pipeline-voice-surface-rehearsal.json

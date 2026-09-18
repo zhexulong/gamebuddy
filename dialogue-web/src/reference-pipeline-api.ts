@@ -156,6 +156,8 @@ export type TavernStateSnapshotV1 = Readonly<{
     worldInfo: Readonly<Record<string, unknown>> | null;
   }> | null;
   memory: Readonly<{ readAvailable: boolean; mutationAvailable: boolean; projectionRevision: string | null }>;
+  /** Additive optional v1 voice surface: present only when a Host voice surface is attached. */
+  voice?: Readonly<{ state: "unavailable" | "ready" | "speaking" }> | null;
   eventStream: Readonly<{ epoch: string; cursor: string }> | null;
 }>;
 
@@ -313,6 +315,10 @@ const SNAPSHOT_KEYS = [
   "memory",
   "eventStream",
 ] as const;
+/** Additive v1 optional `voice` field: old shells send keys without it; new shells may include it. */
+const SNAPSHOT_KEYS_WITH_VOICE = [...SNAPSHOT_KEYS, "voice"] as const;
+const VOICE_SURFACE_KEYS = ["state"] as const;
+const VOICE_SURFACE_STATES = ["unavailable", "ready", "speaking"] as const;
 const SNAPSHOT_BUILD_KEYS = ["browserContract", "profileId"] as const;
 const SNAPSHOT_BROWSER_SESSION_KEYS = ["expiresAtMs"] as const;
 const SNAPSHOT_SELECTION_KEYS = ["chatHandle", "generation", "stateRevision"] as const;
@@ -617,7 +623,12 @@ function isBrowserEvent(value: unknown): value is BrowserEventV1 {
 }
 
 function isSnapshot(value: unknown): value is TavernStateSnapshotV1 {
-  if (!isRecord(value) || !hasExactKeys(value, SNAPSHOT_KEYS)) return false;
+  if (!isRecord(value)) return false;
+  // Additive optional `voice` may be absent or present; no other key may vary.
+  const ownKeys = Object.keys(value).sort();
+  const baseKeys = [...SNAPSHOT_KEYS].sort();
+  const withVoiceKeys = [...SNAPSHOT_KEYS_WITH_VOICE].sort();
+  if (!hasExactKeys(value, ownKeys.length === baseKeys.length ? baseKeys : withVoiceKeys)) return false;
   if (value.apiVersion !== TAVERN_BROWSER_API_VERSION) return false;
   if (
     !isRecord(value.build) ||
@@ -651,6 +662,12 @@ function isSnapshot(value: unknown): value is TavernStateSnapshotV1 {
   if (typeof value.memory.readAvailable !== "boolean" || typeof value.memory.mutationAvailable !== "boolean")
     return false;
   if (value.memory.projectionRevision !== null && !isOpaqueHandle(value.memory.projectionRevision)) return false;
+  if (
+    "voice" in value &&
+    value.voice !== null &&
+    (!isRecord(value.voice) || !hasExactKeys(value.voice, VOICE_SURFACE_KEYS) || !isOneOf(value.voice.state, VOICE_SURFACE_STATES))
+  )
+    return false;
   if (value.eventStream !== null && !isEventStream(value.eventStream)) return false;
   return true;
 }

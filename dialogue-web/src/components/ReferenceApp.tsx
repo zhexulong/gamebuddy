@@ -549,6 +549,7 @@ export function ReferenceApp() {
               isGenerating={stopAvailable}
               disabled={!submitAvailable}
               labels={labels()}
+              voice={view.session.snapshot.voice}
             />
           </main>
         </>

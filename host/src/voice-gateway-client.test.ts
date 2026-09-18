@@ -896,3 +896,60 @@ test("quarantined gateway_state revokes audio admission for graceful text fallba
 function socketPush(socket: Socket, value: unknown): void {
   socket.write(`${JSON.stringify(value)}\n`);
 }
+
+test("voice surface reader projects unavailable before health, then ready, then speaking on enqueue until terminal observation", async () => {
+  let peer: Socket | undefined;
+  const server = await listen((socket) => {
+    peer = socket;
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) return;
+        const request = JSON.parse(buffer.slice(0, newline)) as { type: string; requestId: string };
+        buffer = buffer.slice(newline + 1);
+        if (request.type === "hello") reply(socket, request.requestId, { type: "hello_ack", protocolVersion: 1 });
+        else if (request.type === "health")
+          reply(socket, request.requestId, {
+            type: "health",
+            protocolVersion: 1,
+            status: "ready",
+            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 5 },
+          });
+        else if (request.type === "speech_enqueue") reply(socket, request.requestId, { type: "accepted", value: true });
+      }
+    });
+  });
+  try {
+    const client = await LocalVoiceGatewayClient.connect({ port: port(server), token: "voice_token_1234567890" });
+    const reader = client.createVoiceSurfaceReader();
+    // Not yet health-validated: no usable surface, no mic icon.
+    assert.equal(reader(), null);
+    await client.health();
+    assert.deepEqual(reader(), Object.freeze({ state: "ready" }));
+    // An accepted utterance moves the surface to speaking.
+    const admission = client.createAudioEpochAdmission();
+    const binding = admission.capture();
+    await client.enqueue(expression(), audioEnqueueAdmission(admission, binding));
+    assert.deepEqual(reader(), Object.freeze({ state: "speaking" }));
+    // The terminal playback observation (pushed by the v2 runtime) settles it.
+    socketPush(peer!, {
+      protocolVersion: 2,
+      sessionId: "gateway",
+      connectionEpoch: 5,
+      timestampMs: Date.now(),
+      type: "playback_observation",
+      speechJobId: "speech_job_09",
+      audioEndMs: 480,
+      terminalStatus: "completed",
+    });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    assert.deepEqual(reader(), Object.freeze({ state: "ready" }));
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});

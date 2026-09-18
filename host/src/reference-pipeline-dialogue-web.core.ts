@@ -78,6 +78,8 @@ export async function sendProjectedSnapshot(
       mutationAvailable: false,
       projectionRevision: null,
     },
+    // Additive optional v1 field; projected only when a Host voice surface is attached.
+    ...(state.voice === null ? {} : { voice: state.voice }),
     eventStream: profile.routeIds.includes("events") && state.eventStream !== null ? state.eventStream : null,
   };
   if (!TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check(snapshot))
