@@ -13,23 +13,15 @@ import {
 import { type HostDeploymentManifest, loadHostDeploymentManifest } from "./deployment-manifest.js";
 import { parseDialogueLaunchMode } from "./dialogue-launch-mode.js";
 import {
+  startChatOnlyPresentationAdmission,
   startDesktopPresentationAdmission,
+  startTavernManagementPresentationAdmission,
   type DesktopPresentationAdmission,
 } from "./composition/desktop-presentation-admission-owner.js";
 import { createStardewGamePresentationProjection } from "./games/stardew/provider.js";
 import { createStardewProductionLifecycleCoordinator } from "./stardew-production-lifecycle-coordinator.internal.js";
-import { composeTavernProfile } from "./tavern/browser-contract/index.js";
 import { createChatEventStream } from "./tavern/chat-event-stream.js";
-import { createChatManagementService } from "./tavern/chat-management/chat-management-service.js";
-import { createChatPipelineService } from "./tavern/chat-pipeline-service.js";
-import { createMemoryManagementService } from "./tavern/memory-management/memory-management.js";
 import { closeReferencePipelineRuntime } from "./tavern/reference-pipeline-runtime-lifecycle.js";
-import { createReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
-import { startReferencePipelineStaticShellComposition } from "./tavern/reference-pipeline-static-shell-composition.js";
-import { createTavernManagementStateFacade } from "./tavern/tavern-management-state.js";
-import { startTavernManagementStaticShellComposition } from "./tavern/tavern-management-static-shell-composition.js";
-import { createWorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
-import { createWorldInfoManagementRepository } from "./tavern/world-info-management/world-info-management.js";
 import { createChatLiveWindowsReparseInspector, createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import { createPublishedWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.js";
 
@@ -47,56 +39,56 @@ if (launch.profile === "management") {
 }
 
 async function runReferenceProfile(manifest: HostDeploymentManifest, mode: "fresh" | "known"): Promise<void> {
-  // MIGRATION-ERA (browser/product helper): this Chat-only preview profile still
-  // assembles its own reference-pipeline listener and Chat-lane services. The
-  // composition-owned presentation admission owner is the production owner of
-  // that startup; this profile goes away with this entry (Lane E).
+  // MIGRATION-ERA (browser/product helper): this Chat-only profile is now a
+  // pure dispatch into the composition-owned chat-only presentation admission
+  // (Lane E1); nothing but the dispatch remains here, and this entry goes away
+  // with Lane E3.
   const launchOptions =
     launch.tavernNarrativeGateNonceSha256 === undefined
       ? undefined
       : { tavernNarrativeGateNonceSha256: launch.tavernNarrativeGateNonceSha256 };
-  const profile = composeTavernProfile({
-    profileId: "gamebuddy.chat-core.reference-pipeline",
-    releaseTier: "chat_core",
-    routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status", "events"],
-    operationIds: ["chat.submit", "chat.cancel"],
-    navigationItemIds: ["chat"],
-  });
   const bootstrapToken = randomBytes(32).toString("base64url");
   const facade =
     mode === "known"
       ? await createKnownUnmountedChatSemanticFacade(manifest, launchOptions)
       : await createFreshUnmountedChatSemanticFacade(manifest, launchOptions);
   let lease: Awaited<ReturnType<typeof facade.startMountedChatRuntime>> | undefined;
-  let pipelineService: ReturnType<typeof createChatPipelineService> | undefined;
-  let server: Awaited<ReturnType<typeof startReferencePipelineStaticShellComposition>> | undefined;
+  let admission: DesktopPresentationAdmission | undefined;
   const eventStream = createChatEventStream();
   try {
     lease = await facade.startMountedChatRuntime();
-    const referenceStateFacade = await createReferencePipelineStateFacade(manifest, lease, profile, eventStream);
-    pipelineService = createChatPipelineService({ manifest, lease, profile, eventStream });
-    const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+    const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
     const inspector = process.env.GAMEBUDDY_CHAT_LIVE_ARTIFACT === "gamebuddy.chat-live.v1"
-    ? await createChatLiveWindowsReparseInspector(artifactRoot)
-    : await createPublishedWindowsReparseInspector(artifactRoot);
-    server = await startReferencePipelineStaticShellComposition({
-      referenceStateFacade,
-      pipelineService,
-      eventStream,
-      profile,
+    ? await createChatLiveWindowsReparseInspector(hostArtifactRoot)
+    : await createPublishedWindowsReparseInspector(hostArtifactRoot);
+    admission = await startChatOnlyPresentationAdmission({
+      manifest,
+      hostArtifactRoot,
       bootstrapToken,
+      eventStream,
+      lease,
       inspector,
-      artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
     });
-    process.stdout.write(`GameBuddy Dialogue is ready at ${server.launchUrl}\n`);
+    process.stdout.write(`GameBuddy Dialogue is ready at ${admission.launchUrl}\n`);
     await waitForSignal();
   } finally {
-    await closeReferencePipelineRuntime({
-      ...(server === undefined ? {} : { server }),
-      ...(pipelineService === undefined ? {} : { pipelineService }),
-      ...(lease === undefined ? {} : { lease }),
-      facade,
-    });
+    let failure: unknown;
+    try {
+      // The chat-only admission closes its own listener and delegated services
+      // before the mounted lease drains below.
+      await admission?.close();
+    } catch (error) {
+      failure ??= error;
+    }
+    try {
+      await closeReferencePipelineRuntime({
+        ...(lease === undefined ? {} : { lease }),
+        facade,
+      });
+    } catch (error) {
+      failure ??= error;
+    }
+    if (failure !== undefined) throw failure;
   }
 }
 
@@ -192,72 +184,53 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
 }
 
 async function runManagementProfile(manifest: HostDeploymentManifest, mode: "fresh" | "known"): Promise<void> {
-  // MIGRATION-ERA (browser/product helper): this Tavern-management preview profile
-  // still assembles its own management listener, management/memory/world-info
-  // services, and state facade. It is not yet covered by the composition-owned
-  // presentation admission owner; this profile goes away with this entry (Lane E).
-  const profile = composeTavernProfile({
-    profileId: "gamebuddy.tavern-management.chat-list-title",
-    releaseTier: "tavern_management",
-    routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "memory.read", "memory.mutate", "world-info.read", "world-info.bind"],
-    operationIds: ["draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"],
-    // A mounted Memory route is paired with the Memory navigation item; the
-    // item only projects `available` after the exact-bound read succeeds.
-    navigationItemIds: ["chat", "memory"],
-  });
+  // MIGRATION-ERA (browser/product helper): this Tavern-management profile is
+  // now a pure dispatch into the composition-owned management presentation
+  // admission (Lane E1); nothing but the dispatch remains here, and this entry
+  // goes away with Lane E3.
   const bootstrapToken = randomBytes(32).toString("base64url");
   const facade =
     mode === "known"
       ? await createKnownUnmountedChatSemanticFacade(manifest)
       : await createFreshUnmountedChatSemanticFacade(manifest);
   let lease: Awaited<ReturnType<typeof facade.startMountedChatRuntime>> | undefined;
-  let managementService: ReturnType<typeof createChatManagementService> | undefined;
-  let memoryService: ReturnType<typeof createMemoryManagementService> | undefined;
-  let worldInfoService: Awaited<ReturnType<typeof createWorldInfoBindingManagementService>> | undefined;
-  let worldInfoRepository: ReturnType<typeof createWorldInfoManagementRepository> | undefined;
-  let server: Awaited<ReturnType<typeof startTavernManagementStaticShellComposition>> | undefined;
+  let admission: DesktopPresentationAdmission | undefined;
+  const eventStream = createChatEventStream();
   try {
     lease = await facade.startMountedChatRuntime();
-    // The real durable managed repository backs the lease-bound binding
-    // service; no browser fixture or alternate resolver is ever injected.
-    worldInfoRepository = createWorldInfoManagementRepository(manifest.runtimeRoot);
-    worldInfoService = createWorldInfoBindingManagementService({
-      manifest,
-      lease,
-      profile,
-      repository: worldInfoRepository,
-    });
-    const managementStateFacade = await createTavernManagementStateFacade(
-      manifest,
-      lease,
-      profile,
-      worldInfoService,
-    );
-    managementService = createChatManagementService({ manifest, lease, profile });
-    memoryService = createMemoryManagementService({ manifest, lease, profile });
-    const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+    const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
     const inspector = process.env.GAMEBUDDY_CHAT_LIVE_ARTIFACT === "gamebuddy.chat-live.v1"
-    ? await createChatLiveWindowsReparseInspector(artifactRoot)
-    : await createPublishedWindowsReparseInspector(artifactRoot);
-    server = await startTavernManagementStaticShellComposition({
-      managementStateFacade,
-      managementService,
-      memoryService,
-      worldInfoService,
-      profile,
+    ? await createChatLiveWindowsReparseInspector(hostArtifactRoot)
+    : await createPublishedWindowsReparseInspector(hostArtifactRoot);
+    admission = await startTavernManagementPresentationAdmission({
+      manifest,
+      hostArtifactRoot,
       bootstrapToken,
+      eventStream,
+      lease,
       inspector,
-      artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
     });
-    process.stdout.write(`GameBuddy Tavern management is ready at ${server.launchUrl}\n`);
+    process.stdout.write(`GameBuddy Tavern management is ready at ${admission.launchUrl}\n`);
     await waitForSignal();
   } finally {
-    await closeReferencePipelineRuntime({
-      ...(server === undefined ? {} : { server }),
-      ...(managementService === undefined ? {} : { pipelineService: managementService }),
-      ...(lease === undefined ? {} : { lease }),
-      facade,
-    });
+    let failure: unknown;
+    try {
+      // The management admission closes its own listener and delegated
+      // management/Memory/World Info services before the mounted lease drains
+      // below.
+      await admission?.close();
+    } catch (error) {
+      failure ??= error;
+    }
+    try {
+      await closeReferencePipelineRuntime({
+        ...(lease === undefined ? {} : { lease }),
+        facade,
+      });
+    } catch (error) {
+      failure ??= error;
+    }
+    if (failure !== undefined) throw failure;
   }
 }
 
