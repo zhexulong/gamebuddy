@@ -48,6 +48,22 @@ export async function runNavigationMutationSmoke(
     const worldMap = await client.navigationRead({ operation: "inspect_world_map", args: {} });
     assertWorldMap(worldMap);
     const query = config.NativeLocalPlayerFixture.NavigationMutationTargetLabel;
+    // Semantic recall must not depend on exact-name search: a partial/prefix
+    // query for the same destination must surface it among the fuzzy
+    // candidates (proving the managed n-gram index recall, not just the
+    // exact-label path).
+    stage = "find_destination_semantic";
+    const prefix = query.length > 1 ? query.slice(0, Math.ceil(query.length / 2)) : query;
+    const semanticFound = await client.navigationRead({ operation: "find_destination", args: { query: prefix } });
+    const semantic = semanticFound?.payload ?? semanticFound;
+    const semanticLabels = Array.isArray(semantic?.candidates)
+      ? semantic.candidates.map((candidate) => candidate.label)
+      : semantic?.status === "resolved" && semantic?.destination
+        ? [semantic.destination.label]
+        : [];
+    if (!semanticLabels.some((label) => label === query))
+      throw new Error(`navigation_semantic_recall_missed:${query}:${JSON.stringify(semanticLabels)}`);
+
     stage = "find_destination";
     const found = await client.navigationRead({ operation: "find_destination", args: { query } });
     const destination = requireResolvedLabelDestination(found, before.location);
