@@ -1593,6 +1593,64 @@ test("Host service receives only final transcripts from an attached Voice Gatewa
   assert.equal(listener, undefined);
 });
 
+function eventHarnessWithPlayback(
+  service: CompanionHostService,
+): (observation: Readonly<{ terminalStatus: string; speechJobId: string | undefined }>) => void {
+  let listener:
+    | ((observation: Readonly<{ terminalStatus: string; speechJobId: string | undefined }>) => void)
+    | undefined;
+  service.attachVoicePlaybackObservationSource({
+    onPlaybackObservation(next) {
+      listener = next;
+      return () => {
+        listener = undefined;
+      };
+    },
+  });
+  return (observation) => listener?.(observation);
+}
+
+test("cancelled playback observation injects a one-shot interruption note into the next prompt batch and never touches Chat/Game", async () => {
+  const adapter = eventHarness();
+  const harness = fakeLoop();
+  const loop = { ...harness.loop, async abortAndClear() {} };
+  const service = new CompanionHostService(loop as never, adapter.events);
+  const observe = eventHarnessWithPlayback(service);
+  // A cancelled playback observation must not cancel or mutate anything.
+  observe({ terminalStatus: "cancelled", speechJobId: "speech_job_07" });
+  await service.acceptPlayerText("继续", "zh-CN", 30);
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
+  const voiceFacts = harness.facts.filter((fact) => (fact as { source?: string }).source === "voice");
+  assert.equal(voiceFacts.length, 1);
+  const fact = voiceFacts[0] as {
+    payload?: { kind?: string; speechJobId?: string | null };
+    contextProjection?: { kind?: string; text?: string };
+  };
+  assert.equal(fact.payload?.kind, "speech_interrupted");
+  assert.equal(fact.payload?.speechJobId, "speech_job_07");
+  assert.equal(fact.contextProjection?.kind, "speech_interrupted");
+  assert.ok((fact.contextProjection?.text ?? "").includes("打断"));
+  // One-shot: the next player input does not re-inject the note.
+  const before = harness.facts.length;
+  await service.acceptPlayerText("再说一句", "zh-CN", 40);
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
+  assert.equal(harness.facts.length, before);
+  service.close();
+});
+
+test("completed playback observation sets no interruption note", async () => {
+  const adapter = eventHarness();
+  const harness = fakeLoop();
+  const loop = { ...harness.loop, async abortAndClear() {} };
+  const service = new CompanionHostService(loop as never, adapter.events);
+  const observe = eventHarnessWithPlayback(service);
+  observe({ terminalStatus: "completed", speechJobId: "speech_job_08" });
+  await service.acceptPlayerText("继续", "zh-CN", 30);
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
+  assert.equal(harness.facts.filter((fact) => (fact as { source?: string }).source === "voice").length, 0);
+  service.close();
+});
+
 
 function stopSettlementFact(input: Readonly<{
   stopId: string;
