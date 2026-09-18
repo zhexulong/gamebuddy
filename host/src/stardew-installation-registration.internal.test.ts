@@ -306,7 +306,14 @@ test("owner transaction rejects stale and mismatched settlement markers without 
     await assert.rejects(withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
       await storage.releaseSettledPointer(2, settlementMarker);
     }), { message: "stardew_installation_registration_unavailable" });
-    assert.equal((await readStardewInstallationRegistration(subject.root))?.revision, 2);
+    // The intentionally mismatched settlement marker stays on disk and the
+    // record revision is never rewritten. Public read is unavailable while a
+    // marker exists, so the revision is asserted inside the owner lock.
+    await withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
+      assert.equal((await storage.readRegistration())?.revision, 2);
+      assert.equal((await storage.readRegistration())?.activeAttempt?.bootstrapCorrelation, "bootstrap_01");
+    });
+    assert.notEqual(await readFile(markerPath, "utf8"), "");
   } finally {
     await subject.dispose();
   }
