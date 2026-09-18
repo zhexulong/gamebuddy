@@ -457,6 +457,12 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
         value = null;
       }
       if (isVoiceGatewayEventV2(value) && this.#capabilities.ready) {
+        // Degradation guard: a quarantined gateway is not a usable audio
+        // surface — revoke the audio admission so the Host gracefully falls
+        // back to plain text (game action execution is untouched).
+        if (value.type === "gateway_state" && value.state.reasonCode === "quarantined") {
+          this.invalidateAudioAdmission();
+        }
         for (const listener of this.#playbackListeners) listener(value);
         continue;
       }
