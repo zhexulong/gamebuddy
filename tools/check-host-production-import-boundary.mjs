@@ -8,7 +8,7 @@ const ts = requireFromHost("typescript");
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repositoryRoot = resolve(here, "..");
-export const DEFAULT_ROOTS = Object.freeze(["host/src/main.ts", "host/src/dialogue-web-main.ts"]);
+export const DEFAULT_ROOTS = Object.freeze(["host/src/main.ts"]);
 /** Mounted-turn composition is a production island, not an application entry root. */
 export const MOUNTED_TURN_COMPOSITION_ROOTS = Object.freeze([
   "host/src/tavern/player-turn-acceptance.ts",

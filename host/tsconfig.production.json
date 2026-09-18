@@ -9,8 +9,6 @@
   "files": [
     "src/main.ts",
     "src/bootstrap/entry/desktop-host-entry.internal.ts",
-    "src/dialogue-web-main.ts",
-    "src/dialogue-launch-mode.ts",
     "src/stardew-attachment.ts",
     "src/farmhand-companion-preview.ts",
     "src/tavern/static-artifact/index.ts",

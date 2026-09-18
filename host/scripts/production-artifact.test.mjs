@@ -512,7 +512,8 @@ test("production TypeScript emits exactly the two roots' reachable closure", asy
     });
     assert.equal(result.code, 0, result.stderr.toString("utf8"));
     const emitted = (await readdir(emittedRoot, { recursive: true })).map((path) => path.replaceAll("\\", "/"));
-    for (const root of ["main.js", "dialogue-web-main.js", "stardew-attachment.js", ...REQUIRED_VERIFICATION_ROOTS]) assert.ok(emitted.includes(root));
+    for (const root of ["main.js", "stardew-attachment.js", "farmhand-companion-preview.js", ...REQUIRED_VERIFICATION_ROOTS]) assert.ok(emitted.includes(root));
+    assert.ok(!emitted.includes("dialogue-web-main.js"), "removed entry must not be emitted");
     for (const required of [
       "tavern/player-turn-acceptance.internal.js",
       "tavern/provider-attempt-claim.internal.js",
@@ -1348,7 +1349,7 @@ test("production child environment strips inherited Pi and Magic Context selecto
   assert.match(child.GAMEBUDDY_CONTROL_TOKEN ?? "", /^[A-Za-z0-9_-]{16,256}$/);
 });
 
-test("Game launcher credentials are fresh, grammar-valid, child-only, and absent for Dialogue", () => {
+test("Game launcher credentials are fresh, grammar-valid, child-only, and absent for non-launcher entries", () => {
   const inherited = { GAMEBUDDY_CONTROL_PIPE: "inherited_pipe", GAMEBUDDY_CONTROL_TOKEN: "inherited_token_value", SAFE: "ok" };
   const first = createProductionChildEnvironment("main.js", inherited);
   const second = createProductionChildEnvironment("main.js", inherited);
@@ -1358,7 +1359,7 @@ test("Game launcher credentials are fresh, grammar-valid, child-only, and absent
   assert.notEqual(first.GAMEBUDDY_CONTROL_TOKEN, second.GAMEBUDDY_CONTROL_TOKEN);
   assert.equal(inherited.GAMEBUDDY_CONTROL_PIPE, "inherited_pipe");
   assert.equal(inherited.GAMEBUDDY_CONTROL_TOKEN, "inherited_token_value");
-  assert.deepEqual(createProductionChildEnvironment("dialogue-web-main.js", inherited), { SAFE: "ok" });
+  assert.deepEqual(createProductionChildEnvironment("farmhand-companion-preview.js", inherited), { SAFE: "ok" });
 });
 
 
@@ -1664,7 +1665,7 @@ test("starter accepts exactly one configured root then forwards config arguments
   // Use Host-local regular package directories in this isolated fixture.
   await installArtifactTestDependencies(root);
   const start = join(root, "scripts", "start-test-artifact.mjs");
-  for (const entry of ["main.js", "dialogue-web-main.js"]) {
+  for (const entry of ["main.js", "farmhand-companion-preview.js"]) {
     await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({ entryRoots: [entry], resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }], externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] } })));
     const emitted = join(root, `emitted-${entry}`); await mkdir(join(emitted, "tavern"), { recursive: true });
     for (const verificationRoot of REQUIRED_VERIFICATION_ROOTS) {

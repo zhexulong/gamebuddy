@@ -57,19 +57,16 @@ service do not require Stardew factories, transport, scope, or snapshots. It is
 not a shipped second game or a generic bridge protocol. The current `Scope`,
 `Snapshot`, and `bridge-v1` wire contract remain Stardew-shaped and unchanged.
 
-## Dialogue Web (experimental vertical slice)
+## Dialogue surfaces (Chat / Tavern management)
 
 `pnpm --filter @gamebuddy/dialogue-web build` builds the GameBuddy-owned local
 chat surface. It does **not** call the `pi` CLI or access a user's Pi directory.
-Create an operator-owned config outside this repository from
-`dialogue.config.example.json`, then run:
-
-```powershell
-pnpm --filter @gamebuddy/companion-host start:dialogue <dialogue-config.json>
-```
-
-The command prints a one-time `127.0.0.1` capability URL. Open it in the same
-local browser. `continuityId` selects the Host-owned shared continuity; omitting
+The Chat, Tavern-management, and composed Chat+Game surfaces are assembled by
+the single Desktop composition owner (`desktop-host-entry`); the temporary
+standalone dialogue entry is removed. The fresh-root Tavern gates drive the
+exact composition bootstrap through `tools/desktop-composition-launch.mjs`; the
+printed one-time `127.0.0.1` capability URL is opened in the same local
+browser. `continuityId` selects the Host-owned shared continuity; omitting
 `surfaceSessionId` resumes that continuity's latest non-ended Chat surface, and
 supplying an existing opaque `surfaceSessionId` resumes that exact Chat surface.
 The browser never selects either identifier. The Chat surface starts an embedded,

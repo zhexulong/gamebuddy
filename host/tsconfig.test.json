@@ -18,8 +18,6 @@
   ],
   "exclude": [
     "src/main.ts",
-    "src/dialogue-web-main.ts",
-    "src/dialogue-web-main.test.ts",
     "src/windows-legacy-authority-seal/**"
   ]
 }
