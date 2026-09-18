@@ -155,6 +155,25 @@ test("malformed, foreign, duplicate, stdout-forged, timeout, disconnect, and tea
   const teardown = transportHarness({ terminateResult: false });
   const teardownResult = await passed(teardown, { timeoutMs: 200, teardownTimeoutMs: 10 });
   assert.deepEqual(teardownResult, { state: "BLOCKED", reasonCode: "teardown_failure" });
+
+  // A real forced-kill teardown (taskkill /T /F) leaves the victim with a
+  // non-zero exit code; that must not downgrade an already-PASSED outcome.
+  const forcedKill = transportHarness({ terminateResult: true });
+  const forcedKillResult = runOperationalGateIpc({ transport: forcedKill.transport, task: "inspect the chest", nonceSha256: nonce, timeoutMs: 200, teardownTimeoutMs: 200 });
+  forcedKill.emit(ready);
+  await new Promise((resolve) => setImmediate(resolve));
+  forcedKill.emit(terminal);
+  // taskkill /F reports code 1 on the killed child; the kill was requested so
+  // the teardown is owned by the runner, not a child failure.
+  forcedKill.exit(1, null);
+  assert.deepEqual(await forcedKillResult, {
+    state: "PASSED",
+    ready,
+    terminalEvidence: terminal,
+    dispatchCount: 1,
+    terminalCount: 1,
+  });
+  assert.equal(forcedKill.terminateCalls, 1);
 });
 
 test("process-tree termination uses the exact owned PID and fails closed when the tree reaper fails", async () => {
