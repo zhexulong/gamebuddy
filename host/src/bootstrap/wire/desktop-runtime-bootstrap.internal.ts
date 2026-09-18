@@ -54,7 +54,7 @@ export async function runDesktopHostBootstrap(moduleDirectory: string): Promise<
 
   const frame = parseBootstrapFrame(await readBootstrapFrame());
   const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory);
-  const assemblyInput = await loadDesktopHostAssemblyInput();
+  const assemblyInput = await loadDesktopHostAssemblyInput(publishCompositionReady);
   const rootAuthority = mintDesktopRootLayoutCapability(rootLayout);
   const guardianAuthority = mintDesktopGuardianSessionCapability(frame);
   const composition = await createDesktopProductCompositionForBootstrap(rootAuthority, guardianAuthority, assemblyInput);
@@ -254,17 +254,55 @@ async function createDesktopProductCompositionForBootstrap(
   }
 }
 
-async function loadDesktopHostAssemblyInput(): Promise<DesktopHostAssemblyInput> {
+async function loadDesktopHostAssemblyInput(
+  publishLaunchUrl: (launchUrl: string) => void,
+): Promise<DesktopHostAssemblyInput> {
   const manifestPath = process.env.GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST;
   const gameSessionMode = process.env.GAMEBUDDY_HOST_GAME_SESSION_MODE;
-  if (manifestPath === undefined || manifestPath.length === 0 || (gameSessionMode !== "fresh" && gameSessionMode !== "known")) throw unavailable();
+  const surface = process.env.GAMEBUDDY_HOST_SURFACE;
+  const tavernNarrativeGateNonceSha256 = process.env.GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256;
+  if (
+    manifestPath === undefined ||
+    manifestPath.length === 0 ||
+    (gameSessionMode !== "fresh" && gameSessionMode !== "known") ||
+    (surface !== undefined && surface !== "composed-reference-game" && surface !== "chat-only" && surface !== "management") ||
+    (tavernNarrativeGateNonceSha256 !== undefined && !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256))
+  ) throw unavailable();
   let manifest;
   try {
     manifest = await loadHostDeploymentManifest(manifestPath);
   } catch {
     throw unavailable();
   }
-  return Object.freeze({ manifest, gameSessionMode });
+  return Object.freeze({
+    manifest,
+    gameSessionMode,
+    ...(surface === undefined ? {} : { surface }),
+    ...(tavernNarrativeGateNonceSha256 === undefined ? {} : { tavernNarrativeGateNonceSha256 }),
+    publishLaunchUrl,
+  });
+}
+
+/**
+ * Host-owned one-shot publication of the composed surface launch URL. The
+ * desktop launcher consumes it over the child IPC channel; production Desktop
+ * spawns without an IPC channel, so the publication is a no-op there and the
+ * composition stays the sole owner of the launch URL. Gate evidence failure
+ * never changes the already-running product composition.
+ */
+function publishCompositionReady(launchUrl: string): void {
+  if (typeof process.send !== "function" || process.connected !== true) return;
+  try {
+    process.send(
+      Object.freeze({
+        schema: "gamebuddy-desktop-composition-ready/v1",
+        protocolVersion: 1,
+        launchUrl,
+      }),
+    );
+  } catch {
+    // Gate evidence publication is best-effort; the composition is already running.
+  }
 }
 
 async function createAuthenticatedDesktopGuardianSession(binding: DesktopGuardianSessionBinding): Promise<DesktopGuardianSession> {

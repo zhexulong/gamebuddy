@@ -120,7 +120,8 @@ test("desktop composition retains the typed root capability and closes the authe
 });
 test("desktop product composition wires the semantic authority, Chat runtime, and Stardew lifecycle owner into reverse-order children", async () => {
   const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts"), "utf8");
-  assert.match(source, /createSharedSemanticProductionAuthorityFromDeploymentManifest\(input\.manifest, input\.gameSessionMode\)/);
+  assert.match(source, /createSharedSemanticProductionAuthorityFromDeploymentManifest\(\s*input\.manifest,\s*input\.gameSessionMode,\s*\.\.\.\(mountOptions === undefined \? \[\] : \[mountOptions\]\),\s*\)/);
+  assert.match(source, /input\.publishLaunchUrl\?\.\(presentationAdmission\.launchUrl\)/);
   assert.match(source, /createChatSemanticFacadeFromSharedAuthority\(shared\.chat\)/);
   assert.match(source, /startMountedChatRuntime\(\)/);
   assert.match(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)/);
@@ -209,6 +210,9 @@ type CompositionDrainFixtureResult = Readonly<{
   presentationStarts: number;
   presentationCloses: number;
   providerLookups: number;
+  mountOptionsNonce: string | null;
+  readyPublished: number;
+  readyUrl: string | null;
   errorMessage?: string;
 }>;
 
@@ -218,7 +222,8 @@ type CompositionDrainFixtureScenario =
   | "presentation-failure"
   | "presentation-missing"
   | "chat-only-surface"
-  | "management-surface";
+  | "management-surface"
+  | "gate-chat-only-surface";
 
 function runCompositionDrainFixture(scenario: CompositionDrainFixtureScenario): Promise<CompositionDrainFixtureResult> {
   const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), "desktop-host-composition-drain-fixture-worker.js");
@@ -309,6 +314,22 @@ test("desktop product composition fails closed when the registered provider expo
   assert.equal(result.coordinator, 1);
   assert.equal(result.shared, 1);
   assert.equal(result.session, 1);
+});
+
+test("desktop product composition forwards the gate marker nonce and publishes the launch URL once through the Host seam", async () => {
+  // The gate-selected chat-only variant receives the Host-owned marker nonce
+  // and publishes the composed launch URL exactly once through the assembly
+  // input seam; the URL is never projected through the facade.
+  const result = await runCompositionDrainFixture("gate-chat-only-surface");
+  assert.equal(result.outcome, "constructed");
+  assert.equal(result.coordinator, 0);
+  assert.equal(result.providerLookups, 0);
+  assert.equal(result.presentationStarts, 1);
+  assert.equal(result.presentationCloses, 1);
+  assert.equal(result.lease, 1);
+  assert.equal(result.mountOptionsNonce, "a".repeat(64));
+  assert.equal(result.readyPublished, 1);
+  assert.equal(result.readyUrl, "http://127.0.0.1:1/#profile=reference&boot=fixture");
 });
 
 test("desktop product composition builds the chat-only surface with the mounted Chat lane and no Stardew coordinator", async () => {

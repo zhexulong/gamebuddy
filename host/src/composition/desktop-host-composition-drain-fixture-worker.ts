@@ -17,8 +17,10 @@ import type { DesktopRootLayoutCapability } from "./desktop-host-composition.js"
  */
 
 const scenario = process.argv[2] ?? "";
-const counts = { shared: 0, lease: 0, facade: 0, session: 0, coordinator: 0, presentationStarts: 0, presentationCloses: 0, providerLookups: 0 };
+const counts = { shared: 0, lease: 0, facade: 0, session: 0, coordinator: 0, presentationStarts: 0, presentationCloses: 0, providerLookups: 0, readyPublished: 0, readyUrl: null as string | null, mountOptionsNonce: null as string | null };
 const constructionFailure = new Error("game_owner_construction_failed");
+
+const gateReadyNonce = "a".repeat(64);
 
 const sharedAuthority = Object.freeze({
   chat: Object.freeze({}),
@@ -71,11 +73,20 @@ const session = Object.freeze({
 });
 
 const input = Object.freeze(
-  scenario === "chat-only-surface" || scenario === "management-surface"
+  scenario === "chat-only-surface" || scenario === "management-surface" || scenario === "gate-chat-only-surface"
     ? {
         manifest: Object.freeze({}) as unknown as HostDeploymentManifest,
         gameSessionMode: "fresh" as const,
-        surface: (scenario === "chat-only-surface" ? "chat-only" : "management") as "chat-only" | "management",
+        surface: (scenario === "management-surface" ? "management" : "chat-only") as "chat-only" | "management",
+        ...(scenario === "gate-chat-only-surface"
+          ? {
+              tavernNarrativeGateNonceSha256: gateReadyNonce,
+              publishLaunchUrl: (launchUrl: string) => {
+                counts.readyPublished += 1;
+                counts.readyUrl = launchUrl;
+              },
+            }
+          : {}),
       }
     : {
         manifest: Object.freeze({}) as unknown as HostDeploymentManifest,
@@ -88,7 +99,10 @@ async function main(): Promise<void> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   await mock.module(pathToFileURL(join(moduleDirectory, "..", "continuity-semantic-production-coordinator", "continuity-semantic-production-coordinator.js")).href, {
     namedExports: {
-      createSharedSemanticProductionAuthorityFromDeploymentManifest: async () => sharedAuthority,
+      createSharedSemanticProductionAuthorityFromDeploymentManifest: async (_manifest: unknown, _mode: unknown, options?: Readonly<{ tavernNarrativeGateNonceSha256?: string }>) => {
+        counts.mountOptionsNonce = options?.tavernNarrativeGateNonceSha256 ?? null;
+        return sharedAuthority;
+      },
     },
   });
   await mock.module(pathToFileURL(join(moduleDirectory, "..", "continuity-semantic-deployment-composition", "continuity-semantic-chat-facade.internal.js")).href, {
@@ -134,7 +148,7 @@ async function main(): Promise<void> {
   let errorMessage: string | undefined;
   try {
     const composition = await createDesktopProductComposition(rootLayoutCapability, session, input);
-    if (scenario === "chat-only-surface" || scenario === "management-surface") {
+    if (scenario === "chat-only-surface" || scenario === "management-surface" || scenario === "gate-chat-only-surface") {
       // Surface-selected construction succeeds: close through the one product
       // facade so the test can observe the exact children close order.
       outcome = "constructed";

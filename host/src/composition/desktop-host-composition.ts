@@ -87,6 +87,17 @@ export type DesktopHostAssemblyInput = Readonly<{
   gameSessionMode: "fresh" | "known";
   /** Composed surface selection; defaults to the composed reference-game surface. */
   surface?: DesktopHostSurface;
+  /**
+   * Chat-gate marker nonce digest (never a secret) for the narrative-gate
+   * provider-boundary contract; supplied only when the bootstrap caller runs that gate.
+   */
+  tavernNarrativeGateNonceSha256?: string;
+  /**
+   * Host-owned one-shot publication of the composed surface launch URL after
+   * the presentation admission started. The Desktop launcher consumes it as the
+   * gate readiness fact; the URL never enters the composition facade.
+   */
+  publishLaunchUrl?: (launchUrl: string) => void;
 }>;
 
 /**
@@ -109,7 +120,15 @@ export async function createDesktopProductComposition(
   let lifecycleCoordinator: GameLifecycleProviderCapability | undefined;
   let presentationAdmission: DesktopPresentationAdmission | undefined;
   try {
-    shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(input.manifest, input.gameSessionMode);
+    const mountOptions =
+      input.tavernNarrativeGateNonceSha256 === undefined
+        ? undefined
+        : Object.freeze({ tavernNarrativeGateNonceSha256: input.tavernNarrativeGateNonceSha256 });
+    shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(
+      input.manifest,
+      input.gameSessionMode,
+      ...(mountOptions === undefined ? [] : [mountOptions]),
+    );
     // The mounted Chat runtime is a sibling composition child of the Stardew
     // lifecycle owner over the same shared semantic authority. The reference
     // facade entry keeps the lease after the coordinator; here it starts before
@@ -144,6 +163,9 @@ export async function createDesktopProductComposition(
       presentationAdmission = surface === "chat-only"
         ? await startChatOnlyPresentationAdmission(variantInput)
         : await startTavernManagementPresentationAdmission(variantInput);
+      // The composed surface is ready at the Host-owned seam: the launch URL is
+      // published exactly once and never projects through the composition facade.
+      input.publishLaunchUrl?.(presentationAdmission.launchUrl);
       // Children close in reverse registration order: the presentation
       // admission first, then the Chat runtime, then the shared semantic
       // authority; no Game owner participates in this surface.
@@ -173,6 +195,10 @@ export async function createDesktopProductComposition(
       lease: mountedLease,
       presentation,
     });
+    // The composed reference-game surface is ready at the Host-owned seam; the
+    // launch URL is published exactly once and never projects through the
+    // composition facade.
+    input.publishLaunchUrl?.(presentationAdmission.launchUrl);
     // Children close in reverse registration order: the presentation admission
     // first, then the Chat runtime, then the Stardew lifecycle owner, then the
     // shared semantic authority, matching the reference entry's server ->
