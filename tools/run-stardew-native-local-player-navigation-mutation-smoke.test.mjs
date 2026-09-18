@@ -64,7 +64,18 @@ function fake({
             { label: "game-derived-target", destination: { kind: "label", label: "game-derived-target", ref: null } },
           ],
         };
-      assert.equal(args.query, "game-derived-target");
+      assert.ok(args.query === "game-derived-target" || args.query === "game-deriv", `unexpected query ${args.query}`);
+      if (args.query === "game-deriv") {
+        // Semantic recall: the prefix query must surface the target among the
+        // fuzzy candidates (the live gate proves the managed index recall).
+        return {
+          status: "candidates",
+          reason: "fuzzy_match",
+          candidates: [
+            { label: "game-derived-target", contextLabel: null, destination: { kind: "ref", label: null, ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" }, unlockState: "unknown" },
+          ],
+        };
+      }
       return {
         status: "resolved",
         destination: { kind: "label", label: "game-derived-target", ref: null },
@@ -111,7 +122,7 @@ test("producer facts flow through one typed mutation, exact correlation, and a f
   assert.equal(harness.calls.filter(([kind]) => kind === "execute").length, 1);
   assert.deepEqual(
     harness.calls.map(([kind]) => kind),
-    ["observe", "inspect_world_map", "find_destination", "execute", "observe", "find_destination"],
+    ["observe", "inspect_world_map", "find_destination", "find_destination", "execute", "observe", "find_destination"],
   );
   assert.equal(result.before.hasLocation, true);
   assert.equal(result.after.hasLocation, true);
