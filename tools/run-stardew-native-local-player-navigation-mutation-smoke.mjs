@@ -81,6 +81,23 @@ export async function runNavigationMutationSmoke(
     if (evidence.destination !== destination.label) throw new Error("navigation_mutation_evidence_destination_mismatch");
     if (evidence.location !== after.location) throw new Error("navigation_mutation_fresh_location_mismatch");
 
+    // Optional piggybackedScene attachment: the Mod may attach a bounded
+    // destination scene to a succeeded Navigation terminal. Its absence never
+    // fails the navigation (the design makes the attachment optional), but the
+    // live gate records whether it was attached and whether its shape and
+    // location agree with the fresh postcondition.
+    const piggybackedScene = terminal.piggybackedScene ?? null;
+    const piggybackedSceneVerified = piggybackedScene !== null
+      && typeof piggybackedScene.observationId === "string"
+      && piggybackedScene.observationId.startsWith("so1_")
+      && typeof piggybackedScene.currentLocation === "string"
+      && piggybackedScene.currentLocation === after?.location
+      && Array.isArray(piggybackedScene.affordances)
+      && typeof piggybackedScene.partial === "boolean"
+      && (piggybackedScene.partial
+        ? piggybackedScene.truncatedReason === "maximum_affordances" || piggybackedScene.truncatedReason === "payload_limit"
+        : piggybackedScene.truncatedReason === null);
+
     // Re-resolve from the game after completion. This verifier uses the
     // producer's query and returned selector, never a runner-owned destination.
     stage = "postcondition_find";
@@ -99,6 +116,8 @@ export async function runNavigationMutationSmoke(
       correlationVerified: true,
       evidenceVerified: true,
       postconditionVerified: true,
+      piggybackedSceneAttached: piggybackedScene !== null,
+      piggybackedSceneVerified,
       traceCount: trace.length,
       mutationCount: 1,
       durationMs: Date.now() - startedAt,
