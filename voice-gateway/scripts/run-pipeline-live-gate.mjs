@@ -143,8 +143,11 @@ async function rehearsal() {
     for (let index = 0; index < 4 && (await pipeline.pumpAwait()); index += 1);
     await pipeline.cancelSpeech();
     await pipeline.pumpToIdle();
+    await mixer.close(); // wait for the render stats line before summarizing
+    const playoutStats = mixer.playoutStats;
+    const stutterFree = playoutStats === undefined || (playoutStats.maxGapMs <= 40 && playoutStats.gapsOverStepMs <= playoutStats.frames * 0.1 + 3);
     const summary = report({
-      passed: true,
+      passed: stutterFree,
       stage: "rehearsal",
       mixerReady: mixer.ready === true,
       playedSentences: played.sentences,
@@ -152,12 +155,21 @@ async function rehearsal() {
       ttsProvider: ttsForReport.providerId,
       // Phase 2 render path: device opens once and micro-chunks stride stdin.
       renderPath: "winmm_resident_stream",
+      playoutStats,
     });
     await writeFile(artifactPath, JSON.stringify(summary, null, 2));
-    console.log(`voice_gate_passed: ${played.sentences} sentences on ${outputDevice} (tts=${ttsForReport.providerId}, render=winmm_resident_stream)`);
+    console.log(
+      `voice_gate_passed: ${played.sentences} sentences on ${outputDevice} (tts=${ttsForReport.providerId}, render=winmm_resident_stream)` +
+        (playoutStats === undefined
+          ? " (no playout stats)"
+          : ` [maxGap=${playoutStats.maxGapMs}ms overStep=${playoutStats.gapsOverStepMs}/${playoutStats.frames}]`),
+    );
+    if (!stutterFree) {
+      console.error(`voice_gate_stutter: maxGapMs=${playoutStats?.maxGapMs} gapsOverStepMs=${playoutStats?.gapsOverStepMs}`);
+      process.exit(1);
+    }
   } finally {
     await pipeline.close();
-    await mixer.close();
   }
 }
 

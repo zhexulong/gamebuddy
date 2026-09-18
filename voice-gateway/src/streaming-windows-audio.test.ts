@@ -7,6 +7,7 @@ import { createStreamingWindowsAudioMixer } from "./streaming-windows-audio.js";
 class FakeChild extends EventEmitter {
   stdin = new FakeStdin();
   stderr = new FakeStderr();
+  stdout = new FakeStderr();
   killed = false;
   kill() {
     this.killed = true;
