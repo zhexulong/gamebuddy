@@ -48,6 +48,10 @@ namespace GameBuddyWaveOut {
     [DllImport("winmm.dll")] public static extern uint timeEndPeriod(uint uPeriod);
     const uint WHDR_DONE = 0x00000001;
     const uint CALLBACK_EVENT = 0x00050000;
+    // The driver holds this event's handle across the whole playback lifetime;
+    // a local SafeWaitHandle could be finalized mid-play (GC) and leave the
+    // driver signalling a dead handle. Keep it rooted on the class.
+    static AutoResetEvent s_doneEvent = new AutoResetEvent(false);
     static WAVEFORMATEX Format() { return new WAVEFORMATEX { wFormatTag=1, nChannels=1, nSamplesPerSec=16000, nAvgBytesPerSec=32000, nBlockAlign=2, wBitsPerSample=16, cbSize=0 }; }
     static void Check(uint result, string operation) { if (result != 0) throw new InvalidOperationException(operation + "_" + result); }
     public static string[] List() {
@@ -64,7 +68,7 @@ namespace GameBuddyWaveOut {
       }
       return true;
     }
-    static bool WaitDone(AutoResetEvent doneEvent, WAVEHDR[] headers, int slot, long freqTicksPerMs) {
+    static bool WaitDone(WAVEHDR[] headers, int slot, long freqTicksPerMs) {
       long deadlineMs = Math.Max(5000L, (headers[slot].dwBufferLength / 32L) + 3000L);
       long deadline = Stopwatch.GetTimestamp() + deadlineMs * freqTicksPerMs;
       // Distinguish "driver says done but event missed" from "not done yet".
@@ -72,7 +76,7 @@ namespace GameBuddyWaveOut {
       // authoritative WHDR_DONE flag keeps pacing exact (caller bounds CPU by
       // the 20ms audio duration).
       while ((headers[slot].dwFlags & WHDR_DONE) == 0) {
-        if (doneEvent.WaitOne(0)) continue;
+        if (s_doneEvent.WaitOne(0)) continue;
         System.Threading.Thread.SpinWait(64);
         if (Stopwatch.GetTimestamp() >= deadline) return false;
       }
@@ -92,13 +96,13 @@ namespace GameBuddyWaveOut {
     //   + 8ms — the intrinsic "stutter" the playout path would otherwise hide.
     public static void Stream(int deviceId, Stream input) {
       timeBeginPeriod(1);
-      AutoResetEvent doneEvent = new AutoResetEvent(false);
       IntPtr hwo = IntPtr.Zero;
       var format = Format();
-      Check(waveOutOpen(out hwo, deviceId, ref format, IntPtr.Zero, doneEvent.SafeWaitHandle.DangerousGetHandle(), CALLBACK_EVENT), "waveout_stream_open");
-      // Deep device queue: submit up to 16 frames upfront so the driver has
-      // ~320ms of audio queued; a slow-but-steady upstream never underruns.
-      int slots = 16;
+      Check(waveOutOpen(out hwo, deviceId, ref format, IntPtr.Zero, s_doneEvent.SafeWaitHandle.DangerousGetHandle(), CALLBACK_EVENT), "waveout_stream_open");
+      // Deep device queue: submit up to 100 frames upfront (2s of audio) so a
+      // bursty TTS upstream (e.g. MiMo SSE with network gaps) never underruns
+      // the device; the render loop refills greedily from stdin.
+      int slots = 100;
       byte[][] audio = new byte[slots][];
       GCHandle[] pins = new GCHandle[slots];
       WAVEHDR[] headers = new WAVEHDR[slots];
@@ -111,7 +115,8 @@ namespace GameBuddyWaveOut {
       long lastDoneTicks = 0L;
       try {
         Queue<byte[]> queue = new Queue<byte[]>();
-        bool inputEnded = false;
+        bool inputEnded = false;   // sealed with queueLock; stop frame or EOF
+        bool stopRequested = false; // sealed with queueLock; break the render loop now
         object queueLock = new object();
         // Background reader: keep stdin fully drained into jitter queue so a
         // slow TTS upstream simply delays, it never blocks the render loop.
@@ -120,10 +125,10 @@ namespace GameBuddyWaveOut {
           for (;;) {
             if (!ReadExact(input, lengthBytes, 4)) { lock (queueLock) { inputEnded = true; } return; }
             int length = BitConverter.ToInt32(lengthBytes, 0);
-            if (length == 0) { lock (queueLock) { inputEnded = true; } return; }
-            if (length < 0 || length % 2 != 0 || length > 1920000) { lock (queueLock) { inputEnded = true; } return; }
+            if (length == 0) { lock (queueLock) { inputEnded = true; stopRequested = true; } return; }
+            if (length < 0 || length % 2 != 0 || length > 1920000) { lock (queueLock) { inputEnded = true; stopRequested = true; } return; }
             byte[] frame = new byte[length];
-            if (!ReadExact(input, frame, length)) { lock (queueLock) { inputEnded = true; } return; }
+            if (!ReadExact(input, frame, length)) { lock (queueLock) { inputEnded = true; stopRequested = true; } return; }
             lock (queueLock) { if (queue.Count < 6000) queue.Enqueue(frame); /* 2s of 20ms frames, bounded */ }
           }
         });
@@ -162,8 +167,28 @@ namespace GameBuddyWaveOut {
           int activeCount = primed;
           int playing = 0;
           while (activeCount > 0) {
+            // A stop frame interrupts immediately: flush the device queue now.
+            bool stopNow;
+            lock (queueLock) { stopNow = stopRequested; }
+            if (stopNow) {
+              waveOutReset(hwo);
+              // Every queued header is marked DONE by Reset; release them all.
+              for (int slot = 0; slot < slots; slot++) {
+                if (active[slot]) {
+                  try { waveOutUnprepareHeader(hwo, ref headers[slot], (uint)Marshal.SizeOf(typeof(WAVEHDR))); } catch { }
+                  if (pins[slot].IsAllocated) pins[slot].Free();
+                  active[slot] = false;
+                }
+              }
+              activeCount = 0;
+              break;
+            }
+            // Advance to the oldest active slot; a slot whose refill missed
+            // (queue momentarily empty) must be skipped, otherwise WaitDone
+            // would block forever on a header the device never owned.
+            while (!active[playing]) playing = (playing + 1) % slots;
             // Wait for the oldest queued buffer to finish.
-            if (!WaitDone(doneEvent, headers, playing, freqTicksPerMs)) throw new TimeoutException("waveout_stream_playback_timeout");
+            if (!WaitDone(headers, playing, freqTicksPerMs)) throw new TimeoutException("waveout_stream_playback_timeout");
             long now = Stopwatch.GetTimestamp();
             long gapMs = 0L;
             if (firstDoneTicks == 0L) firstDoneTicks = now;
@@ -179,10 +204,14 @@ namespace GameBuddyWaveOut {
             pins[playing].Free();
             active[playing] = false;
             activeCount--;
-            // Refill the just-finished slot; if the queue is momentarily empty
-            // (TTS still synthesizing), just continue — the other slots keep
-            // the device fed until a new frame arrives.
-            if (submit(playing)) activeCount++;
+            // Refill aggressively: fill EVERY idle slot from the jitter queue
+            // (not just the just-finished one) so the device queue stays deep.
+            // A 1:1 refill never builds the deep queue — each 20ms frame then
+            // pays the full unprepare/prepare/write overhead (~10ms) between
+            // buffers, which measures as uniform ~30ms gaps.
+            for (int slot = 0; slot < slots; slot++) {
+              if (!active[slot] && submit(slot)) activeCount++;
+            }
             // Advance to the next buffer in FIFO order.
             playing = (playing + 1) % slots;
             if (activeCount == 0) {
@@ -254,7 +283,8 @@ if ($Mode -eq 'list') {
 
 if ($Mode -eq 'stream') {
     $stdin = [Console]::OpenStandardInput()
-    [GameBuddyWaveOut.Native]::Stream($deviceId, $stdin)
+    try { [GameBuddyWaveOut.Native]::Stream($deviceId, $stdin) }
+    catch { $_ | Out-String | Write-Error; exit 3 }
     [pscustomobject]@{ state = 'stopped'; mode = 'stream'; device = $Device } | ConvertTo-Json -Compress
     exit 0
 }

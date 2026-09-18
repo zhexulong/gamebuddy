@@ -92,6 +92,7 @@ export async function createStreamingWindowsAudioMixer(
   let failed: string | undefined;
   let closed = false;
   let pending: Readonly<{ reject(error: Error): void }> | undefined;
+  let bytesQueued = 0;
 
   const fail = (reason: string, error?: Error): void => {
     if (failed !== undefined) return;
@@ -138,13 +139,14 @@ export async function createStreamingWindowsAudioMixer(
     throw error;
   });
 
-  const play = (_jobId: string, _epoch: number, pcm16: Uint8Array): Promise<void> => {
+      const play = (_jobId: string, _epoch: number, pcm16: Uint8Array): Promise<void> => {
     if (closed) return Promise.reject(new Error("windows_stream_closed"));
     if (failed !== undefined) return Promise.reject(new Error(failed));
     if (pcm16.byteLength === 0 || pcm16.byteLength > MAX_FRAME_BYTES || pcm16.byteLength % 2 !== 0) {
       fail("windows_playback_rejected");
       return Promise.reject(new Error("windows_playback_rejected"));
     }
+    bytesQueued += pcm16.byteLength;
     return new Promise<void>((resolvePromise, rejectPromise) => {
       pending = { reject: rejectPromise };
       child.stdin.write(encodeFrame(pcm16), (error) => {
@@ -152,8 +154,8 @@ export async function createStreamingWindowsAudioMixer(
           fail("windows_stream_write_failed", error);
           return;
         }
-        // The resident stream waits for the previous frame's WHDR_DONE before
-        // reading the next, so write acceptance implies bounded device pacing.
+        // Write acceptance only means the frame reached the OS pipe; the
+        // render child paces the device from its own queue.
         resolvePromise();
       });
     });
@@ -163,7 +165,7 @@ export async function createStreamingWindowsAudioMixer(
     if (closed || failed !== undefined) return;
     closed = true;
     try {
-      child.stdin.write(encodeFrame(new Uint8Array(0)));
+      child.stdin.write(encodeFrame(new Uint8Array(0))); // immediate abort (cancel path)
     } catch {
       /* closing anyway */
     }
@@ -180,17 +182,49 @@ export async function createStreamingWindowsAudioMixer(
     get playoutStats() {
       return playoutStats;
     },
+    get debugStdout() {
+      return childStdout;
+    },
+    get debugStderr() {
+      return childStderr;
+    },
     async probePcm(pcm16: Uint8Array) {
       await play("voice_probe", 0, pcm16);
     },
     play,
     stop,
     async close() {
-      if (!closed) stop();
+      if (!closed) {
+        // Graceful drain: EOF lets the render child play every queued frame,
+        // then it prints the complete stats line and exits on its own. stop()
+        // (a zero-length frame) is only for immediate aborts.
+        closed = true;
+        try {
+          child.stdin.end();
+        } catch {
+          /* already ending */
+        }
+      }
+      // Wait for the render child to exit (stats line follows) OR for the
+      // stats line itself, whichever lands first. The deadline scales with the
+      // audio actually queued: EOF drains the device at real-time pace.
+      const drainMs = Math.min(30_000, bytesQueued / 32 + 3_000);
       await new Promise<void>((resolvePromise) => {
-        const onClose = () => resolvePromise();
-        child.once("close", onClose);
-        setTimeout(onClose, 2_000).unref();
+        let settled = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          resolvePromise();
+        };
+        child.once("close", finish);
+        const timer = setTimeout(finish, drainMs);
+        timer.unref();
+        const poll = (): void => {
+          if (settled) return;
+          if (playoutStats !== undefined) return finish();
+          setTimeout(poll, 25);
+        };
+        poll();
       }).catch(() => undefined);
       captureStats();
     },
