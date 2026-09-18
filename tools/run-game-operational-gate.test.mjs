@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
-  OPERATIONAL_GATE_TIMEOUT_MS,
-  parseArguments,
-  prepareReportTarget,
-  runOperationalGateIpc,
-  terminateOwnedProcessTree,
+OPERATIONAL_GATE_TIMEOUT_MS,
+parseArguments,
+prepareReportTarget,
+runOperationalGateIpc,
+terminateOwnedProcessTree,
+validateGateWindowMode,
   writeOperationalGateReport,
 } from "./run-game-operational-gate.mjs";
 
@@ -204,7 +205,8 @@ test("Task 0 current owner keeps the transitional direct route blocked on both p
   assert.match(owner, /这两项都是 predecessor blockers；Task 0 test、fixture、旧 profile 或 fallback 均不能解除它们/);
   assert.match(owner, /`StardewProductionLifecycleCoordinator` 仍是唯一产品 owner，native-local direct route 仍只作待移除的 characterization/);
   assert.match(owner, /action platform 与部分 M1–M10 action 已有局部 closure；这不等于完整 Game release/);
-  assert.match(owner, /Navigation、guardian containment、onboarding 和 target-version live open-gameplay gate 均未闭合/);
+  assert.match(owner, /guardian containment、onboarding 和 target-version live open-gameplay gate 均未闭合/);
+  assert.match(owner, /ordinary Navigation 已独立完成自身 live gate 并正式发布/);
 });
 
 test("runner source uses the production launcher-owned manifest and fresh STOP composition", async () => {
@@ -220,7 +222,6 @@ test("runner source uses the production launcher-owned manifest and fresh STOP c
     "utf8",
   );
   assert.match(source, /start-production-artifact\.mjs/);
-  assert.match(source, /GAME_OPERATIONAL_GATE_NONCE_SHA256/);
   assert.match(source, /gamebuddy-game-operational-gate-evidence\/v2/);
   assert.match(source, /taskkill\.exe/);
   assert.match(source, /harness_timeout/);
@@ -229,7 +230,15 @@ test("runner source uses the production launcher-owned manifest and fresh STOP c
   assert.match(source, /stdout.*never parsed/i);
   assert.doesNotMatch(source, /verifyGameOperationalGateMarkerReport/);
   assert.doesNotMatch(source, /game_operational_runtime_or_bridge_receipt_ipc_unavailable/);
-  assert.match(source, /\[PRODUCTION_LAUNCHER, "main\.js", config\.gameOperatorConfigPath\]/);
+  // Task 3: the child receives only the validated deployment-manifest reference
+  // and the per-run nonce as explicit flags; no operator config path or raw
+  // Stardew facts are passed, and no separate nonce env var is injected.
+  assert.doesNotMatch(source, /gameOperatorConfigPath/);
+  assert.doesNotMatch(source, /GAMEBUDDY_GAME_OPERATIONAL_GATE_NONCE_SHA256/);
+  assert.match(
+    source,
+    /\[\s*PRODUCTION_LAUNCHER,\s*"main\.js",\s*"--deployment-manifest-ref",\s*config\.deploymentManifestRef,\s*"--operational-nonce",\s*nonceSha256,\s*\]/,
+  );
   assert.match(launcher, /import \{ recheckProductionEntry, resolveProductionEntry \} from "\.\/production-artifact\.mjs"/);
   assert.match(launcher, /import \{ startArtifact \} from "\.\/start-artifact\.internal\.mjs"/);
   assert.match(launcher, /await startArtifact\(\{ resolveEntry: resolveProductionEntry, recheckEntry: recheckProductionEntry \}\)/);
@@ -275,12 +284,47 @@ test("content-free PASSED report with action counts is exclusively writable", as
   }
 });
 
+test("gate window-mode validation accepts only the frozen five modes", () => {
+  for (const mode of ["visible", "foreground", "minimized", "hidden", "background"]) {
+    assert.equal(validateGateWindowMode(mode), true);
+  }
+  assert.equal(validateGateWindowMode("foregrounded"), false);
+  assert.equal(validateGateWindowMode(""), false);
+  assert.equal(validateGateWindowMode(undefined), false);
+  assert.equal(validateGateWindowMode(42), false);
+});
+
 test("config remains separate from task fixture and is not allowed to supply nonce", async () => {
   const root = await mkdtemp(join(tmpdir(), "game-operational-gate-test-"));
   try {
     const configPath = join(root, "config.json");
     await writeFile(configPath, JSON.stringify({ markerNonceSha256: nonce }), "utf8");
     assert.match(await readFile(configPath, "utf8"), /markerNonceSha256/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("gate config rejects gameOperatorConfigPath and any raw Stardew fact field", async () => {
+  const root = await mkdtemp(join(tmpdir(), "game-operational-gate-test-"));
+  try {
+    const base = {
+      runtimeRoot: join(root, "runtime"),
+      sharedIdentity: "shared_identity_01",
+      foreignIdentity: "foreign_identity_01",
+      surfaceSessions: "surface_sessions_01",
+      deploymentManifestRef: "C:/runtime/deployment-manifest.json",
+      taskFixturePath: join(root, "task.json"),
+      windowMode: "hidden",
+    };
+    // The old raw operator path is structurally rejected by the exact config
+    // shape (CONFIG_KEYS) before any spawn can occur.
+    const configPath = join(root, "config.json");
+    await writeFile(configPath, JSON.stringify({ ...base, gameOperatorConfigPath: "C:\\sentinel.json" }), "utf8");
+    const source = await readFile(new URL("./run-game-operational-gate.mjs", import.meta.url), "utf8");
+    assert.equal(source.includes("gameOperatorConfigPath"), false);
+    for (const leaked of ["pipeName", "bridgeToken", "launchGeneration", "locator", "profilePath", "sessionId", "pid", "job", "guardianInstanceId"])
+      assert.equal(source.includes(`config.${leaked}`) || source.includes(`parsed.${leaked}`), false, `leaked field: ${leaked}`);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
