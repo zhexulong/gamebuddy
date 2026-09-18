@@ -15,6 +15,17 @@ import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
 
 export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void }>;
 
+/**
+ * Voice-local playback observations (v2 push lane). The Host only derives a
+ * bounded "上一句语音被打断" note for the next prompt assembly; it never
+ * touches ChatThreadStore and never cancels any Game action.
+ */
+export type VoicePlaybackObservationSource = Readonly<{
+  onPlaybackObservation(
+    listener: (observation: Readonly<{ terminalStatus: string; speechJobId: string | undefined }>) => void,
+  ): () => void;
+}>;
+
 /** Host-owned outcome of a newly admitted STOP, derived only from Pi consumption state. */
 export type StopOutcome = "active_turn_cancelled" | "queued_turn_cancelled" | "no_active_turn";
 
@@ -167,6 +178,9 @@ export class CompanionHostService {
   readonly #unsubscribe: () => void;
   readonly #unsubscribeConnection: () => void;
   #unsubscribeVoice: (() => Promise<void>) | undefined;
+  #unsubscribePlayback: (() => Promise<void>) | undefined;
+  /** Voice-local note consumed by the next prompt assembly; never Chat/Game state. */
+  #voiceInterruptionNote: Readonly<{ atMs: number; speechJobId: string | undefined }> | undefined;
   #flushScheduled = false;
   #integrationToolRefresh: Promise<void> | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -209,11 +223,15 @@ export class CompanionHostService {
     this.#unsubscribe();
     this.#unsubscribeConnection();
     const detachVoice = this.#unsubscribeVoice;
+    const detachPlayback = this.#unsubscribePlayback;
     // Detach synchronously so a closed Host never retains an admitting Voice
     // Gateway callback. Gateways whose unsubscribe is asynchronous may finish
     // their own cleanup afterwards, but admission stops at this boundary now.
     this.#unsubscribeVoice = undefined;
+    this.#unsubscribePlayback = undefined;
+    this.#voiceInterruptionNote = undefined;
     if (detachVoice !== undefined) void detachVoice();
+    if (detachPlayback !== undefined) void detachPlayback();
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
     this.#stopSettledListeners.clear();
   }
@@ -251,6 +269,7 @@ export class CompanionHostService {
   ): Promise<void> {
     if (this.#closed || !this.#integrationAdmissionOpen || input.text.trim().length === 0) return;
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(input.sourceEventId)) throw new Error("invalid_player_source_event_id");
+    this.#injectVoiceInterruptionNote();
     this.loop.pump.enqueuePlayerInput({
       source: "player_text",
       inputId: input.sourceEventId,
@@ -412,6 +431,7 @@ export class CompanionHostService {
     await deliverFinalVoiceInput(
       {
         receive: async (final) => {
+          this.#injectVoiceInterruptionNote();
           this.loop.pump.enqueuePlayerInput({
             // The Gateway-authenticated event identity, not local input
             // correlation, is the only voice presentation authority.
@@ -450,6 +470,63 @@ export class CompanionHostService {
     };
     this.#unsubscribeVoice = wrapped;
     return wrapped;
+  }
+
+  /**
+   * Attach the v2 push lane. A cancelled playback observation only sets a
+   * Voice-local note for the next player prompt; it must not cancel, write, or
+   * route anything in Chat or Game.
+   */
+  public attachVoicePlaybackObservationSource(source: VoicePlaybackObservationSource): () => Promise<void> {
+    if (this.#unsubscribePlayback !== undefined) void this.#unsubscribePlayback();
+    const unsubscribe = source.onPlaybackObservation((observation) => {
+      if (observation.terminalStatus !== "cancelled") return;
+      this.#voiceInterruptionNote = Object.freeze({
+        atMs: Date.now(),
+        speechJobId: observation.speechJobId,
+      });
+    });
+    let detached = false;
+    const wrapped = (): Promise<void> => {
+      if (!detached) {
+        detached = true;
+        unsubscribe();
+        if (this.#unsubscribePlayback === wrapped) this.#unsubscribePlayback = undefined;
+      }
+      return Promise.resolve();
+    };
+    this.#unsubscribePlayback = wrapped;
+    return wrapped;
+  }
+
+  /**
+   * One-shot Voice-local context note for the next assembled prompt: the
+   * previous utterance was cut short (player barge-in). Purely model-facing,
+   * consumed exactly once, and never touches ChatThreadStore or Game actions.
+   */
+  #injectVoiceInterruptionNote(): void {
+    const note = this.#voiceInterruptionNote;
+    if (note === undefined) return;
+    this.#voiceInterruptionNote = undefined;
+    const ageMs = Date.now() - note.atMs;
+    if (ageMs > 120_000) return; // stale note is not a fact for this turn
+    try {
+      this.loop.pump.enqueueFact({
+        source: "voice",
+        kind: "semantic_event",
+        eventId: `voice_interruption_${note.speechJobId ?? "unknown"}`,
+        occurredAtMs: note.atMs,
+        correlationId: randomUUID(),
+        revision: 0,
+        payload: Object.freeze({ kind: "speech_interrupted", speechJobId: note.speechJobId ?? null }),
+        contextProjection: Object.freeze({
+          kind: "speech_interrupted",
+          text: "上一句语音在播放中被玩家打断（玩家后来开口说话），玩家没有听到那句话的结尾。",
+        }),
+      });
+    } catch {
+      this.#voiceInterruptionNote = note; // retry on the next player input
+    }
   }
 
   /** Initial launch facts were already adapter-validated before runtime mount. */

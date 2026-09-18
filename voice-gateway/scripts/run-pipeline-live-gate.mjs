@@ -347,9 +347,13 @@ async function configuredLiveTts() {
       // operator's own consent to a bounded cloud utterance (the gate is not
       // the product path, which remains fail-closed without a Host-owned
       // admission contract).
+      const style = process.env.GAMEBUDDY_MIMO_STYLE;
+      const styleByProfile =
+        style === undefined || style.trim().length === 0 ? undefined : { "companion.default": style.trim() };
       const tts = new MimoTtsProvider({
         apiKey: apiKey.trim(),
         voiceByProfile: { "companion.default": voice },
+        styleByProfile,
         admission: Object.freeze({ assertCurrent() {} }),
       });
       ttsForReport = { providerId: tts.providerId, modelRevision: tts.modelRevision };

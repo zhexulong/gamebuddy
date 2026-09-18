@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GroqWhisperAsrProvider, GROQ_WHISPER_DEFAULT_MODEL, GROQ_WHISPER_ENDPOINT } from "./groq.js";
+import {
+  GroqWhisperAsrProvider,
+  GROQ_WHISPER_DEFAULT_MODEL,
+  GROQ_WHISPER_ENDPOINT,
+  promptForLocale,
+  WHISPER_PROMPT_PRESETS,
+} from "./groq.js";
 
 const VALID_KEY = "gsk_test_123456789012345678901234567890";
 const DUMMY_PCM16 = new Uint8Array([0, 0, 100, 0, 200, 0, 50, 0]); // 4 samples, 8 bytes
@@ -74,6 +80,8 @@ test("GroqWhisperAsrProvider transcribes audio with correct request format", asy
     assert.equal(formData?.get("response_format"), "json");
     assert.equal(formData?.get("temperature"), "0");
     assert.equal(formData?.get("language"), "zh");
+    // zh 默认回退简体预设,英文保留原文
+    assert.equal(formData?.get("prompt"), WHISPER_PROMPT_PRESETS.ZH_SIMPLIFIED);
 
     const file = formData?.get("file");
     assert.ok(file instanceof Blob);
@@ -81,6 +89,40 @@ test("GroqWhisperAsrProvider transcribes audio with correct request format", asy
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("GroqWhisperAsrProvider forwards an explicit custom prompt verbatim", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedRequest: Request | undefined;
+
+  globalThis.fetch = async (input, init) => {
+    capturedRequest = new Request(input, init);
+    return new Response(JSON.stringify({ text: "ok" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const provider = new GroqWhisperAsrProvider({ apiKey: VALID_KEY, prompt: "自定义提示词" });
+    await provider.transcribe(DUMMY_PCM16, "zh-CN", new AbortController().signal);
+    const formData = await capturedRequest!.formData();
+    assert.equal(formData.get("prompt"), "自定义提示词");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("promptForLocale resolves presets and domain term assembly", () => {
+  assert.equal(promptForLocale("zh-CN"), WHISPER_PROMPT_PRESETS.ZH_SIMPLIFIED);
+  assert.equal(promptForLocale("zh-TW"), WHISPER_PROMPT_PRESETS.ZH_SIMPLIFIED);
+  assert.equal(promptForLocale("en-US"), WHISPER_PROMPT_PRESETS.EN);
+  assert.equal(promptForLocale("ja-JP"), undefined);
+  assert.equal(promptForLocale("zh-CN", "自定义"), "自定义");
+  const withTerms = WHISPER_PROMPT_PRESETS.withDomainTerms(["Parsnip", "Iridium"]);
+  assert.ok(withTerms.includes("Parsnip"));
+  assert.ok(withTerms.includes("Iridium"));
+  assert.ok(withTerms.includes("简体中文"));
 });
 
 test("GroqWhisperAsrProvider sanitizes error and hides secrets on failure", async () => {

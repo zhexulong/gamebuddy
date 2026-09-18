@@ -4,6 +4,34 @@ import { pcm16ToWav } from "./sensevoice.js";
 export const GROQ_WHISPER_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions";
 export const GROQ_WHISPER_DEFAULT_MODEL = "whisper-large-v3-turbo";
 
+/**
+ * 开箱即用的 Whisper prompt 预设。prompt 只做语境引导（不注入系统指令），
+ * 解决两个确定性问题：简体字输出、中英混杂时保留英文原文。
+ * 外部可传自定义 prompt；未传时按 locale 回退到对应预设；环境变量
+ * GAMEBUDDY_WHISPER_PROMPT 可免编译覆盖。
+ */
+export const WHISPER_PROMPT_PRESETS = Object.freeze({
+  /** 简体中文 + 保留英文混合词（默认 zh）。 */
+  ZH_SIMPLIFIED: "这是一段普通话与 English 混合的日常对话，使用简体中文记录，英文单词保留原文。",
+  /** 英文默认。 */
+  EN: "This is a casual English conversation. Transcribe it verbatim.",
+  /** 允许外部注入游戏领域专有名词（如 Parsnip、Iridium、矿洞）。 */
+  withDomainTerms(terms: readonly string[]): string {
+    const joined = terms.length === 0 ? "" : `，可能包含专有名词：${terms.join("、")}`;
+    return `这是一段普通话与 English 混合的日常对话${joined}。使用简体中文记录，英文单词保留原文。`;
+  },
+} as const);
+
+export function promptForLocale(locale: string, explicit?: string): string | undefined {
+  if (explicit !== undefined && explicit.trim().length > 0) return explicit.trim();
+  const env = process.env.GAMEBUDDY_WHISPER_PROMPT;
+  if (env !== undefined && env.trim().length > 0) return env.trim();
+  const language = locale.split(/[-_]/)[0]?.toLowerCase();
+  if (language === "zh") return WHISPER_PROMPT_PRESETS.ZH_SIMPLIFIED;
+  if (language === "en") return WHISPER_PROMPT_PRESETS.EN;
+  return undefined;
+}
+
 const MAX_PCM_BYTES = 25 * 1024 * 1024;
 const TEST_ENDPOINT_OVERRIDE = Symbol("groq_test_endpoint_override");
 type GroqWhisperInternalOptions = GroqWhisperOptions & Readonly<{ [TEST_ENDPOINT_OVERRIDE]?: string }>;
@@ -12,6 +40,8 @@ export type GroqWhisperOptions = Readonly<{
   apiKey: string;
   model?: string;
   endpoint?: string;
+  /** 可选自定义 prompt；省略时按 locale 回退 WHISPER_PROMPT_PRESETS。 */
+  prompt?: string;
 }>;
 
 /**
@@ -24,6 +54,7 @@ export class GroqWhisperAsrProvider implements AsrProvider {
   public readonly modelRevision: string;
   readonly #apiKey: string;
   readonly #endpoint: string;
+  readonly #prompt: string | undefined;
 
   public constructor(options: GroqWhisperOptions) {
     if (typeof options.apiKey !== "string" || options.apiKey.trim().length < 16) {
@@ -39,6 +70,7 @@ export class GroqWhisperAsrProvider implements AsrProvider {
     } else {
       this.#endpoint = options.endpoint ?? GROQ_WHISPER_ENDPOINT;
     }
+    this.#prompt = options.prompt;
   }
 
   /** Explicit test-only endpoint seam; production construction uses the verified origin. */
@@ -65,6 +97,10 @@ export class GroqWhisperAsrProvider implements AsrProvider {
         formData.append("language", language);
       }
     }
+    // Whisper 输出字体现由模型自决；prompt 做语境引导（简体 + 保留英文），
+    // 不发系统指令，≤224 tokens 界限内。
+    const prompt = promptForLocale(locale, this.#prompt);
+    if (prompt !== undefined) formData.append("prompt", prompt);
 
     let response: Response;
     try {
