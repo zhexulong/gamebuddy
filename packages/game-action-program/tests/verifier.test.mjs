@@ -3,15 +3,33 @@ import assert from "node:assert/strict";
 import { verifyActionProgram } from "../src/verifier.mjs";
 
 const descriptors = { schema: "gamebuddy-action-descriptors/v1", catalogRevision: 1, actions: [
-  { actionId: "navigate_to_destination", identityVersion: 1, lifecycle: "published", kind: "execution", argumentSchema: { destination: { type: "object" } }, outputFacts: { arrival: "object" }, resourceTemplate: { claims: [{ key: "embodied_actor", value: "ScopePlayer" }] }, effect: "write", postcondition: { name: "arrived" } },
-  { actionId: "inspect_arrival", identityVersion: 1, lifecycle: "published", kind: "read_only", argumentSchema: { arrival: { type: "object" } }, outputFacts: {}, resourceTemplate: { claims: [] }, effect: "read", postcondition: { name: "observed" } },
+  { actionId: "navigate_to_destination", identityVersion: 1, lifecycle: "published", kind: "execution", argumentSchema: { destination: { type: "destination_selector" } }, outputFacts: { arrival: "destination_arrival" }, resourceTemplate: { claims: [{ key: "embodied_actor", value: "ScopePlayer" }] }, effect: "write", postcondition: { name: "arrived" } },
+  { actionId: "inspect_arrival", identityVersion: 1, lifecycle: "published", kind: "read_only", argumentSchema: { arrival: { type: "destination_arrival" } }, outputFacts: {}, resourceTemplate: { claims: [] }, effect: "read", postcondition: { name: "observed" } },
 ] };
 const policy = { enabledActionIds: ["navigate_to_destination", "inspect_arrival"] };
 const valid = { schema: "gamebuddy-action-program/v1", programId: "route_1", nodes: [
-  { nodeId: "navigate", actionId: "navigate_to_destination", args: { destination: { kind: "label" } }, bindings: [], guards: [] },
+  { nodeId: "navigate", actionId: "navigate_to_destination", args: { destination: { kind: "label", label: "Town" } }, bindings: [], guards: [] },
   { nodeId: "inspect", actionId: "inspect_arrival", args: {}, bindings: [{ arg: "arrival", from: "navigate", fact: "arrival" }], guards: [{ kind: "fact_present", nodeId: "navigate", fact: "arrival", operator: null, value: null }] },
 ], edges: [{ from: "navigate", to: "inspect" }] };
 function codes(program, selectedPolicy = policy) { return verifyActionProgram({ program, descriptors, restrictivePolicy: selectedPolicy }).diagnostics.map(x => x.code); }
+test("typed destination selector and arrival enforce exact shapes on the wire", () => {
+  // label selector requires a bounded label; ref selector requires a dr1_ ref
+  for (const destination of [
+    { kind: "label" },
+    { kind: "label", label: "" },
+    { kind: "label", label: "Town", ref: null },
+    { kind: "ref" },
+    { kind: "ref", ref: "not-a-ref" },
+    { kind: "bogus", label: "Town" },
+  ]) {
+    const report = verifyActionProgram({ program: { ...valid, nodes: [{ ...valid.nodes[0], args: { destination } }] }, descriptors, restrictivePolicy: policy });
+    assert.equal(report.accepted, false);
+    assert.ok(report.diagnostics.some((entry) => entry.code === "argument_type_mismatch"), JSON.stringify({ destination, diagnostics: report.diagnostics }));
+  }
+  // valid label selector still passes (the shared valid program covers this)
+  assert.equal(verifyActionProgram({ program: valid, descriptors, restrictivePolicy: policy }).accepted, true);
+});
+
 test("accepts descriptor-driven navigation DAG without action-name special handling", () => assert.equal(verifyActionProgram({ program: valid, descriptors, restrictivePolicy: policy }).accepted, true));
 test("rejects exact shape, bounds, unknown action, schema, cycle, dominance, type, resource, guard, terminality, raw fields, and policy", () => {
   assert.ok(codes({ ...valid, extra: true }).includes("invalid_program_shape"));

@@ -114,7 +114,20 @@ function validateResourceConflicts(nodes, adjacency, catalog, add) {
 }
 function topologicalOrder(nodes, adjacency, indegree) { const pending = new Map(indegree); const ready = [...pending].filter(([, v]) => v === 0).map(([id]) => id); const order = []; while (ready.length) { const id = ready.shift(); order.push(id); for (const next of adjacency.get(id)) { pending.set(next, pending.get(next) - 1); if (pending.get(next) === 0) ready.push(next); } } return order.length === nodes.size ? order : null; }
 function reachable(from, to, adjacency) { const seen = new Set([from]); const todo = [from]; while (todo.length) { const current = todo.pop(); for (const next of adjacency.get(current) ?? []) { if (next === to) return true; if (!seen.has(next)) { seen.add(next); todo.push(next); } } } return false; }
-function matchesType(value, type) { return (type === "string" && typeof value === "string") || (type === "integer" && Number.isSafeInteger(value)) || (type === "boolean" && typeof value === "boolean") || (type === "object" && isPlainDataObject(value)); }
+function matchesType(value, type) { return (type === "string" && typeof value === "string") || (type === "integer" && Number.isSafeInteger(value)) || (type === "boolean" && typeof value === "boolean") || (type === "object" && isPlainDataObject(value)) || (type === "destination_selector" && isDestinationSelector(value)) || (type === "destination_arrival" && isDestinationArrival(value)); }
+function isDestinationSelector(value) {
+  return isPlainDataObject(value)
+    && ((value.kind === "label" && typeof value.label === "string" && value.label.length >= 1 && value.label.length <= 128 && value.ref === undefined)
+      || (value.kind === "ref" && typeof value.ref === "string" && /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref) && value.label === undefined));
+}
+function isDestinationArrival(value) {
+  return isPlainDataObject(value)
+    && (value.reason === "destination_arrived" || value.reason === "already_at_destination")
+    && isPlainDataObject(value.destination)
+    && typeof value.destination.label === "string"
+    && value.destination.label.length >= 1
+    && value.destination.label.length <= 128;
+}
 function findForbidden(value, path, add) { if (!value || typeof value !== "object") return; for (const [key, child] of Object.entries(value)) { const childPath = `${path}/${escapePointer(key)}`; if (FORBIDDEN_FIELDS.has(key)) add("forbidden_raw_resource_field", childPath, null, "Candidate resource, lock, lease, owner, or acquire/release fields are forbidden."); findForbidden(child, childPath, add); } }
 function escapePointer(value) { return value.replaceAll("~", "~0").replaceAll("/", "~1"); }
 function report(program, descriptors, diagnostics) { diagnostics.sort((a, b) => a.path.localeCompare(b.path) || a.code.localeCompare(b.code) || String(a.nodeId).localeCompare(String(b.nodeId))); if (diagnostics.length > PROGRAM_LIMITS.maxDiagnostics) diagnostics.splice(PROGRAM_LIMITS.maxDiagnostics, Infinity, { severity: "error", code: "diagnostics_truncated", nodeId: null, path: "", message: "Diagnostics were truncated." }); return Object.freeze({ accepted: diagnostics.length === 0, catalogRevision: descriptors?.catalogRevision ?? null, normalizedProgram: diagnostics.length === 0 ? structuredClone(program) : null, diagnostics, runtimeRequirements: ["fresh_mod_admission", "descriptor_derived_resources", "live_postcondition", "stop_epoch"] }); }
