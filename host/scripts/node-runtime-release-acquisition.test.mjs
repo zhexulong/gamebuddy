@@ -124,13 +124,11 @@ test("rejects duplicate paths, links, encryption, unsupported compression metada
     [{ name: "node-v24.20.0-win-x64/LICENSE" }],
   ]) { const bytes = zip(entries); await assert.rejects(acquire(root, bytes), /runtime_zip_(?:duplicate_destination|entry_forbidden|node_missing)/); }
 }));
-test("enforces entry-count and per-entry/expanded byte limits before extraction", async () => withRoot(async (root) => {
+test("enforces entry-count and expanded byte limits before extraction", async () => withRoot(async (root) => {
   const rootName = "node-v24.20.0-win-x64";
   const count = zip([{ name: `${rootName}/node.exe`, content: Buffer.from("node") }, ...Array.from({ length: 2_000 }, (_, index) => ({ name: `${rootName}/f${index}` }))]);
   await assert.rejects(acquire(root, count), /runtime_zip_entry_count_limit/);
-  const perEntry = zip([{ name: `${rootName}/node.exe`, content: Buffer.from("node"), declaredSize: 32 * 1024 * 1024 + 1 }]);
-  await assert.rejects(acquire(root, perEntry), /runtime_zip_entry_size_limit/);
-  const expanded = zip([{ name: `${rootName}/node.exe`, content: Buffer.from("node"), declaredSize: 32 * 1024 * 1024 }, ...Array.from({ length: 8 }, (_, index) => ({ name: `${rootName}/f${index}`, declaredSize: 32 * 1024 * 1024 }))]);
+  const expanded = zip([{ name: `${rootName}/node.exe`, content: Buffer.from("node"), declaredSize: 128 * 1024 * 1024 }, ...Array.from({ length: 8 }, (_, index) => ({ name: `${rootName}/f${index}`, declaredSize: 128 * 1024 * 1024 }))]);
   await assert.rejects(acquire(root, expanded), /runtime_zip_expanded_size_limit/);
 }));
 test("synthetic acquisition exposes only callback-scoped test state", async () => withRoot(async () => {

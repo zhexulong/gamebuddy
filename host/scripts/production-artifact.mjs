@@ -722,10 +722,15 @@ function runtimeOrigin(descriptor) {
 /** An authorized supply lane mints this opaque input only after it verifies the
   * committed archive SHA-256. Publication has no filesystem-path fallback. */
 function validRuntimeClosureFiles(value) {
+  // Path grammar allows `@scope/name` scoped npm packages shipped in the pinned
+  // Node distribution (e.g. node_modules/npm/node_modules/@gar/...). Order is
+  // strict ascending lexicographic (same comparator `files().sort()` uses), so
+  // the acquisition closure and the re-scanned exact tree agree byte-for-byte.
+  const sourcePathPattern = /^(?:[A-Za-z0-9@._-]+\/)*[A-Za-z0-9@._-]+$/;
   return Array.isArray(value) && value.length > 0 && value.every((entry) => exactKeys(entry, ["sourcePath", "sha256"])
-    && typeof entry.sourcePath === "string" && /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(entry.sourcePath)
+    && typeof entry.sourcePath === "string" && sourcePathPattern.test(entry.sourcePath)
     && typeof entry.sha256 === "string" && /^[a-f0-9]{64}$/.test(entry.sha256))
-    && value.every((entry, index) => index === 0 || value[index - 1].sourcePath.localeCompare(entry.sourcePath) < 0);
+    && value.every((entry, index) => index === 0 || value[index - 1].sourcePath < entry.sourcePath);
 }
 
 
@@ -746,9 +751,10 @@ async function copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor, sourc
   // order, and fixed executable fact before looking at the extracted tree. The
   // tree must then reproduce those exact facts, rather than merely presenting
   // a self-consistent runtime directory at publication time.
-  if (!validRuntimeClosureFiles(source.files)
-    || source.files.find((entry) => entry.sourcePath === "node.exe")?.sha256 !== descriptor.nodeSha256)
-    throw new Error("verified_bundled_runtime_closure_mismatch");
+  if (!validRuntimeClosureFiles(source.files))
+    throw new Error("verified_bundled_runtime_closure_files_invalid");
+  if (source.files.find((entry) => entry.sourcePath === "node.exe")?.sha256 !== descriptor.nodeSha256)
+    throw new Error("verified_bundled_runtime_node_digest_mismatch");
   const sourceRoot = resolve(source.extractedRoot, descriptor.archiveRoot);
   if (!inside(source.extractedRoot, sourceRoot) || JSON.stringify((await readdir(source.extractedRoot)).sort()) !== JSON.stringify([descriptor.archiveRoot]))
     throw new Error("verified_bundled_runtime_source_invalid");
@@ -953,6 +959,11 @@ export async function verifyExternalRuntimeClosure({ artifactRoot, hostRoot, ext
   }
   for (const item of artifactFiles) {
     if (origins.get(slash(item))?.kind === BROWSER_ARTIFACT.kind) continue;
+    // The bundled runtime subtree (runtime/**) is a pinned official Node
+    // distribution, admitted by runtimeAdmissionSha256 + closure file list; its
+    // own modules (npm/corepack …) legitimately use dynamic import and are not
+    // part of the Host module graph, so they are excluded from Host ingress audit.
+    if (slash(item).startsWith("runtime/")) continue;
     if (extname(item) !== ".js") continue;
     const content = await readFile(resolve(artifactRoot, item), "utf8");
     let ingress;

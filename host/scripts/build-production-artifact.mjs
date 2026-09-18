@@ -324,7 +324,12 @@ async function resolveStagedWindowsReparseInspectorAdapter(stagingRoot) {
 async function importStagedWindowsReparseInspectorAdapter(stagingRoot) {
   const adapterPath = await resolveStagedWindowsReparseInspectorAdapter(stagingRoot);
   const adapter = await import(pathToFileURL(adapterPath).href);
-  if (typeof adapter.createBuildWindowsReparseInspector !== "function" || typeof adapter.assertNoWindowsReparse !== "function")
+  // The emitted adapter exposes the narrow inspection boundary consumed by
+  // createWindowsReparsePolicy (dialogue-web/scripts/static-artifact-manifest-core.mjs):
+  // a bounded object with `create` + `assertNoReparse`, never raw functions or
+  // helper paths. Align with that contract instead of demanding direct exports.
+  const boundary = adapter?.BUILD_ARTIFACT_REPARSE_INSPECTION;
+  if (typeof boundary?.create !== "function" || typeof boundary?.assertNoReparse !== "function")
     throw new Error("windows_reparse_inspector_emitted_adapter_invalid");
   return adapter;
 }
