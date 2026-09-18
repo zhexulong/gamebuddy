@@ -623,7 +623,7 @@ test("equip_tool and existing published actions remain completely unimpacted", a
   const tools = createStardewActionTools(integration, DEFAULT_ACTION_POLICY, createTestAdmission());
   const equipTool = tools.find((t) => t.name === "stardew_equip_tool");
   assert.ok(equipTool !== undefined, "equip_tool must remain mounted");
-  assert.equal(equipTool?.parameters.properties?.slot !== undefined, true);
+  assert.equal(equipTool?.parameters.properties?.tool !== undefined, true);
 
   const moveTool = tools.find((t) => t.name === "stardew_move_to_tile");
   assert.ok(moveTool !== undefined, "move_to_tile must remain mounted");
@@ -653,7 +653,7 @@ test("validateExecutionRequest validates candidate actions and preserves equip_t
         requestId: "req_eq_1",
         idempotencyKey: "idem_eq_1",
         action: "equip_tool",
-        args: { slot: 3 },
+        args: { tool: "axe" },
         expectedRevision: 5,
         deadlineMs: now + 5000,
       },

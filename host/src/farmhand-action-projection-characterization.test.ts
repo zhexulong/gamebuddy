@@ -239,7 +239,7 @@ test("every materialized published Farmhand tool routes its exact action-specifi
   const fixtures: Readonly<Record<string, Readonly<Record<string, unknown>>>> =
     {
       move_to_tile: { x: 11, y: 12 },
-      equip_tool: { slot: 1 },
+      equip_tool: { tool: "axe" },
       travel: { x: 13, y: 14 },
       enter_exit: { x: 15, y: 16 },
       till_soil: { x: 17, y: 18 },

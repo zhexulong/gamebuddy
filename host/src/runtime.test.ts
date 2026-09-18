@@ -829,7 +829,7 @@ test("runtime composes a ledger admission before mounting and executing a live S
     const result = await equip.execute(
       "runtime-admission-equip",
       {
-        slot: 1,
+        tool: "axe",
         requestId: "runtime_request_01",
         idempotencyKey: "runtime_key_01",
       },
