@@ -200,7 +200,7 @@ test("composition facade close runs the presentation, Chat, Game, and shared chi
 
 type CompositionDrainFixtureResult = Readonly<{
   scenario: string;
-  outcome: "unexpected_success" | "original_failure_propagated" | "different_failure";
+  outcome: "unexpected_success" | "original_failure_propagated" | "different_failure" | "constructed";
   shared: number;
   lease: number;
   facade: number;
@@ -208,6 +208,7 @@ type CompositionDrainFixtureResult = Readonly<{
   coordinator: number;
   presentationStarts: number;
   presentationCloses: number;
+  providerLookups: number;
   errorMessage?: string;
 }>;
 
@@ -215,7 +216,9 @@ type CompositionDrainFixtureScenario =
   | "coordinator-failure"
   | "mount-failure"
   | "presentation-failure"
-  | "presentation-missing";
+  | "presentation-missing"
+  | "chat-only-surface"
+  | "management-surface";
 
 function runCompositionDrainFixture(scenario: CompositionDrainFixtureScenario): Promise<CompositionDrainFixtureResult> {
   const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), "desktop-host-composition-drain-fixture-worker.js");
@@ -306,4 +309,53 @@ test("desktop product composition fails closed when the registered provider expo
   assert.equal(result.coordinator, 1);
   assert.equal(result.shared, 1);
   assert.equal(result.session, 1);
+});
+
+test("desktop product composition builds the chat-only surface with the mounted Chat lane and no Stardew coordinator", async () => {
+  // The surface-selected chat-only variant of the composition assembles the
+  // Chat runtime and the chat-only presentation admission as siblings; the
+  // Stardew provider is never looked up and no coordinator is constructed.
+  const result = await runCompositionDrainFixture("chat-only-surface");
+  assert.equal(result.outcome, "constructed");
+  assert.equal(result.coordinator, 0);
+  assert.equal(result.providerLookups, 0);
+  assert.equal(result.presentationStarts, 1);
+  assert.equal(result.presentationCloses, 1);
+  assert.equal(result.lease, 1);
+  assert.equal(result.facade, 1);
+  assert.equal(result.shared, 1);
+  assert.equal(result.session, 1);
+});
+
+test("desktop product composition builds the management surface with the mounted Chat lane and no Stardew coordinator", async () => {
+  // The surface-selected management variant assembles the Chat runtime and the
+  // management presentation admission as siblings; the Stardew provider is
+  // never looked up and no coordinator is constructed.
+  const result = await runCompositionDrainFixture("management-surface");
+  assert.equal(result.outcome, "constructed");
+  assert.equal(result.coordinator, 0);
+  assert.equal(result.providerLookups, 0);
+  assert.equal(result.presentationStarts, 1);
+  assert.equal(result.presentationCloses, 1);
+  assert.equal(result.lease, 1);
+  assert.equal(result.facade, 1);
+  assert.equal(result.shared, 1);
+  assert.equal(result.session, 1);
+});
+
+test("desktop product composition source selects the Chat-only/management variants without any Stardew coordinator assembly", async () => {
+  const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts"), "utf8");
+  // The assembly input carries the surface selection; chat-only and management
+  // never reach PRODUCT_INTEGRATION_CATALOG, and the composed-reference-game
+  // surface keeps the single Stardew coordinator assembly.
+  assert.match(source, /surface\?: DesktopHostSurface/);
+  assert.match(source, /const surface = input\.surface \?\? "composed-reference-game";/);
+  assert.match(source, /if \(surface === "chat-only" \|\| surface === "management"\) \{/);
+  assert.match(source, /surface === "chat-only"\s*\? await startChatOnlyPresentationAdmission\(variantInput\)\s*: await startTavernManagementPresentationAdmission\(variantInput\)/);
+  assert.match(source, /startChatOnlyPresentationAdmission|startTavernManagementPresentationAdmission/);
+  // The Chat-only variants register only the shared authority, Chat runtime,
+  // and presentation admission as children; no game child participates.
+  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*shared,\s*chatRuntime,\s*presentationAdmission,\s*\]\)/);
+  assert.doesNotMatch(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)[\s\S]*?surface === "chat-only"/);
+  assert.doesNotMatch(source, /createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*session,\s*\}\)[\s\S]*?surface === "chat-only"/);
 });

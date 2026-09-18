@@ -13,7 +13,9 @@ import type { GameLifecycleProviderCapability } from "../integration-catalog.js"
 import { PRODUCT_INTEGRATION_CATALOG } from "../integration-catalog-product.js";
 import { createChatEventStream } from "../tavern/chat-event-stream.js";
 import {
+  startChatOnlyPresentationAdmission,
   startDesktopPresentationAdmission,
+  startTavernManagementPresentationAdmission,
   type DesktopPresentationAdmission,
 } from "./desktop-presentation-admission-owner.js";
 
@@ -70,10 +72,21 @@ export type DesktopPrivateHostComposition = Readonly<{
   close(): Promise<void>;
 }>;
 
+/**
+ * The composed product surface the Host-owned formal entry seam selects. The
+ * chat-only and management variants assemble the Chat surface alone and never
+ * construct a Stardew coordinator; the composed-reference-game variant adds
+ * the Game child. The default keeps the Game surface for the existing desktop
+ * entry, which supplies no explicit selection.
+ */
+export type DesktopHostSurface = "composed-reference-game" | "chat-only" | "management";
+
 /** Explicit product input supplied by the Host-owned formal entry seam. */
 export type DesktopHostAssemblyInput = Readonly<{
   manifest: HostDeploymentManifest;
   gameSessionMode: "fresh" | "known";
+  /** Composed surface selection; defaults to the composed reference-game surface. */
+  surface?: DesktopHostSurface;
 }>;
 
 /**
@@ -113,6 +126,33 @@ export async function createDesktopProductComposition(
         await mountedFacade.close();
       },
     });
+    // E1: the chat-only and management surfaces are Chat-owned composition
+    // variants. They assemble their Chat pipeline / management services over
+    // the mounted Chat lane and the shared semantic authority, and never
+    // construct the Stardew coordinator, guardian, or folder picker; the
+    // composed-reference-game surface below keeps the Game child.
+    const surface = input.surface ?? "composed-reference-game";
+    if (surface === "chat-only" || surface === "management") {
+      const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+      const variantInput = Object.freeze({
+        manifest: input.manifest,
+        hostArtifactRoot,
+        bootstrapToken: randomBytes(32).toString("base64url"),
+        eventStream: createChatEventStream(),
+        lease: mountedLease,
+      });
+      presentationAdmission = surface === "chat-only"
+        ? await startChatOnlyPresentationAdmission(variantInput)
+        : await startTavernManagementPresentationAdmission(variantInput);
+      // Children close in reverse registration order: the presentation
+      // admission first, then the Chat runtime, then the shared semantic
+      // authority; no Game owner participates in this surface.
+      return createDesktopPrivateHostComposition(rootLayoutCapability, session, [
+        shared,
+        chatRuntime,
+        presentationAdmission,
+      ]);
+    }
     const provider = PRODUCT_INTEGRATION_CATALOG.getProvider("stardew");
     if (provider === undefined) throw new Error("stardew_game_integration_provider_unavailable");
     lifecycleCoordinator = await provider.createLifecycleCoordinator({

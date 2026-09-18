@@ -17,7 +17,7 @@ import type { DesktopRootLayoutCapability } from "./desktop-host-composition.js"
  */
 
 const scenario = process.argv[2] ?? "";
-const counts = { shared: 0, lease: 0, facade: 0, session: 0, coordinator: 0, presentationStarts: 0, presentationCloses: 0 };
+const counts = { shared: 0, lease: 0, facade: 0, session: 0, coordinator: 0, presentationStarts: 0, presentationCloses: 0, providerLookups: 0 };
 const constructionFailure = new Error("game_owner_construction_failed");
 
 const sharedAuthority = Object.freeze({
@@ -43,6 +43,7 @@ const chatFacade = Object.freeze({
 
 const catalog = Object.freeze({
   getProvider: (name: string) => {
+    counts.providerLookups += 1;
     if (name !== "stardew") return undefined;
     return Object.freeze({
       createLifecycleCoordinator: async () => {
@@ -69,10 +70,18 @@ const session = Object.freeze({
   close: async () => { counts.session += 1; },
 });
 
-const input = Object.freeze({
-  manifest: Object.freeze({}) as unknown as HostDeploymentManifest,
-  gameSessionMode: "fresh" as const,
-});
+const input = Object.freeze(
+  scenario === "chat-only-surface" || scenario === "management-surface"
+    ? {
+        manifest: Object.freeze({}) as unknown as HostDeploymentManifest,
+        gameSessionMode: "fresh" as const,
+        surface: (scenario === "chat-only-surface" ? "chat-only" : "management") as "chat-only" | "management",
+      }
+    : {
+        manifest: Object.freeze({}) as unknown as HostDeploymentManifest,
+        gameSessionMode: "fresh" as const,
+      },
+);
 const rootLayoutCapability = Object.freeze({}) as DesktopRootLayoutCapability;
 
 async function main(): Promise<void> {
@@ -102,14 +111,37 @@ async function main(): Promise<void> {
           close: async () => { counts.presentationCloses += 1; },
         });
       },
+      startChatOnlyPresentationAdmission: async () => {
+        if (scenario === "presentation-failure") throw constructionFailure;
+        counts.presentationStarts += 1;
+        return Object.freeze({
+          launchUrl: "http://127.0.0.1:1/#profile=reference&boot=fixture",
+          close: async () => { counts.presentationCloses += 1; },
+        });
+      },
+      startTavernManagementPresentationAdmission: async () => {
+        if (scenario === "presentation-failure") throw constructionFailure;
+        counts.presentationStarts += 1;
+        return Object.freeze({
+          launchUrl: "http://127.0.0.1:1/#profile=management&boot=fixture",
+          close: async () => { counts.presentationCloses += 1; },
+        });
+      },
     },
   });
   const { createDesktopProductComposition } = await import(pathToFileURL(join(moduleDirectory, "desktop-host-composition.js")).href);
-  let outcome: "unexpected_success" | "original_failure_propagated" | "different_failure";
+  let outcome: "unexpected_success" | "original_failure_propagated" | "different_failure" | "constructed";
   let errorMessage: string | undefined;
   try {
-    await createDesktopProductComposition(rootLayoutCapability, session, input);
-    outcome = "unexpected_success";
+    const composition = await createDesktopProductComposition(rootLayoutCapability, session, input);
+    if (scenario === "chat-only-surface" || scenario === "management-surface") {
+      // Surface-selected construction succeeds: close through the one product
+      // facade so the test can observe the exact children close order.
+      outcome = "constructed";
+      await composition.close();
+    } else {
+      outcome = "unexpected_success";
+    }
   } catch (error) {
     outcome = error === constructionFailure ? "original_failure_propagated" : "different_failure";
     errorMessage = error instanceof Error ? error.message : String(error);
