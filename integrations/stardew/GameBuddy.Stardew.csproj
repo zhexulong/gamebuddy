@@ -14,7 +14,6 @@
 
   <ItemGroup>
     <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.4.0" PrivateAssets="all" />
-    <PackageReference Include="Raffinert.FuzzySharp" Version="5.0.3" />
   </ItemGroup>
 
   <ItemGroup>

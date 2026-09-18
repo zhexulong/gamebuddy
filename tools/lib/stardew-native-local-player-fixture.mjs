@@ -5,7 +5,6 @@ import { dirname, isAbsolute, join } from "node:path";
 const BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",
   "GameBuddy.Stardew.Core.dll",
-  "Raffinert.FuzzySharp.dll",
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
 ]);

@@ -51,7 +51,7 @@ import {
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import { createTestWindowsReparseInspector } from "./windows-reparse-inspector/index.test-support.js";
-import type { WindowsPathObjectIdentity } from "./windows-reparse-inspector/index.js";
+import type { WindowsPathObjectIdentity, WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 
 const bootstrapToken = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
 const gameDirectoryCandidate = "C:\\Games\\Stardew Valley";
@@ -65,7 +65,6 @@ const packageEntries = [
   "GameBuddy.Stardew.Core.dll",
   "GameBuddy.Stardew.deps.json",
   "GameBuddy.Stardew.dll",
-  "Raffinert.FuzzySharp.dll",
   "manifest.json",
 ] as const;
 const tavernProfile = composeTavernProfile({
@@ -487,17 +486,21 @@ async function createFixture(input: Readonly<{
     bootstrapOperationId: "request-1",
     authorityGeneration: 1,
   });
+  let freshRegistrationAdmissionCount = 0;
   const coordinator = createStardewProductionLifecycleCoordinatorForTesting(
     manifest,
     dependencies,
     {
       ...input.overrides,
-      createInstallationInspector: input.overrides?.createInstallationInspector ?? (async () =>
-        installationInspector(input.inspectorChains ?? [
-          installationChain, installationChain, installationChain,
-          installationChain, installationChain, installationChain,
-        ],
-          input.inspectorGate === undefined ? undefined : () => input.inspectorGate!)),
+      createInstallationInspector: (async () => {
+        freshRegistrationAdmissionCount += 1;
+        return (input.overrides?.createInstallationInspector ?? (async () =>
+          installationInspector(input.inspectorChains ?? [
+            installationChain, installationChain, installationChain,
+            installationChain, installationChain, installationChain,
+          ],
+            input.inspectorGate === undefined ? undefined : () => input.inspectorGate!)))();
+      }) as () => Promise<WindowsReparseInspectorCapability>,
       connectFarmhandGameRuntimeFacade: input.overrides?.connectFarmhandGameRuntimeFacade ?? (async (connection, deadlineMs) => {
         bridgeConnectCalls.push(Object.freeze({
           scope: connection.scope,
@@ -539,6 +542,7 @@ async function createFixture(input: Readonly<{
   coordinator.activationOwner.bindBrowserAdmissionIssuer(broker.handler.lifecycleActivationIssuer);
   return {
     runtimeRoot,
+    manifest,
     coordinator,
     broker,
     spawnCalls,
@@ -554,6 +558,7 @@ async function createFixture(input: Readonly<{
     gameRuntimeTaskCancelCalls: () => gameRuntimeTaskCancelCalls,
     gameStopCalls,
     packageReadCount: () => packageReadCount,
+    freshRegistrationAdmissionCount: () => freshRegistrationAdmissionCount,
   };
 }
 
@@ -3905,6 +3910,23 @@ test("game.resume.cancel terminates the reconnect epoch, keeps the armed generat
       ),
       /stardew_game_resume_cancel_unavailable/,
     );
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("headless operational admission consumes one fresh registered installation through the existing lifecycle core", async () => {
+  const fixture = await createFixture();
+  try {
+    const lease = await fixture.coordinator.headlessOperationalGame.activateHeadlessOperationalGame(fixture.manifest);
+    assert.equal(lease.activateCommittedIngress.length, 0);
+    assert.equal(typeof lease.close, "function");
+    assert.equal(fixture.playerSpawnCalls.length, 1);
+    assert.equal(fixture.spawnCalls.length, 1);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
+    assert.ok(fixture.freshRegistrationAdmissionCount() >= 1, "headless consume lease fresh-admits at least once");
+    await lease.close();
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();

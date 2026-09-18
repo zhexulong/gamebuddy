@@ -166,7 +166,6 @@ async function setupRunnerFixture() {
   await writeFile(join(loader, 'StardewNavigationP4Loader.dll'), 'loader');
   await writeFile(join(probe, 'manifest.json'), JSON.stringify({ UniqueID: 'zhexulong.GameBuddy.NavigationTopologyCharacterization' }));
   await writeFile(join(probe, 'GameBuddy.Stardew.NavigationTopologyCharacterization.dll'), 'probe');
-  for (const name of ['GameBuddy.Stardew.dll', 'GameBuddy.Stardew.Core.dll', 'Raffinert.FuzzySharp.dll']) {
     await writeFile(join(probe, name), `shared-${name}`);
     await writeFile(join(production, name), `shared-${name}`);
   }

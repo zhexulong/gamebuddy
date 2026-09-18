@@ -31,7 +31,6 @@ export const BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.Core.dll",
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
-  "Raffinert.FuzzySharp.dll",
 ]);
 export const BUNDLE_MANIFEST_UNIQUE_ID = "zhexulong.GameBuddy";
 export const BUNDLE_MANIFEST_ENTRY_DLL = "GameBuddy.Stardew.dll";

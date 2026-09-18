@@ -5,7 +5,10 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using StardewValley;
+using StardewValley.GameData.Characters;
 using StardewValley.GameData.Locations;
+using StardewValley.GameData.Objects;
+using StardewValley.GameData.Shops;
 using StardewValley.TokenizableStrings;
 using StardewValley.WorldMaps;
 
@@ -125,6 +128,8 @@ internal sealed class DerivedDestinationSet
                 destinations.Add(new NavigationDestination(contentOwner, identity, label, null, fallbackLabel, aliases));
             }
 
+            TryApplyNativeMetadata(destinations);
+
             string generation = ComputeGeneration(destinations);
             set = new DerivedDestinationSet(generation, new NavigationSourceNode("root", null, null, null, sourceNodes), destinations);
             reasonCode = "accepted";
@@ -181,6 +186,146 @@ internal sealed class DerivedDestinationSet
             .OrderBy(identity => identity, StringComparer.Ordinal)) + "\n";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(serialized))).ToLowerInvariant();
     }
+
+    /// <summary>
+    /// Attaches native 1.6 metadata to destinations so search recall is not
+    /// limited to map labels: NPC residents (their canonical name and id) from
+    /// Data/Characters join their home location, and each shop's key plus its
+    /// stock item display names from Data/Shops join the home location of its
+    /// owner NPC. All extracted lists are sorted and deduplicated. Any content
+    /// failure degrades to the plain map-only destination list; this step is
+    /// recall-optimizing only and never changes canonical identities, so
+    /// Navigation bindings are unaffected.
+    /// </summary>
+    private static void TryApplyNativeMetadata(List<NavigationDestination> destinations)
+    {
+        try
+        {
+            IReadOnlyDictionary<string, CharacterData> characters = DataLoader.Characters(Game1.content);
+            IReadOnlyDictionary<string, ShopData> shops = DataLoader.Shops(Game1.content);
+            IReadOnlyDictionary<string, ObjectData> objects = DataLoader.Objects(Game1.content);
+
+            Dictionary<string, int> indexByIdentity = new(StringComparer.Ordinal);
+            for (int i = 0; i < destinations.Count; i++)
+                indexByIdentity.TryAdd(destinations[i].CanonicalIdentity, i);
+
+            Dictionary<string, string> npcHomes = new(StringComparer.Ordinal);
+            Dictionary<string, List<string>> npcTerms = new(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, CharacterData> pair in characters.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                string npcId = pair.Key;
+                string? home = GetDefaultHomeLocation(pair.Value);
+                if (home is null || !indexByIdentity.ContainsKey(home))
+                    continue;
+                npcHomes[npcId] = home;
+                if (!npcTerms.TryGetValue(home, out List<string>? terms))
+                    npcTerms[home] = terms = new List<string>();
+                terms.Add(npcId);
+                string? displayName = ParseSearchableText(pair.Value.DisplayName);
+                if (displayName is not null && !StringComparer.Ordinal.Equals(displayName, npcId))
+                    terms.Add(displayName);
+            }
+
+            Dictionary<string, List<string>> serviceTerms = new(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, ShopData> pair in shops.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                string shopKey = pair.Key;
+                List<string> ownerHomes = new();
+                foreach (ShopOwnerData owner in pair.Value.Owners ?? Enumerable.Empty<ShopOwnerData>())
+                {
+                    if (owner is null || string.IsNullOrWhiteSpace(owner.Name)
+                        || !npcHomes.TryGetValue(owner.Name, out string? home) || !indexByIdentity.ContainsKey(home))
+                        continue;
+                    if (!ownerHomes.Contains(home, StringComparer.Ordinal))
+                        ownerHomes.Add(home);
+                }
+                if (ownerHomes.Count == 0)
+                    continue;
+                List<string> terms = new() { shopKey };
+                foreach (ShopItemData item in (pair.Value.Items ?? Enumerable.Empty<ShopItemData>()).OrderBy(item => item.Id, StringComparer.Ordinal))
+                {
+                    string? itemName = GetItemDisplayName(item, objects);
+                    if (itemName is not null)
+                        terms.Add(itemName);
+                }
+                string[] orderedTerms = terms.Where(term => !string.IsNullOrWhiteSpace(term))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(term => term, StringComparer.Ordinal)
+                    .ToArray();
+                foreach (string home in ownerHomes)
+                {
+                    if (!serviceTerms.TryGetValue(home, out List<string>? list))
+                        serviceTerms[home] = list = new List<string>();
+                    list.AddRange(orderedTerms);
+                }
+            }
+
+            for (int i = 0; i < destinations.Count; i++)
+            {
+                NavigationDestination destination = destinations[i];
+                IReadOnlyList<string>? npcs = SortTerms(npcTerms, destination.CanonicalIdentity);
+                IReadOnlyList<string>? services = SortTerms(serviceTerms, destination.CanonicalIdentity);
+                if (npcs is null && services is null)
+                    continue;
+                destinations[i] = destination with { RelatedNpcs = npcs, ServiceTerms = services };
+            }
+        }
+        catch
+        {
+            // Enrichment is recall-optimizing only; keep the plain map-only list.
+        }
+    }
+
+    /// <summary>
+    /// Deterministically selects the NPC's default home: the first
+    /// unconditional home entry, otherwise the first entry in stable content
+    /// order.
+    /// </summary>
+    private static string? GetDefaultHomeLocation(CharacterData character)
+    {
+        if (character.Home is null)
+            return null;
+        foreach (CharacterHomeData home in character.Home
+            .Where(home => !string.IsNullOrWhiteSpace(home.Location))
+            .OrderBy(home => string.IsNullOrEmpty(home.Condition) ? 0 : 1)
+            .ThenBy(home => home.Location, StringComparer.Ordinal)
+            .ThenBy(home => home.Id, StringComparer.Ordinal))
+        {
+            return home.Location;
+        }
+        return null;
+    }
+
+    private static string? GetItemDisplayName(ShopItemData item, IReadOnlyDictionary<string, ObjectData> objects)
+    {
+        string? direct = ParseSearchableText(item.ObjectDisplayName);
+        if (direct is not null)
+            return direct;
+        string itemId = item.ItemId ?? string.Empty;
+        int closingBracket = itemId.IndexOf(')');
+        if (closingBracket < 0 || closingBracket + 1 >= itemId.Length)
+            return null;
+        string key = itemId.Substring(closingBracket + 1);
+        return objects.TryGetValue(key, out ObjectData? objectData)
+            ? ParseSearchableText(objectData.DisplayName)
+            : null;
+    }
+
+    private static string? ParseSearchableText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+        string parsed = TokenParser.ParseText(text, null, null, null) ?? text;
+        return parsed.Length is >= 1 and <= 128 ? parsed : null;
+    }
+
+    private static IReadOnlyList<string>? SortTerms(Dictionary<string, List<string>> termsByIdentity, string identity)
+    {
+        if (!termsByIdentity.TryGetValue(identity, out List<string>? terms) || terms.Count == 0)
+            return null;
+        string[] ordered = terms.Distinct(StringComparer.Ordinal).OrderBy(term => term, StringComparer.Ordinal).ToArray();
+        return ordered.Length == 0 ? null : ordered;
+    }
 }
 
 /// <summary>
@@ -211,5 +356,7 @@ internal sealed record NavigationDestination(
     string CanonicalLabel,
     string? ContextLabel,
     string? FallbackLabel = null,
-    IReadOnlyList<string>? ExplicitAliases = null
+    IReadOnlyList<string>? ExplicitAliases = null,
+    IReadOnlyList<string>? RelatedNpcs = null,
+    IReadOnlyList<string>? ServiceTerms = null
 );

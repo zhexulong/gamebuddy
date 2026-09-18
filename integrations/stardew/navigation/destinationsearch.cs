@@ -1,7 +1,5 @@
-using System.Globalization;
 using System.Linq;
 using System.Text;
-using Raffinert.FuzzySharp;
 
 namespace GameBuddy.Stardew.Navigation;
 
@@ -30,6 +28,17 @@ internal sealed record DestinationSearchResult(
 }
 
 /// <summary>
+/// Scores one normalized query against a destination directory. The returned
+/// array is aligned with the directory order; scores order candidates only and
+/// are never projected into a result. Production uses
+/// <see cref="DestinationSearchIndex"/>; tests inject fixed scores.
+/// </summary>
+internal delegate double[] DestinationScorer(
+    IReadOnlyList<NavigationDestination> destinations,
+    string normalizedQuery
+);
+
+/// <summary>
 /// Bounded lexical ranking over the current Mod-derived destination directory.
 /// It never exposes scores or canonical identities and never turns a fuzzy
 /// match into an automatic destination choice.
@@ -37,9 +46,19 @@ internal sealed record DestinationSearchResult(
 internal sealed class DestinationSearch
 {
     private const int MaximumCandidates = 3;
-    private const int MinimumFuzzyScore = 60;
-    private const int AmbiguousFuzzyScoreMargin = 5;
     private const int MaximumResultUtf8Bytes = 2048;
+
+    /// <summary>
+    /// Fuzzy candidates must score within 25% of the best candidate. The managed
+    /// index reports directory-relative BM25 magnitudes rather than the retired
+    /// edit-distance scorer's fixed 0-100 ratio, so the ambiguity margin is taken
+    /// relative to the best score.
+    /// </summary>
+    private const double AmbiguousScoreRatioMargin = 0.25;
+
+    private readonly DestinationScorer? scorer;
+
+    internal DestinationSearch(DestinationScorer? scorer = null) => this.scorer = scorer;
 
     internal DestinationSearchResult Find(
         DerivedDestinationSet set,
@@ -52,13 +71,13 @@ internal sealed class DestinationSearch
 
         IReadOnlyList<NavigationDestination> destinations = set.SearchDestinations;
         NavigationDestination[] exactCurrent = MatchExact(destinations,
-            destination => StringComparer.Ordinal.Equals(Normalize(destination.CanonicalLabel), normalized));
+            destination => StringComparer.Ordinal.Equals(DestinationSearchText.Normalize(destination.CanonicalLabel), normalized));
         NavigationDestination[] exactFallback = MatchExact(destinations,
             destination => destination.FallbackLabel is not null
-                && StringComparer.Ordinal.Equals(Normalize(destination.FallbackLabel), normalized));
+                && StringComparer.Ordinal.Equals(DestinationSearchText.Normalize(destination.FallbackLabel), normalized));
         NavigationDestination[] exactAlias = MatchExact(destinations,
             destination => (destination.ExplicitAliases ?? Array.Empty<string>())
-                .Any(alias => StringComparer.Ordinal.Equals(Normalize(alias), normalized)));
+                .Any(alias => StringComparer.Ordinal.Equals(DestinationSearchText.Normalize(alias), normalized)));
         NavigationDestination[] exact = exactCurrent.Concat(exactFallback).Concat(exactAlias)
             .GroupBy(destination => destination.CanonicalIdentity, StringComparer.Ordinal)
             .Select(group => group.First())
@@ -90,9 +109,14 @@ internal sealed class DestinationSearch
             return IsWithinResultByteLimit(exactResult) ? exactResult : DestinationSearchResult.Unavailable();
         }
 
-        var fuzzy = destinations
-            .Select(destination => new { Destination = destination, Score = BestScore(normalized, destination) })
-            .Where(match => match.Score >= MinimumFuzzyScore)
+        double[] scores = this.Score(destinations, normalized);
+        var fuzzy = Enumerable.Range(0, destinations.Count)
+            .Select(index => new
+            {
+                Destination = destinations[index],
+                Score = index < scores.Length ? scores[index] : 0.0,
+            })
+            .Where(match => match.Score > 0.0)
             .OrderByDescending(match => match.Score)
             .ThenBy(match => match.Destination.CanonicalLabel, StringComparer.Ordinal)
             .ThenBy(match => match.Destination.CanonicalIdentity, StringComparer.Ordinal)
@@ -100,7 +124,7 @@ internal sealed class DestinationSearch
         if (fuzzy.Length == 0)
             return DestinationSearchResult.NotFound();
 
-        int cutoff = fuzzy[0].Score - AmbiguousFuzzyScoreMargin;
+        double cutoff = fuzzy[0].Score * (1.0 - AmbiguousScoreRatioMargin);
         NavigationDestination[] candidates = fuzzy.Where(match => match.Score >= cutoff)
             .Take(MaximumCandidates)
             .Select(match => match.Destination)
@@ -121,14 +145,10 @@ internal sealed class DestinationSearch
         return Encoding.UTF8.GetByteCount(System.Text.Json.JsonSerializer.Serialize(payload)) <= MaximumResultUtf8Bytes;
     }
 
-    private static int BestScore(string normalizedQuery, NavigationDestination destination)
-    {
-        IEnumerable<string> labels = new[] { destination.CanonicalLabel, destination.FallbackLabel }
-            .Concat(destination.ExplicitAliases ?? Array.Empty<string>())
-            .OfType<string>()
-            .Where(label => !string.IsNullOrWhiteSpace(label));
-        return labels.Select(label => Fuzz.WeightedRatio(normalizedQuery, Normalize(label))).DefaultIfEmpty(0).Max();
-    }
+    private double[] Score(IReadOnlyList<NavigationDestination> destinations, string normalizedQuery) =>
+        this.scorer is null
+            ? DestinationSearchIndex.Build(destinations).ScoreAll(normalizedQuery)
+            : this.scorer(destinations, normalizedQuery);
 
     private static DestinationSearchCandidate ToCandidate(
         NavigationDestination destination,
@@ -167,29 +187,7 @@ internal sealed class DestinationSearch
         if (value.Any(char.IsControl) || value.Contains('/') || value.Contains('\\') || value.Contains(':')
             || value.Any(char.IsDigit))
             return false;
-        normalized = Normalize(value);
+        normalized = DestinationSearchText.Normalize(value);
         return normalized.Length > 0;
-    }
-
-    private static string Normalize(string value)
-    {
-        StringBuilder builder = new();
-        bool pendingSpace = false;
-        foreach (Rune rune in value.Normalize(NormalizationForm.FormKC).ToLowerInvariant().EnumerateRunes())
-        {
-            UnicodeCategory category = Rune.GetUnicodeCategory(rune);
-            if (Rune.IsWhiteSpace(rune) || category is UnicodeCategory.ConnectorPunctuation or UnicodeCategory.DashPunctuation or UnicodeCategory.OtherPunctuation)
-            {
-                pendingSpace = builder.Length > 0;
-                continue;
-            }
-            if (pendingSpace)
-            {
-                builder.Append(' ');
-                pendingSpace = false;
-            }
-            builder.Append(rune);
-        }
-        return builder.ToString().Trim();
     }
 }

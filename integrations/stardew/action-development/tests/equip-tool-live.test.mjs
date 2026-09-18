@@ -210,8 +210,8 @@ test("real immutable binding and Devkit claims turn missing cleanup receipt into
   await mkdir(modsPath, { recursive: true });
   await mkdir(runtimeLeaseRoot);
   await mkdir(path.join(root, "native-fixture"));
-  const files = ["GameBuddy.Stardew.dll", "GameBuddy.Stardew.Core.dll", "Raffinert.FuzzySharp.dll", "manifest.json", "GameBuddy.Stardew.deps.json"];
   const hash = createHash("sha256");
+  const files = ["GameBuddy.Stardew.dll", "GameBuddy.Stardew.Core.dll", "manifest.json", "GameBuddy.Stardew.deps.json"];
   for (const name of files) {
     const bytes = Buffer.from(name === "manifest.json"
       ? JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" })
