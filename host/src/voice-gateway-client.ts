@@ -3,15 +3,21 @@ import { createConnection, type Socket } from "node:net";
 import {
   createBoundedUtf8NdjsonDecoder,
   encodeVoiceGatewayMessage,
+  encodeVoiceGatewayMessageV2,
   isFinalTranscriptEvent,
   isOpaqueId,
   isSourceEventId,
+  isVoiceGatewayEventV2,
   isVoiceGatewayRequest,
+  isVoiceGatewayRequestV2,
   MAX_NDJSON_FRAME_BYTES,
   parseVoiceGatewayResponse,
   VOICE_PROTOCOL_VERSION,
+  VOICE_PROTOCOL_VERSION_V2,
   type VoiceGatewayEvent,
+  type VoiceGatewayEventV2,
   type VoiceGatewayRequest,
+  type VoiceGatewayRequestV2,
   type VoiceGatewayResponse,
 } from "@gamebuddy/voice-protocol";
 
@@ -64,6 +70,7 @@ export type VoiceGatewayConnection = Readonly<{
 export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   readonly #pending = new Map<string, Pending>();
   readonly #finalListeners = new Set<(input: FinalVoiceInput) => void>();
+  readonly #playbackListeners = new Set<(observation: VoiceGatewayEventV2) => void>();
   #socket: Socket | undefined;
   readonly #framer = createBoundedUtf8NdjsonDecoder({
     maxRecordBytes: MAX_NDJSON_FRAME_BYTES,
@@ -153,6 +160,54 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   public close(): void {
     this.#socket?.destroy();
     this.handleClose("voice_gateway_closed");
+  }
+
+  /**
+   * Voice-local streaming surface: send a delta text chunk for a speech job.
+   * v2 is a push lane — the server confirms via pushed playback_observation,
+   * which callers may subscribe to with onPlaybackObservation(). This never
+   * touches ChatThreadStore and never cancels any Game action.
+   */
+  public async streamSpeechChunk(
+    sessionId: string,
+    speechJobId: string,
+    chunkIndex: number,
+    deltaText: string,
+    isFinalChunk: boolean,
+    deadlineMs: number,
+    voiceProfile?: string,
+  ): Promise<void> {
+    if (!this.#connected || this.#socket === undefined || this.#socket.destroyed)
+      throw new Error("voice_gateway_disconnected");
+    // The v2 lane runs on the authenticated socket with the current healthy
+    // gateway epoch as its connectionEpoch; a stale/unhealthy gateway has no
+    // usable streaming lane (same gate as v1 speech enqueue).
+    const connectionEpoch = this.currentReadyCapabilities().epoch;
+    const request: VoiceGatewayRequestV2 = {
+      protocolVersion: VOICE_PROTOCOL_VERSION_V2,
+      sessionId,
+      connectionEpoch,
+      timestampMs: Date.now(),
+      type: "stream_speech_chunk",
+      requestId: randomUUID(),
+      speechJobId,
+      chunkIndex,
+      deltaText,
+      isFinalChunk,
+      deadlineMs,
+      ...(voiceProfile === undefined ? {} : { voiceProfile }),
+    };
+    if (!isVoiceGatewayRequestV2(request)) throw new Error("invalid_voice_gateway_v2_request");
+    this.#socket.write(encodeVoiceGatewayMessageV2(request));
+  }
+
+  public onPlaybackObservation(listener: (observation: VoiceGatewayEventV2) => void): () => void {
+    this.#playbackListeners.add(listener);
+    return () => this.#playbackListeners.delete(listener);
+  }
+
+  public onV2GatewayState(listener: (state: VoiceGatewayEventV2) => void): () => void {
+    return this.onPlaybackObservation(listener);
   }
 
   public onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void {
@@ -393,6 +448,18 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
       return;
     }
     for (const line of frames) {
+      // v2 events arrive pushed on the same authenticated socket; they have
+      // no requestId, so they cannot resolve a pending v1 request.
+      let value: unknown;
+      try {
+        value = JSON.parse(line) as unknown;
+      } catch {
+        value = null;
+      }
+      if (isVoiceGatewayEventV2(value) && this.#capabilities.ready) {
+        for (const listener of this.#playbackListeners) listener(value);
+        continue;
+      }
       const response = parseVoiceGatewayResponse(line);
       if (response === null) {
         this.close();
