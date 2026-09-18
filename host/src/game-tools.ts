@@ -16,10 +16,10 @@ import {
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import {
-  type ActionRegistration,
   type ActionRegistrationDescriptor,
   type ExecutionReceipt,
   type ExecutionRequest,
+  TOOL_SELECTOR_VALUES,
   isValidObserveSceneResult,
   validateExecutionRequest,
 } from "./protocol.js";
@@ -1225,10 +1225,13 @@ export function createStardewActionTools(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.equip_tool,
         label: "Equip Stardew Tool",
-        description:
-          "Select a Tool already owned by the AI Farmhand. The Mod receipt reports the authoritative before/after CurrentTool state.",
+        description: `Select a Tool already owned by the AI Farmhand by semantic category (${[...TOOL_SELECTOR_VALUES].join(", ")}). The Mod receipt reports the authoritative before/after CurrentTool state.`,
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          tool: Type.Union(
+            [...TOOL_SELECTOR_VALUES].map((selector) =>
+              Type.Literal(selector),
+            ),
+          ),
           requestId: Type.Optional(
             Type.String({ minLength: 1, maxLength: 128 }),
           ),
@@ -1237,7 +1240,7 @@ export function createStardewActionTools(
           ),
         }),
         action: "equip_tool",
-        toArgs: (params) => ({ slot: params.slot }),
+        toArgs: (params) => ({ tool: params.tool }),
       }),
     );
   }

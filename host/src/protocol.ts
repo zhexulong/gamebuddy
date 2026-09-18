@@ -3174,7 +3174,7 @@ function isToolSlot(value: unknown): value is number {
   return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 36;
 }
 
-const TOOL_SELECTOR_VALUES = new Set([
+export const TOOL_SELECTOR_VALUES = new Set([
   "axe",
   "pickaxe",
   "hoe",

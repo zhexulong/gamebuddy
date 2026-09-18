@@ -662,7 +662,7 @@ test("Gameplay worker fake session blocks a second action until the owned receip
       create: async ({ customTools }) =>
         fakeSession(customTools, async (tools) => {
           await invoke(tools, "stardew_equip_tool", {
-            slot: 1,
+            tool: "axe",
             requestId: "request_01",
             idempotencyKey: "key_01",
           });
@@ -747,7 +747,7 @@ test("Gameplay worker permits repeated actions in one family after each receipt 
       create: async ({ customTools }) =>
         fakeSession(customTools, async (tools) => {
           await invoke(tools, "stardew_equip_tool", {
-            slot: 1,
+            tool: "axe",
             requestId: "request_first",
             idempotencyKey: "key_first",
           });
@@ -761,7 +761,7 @@ test("Gameplay worker permits repeated actions in one family after each receipt 
             evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
           };
              await invoke(tools, "stardew_equip_tool", {
-               slot: 2,
+               tool: "pickaxe",
                requestId: "request_second",
                idempotencyKey: "key_second",
              });
@@ -804,7 +804,7 @@ test("Gameplay worker parent abort cancels only its accepted execution and recor
           customTools,
           async (tools) => {
             await invoke(tools, "stardew_equip_tool", {
-              slot: 1,
+              tool: "axe",
               requestId: "request_cancel",
               idempotencyKey: "key_cancel",
             });
@@ -1038,7 +1038,7 @@ test("adapter liveness freezes the active task, cancels its owned execution once
           customTools,
           async (tools) => {
             await invoke(tools, "stardew_equip_tool", {
-              slot: 1,
+              tool: "axe",
               requestId: "request_live",
               idempotencyKey: "key_live",
             });
@@ -1118,7 +1118,7 @@ test("worker blocks the next action until a terminal receipt has a fresh snapsho
       create: async ({ customTools }) =>
         fakeSession(customTools, async (tools) => {
           await invoke(tools, "stardew_equip_tool", {
-            slot: 1,
+            tool: "axe",
             requestId: "request_01",
             idempotencyKey: "key_01",
           });
@@ -1196,7 +1196,7 @@ test("worker mints a fresh runtime-owned admission for each action invocation", 
           customTools,
           async (tools) => {
             await invoke(tools, "stardew_equip_tool", {
-              slot: 1,
+              tool: "axe",
               requestId: "request_same_owner",
               idempotencyKey: "key_same_owner",
             });
@@ -1259,7 +1259,7 @@ test("latest nonterminal receipt before delayed tool resolution remains ledger-p
           customTools,
           async (tools) => {
             await invoke(tools, "stardew_equip_tool", {
-              slot: 1,
+              tool: "axe",
               requestId: "request_pending",
               idempotencyKey: "key_pending",
             });
@@ -1344,7 +1344,7 @@ test("pending post-write dispatch settles from an exact terminal wake before its
           customTools,
           async (tools) => {
             await invoke(tools, "stardew_equip_tool", {
-              slot: 1,
+              tool: "axe",
               requestId: "request_wake",
               idempotencyKey: "key_wake",
             });
@@ -1424,7 +1424,7 @@ test("latest terminal receipt before delayed tool resolution retires ledger corr
           customTools,
           async (tools) => {
             await invoke(tools, "stardew_equip_tool", {
-              slot: 1,
+              tool: "axe",
               requestId: "request_terminal",
               idempotencyKey: "key_terminal",
             });

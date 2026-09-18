@@ -5,7 +5,7 @@ import { createDeterministicBridgePair } from "./bridge.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
 import { GameConnectionTestClient } from "./test-support/game-connection-test-client.js";
-import { newEnvelope, type Scope } from "./protocol.js";
+import { newEnvelope, validateExecutionRequest, type Scope } from "./protocol.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
@@ -282,7 +282,7 @@ catalogRevision: 1,
   assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /Game action was not created/);
 });
 
-test("equip_tool mounts only from a live capability and forwards the selected slot", async () => {
+test("equip_tool mounts only from a live capability and forwards the selected tool", async () => {
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
@@ -332,13 +332,15 @@ catalogRevision: 1,
   assert.equal(tools[0]?.name, "stardew_equip_tool");
   const result = await tools[0]!.execute(
     "test",
-    { slot: 2, requestId: "request_tool_01", idempotencyKey: "idempotency_tool_01" },
+    { tool: "axe", requestId: "request_tool_01", idempotencyKey: "idempotency_tool_01" },
     new AbortController().signal,
     () => {},
     {} as never,
   );
-  assert.equal((received as { action: string; args: { slot: number } }).action, "equip_tool");
-  assert.equal((received as { args: { slot: number } }).args.slot, 2);
+  assert.equal((received as { action: string; args: { tool: string } }).action, "equip_tool");
+  assert.equal((received as { args: { tool: string } }).args.tool, "axe");
+  // Wire consistency: the tool-emitted request must pass the wire validator unchanged.
+  assert.equal(validateExecutionRequest(received, integration.state.snapshot!), null);
   assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /tool_selected/);
 });
 
