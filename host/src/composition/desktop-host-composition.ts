@@ -1,28 +1,11 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { DesktopGuardianSession } from "../containment/auth/desktop-guardian-session.internal.js";
+import {
+  createChatSemanticFacadeFromSharedAuthority,
+  type ConstructedUnmountedChatSemanticFacade,
+} from "../continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.js";
 import { createSharedSemanticProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import type { StardewOwnedPlayerHostBootstrap } from "../games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
-import { createStardewProductionLifecycleCoordinator, type StardewProductionLifecycleCoordinator } from "../stardew-production-lifecycle-coordinator.internal.js";
-import {
-  createDesktopGuardianGameRuntimePlatform,
-  createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
-} from "./contained-game-runtime-platform.private.js";
-import { createPublishedWindowsStardewFolderPicker } from "../windows-stardew-folder-picker/index.js";
-import { createStardewBootstrapGuardianOwnerBinding } from "../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
-import {
-  createStardewBootstrapGuardianNativePortsFromDesktopSession,
-  createStardewBootstrapGuardianOwner,
-  type StardewBootstrapGuardianOwner,
-} from "../games/stardew/lifecycle/stardew-bootstrap-guardian.private.js";
-type StardewBootstrapGuardianOwnerFactory = Readonly<{
-  create(
-    owner: StardewOwnedPlayerHostBootstrap,
-    deadlineUnixMs: number,
-    operationWaitBudgetMs: number,
-  ): StardewBootstrapGuardianOwner;
-}>;
+import { PRODUCT_INTEGRATION_CATALOG } from "../integration-catalog-product.js";
 
 /**
  * Narrow lifecycle contract shared by composition-owned children. The child
@@ -70,21 +53,9 @@ export type DesktopRootLayoutCapability = object & {
   readonly [desktopRootLayoutCapabilityBrand]: true;
 };
 
-/** Constructs one Guardian owner for the exact lifecycle invocation while retaining session transport privately. */
-function createStardewBootstrapGuardianOwnerFromDesktopSession(
-  owner: StardewOwnedPlayerHostBootstrap,
-  session: DesktopGuardianSession,
-  deadlineUnixMs: number,
-  operationWaitBudgetMs: number,
-): StardewBootstrapGuardianOwner {
-  const binding = createStardewBootstrapGuardianOwnerBinding(owner);
-  return createStardewBootstrapGuardianOwner(
-    binding,
-    createStardewBootstrapGuardianNativePortsFromDesktopSession(binding, session, deadlineUnixMs, operationWaitBudgetMs),
-  );
-}
-
-/** Generic desktop composition surface; game-specific Guardian seams stay closure-private. */
+/**
+ * Generic desktop composition surface; game-specific Guardian seams stay closure-private.
+ */
 export type DesktopPrivateHostComposition = Readonly<{
   close(): Promise<void>;
 }>;
@@ -97,8 +68,10 @@ export type DesktopHostAssemblyInput = Readonly<{
 
 /**
  * Builds the one long-lived Desktop Host product composition. The returned
- * facade deliberately exposes only lifecycle; all semantic and Stardew owners
- * remain in this closure and close before the authenticated Desktop session.
+ * facade deliberately exposes only lifecycle; all semantic, Chat, and Stardew
+ * owners remain in this closure and close before the authenticated Desktop
+ * session. Chat and Game are independent composition children sharing one
+ * semantic authority; neither surface owns, pauses, or closes the other.
  */
 export async function createDesktopProductComposition(
   rootLayoutCapability: DesktopRootLayoutCapability,
@@ -106,20 +79,45 @@ export async function createDesktopProductComposition(
   input: DesktopHostAssemblyInput,
 ): Promise<DesktopPrivateHostComposition> {
   let shared: Awaited<ReturnType<typeof createSharedSemanticProductionAuthorityFromDeploymentManifest>> | undefined;
-  let lifecycleCoordinator: StardewProductionLifecycleCoordinator | undefined;
+  let chatFacade: ConstructedUnmountedChatSemanticFacade | undefined;
+  let chatRuntime: { close(): Promise<void> } | undefined;
+  let lifecycleCoordinator: { close(): Promise<void> } | undefined;
   try {
     shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(input.manifest, input.gameSessionMode);
-    const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-    const folderPicker = await createPublishedWindowsStardewFolderPicker(artifactRoot);
-    const runtimeCollaboratorFactory = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
-    lifecycleCoordinator = createStardewProductionLifecycleCoordinator(
-      input.manifest,
-      folderPicker,
-      shared.game,
-      runtimeCollaboratorFactory,
-    );
-    return createDesktopPrivateHostComposition(rootLayoutCapability, session, [shared, lifecycleCoordinator]);
+    // The mounted Chat runtime is a sibling composition child of the Stardew
+    // lifecycle owner over the same shared semantic authority. The reference
+    // facade entry keeps the lease after the coordinator; here it starts before
+    // the coordinator so a coordinator construction failure still drains the
+    // Chat child alongside the shared owner.
+    const mountedFacade = await createChatSemanticFacadeFromSharedAuthority(shared.chat);
+    chatFacade = mountedFacade;
+    const mountedLease = await mountedFacade.startMountedChatRuntime();
+    chatRuntime = Object.freeze({
+      close: async () => {
+        // Mirrors the reference entry's Chat lane: the mounted runtime authority
+        // closes first, then the facade drains its Chat runtime projection.
+        await mountedLease.close();
+        await mountedFacade.close();
+      },
+    });
+    const provider = PRODUCT_INTEGRATION_CATALOG.getProvider("stardew");
+    if (provider === undefined) throw new Error("stardew_game_integration_provider_unavailable");
+    lifecycleCoordinator = await provider.createLifecycleCoordinator({
+      manifest: input.manifest,
+      game: shared.game,
+      session,
+    });
+    // Children close in reverse registration order: the Chat runtime first,
+    // then the Stardew lifecycle owner, then the shared semantic authority,
+    // matching the reference entry's facade -> coordinator -> shared order.
+    return createDesktopPrivateHostComposition(rootLayoutCapability, session, [shared, lifecycleCoordinator, chatRuntime]);
   } catch (error) {
+    try {
+      if (chatRuntime !== undefined) await chatRuntime.close();
+      else await chatFacade?.close();
+    } catch {
+      // Preserve the product construction failure.
+    }
     try {
       await lifecycleCoordinator?.close();
     } catch {
@@ -154,13 +152,6 @@ export function createDesktopPrivateHostComposition(
   let sessionClosePromise: Promise<void> | undefined;
   let compositionClosePromise: Promise<void> | undefined;
   const childLifecycle = createHostChildLifecycleAggregation(children);
-  // Keep the Stardew adapter in this composition-private closure. The generic
-  // facade below intentionally projects lifecycle only; no game-specific
-  // factory crosses this boundary.
-  const stardewBootstrapGuardianOwnerFactory: StardewBootstrapGuardianOwnerFactory = Object.freeze({
-    create: (owner, deadlineUnixMs, operationWaitBudgetMs) =>
-      createStardewBootstrapGuardianOwnerFromDesktopSession(owner, session, deadlineUnixMs, operationWaitBudgetMs),
-  });
   return Object.freeze({
     close: () => compositionClosePromise ??= closeComposition(),
   });
@@ -177,10 +168,10 @@ export function createDesktopPrivateHostComposition(
     } catch (error) {
       failure ??= error;
     }
-    // Keep the capabilities and private adapter captured until every child and
-    // the authenticated session have fully closed; neither is projected.
+    // Keep the capability captured until every child and the authenticated
+    // session have fully closed; it is not projected.
+    void retainedRootLayoutCapability;
     retainedRootLayoutCapability = undefined;
-    void stardewBootstrapGuardianOwnerFactory;
     if (failure !== undefined) throw failure;
   }
 
