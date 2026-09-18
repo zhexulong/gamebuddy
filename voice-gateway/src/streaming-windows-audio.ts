@@ -22,9 +22,18 @@ export type StreamingWindowsAudioMixer = Mixer &
   Readonly<{
     readonly device: string;
     readonly failureReason?: string;
+    readonly playoutStats?: PlayoutStats;
     probePcm(pcm16: Uint8Array): Promise<void>;
     close(): Promise<void>;
   }>;
+
+export type PlayoutStats = Readonly<{
+  frames: number;
+  audioMs: number;
+  wallMs: number;
+  maxGapMs: number;
+  gapsOverStepMs: number;
+}>;
 
 export async function createStreamingWindowsAudioMixer(
   selection: string,
@@ -41,6 +50,44 @@ export async function createStreamingWindowsAudioMixer(
   child.stderr.on("data", (chunk: string) => {
     childStderr += chunk;
   });
+  // The render script prints one final JSON line to stdout with playout
+  // statistics (frame-completion gap distribution). Keep its parse result so
+  // a live/rehearsal harness can assert stutter objectively without ears.
+  let childStdout = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    childStdout += chunk;
+  });
+  let playoutStats: PlayoutStats | undefined;
+  const captureStats = (): void => {
+    if (playoutStats !== undefined) return;
+    const line = childStdout
+      .split(/\r?\n/)
+      .map((part) => part.trim())
+      .find((part) => part.startsWith('{"frames"'));
+    if (line === undefined) return;
+    try {
+      const parsed = JSON.parse(line) as Record<string, unknown>;
+      if (
+        typeof parsed.frames === "number" &&
+        typeof parsed.audioMs === "number" &&
+        typeof parsed.wallMs === "number" &&
+        typeof parsed.maxGapMs === "number" &&
+        typeof parsed.gapsOverStepMs === "number"
+      ) {
+        playoutStats = {
+          frames: parsed.frames,
+          audioMs: parsed.audioMs,
+          wallMs: parsed.wallMs,
+          maxGapMs: parsed.maxGapMs,
+          gapsOverStepMs: parsed.gapsOverStepMs,
+        };
+      }
+    } catch {
+      /* non-JSON progress noise */
+    }
+  };
+  child.stdout.on("data", captureStats);
 
   let failed: string | undefined;
   let closed = false;
@@ -130,6 +177,9 @@ export async function createStreamingWindowsAudioMixer(
     get failureReason() {
       return failed;
     },
+    get playoutStats() {
+      return playoutStats;
+    },
     async probePcm(pcm16: Uint8Array) {
       await play("voice_probe", 0, pcm16);
     },
@@ -142,6 +192,7 @@ export async function createStreamingWindowsAudioMixer(
         child.once("close", onClose);
         setTimeout(onClose, 2_000).unref();
       }).catch(() => undefined);
+      captureStats();
     },
   });
 }

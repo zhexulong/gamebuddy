@@ -19,8 +19,11 @@ if ($Mode -eq 'play' -and ([string]::IsNullOrWhiteSpace($PcmPath) -or -not (Test
 if (-not ('GameBuddyWaveOut.Native' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace GameBuddyWaveOut {
   public static class Native {
@@ -41,7 +44,10 @@ namespace GameBuddyWaveOut {
     [DllImport("winmm.dll")] public static extern uint waveOutUnprepareHeader(IntPtr hwo, ref WAVEHDR header, uint size);
     [DllImport("winmm.dll")] public static extern uint waveOutReset(IntPtr hwo);
     [DllImport("winmm.dll")] public static extern uint waveOutClose(IntPtr hwo);
+    [DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint uPeriod);
+    [DllImport("winmm.dll")] public static extern uint timeEndPeriod(uint uPeriod);
     const uint WHDR_DONE = 0x00000001;
+    const uint CALLBACK_EVENT = 0x00050000;
     static WAVEFORMATEX Format() { return new WAVEFORMATEX { wFormatTag=1, nChannels=1, nSamplesPerSec=16000, nAvgBytesPerSec=32000, nBlockAlign=2, wBitsPerSample=16, cbSize=0 }; }
     static void Check(uint result, string operation) { if (result != 0) throw new InvalidOperationException(operation + "_" + result); }
     public static string[] List() {
@@ -58,65 +64,155 @@ namespace GameBuddyWaveOut {
       }
       return true;
     }
-    // Resident-stream render (double-buffered): the device opens once and PCM
-    // frames arrive on stdin as [4-byte LE length][PCM16 bytes]. Two WAVEHDR
-    // slots keep the device queue full — while the current frame plays, the
-    // next frame is read and queued; the completed slot is recycled, so
-    // playback is continuous with no per-frame submit gap. A length of 0 (or
-    // EOF) is consumed exactly once as the stop signal.
+    static bool WaitDone(AutoResetEvent doneEvent, WAVEHDR[] headers, int slot, long freqTicksPerMs) {
+      long deadlineMs = Math.Max(5000L, (headers[slot].dwBufferLength / 32L) + 3000L);
+      long deadline = Stopwatch.GetTimestamp() + deadlineMs * freqTicksPerMs;
+      // Distinguish "driver says done but event missed" from "not done yet".
+      // Event wait precision on Windows can be coarse; a tight spin on the
+      // authoritative WHDR_DONE flag keeps pacing exact (caller bounds CPU by
+      // the 20ms audio duration).
+      while ((headers[slot].dwFlags & WHDR_DONE) == 0) {
+        if (doneEvent.WaitOne(0)) continue;
+        System.Threading.Thread.SpinWait(64);
+        if (Stopwatch.GetTimestamp() >= deadline) return false;
+      }
+      return true;
+    }
+    // Resident-stream render (callback-driven, jitter-buffered): the device
+    // opens once and stays open while PCM frames arrive on stdin as
+    // [4-byte LE length][PCM16 bytes]. A background thread reads stdin into a
+    // bounded queue so TTS bursts are absorbed; the render loop submits 20ms
+    // frames with CALLBACK_EVENT wakeups (the driver signals a manual-reset
+    // event when a buffer finishes, instead of Sleep-polling at the ~15.6ms
+    // system clock granularity). A length of 0 (or EOF) stops playback and
+    // exits; a final JSON stats line is printed to stdout:
+    // {frames,audioMs,wallMs,maxGapMs,gapsOverStepMs}
+    //   where gap = time between consecutive buffer-completion callbacks.
+    //   gapsOverStepMs counts gaps exceeding the buffer's own audio duration
+    //   + 8ms — the intrinsic "stutter" the playout path would otherwise hide.
     public static void Stream(int deviceId, Stream input) {
+      timeBeginPeriod(1);
+      AutoResetEvent doneEvent = new AutoResetEvent(false);
       IntPtr hwo = IntPtr.Zero;
       var format = Format();
-      Check(waveOutOpen(out hwo, deviceId, ref format, IntPtr.Zero, IntPtr.Zero, 0), "waveout_stream_open");
-      int slots = 2;
+      Check(waveOutOpen(out hwo, deviceId, ref format, IntPtr.Zero, doneEvent.SafeWaitHandle.DangerousGetHandle(), CALLBACK_EVENT), "waveout_stream_open");
+      // Deep device queue: submit up to 16 frames upfront so the driver has
+      // ~320ms of audio queued; a slow-but-steady upstream never underruns.
+      int slots = 16;
       byte[][] audio = new byte[slots][];
       GCHandle[] pins = new GCHandle[slots];
       WAVEHDR[] headers = new WAVEHDR[slots];
       bool[] active = new bool[slots];
+      long audioBytes = 0L;
+      long maxGapMs = 0L;
+      long gapsOverStepMs = 0L;
+      long previousDoneTicks = 0L;
+      long firstDoneTicks = 0L;
+      long lastDoneTicks = 0L;
       try {
-        byte[] lengthBytes = new byte[4];
-        bool stopSeen = false;
-        // Block until a playable frame is available; consumes the stop marker
-        // exactly once (side effect: stopSeen). True when a frame was queued.
-        Func<int, bool> readNext = slot => {
-          if (stopSeen) return false;
-          if (!ReadExact(input, lengthBytes, 4)) { stopSeen = true; return false; }
-          int length = BitConverter.ToInt32(lengthBytes, 0);
-          if (length == 0) { stopSeen = true; return false; }
-          if (length < 0 || length % 2 != 0 || length > 1920000) throw new InvalidOperationException("invalid_pcm16_frame");
-          audio[slot] = new byte[length];
-          if (!ReadExact(input, audio[slot], length)) { stopSeen = true; throw new InvalidOperationException("truncated_pcm16_frame"); }
-          pins[slot] = GCHandle.Alloc(audio[slot], GCHandleType.Pinned);
+        Queue<byte[]> queue = new Queue<byte[]>();
+        bool inputEnded = false;
+        object queueLock = new object();
+        // Background reader: keep stdin fully drained into jitter queue so a
+        // slow TTS upstream simply delays, it never blocks the render loop.
+        Thread reader = new Thread(() => {
+          byte[] lengthBytes = new byte[4];
+          for (;;) {
+            if (!ReadExact(input, lengthBytes, 4)) { lock (queueLock) { inputEnded = true; } return; }
+            int length = BitConverter.ToInt32(lengthBytes, 0);
+            if (length == 0) { lock (queueLock) { inputEnded = true; } return; }
+            if (length < 0 || length % 2 != 0 || length > 1920000) { lock (queueLock) { inputEnded = true; } return; }
+            byte[] frame = new byte[length];
+            if (!ReadExact(input, frame, length)) { lock (queueLock) { inputEnded = true; } return; }
+            lock (queueLock) { if (queue.Count < 6000) queue.Enqueue(frame); /* 2s of 20ms frames, bounded */ }
+          }
+        });
+        reader.Priority = ThreadPriority.AboveNormal;
+        reader.IsBackground = true;
+        reader.Start();
+
+        Func<int, bool> submit = slot => {
+          byte[] frame;
+          lock (queueLock) { if (queue.Count == 0) return false; frame = queue.Dequeue(); }
+          audio[slot] = frame;
+          pins[slot] = GCHandle.Alloc(frame, GCHandleType.Pinned);
           headers[slot] = new WAVEHDR();
           headers[slot].lpData = pins[slot].AddrOfPinnedObject();
-          headers[slot].dwBufferLength = (uint)length;
+          headers[slot].dwBufferLength = (uint)frame.Length;
           Check(waveOutPrepareHeader(hwo, ref headers[slot], (uint)Marshal.SizeOf(typeof(WAVEHDR))), "waveout_stream_prepare");
           Check(waveOutWrite(hwo, ref headers[slot], (uint)Marshal.SizeOf(typeof(WAVEHDR))), "waveout_stream_write");
           active[slot] = true;
+          audioBytes += frame.Length;
           return true;
         };
-        if (!readNext(0)) return; // nothing at all to play
-        int activeCount = 1;
-        int playing = 0;      // slot whose frame is currently sounding
-        int prefetch = 1;     // slot to receive the next frame
-        if (readNext(prefetch)) activeCount = 2; // queue the next frame behind
-        while (activeCount > 0) {
-          // Wait for the sounding frame to finish.
-          var deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(5000, (audio[playing].Length / 32) + 3000));
-          while ((headers[playing].dwFlags & WHDR_DONE) == 0 && DateTime.UtcNow < deadline) System.Threading.Thread.Sleep(2);
-          if ((headers[playing].dwFlags & WHDR_DONE) == 0) throw new TimeoutException("waveout_stream_playback_timeout");
-          waveOutUnprepareHeader(hwo, ref headers[playing], (uint)Marshal.SizeOf(typeof(WAVEHDR)));
-          pins[playing].Free();
-          active[playing] = false;
-          activeCount--;
-          // Refill the just-finished slot with the next frame (non-blocking when
-          // stopSeen is already set; otherwise the caller must keep audio coming
-          // at device pace — this is the streaming contract).
-          if (readNext(playing)) activeCount++;
-          playing = prefetch;
-          prefetch = playing == 0 ? 1 : 0;
+
+        long freqTicksPerMs = Stopwatch.Frequency / 1000L;
+
+        // Wait for the first frame so the render loop never starts empty.
+        for (;;) {
+          bool available;
+          lock (queueLock) { available = queue.Count > 0 || inputEnded; }
+          if (available) break;
+          Thread.Sleep(1);
         }
+        // Prime the full deep queue so playback begins with ~320ms of head.
+        int primed = 0;
+        for (int slot = 0; slot < slots && submit(slot); slot++) primed++;
+        if (primed > 0) {
+          int activeCount = primed;
+          int playing = 0;
+          while (activeCount > 0) {
+            // Wait for the oldest queued buffer to finish.
+            if (!WaitDone(doneEvent, headers, playing, freqTicksPerMs)) throw new TimeoutException("waveout_stream_playback_timeout");
+            long now = Stopwatch.GetTimestamp();
+            long gapMs = 0L;
+            if (firstDoneTicks == 0L) firstDoneTicks = now;
+            else {
+              gapMs = (now - previousDoneTicks) / freqTicksPerMs;
+              if (gapMs > maxGapMs) maxGapMs = gapMs;
+              long stepMs = audio[playing].Length / 32L;
+              if (gapMs > stepMs + 8L) gapsOverStepMs++;
+            }
+            previousDoneTicks = now;
+            lastDoneTicks = now;
+            waveOutUnprepareHeader(hwo, ref headers[playing], (uint)Marshal.SizeOf(typeof(WAVEHDR)));
+            pins[playing].Free();
+            active[playing] = false;
+            activeCount--;
+            // Refill the just-finished slot; if the queue is momentarily empty
+            // (TTS still synthesizing), just continue — the other slots keep
+            // the device fed until a new frame arrives.
+            if (submit(playing)) activeCount++;
+            // Advance to the next buffer in FIFO order.
+            playing = (playing + 1) % slots;
+            if (activeCount == 0) {
+              // All slots idle: either stop was signaled or the queue is
+              // drained. Wait (bounded) for the reader to deliver more frames
+              // before declaring the stream over.
+              bool drained;
+              lock (queueLock) { drained = inputEnded; }
+              if (drained) break;
+              // Upstream still active: poll until the queue refills or the
+              // stop marker arrives.
+              for (;;) {
+                Thread.Sleep(1);
+                if (submit(playing)) { activeCount++; break; }
+                lock (queueLock) { drained = inputEnded; }
+                if (drained) break;
+              }
+            }
+          }
+        }
+        long endTicks = Stopwatch.GetTimestamp();
+        long wallMs = (firstDoneTicks == 0L) ? 0L : (endTicks - firstDoneTicks) / freqTicksPerMs;
+        long audioMs = audioBytes / 32L;
+        string stats = "{\"frames\":" + audioBytes / 640L
+          + ",\"audioMs\":" + audioMs + ",\"wallMs\":" + wallMs
+          + ",\"maxGapMs\":" + maxGapMs + ",\"gapsOverStepMs\":" + gapsOverStepMs + "}";
+        var statsBytes = System.Text.Encoding.UTF8.GetBytes(stats + "\n");
+        using (var stdout = Console.OpenStandardOutput()) stdout.Write(statsBytes, 0, statsBytes.Length);
       } finally {
+        timeEndPeriod(1);
         if (hwo != IntPtr.Zero) { waveOutReset(hwo); waveOutClose(hwo); }
         for (int slot = 0; slot < slots; slot++) {
           if (active[slot]) {
