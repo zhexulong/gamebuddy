@@ -30,14 +30,18 @@ export type StreamingSpeechPipelineOptions = Readonly<{
 }>;
 
 export type StreamingSpeechPipeline = Readonly<{
-  /** Feed a text delta. Resolves once every completed sentence is chunked and synthesized into micro-chunks. */
+  /** Feed a text delta; enqueues completed sentences and returns immediately (synthesis runs in the background). */
   pushText(delta: string, nowMs?: number): Promise<void>;
-  /** Flush accumulated partials through TTS; resolves once synthesized. */
+  /** Flush accumulated partials through the background synthesizer; returns immediately. */
   flush(): Promise<void>;
   /** Advance playback by one 20ms micro-chunk; false when the queue is empty. */
   pump(): boolean;
   /** Like pump(), but awaits the underlying mixer write (real-device backpressure). */
   pumpAwait(): Promise<boolean>;
+  /** True while sentences are still being synthesized or micro-chunks are queued. */
+  readonly pendingWork: boolean;
+  /** Play until every enqueued and in-flight sentence has been voiced (parallel pre-synthesis drain). */
+  pumpToIdle(): Promise<void>;
   /** Fade the sounding tail (5ms raised cosine) and pad 10ms silence; drop the unplayed queue. */
   cancelSpeech(): Promise<void>;
   close(): Promise<void>;
@@ -96,13 +100,13 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
       if (closed) return;
       for (const chunk of chunker.push(delta, nowMs)) sentenceQueue.push(chunk.text);
       runWorker();
-      await worker; // resolve once current sentences finished synthesizing
+      // Fire-and-forget: the worker synthesizes in the background while the
+      // caller pumps already-queued audio (parallel pre-synthesis, Phase 2).
     },
     async flush() {
       if (closed) return;
       for (const chunk of chunker.flush()) sentenceQueue.push(chunk.text);
       runWorker();
-      await worker;
     },
     pump(): boolean {
       if (closed) return false;
@@ -118,6 +122,21 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
       if (microChunk === undefined) return false;
       await options.mixer.play("pipeline", 0, microChunk);
       return true;
+    },
+    get pendingWork() {
+      return sentenceQueue.length > 0 || workerRunning || microQueue.length > 0;
+    },
+    async pumpToIdle() {
+      for (;;) {
+        if (await this.pumpAwait()) continue;
+        if (sentenceQueue.length > 0 || workerRunning) {
+          // Micro-chunks are momentarily drained but synthesis is still
+          // producing; yield briefly so it can enqueue the next audio.
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+          continue;
+        }
+        return;
+      }
     },
     async cancelSpeech() {
       if (closed) return;
