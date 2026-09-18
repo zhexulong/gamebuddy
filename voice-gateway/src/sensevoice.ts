@@ -162,7 +162,7 @@ function isNonEmptyPath(value: string): boolean {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 4096;
 }
 
-function pcm16ToWav(pcm16: Uint8Array): Uint8Array {
+export function pcm16ToWav(pcm16: Uint8Array): Uint8Array {
   const header = Buffer.alloc(44);
   header.write("RIFF", 0, "ascii");
   header.writeUInt32LE(36 + pcm16.byteLength, 4);

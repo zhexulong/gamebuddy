@@ -1,10 +1,21 @@
 import { readFile } from "node:fs/promises";
-import type { Mixer, TtsProvider } from "./gateway.js";
+import type { AsrProvider, Mixer, TtsProvider } from "./gateway.js";
+import { GroqWhisperAsrProvider } from "./groq.js";
 import { MimoTtsProvider, type MimoTtsAdmission } from "./mimo.js";
 import { auditSenseVoiceAssets, type SenseVoiceAssetManifest, SenseVoiceCliAsrProvider } from "./sensevoice.js";
 import { startVoiceGateway } from "./server.js";
 import { createWindowsAudioMixer, type WindowsOutputSelection } from "./windows-audio.js";
 import { type WindowsInputSelection, WindowsPttCapture } from "./windows-capture.js";
+
+// Optional: load local operator environment (e.g. GROQ_API_KEY, MIMO_API_KEY) from .env.local
+for (const envPath of [".env.local", "../.env.local"]) {
+  try {
+    process.loadEnvFile?.(envPath);
+    break;
+  } catch {
+    // optional local file
+  }
+}
 
 // Windows output is opt-in. `default` asks Windows to resolve its current
 // multimedia output device for every open; an explicit `waveout:N` endpoint
@@ -37,8 +48,12 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535 || !/^[A-Za-z0-9_-]{16,
   process.once("SIGTERM", shutdown);
 }
 
-/** Real ASR is opt-in and fail-closed: no asset configuration means text-only. */
-async function configuredAsr(): Promise<SenseVoiceCliAsrProvider | undefined> {
+/** Real ASR is opt-in and fail-closed: Groq cloud ASR or audited local SenseVoice. */
+async function configuredAsr(): Promise<AsrProvider | undefined> {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey !== undefined && groqKey.trim().length >= 16) {
+    return new GroqWhisperAsrProvider({ apiKey: groqKey.trim() });
+  }
   const path = process.env.GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST;
   if (path === undefined || path.length === 0) return undefined;
   let manifest: SenseVoiceAssetManifest;
@@ -106,7 +121,7 @@ async function configuredMixer(): Promise<Mixer> {
  * must not make the user-selected/default device unavailable. Real driver open
  * and bounded PCM are checked only during an explicit PTT lifecycle.
  */
-async function configuredCapture(asr: SenseVoiceCliAsrProvider | undefined): Promise<WindowsPttCapture | undefined> {
+async function configuredCapture(asr: AsrProvider | undefined): Promise<WindowsPttCapture | undefined> {
   if (asr === undefined || process.platform !== "win32") return undefined;
   const selected = process.env.GAMEBUDDY_WINDOWS_INPUT_DEVICE;
   const selection = (selected === undefined || selected.length === 0 ? "default" : selected) as WindowsInputSelection;
