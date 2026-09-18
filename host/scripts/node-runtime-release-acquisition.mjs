@@ -6,7 +6,6 @@ import yauzl from "yauzl";
 
 const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const MAX_ENTRIES = 2_000;
-const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
 import { createWindowsReleaseBootstrapScratch } from "./windows-release-bootstrap-scratch.internal.mjs";
@@ -32,11 +31,30 @@ function isRegularEntry(entry) { const unixType = (entry.externalFileAttributes 
 function openZip(bytes) { return new Promise((resolveOpen, reject) => yauzl.fromBuffer(bytes, { lazyEntries: true, strictFileNames: true, validateEntrySizes: true, autoClose: false }, (error, zip) => error ? reject(error) : resolveOpen(zip))); }
 async function preflight(zip, descriptor) {
   const entries = []; const seenRaw = new Set(); const seenFolded = new Set(); let total = 0;
-  try { await new Promise((resolveEntries, reject) => { zip.on("error", reject); zip.on("entry", (entry) => { try { if (entries.length >= MAX_ENTRIES) throw new Error("runtime_zip_entry_count_limit"); if (!isRegularEntry(entry)) throw new Error("runtime_zip_entry_forbidden"); if (entry.uncompressedSize > MAX_ENTRY_BYTES) throw new Error("runtime_zip_entry_size_limit"); const path = rejectName(entry.fileName, descriptor.archiveRoot); const folded = path.toLocaleLowerCase("en-US"); if (seenRaw.has(path) || seenFolded.has(folded)) throw new Error("runtime_zip_duplicate_destination"); seenRaw.add(path); seenFolded.add(folded); total += entry.uncompressedSize; if (total > MAX_TOTAL_BYTES) throw new Error("runtime_zip_expanded_size_limit"); entries.push({ entry, path }); zip.readEntry(); } catch (error) { reject(error); } }); zip.on("end", resolveEntries); zip.readEntry(); }); } catch (error) { throw new Error(error?.message?.startsWith("runtime_zip_") ? error.message : "runtime_zip_entry_forbidden"); }
+  try { await new Promise((resolveEntries, reject) => { zip.on("error", reject); zip.on("entry", (entry) => { try { if (entries.length >= MAX_ENTRIES) throw new Error("runtime_zip_entry_count_limit"); if (!isRegularEntry(entry)) { if ((entry.externalFileAttributes & 0x10) !== 0) { zip.readEntry(); return; } throw new Error("runtime_zip_entry_forbidden"); } const path = rejectName(entry.fileName, descriptor.archiveRoot); const folded = path.toLocaleLowerCase("en-US"); if (seenRaw.has(path) || seenFolded.has(folded)) throw new Error("runtime_zip_duplicate_destination"); seenRaw.add(path); seenFolded.add(folded); total += entry.uncompressedSize; if (total > MAX_TOTAL_BYTES) throw new Error("runtime_zip_expanded_size_limit"); entries.push({ entry, path }); zip.readEntry(); } catch (error) { reject(error); } }); zip.on("end", resolveEntries); zip.readEntry(); }); } catch (error) { throw new Error(error?.message?.startsWith("runtime_zip_") ? error.message : "runtime_zip_entry_forbidden"); }
   if (!entries.some(({ path }) => path === "node.exe")) throw new Error("runtime_zip_node_missing"); return entries;
 }
 async function streamEntry(zip, entry) { return new Promise((resolveStream, reject) => zip.openReadStream(entry, (error, stream) => error ? reject(error) : resolveStream(stream))); }
-async function closure(root, prefix = "") { const entries = []; for (const item of (await readdir(resolve(root, prefix), { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) { const path = prefix ? `${prefix}/${item.name}` : item.name; const absolute = resolve(root, path); const state = await lstat(absolute); if (state.isSymbolicLink() || (!state.isDirectory() && !state.isFile())) throw new Error("runtime_extraction_nonregular_entry"); if (state.isDirectory()) entries.push(...await closure(root, path)); else entries.push({ sourcePath: slash(path), sha256: sha256(await readFile(absolute)) }); } return entries; }
+async function closure(root, prefix = "") {
+  const entries = [];
+  const walk = async (dir) => {
+    const items = await readdir(resolve(root, dir), { withFileTypes: true });
+    for (const item of items) {
+      const path = dir ? `${dir}/${item.name}` : item.name;
+      const absolute = resolve(root, path);
+      const state = await lstat(absolute);
+      if (state.isSymbolicLink() || (!state.isDirectory() && !state.isFile())) throw new Error("runtime_extraction_nonregular_entry");
+      if (state.isDirectory()) await walk(path);
+      else entries.push({ sourcePath: slash(path), sha256: sha256(await readFile(absolute)) });
+    }
+  };
+  await walk(prefix);
+  // Stable full-path lexicographic ordering, byte-identical to the production
+  // `files().sort()` comparator, so the acquisition closure and the publisher's
+  // re-scanned exact tree agree (localeCompare would disagree on `/` vs `.`).
+  entries.sort((a, b) => (a.sourcePath < b.sourcePath ? -1 : a.sourcePath > b.sourcePath ? 1 : 0));
+  return entries;
+}
 async function extract(bytes, descriptor, acquisitionRoot) {
   let zip; try { zip = await openZip(bytes); } catch { throw new Error("runtime_zip_entry_forbidden"); }
   try { const entries = await preflight(zip, descriptor); const extractionRoot = resolve(acquisitionRoot, "extracted"); await mkdir(extractionRoot, { recursive: false }); for (const { entry, path } of entries) { const target = resolve(extractionRoot, descriptor.archiveRoot, path); if (!inside(extractionRoot, target)) throw new Error("runtime_zip_entry_forbidden"); await mkdir(resolve(target, ".."), { recursive: true }); const output = await open(target, "wx"); try { const input = await streamEntry(zip, entry); let bytesWritten = 0; for await (const chunk of input) { bytesWritten += chunk.length; if (bytesWritten > entry.uncompressedSize) throw new Error("runtime_zip_entry_size_mismatch"); await output.write(chunk); } if (bytesWritten !== entry.uncompressedSize) throw new Error("runtime_zip_entry_size_mismatch"); } finally { await output.close(); } } const root = resolve(extractionRoot, descriptor.archiveRoot); if (JSON.stringify((await readdir(extractionRoot)).sort()) !== JSON.stringify([descriptor.archiveRoot])) throw new Error("runtime_extraction_root_invalid"); const files = await closure(root); if (files.find((entry) => entry.sourcePath === "node.exe")?.sha256 !== descriptor.nodeSha256) throw new Error("runtime_node_digest_mismatch"); return { extractedRoot: extractionRoot, files }; } finally { zip.close(); }

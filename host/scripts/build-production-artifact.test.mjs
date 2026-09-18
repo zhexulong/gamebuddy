@@ -66,7 +66,7 @@ test("generated browser Vite config uses only canonical relative static ESM impo
   const adapter = join(stagingRoot, "windows-reparse-inspector", "index.js");
   try {
     await mkdir(join(stagingRoot, "windows-reparse-inspector"), { recursive: true });
-    await writeFile(adapter, "export async function createBuildWindowsReparseInspector() { return {}; }\nexport async function assertNoWindowsReparse() {}\n", "utf8");
+    await writeFile(adapter, "export const BUILD_ARTIFACT_REPARSE_INSPECTION = Object.freeze({ create: async () => Object.freeze({}), assertNoReparse: async () => {} });\n", "utf8");
     const configPath = await writeBrowserViteConfig({ stagingRoot });
     const config = await readFile(configPath, "utf8");
     assert.match(config, /^import \* as reparseInspectorAdapter from "\.\/windows-reparse-inspector\/index\.js";/m);
