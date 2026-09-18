@@ -98,6 +98,7 @@ export type TavernStateSnapshotV1 = Readonly<{
     worldInfo: Readonly<Record<string, unknown>> | null;
   }> | null;
   memory: Readonly<{ readAvailable: boolean; mutationAvailable: boolean; projectionRevision: string | null }>;
+  voice?: Readonly<{ state: "unavailable" | "ready" | "speaking" }> | null;
   eventStream: Readonly<{ epoch: string; cursor: string }> | null;
 }>;
 

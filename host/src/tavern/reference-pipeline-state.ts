@@ -46,6 +46,8 @@ export type ReferencePipelineState = Readonly<{
   turn: BrowserTurnV1 | null;
   operations: readonly TavernBrowserOperationV1[];
   eventStream: Readonly<{ epoch: string; cursor: string }> | null;
+  /** Redacted Voice surface projection: null when a voice source is not attached. */
+  voice: Readonly<{ state: "unavailable" | "ready" | "speaking" }> | null;
 }>;
 
 /** Read-only reference-pipeline capability: no roots, stores, selector, lease, or mutation authority escapes. */
@@ -53,6 +55,14 @@ export type ReferencePipelineStateFacade = Readonly<{
   read(): Promise<ReferencePipelineState>;
   readDraft(): Promise<BrowserDraftV1>;
 }>;
+
+/**
+ * Narrow voice-surface reader. When a Host-owned Voice client is attached the
+ * facade projects its redacted state; otherwise the projection is null. The
+ * reader is deliberately a plain function: it never exposes the client,
+ * token, epoch, or any provider/audio fact across the facade boundary.
+ */
+export type VoiceSurfaceReader = () => Readonly<{ state: "unavailable" | "ready" | "speaking" }> | null;
 
 /**
  * Builds the exact mounted state facade only from the production coordinator's
@@ -66,6 +76,7 @@ export async function createReferencePipelineStateFacade(
   lease: MountedChatRuntimeLease,
   profile: ComposedTavernProfile,
   eventStream?: ChatEventStream,
+  voiceSurface?: VoiceSurfaceReader,
 ): Promise<ReferencePipelineStateFacade> {
   if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
   assertComposedProfile(profile);
@@ -99,7 +110,7 @@ export async function createReferencePipelineStateFacade(
         // Durable reads do not hold the mount capability. A concurrent close
         // revokes the lease before projection, so never project stale data.
         assertReferencePipelineLeaseAfterDurableRead(lease);
-        return project(lease, companionDisplayName, profile, state, eventStream);
+        return project(lease, companionDisplayName, profile, state, eventStream, voiceSurface);
       } catch {
         throw unavailable();
       }
@@ -164,6 +175,7 @@ function project(
   profile: ComposedTavernProfile,
   state: ChatThreadState,
   eventStream?: ChatEventStream,
+  voiceSurface?: VoiceSurfaceReader,
 ): ReferencePipelineState {
   const projection = lease.browserProjection;
   const transcript = Object.freeze(state.messages.map((message, order) => projectMessage(lease, message, order)));
@@ -185,6 +197,9 @@ function project(
       profile.routeIds.includes("events") && eventStream !== undefined
         ? Object.freeze({ epoch: eventStream.epoch, cursor: eventStream.cursor })
         : null,
+    // The snapshot's additive optional `voice` field is projected only when a
+    // Host-owned voice surface is attached; absent means no mic icon at all.
+    voice: voiceSurface === undefined ? null : projectVoice(voiceSurface),
   });
   // Fail closed unless every projected browser fact satisfies its frozen
   // contract schema; a partial or invalid projection never escapes.
@@ -195,6 +210,14 @@ function project(
   )
     throw unavailable();
   return value;
+}
+
+function projectVoice(voiceSurface: VoiceSurfaceReader): ReferencePipelineState["voice"] {
+  const current = voiceSurface();
+  if (current === null) return null;
+  if (current.state !== "unavailable" && current.state !== "ready" && current.state !== "speaking")
+    throw unavailable();
+  return Object.freeze({ state: current.state });
 }
 
 function projectMessage(

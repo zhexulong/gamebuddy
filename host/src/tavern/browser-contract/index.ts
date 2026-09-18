@@ -252,6 +252,20 @@ export const SetWorldInfoBindingCommandV1Schema = strictObject({
 
 export const TavernStateEventStreamV1Schema = strictObject({ epoch: OpaqueHandle, cursor: OpaqueHandle });
 
+/**
+ * Voice surface narrow projection (additive optional in v1): a redacted,
+ * device-free Voice Gateway state for the input-adjacent status icon.
+ * `unavailable` = no usable audio surface; `ready` = PTT available;
+ * `speaking` = companion utterance is playing (barge-in possible).
+ */
+export const TavernVoiceSurfaceStateV1Schema = strictObject({
+  state: Type.Union([
+    Type.Literal("unavailable"),
+    Type.Literal("ready"),
+    Type.Literal("speaking"),
+  ]),
+});
+
 const MemoryStateSnapshotV1Schema = Type.Union([
   strictObject({
     readAvailable: Type.Literal(true),
@@ -291,6 +305,9 @@ export const TavernStateSnapshotV1Schema = strictObject({
     }),
   ]),
   memory: MemoryStateSnapshotV1Schema,
+  // Additive optional v1 field (兼容 additive): old shell clients that predate
+  // this field simply do not render the mic icon; there is no v1 break.
+  voice: Type.Optional(Type.Union([Type.Null(), TavernVoiceSurfaceStateV1Schema])),
   eventStream: Type.Union([Type.Null(), TavernStateEventStreamV1Schema]),
 });
 export const SubmitMessageCommandV1Schema = strictObject({
@@ -712,6 +729,7 @@ export const TavernBrowserContractV1 = Object.freeze({
     BrowserDraftV1Schema,
     TavernBrowserOperationV1Schema,
     TavernStateEventStreamV1Schema,
+    TavernVoiceSurfaceStateV1Schema,
     TavernStateSnapshotV1Schema,
     SubmitMessageCommandV1Schema,
     SaveDraftCommandV1Schema,
@@ -747,6 +765,7 @@ export type BrowserDraftV1 = Static<typeof BrowserDraftV1Schema>;
 export type SaveDraftCommandV1 = Static<typeof SaveDraftCommandV1Schema>;
 export type DiscardDraftCommandV1 = Static<typeof DiscardDraftCommandV1Schema>;
 export type TavernStateSnapshotV1 = Static<typeof TavernStateSnapshotV1Schema>;
+export type TavernVoiceSurfaceStateV1 = Static<typeof TavernVoiceSurfaceStateV1Schema>;
 export type TavernBrowserOperationV1 = Static<typeof TavernBrowserOperationV1Schema>;
 export type TavernStateEventStreamV1 = Static<typeof TavernStateEventStreamV1Schema>;
 export type TavernBrowserNavigationItemIdV1 = Static<typeof NavigationItemId>;

@@ -708,6 +708,37 @@ body {
   margin-bottom: 2px;
 }
 
+/* Voice surface single-point status dot (additive v1 snapshot field). */
+.voice-status-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--text-disabled);
+  transition: color var(--motion-duration-fast) var(--motion-ease-out);
+}
+.voice-status-unavailable {
+  color: var(--text-disabled);
+}
+.voice-status-ready {
+  color: var(--success, #2f9e44);
+}
+.voice-status-speaking {
+  color: var(--success, #2f9e44);
+  animation: voice-status-pulse 1.2s ease-in-out infinite;
+}
+@keyframes voice-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .composer-button {
   width: 36px;
   height: 36px;

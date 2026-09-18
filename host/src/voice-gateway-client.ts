@@ -85,6 +85,13 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   readonly #audioEpochBindings = new WeakSet<VoiceAudioEpochBinding>();
   readonly #audioEpochGenerations = new WeakMap<VoiceAudioEpochBinding, number>();
   #audioAdmissionGeneration = 0;
+  /** Voice-local surface state for the additive snapshot `voice` projection. */
+  /**
+   * External (v1 enqueue / v2 stream) accepted utterances. The v2 runtime
+   * pushes only terminal playback observations, so speaking is derived here:
+   * accepted job +1, terminal observation -1 (clamped).
+   */
+  #surfaceActiveJobs = 0;
 
   private constructor(private readonly connection: Required<VoiceGatewayConnection>) {}
 
@@ -118,6 +125,31 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   });
   public get capabilities() {
     return this.#capabilities;
+  }
+
+  /**
+   * Narrow voice-surface reader for the browser snapshot (additive v1 field).
+   * Returns `null` while the client is not ready: the snapshot then omits the
+   * field and the frontend renders no mic icon. Once ready, the reading is
+   * `ready` or `speaking` (a v2 playback observation in flight). This never
+   * exposes the client, token, epoch, provider, or any audio fact.
+   */
+  public createVoiceSurfaceReader(): () => Readonly<{ state: "unavailable" | "ready" | "speaking" }> | null {
+    return () => {
+      if (!this.#connected || !this.#capabilities.ready) return null;
+      return Object.freeze({
+        state: this.#surfaceActiveJobs > 0 ? ("speaking" as const) : ("ready" as const),
+      });
+    };
+  }
+
+  /** Derives the redacted surface state from accepted jobs and terminal observations. */
+  #trackVoiceSurface(value: VoiceGatewayEventV2): void {
+    if (value.type !== "playback_observation") return;
+    const status = value.terminalStatus;
+    if (status === "completed" || status === "cancelled" || status === "failed_before_side_effect" || status === "not_accepted" || status === "unknown_after_admission" || status === "quarantined") {
+      if (this.#surfaceActiveJobs > 0) this.#surfaceActiveJobs -= 1;
+    }
   }
   public get epoch(): number {
     return this.#capabilities?.epoch ?? 0;
@@ -199,6 +231,9 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     };
     if (!isVoiceGatewayRequestV2(request)) throw new Error("invalid_voice_gateway_v2_request");
     this.#socket.write(encodeVoiceGatewayMessageV2(request));
+    // A streamed job is an in-flight voice surface until its terminal
+    // playback observation arrives back on the same socket.
+    this.#surfaceActiveJobs += 1;
   }
 
   public onPlaybackObservation(listener: (observation: VoiceGatewayEventV2) => void): () => void {
@@ -322,6 +357,9 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     const response = await this.request("speech_enqueue", { job });
     if (response.type !== "accepted" || response.value !== true)
       throw new Error(response.type === "error" ? response.reasonCode : "voice_speech_rejected");
+    // An accepted utterance is an in-flight voice surface; the terminal
+    // playback observation (pushed by the v2 runtime) decrements it.
+    this.#surfaceActiveJobs += 1;
   }
 
   public async stopAll(reasonCode = "player_stop_all"): Promise<void> {
@@ -463,6 +501,7 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
         if (value.type === "gateway_state" && value.state.reasonCode === "quarantined") {
           this.invalidateAudioAdmission();
         }
+        this.#trackVoiceSurface(value);
         for (const listener of this.#playbackListeners) listener(value);
         continue;
       }
