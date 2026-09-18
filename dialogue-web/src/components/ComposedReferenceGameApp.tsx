@@ -21,6 +21,8 @@ import {
   createComposedReferenceGameBrowserApi,
   type ComposedReferenceGameBrowserRootV1,
   type GameBrowserStateV1,
+  type GameCreateRequestV1,
+  type GameCreateResultV1,
   type GameResumeResultV1,
   type StardewCabinChoiceV1,
   ComposedReferenceGameProblemError,
@@ -57,6 +59,8 @@ const RESUME_REREAD_MAX_ATTEMPTS = 60;
  * deliberate end state after STOP, so neither is player-resumable here.
  */
 const RESUMABLE_CONNECTION_STATUSES: ReadonlySet<string> = new Set(["failed", "disconnected"]);
+
+const STARDEW_GAME_INTEGRATION_ID = "stardew" as const;
 
 type ReadyView = Readonly<{
   kind: "ready";
@@ -135,6 +139,16 @@ export function ComposedReferenceGameApp() {
   const [gameReopenActive, setGameReopenActive] = useState(false);
   const [gameReopenFailed, setGameReopenFailed] = useState(false);
   const [gameReopenUnavailable, setGameReopenUnavailable] = useState(false);
+  const gameResumeCancelActiveRef = useRef(false);
+  const gameResumeCancelKeysRef = useRef(new Map<number, string>());
+  const [gameResumeCancelActive, setGameResumeCancelActive] = useState(false);
+  const [gameResumeCancelFailed, setGameResumeCancelFailed] = useState(false);
+  const gameCreateActiveRef = useRef(false);
+  const [gameCreateActive, setGameCreateActive] = useState(false);
+  const [gameCreateFailed, setGameCreateFailed] = useState(false);
+  const [gameCreateUnavailable, setGameCreateUnavailable] = useState(false);
+  const [createFormOpen, setCreateFormOpen] = useState(false);
+  const [continuityIdentityInput, setContinuityIdentityInput] = useState("");
   const cabinIdempotencyKeysRef = useRef(new Map<string, string>());
 
   const commit = useCallback((next: ViewState): void => {
@@ -860,6 +874,186 @@ export function ComposedReferenceGameApp() {
     setGameReopenActive(false);
   };
 
+  /**
+   * `game.resume.cancel` for the failed/unavailable resume surface. The cancel
+   * pins the exact in-flight reconnect epoch by armed attachment generation; a
+   * successful `cancelled` result settles the epoch server-side before it
+   * returns, so one authoritative reread shows the disconnected projection
+   * (the session stays resumable, the generation keeps its armed value). A
+   * stale generation reconciles silently; any other failure is presented
+   * fail-closed. The Player world and durable session state are never touched.
+   */
+  const handleGameResumeCancel = async (): Promise<void> => {
+    const current = viewRef.current;
+    const game = current.kind === "ready" ? current.root.game : null;
+    if (
+      gameResumeCancelActiveRef.current ||
+      current.kind !== "ready" ||
+      game === null ||
+      game.game.attachment.status !== "attached" ||
+      game.game.attachment.generation < 1 ||
+      !RESUMABLE_CONNECTION_STATUSES.has(game.game.connectionStatus) ||
+      (!gameResumeFailed && !gameResumeUnavailable)
+    ) return;
+    const generation = game.game.attachment.generation;
+    const existingKey = gameResumeCancelKeysRef.current.get(generation);
+    const idempotencyKey = existingKey ?? newIdempotencyKey();
+    gameResumeCancelKeysRef.current.set(generation, idempotencyKey);
+    gameResumeCancelActiveRef.current = true;
+    setGameResumeCancelActive(true);
+    setGameResumeCancelFailed(false);
+    try {
+      await composedApiRef.current.cancelResume({
+        apiVersion: 1,
+        idempotencyKey,
+        expectedAttachmentGeneration: generation,
+      });
+      try {
+        await reread();
+      } catch { /* retain the current authoritative projection */ }
+      setGameResumeFailed(false);
+      setGameResumeUnavailable(false);
+    } catch (error) {
+      let rereadSucceeded = false;
+      try {
+        await reread();
+        rereadSucceeded = true;
+      } catch { /* retain the current authoritative projection */ }
+      const fresh = viewRef.current;
+      const staleGenerationReconciled =
+        error instanceof ComposedReferenceGameProblemError &&
+        error.code === "game_attachment_conflict" &&
+        rereadSucceeded &&
+        fresh.kind === "ready" &&
+        fresh.root.game?.game.attachment.generation !== generation;
+      if (staleGenerationReconciled) {
+        // The reconnect epoch already ended under a newer attachment: there is
+        // nothing to cancel, so the stale failure surface is cleared.
+        setGameResumeFailed(false);
+        setGameResumeUnavailable(false);
+      } else {
+        setGameResumeCancelFailed(true);
+      }
+    } finally {
+      gameResumeCancelActiveRef.current = false;
+      setGameResumeCancelActive(false);
+    }
+  };
+
+  /**
+   * Bounded authoritative rereads for one admitted `game.create`. Transport
+   * `accepted`/`attached` are never runtime success; the attempt stays visibly
+   * in flight until the composed authoritative Game projection converges on
+   * the new attachment generation at ready-actions-paused (attached +
+   * connected_idle + paused — a shape the pre-create failed/disconnected
+   * surface can never produce), or the bounded budget expires (fail-closed
+   * unavailable; the next form submit mints a fresh attempt identity).
+   */
+  const createAwaitAuthoritative = async (
+    attempts: number,
+  ): Promise<"converged" | "unavailable"> => {
+    if (cancelledRef.current || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
+    try {
+      await reread();
+    } catch {
+      if (cancelledRef.current) return "unavailable";
+      // An inconclusive authoritative read never completes the create; keep
+      // rereading inside the bounded budget.
+      await delay(RESUME_REREAD_INTERVAL_MS);
+      return createAwaitAuthoritative(attempts + 1);
+    }
+    const fresh = viewRef.current;
+    if (fresh.kind !== "ready" || fresh.root.game === null) return "unavailable";
+    const projection = fresh.root.game.game;
+    if (
+      projection.attachment.status === "attached" &&
+      projection.connectionStatus === "connected_idle" &&
+      projection.actionAuthority === "paused"
+    ) return "converged";
+    await delay(RESUME_REREAD_INTERVAL_MS);
+    return createAwaitAuthoritative(attempts + 1);
+  };
+
+  /**
+   * Start-new-game submission (single-flight, one fresh idempotency key per
+   * attempt). The command carries only the published integration id and the
+   * player's explicit continuity binding choice (empty = null = no binding);
+   * the Host store mints the durable session. `unavailable` and rejected
+   * commands fail closed with the form kept retryable; a converged create
+   * hands the drawer over to the authoritative ready-actions-paused
+   * projection.
+   */
+  const handleGameCreate = async (): Promise<void> => {
+    const current = viewRef.current;
+    if (
+      gameCreateActiveRef.current ||
+      current.kind !== "ready" ||
+      current.root.game === null ||
+      (!gameResumeFailed && !gameResumeUnavailable)
+    ) return;
+    const continuityText = continuityIdentityInput.trim();
+    const idempotencyKey = newIdempotencyKey();
+    const request: GameCreateRequestV1 = {
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: STARDEW_GAME_INTEGRATION_ID,
+      continuityIdentityId: continuityText.length === 0 ? null : continuityText,
+    };
+    gameCreateActiveRef.current = true;
+    setGameCreateActive(true);
+    setGameCreateFailed(false);
+    setGameCreateUnavailable(false);
+    let outcome: GameCreateResultV1 | undefined;
+    try {
+      outcome = await composedApiRef.current.createGameSession(request);
+    } catch {
+      try {
+        await reread();
+      } catch { /* retain the current authoritative projection */ }
+      setGameCreateFailed(true);
+      gameCreateActiveRef.current = false;
+      setGameCreateActive(false);
+      return;
+    }
+    if (outcome === undefined) {
+      gameCreateActiveRef.current = false;
+      setGameCreateActive(false);
+      return;
+    }
+    if (outcome.status === "unavailable") {
+      // The create failed closed with no resumable half-record; never project
+      // a session or a ready surface from the null handle.
+      try {
+        await reread();
+      } catch { /* retain the current authoritative projection */ }
+      setGameCreateUnavailable(true);
+      gameCreateActiveRef.current = false;
+      setGameCreateActive(false);
+      return;
+    }
+    // `accepted`/`attached` are transport admissions only and never runtime
+    // success: keep the create visibly in flight while bounded authoritative
+    // rereads converge on ready-actions-paused, or the budget expires.
+    let convergence: "converged" | "unavailable";
+    try {
+      convergence = await createAwaitAuthoritative(1);
+    } catch {
+      convergence = "unavailable";
+    }
+    if (convergence === "unavailable") {
+      setGameCreateUnavailable(true);
+    } else {
+      // The new session is authoritative at ready-actions-paused; the stale
+      // resume failure surface is cleared and the form is done.
+      setGameResumeFailed(false);
+      setGameResumeUnavailable(false);
+      setCreateFormOpen(false);
+      setContinuityIdentityInput("");
+    }
+    gameCreateActiveRef.current = false;
+    setGameCreateActive(false);
+  };
+
   const handleStop = async (): Promise<void> => {
     const current = viewRef.current;
     const turn = current.kind === "ready" ? current.session.snapshot.chat?.turn : null;
@@ -914,6 +1108,14 @@ export function ComposedReferenceGameApp() {
     view.root.game.game.attachment.generation > 0 &&
     view.root.game.game.connectionStatus === "connected_idle";
   const gameReopenInFlight = gameReopenActiveRef.current || gameReopenActive;
+  const gameResumeCancelInFlight = gameResumeCancelActiveRef.current || gameResumeCancelActive;
+  const gameCreateInFlight = gameCreateActiveRef.current || gameCreateActive;
+  const resumeFailureSurface = view.kind === "ready" &&
+    view.root.game !== null &&
+    view.root.game.game.attachment.status === "attached" &&
+    view.root.game.game.attachment.generation > 0 &&
+    RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus) &&
+    (gameResumeFailed || gameResumeUnavailable);
   const gameSyncing = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.connectionStatus === "syncing";
@@ -982,6 +1184,49 @@ export function ComposedReferenceGameApp() {
                 {gameResumeActive && <p role="status">{labels().gameResumeInProgress}</p>}
                 {gameResumeFailed && <p role="status">{labels().gameResumeFailed}</p>}
                 {gameResumeUnavailable && <p role="status">{labels().gameResumeUnavailable}</p>}
+                {resumeFailureSurface && (
+                  <div className="resume-failure-actions">
+                    <button type="button" disabled={gameResumeInFlight} onClick={() => void handleGameResume()}>
+                      {labels().gameRetry}
+                    </button>
+                    <button type="button" disabled={gameResumeCancelInFlight} onClick={() => void handleGameResumeCancel()}>
+                      {labels().gameResumeCancel}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={gameCreateInFlight}
+                      onClick={() => setCreateFormOpen((open) => !open)}
+                    >
+                      {labels().gameCreate}
+                    </button>
+                  </div>
+                )}
+                {gameResumeCancelActive && <p role="status">{labels().gameResumeCancelInProgress}</p>}
+                {gameResumeCancelFailed && <p role="status">{labels().gameResumeCancelFailed}</p>}
+                {createFormOpen && (
+                  <form className="game-create-form" onSubmit={(event) => { event.preventDefault(); void handleGameCreate(); }}>
+                    <h3>{labels().gameCreateFormTitle}</h3>
+                    <label>
+                      <span>{labels().gameCreateIntegration}</span>
+                      <span className="game-create-integration">{STARDEW_GAME_INTEGRATION_ID}</span>
+                    </label>
+                    <label>
+                      <span>{labels().gameCreateContinuityBinding}</span>
+                      <input
+                        type="text"
+                        value={continuityIdentityInput}
+                        onChange={(event) => setContinuityIdentityInput(event.target.value)}
+                        placeholder={labels().gameCreateContinuityBindingHint}
+                      />
+                    </label>
+                    <button type="submit" disabled={gameCreateInFlight}>
+                      {labels().create}
+                    </button>
+                    {gameCreateActive && <p role="status">{labels().gameCreateInProgress}</p>}
+                    {gameCreateFailed && <p role="status">{labels().gameCreateFailed}</p>}
+                    {gameCreateUnavailable && <p role="status">{labels().gameCreateUnavailable}</p>}
+                  </form>
+                )}
                 {gameReopenAvailable && (
                   <>
                     <p role="status">{labels().gameActionsPaused}</p>

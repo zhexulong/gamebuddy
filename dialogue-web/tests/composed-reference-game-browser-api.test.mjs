@@ -621,3 +621,207 @@ test("Game reopen preserves frozen typed problem outcomes and rejects non-200 tr
     );
   }
 });
+test("Game create client sends the exact integration and continuity binding command and decodes strict results", async () => {
+  const key = "C".repeat(21) + "A";
+  const sessionId = "0".repeat(32);
+  const recorder = transport(jsonResponse(root()), jsonResponse({ apiVersion: 1, status: "attached", gameSessionId: sessionId }));
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await api.bootstrap(HANDLE);
+  const created = await api.createGameSession({
+    apiVersion: 1,
+    idempotencyKey: key,
+    integrationId: "stardew",
+    continuityIdentityId: null,
+  });
+  assert.deepEqual(created, { apiVersion: 1, status: "attached", gameSessionId: sessionId });
+  assert.deepEqual(
+    { input: recorder.calls[1].input, method: recorder.calls[1].init.method, headers: recorder.calls[1].init.headers, body: recorder.calls[1].init.body },
+    {
+      input: "/api/composed-reference-game/v1/game/create",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": HANDLE },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey: key, integrationId: "stardew", continuityIdentityId: null }),
+    },
+  );
+  // A player-selected continuity binding is carried verbatim as an explicit
+  // SAFE_ID; the client never reorders or augments the strict command.
+  const boundKey = "B".repeat(21) + "A";
+  const boundRecorder = transport(jsonResponse(root()), jsonResponse({ apiVersion: 1, status: "accepted", gameSessionId: sessionId }));
+  const boundApi = createComposedReferenceGameBrowserApi(boundRecorder.fetch);
+  await boundApi.bootstrap(HANDLE);
+  await boundApi.createGameSession({
+    apiVersion: 1,
+    idempotencyKey: boundKey,
+    integrationId: "stardew",
+    continuityIdentityId: "continuity-identity-1",
+  });
+  assert.deepEqual(
+    boundRecorder.calls[1].init.body,
+    JSON.stringify({ apiVersion: 1, idempotencyKey: boundKey, integrationId: "stardew", continuityIdentityId: "continuity-identity-1" }),
+  );
+  for (const invalid of [
+    { apiVersion: 1, idempotencyKey: key, integrationId: "", continuityIdentityId: null },
+    { apiVersion: 1, idempotencyKey: key, integrationId: "bad/id", continuityIdentityId: null },
+    { apiVersion: 1, idempotencyKey: `${key}x`, integrationId: "stardew", continuityIdentityId: null },
+    { apiVersion: 1, idempotencyKey: key, integrationId: "stardew", continuityIdentityId: "has space" },
+    { apiVersion: 1, idempotencyKey: key, integrationId: "stardew", continuityIdentityId: null, path: "C:\\Games\\Stardew Valley" },
+  ]) {
+    await assert.rejects(
+      api.createGameSession(invalid),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_create_request",
+    );
+  }
+});
+
+test("Game create requires an established CSRF session before any transport", async () => {
+  const recorder = transport();
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await assert.rejects(
+    api.createGameSession({ apiVersion: 1, idempotencyKey: "C".repeat(21) + "A", integrationId: "stardew", continuityIdentityId: null }),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "missing_composed_session",
+  );
+  assert.deepEqual(recorder.calls, []);
+});
+
+test("Game create result binds status to the gameSessionId exactly: handle on accepted/attached, null on unavailable", async () => {
+  const key = "C".repeat(21) + "A";
+  const sessionId = "0".repeat(32);
+  for (const status of ["accepted", "attached"]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse({ apiVersion: 1, status, gameSessionId: sessionId }));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    const created = await api.createGameSession({ apiVersion: 1, idempotencyKey: key, integrationId: "stardew", continuityIdentityId: null });
+    assert.deepEqual(created, { apiVersion: 1, status, gameSessionId: sessionId });
+  }
+  const unavailableRecorder = transport(jsonResponse(root()), jsonResponse({ apiVersion: 1, status: "unavailable", gameSessionId: null }));
+  const unavailableApi = createComposedReferenceGameBrowserApi(unavailableRecorder.fetch);
+  await unavailableApi.bootstrap(HANDLE);
+  const unavailable = await unavailableApi.createGameSession({ apiVersion: 1, idempotencyKey: key, integrationId: "stardew", continuityIdentityId: null });
+  assert.deepEqual(unavailable, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+  for (const bad of [
+    { apiVersion: 1, status: "accepted", gameSessionId: null },
+    { apiVersion: 1, status: "attached" },
+    { apiVersion: 1, status: "unavailable", gameSessionId: sessionId },
+    { apiVersion: 1, status: "unavailable", gameSessionId: null, token: "leak" },
+    { apiVersion: 1, status: "created", gameSessionId: sessionId },
+    { apiVersion: 2, status: "attached", gameSessionId: sessionId },
+  ]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse(bad));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.createGameSession({ apiVersion: 1, idempotencyKey: key, integrationId: "stardew", continuityIdentityId: null }),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_create_result",
+    );
+  }
+});
+
+test("Game create preserves frozen typed problem outcomes and rejects non-200 transport", async () => {
+  const key = "C".repeat(21) + "A";
+  for (const code of ["idempotency_conflict", "game_operation_in_progress", "game_runtime_unavailable", "game_unavailable", "game_storage_unavailable", "state_unavailable"]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse({ code }, 409));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.createGameSession({ apiVersion: 1, idempotencyKey: key, integrationId: "stardew", continuityIdentityId: null }),
+      (error) => error instanceof ComposedReferenceGameProblemError && error.code === code,
+    );
+  }
+  for (const response of [
+    new Response(null, { status: 204 }),
+    new Response("not-json", { status: 200 }),
+    new Response(JSON.stringify({ code: "state_unavailable", detail: "raw producer text" }), { status: 409 }),
+    new Response(JSON.stringify({ code: "foreign_server_detail" }), { status: 409 }),
+  ]) {
+    const recorder = transport(jsonResponse(root()), response);
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.createGameSession({ apiVersion: 1, idempotencyKey: key, integrationId: "stardew", continuityIdentityId: null }),
+      ComposedReferenceGameProtocolError,
+    );
+  }
+});
+
+test("Game resume cancel client sends the exact generation-bound cancellation command and decodes the strict cancelled result", async () => {
+  const key = "X".repeat(21) + "A";
+  const recorder = transport(jsonResponse(root()), jsonResponse({ apiVersion: 1, status: "cancelled" }));
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await api.bootstrap(HANDLE);
+  const cancelled = await api.cancelResume({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 2 });
+  assert.deepEqual(cancelled, { apiVersion: 1, status: "cancelled" });
+  assert.deepEqual(
+    { input: recorder.calls[1].input, method: recorder.calls[1].init.method, headers: recorder.calls[1].init.headers, body: recorder.calls[1].init.body },
+    {
+      input: "/api/composed-reference-game/v1/game/resume/cancel",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": HANDLE },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 2 }),
+    },
+  );
+  for (const invalid of [
+    { apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 0 },
+    { apiVersion: 1, idempotencyKey: `${key}x`, expectedAttachmentGeneration: 2 },
+    { apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 2, path: "C:\\Games\\Stardew Valley" },
+  ]) {
+    await assert.rejects(
+      api.cancelResume(invalid),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_resume_cancel_request",
+    );
+  }
+});
+
+test("Game resume cancel requires an established CSRF session before any transport", async () => {
+  const recorder = transport();
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await assert.rejects(
+    api.cancelResume({ apiVersion: 1, idempotencyKey: "X".repeat(21) + "A", expectedAttachmentGeneration: 2 }),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "missing_composed_session",
+  );
+  assert.deepEqual(recorder.calls, []);
+});
+
+test("Game resume cancel decodes only the frozen cancelled result and rejects malformed or additive results", async () => {
+  const key = "X".repeat(21) + "A";
+  for (const bad of [
+    { apiVersion: 1, status: "cancelled", generation: 3 },
+    { apiVersion: 1, status: "active" },
+    { apiVersion: 2, status: "cancelled" },
+    { apiVersion: 1, status: "cancelled", token: "leak" },
+  ]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse(bad));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.cancelResume({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 2 }),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_resume_cancel_result",
+    );
+  }
+});
+
+test("Game resume cancel preserves frozen typed problem outcomes and rejects non-200 transport", async () => {
+  const key = "X".repeat(21) + "A";
+  for (const code of ["idempotency_conflict", "game_unavailable", "game_attachment_conflict", "state_unavailable"]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse({ code }, 409));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.cancelResume({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 2 }),
+      (error) => error instanceof ComposedReferenceGameProblemError && error.code === code,
+    );
+  }
+  for (const response of [
+    new Response(null, { status: 204 }),
+    new Response("not-json", { status: 200 }),
+    new Response(JSON.stringify({ code: "state_unavailable", detail: "raw producer text" }), { status: 409 }),
+    new Response(JSON.stringify({ code: "foreign_server_detail" }), { status: 409 }),
+  ]) {
+    const recorder = transport(jsonResponse(root()), response);
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.cancelResume({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 2 }),
+      ComposedReferenceGameProtocolError,
+    );
+  }
+});
