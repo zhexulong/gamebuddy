@@ -223,18 +223,35 @@ test("production runtime copier binds synthetic acquisition file-list digests be
       try {
         const origins = await copyVerifiedBundledRuntimeSource({ stagingRoot: staging, descriptor, source });
         assert.deepEqual([...origins], [["runtime/node.exe", { kind: undefined, sourceUrl: descriptor.sourceUrl, archiveSha256: descriptor.archiveSha256 }]]);
-        for (const files of [
-          [{ ...source.files[0], sourcePath: "../node.exe" }],
+        // Each tamper is fail-closed under the split error vocabulary: invalid
+        // file lists are rejected before the fixed node digest is consulted;
+        // a list without an exact matching node.exe hits the digest check.
+        const invalidListReasons = [
           [{ ...source.files[0] }, { ...source.files[0] }],
           [{ sourcePath: "z.dll", sha256: "a".repeat(64) }, { ...source.files[0] }],
-          [{ sourcePath: "other.dll", sha256: "a".repeat(64) }],
           [{ ...source.files[0], sha256: "not-a-sha256" }],
+        ];
+        for (const files of invalidListReasons) {
+          const invalidStaging = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-copy-invalid-"));
+          try {
+            await assert.rejects(
+              copyVerifiedBundledRuntimeSource({ stagingRoot: invalidStaging, descriptor, source: { ...source, files } }),
+              /verified_bundled_runtime_closure_files_invalid/,
+            );
+            await assert.rejects(lstat(join(invalidStaging, "runtime")), { code: "ENOENT" });
+          } finally { await rm(invalidStaging, { recursive: true, force: true }); }
+        }
+        // A valid list without the exact pinned node.exe disappears the fixed
+        // executable fact before any tree is copied (renamed or missing).
+        for (const files of [
+          [{ sourcePath: "other.dll", sha256: "a".repeat(64) }],
+          [{ ...source.files[0], sourcePath: "../node.exe" }],
         ]) {
           const invalidStaging = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-copy-invalid-"));
           try {
             await assert.rejects(
               copyVerifiedBundledRuntimeSource({ stagingRoot: invalidStaging, descriptor, source: { ...source, files } }),
-              /verified_bundled_runtime_closure_mismatch/,
+              /verified_bundled_runtime_node_digest_mismatch/,
             );
             await assert.rejects(lstat(join(invalidStaging, "runtime")), { code: "ENOENT" });
           } finally { await rm(invalidStaging, { recursive: true, force: true }); }
