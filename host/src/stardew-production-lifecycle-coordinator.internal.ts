@@ -4,6 +4,7 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationIssuer,
 } from "./composed-reference-game-browser.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
+import type { GameOperationalGateEvidence } from "./game-operational-gate-evidence.js";
 import type {
   ConnectedSemanticGameLease,
   ConstructedUnmountedGameSemanticFacade,
@@ -255,7 +256,32 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly launchReadinessReader: StardewGameSurfaceLaunchReadinessReader;
   readonly actionAuthorityReader: StardewGameSurfaceActionAuthorityReader;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
+  readonly headlessOperationalGame: HeadlessOperationalGame;
   close(): Promise<void>;
+}>;
+
+/**
+ * Composition-only one-shot operational lease. It exposes no installation,
+ * bridge, process, session, or browser admission surface: ingress activation
+ * and termination are the only operations the operational runner may drive.
+ * On top of that, it exposes exactly the session/dispatch/evidence faces the
+ * existing production-game-task-ingress composition requires (piSessionId,
+ * gameSessionId, dispatchPromptDefinedTask, cancelPromptDefinedTask,
+ * nextOperationalGateEvidence).
+ */
+export type HeadlessOperationalGameLease = Readonly<{
+  piSessionId: string;
+  gameSessionId: string;
+  activateCommittedIngress(): void;
+  dispatchPromptDefinedTask(task: string): Promise<void>;
+  cancelPromptDefinedTask(): void;
+  nextOperationalGateEvidence?(): Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">>;
+  close(): Promise<void>;
+}>;
+
+/** Non-exported coordinator-private headless admission consumed by production composition only. */
+export type HeadlessOperationalGame = Readonly<{
+  activateHeadlessOperationalGame(manifest: HostDeploymentManifest): Promise<HeadlessOperationalGameLease>;
 }>;
 
 type BootstrapComposition = StardewPrivateBootstrapInternalComposition;
@@ -1582,6 +1608,178 @@ function createCoordinator(
     disconnectGame,
   });
 
+  /**
+   * Composition-only one-shot operational Game admission (Design 100). It is
+   * the production operational-gate consumer of the same lifecycle core the
+   * browser path uses; it never manufactures a browser admission and never
+   * returns an installation, bridge, process, session, or capability fact.
+   *
+   * Sequence: verify the exact deployment-manifest identity → consume the
+   * Design 101 registration owner → fresh-admit the private locator → reserve/
+   * stage the Player Host through the same broker/owner core → Player Host
+   * launch + attestation → auto-select the single registered Farmhand cabin →
+   * AI-client launch → Design 99 materializer → durable runEnter. Committed
+   * ingress stays armed (not activated) until the lease owner asks, exactly
+   * like the browser surface only after its own ingress composition arms.
+   */
+  let headlessActivationInFlight = false;
+  const headlessOperationalGame: HeadlessOperationalGame = Object.freeze({
+    activateHeadlessOperationalGame: async (candidate: HostDeploymentManifest): Promise<HeadlessOperationalGameLease> => {
+      if (isClosing()) throw new Error("stardew_lifecycle_closing");
+      if (headlessActivationInFlight || acceptedAdmission !== undefined || activationPromise !== undefined || exactOwner !== undefined)
+        throw new Error("stardew_lifecycle_activation_conflict");
+      if (
+        candidate.schemaVersion !== manifest.schemaVersion ||
+        candidate.runtimeRoot !== manifest.runtimeRoot ||
+        candidate.bootstrapOperationId !== manifest.bootstrapOperationId ||
+        candidate.authorityGeneration !== manifest.authorityGeneration ||
+        candidate.principal.playerId !== manifest.principal.playerId ||
+        candidate.principal.companionId !== manifest.principal.companionId ||
+        candidate.principal.continuityId !== manifest.principal.continuityId
+      ) throw new Error("stardew_headless_manifest_identity_mismatch");
+      // The operational runner may not drive a second lifecycle while this
+      // one-shot admission is in flight; the returned lease is the only handle.
+      headlessActivationInFlight = true;
+      try {
+        const registered = await readStardewInstallationRegistration(runtimeRoot);
+        if (registered === null || registered.state !== "ready" || registered.locator === null)
+          throw new Error("stardew_registered_installation_unavailable");
+        transition("reserving");
+        const headlessSessionId = `headless-${randomUUID()}`;
+        const claim = composition.broker.confirm({
+          playerId,
+          companionId,
+          browserSessionId: headlessSessionId,
+          expiresAtMs: Date.now() + 10 * 60_000,
+        }).consume(headlessSessionId);
+        const owner = await internal.reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim);
+        exactOwner = owner;
+        if (isClosing()) {
+          await internal.quarantineOwnedPlayerHostOwner(owner);
+          ownerQuarantined = true;
+          throw new Error("stardew_lifecycle_closing");
+        }
+        transition("staging");
+        await internal.stageOwnedPlayerHostProfile(owner);
+        if (isClosing()) {
+          await internal.quarantineOwnedPlayerHostOwner(owner);
+          ownerQuarantined = true;
+          internal.terminalizeOwnedPlayerHostOwner(owner);
+          throw new Error("stardew_lifecycle_closing");
+        }
+        transition("staged");
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        // Player Host launch + attestation through the same lifecycle core. The
+        // one-shot headless launch never awaits a browser command; the launch
+        // gate and the exact-owner attestation correlation run exactly once.
+        if (launchPromise !== undefined) throw new Error("stardew_player_host_launch_in_progress");
+        launchPromise = runPlayerHostLaunch();
+        await launchPromise;
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        // Auto-select the first registered Farmhand cabin (this one-shot
+        // operational topology owns exactly one AI Farmhand attachment).
+        const ownerForHandoff = exactOwner;
+        if (ownerForHandoff === undefined || activationState !== "awaiting_player_host_attestation")
+          throw new Error("stardew_cabin_handoff_unavailable");
+        const choices = await handoffCoordinator.list(ownerForHandoff);
+        const choice = choices[0];
+        if (choice === undefined) throw new Error("stardew_headless_cabin_unavailable");
+        const handoffExpiry = choice.expiresAtMs;
+        const admission = await handoffCoordinator.confirmAndAdmit(choice.selection, { confirmed: true });
+        await internal.materializeAiClientProfileAfterManifestAdmission(ownerForHandoff, admission);
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        const aiResult = await withFreshRegisteredInstallation((candidateInstallation) =>
+          aiClientLaunch(ownerForHandoff, candidateInstallation),
+        );
+        if (aiResult.status.kind !== "awaiting_ai_client_attestation")
+          throw new Error("stardew_ai_client_launch_terminal_projection_invalid");
+        if (containedRuntimeTeardown !== undefined) aiClientLaunchThroughRuntime = true;
+        while (farmhandGameRuntimeFacade === undefined) {
+          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          try {
+            farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
+              ownerForHandoff,
+              (connection) => materializeFarmhandGameSession(connection, handoffExpiry),
+            );
+          } catch (error) {
+            if (!isTransientFarmhandBridgeConnectError(error)) throw error;
+            await waitForFarmhandBridgeRetry(handoffExpiry);
+          }
+        }
+        const enteredLease = await farmhandGameRuntimeFacade.runEnter();
+        farmhandGameRuntimeLease = enteredLease;
+        if (isClosing()) {
+          await farmhandGameRuntimeFacade.close();
+          farmhandGameRuntimeFacade = undefined;
+          farmhandGameRuntimeLease = undefined;
+          farmhandGameRuntimeFacadeClosed = true;
+          throw new Error("stardew_lifecycle_closing");
+        }
+        // The operational surface has no Voice attachment. Bind the tracked
+        // production absent-Voice STOP adapter and persist the durable
+        // attachment facts; committed ingress activation is deferred to the
+        // lease owner (the task-ingress composition arms before committing).
+        enteredLease.host.attachVoiceStopper(async () => undefined);
+        attachmentGeneration = 1;
+        attachmentConnectionStatus = "connected_idle";
+        actionAuthorityStatus = "active";
+        let ingressActivated = false;
+        let leaseClosed = false;
+        const leaseUnavailable = (): never => {
+          throw new Error("stardew_headless_lease_unavailable");
+        };
+        const requireLive = (): ConnectedSemanticGameLease => {
+          if (leaseClosed || isClosing() || farmhandGameRuntimeLease !== enteredLease) leaseUnavailable();
+          return enteredLease;
+        };
+        return Object.freeze({
+          piSessionId: enteredLease.piSessionId,
+          gameSessionId: enteredLease.gameSessionId,
+          activateCommittedIngress: (): void => {
+            const live = requireLive();
+            if (ingressActivated) throw new Error("stardew_headless_ingress_already_activated");
+            live.activateCommittedIngress();
+            ingressActivated = true;
+          },
+          dispatchPromptDefinedTask: async (task: string): Promise<void> => {
+            const live = requireLive();
+            if (!ingressActivated) throw new Error("stardew_headless_ingress_not_activated");
+            await live.dispatchPromptDefinedTask(task);
+          },
+          cancelPromptDefinedTask: (): void => {
+            const live = requireLive();
+            live.cancelPromptDefinedTask();
+          },
+          nextOperationalGateEvidence: enteredLease.nextOperationalGateEvidence === undefined
+            ? undefined
+            : () => {
+                const live = requireLive();
+                return live.nextOperationalGateEvidence!();
+              },
+          close: async (): Promise<void> => {
+            if (leaseClosed) return;
+            leaseClosed = true;
+            await teardownAttachment();
+          },
+        }) as HeadlessOperationalGameLease;
+      } catch (error) {
+        if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
+        if (exactOwner !== undefined && !ownerQuarantined) {
+          try {
+            await internal.quarantineOwnedPlayerHostOwner(exactOwner);
+            ownerQuarantined = true;
+          } catch {
+            // close() retains and retries the exact-owner quarantine.
+          }
+        }
+        throw error;
+      } finally {
+        headlessActivationInFlight = false;
+      }
+    },
+  });
+
+
   const closeAttempt = async (): Promise<void> => {
     if (activationState !== "closed") transition("closing");
     if (attachmentGeneration !== 0) attachmentConnectionStatus = "stopping";
@@ -1680,7 +1878,15 @@ function createCoordinator(
     return attempt;
   };
 
-  return Object.freeze({ lifecycleReader, attachmentReader, launchReadinessReader, actionAuthorityReader, activationOwner, close });
+  return Object.freeze({
+    lifecycleReader,
+    attachmentReader,
+    launchReadinessReader,
+    actionAuthorityReader,
+    activationOwner,
+    headlessOperationalGame,
+    close,
+  });
 }
 
 /**

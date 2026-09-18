@@ -10,6 +10,7 @@ export type SemanticVoiceConfig = Readonly<{
 }>;
 
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
+const SHA256 = /^[a-f0-9]{64}$/;
 const VOICE_PROFILE = /^[A-Za-z0-9._-]{1,128}$/;
 const VOICE_TOKEN = /^[A-Za-z0-9_-]{16,256}$/;
 const VOICE_CONFIG_KEYS = ["schemaVersion", "voiceGateway", "voiceSessionId", "voiceProfile"] as const;
@@ -17,33 +18,48 @@ const VOICE_GATEWAY_KEYS = ["port", "token"] as const;
 const OPERATION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 export type SemanticMainCommand = Readonly<
-  | { kind: "enter"; operatorConfigPath: string }
-  | { kind: "recover_dead_owner"; operatorConfigPath: string; operationId: string }
+  | { kind: "enter"; deploymentManifestRef: string; operationalNonceSha256: string }
+  | { kind: "recover_dead_owner"; deploymentManifestRef: string; operationId: string }
 >;
 
 /**
- * Parses the Host's deliberately small command surface. Dead-owner recovery
- * is CLI-only and has no implicit or automatic route from normal entry.
+ * Parses the Host's deliberately small command surface. Normal entry accepts
+ * only the explicit operational flags `--deployment-manifest-ref <path>` and
+ * `--operational-nonce <sha256>`. Dead-owner recovery is CLI-only and has no
+ * implicit or automatic route from normal entry.
  */
 export function parseSemanticMainCommand(
   argv: readonly string[],
-  environmentOperatorConfigPath: string | undefined,
 ): SemanticMainCommand {
-  if (argv.length === 0) {
-    if (!validAbsolutePath(environmentOperatorConfigPath))
-      throw new Error("semantic_game_operator_config_path_required");
-    return Object.freeze({ kind: "enter", operatorConfigPath: environmentOperatorConfigPath });
+  const manifestRef = argv[1];
+  const nonce = argv[3];
+  if (argv.length === 4 &&
+      argv[0] === "--deployment-manifest-ref" &&
+      manifestRef !== undefined &&
+      validAbsolutePath(manifestRef) &&
+      argv[2] === "--operational-nonce" &&
+      nonce !== undefined &&
+      SHA256.test(nonce)) {
+    return Object.freeze({
+      kind: "enter",
+      deploymentManifestRef: manifestRef,
+      operationalNonceSha256: nonce,
+    });
   }
-  if (argv.length === 1 && validAbsolutePath(argv[0]))
-    return Object.freeze({ kind: "enter", operatorConfigPath: argv[0] });
   if (
-    argv.length === 3 &&
-    validAbsolutePath(argv[0]) &&
-    argv[1] === "recover-dead-owner" &&
-    typeof argv[2] === "string" &&
-    OPERATION_ID.test(argv[2])
+    argv.length === 5 &&
+    argv[0] === "recover-dead-owner" &&
+    argv[1] === "--deployment-manifest-ref" &&
+    validAbsolutePath(argv[2]) &&
+    argv[3] === "--operation-id" &&
+    typeof argv[4] === "string" &&
+    OPERATION_ID.test(argv[4])
   ) {
-    return Object.freeze({ kind: "recover_dead_owner", operatorConfigPath: argv[0], operationId: argv[2] });
+    return Object.freeze({
+      kind: "recover_dead_owner",
+      deploymentManifestRef: argv[2],
+      operationId: argv[4],
+    });
   }
   throw new Error("invalid_semantic_main_command");
 }

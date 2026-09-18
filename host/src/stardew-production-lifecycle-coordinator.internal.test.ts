@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -524,7 +525,7 @@ async function createFixture(input: Readonly<{
                 gameRuntimeTaskCancelCalls += 1;
                 if (input.gameRuntimeTaskCancelError !== undefined) throw input.gameRuntimeTaskCancelError;
               },
-              stopSettled: input.gameStopSettled,
+              ...(input.gameStopSettled === undefined ? {} : { stopSettled: input.gameStopSettled }),
             });
           },
           recoverDeadOwner: async () => undefined,
@@ -609,6 +610,49 @@ async function publishSignedPlayerHostSession(
     .update(JSON.stringify(unsigned), "utf8")
     .digest("base64url");
   await writeFile(join(sessionDirectory, "stardew-session.json"), JSON.stringify({ ...session, signature }));
+}
+
+/** Synchronous variant for the fixture `afterPlayerSpawn` hook, which is not awaited. */
+function publishSignedPlayerHostSessionSync(
+  runtimeRoot: string,
+  launchGeneration = "player-generation-1",
+  cabins: readonly PublishedCabin[] = [],
+  expiresAtUnixMs = Date.now() + 60_000,
+): void {
+  const sessionDirectory = join(
+    runtimeRoot,
+    "stardew-private-bootstrap",
+    "bootstrap-coordinator-1",
+    "session",
+  );
+  mkdirSync(sessionDirectory, { recursive: true });
+  const session = {
+    schemaVersion: 1,
+    integrationId: "stardew",
+    integrationVersion: "0.1.0",
+    gameVersion: "1.6.15",
+    gameBuildNumber: 24356,
+    smapiVersion: "4.5.2",
+    multiplayerProtocol: "1.6.15",
+    endpoint: "127.0.0.1:24642",
+    saveId: "save-coordinator",
+    worldId: "world-coordinator",
+    publishedAtUnixMs: Date.now(),
+    expiresAtUnixMs,
+    nonce: "nonce-coordinator",
+    state: "ready",
+    hostPlayerId: "player-1",
+    runtimeRole: "player_host",
+    launchGeneration,
+    cabins,
+    signature: "",
+  };
+  const unsigned = { ...session };
+  delete (unsigned as Partial<typeof session>).signature;
+  const signature = createHmac("sha256", "session-secret-coordinator-012345")
+    .update(JSON.stringify(unsigned), "utf8")
+    .digest("base64url");
+  writeFileSync(join(sessionDirectory, "stardew-session.json"), JSON.stringify({ ...session, signature }));
 }
 
 function signAttachmentValue<T extends { signature: string }>(value: T): T {
@@ -3917,15 +3961,115 @@ test("game.resume.cancel terminates the reconnect epoch, keeps the armed generat
 });
 
 test("headless operational admission consumes one fresh registered installation through the existing lifecycle core", async () => {
-  const fixture = await createFixture();
+  let runtimeRootForSession = "";
+  const fixture = await createFixture({
+    afterPlayerSpawn: () => {
+      // The Player Host game thread publishes its signed session advertisement
+      // immediately after spawning; the attestation correlation reads it back.
+      // cabin-alpha is free for this companion; cabin-foreign is bound to
+      // another companion and cabin-busy is occupied, so headless auto-select
+      // deterministically picks the single free Farmhand cabin.
+      publishSignedPlayerHostSessionSync(runtimeRootForSession, "player-generation-1", availableCabins);
+    },
+  });
+  runtimeRootForSession = fixture.runtimeRoot;
   try {
+    // When the headless flow writes its attachment request, the fixture Host
+    // (standing in for the game thread) answers with a signed ready response
+    // and the issued Farmhand join manifest exactly like the browser path.
+    const responder = setInterval(() => {
+      void (async () => {
+        try {
+          const request = await waitForAttachmentRequest(runtimeRootForSession);
+          const cabin = availableCabins[0]!;
+          await publishAttachmentAdmission(runtimeRootForSession, request, cabin);
+          clearInterval(responder);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT" && !((error as Error).message ?? "").includes("wait_for_attachment_request_timeout")) {
+            // ignore transient missing-file; only stop on real failure
+          }
+        }
+      })();
+    }, 10);
     const lease = await fixture.coordinator.headlessOperationalGame.activateHeadlessOperationalGame(fixture.manifest);
+    clearInterval(responder);
     assert.equal(lease.activateCommittedIngress.length, 0);
     assert.equal(typeof lease.close, "function");
     assert.equal(fixture.playerSpawnCalls.length, 1);
     assert.equal(fixture.spawnCalls.length, 1);
     assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
-    assert.ok(fixture.freshRegistrationAdmissionCount() >= 1, "headless consume lease fresh-admits at least once");
+    // Design 100 Step 1 asserts exact-once fresh registration admission. The
+    // Player Host launch and the AI-client launch each fresh-admit the private
+    // locator exactly once, so the count is exactly 2.
+    assert.equal(fixture.freshRegistrationAdmissionCount(), 2);
+    // The committed ingress is deferred to the lease owner: it is armed but not
+    // yet released, then one-shot activated and double-activation rejected.
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 0);
+    // Phase A: the lease exposes exactly the task-ingress composition surface
+    // (piSessionId/gameSessionId/dispatch/cancel/evidence) on top of ingress
+    // activation and close — no facade, snapshot, installation, or bridge facts.
+    assert.equal(lease.piSessionId, "pi-session-stardew-test");
+    assert.equal(lease.gameSessionId, "game-session-stardew-test");
+    assert.equal(typeof lease.dispatchPromptDefinedTask, "function");
+    assert.equal(typeof lease.cancelPromptDefinedTask, "function");
+    // The evidence face is optional at the lease level: it is armed only when
+    // the production composition supplies a game-operational-gate nonce (the
+    // headless fixture runs without one, so it stays undefined here). The type
+    // surface is what Phase A pins; the armed path is exercised in Phase B/3.
+    assert.ok(
+      lease.nextOperationalGateEvidence === undefined || typeof lease.nextOperationalGateEvidence === "function",
+      "evidence face must be absent or a function",
+    );
+    assert.equal(Object.isFrozen(lease), true);
+    lease.activateCommittedIngress();
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 1);
+    assert.throws(() => lease.activateCommittedIngress(), /stardew_headless_ingress_already_activated/);
+    await lease.close();
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("duplicate or payload-drift headless admission cannot rematerialize or launch", async () => {
+  let runtimeRootForSession = "";
+  const fixture = await createFixture({
+    afterPlayerSpawn: () => {
+      publishSignedPlayerHostSessionSync(runtimeRootForSession, "player-generation-1", availableCabins);
+    },
+  });
+  runtimeRootForSession = fixture.runtimeRoot;
+  try {
+    const responder = setInterval(() => {
+      void (async () => {
+        try {
+          const request = await waitForAttachmentRequest(runtimeRootForSession);
+          await publishAttachmentAdmission(runtimeRootForSession, request, availableCabins[0]!);
+          clearInterval(responder);
+        } catch { /* transient */ }
+      })();
+    }, 10);
+    const drifted = { ...fixture.manifest, authorityGeneration: 999 };
+    // A payload-drift manifest is rejected before any lifecycle core call.
+    await assert.rejects(
+      () => fixture.coordinator.headlessOperationalGame.activateHeadlessOperationalGame(drifted),
+      /stardew_headless_manifest_identity_mismatch/,
+    );
+    assert.equal(fixture.playerSpawnCalls.length, 0);
+    assert.equal(fixture.spawnCalls.length, 0);
+    // Once the first headless admission is in flight, a second (even identical)
+    // attempt fails closed with activation_conflict and never re-launches.
+    const first = fixture.coordinator.headlessOperationalGame.activateHeadlessOperationalGame(fixture.manifest);
+    await assert.rejects(
+      () => fixture.coordinator.headlessOperationalGame.activateHeadlessOperationalGame(fixture.manifest),
+      /stardew_lifecycle_activation_conflict/,
+    );
+    const lease = await first;
+    clearInterval(responder);
+    assert.equal(fixture.playerSpawnCalls.length, 1);
+    assert.equal(fixture.spawnCalls.length, 1);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
     await lease.close();
   } finally {
     await fixture.coordinator.close();

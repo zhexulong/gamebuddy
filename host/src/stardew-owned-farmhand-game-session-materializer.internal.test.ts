@@ -44,7 +44,7 @@ test("owned Farmhand materializer preserves authenticated receipt-backed constru
   );
   assert.match(
     source,
-    /LocalStardewBridgeClient\.connectFarmhand\(\s*connection\.scope,\s*connection\.pipeName,\s*connection\.token,\s*connection\.launchGeneration,\s*deadlineMs\s*,?\s*\)/,
+    /LocalStardewBridgeClient\.connectFarmhand\(\s*connection\.scope,\s*connection\.pipeName,\s*connection\.token,\s*connection\.launchGeneration,\s*deadlineMs\s*,?\s*STARDEW_INTEGRATION_LAUNCHER\.module\s*,?\s*\)/,
   );
   assert.match(source, /createStardewIntegrationLaunchHandleFromAuthenticatedBridge\(/);
   assert.match(source, /createGameRuntimeBindingFromReceiptBackedLaunch\(/);

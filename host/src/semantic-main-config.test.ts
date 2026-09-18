@@ -6,7 +6,7 @@ import test from "node:test";
 import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 import { loadSemanticVoiceConfig, parseSemanticMainCommand } from "./semantic-main-config.js";
 
-test("main destructive cutover uses only semantic operator construction and facade teardown", async () => {
+test("main is the operational-gate child and the CLI-only recovery tool, with no operator/voice/control fallback", async () => {
   const source = await readFile(resolve(import.meta.dirname, "../src/main.ts"), "utf8");
   for (const forbidden of [
     "connectIntegrationCompanion",
@@ -17,80 +17,75 @@ test("main destructive cutover uses only semantic operator construction and faca
     "actionPolicy",
     "connected.close",
     "host.close",
+    "createKnownSemanticGameFacadeFromOperatorConfig",
+    "createKnownSemanticGameDeadOwnerRecoveryFacadeFromOperatorConfig",
+    "operatorConfigPath",
+    "connectHealthyVoiceGateway",
+    "createHostShutdownLifecycle",
+    "createVoicePollingSupervisor",
+    "startCompanionControlServer",
+    "readProductControlLaunch",
+    "voiceConfig",
+    "LocalStardewBridgeClient",
+    "farmhand-companion-preview",
   ]) {
-    assert.equal(source.includes(forbidden), false, `forbidden legacy main ingress: ${forbidden}`);
+    assert.equal(source.includes(forbidden), false, `forbidden main ingress: ${forbidden}`);
   }
-  assert.match(
-    source,
-    /parseSemanticMainCommand\(process\.argv\.slice\(2\), process\.env\.GAMEBUDDY_SEMANTIC_GAME_OPERATOR_CONFIG\)/,
-  );
-  assert.match(source, /GAMEBUDDY_GAME_OPERATIONAL_GATE_NONCE_SHA256/);
-  assert.match(source, /\^\[a-f0-9\]\{64\}\$/);
-  assert.match(source, /createKnownSemanticGameFacadeFromOperatorConfig\(\s*operatorConfigPath,/);
-  assert.match(source, /gameOperationalGateNonceSha256/);
-  assert.match(
-    source,
-    /gameVoicePresentation: voice\.createGameVoicePresentationAttachment\(voiceConfig\.voiceProfile\)/,
-  );
-  assert.match(
-    source,
-    /const lease = await facade\.runEnter\(\);\s*taskLease = lease;\s*if \(voice !== undefined && voiceConfig !== undefined\) \{\s*if \(voiceConfig\.voiceSessionId !== lease\.gameSessionId\) throw new Error\("voice_session_receipt_mismatch"\);\s*await voice\.bootstrapSession\(lease\.gameSessionId\);/,
-  );
+  assert.match(source, /parseSemanticMainCommand\(process\.argv\.slice\(2\)\)/);
+  assert.match(source, /activateHeadlessOperationalGame\(manifest\)/);
+  assert.match(source, /createStardewProductionLifecycleCoordinator\(manifest, folderPicker, game\)/);
   assert.match(source, /lease\.activateCommittedIngress\(\);/);
-  assert.doesNotMatch(source, /gamePresentation: Object\.freeze/);
-  assert.doesNotMatch(source, /speechPort: voice/);
+  assert.match(source, /createProductionGameTaskIngressController\(\{\s*nonceSha256: operationalNonceSha256,/);
+  assert.match(source, /dispatchTask: lease\.dispatchPromptDefinedTask/);
+  assert.match(source, /nextOperationalGateEvidence\(\)/);
   assert.match(source, /GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA/);
-  assert.match(source, /nextOperationalGateEvidence/);
   assert.match(source, /process\.send\(evidence\)/);
+  // Recovery is CLI-only and consumes the deployment manifest reference, never
+  // an operator file or a facade path.
+  assert.match(source, /game\.recoverDeadOwner\(\{ request: "recover_dead_owner", operationId \}\)/);
+  assert.match(source, /loadHostDeploymentManifest\(deploymentManifestRef\)/);
   assert.equal(source.includes("gamebuddy-game-operational-gate-runtime/v1"), false);
-  assert.match(
-    source,
-    /createKnownSemanticGameDeadOwnerRecoveryFacadeFromOperatorConfig\(\s*command\.operatorConfigPath,?\s*\)/,
-  );
-  const recoveryBranch = source.slice(
-    source.indexOf('if (command.kind === "recover_dead_owner")'),
-    source.indexOf("} else await enterSemanticGame"),
-  );
-  assert.equal(recoveryBranch.includes("createKnownSemanticGameFacadeFromOperatorConfig("), false);
-  assert.match(
-    recoveryBranch,
-    /await recoveryFacade\.recoverDeadOwner\(\{ request: "recover_dead_owner", operationId: command\.operationId \}\)/,
-  );
-  assert.match(source, /await facade\.runEnter\(\)/);
-  assert.match(source, /closeConnected: \(\) => facade\.close\(\)/);
-  for (const forbidden of ["owner", "proof", "permit", "mutex", "binding", "runtimeRoot", "recoverGame("]) {
-    assert.equal(
-      source.includes(`recoveryFacade.recoverDeadOwner({ ${forbidden}`),
-      false,
-      `leaked recovery authority: ${forbidden}`,
-    );
-  }
 });
 
-test("semantic main command accepts only exact normal-entry or explicit dead-owner recovery forms", () => {
-  const configPath = "C:/semantic/game-operator.json";
-  assert.deepEqual(parseSemanticMainCommand([], configPath), { kind: "enter", operatorConfigPath: configPath });
-  assert.deepEqual(parseSemanticMainCommand([configPath], undefined), {
+test("semantic main command accepts only exact operational-flag entry or explicit dead-owner recovery forms", () => {
+  const manifestRef = "C:/runtime/deployment-manifest.json";
+  const nonce = "a".repeat(64);
+  assert.deepEqual(parseSemanticMainCommand([
+    "--deployment-manifest-ref", manifestRef,
+    "--operational-nonce", nonce,
+  ]), {
     kind: "enter",
-    operatorConfigPath: configPath,
+    deploymentManifestRef: manifestRef,
+    operationalNonceSha256: nonce,
   });
-  assert.deepEqual(parseSemanticMainCommand([configPath, "recover-dead-owner", "operation_01"], undefined), {
+  assert.deepEqual(parseSemanticMainCommand([
+    "recover-dead-owner", "--deployment-manifest-ref", manifestRef,
+    "--operation-id", "operation_01",
+  ]), {
     kind: "recover_dead_owner",
-    operatorConfigPath: configPath,
+    deploymentManifestRef: manifestRef,
     operationId: "operation_01",
   });
-  for (const [argv, environment] of [
-    [["recover-dead-owner", "operation_01"], undefined],
-    [[configPath, "recover-dead-owner"], undefined],
-    [[configPath, "recover-dead-owner", "operation_01", "extra"], undefined],
-    [[configPath, "recover-dead-owner", "invalid operation"], undefined],
-    [[configPath, "unexpected"], undefined],
-    [[], undefined],
-    [[], "relative-config.json"],
+  for (const argv of [
+    [],
+    ["--deployment-manifest-ref"],
+    ["--deployment-manifest-ref", manifestRef],
+    ["--deployment-manifest-ref", manifestRef, "--operational-nonce"],
+    ["--deployment-manifest-ref", manifestRef, "--operational-nonce", "short"],
+    ["--deployment-manifest-ref", manifestRef, "--operational-nonce", "Z".repeat(64)],
+    ["--deployment-manifest-ref", "relative.json", "--operational-nonce", nonce],
+    ["--deployment-manifest-ref", manifestRef, "--operational-nonce", nonce, "extra"],
+    [manifestRef],
+    ["recover-dead-owner"],
+    ["recover-dead-owner", manifestRef, "--operation-id", "operation_01"],
+    ["recover-dead-owner", "--deployment-manifest-ref", manifestRef],
+    ["recover-dead-owner", "--deployment-manifest-ref", manifestRef, "--operation-id", "invalid operation"],
+    ["recover-dead-owner", "--deployment-manifest-ref", manifestRef, "--operation-id", "operation_01", "extra"],
+    ["--help"],
   ] as const) {
     assert.throws(
-      () => parseSemanticMainCommand(argv, environment),
-      /(?:invalid_semantic_main_command|semantic_game_operator_config_path_required)/,
+      () => parseSemanticMainCommand(argv),
+      /invalid_semantic_main_command/,
     );
   }
 });
