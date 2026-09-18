@@ -762,3 +762,77 @@ test("local Voice Gateway client fails closed without a bound session and never 
     await close(server);
   }
 });
+
+test("v2 streaming lane sends stream_speech_chunk and receives pushed playback observations", async () => {
+  const seen: unknown[] = [];
+  let peer: Socket | undefined;
+  const server = await listen((socket) => {
+    peer = socket;
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) return;
+        const request = JSON.parse(buffer.slice(0, newline)) as { type: string; requestId: string };
+        buffer = buffer.slice(newline + 1);
+        seen.push(request);
+        if (request.type === "hello") reply(socket, request.requestId, { type: "hello_ack", protocolVersion: 1 });
+        else if (request.type === "health")
+          reply(socket, request.requestId, {
+            type: "health",
+            protocolVersion: 1,
+            status: "ready",
+            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 3 },
+          });
+        else if (request.type === "stream_speech_chunk") {
+          const chunkRequest = request as unknown as {
+            sessionId: string;
+            connectionEpoch: number;
+            speechJobId: string;
+          };
+          // Push a completed playback observation back over the same socket.
+          socket.write(
+            JSON.stringify({
+              protocolVersion: 2,
+              sessionId: chunkRequest.sessionId,
+              connectionEpoch: chunkRequest.connectionEpoch,
+              timestampMs: Date.now(),
+              type: "playback_observation",
+              speechJobId: chunkRequest.speechJobId,
+              audioEndMs: 480,
+              terminalStatus: "completed",
+            }) + "\n",
+          );
+        }
+      }
+    });
+  });
+  try {
+    const client = await LocalVoiceGatewayClient.connect({ port: port(server), token: "voice_token_1234567890" });
+    await client.health(); // v2 lane is gated on the healthy gateway capability
+    const observations: unknown[] = [];
+    client.onPlaybackObservation((event) => observations.push(event));
+    await client.streamSpeechChunk("session_v2", "speech_v2_1", 0, "你好。", true, Date.now() + 60_000);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20)); // let the write land
+    const chunk = seen.find((request) => (request as { type: string }).type === "stream_speech_chunk") as
+      | { sessionId: string; connectionEpoch: number; speechJobId: string; deltaText: string; isFinalChunk: boolean; chunkIndex: number }
+      | undefined;
+    assert.ok(chunk !== undefined, `stream_speech_chunk must be sent over the wire; seen=${JSON.stringify(seen.map((request) => (request as { type?: string }).type))}`);
+    assert.equal(chunk.sessionId, "session_v2");
+    assert.equal(chunk.connectionEpoch, 3, "v2 lane uses the core gateway epoch as connectionEpoch");
+    assert.equal(chunk.speechJobId, "speech_v2_1");
+    assert.equal(chunk.deltaText, "你好。");
+    assert.equal(chunk.isFinalChunk, true);
+    for (let attempt = 0; attempt < 50 && observations.length === 0; attempt += 1) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+    }
+    assert.equal(observations.length, 1, "a single pushed playback observation must be delivered");
+    assert.equal((observations[0] as { speechJobId: string }).speechJobId, "speech_v2_1");
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
