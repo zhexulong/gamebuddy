@@ -4,7 +4,7 @@ import { GroqWhisperAsrProvider } from "./groq.js";
 import { MimoTtsProvider, type MimoTtsAdmission } from "./mimo.js";
 import { auditSenseVoiceAssets, type SenseVoiceAssetManifest, SenseVoiceCliAsrProvider } from "./sensevoice.js";
 import { startVoiceGateway } from "./server.js";
-import { createWindowsAudioMixer, type WindowsOutputSelection } from "./windows-audio.js";
+import { createStreamingWindowsAudioMixer, type StreamingWindowsAudioMixer } from "./streaming-windows-audio.js";
 import { type WindowsInputSelection, WindowsPttCapture } from "./windows-capture.js";
 
 // Optional: load local operator environment (e.g. GROQ_API_KEY, MIMO_API_KEY) from .env.local
@@ -42,6 +42,12 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535 || !/^[A-Za-z0-9_-]{16,
   console.log(`GameBuddy Voice Gateway listening on 127.0.0.1:${gateway.port} (protocol v1; ${status}).`);
   const shutdown = async () => {
     await gateway.close();
+    // Resident-stream mixer owns a child process; stop it (stop frame) and
+    // wait for the child to exit so a closed gateway never leaks PowerShell.
+    const closeMixer = (mixer as { close?: unknown }).close;
+    if (typeof closeMixer === "function") {
+      await (closeMixer as () => Promise<void>)();
+    }
     process.exit(0);
   };
   process.once("SIGINT", shutdown);
@@ -109,7 +115,9 @@ async function configuredMixer(): Promise<Mixer> {
   if (selected === undefined || selected.length === 0) return unavailableMixer;
   if (process.platform !== "win32") return unavailableMixer;
   try {
-    return await createWindowsAudioMixer(selected as WindowsOutputSelection);
+    // Resident-stream render: the device opens once and micro-chunks stride
+    // stdin, so 20ms playback and prompt barge-in are physically possible.
+    return await createStreamingWindowsAudioMixer(selected);
   } catch {
     return unavailableMixer;
   }
