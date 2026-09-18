@@ -2,9 +2,12 @@ import { createServer, type Server, type Socket } from "node:net";
 import {
   createBoundedUtf8NdjsonDecoder,
   encodeVoiceGatewayMessage,
+  encodeVoiceGatewayMessageV2,
+  isVoiceGatewayEventV2,
   isVoiceGatewayResponse,
   MAX_NDJSON_FRAME_BYTES,
   parseVoiceGatewayRequest,
+  parseVoiceGatewayRequestV2,
   VOICE_PROTOCOL_VERSION,
   type VoiceGatewayRequest,
   type VoiceGatewayResponse,
@@ -17,6 +20,7 @@ import {
   type TtsProvider,
   VoiceGatewayCore,
 } from "./gateway.js";
+import { V2StreamingRuntime } from "./v2-streaming.js";
 
 /** Hardware PTT capture stays wholly inside Gateway; Host never receives raw PCM. */
 interface PttCaptureDevice {
@@ -174,6 +178,30 @@ function handleSocket(
   quarantine: () => void,
 ): void {
   let authenticated = false;
+  // A v2 peer authenticates with the v1 hello on the same socket, then sends
+  // stream_speech_chunk / cancel_* frames; v2 events are pushed here (no poll).
+  let v2: V2StreamingRuntime | undefined;
+  const ensureV2Runtime = (): void => {
+    if (v2 !== undefined) return;
+    v2 = new V2StreamingRuntime({
+      tts: core.tts,
+      mixer: core.mixer,
+      connectionEpoch: core.epoch,
+      onEvent: (event) => {
+        if (socket.destroyed) return;
+        socket.write(encodeVoiceGatewayMessageV2(event));
+      },
+    });
+  };
+  // v2 jobs die with their peer; never leak streams on a dropped socket.
+  socket.once("close", () => {
+    void v2?.close("gateway_socket_closed");
+    v2 = undefined;
+  });
+  // `pushV2Event` is created lazily once the core providers are known, so the
+  // Guard comment: v2 frames are recognized purely by the frozen v2 validator
+  // on an authenticated socket; there is no separate upgrade marker. v1 and
+  // v2 frames may share a connection after the v1 hello authenticates it.
   const framer = createBoundedUtf8NdjsonDecoder({
     maxRecordBytes: MAX_NDJSON_FRAME_BYTES,
     maxBufferedBytes: MAX_NDJSON_FRAME_BYTES,
@@ -200,6 +228,14 @@ function handleSocket(
     for (const line of frames) {
       const parsed = parseRequest(line);
       if (parsed === null) {
+        // Not a v1 frame: on an authenticated socket, a frozen v2 request is
+        // routed through the streaming runtime (v2 events are pushed, no poll).
+        // Malformed input that matches neither protocol stays a protocol error.
+        if (authenticated && parseVoiceGatewayRequestV2(line) !== null) {
+          ensureV2Runtime();
+          v2?.handleRequest(line, Date.now());
+          continue;
+        }
         send(socket, { type: "error", requestId: null, reasonCode: "malformed_request" });
         continue;
       }

@@ -46,6 +46,8 @@ export type StreamingSpeechPipeline = Readonly<{
   cancelSpeech(): Promise<void>;
   close(): Promise<void>;
   readonly pendingChunks: number;
+  /** Total PCM16 bytes handed to the mixer (16kHz mono; audioEndMs = bytes / 32). */
+  readonly playedBytes: number;
 }>;
 
 export async function createStreamingSpeechPipeline(options: StreamingSpeechPipelineOptions): Promise<StreamingSpeechPipeline> {
@@ -54,6 +56,7 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
   const microQueue: Uint8Array[] = [];
   const sentenceQueue: string[] = [];
   let closed = false;
+  let playedBytes = 0;
   let worker: Promise<void> | undefined;
   let workerRunning = false;
 
@@ -112,6 +115,7 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
       if (closed) return false;
       const microChunk = microQueue.shift();
       if (microChunk === undefined) return false;
+      playedBytes += microChunk.byteLength;
       const result = options.mixer.play("pipeline", 0, microChunk);
       if (result instanceof Promise) void result.catch(() => undefined);
       return true;
@@ -120,6 +124,7 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
       if (closed) return false;
       const microChunk = microQueue.shift();
       if (microChunk === undefined) return false;
+      playedBytes += microChunk.byteLength;
       await options.mixer.play("pipeline", 0, microChunk);
       return true;
     },
@@ -157,6 +162,9 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
     },
     get pendingChunks() {
       return microQueue.length;
+    },
+    get playedBytes() {
+      return playedBytes;
     },
   });
 }
