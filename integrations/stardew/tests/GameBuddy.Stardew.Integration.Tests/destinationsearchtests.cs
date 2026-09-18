@@ -180,9 +180,109 @@ public sealed class DestinationSearchTests
         result.Reason.Should().Be("destination_search_invalid");
     }
 
+    [Fact]
+    public void Find_RelatedNpcTerm_RecallsStoreHomeDestination()
+    {
+        // "找罗宾" -> Robin's home (ScienceHouse / carpenter): the NPC resident
+        // name (Latin id) and the localized display name are both indexed as
+        // related-NPC terms attached to the home destination.
+        DestinationSearchResult result = Find(Set(
+            NpcLeaf("ScienceHouse", "ScienceHouse", new[] { "Robin", "罗宾" }, new[] { "CarpenterShop" }),
+            Leaf("Mine", "Mine")),
+            "罗宾");
+
+        result.Status.Should().Be("candidates");
+        result.Reason.Should().Be("fuzzy_match");
+        result.Candidates.Should().NotBeNull().And.HaveCount(1);
+        result.Candidates![0].Label.Should().Be("ScienceHouse");
+        result.Candidates[0].Selector.Kind.Should().Be("ref");
+    }
+
+    [Fact]
+    public void Find_ServiceTerm_RecallsShopFromPurchaseIntent()
+    {
+        // "买种子" -> SeedShop via shop stock display names indexed as service
+        // terms on the shop's home destination (localized stock names, as the
+        // live Data/Shops + Data/Objects pipeline produces them).
+        DestinationSearchResult result = Find(Set(
+            NpcLeaf("SeedShop", "SeedShop", new[] { "Pierre", "皮埃尔" }, new[] { "SeedShop", "防风草种子", "土豆种子" }),
+            Leaf("Mine", "Mine")),
+            "种子");
+
+        result.Status.Should().Be("candidates");
+        result.Candidates.Should().NotBeNull().And.HaveCount(1);
+        result.Candidates![0].Label.Should().Be("SeedShop");
+    }
+
+    [Fact]
+    public void Find_CjkBigram_PrefersExactTwoCharacterLocation()
+    {
+        // 双字词(矿井、海滩)检索: the two-character CJK bigram carries a
+        // precision boost so it ranks above unrelated one-character overlaps.
+        DestinationSearchResult result = Find(Set(
+            NpcLeaf("Mine", "Mine", new[] { "矿井" }, null),
+            NpcLeaf("Beach", "Beach", new[] { "海滩" }, null)),
+            "矿井");
+
+        result.Status.Should().Be("candidates");
+        result.Candidates.Should().NotBeNull();
+        result.Candidates![0].Label.Should().Be("Mine");
+    }
+
+    [Fact]
+    public void Find_LatinPrefix_RecallsStoreFromPartialName()
+    {
+        // Partial western query ("min" -> Mine) recalls via latin-word prefix
+        // tokens with deterministic ordering.
+        DestinationSearchResult result = Find(Set(
+            Leaf("Mine", "Mine"),
+            Leaf("Forest", "Forest")),
+            "min");
+
+        result.Status.Should().Be("candidates");
+        result.Candidates.Should().NotBeNull();
+        result.Candidates![0].Label.Should().Be("Mine");
+    }
+
+    [Fact]
+    public void Find_DeterministicScoreOrder_StableAcrossRepeatedQueries()
+    {
+        var set = Set(
+            NpcLeaf("ScienceHouse", "ScienceHouse", new[] { "Robin", "罗宾" }, new[] { "CarpenterShop" }),
+            NpcLeaf("SeedShop", "SeedShop", new[] { "Pierre", "皮埃尔" }, new[] { "SeedShop", "防风草种子" }),
+            NpcLeaf("Saloon", "Saloon", new[] { "Gus", "格斯" }, new[] { "Stardrop Saloon", "啤酒" }));
+
+        DestinationSearchResult first = Find(set, "罗宾");
+        DestinationSearchResult second = Find(set, "罗宾");
+        first.Candidates.Should().NotBeNull();
+        second.Candidates.Should().NotBeNull();
+        // Ranking and the selected candidate's label are deterministic; the
+        // opaque ref is intentionally observation-local and freshly minted per
+        // resolution, so it must NOT be reused across queries.
+        first.Candidates![0].Label.Should().Be(second.Candidates![0].Label);
+        first.Candidates[0].Selector.Ref.Should().NotBe(second.Candidates[0].Selector.Ref);
+        first.Candidates[0].Selector.Ref.Should().StartWith("dr1_");
+        second.Candidates[0].Selector.Ref.Should().StartWith("dr1_");
+    }
+
+    [Fact]
+    public void Find_UnknownTerm_ReturnsNotFound()
+    {
+        DestinationSearchResult result = Find(Set(
+            NpcLeaf("ScienceHouse", "ScienceHouse", new[] { "Robin" }, null),
+            Leaf("Mine", "Mine")),
+            "zzzz_no_such_term");
+
+        result.Status.Should().Be("not_found");
+        result.Reason.Should().Be("destination_not_found");
+    }
+
     private static DerivedDestinationSet Set(params NavigationSourceNode[] nodes) =>
         new("generation_01", new NavigationSourceNode("root", null, null, null, nodes));
 
     private static NavigationSourceNode Leaf(string label, string identity, params string[] aliases) =>
         new(identity, label, new NavigationDestination("stardew", identity, label, null, null, aliases), null, Array.Empty<NavigationSourceNode>());
+
+    private static NavigationSourceNode NpcLeaf(string label, string identity, string[]? relatedNpcs, string[]? serviceTerms) =>
+        new(identity, label, new NavigationDestination("stardew", identity, label, null, null, null, relatedNpcs, serviceTerms), null, Array.Empty<NavigationSourceNode>());
 }
