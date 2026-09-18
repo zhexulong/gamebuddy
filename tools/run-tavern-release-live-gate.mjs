@@ -522,7 +522,7 @@ function contentFreeNarrativeSummary(role, value) {
   return summary;
 }
 
-async function runNarrativeProcess({ role, reportPath, profile = DEFAULT_TAVERN_RELEASE_PROFILE, spawnProcess = spawn } = {}) {
+async function runNarrativeProcess({ role, reportPath, spawnProcess = spawn } = {}) {
   if (typeof reportPath !== "string" || reportPath.length === 0)
     return { role, state: "blocked", reasonCode: "narrative_report_target_unavailable" };
   return new Promise((resolveRun) => {
@@ -536,7 +536,7 @@ async function runNarrativeProcess({ role, reportPath, profile = DEFAULT_TAVERN_
     try {
       child = spawnProcess(process.execPath, [NARRATIVE_RUNNER, "--report", reportPath], {
         cwd: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
-        env: { ...process.env, GAMEBUDDY_TAVERN_PROFILE: profile },
+        env: { ...process.env },
         stdio: ["ignore", "ignore", "ignore"],
         windowsHide: true,
       });
