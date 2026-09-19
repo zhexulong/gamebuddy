@@ -1,0 +1,228 @@
+---
+id: TASK-OPEN-GAMEPLAY-RELEASE
+type: task-plan
+status: active
+owners:
+  - game-runtime
+  - stardew-integration
+specs:
+  - architecture/game-action-model.md
+  - domains/game/gameplay-loop.md
+  - domains/stardew/integration.md
+blocked_by: []
+---
+
+# 开放玩法发布
+
+## 目标
+
+交付不由基础设施配额限制的生产 Game loop，以及玩家无需编辑配置即可安装、启动、连接、停止和恢复 Stardew 的第一方路径。
+
+## 现行要求
+
+- 每个普通 action 只有一个 adapter-owned registration。
+- 当前 catalog revision 可以在 session 存活期间更新 typed tools。
+- Agent 对开放式目标仍可在每次 native mutation 后读取 fresh observation 再决定下一步；已声明且经 Mod 接受的有限 ActionProgram 可由 Body Program Controller 沿验证过的依赖边继续执行。
+- 产品任务没有 turn、tool-call、wall-clock、retry 或 action-family budget。
+- 玩家使用正式 frontend 完成安装、启动、attachment、停止、恢复和诊断。
+- response-loss recovery 保留同一 node lineage 的原始 `{requestId, idempotencyKey}`，并只查询 Mod-owned receipt；没有 `not_accepted` 的权威证明不得重发 node。Host restart 用稳定 recovery scope reopen journal，历史 owner/epoch 只用于关联，不延续为新 runtime authority。
+- release runner 使用 immutable production artifact 和普通产品 runtime，不使用第二条执行管线。
+- 已撤回的 `ARCH-STARDEW-LINEAR-INTENT-PIPELINE` / `TASK-60-STARDEW-LINEAR-INTENT-PIPELINE` 不再是实施入口。一次提交线性形状的 `ActionProgram` 只是现行 Body Program 的受限图形状；它不创建 `execute_pipeline`、队列 scheduler、通用 blackboard 或第二套 completion/recovery authority。
+- Body Program Controller 可以在当前 node 执行期间异步准备后继 node 的 descriptor、canonical encoding、resource derivation 和 bridge serialization——这只是 non-release optional optimization（可选性能优化），不是 Task 0–6 release prerequisite，不得因未实现异步预取而把任何 Task 0–6 视为 blocked。游戏线程不得同步等待 Host IPC、Host journal 或 grant response；预取 grant 不是执行授权。依赖前置 RuntimeFact 的 node 必须等前置 node 的 receipt、non-empty evidence、fresh postcondition 和 declared facts 持久化后再创建 exact challenge；任何 grant 在消费前仍须通过 Mod 的 STOP/policy/catalog/deadline/binding/resource/game-thread recheck 与 `host_admitted` CAS。
+- 预取、批量 transport 或异步 admission 只作为未改变 authority 语义的性能优化，不能承诺零停顿、60 FPS、固定 IPC 延迟或一个 tick 内完成 STOP。性能结论需由目标版本 benchmark 证明；offline closure 仍不等于 live gate 或 publication。
+
+## 历史实施来源
+
+详细任务和证据索引保存在旧计划的[脱敏历史快照](../../archive/legacy-sources/91_OPEN_GAMEPLAY_PIPELINE_RELEASE_IMPLEMENTATION_PLAN.md)；其长期语义只以本任务引用的 current architecture/domain 文档为准。
+
+## 经验证 Body Program 实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use the project's `subagent-driven-development` skill to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal：** 让 Agent 能提交有限 typed `ActionProgram`，由 Design-time Verifier 做无副作用验证，Mod 接受为 `VerifiedBodyProgram`，再由游戏线程 Body Program Controller 沿声明依赖安全启动 successor；同时保留 Pi/Subagent 的职责、Mod authority、STOP 和同一 node lineage recovery。
+
+**Architecture：** Agent 只声明有限 DAG，不交付权限或规划结果；Design-time Verifier 只检查权威 descriptor 下的结构和类型；Mod 负责实时重新验证并产生 `VerifiedBodyProgram`；Body Program Controller 只沿已验证边调度，不规划、不扩图、不生成玩家文本。现有 ledger/journal/recovery 机制是 node/program transport implementation，不是第二个 Agent workflow。
+
+**Tech Stack：** TypeScript、Node test、C# descriptor parity、JSON Schema、现有 `withPathLock` / `atomicWriteFile` persistence；本计划不新增 category-theory runtime dependency。
+
+**Spec：** [`../../architecture/game-action-model.md`](../../architecture/game-action-model.md)、[`../../domains/game/gameplay-loop.md`](../../domains/game/gameplay-loop.md)、[`../../domains/stardew/integration.md`](../../domains/stardew/integration.md)、[`../../adr/006-verified-body-programs.md`](../../adr/006-verified-body-programs.md)。
+
+### 全局约束
+
+- Mod/adapter registration 是 action identity、argument schema、result fact schema、resource template、effect 和 postcondition contract 的唯一来源；Host、protocol、journal、verifier 和 fixture 不维护第二份 action membership。
+- `ActionProgram` 只允许 bounded finite DAG、flat finite guards 和 typed bindings；拒绝 loop、recursion、arbitrary expressions、script、JSONPath、dynamic node creation、subprogram、retry node 以及 raw `resources`/`locks`/`claimMode`/lease/owner/acquire-release 字段。资源 claim 只能由 Mod registration 的 versioned template 用 canonical args/bindings 派生。
+- v1 protocol limits：canonical program UTF-8 `<= 12,288` bytes、final bridge frame UTF-8 `<= 16,384` bytes、nodes `<= 16`、edges `<= 32`、guards/node `<= 4`、total guards `<= 32`、bindings/node `<= 4`、total bindings `<= 32`、in/out degree `<= 8`、JSON depth `<= 16`；exact-key JSON、RFC 6901 paths、stable diagnostic codes/order和最多 64 条 diagnostics 加 `diagnostics_truncated` sentinel。registration continues to own action-specific argument/fact/resource bounds.
+- Design-time verification 不读取或修改游戏世界，不 mint request/execution/cancel identity，不证明目标存在或 action 会成功；每个 mutation node 仍需游戏线程 fresh admission。
+- Controller 从 ready set 确定性选择每个待启动 node（包括 source node 和 successor）；source node 需要有效 accepted graph/guard/binding，successor 还需要 A 的 exact node execution tuple 的 terminal `succeeded` receipt、non-empty action-specific evidence 和 fresh passed postcondition。仅当 A 的 descriptor 声明 output facts 时，所有 declared RuntimeFact 才是成功所需，且必须匹配 declared fact contract 与 exact producing tuple provenance；未声明 output facts 时 RuntimeFact 不是成功或 successor 前提。B 声明 fact binding 时必须使用 A 的 exact producing attempt。两者均须具备 descriptor-derived resources 和双重 fresh admission：Controller durable-records an authenticated exact-node wire `BodyNodeAdmissionChallenge`, Host journals a one-shot exact-tuple wire `BodyNodeAdmissionGrant` or rejection, and Mod consumes the grant only through its exact STOP/catalog/policy/args/resources recheck and `host_admitted` CAS before native dispatch. `catalogRevision`, `policyIdentity.capabilityRevision` and `policyIdentity.value` remain independent; Envelope/connection scope is the scope authority and is not duplicated in the payload. Host cannot alter graph, args or facts.
+- response-loss recovery 保留同一 `programId/nodeId/nodeAttempt` 的原始 `{requestId,idempotencyKey}`；没有 Mod 权威 `not_accepted` 不得重发。
+- Main Pi Agent 与 `GameplayTaskSubagent` 继续是合法的 Agent consumers；本计划不修改 `GameplayTaskSubagent`。当前 released consumer model 是 Agent/child 按需调用 typed observation、`program_status(programId)` 与 `program_events(programId, cursor, pageSize)`；Host 不猜测任务相关世界字段，也不自动维护或向 Pi prompt 注入 Game world hot-context。
+- 未定址 bridge notice 只供 Host/Mod 内部的 STOP/fence、waiter、连接处理或 observation-cache invalidation 使用；它不触发 Host 自动新开 Agent turn、不作为 Pi world-truth delivery，也不成为 Host workflow/planner。定址认证的 `program_status` / `program_events` result 是可消费的受限 Mod authority fact，但不是完整 current-world snapshot。
+- 本计划不启动游戏、不进行 native/live mutation；所有 verifier、descriptor、controller 和 recovery checks 使用 synthetic/fake bridge 或 game-thread test seam。
+- `equip_tool`（已迁移 `equip_tool/v2`：public 参数为语义 `tool` selector，`slot` 为 Mod 私有；离线契约 `c2f2407`，生产迁移与 target-version live gate `ac481e0`）是已发布的平台控制/最终验收 action，不是 BodyProgram runtime slice、tracer、scheduler target、production output-fact producer 或 native-kernel target。任何 BodyProgram runtime slice 都必须先选定真实产品 action，并冻结该 action 自己的 descriptor、native producer、exact node execution tuple、terminal `succeeded` receipt、action-specific evidence、fresh postcondition 及（若声明）output-fact contract；development-only 或 final-acceptance evidence 不能成为 production input。这个边界不表示 typed-object BodyProgram、Navigation conformance、bridge/lifecycle composition、live publish 或 live mutation 已完成。
+- 首个真实 Body Program A→B 对已冻结为 A=`machine_inspect`（只读）→ B=`machine_load`（真实 native mutation）；A 的 `machine_target_id` output fact、B 的 RFC 6901 binding、receipt/evidence/fresh postcondition 与 Navigation/`equip_tool`/synthetic-development-only-evidence 禁止项契约见 Task 2 pump 条目与 Task 6 preconditions/acceptance。
+- ordinary Navigation 在其既有 ordinary pipeline 中与 BodyProgram 并行推进。它已独立完成自身 live gate 并正式纳入 live publish（publication 决策 2026-09-19，见 item 210）；不得借 BodyProgram tracer、journal、receipt、evidence 或 postcondition 声称 Navigation closure。
+- 未来 shared Mod-private native execution kernel 仅是内部执行 mechanics seam，不能拥有或合并 graph progression、action membership、policy、receipt、evidence、postcondition、ordinary Navigation routing 或 durable authority。Bridge 和 lifecycle work 必须等待本计划中已冻结的 authority contracts，不能由 tracer bullet 提前组成。
+- `BodyProgramJournal/v1` 与 ordinary execution journal 是独立 durable authorities，只以不可替代的 node execution tuple 关联。tuple 是 `{ programId, nodeId, nodeAttempt, requestId, idempotencyKey, executionId }`（mint `executionId` 前为前五项）；receipt 必须绑定该 tuple，action-owned evidence 必须 non-empty 且维持 action-specific shape，postcondition 由 action-owned verifier 对同 tuple 的 fresh game-thread state 验证。仅 matching terminal `succeeded` receipt、non-empty action-specific evidence、fresh passed declared postcondition，以及（仅 descriptor 声明 output facts 时）匹配 declared facts/provenance 的 RuntimeFact 可投影 node `succeeded`。不得以 `TryRoute`、global/latest receipt、route result、transport success 或按 action identity 选择的 receipt 替代。
+### Task 0：冻结 descriptor、ActionProgram JSON 与纯 Design-time Verifier
+
+**Files：**
+- Create: `packages/game-action-program/package.json`、`packages/game-action-program/src/model.mjs`、`packages/game-action-program/src/descriptors.mjs`、`packages/game-action-program/src/verifier.mjs`、`packages/game-action-program/schemas/game-action-program.v1.schema.json`
+- Create: `packages/game-action-program/tests/model.test.mjs`、`packages/game-action-program/tests/verifier.test.mjs`
+- Modify: `integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs` and its descriptor/parity tests only for authoritative fields.
+- Modify: `package.json` and workspace package metadata only to register the new pure package.
+
+**Interfaces：**
+
+```ts
+verifyActionProgram({
+  program: unknown,
+  descriptors: AuthoritativeActionDescriptorProjection,
+  restrictivePolicy: IntegrationActionPolicy,
+}): DesignVerificationReport
+```
+
+`DesignVerificationReport` must contain `accepted`, `descriptorRevision`, `normalizedProgram`, `diagnostics`, and `runtimeRequirements`. Diagnostics contain `severity`, stable `code`, `nodeId`, JSON `path`, and bounded `message`.
+
+- [x] 写 failing tests for exact JSON shape, bounded nodes/guards, action identity/argument schema, fact binding, DAG/cycle, dependency dominance, resource conflict, terminality, dynamic-fact honesty, and restrictive policy checks.
+- [x] Run only the pure package tests; expected failures must show missing verifier/model behavior, not missing native dependencies.
+- [x] Add authoritative descriptor fields for argument schema, typed output facts, resource/effect declaration, and postcondition contract. Generate Host-readable projection and parity tests from the Mod source; do not add a manually maintained Host action list.
+- [x] Implement normalization and verification as pure data functions. Reuse exact-key/bounded JSON patterns from `game-action-devkit`, but do not reuse its live runner/session authority.
+- [x] Run package tests, schema checks, workspace type/build checks, and `git diff --check`; do not run a game or native mutation.
+
+### Task 1：将现有单 action transport 语义收敛为 program/node lineage
+
+**Files：**
+- Modify: `host/src/action-execution-coordinator.internal.ts`、`host/src/execution-correlation-ledger.ts`
+- Modify: `host/src/stardew-logical-action-recovery-journal.ts`、`host/src/stardew-execution-recovery-supervisor.ts`
+- Modify: direct Host tests for these files.
+
+**Consumes：** Task 0 normalized program and authoritative descriptor projection.
+
+**Produces：** Host-side exact-node transport/admission contract and durable transport records: `programId`, `nodeId`, `nodeAttempt`, `admissionAttempt`, immutable canonical request, stable scope, Mod-minted opaque `policyIdentity`, issued-grant correlation, binding and transport state. Host may apply its own restrictive policy as a veto, but must only carry and exact-match the Mod policy identity; it cannot mint or reinterpret that identity. Existing exact cancellation, receipt ordering and query-only recovery remain; no new public `GameConnection` capability. Task 2 owns the Mod `BodyProgramJournal/v1` graph/fact/claim/STOP authority.
+
+- [x] 认领生产 wire `BodyNodeAdmissionChallenge → BodyNodeAdmissionGrant` half-protocol：versioned wire payload 绑定 exact tuple 与 Mod-minted opaque `policyIdentity`，Host 直接持久化并回显该 payload，仅附加连接/Host metadata；Host 只对 Controller-named exact tuple 做 restrictive admit、先 journal 一次性 grant correlation 再回复。`catalogRevision`、`policyIdentity.capabilityRevision` 与 `policyIdentity.value` 独立，scope 由 authenticated envelope/connection 持有而不嵌入 payload。Host unavailable/grant 丢失/response-loss 映射为 `admission_unavailable`，不是 execute `not_accepted`；Host 不铸造/重解释/替换 Mod policy identity，不选择 ready node/successor、不改 graph/args、不产生 facts；Mod `BodyProgramJournal/v1` 保持 graph/fact/claim/STOP authority，Host journal 仍只是 transport evidence。
+- [x] Define and test the authenticated wire `BodyNodeAdmissionChallenge → BodyNodeAdmissionGrant` half-protocol shared by source nodes and successors. The exact wire payload includes the Mod-minted opaque `policyIdentity`, canonical bound args, derived resource claims and numeric catalog revision; Host can only grant/reject the Controller-named exact tuple and journals the wire grant correlation before reply. Host may veto with restrictive connection/Host policy, but cannot mint, reinterpret or substitute the Mod identity or catalog revision; it cannot nominate ready node/successor, alter graph/args or create facts. Envelope/connection scope remains separate metadata. Host unavailable/lost grant is `admission_unavailable`, not execute `not_accepted`.
+- [x] Add Host fault-injection tests at grant write/loss, prepared/write-loss, response-loss, terminal receipt, query failure and Host restart boundaries. Task 2 owns Mod grant consumption/CAS and Mod journal reopen tests.
+- [x] Remove `stardew-logical-action-recovery-journal.ts` action argument membership list; journal validates only canonical requests supplied by descriptor/codec. *(worktree-implemented: `ACTION_ARGUMENT_KEYS` removed, journal validates via `isExecutionRequest`; uncommitted)*
+- [x] Verify that recovery never calls action execute, never creates a new node attempt without authoritative `not_accepted`, and preserves per-node facts.
+
+### Task 2C：BodyProgramJournal/v1 strict durable contract
+
+> **Admission outcome prerequisite：** Before authenticated bridge forwarding resumes, the dynamic journal must durably distinguish an allowlisted `Rejected` node with independent `RejectionCode`, terminal `SkippedDependency` descendants, and retryable `admission_unavailable`. Rejection must atomically cascade only through pending descendants, preserve independent ready nodes, converge a fully terminal rejected graph to `BodyProgramState.Failed`, and preserve rejected/skipped facts across reopen. The exact shapes and focused evidence are tracked in [`NN_BODY_PROGRAM_ADMISSION_OUTCOME_IMPLEMENTATION_PLAN.md`](../../NN_BODY_PROGRAM_ADMISSION_OUTCOME_IMPLEMENTATION_PLAN.md); this is a prerequisite to the wire plan, not a second authority.
+
+> **动态模型校正（2026-09-02）：** 一次孤立的重建曾将 Body Program 错误建模为 Mod 预注册静态 graph 加 `TryStart(programId)`。它与 current [ADR-006](../../adr/006-verified-body-programs.md) 第 21–25、79–95 行的动态 `ActionProgram` 决定冲突，不能作为 production authority、Mod composition 或 protocol compatibility baseline。后续实现必须以 Agent candidate → Mod verify/canonicalize/accept → Mod-owned accepted graph/journal/controller → addressed status/events 为唯一模型。可复用的仅是与模型无关的安全不变量：policy identity ABA 防护、`{ programId, nodeId, nodeAttempt }` fact provenance、strict durable replacement 和 restart `recovery_required` fence；不得保留静态 `TryStart(programId)` API、预注册 graph 选择器、type alias、默认字段或 wrapper 作为兼容层。
+
+**Precondition：** The BodyProgram owner must first restore and declare the complete **dynamic** Task 2 source baseline: candidate/verification/accepted-program model, `BodyProgramJournalPersistence`, `FarmhandBodyProgramController`, `OpenBodyProgramJournalAuthority`, addressed status/event projection, and focused tests. This reconciliation is a source-ownership gate, not permission to recreate a static pre-registered model from stale consumers or to adopt the legacy `FarmhandExecutionJournal`. If the dynamic baseline cannot be identified, Task 2C remains blocked and no restart-fence code may be added.
+
+**Files：**
+- Preserve/extend: `integrations/stardew/src/Core/BodyPrograms/BodyProgramJournalPersistence.cs` and its focused Core tests.
+- Create/modify: strict journal codec/store contract tests only; do not wire Mod lifecycle or Host messages in this task.
+
+**Produces：** The versioned `BodyProgramJournal/v1` canonical state contract consumed by Task 2B: a Mod-accepted canonical dynamic graph, verification/acceptance identity, exact keys and types, scope identity, policy identity, node-attempt RuntimeFact provenance, addressed event cursor, corruption/quarantine semantics, restart execution fence, and atomic complete-state replacement interface. The contract must distinguish an unopened/empty journal from a committed journal and must reject malformed, stale-lineage, duplicate, sparse or scope-mismatched state. It must not promise executable continuation across Mod/game restart: committed non-terminal programs/nodes are diagnostic-only and reopen as `recovery_required`/quarantine.
+
+- [x] After the source baseline reconciliation gate is satisfied, define the canonical persisted shapes for policy identity and producing `{ programId, nodeId, nodeAttempt }` fact provenance, including exact equality and non-reuse rules for policy identity across disable/re-enable (ABA) changes; define the restart fence that maps every non-terminal/uncertain node to diagnostic-only `recovery_required` without consuming old grants or dispatching successors.
+- [x] Test strict decode/encode, scope mismatch, malformed fact provenance, duplicate output-fact names within one node attempt, corruption quarantine, read/write failure, atomic replacement semantics, and restart-fence conversion of non-terminal state to diagnostic-only `recovery_required`. This task is an offline persistence contract; it does not create a controller, Host grant, or Pi consumer.
+
+### Task 2B：Mod production BodyProgram durable authority composition
+
+**Files：**
+- Modify: Mod lifecycle composition (`ModEntry` and its direct lifecycle tests) plus a production-only `IBodyProgramJournalStore` adapter and direct tests.
+- Preserve: `BodyProgramJournalPersistence` remains codec/contract owner; Host, `GameConnection`, `GameplayTaskSubagent`, ordinary action transport and program bridge messages remain out of scope.
+
+**Consumes：** Task 2C strict `BodyProgramJournal/v1` codec/store abstraction, including its restart execution fence, and the exact scope admitted after `SaveLoaded`.
+
+**Produces：** One scope-fixed, Mod-owned production `BodyProgramJournal`/`FarmhandBodyProgramController` per exact AI Farmhand lifecycle; only an opened `Loaded`/`Empty` journal can compose a controller for the current lifecycle, and any prior non-terminal program is diagnostic-only `recovery_required`/quarantined rather than executable. `ReadFailed`, `Corrupt`, `ScopeMismatch`, unsupported root/filesystem and persist failure quarantine it and prevent new admission/dispatch.
+
+- [x] Implement a Windows same-directory/same-volume filesystem `IBodyProgramJournalStore`, rooted only in a documented SMAPI/Stardew per-user data root. Do not use `IDataHelper.WriteGlobalData`, Host storage, Mods installation root, in-memory fallback, migration/adoption, delete-then-move, copy-over-target or truncate-in-place.
+- [x] Reversibly encode fixed scope components in the path; retain canonical payload scope exact-match. Missing documented root, invalid/escaping/overlong scope path or unsupported atomic filesystem must fail closed.
+- [x] Use complete temp write + durable flush + same-volume atomic replace/create-rename as the sole commit point. A failed create/write/flush/close/commit preserves the former target; stale temp is never promoted; corrupt/mismatched target is never silently cleared.
+- [x] Persist every authority transition synchronously before its corresponding native dispatch/grant-consumption/STOP-successor/player-success visibility. On a false write immediately close/quarantine the mutated instance and only recover by reopening committed durable state.
+- [x] Open only after exact `SaveLoaded` scope admission; close/revoke on `ReturnedToTitle`; do not reuse one save scope's journal/controller for another. Add real-filesystem fault/reopen, stale-temp, scope-path, lifecycle uniqueness and quarantine tests, plus target-Windows kill/reopen characterisation; verify reopen never resumes a non-terminal node, consumes an old grant, or dispatches a successor.
+
+### Task 2：Mod authoritative verification and Body Program Controller
+
+**Files：**
+- Create: `integrations/stardew/FarmhandBodyProgramController.cs` and focused C# tests.
+- Modify: `integrations/stardew/FarmhandExecutionController.cs` and generated protocol/descriptor contracts only where the controller must consume `VerifiedBodyProgram`.
+- Preserve: `integrations/stardew/StardewBodyController.cs` as movement/path driver; do not move scheduler logic into it.
+
+**Consumes：** Task 0 program model, Task 1 exact-node transport/admission contract, and Task 2B production-opened `BodyProgramJournal`/controller lifecycle.
+
+**Produces：** Mod-nominal `VerifiedBodyProgram` created only by Mod acceptance of a dynamic `ActionProgram` candidate, single-authority `BodyProgramJournal/v1` (accepted canonical graph, node state, RuntimeFacts with exact producing `{ programId, nodeId, nodeAttempt }` provenance, claims/ownership, STOP epoch, non-reusable policy identity, execution identity, and addressed event cursor), reopen/quarantine path, and finite node scheduler. `BodyProgramJournal/v1` remains separate from the ordinary execution journal and can link to it only by the immutable node execution tuple `{ programId, nodeId, nodeAttempt, requestId, idempotencyKey, executionId }`; it cannot reconstruct, adopt, overwrite, or infer ordinary journal state. Action-owned receipt/evidence/postcondition truth is projected only after exact-tuple verification: successful node projection requires its matching terminal `succeeded` receipt, non-empty action-specific evidence, and a passed declared postcondition against fresh game-thread state; RuntimeFact is additionally required iff the descriptor declares output facts, and then must match declared facts and exact producing tuple provenance. Controller uses one node-start state machine for source nodes and successors: a successor additionally requires terminal success, evidence and postcondition; it requires a typed RuntimeFact bound to its exact producing attempt only when it declares a fact binding. Every node then requires descriptor-derived resource acquire, Host grant and current catalog/policy identity/deadline/game-thread admission. Challenge and grant bind the exact policy identity from the Mod live capability surface; grant consume, native dispatch and completion projection recheck it, never substituting catalog revision. The exact STOP/catalog/policy/args/resources recheck consumes the grant in a durable `awaiting_host_admission → host_admitted` CAS before native dispatch. Controller cannot search, plan, expand, loop or retry uncertain mutations.
+
+- [x] 认领 game-thread Controller pump：Mod 接受 candidate 后在游戏线程自动推进所有 dependency-free source node，A 的 terminal proof/fact durable 后再自动推进其 successor；每个 node 走同一 `NodeAdmissionChallenge → HostAdmissionGrant → host_admitted consume CAS → native dispatch → completion` seam，不等待 Host IPC、不让 Host 选 node、不引入第二 authority；补测必须证明自动推进全程没有新的 Agent B 请求。首个真实 Body Program A→B 前置契约在此冻结：A=`machine_inspect` 声明 output fact `machine_target_id`（类型 `string`，值为该 action 已验证的 opaque machine target identity）；A 只读、不得写 world，但必须具有 action-owned receipt、non-empty action-specific evidence 与 fresh passed postcondition。B=`machine_load` 是真实 native mutation，其 `expectedTargetId` 参数必须通过 RFC 6901 binding 绑定到 A 的 exact `{programId,nodeId,nodeAttempt}` fact。此 A→B 禁止使用 Navigation、`equip_tool` 或 synthetic/development-only/final-acceptance evidence。
+- [x] 认领 ordinary-execution adapter/lifecycle：把 exact `NodeExecutionBinding` 接到既有 action-owned execution authority，并以同一 node execution tuple 回收 receipt/evidence/fresh postcondition/fact；ModEntry game-thread tick 与 `SaveLoaded`/`ReturnedToTitle` close/revoke 须有 direct tests，且不得跨 save scope 复用 binding。
+- [x] Corrective prerequisite before Task 5: bind exact live policy identity to every Controller challenge/grant and reject it at consume/dispatch/completion after policy change; persist and require exact `{ programId, nodeId, nodeAttempt }` RuntimeFact provenance so a same-name/type fact from an old attempt or different program cannot satisfy successor binding. Do not invent timestamps, treat catalog revision as policy, or add a Host-side fact authority.
+- [x] Add deterministic tests for source-node and A→B typed-fact admission, missing fact, wrong-program/old-attempt fact, stale catalog/policy identity after Host grant, raw-resource-field rejection, resource conflict, STOP before source/grant consumption/B, STOP during A, deadline between nodes, redirect epoch and Host admission unavailable versus rejected.
+- [x] Add response-loss tests for each node boundary and restart-fence tests proving BodyProgramJournal reopen turns non-terminal/uncertain state into diagnostic-only `recovery_required`; retain the original tuple for diagnosis, prohibit replay, old-grant consumption and successor dispatch. Reopen need not prove cross-restart executable continuation.
+- [x] Complete the prerequisite [`NN_BODY_PROGRAM_ADMISSION_OUTCOME_IMPLEMENTATION_PLAN.md`](../../NN_BODY_PROGRAM_ADMISSION_OUTCOME_IMPLEMENTATION_PLAN.md) before bridge forwarding: `Rejected` carries only an allowlisted `RejectionCode`, pending descendants become `SkippedDependency`, independent nodes remain eligible, `admission_unavailable` remains awaiting, and exact reject replay/reopen are idempotent.
+- [x] Add bounded no-cycle/no-dynamic-node tests at Mod authoritative verification.
+
+### Task 3：Mod-authoritative program messages and Host private program port
+
+**Files：**
+- Modify: `integrations/stardew/src/Core/Protocol/BridgeProtocol.cs` and the Mod program-journal/controller protocol handlers only for the versioned program command/query/event messages.
+- Modify: `host/src/protocol.ts` and direct Host protocol tests for the matching strict envelope contract.
+- Modify: `host/src/runtime.ts` only through a non-barrel construction-internal fixed-tool seam; do not modify `host/src/game-integration-adapter.ts` or `host/src/game-tools.ts` for program tools.
+- Modify: `host/src/integration-launcher.ts`, `host/src/stardew-integration-launcher.ts`, `host/src/local-stardew-bridge.ts`, and receipt-backed binding/materializer internals only for a construction-private, branded program transport handoff and private program port.
+- Create/modify direct Mod/Host tests; do not modify `host/src/gameplay-task-subagent.ts`.
+
+The exact handoff is: exact-Farmhand-attested `LocalStardewBridgeClient` → launcher-private launch-keyed narrow Body Program port → receipt-backed branded execution **plus an active one-shot S4c factory admission** in the launcher-owned materializer-facing interface → materializer-owned opaque consumer-key closure. The admission is minted only for `materializeExactEnter`'s active factory callback and revoked when that callback returns; a retained execution/admission cannot obtain a port before binding close. `IntegrationLaunchHandle` never carries raw bridge, program transport or generic presentation bridge: presentation uses only a frozen narrow projection. The port may only send/validate the four versioned Mod messages; it must not appear on `GameConnection`, `RuntimeSession`, public `createGameCompanionRuntime`, `GameCompanionRuntimeAttachment`, `ConnectedGameRuntime`, adapter tool context, `game-tools`, the coordinator, recovery supervisor, or subagent. No binding-module registrar, transport map or Body Program context mint/read seam may exist.
+
+The materializer constructs four frozen Main-Agent-only `ToolDefinition` closures during that same S4c callback: `stardew_verify_action_program`, `stardew_submit_action_program`, `stardew_action_program_status`, and `stardew_action_program_events`. An internal non-barrel runtime seam accepts only this pre-built fixed tool list (never a port, bridge, launch or execution) before Pi session creation, mounts it into the explicit allowlist/custom-tool set, and preserves it across ordinary adapter refresh. Public runtime construction cannot inject such tools. Closures use a materializer-private consumer-key `WeakMap`, forward exactly one validated Mod operation, do not retain verify/status/events/cursors, retry/replay, infer completion or create Host workflow state. Normal Mod rejection remains its reported command result; lifecycle, input, preflight, transport and protocol failures are not rewritten as Mod results.
+
+**Consumes：** Task 0 report and Task 2 Mod program acceptance/result projection. The Mod protocol handler and `BodyProgramJournal/v1` remain the authority; Host must not synthesize program status/events from action receipts.
+
+**Produces：** A versioned Mod-authoritative program-message pipeline and a materializer-private fixed Main-Agent tool projection: `stardew_verify_action_program`, `stardew_submit_action_program`, `stardew_action_program_status`, and `stardew_action_program_events`. Verify/submit have immediate report/command results; submit returns after Mod durable acceptance/rejection, not after all nodes finish. Status is an addressed snapshot and events are a cursor-addressed replayable projection. Agent receives bounded program/node facts; Host does not become planner or completion authority. No synthetic resource/status fifth tool is created from current protocol data.
+
+- [x] Define strict versioned program command/query/event messages (`program_verify`, `program_submit`, `program_status`, `program_events`) with scope, program identity, node identity where applicable, bounded payloads and monotonic cursor; existing single-action receipts, semantic events and global latest receipt cannot substitute for this contract.
+- [x] Verify program JSON is checked against current authenticated descriptor projection before submit and Mod repeats verification.
+- [x] Replace global `latestReceipt` as program continuation input with program/node-addressed facts; any temporary retention is an isolated read-only diagnostics projection with tests proving it cannot feed continuation, completion, recovery resend, Pi fact ingress or player-visible success assertions.
+- [x] Verify concurrent read-only observation/status and mutation resource contention; no implicit Host queue.
+- [x] Verify the private fresh-binding recovery port proves stable scope and remains absent from `GameConnection`.
+
+### Task 4：按需 Program/Observation 消费；durable Pi push 延后
+
+**Files：**
+- Modify only direct Host tool/composition tests needed to prove the published on-demand consumer path; do not add a world-state prompt materializer or a fact-push runtime.
+- Do not modify `host/src/gameplay-task-subagent.ts`; its owner consumes the published query seam separately.
+
+**Consumes：** Task 3 bounded program command/query/event messages.
+
+**Produces：** Main Agent-only fixed tools for `program_verify` / `program_submit` / addressed `program_status` / cursor-addressed `program_events`. Agent reads program/world facts on demand through typed, scope-bound Mod queries; their bounded results are ordinary current-turn tool results. Host/Mod retain binding, freshness, STOP, recovery and game-thread admission internally. This task does not establish a Game world hot-context, automatic context refresh, notification-triggered Agent turn, Host status/event cache, or completion planner.
+
+**Deferred capability (embedded Pi `0.84.4`)：** a fresh persistent Main Pi session with no assistant message accepts `sendCustomMessage(..., { triggerTurn: false })` into active state and the session tree, but does **not** create JSONL; after dispose/reopen the fact is absent. Its resolved promise is not a durable append acknowledgment. Durable Pi fact push is therefore an optional future Pi capability enhancement, not a release prerequisite: do not advance a fact-delivery cursor, and do not work around it with synthetic assistant/tool entries, direct JSONL writes, player input, `steer()`, or deferred implicit delivery. Revisit only when Pi supplies a supported primitive that atomically updates active state/session tree and persists the first custom message with failure reporting.
+
+- [x] Prove the four Main-Agent-only fixed tools mount before Pi session construction, retain exact closure identity through adapter refresh, and fail closed on materialized-runtime close.
+- [x] Prove verify/submit fresh restrictive preflight, exactly-one authenticated forwarding, no submit retry, and addressed status/events without Host cursor/cache inference.
+- [x] Prove the offline `gamebuddy.game_program_fact/v1` queue contract is fail-closed for cursor/order/shape/overflow and explicitly at-least-once; it is not a production fact-push authority.
+- [x] Characterize Pi `0.84.4` first-custom-message persistence and record durable push as deferred rather than using a fake player-input/history fallback.
+- [x] For any newly published typed world observation, prove it is an Agent-requested, bounded, scope-bound Mod query result; direct C# and Host navigation tests cover authenticated owner-thread/capability/fresh-set checks, exact bounded inspect/find schemas, ordinary tool-result forwarding, and absence of receipts or automatic task/context projection.
+
+### Task 5：Navigation 的独立普通 pipeline conformance、离线 closure 与 live eligibility
+
+**Files：**
+- Modify only files owned by Tasks 0–4 and corresponding current docs/tests.
+
+- [x] Remove duplicate protocol action argument maps after generated descriptor parity is proven; do not retain fallback lists. **Completed (2026-09-19, commit `9ba127e`)**: `EXECUTION_ACTION_ARGUMENT_KEYS` (host/src/protocol.ts:862 in HEAD) removed; each `validateExecutionRequest` branch head now carries its own inline `hasExactKeys` gate returning the unified `invalid_args` code (13 protocol.test.ts assertions untouched, 39/39 related wire-parity/game-tools/humanlike-projection tests green). `validateExecutionRequestEnvelope` keeps shape-only admission (plain args object, bounded key count, revision/deadline types) because the deep per-action exact-key gate still runs before any dispatch; no fallback list remains anywhere, the generated descriptor artifact stays the single authority.
+- [x] Remove or demote global `stardew_execution_status` from the Agent completion path; keep only a lineage-addressed diagnostic if required. **Completed (2026-09-19, commits `9c242b3` + desc change in current commit)**: `hasAuthoritativeCompletion` call sites (gameplay-task-subagent.ts) no longer read `latestReceipt`; completion is lineage-addressed from a private `MutableTaskRecord.ownedReceipts` cache written only for executions this task dispatched (report_to_parent admission, Host terminal-boundary recheck, and the terminal waiter all use it, with the global register only as a fallback once a task-owned receipt cannot move). `stardew_execution_status` (host/src/game-tools.ts) demoted to an inspection-only diagnostic tool whose description no longer claims authoritative completion proof.
+- [x] Confirm `ActionProgram` limits are protocol/resource safety bounds, not gameplay quotas.
+- [x] Keep Navigation in its ordinary pipeline until it independently completes generic descriptor/node-lifecycle conformance and its own gate. BodyProgram work, including the scalar tracer bullet, cannot publish Navigation or substitute its receipt/evidence/postcondition/gate evidence. Current classification is `implementation: live-verified (offline partial → live)`, `publication: published`, `liveEligibility: target-version live run completed` (real native-local run: FarmHouse → Farm → BusStop → Backwoods, single `navigation_completed` terminal receipt, correlation/evidence/postcondition verified; commits `6125602`、`3ababe0`; STOP/deadline/response-loss three-scenario live evidence closed by probe `d6c0a2b`, semantic recall in gate `a7abc4a`, piggybackedScene attachment `26ac186`). Navigation was formally published on 2026-09-19 after these gates closed, and is not a blocker for the current Demo release.
+- [x] Make `navigate_to_destination` a mandatory **generic conformance action** only within that ordinary Navigation pipeline, not a BodyProgram scheduler special case: its descriptor must declare canonical destination input, `embodied_actor` mutation resource template, terminal/postcondition contract and typed arrival fact through the same registration projection as every other ordinary action. Its existing multi-hop/native `StardewBodyController` driver remains the primitive implementation; `FarmhandBodyProgramController` may not claim Navigation progression, routing, receipt, evidence, postcondition, grant, recovery or continuation ownership. **Completed (2026-09-19, commit `f712a86`)**: `destination` argument migrated object→`destination_selector`, `arrival` output fact migrated object→`destination_arrival` across 7 surfaces (definitions, catalog projection TryMapInput/Output admits typed kinds with DestinationSelector input-only / DestinationArrival output-only matching BodyProgramValidation kind guards, withdrawal-pinning test rewritten to assert typed projection, pure verifier VALUE_TYPES/matchesType with exact wire shapes, navigation-DAG verifier fixture + typed-shape negative cases, runtime typed-arrival-fact emission from validated label selector with opaque-ref no-fabrication, parity/derived surfaces regenerated). validateCatalog updated; `FarmhandBodyProgramCatalogProjection` now projects `navigate_to_destination` into the Body Program execution catalog (`catalog.TryGetAction("navigate_to_destination")` = true). Validated: BodyProgram focused 91/91, Core 402/403 (sole failure = pre-existing concurrent MaximumMessageBytes WIP test), game-action-program 49/49, surface export parity valid. Ordinary Navigation pipeline published state unchanged; Body Program node use of navigate remains a separate, separately-authorized live concern (Task 6 gate) and `FarmhandBodyProgramController` still may not claim Navigation progression/routing/receipt ownership.
+- [ ] Run pure verifier tests, C# core/integration tests, Host focused tests, workspace typecheck/build, production import-boundary checks, documentation checks and `git diff --check`. Durable Pi fact-push tests are not a release gate while the embedded Pi capability remains unavailable. *(2026-09-16 evidence: pure verifier **48/48** incl. mod-projection after exporter restore; C# Core **398/398**; Integration **192 passed / 2 pre-existing reparse-point skips**; production Mod build **0 warnings/0 errors**; `check:host-production-import-boundary` ✅ 0 violations; `check:publint` ✅. BLOCKED re-runs attributable to other lanes' WIP in the mixed checkout, not our code: Host focused tests + workspace typecheck (dialogue-web `ControlledResponse` duplicate + tavern WIP), `check:host-module-graph` (5 cycles: 3 chat-lane + 2 in the stardew adapter seam WIP), `check:text-hygiene` (129 = WIP/EOF across lanes), `git diff --check` (3 EOF-blank-line in .gitignore / host game-binding / dialogue-web WIP). Re-run after those lanes land)*
+- [ ] Obtain one fresh independent review of the complete offline evidence. This phase establishes live eligibility only; do not execute target-version live mutation until every acceptance scenario is closed and separate live authorization is granted. *(2026-09-16 review 76da98d6: NO BLOCKER. Tasks 0-5 offline closure GREEN in substance — every spot-check verified w/ file:line; ADR-006/domains checklist (item 225) rows PASS except: (a) resource claim acquire/release transitions "intentionally not implemented in this lane" (BodyProgramModels.cs:96) — derivation/wire/persistence/conflict-reject exist, Task 6 vocabulary needs owner confirmation whether literal acquire required; (b) legacy EXECUTION_ACTION_ARGUMENT_KEYS = deferred 207. 212 conditional green until other-lane-blocked re-runs pass. 207/208/211 deferred items DON'T block Task 6 (A→B gate path never touches legacy RPC/status/latestReceipt; Navigation explicitly not a Demo blocker). NOTE: Task 6 Agent-completion evidence must come from program_status/events/receipt projections, never hasAuthoritativeCompletion — freeze in the live-gate authorizer checklist)*
+
+### Task 6：单独授权的 target-version production live gate
+
+**Preconditions：** Tasks 0–5 green; immutable production artifact/topology attested; aggregate independent review has no blocker; one explicit live authorization names the frozen player natural-language request, required A→B proof shape and isolated legal save. The authorization freezes acceptance constraints, **not** a harness-authored ActionProgram JSON. 前置 blocker：若没有任何已冻结、已发布、非 `equip_tool`、非 Navigation 的真实 action 同时具备 declared typed output fact、native producer 与 action-owned receipt/evidence/fresh postcondition，则 Task 6 保持 blocked；不得以 synthetic/development-only/final-acceptance evidence 代替。首个真实 Body Program A→B 契约冻结为 A=`machine_inspect` → B=`machine_load`：A 声明 output fact `machine_target_id`（`string`，值为该 action 已验证的 opaque machine target identity），只读但必须具有 action-owned receipt、non-empty evidence 与 fresh passed postcondition；B 是真实 native mutation，其 `expectedTargetId` 参数通过 RFC 6901 binding 绑定到 A 的 exact `{programId,nodeId,nodeAttempt}` `machine_target_id` fact；Navigation、`equip_tool` 与 synthetic/development-only evidence 均不得满足该 A→B 证明形状。
+
+- [ ] Run exactly one serial gate on Stardew `1.6.15 build 24356`, the formal independent native AI Farmhand production topology, ordinary production coordinator/runtime/bridge/Mod artifacts and an isolated legal save. Begin with the frozen player natural-language request delivered to the real Main Pi Agent. The Agent must itself invoke the published verification/submit tools and author a current-descriptor two-node A→B program: B must bind at least one parameter to A's declared typed RuntimeFact, and at least B must be a real native mutation. The frozen program shape is A=`machine_inspect` → B=`machine_load`: B's `expectedTargetId` must bind via RFC 6901 to A's exact `{programId,nodeId,nodeAttempt}` `machine_target_id` RuntimeFact; A is read-only but must carry an action-owned receipt, non-empty action-specific evidence and a fresh passed postcondition; B must be the real native mutation. Neither Navigation, `equip_tool` nor synthetic/development-only evidence may satisfy any part of this proof. A harness/operator must not submit, edit or replace the program; failure by the Agent to author an eligible program fails the gate.
+- [ ] Preserve distinct evidence for player request, Pi reasoning/tool invocation ledger and Agent-authored candidate verifier report; Mod accepted graph; A receipt/evidence/postcondition/`machine_target_id` fact; Controller B challenge, Host exact-node grant and Mod fresh admission; B receipt/evidence/postcondition; journal claim release/program terminal; topology/teardown/cleanup. Prove that after A no Agent request selected or submitted B, no Host graph/argument rewrite occurred, no global latest receipt continuation occurred and no resend/new identity occurred.
+- [ ] Any harness/protocol/preflight failure stops the gate and preserves evidence. Any post-dispatch unknown follows same-tuple recovery and fails the gate; do not launch a second program or tuple to repair it. A passing gate closes only the Verified Body Program target-version runtime claim, not the separate frontend journey or companion-experience gates.
+
+### 完成检查
+
+- [ ] 对照 [ADR-006](../../adr/006-verified-body-programs.md)、`domains/stardew/integration.md` 和 `domains/game/gameplay-loop.md` 逐项检查：Agent declaration、descriptor single source、static verification、Mod verification、single Mod durable program authority、Controller→Host exact-node grant/CAS gate、typed RuntimeFact、resource serialization、STOP、same-node recovery、按需 addressed status/events 消费、no hot-context inference/no planner/no resend。
+- [ ] 每个 commit 只含一个可回滚行为和 direct tests；不混入当前 working tree 的 artifact、guardian、Chat migration 或 `GameplayTaskSubagent` 改动。
+- [ ] Tasks 0–5 establish only offline closure/live eligibility. Task 6 is the separately authorized, single target-version live mutation gate required before claiming Verified Body Program production runtime closure.
+- [ ] Task 6 evidence distinguishes this runtime claim from the separate production frontend journey and Companion experience gates; neither is closed by this gate.

@@ -1,0 +1,19 @@
+{
+  "name": "gamebuddy-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "archive:legacy": "node scripts/archive-legacy-sources.mjs",
+    "check": "node scripts/check-docs.mjs && node scripts/check-sensitive-content.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
+    "check:sensitive": "node scripts/check-sensitive-content.mjs",
+    "inventory": "node scripts/generate-inventory.mjs",
+    "coverage:generate": "node scripts/generate-coverage-ledger.mjs",
+    "coverage:check": "node scripts/check-docs.mjs",
+    "coverage:summary": "node scripts/update-coverage-summary.mjs",
+    "inventory:mark-archived": "node scripts/sync-inventory-archive.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
