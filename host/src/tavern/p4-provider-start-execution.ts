@@ -23,11 +23,24 @@ export type NativeChatPreviewPublisher = Readonly<{
   clear(): void | Promise<void>;
 }>;
 
+/**
+ * Host-owned voice degradation boundary shared with Chat presentations.
+ * Absent publisher => no voice surface (same as absent preview publisher); a
+ * publisher that throws is caught locally and never poisons the observer.
+ */
+export type NativeChatSpeechSink = Readonly<{
+  begin(turnId: string): void | Promise<void>;
+  append(delta: string): void | Promise<void>;
+  finalize(): void | Promise<void>;
+  cancel(): void | Promise<void>;
+}>;
+
 export async function runMountedProviderStartLedger(
   scope: ProviderInvocationScope,
   previewPublisher?: NativeChatPreviewPublisher,
+  speechSink?: NativeChatSpeechSink,
 ): Promise<ProviderStartLedger> {
-  return (await runMountedProviderStart(scope, previewPublisher)).ledger;
+  return (await runMountedProviderStart(scope, previewPublisher, speechSink)).ledger;
 }
 
 function isDeadlineExpired(error: unknown): boolean {
@@ -103,6 +116,7 @@ async function currentTerminalResult(scope: ProviderInvocationScope): Promise<Pr
 export async function runMountedProviderStart(
   scope: ProviderInvocationScope,
   previewPublisher?: NativeChatPreviewPublisher,
+  speechSink?: NativeChatSpeechSink,
 ): Promise<ProviderStartResult> {
   // Pre-arm linearization: an expired or revoked admission rejects with zero
   // store mutation and no Host prompt invocation.
@@ -172,6 +186,16 @@ export async function runMountedProviderStart(
         // before its volatile projection; final durable content is normalized
         // independently by the observer.
         const safeDelta = delta.normalize("NFC");
+        // Same delta stream feeds the Host-owned voice sink when one is
+        // attached; a voice failure is Voice-local and never poisons the
+        // observer's browser preview or the durable P5 commit.
+        if (speechSink !== undefined) {
+          try {
+            await speechSink.append(safeDelta);
+          } catch {
+            // Voice degradation: the surface reader will project unavailable.
+          }
+        }
         if (Buffer.byteLength(safeDelta, "utf8") > 16_384 || previewPublisher === undefined) return;
         try {
           await previewPublisher.publish(
@@ -186,6 +210,14 @@ export async function runMountedProviderStart(
       },
       onFinalText: async (text) => {
         process.stderr.write("[DEBUG-chat-live-p4c] native_final\\n");
+        // Also finalize the voice sink so the speech job is settled.
+        if (speechSink !== undefined) {
+          try {
+            await speechSink.finalize();
+          } catch {
+            // Voice degradation is always graceful.
+          }
+        }
         // Pi may emit its final assistant message before the asynchronous P4
         // observer continuation writes durable `running`. The content callback
         // therefore waits for that exact barrier; it never commits early.
@@ -224,11 +256,27 @@ export async function runMountedProviderStart(
       },
       onRejected: async (reason) => {
         process.stderr.write(`[DEBUG-chat-live-p4c] native_rejected_${reason}\\n`);
+        // A rejected/error turn must not leave a speech job half-open.
+        if (speechSink !== undefined) {
+          try {
+            await speechSink.cancel();
+          } catch {
+            // Voice degradation is always graceful.
+          }
+        }
         if (reason === "error") finalPresentationFailure = new Error("native_content_provider_error");
         if (reason !== "error") finalPresentationFailure = new Error(`native_content_${reason}`);
       },
     });
     nativeObserver.open();
+    // Open one exact speech job for this turn when a voice sink is attached.
+    if (speechSink !== undefined) {
+      try {
+        await speechSink.begin(scope.facts.turnId);
+      } catch {
+        // Voice degradation is always graceful.
+      }
+    }
     // The observer is registered first so its final message_end callback is
     // queued before this boundary subscriber resolves P4 running.
     unsubscribeNativeAssistantStart = runtimeSession.session.subscribe((event: unknown) => {

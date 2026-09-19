@@ -57,7 +57,7 @@ export async function runDesktopHostBootstrap(moduleDirectory: string): Promise<
   const frame = parseBootstrapFrame(await readBootstrapFrame());
   const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory);
   const voice = await connectOptionalVoiceSurface();
-  const assemblyInput = await loadDesktopHostAssemblyInput(publishCompositionReady, voice?.reader);
+  const assemblyInput = await loadDesktopHostAssemblyInput(publishCompositionReady, voice?.reader, voice?.speechSink);
   const rootAuthority = mintDesktopRootLayoutCapability(rootLayout);
   const guardianAuthority = mintDesktopGuardianSessionCapability(frame);
   const composition = await createDesktopProductCompositionForBootstrap(rootAuthority, guardianAuthority, assemblyInput);
@@ -261,6 +261,7 @@ async function createDesktopProductCompositionForBootstrap(
 async function loadDesktopHostAssemblyInput(
   publishLaunchUrl: (launchUrl: string) => void,
   voiceSurface?: VoiceSurfaceReader,
+  speechSink?: import("../../voice.js").ChatVoiceSpeechPublisher,
 ): Promise<DesktopHostAssemblyInput> {
   const manifestPath = process.env.GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST;
   const gameSessionMode = process.env.GAMEBUDDY_HOST_GAME_SESSION_MODE;
@@ -285,6 +286,7 @@ async function loadDesktopHostAssemblyInput(
     ...(surface === undefined ? {} : { surface }),
     ...(tavernNarrativeGateNonceSha256 === undefined ? {} : { tavernNarrativeGateNonceSha256 }),
     ...(voiceSurface === undefined ? {} : { voiceSurface }),
+    ...(speechSink === undefined ? {} : { speechSink }),
     publishLaunchUrl,
   });
 }
@@ -298,7 +300,13 @@ async function loadDesktopHostAssemblyInput(
  * composition.
  */
 async function connectOptionalVoiceSurface(): Promise<
-  Readonly<{ reader: VoiceSurfaceReader; close(): Promise<void> }> | undefined
+  Readonly<{
+    reader: VoiceSurfaceReader;
+    /** Host-owned streaming speech sink for the Chat presentation; absent when no voice client. */
+    speechSink?: import("../../voice.js").ChatVoiceSpeechPublisher;
+    close(): Promise<void>;
+  }>
+  | undefined
 > {
   const port = process.env.GAMEBUDDY_VOICE_PORT;
   const token = process.env.GAMEBUDDY_VOICE_TOKEN;
@@ -314,6 +322,7 @@ async function connectOptionalVoiceSurface(): Promise<
     if (client === undefined) return undefined;
     return Object.freeze({
       reader: client.createVoiceSurfaceReader(),
+      speechSink: client.createChatVoiceStreamingSink(),
       close: async () => {
         client.close();
       },

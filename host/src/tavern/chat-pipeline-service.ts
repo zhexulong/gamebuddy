@@ -22,6 +22,7 @@ import {
   TavernBrowserValidatorsV1,
 } from "./browser-contract/index.js";
 import type { ChatEventStream } from "./chat-event-stream.js";
+import type { ChatVoiceSpeechPublisher } from "../voice.js";
 
 /**
  * Frozen contract static types, derived from the single browser-contract
@@ -142,6 +143,13 @@ export type ChatPipelineServiceOptions = Readonly<{
   profile: ComposedTavernProfile;
   deps?: Partial<ChatPipelineServiceDependencies>;
   eventStream?: ChatEventStream;
+  /**
+   * Optional Host-owned streaming speech sink. When supplied (and the profile
+   * declares the `speech` route), the mounted Chat presentation reads each
+   * companion delta aloud over the Voice Gateway v2 lane while the turn
+   * streams. Absent => text-only; a throwing sink degrades to text-only.
+   */
+  speechSink?: ChatVoiceSpeechPublisher;
 }>;
 
 /**
@@ -178,6 +186,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
     throw unavailable();
 
   const eventStream = options.eventStream;
+  const speechSink = options.speechSink;
   const start: ChatPipelineStartDependency = options.deps?.start ?? Object.freeze({
     start: async () =>
       await startMountedChatProvider(
@@ -203,6 +212,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
                 // The browser treats that state as the volatile-preview clear.
               },
             }),
+        speechSink === undefined ? undefined : speechSink,
       ),
   });
   const accept = createPlayerTurnAcceptor(manifest, lease);

@@ -19,6 +19,7 @@ import {
   startTavernManagementPresentationAdmission,
   type DesktopPresentationAdmission,
 } from "./desktop-presentation-admission-owner.js";
+import type { ChatVoiceSpeechPublisher } from "../voice.js";
 
 /**
  * Narrow lifecycle contract shared by composition-owned children. The child
@@ -105,6 +106,12 @@ export type DesktopHostAssemblyInput = Readonly<{
    * `voice` field so the browser mic icon lights up; absent => no mic icon.
    */
   voiceSurface?: VoiceSurfaceReader;
+  /**
+   * Host-owned streaming speech sink (same Voice client). When supplied, the
+   * Chat presentation feeds LLM deltas to the Voice Gateway v2 lane so the
+   * companion reads aloud while it generates. Absent => text-only.
+   */
+  speechSink?: ChatVoiceSpeechPublisher;
 }>;
 
 /**
@@ -171,6 +178,7 @@ export async function createDesktopProductComposition(
         ? await startChatOnlyPresentationAdmission({
           ...variantInput,
           ...(input.voiceSurface === undefined ? {} : { voiceSurface: input.voiceSurface }),
+          ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
         })
         : await startTavernManagementPresentationAdmission(variantInput);
       // The composed surface is ready at the Host-owned seam: the launch URL is
@@ -199,6 +207,7 @@ export async function createDesktopProductComposition(
     // projection, so it must drain before both of them close.
     presentationAdmission = await startDesktopPresentationAdmission({
       ...(input.voiceSurface === undefined ? {} : { voiceSurface: input.voiceSurface }),
+      ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
       manifest: input.manifest,
       hostArtifactRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
       bootstrapToken: randomBytes(32).toString("base64url"),

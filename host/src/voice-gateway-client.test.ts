@@ -953,3 +953,136 @@ test("voice surface reader projects unavailable before health, then ready, then 
     await close(server);
   }
 });
+test("chat voice streaming sink streams deltas as contiguous v2 chunks and finalizes", async () => {
+  const seen: unknown[] = [];
+  let peer: Socket | undefined;
+  const server = await listen((socket) => {
+    peer = socket;
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) return;
+        const request = JSON.parse(buffer.slice(0, newline)) as { type: string; requestId: string };
+        buffer = buffer.slice(newline + 1);
+        seen.push(request);
+        if (request.type === "hello") reply(socket, request.requestId, { type: "hello_ack", protocolVersion: 1 });
+        else if (request.type === "health")
+          reply(socket, request.requestId, {
+            type: "health",
+            protocolVersion: 1,
+            status: "ready",
+            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 3 },
+          });
+        else if (request.type === "stream_speech_chunk") {
+          const chunkRequest = request as unknown as { sessionId: string; connectionEpoch: number; speechJobId: string };
+          socket.write(
+            JSON.stringify({
+              protocolVersion: 2,
+              sessionId: chunkRequest.sessionId,
+              connectionEpoch: chunkRequest.connectionEpoch,
+              timestampMs: Date.now(),
+              type: "playback_observation",
+              speechJobId: chunkRequest.speechJobId,
+              audioEndMs: 480,
+              terminalStatus: "completed",
+            }) + "\n",
+          );
+        }
+      }
+    });
+  });
+  try {
+    const client = await LocalVoiceGatewayClient.connect({ port: port(server), token: "voice_token_1234567890" });
+    await client.health();
+    const sink = client.createChatVoiceStreamingSink();
+    await sink.begin("turn_0001");
+    await sink.append("你好。");
+    await sink.append("今天天气很好。");
+    await sink.finalize();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    const chunks = seen.filter(
+      (request) => (request as { type?: string }).type === "stream_speech_chunk",
+    ) as Array<{
+      chunkIndex: number;
+      deltaText: string;
+      isFinalChunk: boolean;
+      speechJobId: string;
+      sessionId: string;
+    }>;
+    assert.equal(chunks.length, 3, "each append plus the final marker is a contiguous chunk");
+    assert.deepEqual(
+      chunks.map((chunk) => chunk.chunkIndex),
+      [0, 1, 2],
+    );
+    assert.equal(chunks[0]?.deltaText, "你好。");
+    assert.equal(chunks[0]?.isFinalChunk, false);
+    assert.equal(chunks[1]?.deltaText, "今天天气很好。");
+    assert.equal(chunks[1]?.isFinalChunk, false);
+    assert.equal(chunks[2]?.deltaText, "。", "the final marker carries a noise-only symbol the chunker skips");
+    assert.equal(chunks[2]?.isFinalChunk, true);
+    assert.ok(chunks[0]?.speechJobId.startsWith("chat_turn_turn_0001_"), "the job id is scoped to the turn");
+    assert.ok(chunks[0]?.sessionId.startsWith("chat_turn_turn_0001"), "the session id is scoped to the turn");
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+test("chat voice streaming sink cancels the exact job and idles an empty job", async () => {
+  const seen: unknown[] = [];
+  let peer: Socket | undefined;
+  const server = await listen((socket) => {
+    peer = socket;
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) return;
+        const request = JSON.parse(buffer.slice(0, newline)) as { type: string; requestId: string };
+        buffer = buffer.slice(newline + 1);
+        seen.push(request);
+        if (request.type === "hello") reply(socket, request.requestId, { type: "hello_ack", protocolVersion: 1 });
+        else if (request.type === "health")
+          reply(socket, request.requestId, {
+            type: "health",
+            protocolVersion: 1,
+            status: "ready",
+            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 3 },
+          });
+      }
+    });
+  });
+  try {
+    const client = await LocalVoiceGatewayClient.connect({ port: port(server), token: "voice_token_1234567890" });
+    await client.health();
+    const sink = client.createChatVoiceStreamingSink();
+    // An empty begin/finalize never opens a job on the wire.
+    await sink.begin("turn_empty");
+    await sink.finalize();
+    // A real job cancels with a voice-local cancel_speech frame.
+    await sink.begin("turn_0002");
+    await sink.append("这句话会被取消。");
+    await sink.cancel();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    const chunks = seen.filter((request) => (request as { type?: string }).type === "stream_speech_chunk");
+    const cancels = seen.filter((request) => (request as { type?: string }).type === "cancel_speech");
+    assert.equal(chunks.length, 1, "the empty job must not open a chunk");
+    assert.equal(cancels.length, 1, "cancel must send exactly one cancel_speech frame");
+    assert.equal(
+      (cancels[0] as { speechJobId?: string }).speechJobId,
+      (chunks[0] as { speechJobId: string }).speechJobId,
+      "cancel targets the exact job id",
+    );
+    assert.equal((cancels[0] as { reason: string }).reason, "speech_cancelled");
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});

@@ -61,6 +61,25 @@ export interface VoiceSpeechPort {
 }
 
 /**
+ * Host-owned streaming speech sink for Chat presentations. It receives the
+ * same delta stream as the browser preview, scoped to the exact Host-owned
+ * turn, and forwards it to the Voice Gateway's v2 `stream_speech_chunk` lane.
+ * The publisher never holds a client/token/epoch; the closure owns them, so
+ * nothing escapes the Host boundary. The separate begin/final calls delimit
+ * one exact speech job (one turn = one job); a host-side cancel must call
+ * cancel() so the voice lane stops without touching Game actions.
+ */
+export interface ChatVoiceSpeechPublisher {
+  begin(turnId: string): Promise<void> | void;
+  /** Feed one incremental delta (NFC-normalized by the caller, like preview). */
+  append(delta: string): Promise<void> | void;
+  /** Terminal: flush the final text and settle the job (equivalent to isFinalChunk). */
+  finalize(): Promise<void> | void;
+  /** Interrupt the exact job; Voice-local only, never a Chat/Game mutation. */
+  cancel(): Promise<void> | void;
+}
+
+/**
  * Partials are intentionally absent: only a caller holding a verified final ASR
  * event may invoke this. It preserves provider metadata and never sees PCM.
  */
