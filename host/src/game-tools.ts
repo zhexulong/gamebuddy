@@ -155,7 +155,7 @@ export function createStardewObservationTools(
     name: "stardew_execution_status",
     label: "Stardew Execution Status",
     description:
-      "Read the latest authoritative Stardew execution receipt; accepted or running is not success.",
+      "Read the latest diagnostic Stardew execution receipt snapshot. This is an inspection-only view for debugging; it is not authoritative completion proof for any task and must not be used to confirm an action finished.",
     parameters: Type.Object({}),
     execute: async () => {
       const receipt = integration.state.latestReceipt;
