@@ -88,8 +88,10 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// canonical arguments (already validated at verify/admission), never from
     /// parsing evidence. Unsupported argument names are ignored; a missing
     /// required wire value fails closed below by the router's own gate.
+    /// The expected revision is bound to the current live execution revision
+    /// (the same authority ordinary dispatch uses), never a hardcoded value.
     /// </summary>
-    private static bool TryBuildExecutionRequest(
+    private bool TryBuildExecutionRequest(
         HostAdmissionGrant grant,
         NodeExecutionBinding execution,
         out BridgeExecutionRequest? request,
@@ -162,7 +164,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 Direction = direction,
                 Destination = destination,
             },
-            /* ExpectedRevision */ 1,
+            this.ledger.CurrentRevision,
             grant.DeadlineMs);
         reasonCode = "accepted";
         return true;
