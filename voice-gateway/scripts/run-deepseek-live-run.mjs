@@ -58,7 +58,8 @@ if (process.platform !== "win32") {
 const { createStreamingWindowsAudioMixer } = await import(
   pathToFileURL(resolve(voiceGatewayRoot, "dist", "streaming-windows-audio.js")).href,
 );
-const { MimoTtsProvider } = await import(pathToFileURL(resolve(voiceGatewayRoot, "dist", "mimo.js")).href);
+  const { MimoTtsProvider, MIMO_TTS_PERSONAS } = await import(pathToFileURL(resolve(voiceGatewayRoot, "dist", "mimo.js")).href);
+  const { extractSpeakableText } = await import(pathToFileURL(resolve(voiceGatewayRoot, "dist", "speakable-text.js")).href);
 const { startVoiceGateway } = await import(pathToFileURL(resolve(voiceGatewayRoot, "dist", "server.js")).href);
 
 process.loadEnvFile?.(resolve(voiceGatewayRoot, "..", ".env.local"));
@@ -73,8 +74,13 @@ try {
   }
   const firstMes = card.data.first_mes.trim();
   if (firstMes.length === 0) throw new Error("deepseek_chan_first_mes_empty");
+  // 角色卡的消息体混有动作/旁白(*...*)与台词;voice 层剥离旁白后朗读,
+  // 只读角色说的话 —— 与产品路径同一提取器,不在 live run 里做前处理。
+  const speakable = extractSpeakableText(firstMes);
+  if (speakable.length === 0) throw new Error("deepseek_chan_first_mes_not_speakable");
   record.cardName = card.data.name ?? "deepseek-chan";
   record.firstMesLength = firstMes.length;
+  record.speakableLength = speakable.length;
   record.characterBookRecognized = card.data.character_book !== undefined && card.data.character_book !== null;
   if (record.characterBookRecognized !== true) throw new Error("deepseek_chan_character_book_missing");
   // 独立 worldbook(带回 title 字段修复后的系统原生支持)。
@@ -88,11 +94,17 @@ try {
   if (mixer.ready !== true) throw new Error(`deepseek_output_unavailable: ${mixer.failureReason ?? "mixer_not_ready"}`);
   const apiKey = process.env.MIMO_API_KEY;
   if (apiKey === undefined || apiKey.trim().length < 16) throw new Error("deepseek_tts_unavailable: set MIMO_API_KEY");
+  // deepseek-chan 的角色卡适配在 gamebuddy-voice 层:选择 named persona
+  // (soft_maid = 冰糖少女音 + 慢半拍软糯风格),由 MIMO_TTS_PERSONAS 解析出
+  // 具体 voice + style,脚本不再手拼 voice/style 串。
+  const personaId = process.env.GAMEBUDDY_MIMO_PERSONA ?? "soft_maid";
   const ttsBuilder = new MimoTtsProvider({
     apiKey: apiKey.trim(),
-    voiceByProfile: { "companion.default": process.env.GAMEBUDDY_MIMO_VOICE ?? "mimo_default" },
+    personaByProfile: { "companion.default": personaId },
     admission: Object.freeze({ assertCurrent() {} }),
   });
+  record.persona = personaId;
+  record.resolvedVoice = MIMO_TTS_PERSONAS[personaId]?.voice ?? null;
   // 与 main.ts 生产路径相同的 bounded output probe: probe 成功后 markReadyAfterProbe
   // 返回 ready 的 provider 实例;不通过 probe 则 gateway 保持 voice unavailable。
   const tts = await probeMimoTts(ttsBuilder, mixer);
@@ -111,7 +123,7 @@ try {
   const deadlineMs = Date.now() + 180_000;
   const observations = [];
   const unsubscribe = client.onPlaybackObservation((event) => observations.push(event));
-  await client.streamSpeechChunk(sessionId, speechJobId, 0, firstMes, true, deadlineMs);
+  await client.streamSpeechChunk(sessionId, speechJobId, 0, speakable, true, deadlineMs);
   const speakingDuring = reader();
   if (speakingDuring === null || speakingDuring.state !== "speaking") {
     throw new Error(`deepseek_not_speaking: ${JSON.stringify(speakingDuring)}`);
@@ -162,6 +174,7 @@ try {
   record.reason = "ok";
   record.cardName = card.data?.name ?? "deepseek-chan";
   record.firstMesSnippet = firstMes.slice(0, 60);
+  record.speakableSnippet = speakable.slice(0, 80);
   record.voiceTransitions = "ready -> speaking -> ready";
   record.terminalStatus = settled.terminalStatus;
   record.playoutStats = stats;

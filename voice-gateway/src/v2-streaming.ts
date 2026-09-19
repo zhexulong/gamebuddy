@@ -31,6 +31,8 @@ const MAX_ACTIVE_SPEECH_JOBS = 8;
 const MAX_JOB_TEXT_LENGTH = 16_000;
 const DELTA_TEXT_LIMIT = 4_000;
 const PUMP_IDLE_DELAY_MS = 10;
+/** Initial device headroom handed to the render child before pacing kicks in. */
+const PREBUFFER_MS = 320;
 
 type JobState = Readonly<{
   sessionId: string;
@@ -261,22 +263,40 @@ export class V2StreamingRuntime {
 
   /**
    * One pump loop for the whole runtime (single speaker). It monotonically
-   * drains micro-chunks; when no job is final-pending it idles briefly.
+   * drains micro-chunks paced to the device: one 20ms micro-chunk per 20ms
+   * wall tick (with a bounded prebuffer so the device never underruns). Keep
+   * the sync at this layer so the final playout tick lands on the device the
+   * moment the last frame is handed over — otherwise `completed` would be
+   * observed before the speaker physically finished (the close-then-drain
+   * stall seen in the three-turn live gate).
    */
   private startPump(): void {
     if (this.#pumpPromise !== undefined) return;
     this.#pumpPromise = (async () => {
+      const FRAME_MS = 20;
+      // Prebuffer: hand the first frames immediately so the device queue
+      // fills ~320ms deep before pacing kicks in (same headroom the render
+      // child reserves).
+      let nextFrameAt = Date.now() + PREBUFFER_MS;
       for (;;) {
         if (this.#closed || this.#pipeline === undefined) return;
-        if (await this.#pipeline.pumpAwait()) continue;
-        // Queue momentarily empty. If a job is finalizing we keep pumping
-        // (its tail chunks were already enqueued); otherwise sleep briefly.
+        if (await this.#pipeline.pumpAwait()) {
+          nextFrameAt += FRAME_MS;
+          const waitMs = nextFrameAt - Date.now();
+          if (waitMs > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, waitMs));
+          continue;
+        }
         const hasPending = [...this.#jobs.values()].some((job) => !job.finalCommitted);
         if (!hasPending && !this.#pipeline.pendingWork) {
-          // Nothing to voice anywhere: finalize drains took everything.
+          // Nothing to voice: the device already consumed the queue, so the
+          // next batch may start with fresh prebuffer headroom instead of a
+          // stale pacing offset.
+          nextFrameAt = Date.now() + PREBUFFER_MS;
           await new Promise((resolvePromise) => setTimeout(resolvePromise, PUMP_IDLE_DELAY_MS));
           continue;
         }
+        // Queue momentarily empty but more text is still expected: keep the
+        // pacing offset (the speaker is still draining the prebuffer).
         await new Promise((resolvePromise) => setTimeout(resolvePromise, PUMP_IDLE_DELAY_MS));
       }
     })().finally(() => {
