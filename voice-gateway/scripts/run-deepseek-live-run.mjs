@@ -14,7 +14,7 @@
  *
  * 需要玩家听声确认(不需要说话)。
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,11 +23,26 @@ const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "h
 const voiceGatewayRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const presetRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "assets", "tavern", "presets", "deepseek-chan");
 
+// The test-build artifact location is not portable across machines/CI: a
+// clean checkout may only have host/dist. Probe candidates in order and
+// fail with a clear setup hint instead of ERR_MODULE_NOT_FOUND.
+function resolveHostClientDist() {
+  for (const candidate of ["dist-test-voice4", "dist-test", "dist"]) {
+    if (existsSync(resolve(hostRoot, candidate, "voice-gateway-client.js")) === false) continue;
+    if (existsSync(resolve(hostRoot, candidate, "tavern", "browser-contract", "index.js")) === false) continue;
+    return candidate;
+  }
+  throw new Error(
+    "host_voice_artifact_missing: build host/src/voice-gateway-client.ts and tavern/browser-contract into host/dist (pnpm --dir host build) before running this gate",
+  );
+}
+const hostDist = resolveHostClientDist();
+
 const { LocalVoiceGatewayClient } = await import(
-  pathToFileURL(resolve(hostRoot, "dist-test-voice4", "voice-gateway-client.js")).href,
+  pathToFileURL(resolve(hostRoot, hostDist, "voice-gateway-client.js")).href,
 );
 const { TavernBrowserValidatorsV1 } = await import(
-  pathToFileURL(resolve(hostRoot, "dist-test-voice4", "tavern", "browser-contract", "index.js")).href,
+  pathToFileURL(resolve(hostRoot, hostDist, "tavern", "browser-contract", "index.js")).href,
 );
 
 const token = "voice_token_1234567890_v2rehearsal";
