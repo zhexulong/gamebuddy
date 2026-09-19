@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { rmSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { createTestWindowsOwnerDeathVerification } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.test-support.js";
@@ -51,6 +53,247 @@ const receipt = (permit: any, kind: "runtime_bootstrapped" | "runtime_torn_down"
   owner: permit.owner,
   fenceToken: permit.fenceToken,
   occurredAtMs: Date.now(),
+});
+
+test("Game session world binding is durable, exact, idempotent, and redacted", () => {
+  const root = canonicalTestRootSync("production-game-session-binding-");
+  const control = openProductionContinuityStore({ runtimeRoot: root });
+  let controlClosed = false;
+  try {
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store = control.bindBootstrapContext({ bootstrap, metadata });
+    const session = store.createGameSessionMetadata({
+      creationRequestId: "create-binding",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    const binding = store.registerGameSessionWorldBinding({
+      gameSessionId: session.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "opaque-world-ref",
+      operationId: "bind-01",
+    });
+    assert.deepEqual(binding, {
+      gameSessionId: session.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "opaque-world-ref",
+      status: "registered",
+      revision: 1,
+    });
+    assert.deepEqual(
+      store.registerGameSessionWorldBinding({
+        gameSessionId: session.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "opaque-world-ref",
+        operationId: "bind-01",
+      }),
+      binding,
+    );
+    assert.deepEqual(
+      store.readGameSessionWorldBinding({ gameSessionId: session.gameSessionId, integrationId: "stardew" }),
+      binding,
+    );
+    assert.throws(
+      () =>
+        store.registerGameSessionWorldBinding({
+          gameSessionId: session.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "other-world-ref",
+          operationId: "bind-01",
+        }),
+      /game_session_world_binding_conflict/,
+    );
+    assert.throws(
+      () =>
+        store.registerGameSessionWorldBinding({
+          gameSessionId: session.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "other-world-ref",
+          operationId: "bind-02",
+        }),
+      /game_session_world_binding_conflict/,
+    );
+    const incomplete = store.createGameSessionMetadata({
+      creationRequestId: "create-incomplete",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    assert.throws(
+      () => store.completeGameSessionBinding({
+        creationRequestId: "create-incomplete",
+        gameSessionId: incomplete.gameSessionId,
+        expectedRevision: 1,
+      }),
+      /game_session_world_binding_missing/,
+    );
+    assert.equal(store.readGameSessionMetadata({ gameSessionId: incomplete.gameSessionId })?.status, "pending");
+    store.failGameSessionCreation({
+      creationRequestId: "create-incomplete",
+      gameSessionId: incomplete.gameSessionId,
+      expectedRevision: 1,
+    });
+    assert.throws(
+      () =>
+        store.registerGameSessionWorldBinding({
+          gameSessionId: incomplete.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "late-world-ref",
+          operationId: "late-bind-01",
+        }),
+      /game_session_world_binding_conflict/,
+    );
+    const bindingBeforeFailure = store.createGameSessionMetadata({
+      creationRequestId: "create-binding-fail",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    store.registerGameSessionWorldBinding({
+      gameSessionId: bindingBeforeFailure.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "opaque-binding-fail",
+      operationId: "binding-fail-01",
+    });
+    assert.throws(
+      () =>
+        store.failGameSessionCreation({
+          creationRequestId: "create-binding-fail",
+          gameSessionId: bindingBeforeFailure.gameSessionId,
+          expectedRevision: 1,
+        }),
+      /game_session_metadata_conflict/,
+    );
+    assert.equal(
+      store.readGameSessionMetadata({ gameSessionId: bindingBeforeFailure.gameSessionId })?.status,
+      "pending",
+    );
+    const resumable = store.completeGameSessionBinding({
+      creationRequestId: "create-binding",
+      gameSessionId: session.gameSessionId,
+      expectedRevision: 1,
+    });
+    assert.equal(resumable.status, "resumable");
+    assert.deepEqual(store.listResumableGameSessions(), [resumable]);
+    assert.throws(
+      () =>
+        store.registerGameSessionWorldBinding({
+          gameSessionId: session.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "late-world-ref",
+          operationId: "late-bind-resumable",
+        }),
+      /game_session_world_binding_conflict/,
+    );
+    control.close();
+    controlClosed = true;
+    const reopenedControl = openProductionContinuityStore({ runtimeRoot: root });
+    let reopenedControlClosed = false;
+    try {
+      const reopenedStore = reopenedControl.bindBootstrapContext({
+        bootstrap,
+        metadata: reopenedControl.validateBootstrap(bootstrap),
+      });
+      assert.deepEqual(
+        reopenedStore.readGameSessionWorldBinding({ gameSessionId: session.gameSessionId, integrationId: "stardew" }),
+        binding,
+      );
+      assert.deepEqual(reopenedStore.listResumableGameSessions(), [resumable]);
+      const terminal = reopenedStore.markGameSessionWorldBindingTerminal({
+        gameSessionId: session.gameSessionId,
+        integrationId: "stardew",
+        expectedRevision: 1,
+        operationId: "bind-01",
+      });
+      assert.equal(terminal.status, "terminal");
+      assert.deepEqual(
+        reopenedStore.readGameSessionMetadata({ gameSessionId: session.gameSessionId }),
+        { ...resumable, status: "failed", revision: 3 },
+      );
+      assert.deepEqual(reopenedStore.listResumableGameSessions(), []);
+      assert.deepEqual(
+        reopenedStore.markGameSessionWorldBindingTerminal({
+          gameSessionId: session.gameSessionId,
+          integrationId: "stardew",
+          expectedRevision: 1,
+          operationId: "bind-01",
+        }),
+        terminal,
+      );
+      reopenedControl.close();
+      reopenedControlClosed = true;
+      const terminalReopenedControl = openProductionContinuityStore({ runtimeRoot: root });
+      try {
+        const terminalReopenedStore = terminalReopenedControl.bindBootstrapContext({
+          bootstrap,
+          metadata: terminalReopenedControl.validateBootstrap(bootstrap),
+        });
+        assert.deepEqual(
+          terminalReopenedStore.readGameSessionWorldBinding({
+            gameSessionId: session.gameSessionId,
+            integrationId: "stardew",
+          }),
+          terminal,
+        );
+        assert.deepEqual(
+          terminalReopenedStore.readGameSessionMetadata({ gameSessionId: session.gameSessionId }),
+          { ...resumable, status: "failed", revision: 3 },
+        );
+        assert.deepEqual(terminalReopenedStore.listResumableGameSessions(), []);
+      } finally {
+        terminalReopenedControl.close();
+      }
+    } finally {
+      if (!reopenedControlClosed) reopenedControl.close();
+    }
+  } finally {
+    if (!controlClosed) control.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("Pure Game materialization rejects terminal binding with failed revision 2 on reopen", () => {
+  const root = canonicalTestRootSync("production-game-session-corrupt-reopen-");
+  const control = openProductionContinuityStore({ runtimeRoot: root });
+  try {
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store = control.bindBootstrapContext({ bootstrap, metadata });
+    const session = store.createGameSessionMetadata({
+      creationRequestId: "create-corrupt-reopen",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    store.registerGameSessionWorldBinding({
+      gameSessionId: session.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "opaque-corrupt-reopen",
+      operationId: "bind-corrupt-reopen",
+    });
+    store.completeGameSessionBinding({
+      creationRequestId: "create-corrupt-reopen",
+      gameSessionId: session.gameSessionId,
+      expectedRevision: 1,
+    });
+    store.markGameSessionWorldBindingTerminal({
+      gameSessionId: session.gameSessionId,
+      integrationId: "stardew",
+      expectedRevision: 1,
+      operationId: "bind-corrupt-reopen",
+    });
+    control.close();
+    const db = new DatabaseSync(join(root, "gamebuddy-continuity-v1.sqlite"));
+    try {
+      db.prepare(
+        "UPDATE production_game_session_metadata SET status='failed',revision=2 WHERE game_session_id=?",
+      ).run(session.gameSessionId);
+    } finally {
+      db.close();
+    }
+    assert.throws(
+      () => openProductionContinuityStore({ runtimeRoot: root }),
+      /production_store_materialization_invalid/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 });
 
 test("Game recovery requires explicit OS-proven owner death and exact owner tuple", () => {

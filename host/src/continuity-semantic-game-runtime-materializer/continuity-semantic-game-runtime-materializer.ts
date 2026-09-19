@@ -374,33 +374,33 @@ export function createHostGameRuntimeMaterializer(
         let constructed: Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>;
         try {
           constructed = await createMaterializedGameRuntime(
-          execution.principal,
-          execution.world,
-          execution.runtimeRoot,
-          execution.connection,
-          ports.presentation,
-          permit.gameSessionId,
-          options.gameOperationalGateNonceSha256,
-           options.gameVoicePresentation,
-           fixedTools,
+            execution.principal,
+            execution.world,
+            execution.runtimeRoot,
+            execution.connection,
+            ports.presentation,
+            permit.gameSessionId,
+            options.gameOperationalGateNonceSha256,
+            options.gameVoicePresentation,
+            fixedTools,
             Object.freeze({
               resolvedPolicy: mountedPolicy,
               recoveryJournal,
-                 recoveryBinding: Object.freeze({ scope: recovery.identity, bindingIdentity: recovery.identity }),
-             recoveryPort: Object.freeze({
-              scope: recovery.identity,
-              bindingIdentity: recovery.identity,
-              queryExecutionReceipt: recovery.queryExecutionReceipt,
+              recoveryBinding: Object.freeze({ scope: recovery.identity, bindingIdentity: recovery.identity }),
+              recoveryPort: Object.freeze({
+                scope: recovery.identity,
+                bindingIdentity: recovery.identity,
+                queryExecutionReceipt: recovery.queryExecutionReceipt,
+              }),
             }),
-          }),
-        );
-         } catch (error) {
-            await closeFixedTools();
-           await recoveryJournal.close();
-           throw error;
-          }
-          const runtime = constructed.runtime;
-          await runtime.recoverStardewExecutionReceipts?.(Object.freeze({
+          );
+        } catch (error) {
+          await closeFixedTools();
+          await recoveryJournal.close();
+          throw error;
+        }
+        const runtime = constructed.runtime;
+        await runtime.recoverStardewExecutionReceipts?.(Object.freeze({
             scope: recovery.identity,
             bindingIdentity: recovery.identity,
             queryExecutionReceipt: recovery.queryExecutionReceipt,
@@ -660,12 +660,10 @@ async function createMaterializedGameRuntime(
   presentation: FarmhandPresentationBridge,
   gameSessionId: string,
   gameOperationalGateNonceSha256: string | undefined,
-  gameVoicePresentation: GameVoicePresentationAttachment | undefined,
+  _gameVoicePresentation: GameVoicePresentationAttachment | undefined,
   fixedTools: readonly ToolDefinition[],
-    recoveryAttachment?: Pick<import("../runtime.js").GameCompanionRuntimeAttachment, "recoveryJournal" | "recoveryBinding" | "recoveryPort"> & Readonly<{ resolvedPolicy: IntegrationActionPolicy }>,
-): Promise<
-  Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>
-> {
+  recoveryAttachment?: Pick<import("../runtime.js").GameCompanionRuntimeAttachment, "recoveryJournal" | "recoveryBinding" | "recoveryPort"> & Readonly<{ resolvedPolicy: IntegrationActionPolicy }>,
+): Promise<Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>> {
   const identity = Object.freeze({
     continuityId: principal.continuityId,
     companionId: principal.companionId,
@@ -709,6 +707,24 @@ async function createMaterializedGameRuntime(
         });
       })()
     : undefined;
+  const recoveryFields = recoveryAttachment === undefined
+    ? {}
+    : Object.freeze({
+        ...(recoveryAttachment.recoveryJournal === undefined ? {} : { recoveryJournal: recoveryAttachment.recoveryJournal }),
+        ...(recoveryAttachment.recoveryBinding === undefined ? {} : { recoveryBinding: recoveryAttachment.recoveryBinding }),
+        ...(recoveryAttachment.recoveryPort === undefined ? {} : { recoveryPort: recoveryAttachment.recoveryPort }),
+      });
+  const runtimeAttachment = workerAttachment === undefined && recoveryAttachment === undefined
+    ? undefined
+    : workerAttachment === undefined
+      ? Object.freeze({
+          hostBindingFactory,
+          gameplaySubagentEnabled: false as const,
+          ...recoveryFields,
+        })
+      : recoveryAttachment === undefined
+        ? workerAttachment
+        : Object.freeze({ ...workerAttachment, ...recoveryFields });
   const runtime = await createMaterializedGameCompanionRuntime(
     identity,
     runtimeRoot,
@@ -717,20 +733,12 @@ async function createMaterializedGameRuntime(
     gameOperationalGateNonceSha256 === undefined
       ? undefined
       : Object.freeze({ nonceSha256: gameOperationalGateNonceSha256 }),
-    workerAttachment === undefined && recoveryAttachment === undefined ? hostBindingFactory : undefined,
-    recoveryAttachment === undefined
-      ? workerAttachment
-      : workerAttachment === undefined
-        ? Object.freeze({
-            modelConfig: undefined,
-            gameplaySubagentEnabled: false,
-            hostBindingFactory,
-            recoveryJournal: recoveryAttachment.recoveryJournal,
-            recoveryBinding: recoveryAttachment.recoveryBinding,
-            recoveryPort: recoveryAttachment.recoveryPort,
-          })
-        : Object.freeze({ ...workerAttachment, ...recoveryAttachment }),
-    Object.freeze({ fixedTools, resolvedPolicy: recoveryAttachment?.resolvedPolicy ?? connection.module.parsePolicy(connection.module.defaultPolicy) }),
+    runtimeAttachment === undefined ? hostBindingFactory : undefined,
+    runtimeAttachment,
+    Object.freeze({
+      fixedTools,
+      resolvedPolicy: recoveryAttachment?.resolvedPolicy ?? connection.module.parsePolicy(connection.module.defaultPolicy),
+    }),
   );
   return Object.freeze({ runtime, turnTracker });
 }

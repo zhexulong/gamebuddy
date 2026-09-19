@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import type { TavernAuthoredContextRuntimeCapability } from "@cortexkit/pi-magic-context/tavern";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,38 @@ import {
 } from "./continuity-semantic-chat-runtime-materializer.test-support.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
+type AuthoredStablePlanProjection = ReturnType<TavernAuthoredContextRuntimeCapability["prepare"]>;
+type AuthoredStableSourceRef = Parameters<TavernAuthoredContextRuntimeCapability["assertInstall"]>[1][number];
+type AuthoredVolatileSourceRef = NonNullable<Parameters<TavernAuthoredContextRuntimeCapability["assertInstall"]>[2]>[number];
+
+const emptyAuthoredContextProjection: AuthoredStablePlanProjection = Object.freeze({
+  sourceRefs: Object.freeze([] as AuthoredStableSourceRef[]),
+  stableTokenCount: 0,
+  volatileSourceRefs: Object.freeze([] as AuthoredVolatileSourceRef[]),
+  volatileSourceCandidates: Object.freeze([]),
+  volatileTokenCount: 0,
+});
+
+function authoredContextCapability(
+  overrides: Partial<TavernAuthoredContextRuntimeCapability> = {},
+): TavernAuthoredContextRuntimeCapability {
+  return Object.freeze({
+    prepare: (_transientPreflightId: string) => emptyAuthoredContextProjection,
+    assertInstall: (
+      _durableTurnId: string,
+      _refs: readonly AuthoredStableSourceRef[],
+      _volatileRefs?: readonly AuthoredVolatileSourceRef[],
+    ) => undefined,
+    clearVolatileForTurn: (_durableTurnId: string) => undefined,
+    materializeVolatileForTurn: (
+      _turnId: string,
+      _acceptedPlayerText: string,
+      _boundedVisibleTail: string,
+    ) => Object.freeze({ refs: Object.freeze([] as AuthoredVolatileSourceRef[]), tokenCount: 0 }),
+    clear: async () => undefined,
+    ...overrides,
+  });
+}
 
 async function binding(): Promise<Readonly<{ root: string; binding: ChatRuntimeBinding }>> {
   const root = await canonicalTestRoot("chat-runtime-materializer-");
@@ -144,9 +177,7 @@ test("materializes only an exact Chat permit and mints permit-exact Host lifecyc
 
 test("reverse disposal clears the authored-context capability before disposing Pi", async () => {
   const events: string[] = [];
-  const capability = Object.freeze({
-    prepare: () => Object.freeze({ sourceRefs: Object.freeze([]), stableTokenCount: 0 }),
-    assertInstall: () => undefined,
+  const capability = authoredContextCapability({
     clear: async () => {
       events.push("clear");
     },
@@ -169,9 +200,7 @@ test("reverse disposal aggregates authored capability clear and Pi disposal fail
   const disposeError = new Error("dispose_failed");
   await assert.rejects(
     closeMaterializedChatRuntime(Object.freeze({
-      authoredContextCapability: Object.freeze({
-        prepare: () => Object.freeze({ sourceRefs: Object.freeze([]), stableTokenCount: 0 }),
-        assertInstall: () => undefined,
+      authoredContextCapability: authoredContextCapability({
         clear: async () => {
           events.push("clear");
           throw clearError;
@@ -236,9 +265,7 @@ test("reverse disposal disposes and aggregates when authored capability clear fa
   await assert.rejects(
     closeMaterializedChatRuntime(
       Object.freeze({
-        authoredContextCapability: Object.freeze({
-          prepare: () => Object.freeze({ sourceRefs: Object.freeze([]), stableTokenCount: 0 }),
-          assertInstall: () => undefined,
+        authoredContextCapability: authoredContextCapability({
           clear: async () => {
             events.push("clear");
             throw clearError;
@@ -339,9 +366,7 @@ test("post-factory permit failure preserves primary and reverse cleanup failures
   const materializer = createTestChatRuntimeMaterializer(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     return Object.freeze({
-      authoredContextCapability: Object.freeze({
-        prepare: () => Object.freeze({ sourceRefs: Object.freeze([]), stableTokenCount: 0 }),
-        assertInstall: () => undefined,
+      authoredContextCapability: authoredContextCapability({
         clear: async () => {
           throw clearError;
         },

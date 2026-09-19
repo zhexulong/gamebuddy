@@ -221,11 +221,6 @@ function finalizeMaterializedGameRuntime(
   });
 }
 
-/** Mints closed-record Host lifecycle evidence only after exact permit admission. */
-function mintRuntimeBootstrappedReceipt(permit: ProductionGamePermit): ProductionGameTerminalReceipt {
-  return mintGameRuntimeReceipt(permit, "runtime_bootstrapped");
-}
-
 function createPromptDefinedTaskDispatcher(
   worker: RuntimeDisposal["gameplaySubagent"],
 ): (task: string) => Promise<void> {

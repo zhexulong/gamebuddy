@@ -11,7 +11,7 @@ import type {
 import type { RuntimeSession } from "../runtime.js";
 
 /** Minimal reverse-disposal boundary; no Pi session, runtime root, or binding leaks. */
-import type { TavernAuthoredContextRuntimeCapability } from "@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge";
+import type { TavernAuthoredContextRuntimeCapability } from "@cortexkit/pi-magic-context/tavern";
 export type ChatRuntimeDisposal = Readonly<{
   session: Readonly<{ dispose(): void }>;
   authoredContextCapability?: TavernAuthoredContextRuntimeCapability;

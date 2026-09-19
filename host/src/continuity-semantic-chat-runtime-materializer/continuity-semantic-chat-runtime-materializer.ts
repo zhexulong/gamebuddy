@@ -5,7 +5,6 @@
 
 import { createChatRuntimeConstructionInternal } from "../runtime-core.internal.js";
 import {
-  type ChatRuntimeDisposal,
   type ChatRuntimeMaterializer,
   type MaterializedChatRuntime,
   materializeExactChatRuntime,

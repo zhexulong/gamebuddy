@@ -36,9 +36,12 @@ import type {
   ProductionGamePermit,
   ProductionGameReadback,
   ProductionGameRecoveryTarget,
-  ProductionGameSessionBindingInput,
-  ProductionGameSessionCreateInput,
-  ProductionGameSessionMetadata,
+   ProductionGameSessionBindingInput,
+   ProductionGameSessionCreateInput,
+   ProductionGameSessionMetadata,
+   ProductionGameSessionWorldBinding,
+   ProductionGameSessionWorldBindingInput,
+   ProductionGameSessionWorldBindingTerminalInput,
   ProductionGameTerminalReceipt,
   ProductionGameWorld,
   ProductionSagaReadback,
@@ -151,9 +154,9 @@ type MountedChatRuntimeLeaseRecord = {
   /** Live materialized runtime session for the start scope; never public. */
   readonly providerRuntimeSession?: RuntimeSession;
   /** Exact mounted authored catalog capability; never public or retained by callers. */
-  authoredContextCapability?: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability;
-  refreshAuthoredContext?: (currentCapability: import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability) => Promise<import("@cortexkit/pi-magic-context/internal/gamebuddy-authored-context-bridge").TavernAuthoredContextRuntimeCapability>;
-  authoredContextRefreshPromise?: Promise<void>;
+  authoredContextCapability?: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability;
+  refreshAuthoredContext?: (currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability) => Promise<import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability>;
+  authoredContextRefreshPromise?: Promise<void> | undefined;
 
   /**
    * Process-local one-shot reservation for a durable generation-one attempt.
@@ -172,7 +175,7 @@ type MountedChatRuntimeLeaseRecord = {
   readonly presentationEpoch: CompanionInterruption;
 
   /** The sole Pi prompt currently executing under this mounted lease. */
-  activePrompt?: Readonly<{ turnId: string; attemptId: string; aborting: boolean }>;
+  activePrompt?: Readonly<{ turnId: string; attemptId: string; aborting: boolean }> | undefined;
   /** Retained cancellation state; new browser Stop bypasses it. */
   cancellation?: Promise<CancelResult>;
   readonly begin: <T>(work: () => Promise<T>) => Promise<T>;
@@ -244,9 +247,10 @@ export type ProviderInvocationScope = Readonly<{
   /** The live materialized runtime session; only for the single prompt call. */
   runtimeSession: RuntimeSession;
   /** Callback-scoped authored-context verifier for this exact mounted session. */
-  authoredContextCapability: Readonly<{
-    assertInstall(durableTurnId: string, refs: readonly Readonly<Record<string, string>>[]): void;
-  }>;
+   authoredContextCapability: Readonly<{
+     assertInstall(durableTurnId: string, refs: readonly Readonly<Record<string, string>>[], volatileRefs?: readonly Readonly<Record<string, string>>[]): void;
+     clearVolatileForTurn(durableTurnId: string): void;
+    }>;
   /**
    * The sole store-writer port for this exact attempt's arm/not_started/running
    * transitions and provider-rejection failure. It is callback-scoped and
@@ -467,8 +471,8 @@ async function ensureCurrentAuthoredContext(
         continuityId: manifest.principal.continuityId,
         chatThreadId: record.chatThreadId,
         chatSurfaceSessionId: record.chatSurfaceSessionId,
-        binding: after.thread.worldBookBinding,
-        expectedOldAppliedBinding: state.thread.appliedWorldBookBinding,
+         ...(after.thread.worldBookBinding === undefined ? {} : { binding: after.thread.worldBookBinding }),
+         ...(state.thread.appliedWorldBookBinding === undefined ? {} : { expectedOldAppliedBinding: state.thread.appliedWorldBookBinding }),
       });
     } finally {
       operationAuthority.revoke();
@@ -772,16 +776,26 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
         facts,
         deadlineAtMs,
         runtimeSession,
-        authoredContextCapability: Object.freeze({
-          assertInstall: (durableTurnId: string, refs: readonly Readonly<Record<string, string>>[]) => {
-            assertScopeActive();
-            const capability = mounted.authoredContextCapability;
-            if (capability === undefined) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
-             if (typeof capability.assertInstall !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
-             capability.assertInstall(durableTurnId, refs);
-          },
-        }),
-        transitionStore,
+         authoredContextCapability: Object.freeze({
+            assertInstall: (durableTurnId: string, refs: readonly Readonly<Record<string, string>>[], volatileRefs?: readonly Readonly<Record<string, string>>[]) => {
+              assertScopeActive();
+              const capability = mounted.authoredContextCapability;
+              if (capability === undefined || typeof capability.assertInstall !== "function")
+                throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+              capability.assertInstall(
+                durableTurnId,
+                refs as readonly import("@cortexkit/pi-magic-context/tavern").GameBuddyAuthoredStableSourceRef[],
+                volatileRefs as readonly import("@cortexkit/pi-magic-context/tavern").GameBuddyAuthoredVolatileSourceRef[] | undefined,
+              );
+            },
+            clearVolatileForTurn: (durableTurnId: string) => {
+              assertScopeActive();
+              const capability = mounted.authoredContextCapability;
+              if (capability === undefined || typeof capability.clearVolatileForTurn !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+              capability.clearVolatileForTurn(durableTurnId);
+            },
+         }),
+         transitionStore,
         transitionPresentation,
          readAcceptedMessageText,
          readAcceptedAuthoredContextPlan,
@@ -912,9 +926,10 @@ export async function consumeMountedDurableAdmission<T>(
       chatSurfaceSessionId: string;
        selectionGeneration: number;
        profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
-       authoredContextCapability: Readonly<{
-         prepare(transientPreflightId: string): Readonly<{ sourceRefs: readonly Readonly<Record<string, string>>[]; stableTokenCount: number }>;
-       }>;
+        authoredContextCapability: Readonly<{
+           prepare(transientPreflightId: string): Readonly<{ sourceRefs: readonly Readonly<Record<string, string>>[]; stableTokenCount: number; volatileSourceRefs: readonly Readonly<Record<string, string>>[]; volatileSourceCandidates: readonly Readonly<Record<string, unknown>>[]; volatileTokenCount: number }>;
+           materializeVolatileForTurn(turnId: string, acceptedPlayerText: string, boundedVisibleTail: string): Readonly<{ refs: readonly Readonly<Record<string, string>>[]; tokenCount: number }>;
+        }>;
      }>,
   ) => Promise<T>,
 ): Promise<T> {
@@ -936,14 +951,19 @@ export async function consumeMountedDurableAdmission<T>(
         chatSurfaceSessionId: mounted.chatSurfaceSessionId,
         selectionGeneration: mounted.selectionGeneration,
         profile: Object.freeze({ profileId: mountedThread.profileId, revision: mountedThread.profileRevision, canonicalHash: mountedThread.profileCanonicalHash }),
-        authoredContextCapability: Object.freeze({
-           prepare: (transientPreflightId: string) => {
-             const capability = mounted.authoredContextCapability;
-             if (capability === undefined) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
-             if (typeof capability.prepare !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
-             return capability.prepare(transientPreflightId);
-           },
-         }),
+          authoredContextCapability: Object.freeze({
+            prepare: (transientPreflightId: string) => {
+              const capability = mounted.authoredContextCapability;
+              if (capability === undefined) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+              if (typeof capability.prepare !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+              return capability.prepare(transientPreflightId);
+            },
+            materializeVolatileForTurn: (turnId: string, acceptedPlayerText: string, boundedVisibleTail: string) => {
+              const capability = mounted.authoredContextCapability;
+              if (capability === undefined || typeof capability.materializeVolatileForTurn !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+              return capability.materializeVolatileForTurn(turnId, acceptedPlayerText, boundedVisibleTail);
+            },
+          }),
        }),
     );
   } finally {
@@ -1282,8 +1302,15 @@ export type SemanticGameProductionAuthority = Readonly<{
   completeGameSessionBinding(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
   failGameSessionCreation(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
   readGameSessionMetadata(input: Readonly<{ gameSessionId: string }>): Promise<ProductionGameSessionMetadata | null>;
-  listResumableGameSessions(): Promise<readonly ProductionGameSessionMetadata[]>;
-  close(): Promise<void>;
+   listResumableGameSessions(): Promise<readonly ProductionGameSessionMetadata[]>;
+   registerGameSessionWorldBinding(input: ProductionGameSessionWorldBindingInput): Promise<ProductionGameSessionWorldBinding>;
+   readGameSessionWorldBinding(
+     input: Readonly<{ gameSessionId: string; integrationId: string }>,
+   ): Promise<ProductionGameSessionWorldBinding | null>;
+   markGameSessionWorldBindingTerminal(
+     input: ProductionGameSessionWorldBindingTerminalInput,
+   ): Promise<ProductionGameSessionWorldBinding>;
+   close(): Promise<void>;
 }>;
 /** Only the S4 construction zone may supply facts drawn from its active binding execution. */
 export type GameEffectFacts = Readonly<{
@@ -2893,8 +2920,20 @@ function createKnownGameAuthority(
     input: Readonly<{ gameSessionId: string }>,
   ): Promise<ProductionGameSessionMetadata | null> =>
     begin(() => locked(() => provision.store.readGameSessionMetadata(input)));
-  const listResumableGameSessions = (): Promise<readonly ProductionGameSessionMetadata[]> =>
-    begin(() => locked(() => provision.store.listResumableGameSessions()));
+   const listResumableGameSessions = (): Promise<readonly ProductionGameSessionMetadata[]> =>
+     begin(() => locked(() => provision.store.listResumableGameSessions()));
+   const registerGameSessionWorldBinding = (
+     input: ProductionGameSessionWorldBindingInput,
+   ): Promise<ProductionGameSessionWorldBinding> =>
+     begin(() => locked(() => provision.store.registerGameSessionWorldBinding(input)));
+   const readGameSessionWorldBinding = (
+     input: Readonly<{ gameSessionId: string; integrationId: string }>,
+   ): Promise<ProductionGameSessionWorldBinding | null> =>
+     begin(() => locked(() => provision.store.readGameSessionWorldBinding(input)));
+   const markGameSessionWorldBindingTerminal = (
+     input: ProductionGameSessionWorldBindingTerminalInput,
+   ): Promise<ProductionGameSessionWorldBinding> =>
+     begin(() => locked(() => provision.store.markGameSessionWorldBindingTerminal(input)));
   return Object.freeze({
     authority: "SEMANTIC" as const,
     prepareEnter,
@@ -2908,8 +2947,11 @@ function createKnownGameAuthority(
     completeGameSessionBinding,
     failGameSessionCreation,
     readGameSessionMetadata,
-    listResumableGameSessions,
-    close: () => {
+     listResumableGameSessions,
+     registerGameSessionWorldBinding,
+     readGameSessionWorldBinding,
+     markGameSessionWorldBindingTerminal,
+     close: () => {
       if (closePromise !== undefined) return closePromise;
       closing = true;
       const attempt = (async () => {
