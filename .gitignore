@@ -125,6 +125,7 @@ dialogue-web/playwright-report/
 
 # Voice live-gate run artifacts are machine-local evidence, not sources.
 /voice-gateway/scripts/pipeline-live-gate.json
+voice-gateway/scripts/pipeline-deepseek-live-run.json
 
 
 # voice v2 wire rehearsal artifact
