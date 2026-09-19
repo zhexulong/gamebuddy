@@ -1,6 +1,11 @@
 import { atomicWriteFile, withPathLock } from "./path-lock.js";
 import { readStrictJsonFile } from "./strict-json-reader.js";
-import type { ExecutionRequest } from "./protocol.js";
+import {
+  validateBodyNodeAdmissionPayload,
+  type BodyNodeAdmissionChallenge,
+  type BodyNodeAdmissionGrant,
+  type ExecutionRequest,
+} from "./protocol.js";
 import { resolve } from "node:path";
 
 const STARDEW_LOGICAL_ACTION_RECOVERY_STATES = Object.freeze([
@@ -33,12 +38,19 @@ export type StardewLogicalActionRecoveryRecord = StardewLogicalActionRecoveryDis
     state: StardewLogicalActionRecoveryState;
   }>;
 
+type RecoveryRecordWriter = (record: StardewLogicalActionRecoveryRecord) => Promise<StardewLogicalActionRecoveryRecord>;
+type AdmissionRecordWriter = (record: HostNodeAdmissionRecord) => Promise<void>;
+
+/** Test-only writer with distinct return types for the two journal owners. */
+export type StardewLogicalActionRecoveryJournalWriter = {
+  (record: StardewLogicalActionRecoveryRecord): StardewLogicalActionRecoveryRecord | Promise<StardewLogicalActionRecoveryRecord>;
+  (record: HostNodeAdmissionRecord): void | Promise<void>;
+};
+
 export type StardewLogicalActionRecoveryJournalOptions = Readonly<{
   initialRecords?: readonly StardewLogicalActionRecoveryRecord[];
   /** Test-only writer; production callers must use open(). */
-  write?: (
-    record: StardewLogicalActionRecoveryRecord | HostNodeAdmissionRecord,
-  ) => void | StardewLogicalActionRecoveryRecord | Promise<void | StardewLogicalActionRecoveryRecord>;
+  write?: StardewLogicalActionRecoveryJournalWriter;
 }>;
 
 export type StardewLogicalActionRecoveryJournalOpenOptions = Readonly<{
@@ -56,37 +68,11 @@ const HOST_NODE_ADMISSION_STATES = Object.freeze([
 ] as const);
 type HostNodeAdmissionState = (typeof HOST_NODE_ADMISSION_STATES)[number];
 
-/** Controller-named exact node; Host treats all fields as opaque canonical data. */
-export type NodeAdmissionChallenge = Readonly<{
-  programId: string;
-  nodeId: string;
-  nodeAttempt: number;
-  admissionAttempt: number;
-  stopEpoch: number;
-  scopeIdentity: Readonly<Record<string, unknown>>;
-  /** Opaque identity minted by the Mod; Host only preserves and compares it exactly. */
-  policyIdentity: Readonly<Record<string, unknown>>;
-  catalogRevision: string;
-  actionIdentity: string;
-  canonicalBoundArgs: Readonly<Record<string, unknown>>;
-  derivedResourceClaims: readonly Readonly<Record<string, unknown>>[];
-  deadlineMs: number;
-}>;
-
-export type HostAdmissionGrant = Readonly<{
-  grantId: string;
-  challenge: NodeAdmissionChallenge;
-  attachmentGeneration: string;
-  policyRevision: string;
-  /** Exact opaque echo of challenge.policyIdentity; Host never interprets it. */
-  policyIdentity: Readonly<Record<string, unknown>>;
-  catalogRevision: string;
-}>;
-
+/** Durable Host transport record uses the exact protocol wire payloads. */
 export type HostNodeAdmissionRecord = Readonly<{
-  challenge: NodeAdmissionChallenge;
+  challenge: BodyNodeAdmissionChallenge;
   state: HostNodeAdmissionState;
-  grant?: HostAdmissionGrant;
+  grant?: BodyNodeAdmissionGrant;
   rejectionCode?: string;
 }>;
 
@@ -104,37 +90,6 @@ const DEFAULT_MAX_RECORDS = 256;
 const DEFAULT_MAX_BYTES = 1024 * 1024;
 const MAX_JSON_DEPTH = 32;
 const MAX_JSON_STRING_LENGTH = 16 * 1024;
-const ACTION_ARGUMENT_KEYS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  move_to_tile: ["x", "y"],
-  navigate_to_destination: ["destination"],
-  equip_tool: ["slot"],
-  travel: ["x", "y"],
-  enter_exit: ["x", "y"],
-  till_soil: ["x", "y"],
-  pickup_forage: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  pickup_item: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  water_crop: ["x", "y", "expectedTargetId"],
-  refill_watering_can: ["slot", "x", "y", "expectedTargetId"],
-  harvest_crop: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  plant_seed: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  fertilize_tile: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  place_wood_fence: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  place_crab_pot: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  bait_crab_pot: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  clear_debris: ["slot", "x", "y", "expectedTargetId"],
-  machine_inspect: ["x", "y", "expectedTargetId"],
-  machine_load: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  machine_collect_output: ["x", "y", "expectedTargetId"],
-  npc_relationship: ["x", "y", "expectedTargetId"],
-  pet_animal: ["x", "y", "expectedTargetId"],
-  collect_animal_product: ["slot", "x", "y", "expectedTargetId"],
-  feed_animal: ["slot", "x", "y", "expectedTargetId"],
-  use_item: ["slot", "expectedQualifiedItemId"],
-  chop_tree_source: ["slot", "x", "y", "expectedTargetId"],
-  break_rock_source: ["slot", "x", "y", "expectedTargetId"],
-  clear_hoedirt: ["slot", "x", "y", "expectedTargetId"],
-  dig_artifact_spot: ["slot", "x", "y", "expectedTargetId"],
-});
 
 export class StardewLogicalActionRecoveryJournal {
   readonly #records = new Map<string, StardewLogicalActionRecoveryRecord>();
@@ -142,17 +97,18 @@ export class StardewLogicalActionRecoveryJournal {
   readonly #idempotencyKeys = new Map<string, string>();
   readonly #dispatchOrdinals = new Map<number, string>();
   readonly #admissionRecords = new Map<string, HostNodeAdmissionRecord>();
-  #write: (
-    record: StardewLogicalActionRecoveryRecord | HostNodeAdmissionRecord,
-  ) => void | StardewLogicalActionRecoveryRecord | Promise<void | StardewLogicalActionRecoveryRecord>;
-  #scope?: Readonly<Record<string, unknown>>;
+  #writeRecovery: RecoveryRecordWriter;
+  #writeAdmission: AdmissionRecordWriter;
+  #scope: Readonly<Record<string, unknown>> | undefined;
   #scopeConfigured = false;
   #closed = false;
   #nextDispatchOrdinal = 1;
   #tail: Promise<void> = Promise.resolve();
 
   public constructor(options: StardewLogicalActionRecoveryJournalOptions = {}) {
-    this.#write = options.write ?? (() => undefined);
+    const writer = options.write ?? (() => undefined);
+    this.#writeRecovery = (record) => Promise.resolve(writer(record)).then((durable) => durable ?? record);
+    this.#writeAdmission = (record) => Promise.resolve(writer(record)).then(() => undefined);
     for (const record of options.initialRecords ?? []) this.#seed(record);
   }
 
@@ -187,24 +143,23 @@ export class StardewLogicalActionRecoveryJournal {
     for (const record of document!.records) journal.#seed(record);
     for (const record of document!.admissionRecords ?? []) journal.#seedAdmission(record);
 
-    journal.#write = async (record): Promise<StardewLogicalActionRecoveryRecord> => {
-      if (isHostNodeAdmissionRecord(record)) {
-        await withPathLock(
-          path,
-          async () => {
-            const current = validateDocument(await readStrictJsonFile(path, maxBytes), normalized, maxRecords);
-            const admissionRecords = [...(current.admissionRecords ?? [])];
-            if (admissionRecords.some((item) => admissionKey(item.challenge) === admissionKey(record.challenge)))
-              throw new Error("duplicate_node_admission_record");
-            admissionRecords.push(record);
-            const encoded = JSON.stringify(makeDocument(normalized, current.records, admissionRecords));
-            if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error("recovery_journal_budget_exceeded");
-            await atomicWriteFile(path, encoded, normalized.directory);
-          },
-          { containmentRoot: normalized.directory },
-        );
-        return undefined as never;
-      }
+    journal.#writeAdmission = async (record): Promise<void> => {
+      await withPathLock(
+        path,
+        async () => {
+          const current = validateDocument(await readStrictJsonFile(path, maxBytes), normalized, maxRecords);
+          const admissionRecords = [...(current.admissionRecords ?? [])];
+          if (admissionRecords.some((item) => admissionKey(item.challenge) === admissionKey(record.challenge)))
+            throw new Error("duplicate_node_admission_record");
+          admissionRecords.push(record);
+          const encoded = JSON.stringify(makeDocument(normalized, current.records, admissionRecords));
+          if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error("recovery_journal_budget_exceeded");
+          await atomicWriteFile(path, encoded, normalized.directory);
+        },
+        { containmentRoot: normalized.directory },
+      );
+    };
+    journal.#writeRecovery = async (record): Promise<StardewLogicalActionRecoveryRecord> => {
       let durableRecord: StardewLogicalActionRecoveryRecord | undefined;
       await withPathLock(
         path,
@@ -232,7 +187,7 @@ export class StardewLogicalActionRecoveryJournal {
               durableRecord = record;
             }
           }
-          const next = makeDocument(normalized, records);
+          const next = makeDocument(normalized, records, current.admissionRecords ?? []);
           const encoded = JSON.stringify(next);
           if (records.length > maxRecords || Buffer.byteLength(encoded, "utf8") > maxBytes) {
             throw new Error("recovery_journal_budget_exceeded");
@@ -286,7 +241,15 @@ export class StardewLogicalActionRecoveryJournal {
     return Object.freeze([...this.#records.values()]);
   }
   /** Durable exact-node Host transport records; never a Mod program graph or fact store. */
-  public admissionRecord(challenge: NodeAdmissionChallenge): HostNodeAdmissionRecord | null {
+  public admissionRecord(challenge: BodyNodeAdmissionChallenge): HostNodeAdmissionRecord | null {
+    try {
+      assertNodeAdmissionChallenge(challenge);
+    } catch (error) {
+      if (error instanceof Error && error.message === "invalid_recovery_journal_record") {
+        throw new Error("node_admission_challenge_mismatch");
+      }
+      throw error;
+    }
     const record = this.#admissionRecords.get(admissionKey(challenge));
     if (record !== undefined && !sameAdmissionChallenge(record.challenge, challenge))
       throw new Error("node_admission_challenge_mismatch");
@@ -303,7 +266,7 @@ export class StardewLogicalActionRecoveryJournal {
           throw new Error("duplicate_node_admission_record");
         return existing;
       }
-      await Promise.resolve(this.#writeAdmission(record));
+      await this.#writeAdmission(record);
       const saved = freezeAdmissionRecord(record);
       this.#admissionRecords.set(key, saved);
       return saved;
@@ -315,10 +278,6 @@ export class StardewLogicalActionRecoveryJournal {
         (record) => record.state === "prepared" || record.state === "sent_unknown" || record.state === "recovery_pending",
       ),
     );
-  }
-
-  #writeAdmission(record: HostNodeAdmissionRecord): Promise<void> {
-    return Promise.resolve(this.#write(record)).then(() => undefined);
   }
 
   #seedAdmission(input: HostNodeAdmissionRecord): void {
@@ -370,9 +329,8 @@ export class StardewLogicalActionRecoveryJournal {
 
   #commitNew(record: StardewLogicalActionRecoveryRecord): Promise<StardewLogicalActionRecoveryRecord> {
     return Promise.resolve()
-      .then(() => this.#write(record))
-      .then((durable) => {
-        const saved = durable ?? record;
+      .then(() => this.#writeRecovery(record))
+      .then((saved) => {
         this.#records.set(saved.logicalActionId, saved);
         this.#requestIds.set(saved.requestId, saved.logicalActionId);
         this.#idempotencyKeys.set(saved.idempotencyKey, saved.logicalActionId);
@@ -396,8 +354,7 @@ export class StardewLogicalActionRecoveryJournal {
         throw new Error("invalid_recovery_journal_transition");
       }
       const next = freezeRecord({ ...current, state });
-      return Promise.resolve(this.#write(next)).then((durable) => {
-        const saved = durable ?? next;
+      return this.#writeRecovery(next).then((saved) => {
         this.#records.set(id, saved);
         return saved;
       });
@@ -538,9 +495,7 @@ function isExecutionRequest(value: unknown): value is ExecutionRequest {
     !validText(value.requestId) ||
     !validText(value.idempotencyKey) ||
     typeof value.action !== "string" ||
-    !Object.hasOwn(ACTION_ARGUMENT_KEYS, value.action) ||
     !isRecord(value.args) ||
-    !exactKeys(value.args, ACTION_ARGUMENT_KEYS[value.action]!) ||
     !Number.isSafeInteger(value.expectedRevision) ||
     value.expectedRevision < 0 ||
     !Number.isFinite(value.deadlineMs) ||
@@ -704,35 +659,32 @@ function assertAdmissionRecord(record: HostNodeAdmissionRecord): void {
   if (record.state === "grant_issued") {
     if (record.grant === undefined || record.rejectionCode !== undefined) throw new Error("invalid_recovery_journal_record");
     assertHostAdmissionGrant(record.grant);
-    if (!sameAdmissionChallenge(record.grant.challenge, record.challenge)) throw new Error("invalid_recovery_journal_record");
+    if (!sameAdmissionChallenge(grantChallenge(record.grant), record.challenge)) throw new Error("invalid_recovery_journal_record");
   } else if (record.grant !== undefined || (record.state === "admission_rejected" && !validText(record.rejectionCode ?? "")) || (record.state !== "admission_rejected" && record.rejectionCode !== undefined)) {
     throw new Error("invalid_recovery_journal_record");
   }
 }
 
-function assertNodeAdmissionChallenge(challenge: NodeAdmissionChallenge): void {
-  if (!isRecord(challenge) || !exactKeys(challenge, ["programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "scopeIdentity", "policyIdentity", "catalogRevision", "actionIdentity", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs"])
-    || !validText(challenge.programId) || !validText(challenge.nodeId) || !positiveInteger(challenge.nodeAttempt) || !positiveInteger(challenge.admissionAttempt)
-    || !Number.isSafeInteger(challenge.stopEpoch) || challenge.stopEpoch < 0 || !isRecord(challenge.scopeIdentity) || !isRecord(challenge.policyIdentity)
-    || !validText(challenge.catalogRevision) || !validText(challenge.actionIdentity) || !isRecord(challenge.canonicalBoundArgs)
-    || !Array.isArray(challenge.derivedResourceClaims) || !challenge.derivedResourceClaims.every(isRecord)
-    || !Number.isFinite(challenge.deadlineMs) || !isJsonSafe(challenge)) throw new Error("invalid_recovery_journal_record");
+function assertNodeAdmissionChallenge(challenge: BodyNodeAdmissionChallenge): void {
+  if (validateBodyNodeAdmissionPayload(challenge) !== null) throw new Error("invalid_recovery_journal_record");
 }
 
-function assertHostAdmissionGrant(grant: HostAdmissionGrant): void {
-  if (!isRecord(grant) || !exactKeys(grant, ["grantId", "challenge", "attachmentGeneration", "policyRevision", "policyIdentity", "catalogRevision"])
-    || !validText(grant.grantId) || !validText(grant.attachmentGeneration) || !validText(grant.policyRevision)
-    || !isRecord(grant.policyIdentity) || !validText(grant.catalogRevision))
-    throw new Error("invalid_recovery_journal_record");
-  assertNodeAdmissionChallenge(grant.challenge);
-  if (
-    grant.catalogRevision !== grant.challenge.catalogRevision ||
-    !sameOptional(grant.policyIdentity, grant.challenge.policyIdentity)
-  )
-    throw new Error("invalid_recovery_journal_record");
+function assertHostAdmissionGrant(grant: BodyNodeAdmissionGrant): void {
+  if (validateBodyNodeAdmissionPayload(grant, true) !== null) throw new Error("invalid_recovery_journal_record");
 }
 
-function admissionKey(challenge: NodeAdmissionChallenge): string {
+function grantChallenge(grant: BodyNodeAdmissionGrant): BodyNodeAdmissionChallenge {
+  const {
+    grantId: _grantId,
+    attachmentGeneration: _attachmentGeneration,
+    policyRevision: _policyRevision,
+    executionBinding: _executionBinding,
+    ...challenge
+  } = grant;
+  return challenge;
+}
+
+function admissionKey(challenge: BodyNodeAdmissionChallenge): string {
   // JSON encodes each string independently, so permitted NULs cannot shift a
   // delimiter boundary or make distinct controller-named tuples collide.
   return JSON.stringify([
@@ -742,12 +694,9 @@ function admissionKey(challenge: NodeAdmissionChallenge): string {
     challenge.admissionAttempt,
   ]);
 }
-function sameAdmissionChallenge(left: NodeAdmissionChallenge, right: NodeAdmissionChallenge): boolean {
+function sameAdmissionChallenge(left: BodyNodeAdmissionChallenge, right: BodyNodeAdmissionChallenge): boolean {
   return sameOptional(left, right);
 }
 function freezeAdmissionRecord(record: HostNodeAdmissionRecord): HostNodeAdmissionRecord {
   return deepFreeze(canonicalize(record)) as HostNodeAdmissionRecord;
-}
-function positiveInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 1;
 }

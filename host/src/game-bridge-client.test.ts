@@ -50,7 +50,7 @@ test("integration client exposes only Mod-originated state and receipts", () => 
         newEnvelope(
           "hello_ack",
           scope,
-          { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}], ...TEST_RUNTIME_ATTESTATION },
+          { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}], ...TEST_RUNTIME_ATTESTATION },
           message.correlationId,
           now,
         ),
@@ -113,6 +113,7 @@ test("integration client retains a Mod-published read-only operation without pro
           sessionId: "session_read_only_01",
           capabilities: ["inspect_world_map"],
           catalogRevision: 1,
+          policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
           enabledActionIds: [],
           presentationLocale: "en-US",
           registrations: [
@@ -147,7 +148,7 @@ test("integration client keeps the newest Mod snapshot when a delayed older snap
     newEnvelope(
       "hello_ack",
       scope,
-      { sessionId: "session_01", capabilities: ["inspect_self"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}], ...TEST_RUNTIME_ATTESTATION },
+      { sessionId: "session_01", capabilities: ["inspect_self"], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}], ...TEST_RUNTIME_ATTESTATION },
       "hello_01",
       now,
     ),
@@ -170,6 +171,7 @@ test("integration client clears projection until a matching snapshot follows a c
         sessionId: "session_01",
         capabilities: ["move_to_tile"],
         catalogRevision: 1,
+        policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
         enabledActionIds: ["move_to_tile"],
         presentationLocale: "en-US",
         registrations: [
@@ -186,11 +188,11 @@ test("integration client clears projection until a matching snapshot follows a c
   assert.deepEqual(client.state.enabledActionIds, ["move_to_tile"]);
   assert.equal(client.state.snapshot?.revision, 3);
   modEndpoint.send(
-    newEnvelope("catalog_update", scope, { catalogRevision: 2, enabledActionIds: [] }, "catalog_02", now),
+    newEnvelope("catalog_update", scope, { catalogRevision: 1, policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 }, enabledActionIds: [] }, "catalog_02", now),
     now,
   );
   assert.equal(client.state.snapshot, null);
-  assert.equal(client.state.catalogRevision, 2);
+   assert.equal(client.state.catalogRevision, 1);
   assert.deepEqual(client.state.enabledActionIds, []);
   assert.equal(
     client.execute(
@@ -210,8 +212,8 @@ test("integration client clears projection until a matching snapshot follows a c
     newEnvelope(
       "snapshot",
       scope,
-      { ...snapshot(), catalogRevision: 1, enabledActionIds: ["move_to_tile"] },
-      "stale_snapshot_01",
+       { ...snapshot(), catalogRevision: 1, enabledActionIds: ["move_to_tile"] },
+       "stale_snapshot_01",
       now,
     ),
     now,
@@ -221,7 +223,7 @@ test("integration client clears projection until a matching snapshot follows a c
     newEnvelope(
       "snapshot",
       scope,
-      { ...snapshot(), catalogRevision: 2, enabledActionIds: [], capabilities: ["inspect_self"] },
+       { ...snapshot(), catalogRevision: 1, enabledActionIds: [], capabilities: ["inspect_self"] },
       "snapshot_02",
       now,
     ),
@@ -229,7 +231,7 @@ test("integration client clears projection until a matching snapshot follows a c
   );
   const refreshedState = client.state;
   assert.ok(refreshedState.snapshot !== null);
-  assert.equal(refreshedState.snapshot.catalogRevision, 2);
+   assert.equal(refreshedState.snapshot.catalogRevision, 1);
   assert.deepEqual(refreshedState.snapshot.enabledActionIds, []);
   client.dispose();
 });
@@ -245,6 +247,7 @@ test("integration client rejects a catalog update that promotes a read-only oper
         sessionId: "session_read_only_01",
         capabilities: ["inspect_world_map", "move_to_tile"],
         catalogRevision: 1,
+        policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
         enabledActionIds: ["move_to_tile"],
         presentationLocale: "en-US",
         registrations: [
@@ -259,7 +262,7 @@ test("integration client rejects a catalog update that promotes a read-only oper
     now,
   );
   modEndpoint.send(
-    newEnvelope("catalog_update", scope, { catalogRevision: 2, enabledActionIds: ["inspect_world_map"] }, "catalog_read_only_02", now),
+    newEnvelope("catalog_update", scope, { catalogRevision: 1, policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 }, enabledActionIds: ["inspect_world_map"] }, "catalog_read_only_02", now),
     now,
   );
   assert.equal(client.state.connected, false);
@@ -278,6 +281,7 @@ test("integration client rejects a stale catalog update", () => {
         sessionId: "session_01",
         capabilities: ["move_to_tile"],
         catalogRevision: 2,
+        policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
         enabledActionIds: ["move_to_tile"],
         presentationLocale: "en-US",
         registrations: [
@@ -291,7 +295,7 @@ test("integration client rejects a stale catalog update", () => {
     now,
   );
   modEndpoint.send(
-    newEnvelope("catalog_update", scope, { catalogRevision: 2, enabledActionIds: [] }, "stale_catalog", now),
+    newEnvelope("catalog_update", scope, { catalogRevision: 1, policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 }, enabledActionIds: [] }, "stale_catalog", now),
     now,
   );
   assert.equal(client.state.connected, false);
@@ -310,6 +314,7 @@ test("integration client rejects an unregistered executable catalog update", () 
         sessionId: "session_01",
         capabilities: ["move_to_tile"],
         catalogRevision: 1,
+        policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
         enabledActionIds: ["move_to_tile"],
         presentationLocale: "en-US",
         registrations: [
@@ -323,7 +328,7 @@ test("integration client rejects an unregistered executable catalog update", () 
     now,
   );
   modEndpoint.send(
-    newEnvelope("catalog_update", scope, { catalogRevision: 2, enabledActionIds: ["equip_tool"] }, "unregistered_catalog", now),
+    newEnvelope("catalog_update", scope, { catalogRevision: 1, policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 }, enabledActionIds: ["equip_tool"] }, "unregistered_catalog", now),
     now,
   );
   assert.equal(client.state.connected, false);
@@ -360,7 +365,7 @@ test("integration client binds a typed cancel identity per request and validates
         newEnvelope(
           "hello_ack",
           scope,
-          { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}], ...TEST_RUNTIME_ATTESTATION },
+          { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}], ...TEST_RUNTIME_ATTESTATION },
           message.correlationId,
           now,
         ),
@@ -410,5 +415,70 @@ test("integration client binds a typed cancel identity per request and validates
     assert.match(payload.cancelId, /^[A-Za-z0-9_-]{1,128}$/);
   }
   assert.equal(client.state.latestReceipt?.state, "cancelled");
+  client.dispose();
+});
+
+
+test("integration client rejects a policy identity ABA reuse within one authenticated generation", () => {
+  const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  modEndpoint.send(
+    newEnvelope(
+      "hello_ack",
+      scope,
+      {
+        sessionId: "session_aba_01",
+        capabilities: ["move_to_tile"],
+        catalogRevision: 1,
+        policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+        enabledActionIds: ["move_to_tile"],
+        presentationLocale: "en-US",
+        registrations: [
+          { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" },
+        ],
+        ...TEST_RUNTIME_ATTESTATION,
+      },
+      "hello_aba_01",
+      now,
+    ),
+    now,
+  );
+  modEndpoint.send(
+    newEnvelope(
+      "catalog_update",
+      scope,
+      {
+        catalogRevision: 1,
+        policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 },
+        enabledActionIds: [],
+      },
+      "catalog_aba_02",
+      now,
+    ),
+    now,
+  );
+  assert.equal(client.state.connected, true);
+  assert.equal(client.state.catalogRevision, 1);
+  assert.deepEqual(client.state.policyIdentity, {
+    value: "abcdef0123456789abcdef0123456789",
+    capabilityRevision: 2,
+  });
+
+  modEndpoint.send(
+    newEnvelope(
+      "catalog_update",
+      scope,
+      {
+        catalogRevision: 1,
+        policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 3 },
+        enabledActionIds: [],
+      },
+      "catalog_aba_03",
+      now,
+    ),
+    now,
+  );
+  assert.equal(client.state.connected, false);
+  assert.equal(client.state.latestReasonCode, "invalid_catalog_update");
   client.dispose();
 });
