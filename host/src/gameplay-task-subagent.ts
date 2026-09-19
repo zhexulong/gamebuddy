@@ -133,6 +133,15 @@ type MutableTaskRecord = {
     expectedTargetId?: string;
     sceneTargetRef?: string;
   }>;
+  /**
+   * Task-owned full receipts keyed by `requestId|executionId`. This private
+   * cache is the lineage-addressed completion source: it is written only when
+   * a receipt matches an execution this task dispatched, so a later unrelated
+   * receipt (observation, background action, next instruction) that displaces
+   * the global latestReceipt can never move the completion verdict. The cache
+   * never crosses the GameplayTaskRecord boundary (evidence stays Mod-owned).
+   */
+  ownedReceipts: Map<string, IntegrationExecutionReceipt>;
   pendingDispatch: {
     actionId: string;
     requestId: string;
@@ -274,6 +283,7 @@ export class GameplayTaskSubagent {
       cancellationEpoch: this.#cancellationEpoch,
       minimumSnapshotRevision: null,
       executions: [],
+      ownedReceipts: new Map(),
       pendingDispatch: null,
       terminalReceipt: null,
       terminalReasonCode: null,
@@ -345,9 +355,7 @@ export class GameplayTaskSubagent {
             report.state === "completed" &&
             !hasAuthoritativeCompletion(
               report,
-              requireIntegrationAdapter(this.integration).readState(
-                this.integration,
-              ).latestReceipt,
+              taskOwnedReceipt(record, report),
               record.executions,
               requireIntegrationAdapter(this.integration).actionCatalog,
             )
@@ -555,12 +563,15 @@ export class GameplayTaskSubagent {
             reasonCode: finalReport.reasonCode,
           }),
         );
-        // Recheck at the Host terminal boundary. A later, unrelated receipt may
-        // have displaced the one that made report_to_parent admissible.
+        // Recheck at the Host terminal boundary. The completion verdict is
+        // lineage-addressed: only a receipt for an execution this task
+        // dispatched may prove completion. A later unrelated receipt displacing
+        // the global latestReceipt never moves this task's verdict.
+        const ownedReceipt = taskOwnedReceipt(record, finalReport);
         if (
           !hasAuthoritativeCompletion(
             finalReport,
-            integrationAdapter.readState(this.integration).latestReceipt,
+            ownedReceipt,
             record.executions,
             integrationAdapter.actionCatalog,
           )
@@ -1103,9 +1114,13 @@ async function awaitOwnedTerminalReceipt(
   return await awaitTaskOwnedTerminalReceipt({
     executions: record.executions,
     deadlineMs: deadline,
-    signal,
-    wakeSource,
+    ...(signal === undefined ? {} : { signal }),
+    ...(wakeSource === undefined ? {} : { wakeSource }),
+    // The lineage cache is consulted first so a terminal receipt this task
+    // already observed cannot be lost to a later unrelated receipt; the global
+    // latestReceipt is only a fallback while the world has not yet moved.
     readReceipt: () =>
+      taskOwnedReceiptFromCache(record) ??
       requireIntegrationAdapter(integration).readState(integration)
         .latestReceipt,
   });
@@ -1214,6 +1229,62 @@ function isTerminalReceiptState(state: string): boolean {
   );
 }
 
+/**
+ * Task-owned receipt key for the lineage-addressed completion cache.
+ */
+function ownedReceiptKey(requestId: string, executionId: string): string {
+  return `${requestId}|${executionId}`;
+}
+
+/**
+ * Remember a receipt that matches an execution this task dispatched. The
+ * cache is the completion authority precisely because it is written only for
+ * task-owned tuples: a later unrelated receipt can displace the global
+ * latestReceipt without ever moving this task's verdict.
+ */
+function rememberOwnedReceipt(
+  record: MutableTaskRecord,
+  receipt: IntegrationExecutionReceipt,
+): void {
+  record.ownedReceipts.set(
+    ownedReceiptKey(receipt.requestId, receipt.executionId),
+    receipt,
+  );
+}
+
+/**
+ * Resolve the completion receipt a worker report claims, from the task's
+ * private lineage cache only. The report evidence names an exact
+ * requestId/executionId this task dispatched; anything the global
+ * latestReceipt currently holds is irrelevant to the verdict.
+ */
+function taskOwnedReceipt(
+  record: MutableTaskRecord,
+  report: Readonly<{ state: string; evidence?: unknown }>,
+): IntegrationExecutionReceipt | null {
+  if (!isRecord(report.evidence)) return null;
+  const requestId = report.evidence.requestId;
+  const executionId = report.evidence.executionId;
+  if (typeof requestId !== "string" || typeof executionId !== "string")
+    return null;
+  return (
+    record.ownedReceipts.get(ownedReceiptKey(requestId, executionId)) ?? null
+  );
+}
+
+/**
+ * The first terminal receipt this task already observed, if any. Used by the
+ * terminal waiter so a task-owned outcome is never lost to displacement.
+ */
+function taskOwnedReceiptFromCache(
+  record: MutableTaskRecord,
+): IntegrationExecutionReceipt | null {
+  for (const receipt of record.ownedReceipts.values()) {
+    if (isTerminalReceiptState(receipt.state)) return receipt;
+  }
+  return null;
+}
+
 function reconcileKnownExecution(
   record: MutableTaskRecord,
   integration: GameConnection,
@@ -1228,6 +1299,7 @@ function reconcileKnownExecution(
   );
   if (known !== undefined) {
     known.state = receipt.state;
+    rememberOwnedReceipt(record, receipt);
     recordTerminalReceiptRevision(record, receipt);
   }
 }
@@ -1275,6 +1347,7 @@ function settlePendingDispatch(
     receipt.executionId,
     receipt.state,
   );
+  rememberOwnedReceipt(record, receipt);
   recordTerminalReceiptRevision(record, receipt);
   const execution = record.executions.find(
     (known) =>
