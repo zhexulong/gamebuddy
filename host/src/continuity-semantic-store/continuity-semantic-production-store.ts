@@ -12,7 +12,7 @@ import {
 } from "./continuity-semantic-deadline-cancellation.internal.js";
 
 /** Production-only, fresh-only S4a substrate. It intentionally has no adoption or legacy imports. */
-export const PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION = 43;
+export const PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION = 44;
 export type ProductionPrincipal = Readonly<{ continuityId: string; companionId: string; playerId: string }>;
 export type ProductionBootstrapInput = Readonly<{
   principal: ProductionPrincipal;
@@ -348,6 +348,26 @@ export type ProductionGameSessionBindingInput = Readonly<{
   gameSessionId: string;
   expectedRevision: number;
 }>;
+/** Owner-private relation between one durable session and its selected integration world. */
+export type ProductionGameSessionWorldBinding = Readonly<{
+  gameSessionId: string;
+  integrationId: string;
+  bindingRef: string;
+  status: "registered" | "terminal";
+  revision: number;
+}>;
+export type ProductionGameSessionWorldBindingInput = Readonly<{
+  gameSessionId: string;
+  integrationId: string;
+  bindingRef: string;
+  operationId: string;
+}>;
+export type ProductionGameSessionWorldBindingTerminalInput = Readonly<{
+  gameSessionId: string;
+  integrationId: string;
+  expectedRevision: number;
+  operationId: string;
+}>;
 
 export type ProductionSagaStore = Readonly<{
   claim(input: ProductionSagaInput): ProductionSagaReadback;
@@ -398,6 +418,13 @@ export type ProductionSagaStore = Readonly<{
   failGameSessionCreation(input: ProductionGameSessionBindingInput): ProductionGameSessionMetadata;
   readGameSessionMetadata(input: Readonly<{ gameSessionId: string }>): ProductionGameSessionMetadata | null;
   listResumableGameSessions(): readonly ProductionGameSessionMetadata[];
+  registerGameSessionWorldBinding(input: ProductionGameSessionWorldBindingInput): ProductionGameSessionWorldBinding;
+  readGameSessionWorldBinding(
+    input: Readonly<{ gameSessionId: string; integrationId: string }>,
+  ): ProductionGameSessionWorldBinding | null;
+  markGameSessionWorldBindingTerminal(
+    input: ProductionGameSessionWorldBindingTerminalInput,
+  ): ProductionGameSessionWorldBinding;
 }>;
 export type ProductionContinuityStore = Readonly<{
   bootstrapFresh(input: ProductionBootstrapInput): ProductionStoreMetadata;
@@ -422,6 +449,7 @@ const tableNames = [
   "production_game_lease",
   "production_game_session",
   "production_game_session_metadata",
+  "production_game_session_world_binding",
   "production_initial_chat_saga",
   "production_partition",
   "production_quarantine",
@@ -439,7 +467,7 @@ const indexNames = [
   "production_chat_runtime_teardown_predecessor_index",
 ] as const;
 const schema = `
-CREATE TABLE production_store_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL CHECK(schema_version=43));
+ CREATE TABLE production_store_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL CHECK(schema_version=44));
 CREATE TABLE production_bootstrap (singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL REFERENCES production_store_meta(store_id), bootstrap_operation_id TEXT NOT NULL UNIQUE, continuity_id TEXT NOT NULL, companion_id TEXT NOT NULL, player_id TEXT NOT NULL, authority_generation INTEGER NOT NULL CHECK(authority_generation>=1), authority_root_identity TEXT NOT NULL);
 CREATE TABLE production_partition (singleton INTEGER PRIMARY KEY CHECK(singleton=1), continuity_id TEXT NOT NULL UNIQUE, companion_id TEXT NOT NULL, player_id TEXT NOT NULL, partition_revision INTEGER NOT NULL CHECK(partition_revision>=1), fence_epoch INTEGER NOT NULL CHECK(fence_epoch>=1), selection_revision INTEGER NOT NULL CHECK(selection_revision>=0), game_partition_revision INTEGER NOT NULL CHECK(game_partition_revision>=1), game_fence_epoch INTEGER NOT NULL CHECK(game_fence_epoch>=1));
 CREATE TABLE production_surface_session (session_id TEXT PRIMARY KEY, continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), surface TEXT NOT NULL CHECK(surface IN ('chat','game')), state TEXT NOT NULL CHECK(state IN ('suspended','active','ended','pending','recovery_required')), created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0), updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>=0));
@@ -450,7 +478,8 @@ CREATE TABLE production_chat_runtime_teardown_intent (continuity_id TEXT NOT NUL
 CREATE TABLE production_continuity_event (event_id TEXT PRIMARY KEY, continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), session_id TEXT NOT NULL REFERENCES production_surface_session(session_id), type TEXT NOT NULL CHECK(type='chat_registered'), surface TEXT NOT NULL CHECK(surface='chat'), occurred_at_ms INTEGER NOT NULL CHECK(occurred_at_ms>=0));
 CREATE TABLE production_active_selection (singleton INTEGER PRIMARY KEY CHECK(singleton=1), chat_surface_session_id TEXT NOT NULL REFERENCES production_continuity_thread(chat_surface_session_id), chat_thread_id TEXT NOT NULL, selection_revision INTEGER NOT NULL CHECK(selection_revision>=1));
 CREATE TABLE production_game_session (session_id TEXT PRIMARY KEY REFERENCES production_surface_session(session_id), continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), state TEXT NOT NULL CHECK(state IN ('pending','active','ended','recovery_required')));
-CREATE TABLE production_game_session_metadata (game_session_id TEXT PRIMARY KEY, creation_request_id TEXT NOT NULL UNIQUE, integration_id TEXT NOT NULL, continuity_identity_id TEXT REFERENCES production_partition(continuity_id), status TEXT NOT NULL CHECK(status IN ('pending','resumable','failed')), revision INTEGER NOT NULL CHECK(revision>=1), CHECK((status='pending' AND revision=1) OR (status IN ('resumable','failed') AND revision=2)));
+CREATE TABLE production_game_session_metadata (game_session_id TEXT PRIMARY KEY, creation_request_id TEXT NOT NULL UNIQUE, integration_id TEXT NOT NULL, continuity_identity_id TEXT REFERENCES production_partition(continuity_id), status TEXT NOT NULL CHECK(status IN ('pending','resumable','failed')), revision INTEGER NOT NULL CHECK(revision>=1), CHECK((status='pending' AND revision=1) OR (status='resumable' AND revision=2) OR (status='failed' AND revision IN (2,3))));
+ CREATE TABLE production_game_session_world_binding (game_session_id TEXT PRIMARY KEY REFERENCES production_game_session_metadata(game_session_id), integration_id TEXT NOT NULL, binding_ref TEXT NOT NULL, operation_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN ('registered','terminal')), revision INTEGER NOT NULL CHECK(revision>=1), CHECK((status='registered' AND revision=1) OR (status='terminal' AND revision=2)));
 CREATE TABLE production_game_lease (continuity_id TEXT PRIMARY KEY REFERENCES production_partition(continuity_id), session_id TEXT NOT NULL REFERENCES production_game_session(session_id), binding_digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('owned','close_pending','recovery_required')), lease_revision INTEGER NOT NULL CHECK(lease_revision>=1), world_json TEXT NOT NULL DEFAULT '{}', owner_json TEXT NOT NULL DEFAULT '{}', fence_token TEXT NOT NULL DEFAULT '', deadline_at_ms INTEGER NOT NULL DEFAULT 0 CHECK(deadline_at_ms>=0));
 CREATE TABLE production_game_intent (continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), operation_id TEXT NOT NULL, session_id TEXT NOT NULL REFERENCES production_game_session(session_id), payload_digest TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','terminal','aborted','recovery_required')), request_id TEXT NOT NULL DEFAULT '', request_json TEXT NOT NULL DEFAULT '{}', world_json TEXT NOT NULL DEFAULT '{}', owner_json TEXT NOT NULL DEFAULT '{}', fence_token TEXT NOT NULL DEFAULT '', deadline_at_ms INTEGER NOT NULL DEFAULT 0 CHECK(deadline_at_ms>=0), prepared_vector_json TEXT NOT NULL DEFAULT '{}', committed_vector_json TEXT, receipt_json TEXT, receipt_digest TEXT, recovery_reason TEXT CHECK(recovery_reason IN ('effect_failed','receipt_invalid','deadline_expired','revision_conflict')), PRIMARY KEY(continuity_id,operation_id));
 CREATE TABLE production_continuity_command (continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), operation_id TEXT NOT NULL, command_kind TEXT NOT NULL CHECK(command_kind IN ('register_chat','verify_chat_content','select_chat','transition_chat_lifecycle')), payload_json TEXT NOT NULL, payload_digest TEXT NOT NULL, response_json TEXT NOT NULL, response_digest TEXT NOT NULL, committed_vector_json TEXT NOT NULL, PRIMARY KEY(continuity_id,operation_id));
@@ -519,24 +548,6 @@ function exactPlainDataObject(value: unknown, keys: readonly string[]): value is
 function exactFrozenPlainDataObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   return Object.isFrozen(value) && exactPlainDataObject(value, keys);
 }
-function _exactReceiptDataObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-  // Runtime receipts are Host-minted immutable records.  Their ingress shape
-  // must be exact, but rejecting frozen data would reject the only legitimate
-  // producer as well as untrusted mutable payloads.
-  if (!exactPlainDataObject(value, keys)) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    exactPlainDataObject(record.origin, [
-      "chatThreadId",
-      "chatSurfaceSessionId",
-      "playerId",
-      "companionId",
-      "continuityId",
-    ]) &&
-    exactPlainDataObject(record.world, ["integrationId", "saveId", "worldId"]) &&
-    exactPlainDataObject(record.owner, ["ownerToken", "runtimeInstanceId", "ownerPid", "ownerProcessStartIdentity"])
-  );
-}
 const vectorKeys = ["partitionRevision", "fenceEpoch", "selectionRevision"] as const;
 /** Reads only property descriptors so untrusted vector accessors never execute at ingress. */
 const validVector = (v: unknown): v is SagaVector => validVectorRecord(v, true);
@@ -558,9 +569,9 @@ function validVectorRecord(v: unknown, requireWritable: boolean): v is SagaVecto
       return false;
   }
   return (
-    descriptors.partitionRevision.value >= 1 &&
-    descriptors.fenceEpoch.value >= 1 &&
-    descriptors.selectionRevision.value >= 0
+    (descriptors.partitionRevision!.value as number) >= 1 &&
+    (descriptors.fenceEpoch!.value as number) >= 1 &&
+    (descriptors.selectionRevision!.value as number) >= 0
   );
 }
 const validPrincipal = (p: unknown): p is ProductionPrincipal =>
@@ -791,10 +802,22 @@ export function openProductionContinuityStore(
           requireOpen();
           return readGameSessionMetadata(db, immutable, input);
         },
-        listResumableGameSessions() {
-          requireOpen();
-          return listResumableGameSessions(db, immutable);
-        },
+         listResumableGameSessions() {
+           requireOpen();
+           return listResumableGameSessions(db, immutable);
+         },
+         registerGameSessionWorldBinding(input) {
+           requireOpen();
+           return registerGameSessionWorldBinding(db, immutable, input);
+         },
+         readGameSessionWorldBinding(input) {
+           requireOpen();
+           return readGameSessionWorldBinding(db, immutable, input);
+         },
+         markGameSessionWorldBindingTerminal(input) {
+           requireOpen();
+           return markGameSessionWorldBindingTerminal(db, immutable, input);
+         },
       });
     },
     configuration() {
@@ -845,8 +868,8 @@ function validatePhysicalSignature(db: DatabaseSync): void {
   const objects = db
     .prepare("SELECT type,name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")
     .all() as any[];
-  const actualTables = objects.filter((o) => o.type === "table").map((o) => o.name);
-  const actualIndexes = objects.filter((o) => o.type === "index").map((o) => o.name);
+   const actualTables = objects.filter((o) => o.type === "table").map((o) => o.name);
+   const actualIndexes = objects.filter((o) => o.type === "index").map((o) => o.name);
   if (
     objects.some((o) => o.type !== "table" && o.type !== "index") ||
     actualTables.join("|") !== [...tableNames].sort().join("|") ||
@@ -1050,6 +1073,82 @@ function validateBootstrap(db: DatabaseSync, input: ProductionBootstrapInput): P
 function count(db: DatabaseSync, table: string): number {
   return (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as any).c;
 }
+function validateGameMaterialization(db: DatabaseSync): void {
+  const p = db.prepare("SELECT * FROM production_partition WHERE singleton=1").get() as any,
+    games = db.prepare("SELECT * FROM production_game_session").all() as any[],
+    leases = db.prepare("SELECT * FROM production_game_lease").all() as any[],
+    liveGames = games.filter((g) => g.state !== "ended"),
+    sessionMetadata = db.prepare("SELECT * FROM production_game_session_metadata").all() as any[],
+    worldBindings = db.prepare("SELECT * FROM production_game_session_world_binding").all() as any[];
+  if (
+    liveGames.length > 1 ||    games.some(
+      (g) =>
+        g.continuity_id !== p?.continuity_id ||
+        !safeId(g.session_id) ||
+        !["pending", "active", "ended", "recovery_required"].includes(g.state) ||
+        !db
+          .prepare(
+            "SELECT 1 FROM production_surface_session WHERE session_id=? AND continuity_id=? AND surface='game' AND state=?",
+          )
+          .get(g.session_id, p?.continuity_id, g.state),
+    ) ||
+    leases.length > 1 ||
+    leases.some(
+      (l) =>
+        l.continuity_id !== p?.continuity_id ||
+        !games.some((g) => g.session_id === l.session_id) ||
+        !["owned", "close_pending", "recovery_required"].includes(l.state),
+    ) ||
+    sessionMetadata.some(
+      (m) =>
+        !safeId(m.game_session_id) ||
+        !safeId(m.creation_request_id) ||
+        !safeId(m.integration_id) ||
+        (m.continuity_identity_id !== null && m.continuity_identity_id !== p?.continuity_id) ||
+        !["pending", "resumable", "failed"].includes(m.status) ||
+        !Number.isSafeInteger(m.revision) ||
+        m.revision < 1 ||
+        (m.status === "pending" && m.revision !== 1) ||
+        (m.status === "resumable" && m.revision !== 2) ||
+        (m.status === "failed" && ![2, 3].includes(m.revision)),
+    ) ||
+    worldBindings.some(
+      (b) =>
+        !safeId(b.game_session_id) ||
+        !safeId(b.integration_id) ||
+        typeof b.binding_ref !== "string" ||
+        !/^[A-Za-z0-9_-]{1,256}$/.test(b.binding_ref) ||
+        !safeId(b.operation_id) ||
+        !["registered", "terminal"].includes(b.status) ||
+        !Number.isSafeInteger(b.revision) ||
+        (b.status === "registered" && b.revision !== 1) ||
+        (b.status === "terminal" && b.revision !== 2) ||
+        !sessionMetadata.some(
+          (m) =>
+            m.game_session_id === b.game_session_id &&
+            m.integration_id === b.integration_id &&
+            ((b.status === "registered" && ["pending", "resumable"].includes(m.status)) ||
+              (b.status === "terminal" && m.status === "failed" && m.revision === 3)),
+        ),
+    ) ||
+    sessionMetadata.some(
+      (m) =>
+        (m.status === "resumable" &&
+          !worldBindings.some(
+            (b) => b.game_session_id === m.game_session_id && b.integration_id === m.integration_id && b.status === "registered",
+          )) ||
+        (m.status === "failed" &&
+          m.revision === 2 &&
+          worldBindings.some((b) => b.game_session_id === m.game_session_id)) ||
+        (m.status === "failed" &&
+          m.revision === 3 &&
+          !worldBindings.some(
+            (b) => b.game_session_id === m.game_session_id && b.integration_id === m.integration_id && b.status === "terminal",
+          )),
+    )
+  )
+    throw new Error("production_store_materialization_invalid");
+}
 function validateMaterialization(db: DatabaseSync): void {
   const boot = count(db, "production_bootstrap"),
     part = count(db, "production_partition");
@@ -1060,10 +1159,12 @@ function validateMaterialization(db: DatabaseSync): void {
       if (
         table !== "production_store_meta" &&
         table !== "production_bootstrap" &&
-        table !== "production_game_session" &&
-        table !== "production_game_lease" &&
-        table !== "production_game_intent" &&
-        count(db, table)
+         table !== "production_game_session" &&
+         table !== "production_game_lease" &&
+         table !== "production_game_intent" &&
+         table !== "production_game_session_metadata" &&
+         table !== "production_game_session_world_binding" &&
+         count(db, table)
       )
         throw new Error("production_store_materialization_invalid");
     return;
@@ -1077,26 +1178,28 @@ function validateMaterialization(db: DatabaseSync): void {
       "production_continuity_event",
       "production_chat_runtime_intent",
       "production_continuity_command",
-      "production_saga_operation",
-      "production_saga_receipt",
-    ])
+       "production_saga_operation",
+       "production_saga_receipt",
+      ])
       if (count(db, table)) throw new Error("production_store_materialization_invalid");
     const quarantines = db.prepare("SELECT * FROM production_quarantine").all() as any[];
-    if (
-      quarantines.length > 1 ||
-      (quarantines.length === 1 &&
-        (quarantines[0].continuity_id !==
-          db.prepare("SELECT continuity_id FROM production_bootstrap WHERE singleton=1").get()?.continuity_id ||
-          quarantines[0].reason !== "abandoned_windows_root_mutex" ||
-          quarantines[0].quarantine_id !== `abandoned-${metadata(db)?.storeId}`))
-    )
-      throw new Error("production_store_materialization_invalid");
-    return;
+     if (
+       quarantines.length > 1 ||
+       (quarantines.length === 1 &&
+         (quarantines[0].continuity_id !==
+           db.prepare("SELECT continuity_id FROM production_bootstrap WHERE singleton=1").get()?.continuity_id ||
+           quarantines[0].reason !== "abandoned_windows_root_mutex" ||
+           quarantines[0].quarantine_id !== `abandoned-${metadata(db)?.storeId}`))
+     )
+       throw new Error("production_store_materialization_invalid");
+     validateGameMaterialization(db);
+     return;
   }
-  if (
-    !sha(saga.holder_binding_digest) ||
-    !["claimed_empty", "chat_registered", "content_verified", "selected"].includes(saga.phase)
-  )
+   validateGameMaterialization(db);
+   if (
+     !sha(saga.holder_binding_digest) ||
+     !["claimed_empty", "chat_registered", "content_verified", "selected"].includes(saga.phase)
+   )
     throw new Error("production_store_materialization_invalid");
   const operations = db.prepare("SELECT * FROM production_saga_operation").all() as any[];
   const receipts = db.prepare("SELECT * FROM production_saga_receipt").all() as any[];
@@ -1160,54 +1263,13 @@ function validateMaterialization(db: DatabaseSync): void {
     lifecycle = db.prepare("SELECT * FROM production_chat_lifecycle_metadata").all() as any[],
     event = db.prepare("SELECT * FROM production_continuity_event").all() as any[],
     selection = db.prepare("SELECT * FROM production_active_selection").all() as any[];
-  const games = db.prepare("SELECT * FROM production_game_session").all() as any[];
-  const leases = db.prepare("SELECT * FROM production_game_lease").all() as any[];
-  const _intents = db.prepare("SELECT * FROM production_game_intent").all() as any[];
-  const sessionMetadata = db.prepare("SELECT * FROM production_game_session_metadata").all() as any[];
   const chatRuntimeIntents = db.prepare("SELECT * FROM production_chat_runtime_intent").all() as any[];
   const bootstrap = db
     .prepare("SELECT continuity_id,companion_id,player_id FROM production_bootstrap WHERE singleton=1")
     .get() as any;
-  const liveGames = games.filter((g) => g.state !== "ended"),
-    liveGameState = null,
+  const liveGameState = null,
     successorActive = false,
     successorEnter = false;
-  if (
-    liveGames.length > 1 ||
-    games.some(
-      (g) =>
-        g.continuity_id !== p?.continuity_id ||
-        !safeId(g.session_id) ||
-        !["pending", "active", "ended", "recovery_required"].includes(g.state) ||
-        !db
-          .prepare(
-            "SELECT 1 FROM production_surface_session WHERE session_id=? AND continuity_id=? AND surface='game' AND state=?",
-          )
-          .get(g.session_id, p.continuity_id, g.state),
-    ) ||
-    leases.length > 1 ||
-    leases.some(
-      (l) =>
-        l.continuity_id !== p?.continuity_id ||
-        !games.some((g) => g.session_id === l.session_id) ||
-        !["owned", "close_pending", "recovery_required"].includes(l.state),
-    ) ||
-    chatRuntimeIntents.some((intent) => !validPersistedChatRuntimeIntent(db, intent, p, bootstrap)) ||
-    !validPersistedChatRuntimeTeardownIntents(db, p, bootstrap) ||
-    sessionMetadata.some(
-      (m) =>
-        !safeId(m.game_session_id) ||
-        !safeId(m.creation_request_id) ||
-        !safeId(m.integration_id) ||
-        (m.continuity_identity_id !== null && m.continuity_identity_id !== p?.continuity_id) ||
-        !["pending", "resumable", "failed"].includes(m.status) ||
-        !Number.isSafeInteger(m.revision) ||
-        m.revision < 1 ||
-        (m.status === "pending") !== (m.revision === 1) ||
-        ((m.status === "resumable" || m.status === "failed") !== (m.revision === 2))
-    )
-  )
-    throw new Error("production_store_materialization_invalid");
   const chatRuntimeState = currentChatRuntimeState(db, chatRuntimeIntents);
   if (count(db, "production_continuity_command")) {
     validateV35ChatExtension(
@@ -1355,29 +1417,7 @@ function sagaVector(db: DatabaseSync): SagaVector {
     selectionRevision: p.selection_revision,
   });
 }
-function _chatReadback(db: DatabaseSync, operationId: string, thread: any): ProductionChatCommandReadback {
-  const metadata = db
-    .prepare("SELECT management_revision FROM production_chat_lifecycle_metadata WHERE chat_surface_session_id=?")
-    .get(thread.chat_surface_session_id) as any;
-  if (!metadata || !positiveRevision(metadata.management_revision))
-    throw new Error("production_store_materialization_invalid");
-  const row = db
-    .prepare("SELECT command_kind FROM production_continuity_command WHERE operation_id=?")
-    .get(operationId) as any;
-  const kind = row?.command_kind;
-  if (!["register_chat", "verify_chat_content", "select_chat", "transition_chat_lifecycle"].includes(kind))
-    throw new Error("production_store_materialization_invalid");
-  return Object.freeze({
-    operationId,
-    kind,
-    chatThreadId: thread.chat_thread_id,
-    chatSurfaceSessionId: thread.chat_surface_session_id,
-    lifecycle: thread.lifecycle,
-    managementRevision: metadata.management_revision,
-    vector: sagaVector(db),
-    activeSelection: selectedReadback(db),
-  });
-}
+
 function validChatInput(input: unknown): input is ProductionChatCommandInput {
   if (!input || typeof input !== "object") return false;
   const value = input as ProductionChatCommandInput;
@@ -2240,9 +2280,6 @@ function validChatRuntimeOwner(value: unknown): value is ProductionChatRuntimeOw
 function validChatRuntimeRequest(input: unknown): input is ProductionChatRuntimeRequest {
   return validChatRuntimeRequestRecord(input, validVector);
 }
-function validStoredChatRuntimeRequest(input: unknown): input is ProductionChatRuntimeRequest {
-  return validChatRuntimeRequestRecord(input, validStoredVector);
-}
 function validChatRuntimeTeardownRequest(input: unknown): input is ProductionChatRuntimeTeardownRequest {
   if (!input || typeof input !== "object" || Object.getPrototypeOf(input) !== Object.prototype) return false;
   const value = input as ProductionChatRuntimeTeardownRequest;
@@ -2314,22 +2351,7 @@ function validChatRuntimeRequestRecord(
     vectorValidator(value.expected)
   );
 }
-function _validChatRuntimePermitRequest(input: unknown): input is ProductionChatRuntimeRequest {
-  if (!input || typeof input !== "object" || Object.getPrototypeOf(input) !== Object.prototype) return false;
-  const value = input as ProductionChatRuntimeRequest;
-  return (
-    validPrincipal(value.principal) &&
-    safeId(value.operationId) &&
-    safeId(value.requestId) &&
-    safeId(value.chatThreadId) &&
-    safeId(value.chatSurfaceSessionId) &&
-    sha(value.runtimeBindingDigest) &&
-    validChatRuntimeOwner(value.owner) &&
-    Number.isSafeInteger(value.deadlineAtMs) &&
-    value.deadlineAtMs >= 0 &&
-    validVector(value.expected)
-  );
-}
+
 function canonicalValidChatRuntimeRequest(input: unknown): input is ProductionChatRuntimeRequest {
   if (!input || typeof input !== "object" || Object.getPrototypeOf(input) !== Object.prototype) return false;
   const value = input as Record<string, unknown>;
@@ -3076,234 +3098,7 @@ function failChatRuntime(
     return chatRuntimeReadback(db, transitionChatRuntimeToRecovery(db, row, "deadline_expired"));
   });
 }
-/**
- * A Chat runtime history is append-only. Only a pending/recovery row, or the
- * terminal row is receipt evidence, not a live transition. Only one
- * pending/recovery row may describe live materialization; historical terminal
- * rows must never become a permanent admission barrier.
- */
-function validPersistedChatRuntimeTeardownIntents(db: DatabaseSync, partition: any, bootstrap: any): boolean {
-  const rows = db.prepare("SELECT * FROM production_chat_runtime_teardown_intent ORDER BY operation_id").all() as any[];
-  const bootstrapRows = db.prepare("SELECT * FROM production_chat_runtime_intent ORDER BY operation_id").all() as any[];
-  const operationIds = new Set<string>();
-  const expectedVectors = new Set<string>();
-  const committedVectors = new Set<string>();
-  let liveCount = 0;
-  for (const row of bootstrapRows) {
-    if (operationIds.has(row.operation_id)) return false;
-    operationIds.add(row.operation_id);
-    if (row.status === "pending" || row.status === "recovery_required") liveCount++;
-    const request = parse(row.request_json),
-      expected = request?.expected;
-    if (
-      !request ||
-      !validStoredChatRuntimeRequest(request) ||
-      !validStoredVector(expected) ||
-      expectedVectors.has(canonical(expected)) ||
-      !validFenceToken(row.fence_token)
-    )
-      return false;
-    expectedVectors.add(canonical(expected));
-    if (row.status === "terminal") {
-      const committed = parse(row.committed_vector_json);
-      if (!validStoredVector(committed) || committedVectors.has(canonical(committed))) return false;
-      committedVectors.add(canonical(committed));
-    }
-  }
-  if (liveCount > 1) return false;
-  const predecessors = new Set<string>();
-  for (const row of rows) {
-    const request = parse(row.request_json),
-      prepared = parse(row.prepared_vector_json),
-      committed = row.committed_vector_json === null ? null : parse(row.committed_vector_json),
-      receipt = row.receipt_json === null ? null : parse(row.receipt_json);
-    const predecessor = db
-      .prepare("SELECT * FROM production_chat_runtime_intent WHERE continuity_id=? AND operation_id=?")
-      .get(row.continuity_id, row.bootstrap_operation_id) as any;
-    if (
-      !request ||
-      !validChatRuntimeTeardownRequest(request) ||
-      !predecessor ||
-      predecessor.status !== "terminal" ||
-      row.continuity_id !== partition?.continuity_id ||
-      request.principal.continuityId !== bootstrap?.continuity_id ||
-      request.principal.companionId !== bootstrap?.companion_id ||
-      request.principal.playerId !== bootstrap?.player_id ||
-      row.operation_id !== request.operationId ||
-      row.request_id !== request.requestId ||
-      row.bootstrap_operation_id !== request.bootstrapOperationId ||
-      row.chat_thread_id !== request.chatThreadId ||
-      row.chat_surface_session_id !== request.chatSurfaceSessionId ||
-      row.payload_digest !== digest(request) ||
-      row.request_json !== canonicalChatRuntimeTeardownRequest(request) ||
-      row.runtime_binding_digest !== request.runtimeBindingDigest ||
-      row.owner_json !== canonical(request.owner) ||
-      row.deadline_at_ms !== request.deadlineAtMs ||
-      !Number.isSafeInteger(row.prepared_at_ms) ||
-      row.prepared_at_ms < 0 ||
-      row.prepared_at_ms > row.deadline_at_ms ||
-      !validStoredVector(prepared) ||
-      prepared.partitionRevision !== request.expected.partitionRevision + 1 ||
-      prepared.fenceEpoch !== request.expected.fenceEpoch + 1 ||
-      prepared.selectionRevision !== request.expected.selectionRevision ||
-      predecessor.chat_surface_session_id !== request.chatSurfaceSessionId ||
-      predecessor.chat_thread_id !== request.chatThreadId ||
-      predecessor.runtime_binding_digest !== request.runtimeBindingDigest ||
-      predecessor.owner_json !== canonical(request.owner) ||
-      !["pending", "terminal", "recovery_required"].includes(row.status) ||
-      predecessors.has(row.bootstrap_operation_id)
-    )
-      return false;
-    predecessors.add(row.bootstrap_operation_id);
-    if (operationIds.has(row.operation_id)) return false;
-    operationIds.add(row.operation_id);
-    if (row.status === "pending" || row.status === "recovery_required") {
-      liveCount++;
-      if (liveCount > 1) return false;
-    }
-    if (!validFenceToken(row.fence_token)) return false;
-    if (canonical(parse(predecessor.committed_vector_json)) !== canonical(request.expected)) return false;
-    if (row.status === "pending" || row.status === "recovery_required") {
-      if (
-        committed !== null ||
-        receipt !== null ||
-        row.receipt_digest !== null ||
-        (row.status === "pending" && row.recovery_reason !== null) ||
-        (row.status === "recovery_required" &&
-          !["effect_failed", "receipt_invalid", "deadline_expired", "revision_conflict"].includes(
-            row.recovery_reason,
-          )) ||
-        !db
-          .prepare("SELECT 1 FROM production_surface_session WHERE session_id=? AND state=?")
-          .get(row.chat_surface_session_id, row.status === "pending" ? "suspended" : "recovery_required")
-      )
-        return false;
-    } else {
-      const currentPartition = db
-        .prepare("SELECT selection_revision FROM production_partition WHERE singleton=1")
-        .get() as any;
-      const reopenedBySelection =
-        !!db
-          .prepare("SELECT 1 FROM production_surface_session WHERE session_id=? AND surface='chat' AND state='active'")
-          .get(row.chat_surface_session_id) &&
-        validStoredVector(committed) &&
-        currentPartition?.selection_revision > committed.selectionRevision;
-      const laterRuntime = db
-        .prepare("SELECT request_json FROM production_chat_runtime_intent WHERE continuity_id=? AND operation_id<>?")
-        .all(row.continuity_id, row.bootstrap_operation_id) as any[];
-      const reenteredAfterTeardown = laterRuntime.some((candidate) => {
-        const laterRequest = parse(candidate.request_json);
-        return (
-          validStoredChatRuntimeRequest(laterRequest) &&
-          laterRequest.expected.partitionRevision === committed.partitionRevision + 1 &&
-          laterRequest.expected.fenceEpoch === committed.fenceEpoch + 1 &&
-          laterRequest.expected.selectionRevision === committed.selectionRevision + 1 &&
-          laterRequest.chatSurfaceSessionId === row.chat_surface_session_id &&
-          laterRequest.chatThreadId === row.chat_thread_id
-        );
-      });
-      const recoveredTerminal = teardownRecoveryReceiptMatches(row, receipt, "persisted");
-      if (
-        !validStoredVector(committed) ||
-        !receipt ||
-        row.receipt_digest !== digest(receipt) ||
-        row.recovery_reason !== null ||
-        !(teardownReceiptMatches(row, receipt, "persisted") || recoveredTerminal) ||
-        committed.partitionRevision !== prepared.partitionRevision + (recoveredTerminal ? 2 : 1) ||
-        committed.fenceEpoch !== prepared.fenceEpoch + (recoveredTerminal ? 2 : 1) ||
-        committed.selectionRevision !== prepared.selectionRevision ||
-        (!reenteredAfterTeardown &&
-          !reopenedBySelection &&
-          !db
-            .prepare("SELECT 1 FROM production_surface_session WHERE session_id=? AND state='ended'")
-            .get(row.chat_surface_session_id))
-      )
-        return false;
-    }
-  }
-  const terminalTeardowns = rows.filter((row) => row.status === "terminal");
-  const committedKeys = new Set<string>();
-  for (const row of terminalTeardowns) {
-    const committed = parse(row.committed_vector_json);
-    if (
-      !validStoredVector(committed) ||
-      committedKeys.has(canonical(committed)) ||
-      committedVectors.has(canonical(committed))
-    )
-      return false;
-    committedKeys.add(canonical(committed));
-    committedVectors.add(canonical(committed));
-  }
-  const initialSagaSelect = db
-    .prepare("SELECT response_json,committed_vector_json FROM production_saga_operation WHERE step='select_open'")
-    .all() as any[];
-  // The first bootstrap is anchored to the one initial select bridge. Every
-  // later bootstrap must be the unique successor of a terminal teardown and
-  // its exact vector-matching select bridge. This is the same predecessor
-  // proof used by live admission; operation-id ordering is not evidence.
-  const initialBridges = initialSagaSelect.filter((candidate) => {
-    const response = parse(candidate.response_json),
-      responseVector = parse(candidate.committed_vector_json);
-    return (
-      validStoredVector(responseVector) &&
-      response?.phase === "selected" &&
-      response?.vector &&
-      canonical(response.vector) === canonical(responseVector)
-    );
-  });
-  if (bootstrapRows.length && initialBridges.length !== 1) return false;
-  const initialVector = initialBridges.length === 1 ? parse(initialBridges[0]!.committed_vector_json) : null;
-  const initialRows = bootstrapRows.filter((bootstrapRow) => {
-    const request = parse(bootstrapRow.request_json) as ProductionChatRuntimeRequest | null;
-    return (
-      !!request &&
-      validStoredChatRuntimeRequest(request) &&
-      validStoredVector(initialVector) &&
-      canonical(request.expected) === canonical(initialVector)
-    );
-  });
-  if (bootstrapRows.length && initialRows.length !== 1) return false;
-  const successorCounts = new Map<string, number>();
-  for (const bootstrapRow of bootstrapRows) {
-    const request = parse(bootstrapRow.request_json) as ProductionChatRuntimeRequest | null;
-    if (!request || !validStoredChatRuntimeRequest(request)) return false;
-    if (initialRows.includes(bootstrapRow)) {
-      const initial = initialBridges[0];
-      const response = initial ? parse(initial.response_json) : null;
-      if (
-        !response ||
-        response.chatSurfaceSessionId !== request.chatSurfaceSessionId ||
-        response.chatThreadId !== request.chatThreadId
-      )
-        return false;
-      continue;
-    }
-    // v40 has no direct re-entry edge: every non-initial bootstrap is forced
-    // through its exact terminal teardown and selection bridge. The helper
-    // rejects both ambiguous bridges and ambiguous vector predecessors.
-    const admissions = chatRuntimeSuccessorAdmissions(db, {
-      continuityId: request.principal.continuityId,
-      expected: request.expected,
-      chatThreadId: request.chatThreadId,
-      chatSurfaceSessionId: request.chatSurfaceSessionId,
-    });
-    if (admissions.length !== 1) return false;
-    const predecessorId = admissions[0]!.predecessor.operation_id;
-    successorCounts.set(predecessorId, (successorCounts.get(predecessorId) ?? 0) + 1);
-  }
-  // A terminal teardown may have no successor only when it is the current
-  // chain tip. More than one such tip is a fork; every other teardown has
-  // exactly one successor selected through its unique bridge.
-  let chainTips = 0;
-  for (const teardownRow of terminalTeardowns) {
-    const successors = successorCounts.get(teardownRow.bootstrap_operation_id) ?? 0;
-    if (successors > 1 || (successors === 0 && ++chainTips > 1)) return false;
-  }
-  return true;
-}
-function _rowContinuity(db: DatabaseSync): string {
-  return (db.prepare("SELECT continuity_id FROM production_partition WHERE singleton=1").get() as any)?.continuity_id;
-}
+
 function teardownReceiptMatches(
   row: any,
   receipt: unknown,
@@ -3441,133 +3236,6 @@ function currentChatRuntimeState(
   )
     throw new Error("production_store_materialization_invalid");
   return row.status;
-}
-function validPersistedChatRuntimeIntent(db: DatabaseSync, row: any, partition: any, bootstrap: any): boolean {
-  const request = parse(row.request_json) as ProductionChatRuntimeRequest | null,
-    prepared = parse(row.prepared_vector_json),
-    committed = row.committed_vector_json === null ? null : parse(row.committed_vector_json),
-    receipt = row.receipt_json === null ? null : parse(row.receipt_json),
-    selected = selectedReadback(db),
-    chat = db
-      .prepare("SELECT * FROM production_surface_session WHERE session_id=? AND surface='chat'")
-      .get(row.chat_surface_session_id) as any,
-    thread = db
-      .prepare("SELECT * FROM production_continuity_thread WHERE chat_surface_session_id=?")
-      .get(row.chat_surface_session_id) as any,
-    terminalTeardown = db
-      .prepare(
-        "SELECT status,bootstrap_operation_id,chat_surface_session_id,chat_thread_id FROM production_chat_runtime_teardown_intent WHERE continuity_id=? AND bootstrap_operation_id=?",
-      )
-      .get(row.continuity_id, row.operation_id) as any,
-    reenteredAfterTeardown = (() => {
-      if (terminalTeardown?.status !== "terminal") return false;
-      const teardownRow = db
-        .prepare(
-          "SELECT committed_vector_json FROM production_chat_runtime_teardown_intent WHERE continuity_id=? AND bootstrap_operation_id=?",
-        )
-        .get(row.continuity_id, row.operation_id) as any;
-      const teardownVector = parse(teardownRow?.committed_vector_json);
-      const currentSelection = db
-        .prepare("SELECT selection_revision FROM production_partition WHERE singleton=1")
-        .get() as any;
-      return (
-        (validStoredVector(teardownVector) &&
-          currentSelection?.selection_revision > teardownVector.selectionRevision &&
-          chat?.state === "active") ||
-        (
-          db
-            .prepare(
-              "SELECT request_json FROM production_chat_runtime_intent WHERE continuity_id=? AND operation_id<>?",
-            )
-            .all(row.continuity_id, row.operation_id) as any[]
-        ).some((candidate) => {
-          const laterRequest = parse(candidate.request_json);
-          return (
-            validStoredChatRuntimeRequest(laterRequest) &&
-            validStoredVector(teardownVector) &&
-            laterRequest.expected.partitionRevision === teardownVector.partitionRevision + 1 &&
-            laterRequest.expected.fenceEpoch === teardownVector.fenceEpoch + 1 &&
-            laterRequest.expected.selectionRevision === teardownVector.selectionRevision + 1 &&
-            laterRequest.chatSurfaceSessionId === row.chat_surface_session_id &&
-            laterRequest.chatThreadId === row.chat_thread_id
-          );
-        })
-      );
-    })(),
-    _closedByTerminalTeardown =
-      terminalTeardown?.status === "terminal" &&
-      terminalTeardown.bootstrap_operation_id === row.operation_id &&
-      terminalTeardown.chat_surface_session_id === row.chat_surface_session_id &&
-      terminalTeardown.chat_thread_id === row.chat_thread_id &&
-      !reenteredAfterTeardown;
-  const validRuntimeMaterialization =
-    !!request &&
-    validStoredChatRuntimeRequest(request) &&
-    row.continuity_id === partition?.continuity_id &&
-    request.principal.continuityId === bootstrap?.continuity_id &&
-    request.principal.companionId === bootstrap?.companion_id &&
-    request.principal.playerId === bootstrap?.player_id &&
-    row.operation_id === request.operationId &&
-    row.request_id === request.requestId &&
-    row.chat_surface_session_id === request.chatSurfaceSessionId &&
-    row.chat_thread_id === request.chatThreadId &&
-    row.payload_digest === digest(request) &&
-    row.request_json === canonicalChatRuntimeRequest(request) &&
-    row.runtime_binding_digest === request.runtimeBindingDigest &&
-    row.owner_json === canonical(request.owner) &&
-    Number.isSafeInteger(row.deadline_at_ms) &&
-    row.deadline_at_ms >= 0 &&
-    request.deadlineAtMs === row.deadline_at_ms &&
-    Number.isSafeInteger(row.prepared_at_ms) &&
-    row.prepared_at_ms >= 0 &&
-    row.prepared_at_ms <= row.deadline_at_ms &&
-    validStoredVector(prepared) &&
-    prepared.partitionRevision === request.expected.partitionRevision + 1 &&
-    prepared.fenceEpoch === request.expected.fenceEpoch + 1 &&
-    prepared.selectionRevision === request.expected.selectionRevision &&
-    !!selected &&
-    selected.chatThreadId === request.chatThreadId &&
-    selected.chatSurfaceSessionId === request.chatSurfaceSessionId &&
-    selected.selectionRevision >= request.expected.selectionRevision &&
-    (!!reenteredAfterTeardown || selected.selectionRevision === request.expected.selectionRevision) &&
-    !!thread &&
-    thread.lifecycle === "active" &&
-    thread.content_receipt_json !== null &&
-    !!chat &&
-    ["pending", "terminal", "recovery_required"].includes(row.status);
-  if (!validRuntimeMaterialization) return false;
-  if (row.status === "pending")
-    return (
-      committed === null &&
-      receipt === null &&
-      row.receipt_digest === null &&
-      row.recovery_reason === null &&
-      chat.state === "suspended" &&
-      partition.partition_revision === prepared.partitionRevision &&
-      partition.fence_epoch === prepared.fenceEpoch
-    );
-  if (row.status === "recovery_required")
-    return (
-      committed === null &&
-      receipt === null &&
-      row.receipt_digest === null &&
-      ["effect_failed", "receipt_invalid", "deadline_expired", "revision_conflict"].includes(row.recovery_reason) &&
-      chat.state === "recovery_required" &&
-      partition.partition_revision === prepared.partitionRevision + 1 &&
-      partition.fence_epoch === prepared.fenceEpoch + 1
-    );
-  const recovered = chatRuntimeReceiptMatches(row, receipt, "chat_runtime_recovery_completed", "persisted");
-  return (
-    validStoredVector(committed) &&
-    receipt !== null &&
-    (chatRuntimeReceiptMatches(row, receipt, "chat_runtime_bootstrapped", "persisted") || recovered) &&
-    row.receipt_digest === digest(receipt) &&
-    row.recovery_reason === null &&
-    ["active", "suspended", "recovery_required", "ended"].includes(chat.state) &&
-    committed.partitionRevision === prepared.partitionRevision + (recovered ? 2 : 1) &&
-    committed.fenceEpoch === prepared.fenceEpoch + (recovered ? 2 : 1) &&
-    committed.selectionRevision === prepared.selectionRevision
-  );
 }
 function validOperationHolderBinding(saga: any, operation: any, index: number): boolean {
   const request = parse(operation.request_json),
@@ -4356,7 +4024,38 @@ function validGameSessionBindingInput(value: unknown): value is ProductionGameSe
     (value.expectedRevision as number) >= 1
   );
 }
-function gameSessionMetadataReadback(db: DatabaseSync, row: any): ProductionGameSessionMetadata {
+function validGameSessionWorldBindingInput(value: unknown): value is ProductionGameSessionWorldBindingInput {
+  return (
+    exactPlainDataObject(value, ["gameSessionId", "integrationId", "bindingRef", "operationId"]) &&
+    safeId(value.gameSessionId) &&
+    safeId(value.integrationId) &&
+    typeof value.bindingRef === "string" &&
+    /^[A-Za-z0-9_-]{1,256}$/.test(value.bindingRef) &&
+    safeId(value.operationId)
+  );
+}
+function validGameSessionWorldBindingTerminalInput(
+  value: unknown,
+): value is ProductionGameSessionWorldBindingTerminalInput {
+  return (
+    exactPlainDataObject(value, ["gameSessionId", "integrationId", "expectedRevision", "operationId"]) &&
+    safeId(value.gameSessionId) &&
+    safeId(value.integrationId) &&
+    safeId(value.operationId) &&
+    Number.isSafeInteger(value.expectedRevision) &&
+    (value.expectedRevision as number) >= 1
+  );
+}
+function gameSessionWorldBindingReadback(row: any): ProductionGameSessionWorldBinding {
+  return Object.freeze({
+    gameSessionId: row.game_session_id,
+    integrationId: row.integration_id,
+    bindingRef: row.binding_ref,
+    status: row.status,
+    revision: row.revision,
+  });
+}
+function gameSessionMetadataReadback(_db: DatabaseSync, row: any): ProductionGameSessionMetadata {
   return Object.freeze({
     gameSessionId: row.game_session_id,
     integrationId: row.integration_id,
@@ -4412,6 +4111,15 @@ function transitionGameSessionMetadata(
     if (!row) throw new Error("game_session_metadata_missing");
     if (row.creation_request_id !== input.creationRequestId || row.revision !== input.expectedRevision)
       throw new Error("game_session_metadata_conflict");
+     const binding = db
+       .prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?")
+       .get(input.gameSessionId) as any;
+     if (target === "resumable") {
+       if (!binding || binding.integration_id !== row.integration_id || binding.status !== "registered")
+         throw new Error("game_session_world_binding_missing");
+     } else if (binding) {
+       throw new Error("game_session_metadata_conflict");
+     }
     const updated = db
       .prepare(
         "UPDATE production_game_session_metadata SET status=?,revision=revision+1 WHERE game_session_id=? AND status='pending' AND revision=? AND creation_request_id=?",
@@ -4448,9 +4156,112 @@ function listResumableGameSessions(
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
     const rows = db
-      .prepare("SELECT * FROM production_game_session_metadata WHERE status='resumable' ORDER BY game_session_id")
+      .prepare(
+        "SELECT m.* FROM production_game_session_metadata m JOIN production_game_session_world_binding b ON b.game_session_id=m.game_session_id AND b.integration_id=m.integration_id WHERE m.status='resumable' AND b.status='registered' ORDER BY m.game_session_id",
+      )
       .all() as any[];
     return Object.freeze(rows.map((row) => gameSessionMetadataReadback(db, row)));
+  });
+}
+function registerGameSessionWorldBinding(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: ProductionGameSessionWorldBindingInput,
+): ProductionGameSessionWorldBinding {
+  if (!validGameSessionWorldBindingInput(input)) throw new Error("invalid_game_session_world_binding");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const metadata = db
+      .prepare("SELECT * FROM production_game_session_metadata WHERE game_session_id=?")
+      .get(input.gameSessionId) as any;
+    if (!metadata) throw new Error("game_session_world_binding_session_missing");
+    const byOperation = db
+      .prepare("SELECT * FROM production_game_session_world_binding WHERE operation_id=?")
+      .get(input.operationId) as any;
+    if (byOperation) {
+      if (
+        byOperation.game_session_id !== input.gameSessionId ||
+        byOperation.integration_id !== input.integrationId ||
+        byOperation.binding_ref !== input.bindingRef
+      )
+        throw new Error("game_session_world_binding_conflict");
+      return gameSessionWorldBindingReadback(byOperation);
+    }
+    if (metadata.integration_id !== input.integrationId || metadata.status !== "pending")
+      throw new Error("game_session_world_binding_conflict");
+    const existing = db
+      .prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?")
+      .get(input.gameSessionId) as any;
+    if (existing) throw new Error("game_session_world_binding_conflict");
+    db.prepare(
+      "INSERT INTO production_game_session_world_binding(game_session_id,integration_id,binding_ref,operation_id,status,revision) VALUES(?,?,?,?, 'registered',1)",
+    ).run(input.gameSessionId, input.integrationId, input.bindingRef, input.operationId);
+    return gameSessionWorldBindingReadback(
+      db.prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?").get(input.gameSessionId),
+    );
+  });
+}
+function readGameSessionWorldBinding(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: Readonly<{ gameSessionId: string; integrationId: string }>,
+): ProductionGameSessionWorldBinding | null {
+  if (
+    !exactPlainDataObject(input, ["gameSessionId", "integrationId"]) ||
+    !safeId(input.gameSessionId) ||
+    !safeId(input.integrationId)
+  )
+    throw new Error("invalid_game_session_world_binding");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const row = db
+      .prepare(
+        "SELECT b.* FROM production_game_session_world_binding b JOIN production_game_session_metadata m ON m.game_session_id=b.game_session_id WHERE b.game_session_id=? AND b.integration_id=? AND m.integration_id=?",
+      )
+      .get(input.gameSessionId, input.integrationId, input.integrationId) as any;
+    return row ? gameSessionWorldBindingReadback(row) : null;
+  });
+}
+function markGameSessionWorldBindingTerminal(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: ProductionGameSessionWorldBindingTerminalInput,
+): ProductionGameSessionWorldBinding {
+  if (!validGameSessionWorldBindingTerminalInput(input)) throw new Error("invalid_game_session_world_binding");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const row = db
+      .prepare(
+        "SELECT b.*,m.integration_id AS session_integration_id FROM production_game_session_world_binding b JOIN production_game_session_metadata m ON m.game_session_id=b.game_session_id WHERE b.game_session_id=? AND b.integration_id=?",
+      )
+      .get(input.gameSessionId, input.integrationId) as any;
+    if (!row) throw new Error("game_session_world_binding_missing");
+    if (row.session_integration_id !== input.integrationId || row.operation_id !== input.operationId)
+      throw new Error("game_session_world_binding_conflict");
+    if (row.status === "terminal") {
+      if (input.expectedRevision !== 1) throw new Error("game_session_world_binding_conflict");
+      return gameSessionWorldBindingReadback(row);
+    }
+    if (row.revision !== input.expectedRevision || row.status !== "registered")
+      throw new Error("game_session_world_binding_conflict");
+    const updated = db
+      .prepare(
+        "UPDATE production_game_session_world_binding SET status='terminal',revision=revision+1 WHERE game_session_id=? AND integration_id=? AND operation_id=? AND status='registered' AND revision=?",
+      )
+      .run(input.gameSessionId, input.integrationId, input.operationId, input.expectedRevision);
+    if (updated.changes !== 1) throw new Error("game_session_world_binding_conflict");
+    const metadataUpdated = db
+      .prepare(
+        "UPDATE production_game_session_metadata SET status='failed',revision=revision+1 WHERE game_session_id=? AND integration_id=? AND status='resumable' AND revision=2",
+      )
+      .run(input.gameSessionId, input.integrationId);
+    if (metadataUpdated.changes !== 1) throw new Error("game_session_world_binding_conflict");
+    return gameSessionWorldBindingReadback(
+      db.prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?").get(input.gameSessionId),
+    );
   });
 }
 function strictEmpty(db: DatabaseSync): boolean {
@@ -4464,6 +4275,7 @@ function strictEmpty(db: DatabaseSync): boolean {
     "production_game_lease",
     "production_game_intent",
     "production_game_session_metadata",
+    "production_game_session_world_binding",
     "production_continuity_command",
     "production_quarantine",
     "production_initial_chat_saga",

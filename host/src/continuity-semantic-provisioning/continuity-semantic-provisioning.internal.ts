@@ -24,8 +24,6 @@ import {
 const AUTHORITY_DIRECTORY_NAME = ".gamebuddy-semantic-continuity-v1";
 const DATABASE_NAME = "gamebuddy-continuity-v1.sqlite";
 const AUTHORITY_MARKER_NAME = "production-authority-marker.json";
-const _PRODUCTION_SCHEMA_VERSION = PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION;
-const _FRESH_LEGACY_SENTINEL = "0".repeat(64);
 const LEGACY_ROOT_ARTIFACTS = new Set([
   "companion-continuity.json",
   "game-runtime-owner.json",
@@ -365,10 +363,22 @@ function provision(
       requireOpen();
       return rawStore.readGameSessionMetadata(input);
     },
-    listResumableGameSessions() {
-      requireOpen();
-      return rawStore.listResumableGameSessions();
-    },
+     listResumableGameSessions() {
+       requireOpen();
+       return rawStore.listResumableGameSessions();
+     },
+     registerGameSessionWorldBinding(input) {
+       requireOpen();
+       return rawStore.registerGameSessionWorldBinding(input);
+     },
+     readGameSessionWorldBinding(input) {
+       requireOpen();
+       return rawStore.readGameSessionWorldBinding(input);
+     },
+     markGameSessionWorldBindingTerminal(input) {
+       requireOpen();
+       return rawStore.markGameSessionWorldBindingTerminal(input);
+     },
   });
   return Object.freeze({
     store,

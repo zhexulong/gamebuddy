@@ -16,6 +16,7 @@ export {
   createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
   createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
   createKnownSemanticGameProductionAuthorityFromDeploymentManifest,
+  createSharedSemanticProductionAuthorityFromDeploymentManifest,
   isCurrentMountedChatRuntimeLease,
   stopMountedChatPresentationEpoch,
   SemanticProductionCoordinatorError,

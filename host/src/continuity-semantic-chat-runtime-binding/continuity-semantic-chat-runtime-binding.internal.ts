@@ -292,6 +292,8 @@ function assertOwnerProof(value: unknown): asserts value is Readonly<{ processId
   )
     throw new Error("invalid_windows_process_owner_identity");
 }
+const OWNER_IDENTITY_QUERY_TIMEOUT_MS = 15_000;
+
 async function queryCurrentOwnerProof(): Promise<OwnerProofRecord> {
   const run = promisify(execFile);
   const processId = process.pid;
@@ -307,7 +309,7 @@ async function queryCurrentOwnerProof(): Promise<OwnerProofRecord> {
     const result = await run(
       "powershell.exe",
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-      { windowsHide: true, timeout: 5_000, maxBuffer: 256, encoding: "utf8" },
+      { windowsHide: true, timeout: OWNER_IDENTITY_QUERY_TIMEOUT_MS, maxBuffer: 256, encoding: "utf8" },
     );
     if (result.stderr.length !== 0) throw new Error("unexpected_windows_owner_identity_stderr");
     const match = /^([1-9][0-9]{0,9})\|([1-9][0-9]{0,19})\r?\n$/.exec(result.stdout);

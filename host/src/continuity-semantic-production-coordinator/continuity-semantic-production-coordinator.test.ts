@@ -246,6 +246,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
+    "createSharedSemanticProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
     "stopMountedChatPresentationEpoch",
   ]);
@@ -520,11 +521,14 @@ test(
           "failClose",
           "failEnter",
           "failGameSessionCreation",
-          "listResumableGameSessions",
-          "prepareClose",
+           "listResumableGameSessions",
+           "markGameSessionWorldBindingTerminal",
+           "prepareClose",
           "prepareEnter",
-          "readGameSessionMetadata",
-          "recoverDeadOwner",
+           "readGameSessionMetadata",
+           "readGameSessionWorldBinding",
+           "recoverDeadOwner",
+           "registerGameSessionWorldBinding",
         ]);
         const facts = Object.freeze({
           world: Object.freeze({ integrationId: "stardew", saveId: "save_01", worldId: "world_01" }),
@@ -607,9 +611,24 @@ test(
           continuityIdentityId: principal.continuityId,
         }),
       );
-      assert.equal(idempotent.gameSessionId, created.gameSessionId);
-      assert.equal(idempotent.status, "pending");
-      const read = await game.readGameSessionMetadata(Object.freeze({ gameSessionId: created.gameSessionId }));
+       assert.equal(idempotent.gameSessionId, created.gameSessionId);
+       assert.equal(idempotent.status, "pending");
+       const binding = await game.registerGameSessionWorldBinding(
+         Object.freeze({
+           gameSessionId: created.gameSessionId,
+           integrationId: "stardew",
+           bindingRef: "opaque_world_ref",
+           operationId: "binding_01",
+         }),
+       );
+       assert.equal(binding.status, "registered");
+       assert.deepEqual(
+         await game.readGameSessionWorldBinding(
+           Object.freeze({ gameSessionId: created.gameSessionId, integrationId: "stardew" }),
+         ),
+         binding,
+       );
+       const read = await game.readGameSessionMetadata(Object.freeze({ gameSessionId: created.gameSessionId }));
       assert.deepEqual(read, created);
       assert.equal(await game.readGameSessionMetadata(Object.freeze({ gameSessionId: "session_absent" })), null);
       const completed = await game.completeGameSessionBinding(
