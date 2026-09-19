@@ -205,3 +205,39 @@ test("cleanLorebookText removes C1 control characters in addition to ASCII contr
   const cleaned = cleanLorebookText(withC1);
   assert.equal(cleaned, "Wangshu Inn");
 });
+
+test("importTavernLorebook accepts GameBuddy-authored entries carrying their own title field", () => {
+  // GameBuddy managed worldbook entries use { entryId, title, content } rather
+  // than the SillyTavern/Chub comment/name conventions; title must become the
+  // public title instead of being skipped to the Overview fallback.
+  const request = importTavernLorebook({
+    schemaVersion: 1,
+    worldBookId: "gamebuddy.worldbook.sample",
+    revision: 1,
+    alwaysOnPremise: "companion premise",
+    entries: [
+      {
+        entryId: "sample-entry-1",
+        title: "喜欢帅哥",
+        content: "鲸鱼娘其实喜欢帅气男生——打死不承认。",
+        scope: "companion",
+        provenance: "authored",
+        tokenBudget: 500,
+      },
+      {
+        entryId: "sample-entry-2",
+        title: "大肥鱼家族",
+        content: "家族成员都是鲸鱼娘。",
+        scope: "setting",
+        provenance: "authored",
+        tokenBudget: 500,
+      },
+    ],
+  });
+  assert.equal(request.publicTitle, "Tavern World Info");
+  assert.equal(request.entries.length, 2, "every authored entry must import, not collapse to the Overview fallback");
+  assert.equal(request.entries[0]?.publicTitle, "喜欢帅哥");
+  assert.equal(request.entries[1]?.publicTitle, "大肥鱼家族");
+  assert.equal(request.entries[0]?.scope, "companion");
+  assert.equal(request.entries[1]?.scope, "setting");
+});

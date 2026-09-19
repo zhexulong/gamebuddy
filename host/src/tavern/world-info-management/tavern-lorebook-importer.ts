@@ -192,6 +192,10 @@ export function importTavernLorebook(
       rawEntry.comment ??
       rawEntry.name ??
       rawEntry.publicTitle ??
+      // GameBuddy authored worldbook entries carry their own `title` field
+      // (schemaVersion 1 of the managed repository), distinct from the
+      // SillyTavern/Chub comment/name conventions imported below.
+      rawEntry.title ??
       (Array.isArray(rawEntry.keys) && rawEntry.keys[0]) ??
       (Array.isArray(rawEntry.key) && rawEntry.key[0]) ??
       (typeof rawEntry.key === "string" && rawEntry.key.split(",")[0]) ??
