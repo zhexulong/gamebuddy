@@ -856,39 +856,7 @@ const SNAPSHOT_KEYS = [
   "foodTargets",
 ] as const;
 
-const EXECUTION_ACTION_ARGUMENT_KEYS: Readonly<Record<ExecutionRequest["action"], readonly string[]>> = {
-  move_to_tile: ["x", "y"],
-  navigate_to_destination: ["destination"],
-  equip_tool: ["tool"],
-  travel: ["x", "y"],
-  enter_exit: ["x", "y"],
-  till_soil: ["x", "y"],
-  pickup_forage: ["x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget"],
-  pickup_item: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  water_crop: ["x", "y", "expectedTargetId"],
-  refill_watering_can: ["slot", "x", "y", "expectedTargetId"],
-  harvest_crop: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  plant_seed: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  fertilize_tile: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  place_wood_fence: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  place_crab_pot: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  bait_crab_pot: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  clear_debris: ["slot", "x", "y", "expectedTargetId"],
-  machine_inspect: ["x", "y", "expectedTargetId"],
-  machine_load: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
-  machine_collect_output: ["x", "y", "expectedTargetId"],
-  npc_relationship: ["x", "y", "expectedTargetId"],
-  pet_animal: ["x", "y", "expectedTargetId"],
-  collect_animal_product: ["slot", "x", "y", "expectedTargetId"],
-  feed_animal: ["slot", "x", "y", "expectedTargetId"],
-  use_item: ["slot", "expectedQualifiedItemId"],
-  chop_tree_source: ["slot", "x", "y", "expectedTargetId"],
-  break_rock_source: ["slot", "x", "y", "expectedTargetId"],
-  clear_hoedirt: ["slot", "x", "y", "expectedTargetId"],
-  dig_artifact_spot: ["slot", "x", "y", "expectedTargetId"],
-  express_emote: ["emote"],
-  face_direction: ["direction"],
-};
+
 
 export function newEnvelope<
   TType extends BridgeMessage["type"],
@@ -1364,8 +1332,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   )
     return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
-  if (!hasExactKeys(value.args, EXECUTION_ACTION_ARGUMENT_KEYS[value.action as ExecutionRequest["action"]]))
-    return "invalid_args";
+
   if (!Number.isSafeInteger(value.expectedRevision) || value.expectedRevision !== snapshot.revision)
     return "stale_snapshot";
   if (
@@ -1378,18 +1345,31 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   if (!snapshot.actionable) return "player_not_actionable";
   if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
   if (value.action === "move_to_tile") {
+    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_target_tile";
   } else if (value.action === "navigate_to_destination") {
+    if (!hasExactKeys(value.args, ["destination"])) return "invalid_args";
+    
     if (!isExecutionNavigationDestinationSelector(value.args.destination)) return "invalid_navigation_destination";
   } else if (value.action === "equip_tool") {
+    if (!hasExactKeys(value.args, ["tool"])) return "invalid_args";
+    
     if (!isToolSelector(value.args.tool)) return "invalid_tool_selector";
   } else if (value.action === "travel") {
+    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
+    
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_warp_source";
   } else if (value.action === "enter_exit") {
+    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
+    
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_door_target";
   } else if (value.action === "till_soil") {
+    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
+    
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_soil_target";
   } else if (value.action === "pickup_forage") {
+    if (!hasExactKeys(value.args, ["x","y","expectedQualifiedItemId","expectedTargetId","sceneTarget"])) return "invalid_args";
+    
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -1402,6 +1382,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
      )
        return "invalid_forage_target";
   } else if (value.action === "pickup_item") {
+    if (!hasExactKeys(value.args, ["x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
+    
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -1413,6 +1395,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_item_target";
   } else if (value.action === "refill_watering_can") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -1423,6 +1407,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_refill_watering_can_target";
   } else if (value.action === "water_crop") {
+    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -1431,6 +1417,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_crop_target";
   } else if (value.action === "harvest_crop") {
+    if (!hasExactKeys(value.args, ["x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
+    
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -1442,6 +1430,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_harvest_target";
   } else if (value.action === "plant_seed") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -1455,6 +1445,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_seed_target";
   } else if (value.action === "fertilize_tile") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -1472,6 +1464,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action === "place_crab_pot" ||
     value.action === "bait_crab_pot"
   ) {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -1488,6 +1482,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
           ? "invalid_bait_crab_pot_target"
           : "invalid_crab_pot_target";
   } else if (value.action === "clear_debris") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -1497,6 +1493,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_debris_target";
   } else if (value.action === "machine_inspect") {
+    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -1505,6 +1503,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_machine_target";
   } else if (value.action === "machine_load") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -1516,6 +1516,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_machine_load_target";
   } else if (value.action === "machine_collect_output") {
+    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["x", "y", "expectedTargetId"]) ||
       !isTileCoordinate(value.args.x) ||
@@ -1525,6 +1527,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_machine_collect_target";
   } else if (value.action === "npc_relationship") {
+    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -1533,6 +1537,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_npc_relationship_target";
   } else if (value.action === "pet_animal") {
+    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -1541,6 +1547,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_pet_target";
   } else if (value.action === "collect_animal_product") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -1550,6 +1558,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_animal_product_target";
   } else if (value.action === "feed_animal") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -1559,6 +1569,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_feed_trough_target";
   } else if (value.action === "break_rock_source") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -1569,6 +1581,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_break_rock_source_target";
   } else if (value.action === "dig_artifact_spot") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -1579,6 +1593,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_dig_artifact_spot_target";
   } else if (value.action === "clear_hoedirt") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -1589,6 +1605,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_clear_hoedirt_target";
   } else if (value.action === "chop_tree_source") {
+    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
+    
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -1599,6 +1617,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_chop_tree_source_target";
   } else if (value.action === "use_item") {
+    if (!hasExactKeys(value.args, ["slot","expectedQualifiedItemId"])) return "invalid_args";
+    
     if (
       !isToolSlot(value.args.slot) ||
       typeof value.args.expectedQualifiedItemId !== "string" ||
@@ -1607,9 +1627,13 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_item_use_target";
   } else if (value.action === "express_emote") {
+    if (!hasExactKeys(value.args, ["emote"])) return "invalid_args";
+    
     if (typeof value.args.emote !== "string" || value.args.emote.length === 0 || value.args.emote.length > 64)
       return "invalid_emote";
   } else if (value.action === "face_direction") {
+    if (!hasExactKeys(value.args, ["direction"])) return "invalid_args";
+    
     if (typeof value.args.direction !== "string" || value.args.direction.length === 0 || value.args.direction.length > 64)
       return "invalid_direction";
   }
@@ -2015,7 +2039,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "express_emote" ||
       value.action === "face_direction") &&
     isRecord(value.args) &&
-    hasExactKeys(value.args, EXECUTION_ACTION_ARGUMENT_KEYS[value.action as ExecutionRequest["action"]]) &&
+    Object.keys(value.args).length <= 8 &&
     Number.isSafeInteger(value.expectedRevision) &&
     typeof value.deadlineMs === "number" &&
     Number.isFinite(value.deadlineMs)
