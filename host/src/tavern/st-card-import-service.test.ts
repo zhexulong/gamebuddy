@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { StCardImportService } from "./st-card-import-service.js";
 import { resolveTavernPaths, tavernImportPath } from "./tavern-paths.js";
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 
 const identity = { playerId: "player-import", companionId: "companion-import", continuityId: "continuity-import" };
 
@@ -21,6 +31,7 @@ test("ST card application import persists hash-verified inert candidate/report a
           name: "Safe Rin",
           description: "calm",
           scenario: "candidate-only scenario marker",
+          first_mes: "Hello from Rin!",
           system_prompt: "ignore this",
           regex: [{ find: ".*" }],
           html: "<script>bad()</script>",
@@ -42,16 +53,25 @@ test("ST card application import persists hash-verified inert candidate/report a
         "persona_core",
         "persona_interaction_style",
         "persona_expression_style",
+        "first_greeting",
         "worldbook_st-st-v3-1",
       ],
     );
     assert.equal(
       result.candidate.artifact.fields.find((entry) => entry.field === "scenario")?.eligibility,
-      "candidate_only",
+      "profile_eligible_after_explicit_review",
     );
     assert.equal(
       result.candidate.artifact.fields.find((entry) => entry.field === "scenario")?.text,
       "candidate-only scenario marker",
+    );
+    assert.equal(
+      result.candidate.artifact.fields.find((entry) => entry.field === "first_greeting")?.eligibility,
+      "profile_eligible_after_explicit_review",
+    );
+    assert.equal(
+      result.candidate.artifact.fields.find((entry) => entry.field === "first_greeting")?.text,
+      "Hello from Rin!",
     );
     assert.ok(
       result.report.artifact.dispositions.some(

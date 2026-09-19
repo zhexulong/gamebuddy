@@ -403,8 +403,8 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       let state: ChatThreadState;
       try {
         state = await store.selectSwipe!(lease.chatThreadId, targetMessage.messageId, {
-          direction: command.direction,
-          targetIndex: command.targetIndex,
+          ...(command.direction === undefined ? {} : { direction: command.direction }),
+          ...(command.targetIndex === undefined ? {} : { targetIndex: command.targetIndex }),
         });
       } finally {
         store.close?.();
@@ -542,8 +542,16 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
    * durable ledger and status read-back are the authority.
    */
   async function startOnce(): Promise<void> {
-    await claim.claim();
-    await start.start();
+    try {
+      process.stderr.write("[DEBUG-chat-live-p4] claim_begin\\n");
+      await claim.claim();
+      process.stderr.write("[DEBUG-chat-live-p4] claim_done\\n");
+      await start.start();
+      process.stderr.write("[DEBUG-chat-live-p4] start_done\\n");
+    } catch {
+      process.stderr.write("[DEBUG-chat-live-p4] continuation_error\\n");
+      throw new Error("chat_pipeline_continuation_failed");
+    }
     if (eventStream !== undefined && profile.routeIds.includes("events")) {
       const state = await resumeState();
       if (state.turnLedger !== null) {

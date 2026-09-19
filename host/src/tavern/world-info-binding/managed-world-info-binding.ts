@@ -75,6 +75,8 @@ function canonicalProjection(projection: PublicWorldInfoProjection) {
       summary: entry.summary,
       ...(entry.keys === undefined ? {} : { keys: entry.keys }),
       ...(entry.constant === undefined ? {} : { constant: entry.constant }),
+      ...(entry.secondaryKeys === undefined ? {} : { secondaryKeys: entry.secondaryKeys }),
+      ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
     })),
   };
 }

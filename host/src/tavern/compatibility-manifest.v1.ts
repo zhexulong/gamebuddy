@@ -6,7 +6,7 @@ export const ST_CARD_DECODER_LIMITS_V1 = Object.freeze({
   inputBytesPng: 33_554_432,
   inflateMaxOutputBytes: 67_108_864,
   jsonDepth: 64,
-  jsonNodes: 65_536,
+  jsonNodes: 524_288,
   pngChunks: 1_024,
   nameBytes: 256,
   textBytes: 2_097_152,

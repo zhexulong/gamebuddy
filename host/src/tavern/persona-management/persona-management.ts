@@ -83,7 +83,7 @@ function validateRequest(value: unknown): asserts value is CreatePlayerPersonaRe
   if (
     !record(value) ||
     !allowed(value, ["name", "description"]) ||
-    !text(value.name, 128) ||
+    !singleLine(value.name, 128) ||
     (value.description !== undefined && !text(value.description, 4_096))
   )
     throw new Error("invalid_persona_request");
@@ -94,7 +94,7 @@ function validateUpdateRequest(value: unknown): asserts value is UpdatePlayerPer
     !allowed(value, ["expectedRevision", "name", "description"]) ||
     !Number.isSafeInteger(value.expectedRevision) ||
     (value.expectedRevision as number) < 1 ||
-    !text(value.name, 128) ||
+    !singleLine(value.name, 128) ||
     (value.description !== undefined && !text(value.description, 4_096))
   )
     throw new Error("invalid_persona_request");
@@ -112,6 +112,9 @@ function allowed(value: Record<string, unknown>, keys: readonly string[]): boole
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function singleLine(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001F\u007F-\u009F]/u.test(value);
 }
 function text(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);

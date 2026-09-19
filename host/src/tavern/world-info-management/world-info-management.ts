@@ -20,6 +20,8 @@ export type PublicWorldInfoEntry = Readonly<{
   publicTitle: string;
   summary: string;
   keys?: readonly string[];
+  secondaryKeys?: readonly string[];
+  selectiveLogic?: 0 | 1 | 2 | 3;
   constant?: boolean;
 }>;
 export type PublicWorldInfoProjection = Readonly<{
@@ -333,21 +335,26 @@ function validateArtifact(value: unknown): ManagedArtifact {
   const entries = value.entries.map((entry) => {
     if (
       !record(entry) ||
-       !only(entry, ["scope", "publicTitle", "summary", "keys", "constant"]) ||
-       (entry.scope !== "companion" && entry.scope !== "setting") ||
-       !titleText(entry.publicTitle, MAX_TITLE) ||
-       !summaryText(entry.summary, MAX_SUMMARY) ||
-       (entry.keys !== undefined && !keysValue(entry.keys)) ||
-       (entry.constant !== undefined && typeof entry.constant !== "boolean")
+      !only(entry, ["scope", "publicTitle", "summary", "keys", "constant", "secondaryKeys", "selectiveLogic"]) ||
+      (entry.scope !== "companion" && entry.scope !== "setting") ||
+      !titleText(entry.publicTitle, MAX_TITLE) ||
+      !summaryText(entry.summary, MAX_SUMMARY) ||
+      (entry.keys !== undefined && !keysValue(entry.keys)) ||
+      (entry.constant !== undefined && typeof entry.constant !== "boolean") ||
+      (entry.secondaryKeys !== undefined && !keysValue(entry.secondaryKeys)) ||
+      (entry.selectiveLogic !== undefined &&
+        !(typeof entry.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(entry.selectiveLogic)))
     )
       throw new Error("invalid_world_info_request");
     return Object.freeze({
-       scope: entry.scope,
-       publicTitle: entry.publicTitle,
-       summary: entry.summary,
-       ...(entry.keys === undefined ? {} : { keys: Object.freeze([...entry.keys]) }),
-       ...(entry.constant === undefined ? {} : { constant: entry.constant }),
-     });
+      scope: entry.scope,
+      publicTitle: entry.publicTitle,
+      summary: entry.summary,
+      ...(entry.keys === undefined ? {} : { keys: Object.freeze([...entry.keys]) }),
+      ...(entry.constant === undefined ? {} : { constant: entry.constant }),
+      ...(entry.secondaryKeys === undefined ? {} : { secondaryKeys: Object.freeze([...entry.secondaryKeys]) }),
+      ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic as 0 | 1 | 2 | 3 }),
+    });
   });
   return Object.freeze({
     revision: value.revision,
@@ -370,7 +377,7 @@ function titleText(value: unknown, max: number): value is string {
     typeof value === "string" &&
     value.length > 0 &&
     value.length <= max &&
-    !/[\u0000-\u001f\u007f<>]/u.test(value)
+    !/[\u0000-\u001f\u007f-\u009f<>]/u.test(value)
   );
 }
 function keysValue(value: unknown): value is readonly string[] {
@@ -383,7 +390,7 @@ function keysValue(value: unknown): value is readonly string[] {
         typeof key === "string" &&
         key.length >= 1 &&
         key.length <= MAX_KEY_LENGTH &&
-        !/[\u0000-\u001f\u007f]/u.test(key),
+        !/[\u0000-\u001f\u007f-\u009f]/u.test(key),
     )
   );
 }
@@ -392,7 +399,7 @@ function summaryText(value: unknown, max: number): value is string {
     typeof value === "string" &&
     value.length > 0 &&
     value.length <= max &&
-    !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value) &&
+    !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(value) &&
     !/<script\b/iu.test(value)
   );
 }

@@ -3,9 +3,18 @@ import { createHash } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
 import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
+import { createBuildWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.js";
 import { TavernArtifactStore } from "../artifact-store.js";
 import { createScenarioManagementService } from "./scenario-management.js";
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 
 test("scenario management durably creates, reads, and exactly revises a safe player projection", async () => {
   const root = await canonicalTestRoot("scenario-management-");
@@ -101,12 +110,20 @@ test("scenario management accepts only safe player name and description fields",
       service.create({ name: "Saloon", description: "Safe", script: "run()" } as never),
       /invalid_scenario_request/,
     );
-    await assert.rejects(service.create({ name: "Saloon\n", description: "Safe" }), /invalid_scenario_request/);
+    await assert.rejects(service.create({ name: "Saloon\u0000", description: "Safe" }), /invalid_scenario_request/);
     await assert.rejects(
-      service.create({ name: "Saloon", description: "<script>alert(1)</script>" }),
+      service.create({ name: "Saloon", description: "Safe with C0 \u0000 control" }),
       /invalid_scenario_request/,
     );
-    await service.create({ name: "Saloon", description: "Safe" });
+    await assert.rejects(
+      service.create({ name: "Saloon", description: "Safe with C1 \u0085 control" }),
+      /invalid_scenario_request/,
+    );
+    const createdWithMarkers = await service.create({
+      name: "Saloon with markers",
+      description: "Welcome <User> to <<Scene>> with <Char>!",
+    });
+    assert.equal(createdWithMarkers.description, "Welcome <User> to <<Scene>> with <Char>!");
     await assert.rejects(service.create({ name: "Other", description: "Also safe" }), /scenario_already_exists/);
   } finally {
     await rm(root, { recursive: true, force: true });

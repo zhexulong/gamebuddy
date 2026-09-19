@@ -85,13 +85,6 @@ type ChatThread = ArtifactRevision &
     openingSelection: OpeningSelection;
     openingLockedAtEventId?: string;
   }>;
-type TavernMessageVariant = Readonly<{ variantId: string; text: string }>;
-type TavernMessage = Readonly<{
-  messageId: string;
-  role: "player" | "companion";
-  text: string;
-  variants?: readonly TavernMessageVariant[];
-}>;
 export type TavernArtifact =
   | CharacterCandidate
   | StCardImportRecord

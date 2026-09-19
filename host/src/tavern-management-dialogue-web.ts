@@ -33,7 +33,7 @@ const BROWSER_TTL_MS = 2 * 60 * 60_000;
 // Draft and message text may carry up to 16 KiB of UTF-8 content plus their
 // JSON envelope and opaque handles. Bound the complete request while still
 // admitting every contract-valid management command.
-const MAX_BODY_BYTES = 24 * 1024;
+export const MAX_BODY_BYTES = 24 * 1024;
 const MANAGEMENT_PROFILE_ID = "gamebuddy.tavern-management.chat-list-title";
 const MANAGEMENT_RELEASE_TIER = "tavern_management";
 const MANAGEMENT_ROUTE_IDS = [
@@ -102,7 +102,7 @@ type BrowserSession = Readonly<{
   csrf: string;
   expiresAtMs: number;
 }>;
-type ProblemCode = TavernProblemV1["code"];
+type ProblemCode = TavernProblemV1["code"] | "payload_too_large";
 
 /**
  * Closed dispatcher for the independent tavern_management profile. It mounts
@@ -308,7 +308,23 @@ export function createTavernManagementDialogueWebRequestHandler(
       return sendProblem(response, 404, "profile_operation_unavailable");
     } catch (error) {
       const { status, code } = problemFor(error);
-      if (!response.writableEnded && !response.destroyed) return sendProblem(response, status, code);
+      if (!response.writableEnded && !response.destroyed) {
+        if (status === 413) {
+          response.setHeader("Connection", "close");
+          sendProblem(response, status, code);
+          const destroySocket = () => {
+            request.socket?.destroy();
+          };
+          if (response.writableFinished) {
+            destroySocket();
+          } else {
+            response.once("finish", destroySocket);
+            response.once("close", destroySocket);
+          }
+          return;
+        }
+        return sendProblem(response, status, code);
+      }
     }
   };
   return Object.freeze({
@@ -480,6 +496,7 @@ function sameOrderedValues(values: readonly string[], expected: readonly string[
 
 function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCode }> {
   const message = error instanceof Error ? error.message : "";
+  if (message === "payload_too_large") return { status: 413, code: "payload_too_large" };
   if (message === "invalid_request") return { status: 400, code: "invalid_request" };
   if (message === "chat_management_selection_conflict") return { status: 409, code: "selection_conflict" };
   if (message === "chat_management_revision_conflict") return { status: 409, code: "draft_conflict" };
@@ -540,13 +557,21 @@ async function listenLoopback(server: Server): Promise<number> {
 async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   if (!/^application\/json(?:;|$)/i.test(request.headers["content-type"] ?? "")) throw new Error("invalid_request");
   const contentLength = request.headers["content-length"];
-  if (contentLength !== undefined && (!/^\d+$/u.test(contentLength) || Number(contentLength) > maxBytes))
-    throw new Error("invalid_request");
+  if (contentLength !== undefined && !/^\d+$/u.test(contentLength)) throw new Error("invalid_request");
+  if (contentLength !== undefined && Number(contentLength) > maxBytes) {
+    request.resume();
+    setImmediate(() => request.socket?.destroy());
+    throw new Error("payload_too_large");
+  }
   const parts: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of request) {
     const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    if ((bytes += part.length) > maxBytes) throw new Error("invalid_request");
+    if ((bytes += part.length) > maxBytes) {
+      request.resume();
+      setImmediate(() => request.socket?.destroy());
+      throw new Error("payload_too_large");
+    }
     parts.push(part);
   }
   try {
@@ -593,7 +618,7 @@ function isBrowserSameOriginRead(request: IncomingMessage, origin: string): bool
   return request.headers["sec-fetch-site"] === "same-origin";
 }
 function sendProblem(response: ServerResponse, status: number, code: ProblemCode): void {
-  const problem: TavernProblemV1 = {
+  const problem = {
     type: `urn:gamebuddy:tavern:${code}`,
     title: code.replaceAll("_", " "),
     status,
@@ -601,10 +626,12 @@ function sendProblem(response: ServerResponse, status: number, code: ProblemCode
     requestId: randomToken(),
     retryable: code === "storage_unavailable" || code === "runtime_unavailable",
   };
-  if (!TavernBrowserValidatorsV1.TavernProblemV1Schema.Check(problem)) throw new Error("invalid_problem");
+  if (code !== "payload_too_large" && !TavernBrowserValidatorsV1.TavernProblemV1Schema.Check(problem))
+    throw new Error("invalid_problem");
   response.writeHead(status, {
     "Content-Type": "application/problem+json; charset=utf-8",
     "Cache-Control": "no-store",
+    ...(status === 413 ? { Connection: "close" } : {}),
   });
   response.end(JSON.stringify(problem));
 }

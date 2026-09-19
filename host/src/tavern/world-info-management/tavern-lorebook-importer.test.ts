@@ -127,3 +127,81 @@ test("importTavernLorebook handles array entries and character_book wrappers", a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("importTavernLorebook parses secondary_keys, keysecondary, and selectiveLogic accurately", async () => {
+  const root = await canonicalTestRoot("tavern-importer-secondary-keys-test-");
+  try {
+    const repository: WorldInfoManagementRepository = createWorldInfoManagementRepository(root);
+    const bookWithSecondary = {
+      name: "Teyvat Tactics",
+      description: "Tactics and elemental interactions in Teyvat.",
+      entries: [
+        {
+          comment: "Vaporize Reaction",
+          content: "Hydro meets Pyro to deal amplified damage.",
+          key: ["Vaporize", "Reaction"],
+          secondary_keys: ["Hydro", "Pyro"],
+          selectiveLogic: 3,
+        },
+        {
+          comment: "Swirl Reaction",
+          content: "Anemo diffuses elements across foes.",
+          keys: ["Swirl"],
+          keysecondary: "Anemo,Elements",
+          selectiveLogic: 0,
+        },
+        {
+          comment: "Melt Exclusion",
+          content: "Cryo and Pyro condition.",
+          key: "Melt",
+          secondary_keys: "Freeze,Superconduct",
+          selectiveLogic: 2,
+        },
+        {
+          comment: "Partial Reaction",
+          content: "Not all conditions satisfied.",
+          key: "Partial",
+          secondary_keys: ["A", "B"],
+          selectiveLogic: 1,
+        },
+        {
+          comment: "Plain Entry",
+          content: "No secondary keys.",
+          key: "Plain",
+        },
+      ],
+    };
+
+    const request = importTavernLorebook(bookWithSecondary);
+    assert.equal(request.publicTitle, "Teyvat Tactics");
+    assert.equal(request.entries.length, 5);
+
+    assert.deepEqual(request.entries[0]?.secondaryKeys, ["Hydro", "Pyro"]);
+    assert.equal(request.entries[0]?.selectiveLogic, 3);
+
+    assert.deepEqual(request.entries[1]?.secondaryKeys, ["Anemo", "Elements"]);
+    assert.equal(request.entries[1]?.selectiveLogic, 0);
+
+    assert.deepEqual(request.entries[2]?.secondaryKeys, ["Freeze", "Superconduct"]);
+    assert.equal(request.entries[2]?.selectiveLogic, 2);
+
+    assert.deepEqual(request.entries[3]?.secondaryKeys, ["A", "B"]);
+    assert.equal(request.entries[3]?.selectiveLogic, 1);
+
+    assert.equal(request.entries[4]?.secondaryKeys, undefined);
+    assert.equal(request.entries[4]?.selectiveLogic, undefined);
+
+    repository.validateCreateRequest(request);
+    const created = await repository.create(request);
+    assert.equal(created.entries[0]?.selectiveLogic, 3);
+    assert.deepEqual(created.entries[0]?.secondaryKeys, ["Hydro", "Pyro"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cleanLorebookText removes C1 control characters in addition to ASCII control characters", () => {
+  const withC1 = "Wangshu\u0080\u0085\u009f Inn";
+  const cleaned = cleanLorebookText(withC1);
+  assert.equal(cleaned, "Wangshu Inn");
+});

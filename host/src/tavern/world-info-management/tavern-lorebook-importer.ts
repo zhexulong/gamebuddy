@@ -47,7 +47,7 @@ export function cleanLorebookText(value: unknown, maxLen = MAX_SUMMARY): string 
   text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
   // Remove non-printable control characters while preserving \t (9) and \n (10)
-  text = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+  text = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "");
 
   // Clean redundant whitespace per line
   text = text
@@ -71,6 +71,10 @@ export type RawLoreEntry = Readonly<{
   summary?: string;
   key?: readonly string[] | string;
   keys?: readonly string[];
+  keysecondary?: readonly string[] | string;
+  secondary_keys?: readonly string[] | string;
+  secondaryKeys?: readonly string[] | string;
+  selectiveLogic?: number;
   constant?: boolean;
   disable?: boolean;
   enabled?: boolean;
@@ -118,6 +122,9 @@ export function isRawTavernLorebook(value: unknown): boolean {
     if (Array.isArray(obj.entries) && obj.entries.length > 0) {
       const first = obj.entries[0];
       if (typeof first === "object" && first !== null) {
+        if ("publicTitle" in obj && "publicTitle" in first) {
+          return false;
+        }
         if ("comment" in first || "keys" in first || "key" in first || "uid" in first || "content" in first) {
           return true;
         }
@@ -205,12 +212,35 @@ export function importTavernLorebook(
       .slice(0, 128);
     const constant = rawEntry.constant === true;
 
+    const rawSecondary =
+      Array.isArray(rawEntry.secondary_keys) || typeof rawEntry.secondary_keys === "string"
+        ? rawEntry.secondary_keys
+        : Array.isArray(rawEntry.keysecondary) || typeof rawEntry.keysecondary === "string"
+          ? rawEntry.keysecondary
+          : Array.isArray(rawEntry.secondaryKeys) || typeof rawEntry.secondaryKeys === "string"
+            ? rawEntry.secondaryKeys
+            : undefined;
+    const secondaryKeys = (
+      Array.isArray(rawSecondary) ? rawSecondary : typeof rawSecondary === "string" ? rawSecondary.split(",") : []
+    )
+      .map((key) => cleanLorebookText(key, 128))
+      .filter((key) => key.length > 0)
+      .slice(0, 128);
+
+    const selectiveLogic =
+      typeof rawEntry.selectiveLogic === "number" &&
+      ([0, 1, 2, 3] as readonly number[]).includes(rawEntry.selectiveLogic)
+        ? (rawEntry.selectiveLogic as 0 | 1 | 2 | 3)
+        : undefined;
+
     adaptedEntries.push(
       Object.freeze({
         scope,
         publicTitle: entryTitle,
         summary: entrySummary,
         ...(keys.length === 0 ? {} : { keys: Object.freeze(keys) }),
+        ...(secondaryKeys.length === 0 ? {} : { secondaryKeys: Object.freeze(secondaryKeys) }),
+        ...(selectiveLogic !== undefined ? { selectiveLogic } : {}),
         ...(constant ? { constant: true } : {}),
       }),
     );

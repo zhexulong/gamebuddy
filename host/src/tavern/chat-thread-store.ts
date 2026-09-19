@@ -137,6 +137,8 @@ export type AuthoredContextVolatileSourceCandidate = AuthoredContextVolatileSour
   content: string;
   budgetTokens: number;
   selectionKeys: readonly string[];
+  secondaryKeys?: readonly string[];
+  selectiveLogic?: 0 | 1 | 2 | 3;
 }>;
 
 /**
@@ -171,11 +173,37 @@ export function selectAuthoredContextVolatileSourceRefs(
       candidate.provenance.length === 0 ||
       !Array.isArray(candidate.selectionKeys) ||
       candidate.selectionKeys.some((key) => typeof key !== "string" || key.trim().length === 0) ||
+      (candidate.secondaryKeys !== undefined &&
+        (!Array.isArray(candidate.secondaryKeys) ||
+          candidate.secondaryKeys.length === 0 ||
+          candidate.secondaryKeys.some((key) => typeof key !== "string" || key.trim().length === 0))) ||
+      (candidate.selectiveLogic !== undefined &&
+        !(typeof candidate.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(candidate.selectiveLogic))) ||
       seen.has(candidate.sourceId)
     )
       throw new Error("invalid_chat_turn_context_volatile_candidate");
-    const selected = candidate.selectionKeys.some((key) => corpus.includes(key.normalize("NFC").trim().toLowerCase()));
-    if (!selected) continue;
+    const primaryMatch = candidate.selectionKeys.some((key) => corpus.includes(key.normalize("NFC").trim().toLowerCase()));
+    if (!primaryMatch) continue;
+
+    if (candidate.secondaryKeys !== undefined && candidate.secondaryKeys.length > 0) {
+      const secondaryMatches = candidate.secondaryKeys.map((key) =>
+        corpus.includes(key.normalize("NFC").trim().toLowerCase()),
+      );
+      const anySecondary = secondaryMatches.some(Boolean);
+      const allSecondary = secondaryMatches.every(Boolean);
+      const logic = candidate.selectiveLogic ?? 0;
+      let satisfied = false;
+      if (logic === 0) {
+        satisfied = anySecondary;
+      } else if (logic === 1) {
+        satisfied = !allSecondary;
+      } else if (logic === 2) {
+        satisfied = !anySecondary;
+      } else if (logic === 3) {
+        satisfied = allSecondary;
+      }
+      if (!satisfied) continue;
+    }
     refs.push(
       Object.freeze({
         sourceId: candidate.sourceId,
@@ -1594,7 +1622,7 @@ export function createChatThreadStore(
         else if (selection.direction === "prev") activeSwipeIndex = Math.max(0, currentIndex - 1);
         db.prepare(
           "UPDATE tavern_messages SET text = ?, active_swipe_index = ? WHERE thread_id = ? AND message_id = ?",
-        ).run(swipes[activeSwipeIndex], activeSwipeIndex, chatThreadId, messageId);
+        ).run(swipes[activeSwipeIndex]!, activeSwipeIndex, chatThreadId, messageId);
         db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(now(), chatThreadId);
         return readStateFromDb(db, chatThreadId);
       });
@@ -2449,13 +2477,13 @@ function readContextPlan(db: DatabaseSync, turnId: string, thread: ChatThread): 
     if (source.ordinal !== ordinal) throw new Error("chat_turn_context_source_order_invalid");
     return Object.freeze({ sourceId: source.source_id, kind: source.kind, revision: source.revision, canonicalHash: source.canonical_hash, totalOrderKey: source.total_order_key });
   });
-  if (sources.some((source, index) => index > 0 && source.totalOrderKey <= sources[index - 1].totalOrderKey)) throw new Error("chat_turn_context_source_order_invalid");
+  if (sources.some((source, index) => index > 0 && source.totalOrderKey <= sources[index - 1]!.totalOrderKey)) throw new Error("chat_turn_context_source_order_invalid");
   if (!Number.isSafeInteger(row.stable_token_count) || row.stable_token_count < 0 || !Number.isSafeInteger(row.volatile_token_count) || row.volatile_token_count < 0) throw new Error("chat_turn_context_token_mismatch");
   const volatileSources = (db.prepare("SELECT * FROM tavern_turn_context_volatile_sources WHERE turn_id = ? ORDER BY ordinal").all(turnId) as any[]).map((source, ordinal) => {
     if (source.ordinal !== ordinal || source.durable_turn_id !== turnId) throw new Error("chat_turn_context_volatile_source_order_invalid");
     return Object.freeze({ sourceId: source.source_id, kind: source.kind, revision: source.revision, canonicalHash: source.canonical_hash, totalOrderKey: source.total_order_key, provenance: source.provenance });
   });
-  if (volatileSources.some((source, index) => index > 0 && source.totalOrderKey <= volatileSources[index - 1].totalOrderKey)) throw new Error("chat_turn_context_volatile_source_order_invalid");
+  if (volatileSources.some((source, index) => index > 0 && source.totalOrderKey <= volatileSources[index - 1]!.totalOrderKey)) throw new Error("chat_turn_context_volatile_source_order_invalid");
   return Object.freeze({ threadId: row.thread_id, turnId, continuityId: row.continuity_id, companionId: row.companion_id, playerId: row.player_id, profileId: row.profile_id, profileRevision: row.profile_revision, profileCanonicalHash: row.profile_canonical_hash, chatSurfaceSessionId: row.chat_surface_session_id, stableSources: Object.freeze(sources), stableTokenCount: row.stable_token_count, volatileSources: Object.freeze(volatileSources), volatileTokenCount: row.volatile_token_count });
 }
 
@@ -2481,6 +2509,7 @@ function createAcceptedContextPlan(thread: ChatThread, input: MountedAcceptanceI
       !isExactId(sourceId) ||
       (kind !== "persona" && kind !== "scenario" && kind !== "dialogue_examples" && kind !== "lorebook_constant") ||
       typeof revision !== "string" ||
+      typeof canonicalHash !== "string" ||
       !/^[a-f0-9]{64}$/.test(canonicalHash) ||
       typeof totalOrderKey !== "string" ||
       totalOrderKey <= previous ||
@@ -2501,7 +2530,7 @@ function createAcceptedContextPlan(thread: ChatThread, input: MountedAcceptanceI
     const canonicalHash = source.canonicalHash;
     const totalOrderKey = source.totalOrderKey;
     const provenance = source.provenance;
-    if (!isExactId(sourceId) || kind !== "lorebook_entry" || typeof revision !== "string" || !/^[a-f0-9]{64}$/.test(canonicalHash) || typeof totalOrderKey !== "string" || totalOrderKey <= volatilePrevious || typeof provenance !== "string" || provenance.length === 0 || volatileSeen.has(sourceId)) throw new Error("invalid_chat_turn_context_volatile_plan");
+    if (!isExactId(sourceId) || kind !== "lorebook_entry" || typeof revision !== "string" || typeof canonicalHash !== "string" || !/^[a-f0-9]{64}$/.test(canonicalHash) || typeof totalOrderKey !== "string" || totalOrderKey <= volatilePrevious || typeof provenance !== "string" || provenance.length === 0 || volatileSeen.has(sourceId)) throw new Error("invalid_chat_turn_context_volatile_plan");
     volatilePrevious = totalOrderKey;
     volatileSeen.add(sourceId);
     return Object.freeze({ sourceId, kind, revision, canonicalHash, totalOrderKey, provenance });
@@ -3651,8 +3680,11 @@ function freezeState(state: ChatThreadState): ChatThreadState {
     messages: Object.freeze([...state.messages]),
     draft: freezeDraft(state.draft),
     turnLedger: state.turnLedger === null ? null : validateTurnLedger(state.turnLedger),
-    currentTurnContextPlan:
-      state.currentTurnContextPlan === undefined ? undefined : validateAcceptedTurnAuthoredContextPlan(state.currentTurnContextPlan),
+    ...(state.currentTurnContextPlan === undefined
+      ? {}
+      : {
+          currentTurnContextPlan: validateAcceptedTurnAuthoredContextPlan(state.currentTurnContextPlan),
+        }),
     idempotency: Object.freeze(state.idempotency.map(validateIdempotency)),
   });
 }
@@ -3668,7 +3700,7 @@ function freezeThread(thread: ChatThread): ChatThread {
     title: validateStoredThreadTitle(thread.title),
     lifecycleStatus,
     managementRevision: validateManagementRevision(thread.managementRevision),
-    ...(trashRestoreStatus === undefined ? { trashRestoreStatus: undefined } : { trashRestoreStatus }),
+    ...(trashRestoreStatus === undefined ? {} : { trashRestoreStatus }),
     stableArtifactBindings: freezeStableArtifactBindings(thread.stableArtifactBindings ?? []),
     ...(thread.worldBookBinding === undefined
       ? {}

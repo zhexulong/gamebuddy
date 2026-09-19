@@ -17,6 +17,7 @@ import type { WorldInfoBindingManagementService } from "./tavern/world-info-bind
 import {
   createTavernManagementDialogueWebRequestHandler,
   startTavernManagementDialogueWebServer,
+  MAX_BODY_BYTES,
 } from "./tavern-management-dialogue-web.js";
 
 const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -1239,23 +1240,120 @@ test("management handler maps world-info service and storage unavailability to s
   await handler.close();
 });
 
+test("management handler rejects oversized request bodies with HTTP 413 and closes connection", async () => {
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  const server = await startTavernManagementDialogueWebServer({
+    managementStateFacade: facade,
+    managementService: service(recorder),
+    worldInfoService: worldInfoService(),
+    profile,
+    bootstrapToken: token,
+  });
+  try {
+    const origin = server.origin;
+    // 1. Content-Length exceeding MAX_BODY_BYTES returns 413 payload_too_large
+    const oversizedBody = JSON.stringify({ apiVersion: 1, bootstrapToken: token }) + " ".repeat(MAX_BODY_BYTES + 1024);
+    const res = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: oversizedBody,
+    });
+    assert.equal(res.status, 413);
+    assert.equal(res.headers.get("connection"), "close");
+    const problem = (await res.json()) as { code: string; status: number };
+    assert.equal(problem.code, "payload_too_large");
+    assert.equal(problem.status, 413);
 
+    // 2. Chunked body exceeding MAX_BODY_BYTES returns 413 payload_too_large
+    const chunk1 = "{\"apiVersion\":1,\"bootstrapToken\":\"" + token + "\",\"padding\":\"";
+    const chunk2 = "x".repeat(MAX_BODY_BYTES + 1024) + "\"}";
+    const chunkedRes = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      duplex: "half",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(chunk1));
+          controller.enqueue(new TextEncoder().encode(chunk2));
+          controller.close();
+        },
+      }),
+    } as RequestInit & { duplex: string });
+    assert.equal(chunkedRes.status, 413);
+    assert.equal(chunkedRes.headers.get("connection"), "close");
+    const chunkedProblem = (await chunkedRes.json()) as { code: string; status: number };
+    assert.equal(chunkedProblem.code, "payload_too_large");
+    assert.equal(chunkedProblem.status, 413);
+  } finally {
+    await server.close();
+  }
+});
+
+test("management dispatcher destroys request socket and returns 413 payload_too_large for oversized payloads", async () => {
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service(recorder),
+    worldInfoService: worldInfoService(),
+    profile,
+    bootstrapToken: token,
+  });
+  try {
+    let socketDestroyed = false;
+    const mockSocket = {
+      get destroyed() {
+        return socketDestroyed;
+      },
+      destroy() {
+        socketDestroyed = true;
+      },
+    };
+    const oversizedBody = JSON.stringify({ apiVersion: 1, bootstrapToken: token }) + " ".repeat(MAX_BODY_BYTES + 1024);
+    const req = request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, oversizedBody);
+    Object.defineProperty(req, "socket", { value: mockSocket, configurable: true });
+
+    const output = new ControlledResponse("finish");
+    await dispatch(handler, req, output);
+
+    assert.equal(output.status, 413);
+    assert.equal(output.headers.get("connection"), "close");
+    const payload = JSON.parse(output.body) as { code: string; status: number };
+    assert.equal(payload.code, "payload_too_large");
+    assert.equal(payload.status, 413);
+    assert.equal(socketDestroyed, true);
+  } finally {
+    await handler.close();
+  }
+});
 
 class ControlledResponse extends EventEmitter {
   writableEnded = false;
   writableFinished = false;
   destroyed = false;
-  readonly headers = new Map<string, string>();
+  readonly headers = new (class extends Map<string, string> {
+    override get(key: string): string | undefined {
+      return super.get(key) ?? super.get(key.toLowerCase());
+    }
+  })();
   status = 0;
   body = "";
-  constructor(private readonly outcome: "finish" | "premature_close") {
+  private readonly outcome: "finish" | "premature_close";
+  constructor(outcome: "finish" | "premature_close") {
     super();
+    this.outcome = outcome;
   }
   setHeader(name: string, value: string): void {
     this.headers.set(name, value);
+    this.headers.set(name.toLowerCase(), value);
   }
-  writeHead(status: number): void {
+  writeHead(status: number, headers?: Record<string, string>): void {
     this.status = status;
+    if (headers !== undefined) {
+      for (const [key, value] of Object.entries(headers)) {
+        this.headers.set(key, value);
+        this.headers.set(key.toLowerCase(), value);
+      }
+    }
   }
   end(body = ""): void {
     this.body = body;
@@ -1276,7 +1374,7 @@ function request(
   body?: unknown,
 ): import("node:http").IncomingMessage {
   const hasBody = body !== undefined;
-  const encoded = hasBody ? JSON.stringify(body) : "";
+  const encoded = hasBody ? (typeof body === "string" ? body : JSON.stringify(body)) : "";
   return Object.assign(Readable.from([encoded]), {
     method,
     url: path,
