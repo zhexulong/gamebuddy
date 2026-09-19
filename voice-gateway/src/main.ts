@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { AsrProvider, Mixer, TtsProvider } from "./gateway.js";
 import { GroqWhisperAsrProvider } from "./groq.js";
-import { MimoTtsProvider, type MimoTtsAdmission } from "./mimo.js";
+import { MimoTtsProvider, MIMO_TTS_PERSONAS, type MimoTtsAdmission, type MimoTtsPersonaId } from "./mimo.js";
 import { auditSenseVoiceAssets, type SenseVoiceAssetManifest, SenseVoiceCliAsrProvider } from "./sensevoice.js";
 import { startVoiceGateway } from "./server.js";
 import { createStreamingWindowsAudioMixer, type StreamingWindowsAudioMixer } from "./streaming-windows-audio.js";
@@ -77,15 +77,36 @@ async function configuredTts(admission: MimoTtsAdmission | undefined): Promise<M
   if (admission === undefined) return undefined;
   const apiKey = process.env.MIMO_API_KEY;
   const voice = process.env.GAMEBUDDY_MIMO_VOICE;
-  if (apiKey === undefined || voice === undefined) return undefined;
-  // 单伴侣基调：GAMEBUDDY_MIMO_STYLE 是 operator 配置的外部风格串（Layer 1），
-  // 由 Host/角色卡在更高层递进为具体基调；行内情绪由 LLM 输出的括号标签原生演绎。
+  const persona = process.env.GAMEBUDDY_MIMO_PERSONA;
+  // personaByProfile maps each profile to a named voice persona (the
+  // voice-layer adaptation point for character cards); explicit voice is an
+  // operator override. Unknown persona/voice values fail fast below.
+  if (apiKey === undefined || (voice === undefined && persona === undefined)) return undefined;
+  const personaByProfile =
+    persona === undefined || persona.trim().length === 0
+      ? undefined
+      : (() => {
+          const trimmed = persona.trim();
+          // Fail fast: an unknown persona is a configuration error.
+          if (MIMO_TTS_PERSONAS[trimmed as MimoTtsPersonaId] === undefined)
+            throw new Error(`mimo_persona_unknown: companion.default=${trimmed}`);
+          return { "companion.default": trimmed as MimoTtsPersonaId };
+        })();
+  const voiceByProfile = voice === undefined || voice.trim().length === 0 ? undefined : { "companion.default": voice.trim() };
+  // GAMEBUDDY_MIMO_STYLE stays the raw operator override; persona presets
+  // provide the natural stylistic hint when no explicit style is set.
   const style = process.env.GAMEBUDDY_MIMO_STYLE;
   const styleByProfile = style === undefined || style.trim().length === 0 ? undefined : { "companion.default": style.trim() };
   // Prove that the configured credential/profile can produce a bounded PCM
   // chunk before speech is published. Errors deliberately collapse to an
   // unavailable surface and never expose provider response text or secrets.
-  return new MimoTtsProvider({ apiKey, voiceByProfile: { "companion.default": voice }, styleByProfile, admission });
+  return new MimoTtsProvider({
+    apiKey,
+    ...(voiceByProfile === undefined ? {} : { voiceByProfile }),
+    ...(personaByProfile === undefined ? {} : { personaByProfile }),
+    ...(styleByProfile === undefined ? {} : { styleByProfile }),
+    admission,
+  });
 }
 
 /** Provider readiness is not publishable until its actual PCM opens/writes/completes on the chosen Windows output. */

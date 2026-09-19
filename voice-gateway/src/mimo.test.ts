@@ -6,9 +6,14 @@ import type { SpeechJob } from "./gateway.js";
 import {
   MIMO_TTS_ENDPOINT,
   MIMO_TTS_MODEL,
+  MIMO_TTS_PERSONAS,
+  MIMO_TTS_VOICES,
+  MIMO_TTS_VOICE_METADATA,
   MimoTtsProvider,
+  resolveMimoTtsPersona,
   type MimoTtsAdmission,
   type MimoTtsOptions,
+  type MimoTtsPersonaId,
 } from "./mimo.js";
 
 const job: SpeechJob = {
@@ -75,10 +80,24 @@ test("MiMo adapter sends v2.5 pcm16 streaming request and consumes only SSE audi
   }
 });
 
-test("MiMo adapter fails closed when the logical voice is not configured", async () => {
-  const provider = testProvider({ voiceByProfile: {} });
+test("MiMo adapter fails closed when no voice or persona is configured", () => {
+  // Empty voice/persona configuration is a construction-time configuration
+  // error: an unconfigured provider can never speak, so it never publishes.
+  assert.throws(
+    () => testProvider({ voiceByProfile: {} }),
+    /mimo_voices_not_configured/,
+  );
+  assert.throws(
+    () => testProvider({ voiceByProfile: undefined }),
+    /mimo_voices_not_configured/,
+  );
+});
+
+test("MiMo adapter fails closed when the job's voice profile is not configured", async () => {
+  // The profile exists for another voice but not for the job's profile.
+  const provider = testProvider({ voiceByProfile: { "companion.default": "Chloe" } });
   await assert.rejects(async () => {
-    for await (const _ of provider.synthesize(job, new AbortController().signal)) {
+    for await (const _ of provider.synthesize({ ...job, voiceProfile: "unconfigured.profile" }, new AbortController().signal)) {
       /* no op */
     }
   }, /mimo_voice_profile_not_configured/);
@@ -206,5 +225,106 @@ test("MiMo adapter rejects truncated and zero-audio SSE streams", async () => {
     }, /mimo_no_audio/);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test("MiMo exposes the official preset voice allowlist and per-voice advisory metadata", () => {
+  // The allowlist reflects the provider's official audio.voice table. It is
+  // the voice-layer contract: an id outside it fails fast at construction.
+  assert.deepEqual(
+    [...MIMO_TTS_VOICES],
+    ["mimo_default", "冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean"],
+  );
+  assert.equal(MIMO_TTS_VOICE_METADATA["冰糖"]?.gender, "女性");
+  assert.equal(MIMO_TTS_VOICE_METADATA["冰糖"]?.language, "中文");
+  assert.equal(MIMO_TTS_VOICE_METADATA["白桦"]?.gender, "男性");
+  assert.equal(MIMO_TTS_VOICE_METADATA["Chloe"]?.language, "英文");
+  assert.equal(MIMO_TTS_VOICE_METADATA["mimo_default"]?.persona?.includes("冰糖"), true);
+});
+
+test("MiMo rejects an unknown voice string at construction with a distinct fail code", () => {
+  // A typo like moji -> 茉莉, or an arbitrary id, must never reach the provider.
+  assert.throws(
+    () => testProvider({ voiceByProfile: { "companion.default": "moli" } }),
+    /mimo_voice_unknown/,
+  );
+  assert.throws(
+    () => testProvider({ voiceByProfile: { "companion.default": "DeepSeek" } }),
+    /mimo_voice_unknown/,
+  );
+});
+
+test("MiMo persona preset resolves to the official voice and style hint at synthesis", async () => {
+  const original = globalThis.fetch;
+  let request: Request | undefined;
+  globalThis.fetch = async (input, init) => {
+    request = new Request(input, init);
+    return response('data: {"choices":[{"delta":{"audio":{"data":"AQIDBA=="}}}]}\ndata: [DONE]\n');
+  };
+  try {
+    const provider = testProvider({
+      // persona supplies the voice: no explicit voiceByProfile override.
+      voiceByProfile: undefined,
+      personaByProfile: { "companion.default": "soft_maid" },
+    });
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of provider.synthesize(job, new AbortController().signal)) chunks.push(chunk);
+    assert.ok(chunks.length > 0);
+    const body = (await request?.json()) as {
+      audio: { format: string; voice: string };
+      messages: Array<{ role: string; content?: string }>;
+    };
+    // The persona's official voice (冰糖) is resolved, and its style hint
+    // becomes the user-role direction the provider expects.
+    assert.deepEqual(body.audio, { format: "pcm16", voice: "冰糖" });
+    assert.equal(body.messages[0]?.role, "user");
+    assert.ok((body.messages[0]?.content ?? "").includes("软糯"));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("MiMo persona preset is overridden by an explicit per-profile voice and style", async () => {
+  const original = globalThis.fetch;
+  let request: Request | undefined;
+  globalThis.fetch = async (input, init) => {
+    request = new Request(input, init);
+    return response('data: {"choices":[{"delta":{"audio":{"data":"AQIDBA=="}}}]}\ndata: [DONE]\n');
+  };
+  try {
+    const provider = testProvider({
+      personaByProfile: { "companion.default": "gentle_maid" },
+      voiceByProfile: { "companion.default": "Mia" },
+      styleByProfile: { "companion.default": "speak plainly" },
+    });
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of provider.synthesize(job, new AbortController().signal)) chunks.push(chunk);
+    assert.ok(chunks.length > 0);
+    const body = (await request?.json()) as {
+      audio: { format: string; voice: string };
+      messages: Array<{ role: string; content?: string }>;
+    };
+    assert.deepEqual(body.audio, { format: "pcm16", voice: "Mia" });
+    assert.equal(body.messages[0]?.content, "speak plainly");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("MiMo rejects an unknown persona id at construction with a distinct fail code", () => {
+  // The persona reference comes from operator config as a raw string (e.g. an
+  // env value); the cast models that runtime boundary — construction still
+  // validates the value against the catalog.
+  assert.throws(
+    () => testProvider({ personaByProfile: { "companion.default": "not_a_persona" as MimoTtsPersonaId } }),
+    /mimo_persona_unknown/,
+  );
+});
+
+test("MiMo voice persona metadata exposes only supported preset ids", () => {
+  for (const personaId of Object.keys(MIMO_TTS_PERSONAS) as Array<keyof typeof MIMO_TTS_PERSONAS>) {
+    const resolved = resolveMimoTtsPersona(personaId);
+    assert.ok((MIMO_TTS_VOICES as readonly string[]).includes(resolved.voice), `${personaId} resolves to an official voice`);
+    assert.ok(resolved.style.length > 0, `${personaId} carries a style hint`);
   }
 });
