@@ -330,6 +330,11 @@ export function fixtureActions(action) {
   if (action === "pickup_forage") return ["move_to_tile", "travel", "pickup_forage", "observe_scene"];
   if (action === "pickup_item") return ["move_to_tile", "travel", "pickup_item"];
   if (action === "machine_inspect") return ["move_to_tile", "machine_inspect"];
+  // A→B Body Program: the fixture prepares one idle native Keg plus exactly
+  // five owned Coffee Beans, and both the read-only machine_inspect node and
+  // the machine_load node are enabled in one profile so the program verify /
+  // submit path can run the whole RFC 6901-bound dependency in one world.
+  if (action === "machine_a_to_b") return ["move_to_tile", "machine_inspect", "machine_load"];
   // Fixture establishes an idle native Keg and exactly five owned Coffee
   // Beans. The production bridge alone enters GameLocation.checkAction,
   // consuming the item and starting the native machine lifecycle.
@@ -377,11 +382,9 @@ export function fixtureScenario(actions) {
   if (actions.includes("harvest_crop")) return "native_harvest_crop_v1";
   if (actions.includes("pickup_forage")) return "native_pickup_forage_v1";
   if (actions.includes("pickup_item")) return "native_pickup_item_v1";
-  if (actions.includes("machine_inspect")) return "native_machine_inspect_v1";
-  // A collect proof must begin with production-owned native loading, then
-  // wait for actual target-game clock processing before collection.
-  if (actions.includes("machine_collect_output")) return "native_machine_coffee_load_v1";
   if (actions.includes("machine_load")) return "native_machine_coffee_load_v1";
+  if (actions.includes("machine_collect_output")) return "native_machine_coffee_load_v1";
+  if (actions.includes("machine_inspect")) return "native_machine_inspect_v1";
   if (actions.includes("npc_relationship")) return "native_npc_relationship_v1";
   if (actions.includes("pet_animal")) return "native_pet_animal_v1";
   if (actions.includes("use_item")) return "native_use_item_v1";
