@@ -2144,6 +2144,12 @@ public sealed partial class ModEntry : Mod
             this.DrainLocalPipeBridge(nativeLocalState);
             this.LogNativeLocalPipelineHeartbeat();
             nativeLocalState.Executions?.Update();
+            // The Body Program successor pump must run on the native-local player
+            // lane exactly like the formal lane: it auto-starts dependency-free
+            // sources and exact successors and parks when no authenticated
+            // admission/native seams are wired. Without it, an accepted A→B
+            // program stays pending on this fixture topology.
+            nativeLocalState.BodyProgramController?.Update();
             this.PublishPendingStopObservation(nativeLocalState);
             return;
         }
