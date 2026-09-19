@@ -10,7 +10,7 @@ import { createChatPipelineService } from "../tavern/chat-pipeline-service.js";
 import { startComposedReferenceGameStaticShellComposition } from "../tavern/composed-reference-game-static-shell-composition.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import { createMemoryManagementService } from "../tavern/memory-management/memory-management.js";
-import { createReferencePipelineStateFacade } from "../tavern/reference-pipeline-state.js";
+import { createReferencePipelineStateFacade, type VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
 import { startReferencePipelineStaticShellComposition } from "../tavern/reference-pipeline-static-shell-composition.js";
 import { createTavernManagementStateFacade } from "../tavern/tavern-management-state.js";
 import { startTavernManagementStaticShellComposition } from "../tavern/tavern-management-static-shell-composition.js";
@@ -40,6 +40,8 @@ export type DesktopPresentationAdmissionInput = Readonly<{
   presentation: GamePresentationProjection;
   /** Dev/QA artifact roots supply their own inspector; production uses the published helper. */
   inspector?: WindowsReparseInspectorCapability;
+  /** Optional Voice surface reader: projects the additive v1 `voice` snapshot field. */
+  voiceSurface?: VoiceSurfaceReader;
 }>;
 
 /**
@@ -58,6 +60,8 @@ export type ChatOnlyPresentationAdmissionInput = Readonly<{
   lease: MountedChatRuntimeLease;
   /** Dev/QA artifact roots supply their own inspector; production uses the published helper. */
   inspector?: WindowsReparseInspectorCapability;
+  /** Optional Voice surface reader: projects the additive v1 `voice` snapshot field. */
+  voiceSurface?: VoiceSurfaceReader;
 }>;
 
 export type TavernManagementPresentationAdmissionInput = ChatOnlyPresentationAdmissionInput;
@@ -92,6 +96,7 @@ export async function startChatOnlyPresentationAdmission(
     input.lease,
     tavernProfile,
     input.eventStream,
+    input.voiceSurface,
   );
   const pipelineService = createChatPipelineService({
     manifest: input.manifest,
@@ -231,6 +236,7 @@ export async function startDesktopPresentationAdmission(
     input.lease,
     tavernProfile,
     input.eventStream,
+    input.voiceSurface,
   );
   const pipelineService = createChatPipelineService({
     manifest: input.manifest,

@@ -12,6 +12,7 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GameLifecycleProviderCapability } from "../integration-catalog.js";
 import { PRODUCT_INTEGRATION_CATALOG } from "../integration-catalog-product.js";
 import { createChatEventStream } from "../tavern/chat-event-stream.js";
+import type { VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
 import {
   startChatOnlyPresentationAdmission,
   startDesktopPresentationAdmission,
@@ -98,6 +99,12 @@ export type DesktopHostAssemblyInput = Readonly<{
    * gate readiness fact; the URL never enters the composition facade.
    */
   publishLaunchUrl?: (launchUrl: string) => void;
+  /**
+   * Optional Voice surface reader (from a healthy local Voice client). When
+   * supplied, the reference Chat facade projects the additive v1 snapshot
+   * `voice` field so the browser mic icon lights up; absent => no mic icon.
+   */
+  voiceSurface?: VoiceSurfaceReader;
 }>;
 
 /**
@@ -161,7 +168,10 @@ export async function createDesktopProductComposition(
         lease: mountedLease,
       });
       presentationAdmission = surface === "chat-only"
-        ? await startChatOnlyPresentationAdmission(variantInput)
+        ? await startChatOnlyPresentationAdmission({
+          ...variantInput,
+          ...(input.voiceSurface === undefined ? {} : { voiceSurface: input.voiceSurface }),
+        })
         : await startTavernManagementPresentationAdmission(variantInput);
       // The composed surface is ready at the Host-owned seam: the launch URL is
       // published exactly once and never projects through the composition facade.
@@ -188,6 +198,7 @@ export async function createDesktopProductComposition(
     // composed reference-game surface over the mounted Chat lane and the Game
     // projection, so it must drain before both of them close.
     presentationAdmission = await startDesktopPresentationAdmission({
+      ...(input.voiceSurface === undefined ? {} : { voiceSurface: input.voiceSurface }),
       manifest: input.manifest,
       hostArtifactRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
       bootstrapToken: randomBytes(32).toString("base64url"),

@@ -31,6 +31,7 @@ let tavernProfileIdObservedByFacade: string | null = null;
 let tavernProfileIdObservedByService: string | null = null;
 let facadeSawSharedStream = false;
 let serviceSawSharedStream = false;
+let voiceSurfaceObservedByFacade: boolean | null = null;
 let eventStream: ReturnType<typeof createChatEventStream> | undefined;
 
 const handle = `${"B".repeat(42)}A`;
@@ -46,6 +47,9 @@ const fakeFacade = Object.freeze({
       turn: null,
       operations: base.operations,
       eventStream: null,
+      // The fixture mirrors the real facade projection: the voice surface
+      // reader supplied to construction surfaces as the additive snapshot field.
+      voice: voiceSurfaceObservedByFacade === true ? Object.freeze({ state: "ready" }) : null,
     }),
   readDraft: async () => Object.freeze({ apiVersion: 1, revision: 1, text: "Saved draft" }),
 });
@@ -114,11 +118,16 @@ async function main(): Promise<void> {
           _lease: unknown,
           profile: { readonly profileId?: string } | undefined,
           stream: unknown,
+          voiceSurface: unknown,
         ) => {
           if (scenario === "facade-failure") throw constructionFailure;
           counts.facadeCreated += 1;
           tavernProfileIdObservedByFacade = profile?.profileId ?? null;
           facadeSawSharedStream = stream === eventStream;
+          // The optional voice reader is handed through to the facade; when it
+          // is present the fake facade projects the additive snapshot field.
+          voiceSurfaceObservedByFacade =
+            typeof voiceSurface === "function" && voiceSurface()?.state === "ready";
           return fakeFacade;
         },
       },
@@ -172,6 +181,9 @@ async function main(): Promise<void> {
         eventStream,
         lease: Object.freeze({}) as never,
         inspector: inspector(),
+        // Voice surface reader: exercises the additive v1 `voice` projection
+        // through the real facade + real bootstrap route.
+        voiceSurface: () => Object.freeze({ state: "ready" }),
       });
       observations.outcome = "resolved";
     } catch (error) {
@@ -193,8 +205,11 @@ async function main(): Promise<void> {
       });
       observations.bootstrapStatus = bootstrap.status;
       if (bootstrap.status === 200) {
-        const root = (await bootstrap.json()) as { build: { profileId: string } };
+        const root = (await bootstrap.json()) as { build: { profileId: string }; voice?: { state: string } };
         observations.profileId = root.build.profileId;
+        // The additive voice surface must project into the frozen snapshot
+        // through the real facade + real bootstrap route.
+        observations.voiceStateObserved = root.voice?.state ?? null;
       }
       await Promise.all([admission.close(), admission.close()]);
       observations.listenerClosedAfterClose = await fetch(`${origin}/`).then(
@@ -221,6 +236,7 @@ async function main(): Promise<void> {
       tavernProfileIdObservedByService,
       facadeSawSharedStream,
       serviceSawSharedStream,
+      voiceSurfaceObservedByFacade,
       ...observations,
     })}\n`,
   );
