@@ -16,6 +16,7 @@ import { createTavernManagementStateFacade } from "../tavern/tavern-management-s
 import { startTavernManagementStaticShellComposition } from "../tavern/tavern-management-static-shell-composition.js";
 import { createWorldInfoBindingManagementService } from "../tavern/world-info-binding/world-info-binding-management-service.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
+import type { ChatVoiceSpeechPublisher } from "../voice.js";
 import {
   createPublishedWindowsReparseInspector,
   type WindowsReparseInspectorCapability,
@@ -42,6 +43,8 @@ export type DesktopPresentationAdmissionInput = Readonly<{
   inspector?: WindowsReparseInspectorCapability;
   /** Optional Voice surface reader: projects the additive v1 `voice` snapshot field. */
   voiceSurface?: VoiceSurfaceReader;
+  /** Optional Host-owned streaming speech sink: reads the Chat delta aloud while the turn streams. */
+  speechSink?: ChatVoiceSpeechPublisher;
 }>;
 
 /**
@@ -62,6 +65,8 @@ export type ChatOnlyPresentationAdmissionInput = Readonly<{
   inspector?: WindowsReparseInspectorCapability;
   /** Optional Voice surface reader: projects the additive v1 `voice` snapshot field. */
   voiceSurface?: VoiceSurfaceReader;
+  /** Optional Host-owned streaming speech sink: reads the Chat delta aloud while the turn streams. */
+  speechSink?: ChatVoiceSpeechPublisher;
 }>;
 
 export type TavernManagementPresentationAdmissionInput = ChatOnlyPresentationAdmissionInput;
@@ -103,6 +108,7 @@ export async function startChatOnlyPresentationAdmission(
     lease: input.lease,
     profile: tavernProfile,
     eventStream: input.eventStream,
+    ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
   });
   let server: Awaited<ReturnType<typeof startReferencePipelineStaticShellComposition>>;
   try {
@@ -243,6 +249,7 @@ export async function startDesktopPresentationAdmission(
     lease: input.lease,
     profile: tavernProfile,
     eventStream: input.eventStream,
+    ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
   });
   let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>>;
   try {

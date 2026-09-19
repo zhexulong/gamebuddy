@@ -189,6 +189,62 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     return attachment;
   }
 
+  /**
+   * Host-owned streaming speech sink for the Chat presentation lane (the
+   * same delta stream the browser preview receives). One Chat turn maps to
+   * one v2 speech job: begin() opens it, append() feeds incremental deltas,
+   * finalize() commits the last chunk (isFinalChunk=true), cancel() interrupts
+   * the exact job. The sink is voice-local: it never touches ChatThreadStore
+   * and never cancels any Game action.
+   */
+  public createChatVoiceStreamingSink(voiceProfile?: string): import("./voice.js").ChatVoiceSpeechPublisher {
+    let speechJobId: string | undefined;
+    let sessionId: string | undefined;
+    let chunkIndex = 0;
+    let deadlineMs = 0;
+    return Object.freeze({
+      begin: async (turnId: string) => {
+        if (speechJobId !== undefined) throw new Error("voice_speech_job_already_open");
+        sessionId = `chat_turn_${turnId}_session`;
+        speechJobId = `chat_turn_${turnId}_${randomUUID()}`;
+        chunkIndex = 0;
+        // A turn may stream for up to 3 minutes; the job deadline starts at
+        // begin so an abandoned turn cannot hold the gateway slot forever.
+        deadlineMs = Date.now() + 180_000;
+      },
+      append: async (delta: string) => {
+        if (speechJobId === undefined || sessionId === undefined) return;
+        if (delta.length === 0) return;
+        await this.streamSpeechChunk(sessionId, speechJobId, chunkIndex, delta, false, deadlineMs, voiceProfile);
+        chunkIndex += 1;
+      },
+      finalize: async () => {
+        if (speechJobId === undefined || sessionId === undefined) return;
+        if (chunkIndex === 0) {
+          // No delta ever arrived: nothing to voice; keep it closed.
+          speechJobId = undefined;
+          sessionId = undefined;
+          return;
+        }
+        // The protocol requires a non-empty final deltaText. The chunker
+        // treats a lone punctuation symbol as noise (skipped, never voiced),
+        // so sending "。" settles the job without adding audio.
+        await this.streamSpeechChunk(sessionId, speechJobId, chunkIndex, "。", true, deadlineMs, voiceProfile);
+        chunkIndex += 1;
+        speechJobId = undefined;
+        sessionId = undefined;
+      },
+      cancel: async () => {
+        if (speechJobId === undefined || sessionId === undefined) return;
+        const jobId = speechJobId;
+        const jobSession = sessionId;
+        speechJobId = undefined;
+        sessionId = undefined;
+        await this.cancelSpeechStreamJob(jobSession, jobId, "speech_cancelled");
+      },
+    });
+  }
+
   public close(): void {
     this.#socket?.destroy();
     this.handleClose("voice_gateway_closed");
@@ -243,6 +299,27 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
 
   public onV2GatewayState(listener: (state: VoiceGatewayEventV2) => void): () => void {
     return this.onPlaybackObservation(listener);
+  }
+
+  /**
+   * Voice-local interrupt of one exact v2 speech job. Never touches Chat or
+   * Game state; idempotent and safe to call after the job already settled.
+   */
+  private async cancelSpeechStreamJob(sessionId: string, speechJobId: string, reason: string): Promise<void> {
+    if (!this.#connected || this.#socket === undefined || this.#socket.destroyed) return;
+    const connectionEpoch = this.currentReadyCapabilities().epoch;
+    const request: VoiceGatewayRequestV2 = {
+      protocolVersion: VOICE_PROTOCOL_VERSION_V2,
+      sessionId,
+      connectionEpoch,
+      timestampMs: Date.now(),
+      type: "cancel_speech",
+      requestId: randomUUID(),
+      speechJobId,
+      reason,
+    };
+    if (!isVoiceGatewayRequestV2(request)) return;
+    this.#socket.write(encodeVoiceGatewayMessageV2(request));
   }
 
   public onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void {
