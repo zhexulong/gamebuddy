@@ -1,13 +1,26 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { canonicalHash, canonicalJson, TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
+import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
+import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import { validateTavernArtifact } from "./types.js";
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 
 const hash = "a".repeat(64);
 const profileReader = { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: hash }; } };
@@ -341,6 +354,59 @@ test("New Chat fails closed for absent companion and unverified greeting selecti
       }),
       /tavern_greeting_variant_not_found/,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("createNewChat consumes provisioned scenario and first greeting opening with M0 binding", async () => {
+  const { root, paths, artifacts, service } = await setup();
+  try {
+    await service.createNewCompanion({
+      companionId: "companion",
+      continuityId: "continuity",
+      name: "Buddy",
+      profileId: "profile",
+      profileRevision: 1,
+      profileHash: hash,
+    });
+
+    const scenarioService = createScenarioManagementService(artifacts, paths.companionRoot);
+    const greetingService = createGreetingManagementService(artifacts, paths.companionRoot);
+
+    await scenarioService.create({
+      name: "Default Scenario",
+      description: "You and Buddy sit by the fireplace in the tavern.",
+    });
+    await greetingService.create({
+      label: "Initial Greeting",
+      variants: [{ label: "Default", text: "Greetings, traveler! Pull up a chair." }],
+    });
+
+    const digest = createHash("sha256").update(resolve(paths.companionRoot), "utf8").digest("hex").slice(0, 32);
+    const scenarioId = `player-scenario-${digest}`;
+    const greetingSetId = `greeting-set-${digest}`;
+
+    const chatState = await service.createNewChat({
+      chatThreadId: "thread-narrative",
+      chatSurfaceSessionId: "surface-narrative",
+      scenarioId,
+      opening: {
+        kind: "greeting",
+        greetingSetId,
+        variantId: "greeting-1",
+        messageId: "msg-first-greeting",
+      },
+    });
+
+    assert.equal(chatState.messages.length, 1);
+    assert.equal(chatState.messages[0]?.text, "Greetings, traveler! Pull up a chair.");
+    assert.equal(chatState.messages[0]?.messageId, "msg-first-greeting");
+
+    const scenarioBinding = chatState.thread.stableArtifactBindings?.find((b) => b.kind === "scenario");
+    assert.ok(scenarioBinding !== undefined);
+    assert.equal(scenarioBinding.sourceId, scenarioId);
+    assert.equal(scenarioBinding.revision, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

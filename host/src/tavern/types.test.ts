@@ -18,7 +18,8 @@ test("Scenario requires canonical name and description metadata", () => {
   assert.throws(() => validateTavernArtifact({ ...canonical, description: undefined }), /invalid_tavern_artifact/);
   assert.throws(() => validateTavernArtifact({ ...canonical, name: 42 }), /invalid_tavern_artifact/);
   assert.throws(() => validateTavernArtifact({ ...canonical, description: 42 }), /invalid_tavern_artifact/);
-  assert.throws(() => validateTavernArtifact({ ...canonical, description: "unsafe\ntext" }), /invalid_tavern_artifact/);
+  assert.throws(() => validateTavernArtifact({ ...canonical, name: "unsafe\nname" }), /invalid_tavern_artifact/);
+  assert.throws(() => validateTavernArtifact({ ...canonical, description: "unsafe\u0000text" }), /invalid_tavern_artifact/);
   assert.throws(() => validateTavernArtifact({ ...canonical, script: "run()" }), /invalid_tavern_artifact/);
 });
 

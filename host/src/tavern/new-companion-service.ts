@@ -14,8 +14,10 @@ import { withPathLock } from "../path-lock.js";
 import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
+import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
 import { renderMacros } from "./macro-engine.js";
+import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import type { CharacterCandidate, TavernCompanion } from "./types.js";
 
@@ -141,6 +143,7 @@ export async function provisionNewCompanion(
     identity,
     reviewedProfile(approved, companionId, continuityId, playerId),
     threads,
+    approved,
   );
 }
 
@@ -149,6 +152,7 @@ async function provisionNewCompanionNamespace(
   identity: CompanionIdentity,
   profile: IdentityProfile,
   suppliedThreads?: ChatThreadStore,
+  approved?: ReadonlyMap<string, string>,
 ): Promise<NewCompanionProvision> {
   const paths = resolveRuntimePaths(identity, root);
   // The containment-aware lock creates and verifies each parent component
@@ -164,9 +168,29 @@ async function provisionNewCompanionNamespace(
         createIdentityProfileBinding(identityKey(identity), profile),
         { containmentRoot: paths.root },
       );
+      const tavernPaths = resolveTavernPaths(paths, identity);
+      const scenarioService = createScenarioManagementService(
+        new TavernArtifactStore(paths.root),
+        tavernPaths.companionRoot,
+      );
+      const greetingService = createGreetingManagementService(
+        new TavernArtifactStore(paths.root),
+        tavernPaths.companionRoot,
+      );
+      const scenario = approved?.get("scenario");
+      if (scenario !== undefined && scenario.trim() !== "") {
+        await scenarioService.create({ name: "Default Scenario", description: scenario });
+      }
+      const firstGreeting = approved?.get("first_greeting");
+      if (firstGreeting !== undefined && firstGreeting.trim() !== "") {
+        await greetingService.create({
+          label: "Initial Greeting",
+          variants: [{ label: "Default", text: firstGreeting }],
+        });
+      }
       const threads = suppliedThreads ?? createChatThreadStore(paths.runtimeCwd, identityKey(identity));
       const library = createTavernLibraryService(
-        resolveTavernPaths(paths, identity),
+        tavernPaths,
         new TavernArtifactStore(paths.root),
         threads,
         {

@@ -73,8 +73,6 @@ export function createTavernLibraryService(
     tavernRevisionPath(join(paths.playerRoot, "personas", personaId), revision);
   const scenarioPath = (scenarioId: string, revision: number) =>
     tavernRevisionPath(join(paths.companionRoot, "scenarios", scenarioId), revision);
-  const _greetingPath = (greetingSetId: string, revision: number) =>
-    tavernRevisionPath(join(paths.companionRoot, "greetings", greetingSetId), revision);
   const examplesPath = (examplesId: string, revision: number) =>
     tavernRevisionPath(join(paths.companionRoot, "dialogue-examples", examplesId), revision);
 

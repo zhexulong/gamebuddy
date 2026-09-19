@@ -191,7 +191,7 @@ export function createWorldInfoBindingManagementService(
         companionId: manifest.principal.companionId,
         continuityId: manifest.principal.continuityId,
         expectedUpdatedAtMs: projection.updatedAtMs,
-        binding,
+        ...(binding === undefined ? {} : { binding }),
       });
       assertLeaseAfterDurableRead();
       return await projectFrom(updated);

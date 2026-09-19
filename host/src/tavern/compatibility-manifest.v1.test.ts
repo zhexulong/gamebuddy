@@ -16,7 +16,7 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   assert.equal(ST_CARD_DECODER_LIMITS_V1.inputBytesPng, 33_554_432);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.inflateMaxOutputBytes, 67_108_864);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.jsonDepth, 64);
-  assert.equal(ST_CARD_DECODER_LIMITS_V1.jsonNodes, 65_536);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.jsonNodes, 524_288);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.pngChunks, 1_024);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.nameBytes, 256);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.textBytes, 2_097_152);

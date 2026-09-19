@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { access, lstat, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
-import { identityProfileHash } from "../identity-profile.js";
+import { identityProfileHash, identityProfileMetadata } from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
-import { identityKey } from "../runtime.js";
+import { identityKey, resolveRuntimePaths } from "../runtime.js";
+import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
+import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
+import { createTavernLibraryService } from "./library-service.js";
+import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
+import { resolveTavernPaths } from "./tavern-paths.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
   createNewCompanionService,
@@ -205,6 +211,106 @@ test("New Companion provisions a fresh opaque identity and Host-owned profile bi
       await readFile(join(runtimeRoot, "identity-profile-binding.json"), "utf8"),
       new RegExp(identityKey(created.identity)),
     );
+  } finally {
+    await cleanupTestRoot(root);
+  }
+});
+
+test("New Companion provisions reviewed scenario and first greeting for library new chat", async () => {
+  const root = await canonicalTestRoot("tavern-new-companion-narrative-");
+  const narrativeCandidate = {
+    ...candidate,
+    fields: [
+      {
+        field: "persona_core",
+        text: "Warm and brave companion.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "scenario",
+        text: "You meet at the mountain overlook at dawn.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "first_greeting",
+        text: "The wind is cold, but the sunrise is magnificent.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+    ],
+  };
+  try {
+    const service = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    });
+    const review = service.review(narrativeCandidate, {
+      reviewedFields: ["persona_core", "scenario", "first_greeting"],
+      approvedAtMs: 100,
+    });
+    const threadStore = createChatThreadStore(root, "c".repeat(64));
+    const created = await provisionNewCompanion(
+      root,
+      "player",
+      narrativeCandidate,
+      review,
+      threadStore,
+    );
+
+    const runtimePaths = resolveRuntimePaths(created.identity, root);
+    const tavernPaths = resolveTavernPaths(runtimePaths, created.identity);
+    const store = new TavernArtifactStore(root);
+    const scenarioService = createScenarioManagementService(store, tavernPaths.companionRoot);
+    const greetingService = createGreetingManagementService(store, tavernPaths.companionRoot);
+
+    const persistedScenario = await scenarioService.read();
+    assert.ok(persistedScenario !== null);
+    assert.equal(persistedScenario.name, "Default Scenario");
+    assert.equal(persistedScenario.description, "You meet at the mountain overlook at dawn.");
+
+    const persistedGreeting = await greetingService.read();
+    assert.ok(persistedGreeting !== null);
+    assert.equal(persistedGreeting.label, "Initial Greeting");
+    assert.equal(persistedGreeting.variants.length, 1);
+    assert.equal(persistedGreeting.variants[0]?.text, "The wind is cold, but the sunrise is magnificent.");
+
+    const library = createTavernLibraryService(
+      tavernPaths,
+      store,
+      threadStore,
+      {
+        async readExact() {
+          return identityProfileMetadata(created.profile);
+        },
+      },
+    );
+
+    const digest = createHash("sha256").update(resolve(tavernPaths.companionRoot), "utf8").digest("hex").slice(0, 32);
+    const scenarioId = `player-scenario-${digest}`;
+    const greetingSetId = `greeting-set-${digest}`;
+
+    const newChat = await library.createNewChat({
+      chatThreadId: "thread-narrative-01",
+      chatSurfaceSessionId: "surface-01",
+      scenarioId,
+      opening: {
+        kind: "greeting",
+        greetingSetId,
+        variantId: "greeting-1",
+        messageId: "msg-01",
+      },
+    });
+
+    assert.equal(newChat.messages.length, 1);
+    assert.equal(newChat.messages[0]?.text, "The wind is cold, but the sunrise is magnificent.");
+    assert.equal(newChat.messages[0]?.kind, "opening");
+    assert.equal(newChat.messages[0]?.greetingSource?.greetingSetId, greetingSetId);
+
+    const scenarioBinding = newChat.thread.stableArtifactBindings?.find((b) => b.kind === "scenario");
+    assert.ok(scenarioBinding !== undefined);
+    assert.equal(scenarioBinding.sourceId, scenarioId);
+    assert.equal(scenarioBinding.revision, 1);
+    assert.match(scenarioBinding.canonicalHash, /^[a-f0-9]{64}$/);
   } finally {
     await cleanupTestRoot(root);
   }

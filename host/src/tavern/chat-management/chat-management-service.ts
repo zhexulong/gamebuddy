@@ -236,10 +236,6 @@ function validateListQuery(query: ChatListQueryV1): void {
   if (query.state !== undefined && query.state !== "active") throw unavailable();
 }
 
-function _validateSelectionGeneration(selectionGeneration: number, lease: MountedChatRuntimeLease): void {
-  if (!Number.isSafeInteger(selectionGeneration) || selectionGeneration < 1) throw unavailable();
-  if (selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
-}
 
 function validateDraftCommand(
   command: SaveDraftCommandV1 | DiscardDraftCommandV1,

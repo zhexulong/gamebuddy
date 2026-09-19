@@ -141,7 +141,7 @@ export async function runMountedProviderInvocation(
       // Arm linearization: the exact session surface is unavailable before a
       // Host invocation, so the durable record may safely classify not_started.
       scope.assertAdmission();
-      const _armed = requireAttemptStarting(
+      requireAttemptStarting(
         await scope.transitionStore({ operation: "arm", observedAtMs: Date.now() }),
         "arm",
       );

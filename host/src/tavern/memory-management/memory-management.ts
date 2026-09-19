@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { TextEncoder } from "node:util";
+import { identityProfileHash } from "../../identity-profile.js";
 import {
   isCurrentMountedChatRuntimeLease,
   type MountedChatRuntimeLease,
@@ -71,6 +72,7 @@ export function createMemoryManagementService(
   const profileBinding = Object.freeze({
     profileId: identityProfile.profileId,
     profileRevision: identityProfile.revision,
+    profileCanonicalHash: identityProfileHash(identityProfile),
   });
   const handleSecret = randomBytes(32);
   const projectHandle = (stateToken: string): string =>

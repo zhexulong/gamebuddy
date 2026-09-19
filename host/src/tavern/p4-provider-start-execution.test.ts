@@ -109,12 +109,26 @@ function cancelled(): CancelledTurn {
 }
 
 type Observer = (fact: Readonly<{ statusClass: "success" | "error" }>) => void;
+type AuthoredStableSourceRef = Readonly<Record<string, string>>;
+type AuthoredVolatileSourceRef = Readonly<Record<string, string>>;
+
 type ScopeOverrides = Readonly<{
   assertAdmission?: () => void;
   beginActivePrompt?: () => () => void;
   readAcceptedMessageText?: () => Promise<string>;
-  readAcceptedAuthoredContextPlan?: () => Promise<Readonly<{ turnId: string; stableSources: readonly Readonly<Record<string, string>>[] }>>;
-  authoredContextCapability?: Readonly<{ assertInstall(durableTurnId: string, refs: readonly Readonly<Record<string, string>>[]): void }>;
+  readAcceptedAuthoredContextPlan?: () => Promise<Readonly<{
+    turnId: string;
+    stableSources: readonly AuthoredStableSourceRef[];
+    volatileSources: readonly AuthoredVolatileSourceRef[];
+  }>>;
+  authoredContextCapability?: Readonly<{
+    assertInstall(
+      durableTurnId: string,
+      refs: readonly AuthoredStableSourceRef[],
+      volatileRefs?: readonly AuthoredVolatileSourceRef[],
+    ): void;
+    clearVolatileForTurn(durableTurnId: string): void;
+  }>;
   readCurrentTurnLedger?: () => Promise<ChatTurnLedger>;
   runtimeSession?: object;
   presentationCommitted?: () => boolean;
@@ -296,8 +310,15 @@ function createScope(overrides: ScopeOverrides = {}) {
     readAcceptedMessageText: overrides.readAcceptedMessageText ?? (async () => "Hello"),
     readAcceptedAuthoredContextPlan:
       overrides.readAcceptedAuthoredContextPlan ??
-      (async () => Object.freeze({ turnId: facts.turnId, stableSources: Object.freeze([]) })),
-    authoredContextCapability: overrides.authoredContextCapability ?? Object.freeze({ assertInstall: () => undefined }),
+      (async () => Object.freeze({ turnId: facts.turnId, stableSources: Object.freeze([]), volatileSources: Object.freeze([]) })),
+    authoredContextCapability: overrides.authoredContextCapability ?? Object.freeze({
+      assertInstall: (
+        _durableTurnId: string,
+        _refs: readonly AuthoredStableSourceRef[],
+        _volatileRefs?: readonly AuthoredVolatileSourceRef[],
+      ) => undefined,
+      clearVolatileForTurn: (_durableTurnId: string) => undefined,
+    }),
     assertAdmission: overrides.assertAdmission ?? (() => undefined),
     beginActivePrompt: overrides.beginActivePrompt ?? (() => () => undefined),
     readCurrentTurnLedger:
@@ -326,14 +347,17 @@ test("P4c installs the durable authored-context plan before its plain-text promp
       return Object.freeze({
         turnId: facts.turnId,
         stableSources: Object.freeze([Object.freeze({ sourceId: "persona_01", kind: "persona", revision: "1", canonicalHash: "a".repeat(64), totalOrderKey: "01" })]),
+        volatileSources: Object.freeze([]),
       });
     },
     authoredContextCapability: Object.freeze({
-      assertInstall(turnId, refs) {
+      assertInstall(turnId, refs, volatileRefs) {
         assert.equal(turnId, facts.turnId);
         assert.equal(refs.length, 1);
+        assert.deepEqual(volatileRefs, []);
         events.push("assert-install");
       },
+      clearVolatileForTurn: (_durableTurnId: string) => undefined,
     }),
     readAcceptedMessageText: async () => {
       events.push("read-text");
@@ -361,7 +385,12 @@ test("P4c fails closed on an authored-context mismatch before prompt", async () 
   let promptCalls = 0;
   const { scope } = createScope({
     authoredContextCapability: Object.freeze({
-      assertInstall() { throw new Error("authored_context_catalog_mismatch"); },
+      assertInstall(
+        _durableTurnId: string,
+        _refs: readonly AuthoredStableSourceRef[],
+        _volatileRefs?: readonly AuthoredVolatileSourceRef[],
+      ) { throw new Error("authored_context_catalog_mismatch"); },
+      clearVolatileForTurn: (_durableTurnId: string) => undefined,
     }),
     runtimeSession: Object.freeze({
       installTavernProviderStartObserver() { return () => undefined; },

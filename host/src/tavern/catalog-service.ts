@@ -10,37 +10,11 @@ import type {
 import { type TavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import {
   type DialogueExamples,
-  type GreetingSet,
   type Scenario,
-  type TavernCompanion,
   type UserPersona,
   validateTavernArtifact,
-  type WorldBookBinding,
 } from "./types.js";
 
-/**
- * Catalog and selection boundary for inert Tavern sources. It deliberately
- * returns references and metadata, never a prompt, runtime binding, or Game
- * capability. Persistence is supplied by the caller through this narrow port.
- */
-type TavernCatalog = Readonly<{
-  personas: readonly UserPersona[];
-  scenarios: readonly Scenario[];
-  greetings: readonly GreetingSet[];
-  worldBooks: readonly WorldBookBinding[];
-}>;
-type TavernBindingScope =
-  | Readonly<{ kind: "companion"; companionId: string }>
-  | Readonly<{ kind: "chat"; companionId: string; continuityId: string; chatThreadId: string }>;
-type TavernCatalogSelection = Readonly<{
-  schemaVersion: 1;
-  revision: number;
-  scope: TavernBindingScope;
-  personaId?: string;
-  scenarioId?: string;
-  greetingSetId?: string;
-  worldBookBindingIds: readonly string[];
-}>;
 export type TavernStableContextBinding = Readonly<{
   continuityId: string;
   sessionId: string;
@@ -73,6 +47,8 @@ export type TavernAuthoredContextCatalog = Readonly<{
     provenance: string;
     /** Selection-only metadata; stripped before durable turn persistence. */
     selectionKeys: readonly string[];
+    secondaryKeys?: readonly string[];
+    selectiveLogic?: 0 | 1 | 2 | 3;
   }>[];
 }>;
 type TavernAlwaysOnWorldBookSource = Readonly<{
@@ -212,149 +188,6 @@ export async function materializeTavernAuthoredContextCatalog(
   };
   return Object.freeze({ ...body, canonicalHash: hash(canonicalJson(body)), stableSources: Object.freeze(sources), volatileSources: Object.freeze(volatileSources) });
 }
-
-type TavernCatalogBindingStore = Readonly<{
-  read(scope: TavernBindingScope): Promise<TavernCatalogSelection | undefined>;
-  write(selection: TavernCatalogSelection, expectedRevision: number | undefined): Promise<TavernCatalogSelection>;
-}>;
-type TavernCatalogService = Readonly<{
-  list(catalog: TavernCatalog): Readonly<{
-    personas: readonly UserPersona[];
-    scenarios: readonly Scenario[];
-    greetings: readonly GreetingSet[];
-    worldBooks: readonly WorldBookBinding[];
-  }>;
-  select(
-    companion: TavernCompanion,
-    catalog: TavernCatalog,
-    selection: Readonly<{
-      scope: TavernBindingScope;
-      personaId?: string;
-      scenarioId?: string;
-      greetingSetId?: string;
-      worldBookBindingIds?: readonly string[];
-    }>,
-  ): Promise<TavernCatalogSelection>;
-  read(scope: TavernBindingScope): Promise<TavernCatalogSelection | undefined>;
-}>;
-
-function createTavernCatalogService(store: TavernCatalogBindingStore): TavernCatalogService {
-  return Object.freeze({
-    list(catalog) {
-      validateCatalog(catalog);
-      return Object.freeze({
-        personas: latest(catalog.personas, "personaId"),
-        scenarios: latest(catalog.scenarios, "scenarioId"),
-        greetings: latest(catalog.greetings, "greetingSetId"),
-        worldBooks: freeze(catalog.worldBooks),
-      });
-    },
-    async select(companion, catalog, input) {
-      validateCatalog(catalog);
-      validateScope(input.scope);
-      if (
-        input.scope.companionId !== companion.companionId ||
-        (input.scope.kind === "chat" && input.scope.continuityId !== companion.continuityId)
-      )
-        throw new Error("tavern_catalog_scope_mismatch");
-      selected(latest(catalog.personas, "personaId"), input.personaId, "personaId");
-      selected(latest(catalog.scenarios, "scenarioId"), input.scenarioId, "scenarioId");
-      selected(latest(catalog.greetings, "greetingSetId"), input.greetingSetId, "greetingSetId");
-      const ids = input.worldBookBindingIds === undefined ? [] : [...input.worldBookBindingIds];
-      if (
-        new Set(ids).size !== ids.length ||
-        !ids.every(isId) ||
-        !ids.every((id) => catalog.worldBooks.some((book) => book.bindingId === id && book.scope === input.scope.kind))
-      )
-        throw new Error("invalid_tavern_worldbook_selection");
-      const previous = await store.read(input.scope);
-      const value: TavernCatalogSelection = Object.freeze({
-        schemaVersion: 1,
-        revision: (previous?.revision ?? 0) + 1,
-        scope: freezeScope(input.scope),
-        ...(input.personaId === undefined ? {} : { personaId: input.personaId }),
-        ...(input.scenarioId === undefined ? {} : { scenarioId: input.scenarioId }),
-        ...(input.greetingSetId === undefined ? {} : { greetingSetId: input.greetingSetId }),
-        worldBookBindingIds: Object.freeze(ids),
-      });
-      return store.write(value, previous?.revision);
-    },
-    read(scope) {
-      validateScope(scope);
-      return store.read(scope);
-    },
-  });
-}
-
-function validateCatalog(catalog: TavernCatalog): void {
-  for (const values of [catalog.personas, catalog.scenarios, catalog.greetings, catalog.worldBooks])
-    if (!Array.isArray(values)) throw new Error("invalid_tavern_catalog");
-  validRevisions(catalog.personas, "personaId");
-  validRevisions(catalog.scenarios, "scenarioId");
-  validRevisions(catalog.greetings, "greetingSetId");
-  unique(catalog.worldBooks.map((value) => value.bindingId));
-}
-function validRevisions(
-  values: readonly Readonly<Record<string, unknown>>[],
-  key: "personaId" | "scenarioId" | "greetingSetId",
-): void {
-  const seen = new Set<string>();
-  for (const value of values) {
-    const id = value[key];
-    if (
-      !isId(id) ||
-      !Number.isSafeInteger(value.revision) ||
-      (value.revision as number) < 1 ||
-      seen.has(`${id}\u001f${value.revision}`)
-    )
-      throw new Error("invalid_tavern_catalog");
-    seen.add(`${id}\u001f${value.revision}`);
-  }
-}
-function latest<T extends Readonly<Record<string, unknown>>>(
-  values: readonly T[],
-  key: "personaId" | "scenarioId" | "greetingSetId",
-): readonly T[] {
-  const current = new Map<string, T>();
-  for (const value of values) {
-    const id = value[key] as string;
-    const selected = current.get(id);
-    if (selected === undefined || (value.revision as number) > (selected.revision as number)) current.set(id, value);
-  }
-  return freeze([...current.values()].sort((left, right) => String(left[key]).localeCompare(String(right[key]))));
-}
-function selected(
-  values: readonly Record<string, unknown>[],
-  id: string | undefined,
-  key: "personaId" | "scenarioId" | "greetingSetId",
-): void {
-  if (id !== undefined && (!isId(id) || !values.some((value) => value[key] === id)))
-    throw new Error("invalid_tavern_catalog_selection");
-}
-function unique(ids: readonly string[]): void {
-  if (new Set(ids).size !== ids.length || !ids.every(isId)) throw new Error("invalid_tavern_catalog");
-}
-function validateScope(scope: TavernBindingScope): void {
-  if (
-    !isId(scope.companionId) ||
-    (scope.kind !== "companion" && scope.kind !== "chat") ||
-    (scope.kind === "chat" && (!isId(scope.continuityId) || !isId(scope.chatThreadId)))
-  )
-    throw new Error("invalid_tavern_binding_scope");
-}
-function freezeScope(scope: TavernBindingScope): TavernBindingScope {
-  return scope.kind === "companion"
-    ? Object.freeze({ kind: "companion", companionId: scope.companionId })
-    : Object.freeze({
-        kind: "chat",
-        companionId: scope.companionId,
-        continuityId: scope.continuityId,
-        chatThreadId: scope.chatThreadId,
-      });
-}
-function isId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9._-]{1,128}$/u.test(value);
-}
 function source(
   kind: "persona" | "scenario" | "dialogue_examples" | "lorebook_constant",
   sourceId: string,
@@ -452,7 +285,35 @@ function deriveVolatileWorldInfoSources(sourceValue: TavernWorldInfoSource, pare
     const provenance = `tavern-world-info-entry/${sourceId}/revision/${revision}/canonical/${canonical}`;
     const selectionKeys = Array.isArray(entry.keys) && entry.keys.length > 0 ? entry.keys : [entry.publicTitle];
     if (selectionKeys.some((key) => typeof key !== "string" || key.trim().length === 0)) throw new Error("tavern_volatile_context_invalid_source");
-    return [Object.freeze({ sourceId, kind: "lorebook_entry" as const, revision: String(revision), canonicalHash: hash(content), content, budgetTokens: Math.ceil(content.length / 4), totalOrderKey: String(index + 1).padStart(4, "0"), provenance, selectionKeys: Object.freeze([...selectionKeys]) })];
+    const secondaryKeys = Array.isArray(entry.secondaryKeys) && entry.secondaryKeys.length > 0 ? entry.secondaryKeys : undefined;
+    if (secondaryKeys && secondaryKeys.some((key: unknown) => typeof key !== "string" || key.trim().length === 0)) {
+      throw new Error("tavern_volatile_context_invalid_source");
+    }
+    if (
+      entry.selectiveLogic !== undefined &&
+      !(typeof entry.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(entry.selectiveLogic))
+    ) {
+      throw new Error("tavern_volatile_context_invalid_source");
+    }
+    const selectiveLogic =
+      typeof entry.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(entry.selectiveLogic)
+        ? (entry.selectiveLogic as 0 | 1 | 2 | 3)
+        : undefined;
+    return [
+      Object.freeze({
+        sourceId,
+        kind: "lorebook_entry" as const,
+        revision: String(revision),
+        canonicalHash: hash(content),
+        content,
+        budgetTokens: Math.ceil(content.length / 4),
+        totalOrderKey: String(index + 1).padStart(4, "0"),
+        provenance,
+        selectionKeys: Object.freeze([...selectionKeys]),
+        ...(secondaryKeys !== undefined ? { secondaryKeys: Object.freeze([...secondaryKeys]) } : {}),
+        ...(selectiveLogic !== undefined ? { selectiveLogic } : {}),
+      }),
+    ];
   }));
 }
 function validSourceContent(value: string): boolean {
@@ -460,7 +321,4 @@ function validSourceContent(value: string): boolean {
 }
 function hash(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
-}
-function freeze<T>(values: readonly T[]): readonly T[] {
-  return Object.freeze([...values]);
 }

@@ -86,13 +86,13 @@ function validateRequest(value: unknown): asserts value is CreateGreetingSetRequ
   if (
     !record(value) ||
     !allowed(value, ["label", "variants"]) ||
-    !text(value.label, 128) ||
+    !singleLine(value.label, 128) ||
     !Array.isArray(value.variants) ||
     value.variants.length === 0 ||
     value.variants.length > 16 ||
     !value.variants.every(
       (variant) =>
-        record(variant) && allowed(variant, ["label", "text"]) && text(variant.label, 128) && text(variant.text, 8_192),
+        record(variant) && allowed(variant, ["label", "text"]) && singleLine(variant.label, 128) && text(variant.text, 8_192),
     )
   )
     throw new Error("invalid_greeting_request");
@@ -120,6 +120,9 @@ function allowed(value: Record<string, unknown>, keys: readonly string[]): boole
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function singleLine(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001F\u007F-\u009F]/u.test(value);
 }
 function text(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);

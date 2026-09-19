@@ -205,3 +205,102 @@ test("managed World Info verifies revision snapshots on readback and never proje
     await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
+
+test("managed World Info supports secondaryKeys and selectiveLogic and rejects invalid variants", async () => {
+  const { root, repository } = await temporaryRepository();
+  try {
+    const validEntry = {
+      publicTitle: "Reaction Guide",
+      summary: "Elemental interactions.",
+      entries: [
+        {
+          scope: "setting" as const,
+          publicTitle: "Vaporize",
+          summary: "Pyro on Hydro.",
+          keys: ["vaporize"],
+          secondaryKeys: ["pyro", "hydro"],
+          selectiveLogic: 3 as const,
+        },
+      ],
+    };
+    const created = await repository.create(validEntry);
+    assert.deepEqual(created.entries[0]?.secondaryKeys, ["pyro", "hydro"]);
+    assert.equal(created.entries[0]?.selectiveLogic, 3);
+
+    const detailed = await repository.detail("Reaction Guide");
+    assert.deepEqual(detailed?.entries[0]?.secondaryKeys, ["pyro", "hydro"]);
+    assert.equal(detailed?.entries[0]?.selectiveLogic, 3);
+
+    // Invalid selectiveLogic
+    assert.throws(
+      () =>
+        repository.validateCreateRequest({
+          ...validEntry,
+          entries: [{ ...validEntry.entries[0], selectiveLogic: 4 as any }],
+        }),
+      /invalid_world_info_request/,
+    );
+    assert.throws(
+      () =>
+        repository.validateCreateRequest({
+          ...validEntry,
+          entries: [{ ...validEntry.entries[0], selectiveLogic: "0" as any }],
+        }),
+      /invalid_world_info_request/,
+    );
+
+    // Invalid secondaryKeys
+    assert.throws(
+      () =>
+        repository.validateCreateRequest({
+          ...validEntry,
+          entries: [{ ...validEntry.entries[0], secondaryKeys: [] }],
+        }),
+      /invalid_world_info_request/,
+    );
+    assert.throws(
+      () =>
+        repository.validateCreateRequest({
+          ...validEntry,
+          entries: [{ ...validEntry.entries[0], secondaryKeys: [""] }],
+        }),
+      /invalid_world_info_request/,
+    );
+
+    // C1 control characters rejection in title, summary, keys, secondaryKeys
+    assert.throws(
+      () =>
+        repository.validateCreateRequest({
+          ...validEntry,
+          publicTitle: "Bad\u0080Title",
+        }),
+      /invalid_world_info_request/,
+    );
+    assert.throws(
+      () =>
+        repository.validateCreateRequest({
+          ...validEntry,
+          summary: "Bad\u009fSummary",
+        }),
+      /invalid_world_info_request/,
+    );
+    assert.throws(
+      () =>
+        repository.validateCreateRequest({
+          ...validEntry,
+          entries: [{ ...validEntry.entries[0], keys: ["bad\u0085key"] }],
+        }),
+      /invalid_world_info_request/,
+    );
+    assert.throws(
+      () =>
+        repository.validateCreateRequest({
+          ...validEntry,
+          entries: [{ ...validEntry.entries[0], secondaryKeys: ["bad\u0085secondary"] }],
+        }),
+      /invalid_world_info_request/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

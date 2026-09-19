@@ -123,7 +123,9 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     field("name", profile.identity.name, "candidate_only"),
     field("identity_role", profile.identity.role, "candidate_only"),
     field("continuity", profile.identity.continuity, "candidate_only"),
-    ...(value.scenario === undefined ? [] : [field("scenario", value.scenario, "candidate_only")]),
+    ...(value.scenario === undefined
+      ? []
+      : [field("scenario", value.scenario, "profile_eligible_after_explicit_review")]),
     ...(profile.persona === undefined
       ? []
       : [
@@ -138,7 +140,9 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     ...profile.examples.map((example, index) =>
       field(`example_${index + 1}`, JSON.stringify(example), "candidate_only"),
     ),
-    ...(profile.firstGreeting === undefined ? [] : [field("first_greeting", profile.firstGreeting, "candidate_only")]),
+    ...(profile.firstGreeting === undefined
+      ? []
+      : [field("first_greeting", profile.firstGreeting, "profile_eligible_after_explicit_review")]),
     ...value.worldBookCandidates.map((entry) => field(`worldbook_${entry.entryId}`, entry.content, "candidate_only")),
   ];
   return Object.freeze({
@@ -159,7 +163,7 @@ function reportFromDecode(importId: string, report: StCardImportReport, sourceHa
     revision: 1,
     importId,
     source: report.source,
-    sourceFormat: report.format,
+    ...(report.format !== undefined ? { sourceFormat: report.format } : {}),
     sourceHash,
     dispositions: Object.freeze(report.dispositions.map(disposition)),
   });

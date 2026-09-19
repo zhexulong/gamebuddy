@@ -17,7 +17,13 @@ import {
 import {
   composeGameProfile,
   GameBrowserFixtureV1,
+  type GameCreateCommandV1,
+  type GameCreateResultV1,
   type GameLaunchCommandV1,
+  type GameResumeCancelCommandV1,
+  type GameResumeCancelResultV1,
+  type GameResumeResultV1,
+  type GameSessionResumeCommandV1,
   type GameStopCommandV1,
   type StardewCabinConfirmCommandV1,
 } from "../game-browser-contract/index.js";
@@ -617,6 +623,181 @@ test("composed shell closes and drains both handlers including delegated Tavern 
     );
   } finally {
     await server.close().catch(() => {});
+    await fixture.dispose();
+  }
+});// ─── game.resume / game.create / game.resume.cancel wiring (B-path gap) ────
+
+test("composed shell wires game.resume, game.create, and game.resume.cancel through the lifecycle sink", async () => {
+  const fixture = await artifactFixture();
+  const idempotencyKey = "A".repeat(22);
+  const sessionHandle = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
+  let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
+  const calls: string[] = [];
+  const lifecycleSink = Object.freeze({
+    bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) { issuer = value; },
+    async resume(
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+      command: GameSessionResumeCommandV1,
+    ): Promise<GameResumeResultV1> {
+      calls.push("resume");
+      const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "game_resume",
+        () => {
+          // The composed wire is strictly session-less: the coordinator-side
+          // seam receives no session handle and must fail closed on it.
+          assert.deepEqual(command, { apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2 });
+          return Object.freeze({ apiVersion: 1 as const, status: "accepted" as const });
+        },
+      );
+      if (consumed === undefined) throw new Error("resume_seam_admission_invalid");
+      return consumed as GameResumeResultV1;
+    },
+    async createGameSession(
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+      command: GameCreateCommandV1,
+    ): Promise<GameCreateResultV1> {
+      calls.push("create");
+      const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "game_create",
+        () => {
+          assert.deepEqual(command, { apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: null });
+          return Object.freeze({ apiVersion: 1 as const, status: "accepted" as const, gameSessionId: sessionHandle });
+        },
+      );
+      if (consumed === undefined) throw new Error("create_seam_admission_invalid");
+      return consumed as GameCreateResultV1;
+    },
+    async cancelResume(
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+      command: GameResumeCancelCommandV1,
+    ): Promise<GameResumeCancelResultV1> {
+      calls.push("cancel");
+      const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "game_resume_cancel",
+        () => {
+          assert.deepEqual(command, { apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2 });
+          return Object.freeze({ apiVersion: 1 as const, status: "cancelled" as const });
+        },
+      );
+      if (consumed === undefined) throw new Error("cancel_seam_admission_invalid");
+      return consumed as GameResumeCancelResultV1;
+    },
+  });
+  const profileWithCreateResumeCancel = composeReferenceGameBrowserProfile({
+    tavernProfile,
+    gameProfile: composeGameProfile({
+      profileId: "gamebuddy.game.preview",
+      releaseTier: "game_preview",
+      operationIds: ["game.state.read", "game.resume", "game.resume.cancel", "game.create"],
+      navigationItemIds: ["game"],
+    }),
+  });
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile: profileWithCreateResumeCancel,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    async readGame(context) {
+      const state = GameBrowserFixtureV1.state();
+      return {
+        ...state,
+        build: { ...state.build, profileId: profileWithCreateResumeCancel.gameProfile!.profileId },
+        csrfToken: context.csrfToken,
+        browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+      };
+    },
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+    lifecycleActivationBindingSink: lifecycleSink,
+  });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const root = await bootstrap.json();
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const headers = {
+      Origin: server.origin,
+      Cookie: cookie,
+      "Content-Type": "application/json",
+      "X-CSRF-Token": root.chat.csrfToken,
+    };
+
+    const cancelled = await fetch(`${server.origin}/api/composed-reference-game/v1/game/resume/cancel`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2 }),
+    });
+    assert.equal(cancelled.status, 200);
+    assert.deepEqual(await cancelled.json(), { apiVersion: 1, status: "cancelled" });
+
+    const created = await fetch(`${server.origin}/api/composed-reference-game/v1/game/create`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: null }),
+    });
+    assert.equal(created.status, 200);
+    assert.deepEqual(await created.json(), { apiVersion: 1, status: "accepted", gameSessionId: sessionHandle });
+
+    const resumed = await fetch(`${server.origin}/api/composed-reference-game/v1/game/resume`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2 }),
+    });
+    assert.equal(resumed.status, 200);
+    assert.deepEqual(await resumed.json(), { apiVersion: 1, status: "accepted" });
+    assert.deepEqual(calls, ["cancel", "create", "resume"]);
+  } finally {
+    await server.close();
+    await fixture.dispose();
+  }
+});
+
+test("composed shell rejects a profile declaring game.create/game.resume.cancel when the sink does not wire them", async () => {
+  const fixture = await artifactFixture();
+  try {
+    const profileWithCreate = composeReferenceGameBrowserProfile({
+      tavernProfile,
+      gameProfile: composeGameProfile({
+        profileId: "gamebuddy.game.preview",
+        releaseTier: "game_preview",
+        operationIds: ["game.state.read", "game.create", "game.resume.cancel"],
+        navigationItemIds: ["game"],
+      }),
+    });
+    await assert.rejects(
+      startComposedReferenceGameStaticShellComposition({
+        profile: profileWithCreate,
+        bootstrapToken: token,
+        referenceStateFacade: fakeFacade as any,
+        eventStream,
+        async readGame(context) {
+          const state = GameBrowserFixtureV1.state();
+          return {
+            ...state,
+            build: { ...state.build, profileId: profileWithCreate.gameProfile!.profileId },
+            csrfToken: context.csrfToken,
+            browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+          };
+        },
+        artifactRoot: fixture.root,
+        inspector: inspector(),
+        lifecycleActivationBindingSink: Object.freeze({
+          bindBrowserAdmissionIssuer() { /* sink without create/cancel seams */ },
+        }),
+      }),
+      /resume cancel operation is mismounted/,
+    );
+  } finally {
     await fixture.dispose();
   }
 });
