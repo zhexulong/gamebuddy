@@ -5,6 +5,8 @@ import type { DesktopGuardianSession, GuardianAck } from "../../containment/auth
 import { createDesktopProductComposition, type DesktopHostAssemblyInput, type DesktopPrivateHostComposition, type DesktopRootLayoutCapability } from "../../composition/desktop-host-composition.js";
 import { loadHostDeploymentManifest } from "../../deployment-manifest.js";
 import { parseStrictJson } from "../../strict-json-reader.js";
+import { connectHealthyVoiceGateway } from "../../voice-bootstrap.js";
+import type { VoiceSurfaceReader } from "../../tavern/reference-pipeline-state.js";
 import {
   createPublishedWindowsReparseInspector,
   inspectWindowsPathIdentityChain,
@@ -54,7 +56,8 @@ export async function runDesktopHostBootstrap(moduleDirectory: string): Promise<
 
   const frame = parseBootstrapFrame(await readBootstrapFrame());
   const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory);
-  const assemblyInput = await loadDesktopHostAssemblyInput(publishCompositionReady);
+  const voice = await connectOptionalVoiceSurface();
+  const assemblyInput = await loadDesktopHostAssemblyInput(publishCompositionReady, voice?.reader);
   const rootAuthority = mintDesktopRootLayoutCapability(rootLayout);
   const guardianAuthority = mintDesktopGuardianSessionCapability(frame);
   const composition = await createDesktopProductCompositionForBootstrap(rootAuthority, guardianAuthority, assemblyInput);
@@ -69,6 +72,7 @@ export async function runDesktopHostBootstrap(moduleDirectory: string): Promise<
     }
   } finally {
     await composition.close();
+    await voice?.close();
   }
 }
 
@@ -256,6 +260,7 @@ async function createDesktopProductCompositionForBootstrap(
 
 async function loadDesktopHostAssemblyInput(
   publishLaunchUrl: (launchUrl: string) => void,
+  voiceSurface?: VoiceSurfaceReader,
 ): Promise<DesktopHostAssemblyInput> {
   const manifestPath = process.env.GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST;
   const gameSessionMode = process.env.GAMEBUDDY_HOST_GAME_SESSION_MODE;
@@ -279,8 +284,43 @@ async function loadDesktopHostAssemblyInput(
     gameSessionMode,
     ...(surface === undefined ? {} : { surface }),
     ...(tavernNarrativeGateNonceSha256 === undefined ? {} : { tavernNarrativeGateNonceSha256 }),
+    ...(voiceSurface === undefined ? {} : { voiceSurface }),
     publishLaunchUrl,
   });
+}
+
+/**
+ * Optional Voice surface: when the operator configured a local Voice Gateway
+ * (the same env the Voice Gateway executable itself reads, so host and gateway
+ * share one token source), connect a healthy client and expose its surface
+ * reader. Voice is an optional capability: any connection/health failure falls
+ * back to no reader (browser shows no mic icon) and never blocks the Desktop
+ * composition.
+ */
+async function connectOptionalVoiceSurface(): Promise<
+  Readonly<{ reader: VoiceSurfaceReader; close(): Promise<void> }> | undefined
+> {
+  const port = process.env.GAMEBUDDY_VOICE_PORT;
+  const token = process.env.GAMEBUDDY_VOICE_TOKEN;
+  if (port === undefined || token === undefined || !/^\d+$/.test(port) || !/^[A-Za-z0-9_-]{16,256}$/.test(token))
+    return undefined;
+  const gatewayPort = Number(port);
+  if (!Number.isInteger(gatewayPort) || gatewayPort < 1 || gatewayPort > 65_535) return undefined;
+  try {
+    const client = await connectHealthyVoiceGateway({
+      port: gatewayPort,
+      token: token.trim(),
+    });
+    if (client === undefined) return undefined;
+    return Object.freeze({
+      reader: client.createVoiceSurfaceReader(),
+      close: async () => {
+        client.close();
+      },
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 /**

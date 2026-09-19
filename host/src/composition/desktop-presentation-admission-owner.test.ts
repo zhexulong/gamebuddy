@@ -67,6 +67,7 @@ type ChatOnlyPresentationAdmissionObservations = Readonly<{
   shellServesArtifact?: boolean;
   bootstrapStatus?: number;
   profileId?: string;
+  voiceStateObserved?: string | null;
   listenerClosedAfterClose?: boolean;
   serviceClosedAfterClose?: number;
 }>;
@@ -226,9 +227,12 @@ test("chat-only presentation admission variant serves the reference Chat Core sh
   assert.equal(observed.shellStatus, 200);
   assert.equal(observed.shellServesArtifact, true);
   // The Chat Core bootstrap projection carries the reference profile identity;
-  // there is no composed or game profile anywhere in this surface.
+  // there is no composed or game profile anywhere in this surface, and the
+  // additive v1 voice surface projects through the real facade + bootstrap
+  // route (mic icon lights up in the browser).
   assert.equal(observed.bootstrapStatus, 200);
   assert.equal(observed.profileId, "gamebuddy.chat-core.reference-pipeline");
+  assert.equal((observed as ChatOnlyPresentationAdmissionObservations & { voiceStateObserved?: string | null }).voiceStateObserved, "ready");
   // Closing once (twice requested) closes the one listener and drains the Chat
   // pipeline service through its delegated handler exactly once. The chat-only
   // variant never touches the mounted lease or any facade, and it created no
