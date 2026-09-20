@@ -403,7 +403,19 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         if (closed) return;
         closed = true;
         sessionClosing.Cancel();
-        try { if (guardian is not null) await guardian.CloseControlAsync(cancellationToken).ConfigureAwait(false); } catch { }
+        try
+        {
+            // Task contract: Desktop shutdown/session revocation closes only the
+            // retained Guardian control writer and waits for its redacted
+            // terminal outcome. CloseControlAndWaitForExitAsync is idempotent
+            // and returns ControlClosed once the native guardian has exited.
+            if (guardian is not null) await guardian.CloseControlAndWaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Teardown must never mask the original failure with a close error;
+            // the caller's guard-lease disposal still terminates as a fallback.
+        }
         server.Dispose();
     }
 
