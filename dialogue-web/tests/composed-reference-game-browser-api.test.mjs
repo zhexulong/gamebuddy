@@ -211,6 +211,47 @@ test("composed client reports bounded server problems without accepting additive
 });
 
 
+test("installation discovery is strict, uses opaque candidate IDs, and gates mutations on CSRF", async () => {
+  const candidateId = "A".repeat(22);
+  const discovery = { apiVersion: 1, candidates: [{ candidateId, source: "registry", label: "Game", hint: null, status: "candidate" }], diagnostics: [] };
+  const recorder = transport(jsonResponse(discovery));
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  assert.deepEqual(await api.readStardewInstallationDiscovery(), discovery);
+  for (const valid of ["A".repeat(22), "A".repeat(43), "A".repeat(128)]) {
+    const validRecorder = transport(jsonResponse({
+      ...discovery,
+      candidates: [{ ...discovery.candidates[0], candidateId: valid }],
+    }));
+    assert.deepEqual(
+      await createComposedReferenceGameBrowserApi(validRecorder.fetch).readStardewInstallationDiscovery(),
+      { ...discovery, candidates: [{ ...discovery.candidates[0], candidateId: valid }] },
+    );
+  }
+  for (const bad of [
+    "A".repeat(21),
+    "A".repeat(129),
+    "A".repeat(22) + "!",
+    "A".repeat(22) + "/path",
+    "A".repeat(21) + "B", // length % 4 === 2, non-zero trailing bits
+    "A".repeat(42) + "B", // length % 4 === 3, non-zero trailing bits
+  ]) {
+    await assert.rejects(api.confirmStardewInstallation(bad), ComposedReferenceGameProtocolError);
+  }
+  assert.equal(recorder.calls.length, 1);
+  for (const method of ["retryStardewInstallationDiscovery", "cancelStardewInstallationDiscovery", "openStardewInstallationPicker"]) {
+    await assert.rejects(api[method](), (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "missing_composed_session");
+  }
+  assert.equal(recorder.calls.length, 1);
+  for (const bad of [
+    { ...discovery, extra: true },
+    { ...discovery, diagnostics: Array.from({ length: 33 }, () => "x") },
+    { ...discovery, candidates: [{ ...discovery.candidates[0], path: "C:/raw", executable: "game.exe" }] },
+  ]) {
+    const badTransport = transport(jsonResponse(bad));
+    await assert.rejects(createComposedReferenceGameBrowserApi(badTransport.fetch).readStardewInstallationDiscovery(), ComposedReferenceGameProtocolError);
+  }
+});
+
 test("Stardew cabin client uses the frozen exact read and confirmation DTOs", async () => {
   const choiceHandle = "B".repeat(42) + "A";
   const idempotencyKey = "C".repeat(21) + "A";

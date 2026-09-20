@@ -75,6 +75,9 @@ const PROBLEM_CODES = [
 const CABIN_CHOICES_KEYS = ["apiVersion", "choices"] as const;
 const CABIN_CHOICE_KEYS = ["displayLabel", "availability", "choiceHandle", "expiresAtMs"] as const;
 const CABIN_CONFIRMATION_KEYS = ["apiVersion", "status"] as const;
+const INSTALLATION_DISCOVERY_KEYS = ["apiVersion", "candidates", "diagnostics"] as const;
+const INSTALLATION_CANDIDATE_KEYS = ["candidateId", "source", "label", "hint", "status"] as const;
+const INSTALLATION_DIAGNOSTICS_MAX = 32;
 
 const ROOT_KEYS = ["apiVersion", "build", "chat", "game"] as const;
 const ROOT_BUILD_KEYS = ["browserContract", "profileId"] as const;
@@ -181,6 +184,24 @@ export type StardewCabinChoiceV1 = Readonly<{
   expiresAtMs: number;
 }>;
 
+export type StardewInstallationCandidateV1 = Readonly<{
+  candidateId: string;
+  source: string;
+  label: string;
+  hint: string | null;
+  status: "candidate" | "invalid" | "admission_required";
+}>;
+export type StardewInstallationDiscoveryV1 = Readonly<{
+  apiVersion: 1;
+  candidates: readonly StardewInstallationCandidateV1[];
+  diagnostics: readonly string[];
+}>;
+
+export type StardewInstallationMutationV1 = Readonly<{
+  apiVersion: 1;
+  status: "accepted" | "registered" | "cancelled" | "unavailable";
+}>;
+
 type StardewCabinChoicesV1 = Readonly<{
   apiVersion: 1;
   choices: readonly StardewCabinChoiceV1[];
@@ -279,6 +300,11 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   createGameSession(request: GameCreateRequestV1): Promise<GameCreateResultV1>;
   cancelResume(request: GameResumeCancelRequestV1): Promise<GameResumeCancelResultV1>;
   readStardewCabins(): Promise<StardewCabinChoicesV1>;
+  readStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1>;
+  confirmStardewInstallation(candidateId: string): Promise<StardewInstallationMutationV1>;
+  retryStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1>;
+  cancelStardewInstallationDiscovery(): Promise<StardewInstallationMutationV1>;
+  openStardewInstallationPicker(): Promise<StardewInstallationMutationV1>;
   confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1>;
 }>;
 
@@ -332,6 +358,12 @@ function isStardewChoiceHandle(value: unknown): value is string {
   return isCanonicalBase64UrlBytes(value, 32);
 }
 
+function isInstallationCandidateId(value: unknown): value is string {
+  return typeof value === "string" &&
+    OPAQUE_HANDLE_PATTERN.test(value) &&
+    isCanonicalUnpaddedBase64Url(value);
+}
+
 function isIdempotencyKey(value: unknown): value is string {
   return isCanonicalBase64UrlBytes(value, 16);
 }
@@ -366,6 +398,21 @@ function validateStardewCabinChoices(value: unknown): StardewCabinChoicesV1 {
     }));
   }
   return Object.freeze({ apiVersion: 1, choices: Object.freeze(choices) });
+}
+
+function validateStardewInstallationDiscovery(value: unknown): StardewInstallationDiscoveryV1 {
+  if (!isRecord(value) || !hasExactKeys(value, INSTALLATION_DISCOVERY_KEYS) || value.apiVersion !== 1 || !Array.isArray(value.candidates) || !Array.isArray(value.diagnostics) || value.diagnostics.length > INSTALLATION_DIAGNOSTICS_MAX) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_discovery");
+  const candidates: StardewInstallationCandidateV1[] = [];
+  for (const candidate of value.candidates) {
+    if (!isRecord(candidate) || !hasExactKeys(candidate, INSTALLATION_CANDIDATE_KEYS) || !isInstallationCandidateId(candidate.candidateId) || !isBoundedString(candidate.source, 1, 64) || !isBoundedString(candidate.label, 1, 256) || !isNullableLabel(candidate.hint, 256) || !["candidate", "invalid", "admission_required"].includes(candidate.status as string)) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_candidate");
+    candidates.push(Object.freeze({ candidateId: candidate.candidateId, source: candidate.source, label: candidate.label, hint: candidate.hint, status: candidate.status as StardewInstallationCandidateV1["status"] }));
+  }
+  if (!value.diagnostics.every((item) => isBoundedString(item, 1, 128))) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_diagnostics");
+  return Object.freeze({ apiVersion: 1, candidates: Object.freeze(candidates), diagnostics: Object.freeze(value.diagnostics as string[]) });
+}
+function validateStardewInstallationMutation(value: unknown): StardewInstallationMutationV1 {
+  if (!isRecord(value) || !hasExactKeys(value, ["apiVersion", "status"]) || value.apiVersion !== 1 || !["accepted", "registered", "cancelled", "unavailable"].includes(value.status as string)) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_mutation");
+  return Object.freeze({ apiVersion: 1, status: value.status as StardewInstallationMutationV1["status"] });
 }
 
 function validateStardewCabinConfirmation(value: unknown): StardewCabinConfirmationV1 {
@@ -760,6 +807,26 @@ export function createComposedReferenceGameBrowserApi(
         { method: "GET" },
         validateStardewCabinChoices,
       );
+    },
+    async readStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1> {
+      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery", { method: "GET" }, validateStardewInstallationDiscovery);
+    },
+    async confirmStardewInstallation(candidateId: string): Promise<StardewInstallationMutationV1> {
+      if (!isInstallationCandidateId(candidateId)) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_candidate_id");
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery/confirm", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify({ apiVersion: 1, candidateId }) }, validateStardewInstallationMutation);
+    },
+    async retryStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1> {
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery/retry", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify({ apiVersion: 1 }) }, validateStardewInstallationDiscovery);
+    },
+    async cancelStardewInstallationDiscovery(): Promise<StardewInstallationMutationV1> {
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery/cancel", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify({ apiVersion: 1 }) }, validateStardewInstallationMutation);
+    },
+    async openStardewInstallationPicker(): Promise<StardewInstallationMutationV1> {
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery/manual-picker", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify({ apiVersion: 1 }) }, validateStardewInstallationMutation);
     },
     async confirmStardewCabin(
       request: StardewCabinConfirmationRequestV1,
