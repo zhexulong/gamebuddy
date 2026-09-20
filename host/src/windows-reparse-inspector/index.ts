@@ -403,7 +403,14 @@ function expectedChainComponentCount(path: string): number {
 }
 
 function productionSpawn(command: string, args: readonly string[]): ChildProcess {
-  return spawn(command, [...args], { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  // Absolute Windows child paths can exceed MAX_PATH in deep fixtures;
+  // CreateProcessW rejects them with ENOENT. Prefix with the extended-length
+  // marker so Node can spawn the helper.
+  const marker = String.fromCharCode(92, 92, 63, 92);
+  const extended = process.platform === "win32" && isAbsolute(command) && command.length >= 240 && !command.startsWith(marker)
+    ? marker + command
+    : command;
+  return spawn(extended, [...args], { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 function unavailableSpawn(): ChildProcess {
