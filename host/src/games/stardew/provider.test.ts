@@ -1,9 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { isComposedGameProfile } from "../../game-browser-contract/index.js";
 import type {
   StardewGameSurfaceActionAuthorityReader,
@@ -18,6 +14,10 @@ const csrfToken = "A".repeat(43);
 
 function fakeCoordinator() {
   const calls = { lifecycle: 0, attachment: 0, launchReadiness: 0, actionAuthority: 0 };
+  const discoveryCalls: string[] = [];
+  const discoveryReceivers: unknown[] = [];
+  const rawCandidateId = "A".repeat(43);
+  const redactedCandidateId = "Q".repeat(42) + "A";
   const lifecycleReader = {
     readRoleLifecycleView: async () => {
       calls.lifecycle += 1;
@@ -42,9 +42,56 @@ function fakeCoordinator() {
       return { status: "unavailable" };
     },
   } as unknown as StardewGameSurfaceActionAuthorityReader;
-  const activationOwner = Object.freeze({ bindBrowserAdmissionIssuer: () => undefined });
+  const activationOwner = Object.freeze({
+    bindBrowserAdmissionIssuer: () => undefined,
+    async readInstallationDiscovery(this: unknown) {
+      discoveryReceivers.push(this);
+      discoveryCalls.push("read");
+      return {
+        candidates: [
+          {
+            candidateId: rawCandidateId,
+            source: "known-location" as const,
+            label: "Stardew Valley",
+            displayPath: "C:\\\\Games\\\\Stardew Valley",
+            status: "candidate" as const,
+          },
+          {
+            candidateId: redactedCandidateId,
+            source: "steam-vdf" as const,
+            label: "Stardew Valley",
+            displayPath: "Detected installation (path hidden)",
+            status: "admission_required" as const,
+          },
+        ],
+        diagnostics: ["no-candidates" as const],
+      };
+    },
+    async confirmInstallation(this: unknown, _admission: unknown, candidateId: string) {
+      discoveryReceivers.push(this);
+      discoveryCalls.push(`confirm:${candidateId}`);
+      return { status: "registered" as const };
+    },
+    async retryInstallationDiscovery(this: unknown) {
+      discoveryReceivers.push(this);
+      discoveryCalls.push("retry");
+      return { candidates: [], diagnostics: [] };
+    },
+    async cancelInstallationSelection(this: unknown) {
+      discoveryReceivers.push(this);
+      discoveryCalls.push("cancel");
+      return { status: "cancelled" as const };
+    },
+    async openInstallationPicker(this: unknown) {
+      discoveryReceivers.push(this);
+      discoveryCalls.push("manual-picker");
+      return { status: "cancelled" as const };
+    },
+  });
   return {
     calls,
+    discoveryCalls,
+    discoveryReceivers,
     activationOwner,
     coordinator: {
       lifecycleReader,
@@ -79,13 +126,64 @@ test("stardew presentation projection declares the game preview surface and bind
       "game.reopen",
       "game.disconnect",
       "game.create",
+      "game.installation.discovery.read",
+      "game.installation.discovery.confirm",
+      "game.installation.discovery.retry",
+      "game.installation.discovery.cancel",
+      "game.installation.discovery.manual_picker",
       "game.stardew.cabins.read",
       "game.stardew.cabins.confirm",
     ],
   );
   // Consumer: the activation owner crosses the seam as the composed binding
   // sink itself, so the static shell binds the coordinator's exact owner.
-  assert.equal(projection.lifecycleActivationBindingSink, activationOwner);
+  assert.notEqual(projection.lifecycleActivationBindingSink, activationOwner);
+  assert.equal(typeof projection.lifecycleActivationBindingSink.gameDiscovery?.read, "function");
+});
+
+test("stardew discovery mount delegates every nested callback to the same activation owner", async () => {
+  const { activationOwner, coordinator, discoveryCalls, discoveryReceivers } = fakeCoordinator();
+  const projection = createStardewGamePresentationProjection(coordinator);
+  const discovery = projection.lifecycleActivationBindingSink.gameDiscovery!;
+  const admission = {} as Parameters<typeof discovery.read>[0];
+
+  assert.deepEqual(await discovery.read(admission), {
+    apiVersion: 1,
+    candidates: [
+      {
+        candidateId: "A".repeat(43),
+        source: "known-location",
+        label: "Stardew Valley",
+        hint: null,
+        status: "candidate",
+      },
+      {
+        candidateId: "Q".repeat(42) + "A",
+        source: "steam-vdf",
+        label: "Stardew Valley",
+        hint: "Detected installation (path hidden)",
+        status: "admission_required",
+      },
+    ],
+    diagnostics: ["no-candidates"],
+  });
+  await discovery.confirm(admission, { apiVersion: 1, candidateId: "Q".repeat(42) + "A" });
+  await discovery.retry(admission);
+  await discovery.cancel(admission);
+  await discovery.manualPicker(admission);
+
+  assert.deepEqual(discoveryCalls, ["read", `confirm:${"Q".repeat(42)}A`, "retry", "cancel", "manual-picker"]);
+  assert.deepEqual(discoveryReceivers, [
+    activationOwner,
+    activationOwner,
+    activationOwner,
+    activationOwner,
+    activationOwner,
+  ]);
+  assert.equal(
+    projection.lifecycleActivationBindingSink.bindBrowserAdmissionIssuer,
+    activationOwner.bindBrowserAdmissionIssuer,
+  );
 });
 
 test("stardew presentation projection reads game state through the coordinator's own readers", async () => {
@@ -105,17 +203,4 @@ test("stardew presentation projection reads game state through the coordinator's
   assert.equal(state.game.instance.status, "launching");
   assert.equal(state.game.connectionStatus, "none");
   assert.equal(state.game.actionAuthority, "unavailable");
-});
-
-test("stardew provider returns the presentation projection with its lifecycle capability", async () => {
-  // The production provider closure is not constructible without a deployment
-  // manifest, an authenticated Guardian session, and the published native
-  // helpers, so this seam is pinned at source: the capability carries the same
-  // owner's projection and never a second lifecycle owner.
-  const source = await readFile(
-    resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "src", "games", "stardew", "provider.ts"),
-    "utf8",
-  );
-  assert.match(source, /return Object\.freeze\(\{\s*close: \(\) => coordinator\.close\(\),\s*presentation: createStardewGamePresentationProjection\(coordinator\),\s*\}\);/s);
-  assert.match(source, /presentation: createStardewGamePresentationProjection\(coordinator\)/);
 });

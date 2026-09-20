@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 import type { DesktopGuardianSession } from "../../containment/auth/desktop-guardian-session.internal.js";
 import type { SemanticGameProductionAuthority } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
-import { composeGameProfile } from "../../game-browser-contract/index.js";
+import {
+  composeGameProfile,
+  GameBrowserValidatorsV1,
+  type GameDiscoveryConfirmCommandV1,
+  type GameDiscoveryMutationResultV1,
+  type GameDiscoveryReadResultV1,
+} from "../../game-browser-contract/index.js";
 import { createGameBrowserStateProvider } from "../../game-browser/game-browser-state-provider.js";
 import type { GameIntegrationProvider, GamePresentationProjection } from "../../integration-catalog.js";
 import {
@@ -25,6 +31,56 @@ import {
  * the coordinator object, private activation snapshots, and launch authority
  * stay in this module's closure.
  */
+const REDACTED_DISCOVERY_HINT = "Detected installation (path hidden)" as const;
+
+function projectDiscoveryReadResult(
+  result: Awaited<ReturnType<StardewProductionLifecycleCoordinator["activationOwner"]["readInstallationDiscovery"]>>,
+): GameDiscoveryReadResultV1 {
+  const projected = {
+    apiVersion: 1 as const,
+    candidates: result.candidates.map((candidate) => ({
+      candidateId: candidate.candidateId,
+      source: candidate.source,
+      label: candidate.label,
+      hint: candidate.displayPath === REDACTED_DISCOVERY_HINT ? REDACTED_DISCOVERY_HINT : null,
+      status: candidate.status,
+    })),
+    diagnostics: [...result.diagnostics],
+  };
+  if (!GameBrowserValidatorsV1.GameDiscoveryReadResultV1Schema.Check(projected)) {
+    throw new Error("stardew_installation_discovery_projection_invalid");
+  }
+  return Object.freeze(projected);
+}
+
+function projectDiscoveryMutationResult(
+  result: Awaited<ReturnType<StardewProductionLifecycleCoordinator["activationOwner"]["confirmInstallation"]>>,
+): GameDiscoveryMutationResultV1 {
+  const projected = { apiVersion: 1 as const, status: result.status };
+  if (!GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema.Check(projected)) {
+    throw new Error("stardew_installation_discovery_mutation_projection_invalid");
+  }
+  return Object.freeze(projected);
+}
+
+function createStardewGameDiscoveryBinding(
+  owner: StardewProductionLifecycleCoordinator["activationOwner"],
+): NonNullable<GamePresentationProjection["lifecycleActivationBindingSink"]["gameDiscovery"]> {
+  const read = owner.readInstallationDiscovery.bind(owner);
+  const confirm = owner.confirmInstallation.bind(owner);
+  const retry = owner.retryInstallationDiscovery.bind(owner);
+  const cancel = owner.cancelInstallationSelection.bind(owner);
+  const manualPicker = owner.openInstallationPicker.bind(owner);
+  return Object.freeze({
+    read: async (admission) => projectDiscoveryReadResult(await read(admission)),
+    confirm: async (admission, command: GameDiscoveryConfirmCommandV1) =>
+      projectDiscoveryMutationResult(await confirm(admission, command.candidateId)),
+    retry: async (admission) => projectDiscoveryReadResult(await retry(admission)),
+    cancel: async (admission) => projectDiscoveryMutationResult(await cancel(admission)),
+    manualPicker: async (admission) => projectDiscoveryMutationResult(await manualPicker(admission)),
+  });
+}
+
 export function createStardewGamePresentationProjection(
   coordinator: StardewProductionLifecycleCoordinator,
 ): GamePresentationProjection {
@@ -41,6 +97,11 @@ export function createStardewGamePresentationProjection(
       "game.reopen",
       "game.disconnect",
       "game.create",
+      "game.installation.discovery.read",
+      "game.installation.discovery.confirm",
+      "game.installation.discovery.retry",
+      "game.installation.discovery.cancel",
+      "game.installation.discovery.manual_picker",
       "game.stardew.cabins.read",
       "game.stardew.cabins.confirm",
     ],
@@ -53,10 +114,14 @@ export function createStardewGamePresentationProjection(
     coordinator.launchReadinessReader,
     coordinator.actionAuthorityReader,
   ).readState;
+  const lifecycleActivationBindingSink = Object.freeze({
+    ...coordinator.activationOwner,
+    gameDiscovery: createStardewGameDiscoveryBinding(coordinator.activationOwner),
+  });
   return Object.freeze({
     gameProfile,
     readGame,
-    lifecycleActivationBindingSink: coordinator.activationOwner,
+    lifecycleActivationBindingSink,
   });
 }
 

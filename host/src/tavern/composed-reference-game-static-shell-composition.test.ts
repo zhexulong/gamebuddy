@@ -503,7 +503,7 @@ test("composed shell wires all discovery callbacks through authenticated HTTP", 
   const discovery = {
     read: async (admission: any) => { calls.push("read"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_read", () => ({ apiVersion: 1 as const, candidates: [], diagnostics: [] }))!; },
     confirm: async (admission: any, command: any) => { calls.push("confirm"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_confirm", () => { assert.deepEqual(command, { apiVersion: 1, candidateId }); return { apiVersion: 1 as const, status: "registered" as const }; })!; },
-    retry: async (admission: any) => { calls.push("retry"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_retry", () => ({ apiVersion: 1 as const, status: "accepted" as const }))!; },
+    retry: async (admission: any) => { calls.push("retry"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_retry", () => ({ apiVersion: 1 as const, candidates: [], diagnostics: [] }))!; },
     cancel: async (admission: any) => { calls.push("cancel"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_cancel", () => ({ apiVersion: 1 as const, status: "cancelled" as const }))!; },
     manualPicker: async (admission: any) => { calls.push("manual-picker"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_picker", () => ({ apiVersion: 1 as const, status: "accepted" as const }))!; },
   };

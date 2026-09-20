@@ -84,7 +84,7 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
   gameDiscovery?: Readonly<{
     read(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryReadResultV1>;
     confirm(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission, command: GameDiscoveryConfirmCommandV1): Promise<GameDiscoveryMutationResultV1>;
-    retry(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryMutationResultV1>;
+    retry(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryReadResultV1>;
     cancel(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryMutationResultV1>;
     manualPicker(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryMutationResultV1>;
   }>;
@@ -1090,7 +1090,10 @@ export function createComposedReferenceGameBrowserRequestHandler(
               ? await options.gameDiscovery.cancel(admission)
               : await options.gameDiscovery.manualPicker(admission);
         if (result === undefined) { sendProblem(response, 409, "state_unavailable"); return; }
-        if (!GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema.Check(result)) { sendProblem(response, 409, "state_unavailable"); return; }
+        const validResult = operation === "discovery_retry"
+          ? GameBrowserValidatorsV1.GameDiscoveryReadResultV1Schema.Check(result)
+          : GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema.Check(result);
+        if (!validResult) { sendProblem(response, 409, "state_unavailable"); return; }
         sendJson(response, 200, result);
       } catch { sendProblem(response, 503, "game_unavailable"); }
       return;
