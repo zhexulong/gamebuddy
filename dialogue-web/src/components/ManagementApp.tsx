@@ -6,6 +6,7 @@ import {
   createManagementPipelineApi,
   type MemoryItemV1,
   type MemoryReadV1,
+  type TavernVoicePreferenceV1,
   TavernProblemError,
   TavernProtocolError,
   type TavernStateSnapshotV1,
@@ -54,6 +55,8 @@ type ReadyView = Readonly<{
 type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail: string }>;
 type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
 
+type VoiceView = Readonly<{ kind: "loading" }> | Readonly<{ kind: "unavailable" }> | Readonly<{ kind: "error" }> | Readonly<{ kind: "ready"; preference: TavernVoicePreferenceV1 }>;
+
 type MemoryView =
   | Readonly<{ kind: "idle" }>
   | Readonly<{ kind: "loading" }>
@@ -74,6 +77,8 @@ export function ManagementApp() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView>({ kind: "idle" });
+  const [voiceView, setVoiceView] = useState<VoiceView>({ kind: "loading" });
+  const voiceLoadedRef = useRef(false);
   const localeRef = useRef<Locale>(resolveLocale());
   const cancelledRef = useRef(false);
 
@@ -123,6 +128,15 @@ export function ManagementApp() {
         if (!active) return;
         setDraftText(draft.text ?? "");
         commit({ kind: "ready", session, draft, locale: localeRef.current, notice: null });
+        if (!voiceLoadedRef.current) {
+          voiceLoadedRef.current = true;
+          try {
+            setVoiceView({ kind: "ready", preference: await api.readVoicePreference() });
+          } catch {
+            // Older management fixtures may not publish the optional voice route.
+            setVoiceView({ kind: "unavailable" });
+          }
+        }
       } catch (error) {
         if (!active) return;
         commit(problemView(error, messages(localeRef.current)));
@@ -137,6 +151,23 @@ export function ManagementApp() {
   const reconcileList = async (current: ReadyView): Promise<ManagementPipelineSession> => {
     const list = await apiRef.current.listChats();
     return current.session.withChatList(list);
+  };
+
+  const handleVoiceMutation = async (action: "accept" | "revoke"): Promise<void> => {
+    const current = viewRef.current;
+    const voice = voiceView;
+    if (current.kind !== "ready" || voice.kind !== "ready") return;
+    const command = action === "accept"
+      ? { action, expectedRevision: voice.preference.revision, disclosureVersion: "mimo-cloud-tts-v1" as const }
+      : { action, expectedRevision: voice.preference.revision };
+    try {
+      await apiRef.current.updateVoicePreference(command, current.session.snapshot.csrfToken);
+      setVoiceView({ kind: "ready", preference: await apiRef.current.readVoicePreference() });
+      commit({ ...current, notice: { kind: "success", text: labels().success } });
+    } catch {
+      setVoiceView({ kind: "error" });
+      commit({ ...current, notice: { kind: "failure", text: labels().failure } });
+    }
   };
 
   const handleDraftMutation = async (kind: "save" | "discard"): Promise<void> => {
@@ -413,6 +444,12 @@ export function ManagementApp() {
                 {view.notice.text}
               </div>
             )}
+            <VoiceSettingsPanel
+              voiceView={voiceView}
+              labels={labels()}
+              onAccept={() => void handleVoiceMutation("accept")}
+              onRevoke={() => void handleVoiceMutation("revoke")}
+            />
             {worldInfoBindAvailable && view.session.snapshot.chat.worldInfo !== null && (
               <WorldInfoBindingPanel
                 worldInfo={view.session.snapshot.chat.worldInfo}
@@ -482,6 +519,40 @@ export function ManagementApp() {
   );
 }
 
+function VoiceSettingsPanel({
+  voiceView,
+  labels,
+  onAccept,
+  onRevoke,
+}: Readonly<{
+  voiceView: VoiceView;
+  labels: ReturnType<typeof messages>;
+  onAccept: () => void;
+  onRevoke: () => void;
+}>): ReactElement {
+  return (
+    <section className="management-settings-section" aria-label={labels.voiceSettings} data-voice-settings>
+      <h2>{labels.voiceSettings}</h2>
+      <p>{labels.voiceDisclosure}</p>
+      {voiceView.kind === "loading" && <p>{labels.openingChat}</p>}
+      {voiceView.kind === "unavailable" && <p>{labels.voiceSettingsUnavailable}</p>}
+      {voiceView.kind === "error" && <p>{labels.failure}</p>}
+      {voiceView.kind === "ready" && (
+        <>
+          <dl className="management-settings-details">
+            <div><dt>{labels.voiceConsent}</dt><dd>{labels[`voiceConsent${voiceView.preference.consent[0].toUpperCase()}${voiceView.preference.consent.slice(1)}` as "voiceConsentUndecided" | "voiceConsentAccepted" | "voiceConsentRevoked"]}</dd></div>
+            <div><dt>{labels.voiceDisclosureVersion}</dt><dd>{voiceView.preference.disclosureVersion ?? "—"}</dd></div>
+          </dl>
+          <div className="composer-actions">
+            <button type="button" className="small-button" onClick={onAccept} disabled={voiceView.preference.consent === "accepted"}>{labels.voiceAccept}</button>
+            <button type="button" className="small-button" onClick={onRevoke} disabled={voiceView.preference.consent === "revoked"}>{labels.voiceRevoke}</button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function WorldInfoBindingPanel({
   worldInfo,
   labels,
@@ -490,7 +561,7 @@ function WorldInfoBindingPanel({
   worldInfo: NonNullable<TavernStateSnapshotV1["chat"]>["worldInfo"] & {};
   labels: ReturnType<typeof messages>;
   onBind: (sourceHandle: string | null) => void;
-}>): ReactElement {
+}>): ReactElement | null {
   if (worldInfo === null) return null;
   const controlsLocked = worldInfo.state === "locked" || worldInfo.state === "unavailable";
   const hasItems = worldInfo.items.length > 0;
