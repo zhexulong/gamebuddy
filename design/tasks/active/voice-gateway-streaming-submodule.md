@@ -230,6 +230,6 @@ references:
 | **L5: player_release** | 真实玩家端到端发布 | 完整游戏交互体验、用户显式 Consent 记录、无感文字降级、崩溃日志安全清理 | 未经授权传输音频或主循环卡顿即阻断 |
 
 ### 5.1 门禁发布约束（Release Disclaimers）
-1. **当前状态绝对限制**：当前仅完成 L1/L2 与局部 L3 验证（针对 v1 PTT 网关）；L4 与 L5 尚未执行，**Voice streaming release gate 处于 `BLOCKED` 状态**。
+1. **当前状态绝对限制**：当前已完成 L1/L2 与部分 L3/L4 链路验证（L4 输出与输入链路已获真实设备/实机证据）；L5 尚未执行，**Voice streaming release gate 整体处于 `BLOCKED` 状态**。
 2. **禁止跨领域背书**：Voice 网关的任何测试或门禁结果，**绝不产生 Chat release pass、Game Action live pass、Desktop Player Release pass 或陪伴玩法 pass**。
 3. **未通过即 Blocked**：任何未执行、被阻断或证据不完整的检查项，一律保持 `blocked`、`failed` 或 `uncertain`，严禁升级为 release pass。
