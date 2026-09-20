@@ -8,6 +8,7 @@ import {
   validateSetWorldInfoBindingCommand,
   validateSnapshot,
   validateWorldInfoState,
+  validateVoicePreference,
 } from "../src/management-pipeline-api.ts";
 import { createManagementPipelineSession } from "../src/management-pipeline-session.ts";
 
@@ -156,6 +157,26 @@ test("management World Info validators reject incomplete, noncanonical, and non-
     () => validateSetWorldInfoBindingCommand({ apiVersion: 1, selectionGeneration: 1, expectedRevision: HANDLE, sourceHandle: null, extra: true }),
     TavernProtocolError,
   );
+});
+
+test("management Voice preference validators and client use exact session and CSRF-bound routes", async () => {
+  const preference = { revision: 0, disclosureVersion: null, consent: "undecided", decidedAtMs: null };
+  const accepted = { revision: 1, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 10 };
+  assert.deepEqual(validateVoicePreference(preference), preference);
+  assert.throws(() => validateVoicePreference({ ...preference, extra: true }), TavernProtocolError);
+  const command = { expectedRevision: 0, action: "accept", disclosureVersion: "mimo-cloud-tts-v1" };
+  const calls = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    calls.push({ path, init });
+    return response(path.endsWith("voice-preference") && init.method === "PUT" ? accepted : preference);
+  });
+  assert.deepEqual(await api.readVoicePreference(), preference);
+  assert.deepEqual(await api.updateVoicePreference(command, HANDLE), accepted);
+  assert.deepEqual(calls[0], { path: "/api/tavern/v1/settings/voice-preference", init: { method: "GET", credentials: "same-origin" } });
+  assert.equal(calls[1].init.method, "PUT");
+  assert.deepEqual(calls[1].init.headers, { "Content-Type": "application/json", "x-csrf-token": HANDLE });
+  assert.equal(calls[1].init.body, JSON.stringify(command));
+  await assert.rejects(api.updateVoicePreference({ ...command, extra: true }, HANDLE), TavernProtocolError);
 });
 
 test("management World Info client uses the exact read and CSRF-bound bind routes", async () => {

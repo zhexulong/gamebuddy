@@ -1,14 +1,15 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { composeReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
-import { composeTavernProfile, type ComposedTavernProfile } from "../tavern/browser-contract/index.js";
+import { VoicePreferenceStore } from "../settings/voice-preference-store.js";
+import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
+import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import { createChatPipelineService } from "../tavern/chat-pipeline-service.js";
 import { startComposedReferenceGameStaticShellComposition } from "../tavern/composed-reference-game-static-shell-composition.js";
-import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import { createMemoryManagementService } from "../tavern/memory-management/memory-management.js";
 import { createReferencePipelineStateFacade, type VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
 import { startReferencePipelineStaticShellComposition } from "../tavern/reference-pipeline-static-shell-composition.js";
@@ -93,7 +94,7 @@ export async function startChatOnlyPresentationAdmission(
   input: ChatOnlyPresentationAdmissionInput,
 ): Promise<DesktopPresentationAdmission> {
   const tavernProfile = composeReferenceTavernProfile();
-  const inspector = input.inspector ?? await createPublishedWindowsReparseInspector(input.hostArtifactRoot);
+  const inspector = input.inspector ?? (await createPublishedWindowsReparseInspector(input.hostArtifactRoot));
   // The chat-only surface composes the same reference-pipeline lane as the
   // composed reference-game variant, without any game projection wiring.
   const referenceStateFacade = await createReferencePipelineStateFacade(
@@ -138,7 +139,7 @@ export async function startChatOnlyPresentationAdmission(
     launchUrl: server.launchUrl,
     // Closing the listener drains its delegated Chat admission and the Chat
     // pipeline service behind it; the mounted lease stays its own owner's.
-    close: () => closePromise ??= server.close(),
+    close: () => (closePromise ??= server.close()),
   });
 }
 
@@ -156,7 +157,7 @@ export async function startTavernManagementPresentationAdmission(
   input: TavernManagementPresentationAdmissionInput,
 ): Promise<DesktopPresentationAdmission> {
   const tavernProfile = composeTavernManagementProfile();
-  const inspector = input.inspector ?? await createPublishedWindowsReparseInspector(input.hostArtifactRoot);
+  const inspector = input.inspector ?? (await createPublishedWindowsReparseInspector(input.hostArtifactRoot));
   const createdServices: { close(): Promise<void> }[] = [];
   let server: Awaited<ReturnType<typeof startTavernManagementStaticShellComposition>>;
   try {
@@ -188,11 +189,15 @@ export async function startTavernManagementPresentationAdmission(
       profile: tavernProfile,
     });
     createdServices.push(memoryService);
+    const voicePreferenceStore = new VoicePreferenceStore(
+      join(input.manifest.runtimeRoot, "settings", "voice-preference.json"),
+    );
     server = await startTavernManagementStaticShellComposition({
       managementStateFacade,
       managementService,
       memoryService,
       worldInfoService,
+      voicePreferenceStore,
       profile: tavernProfile,
       bootstrapToken: input.bootstrapToken,
       inspector,
@@ -217,7 +222,7 @@ export async function startTavernManagementPresentationAdmission(
     launchUrl: server.launchUrl,
     // Closing the listener drains its delegated management, Memory, and World
     // Info services behind it; the mounted lease stays its own owner's.
-    close: () => closePromise ??= server.close(),
+    close: () => (closePromise ??= server.close()),
   });
 }
 
@@ -236,7 +241,7 @@ export async function startDesktopPresentationAdmission(
     tavernProfile,
     gameProfile: input.presentation.gameProfile,
   });
-  const inspector = input.inspector ?? await createPublishedWindowsReparseInspector(input.hostArtifactRoot);
+  const inspector = input.inspector ?? (await createPublishedWindowsReparseInspector(input.hostArtifactRoot));
   const referenceStateFacade = await createReferencePipelineStateFacade(
     input.manifest,
     input.lease,
@@ -281,7 +286,7 @@ export async function startDesktopPresentationAdmission(
     launchUrl: server.launchUrl,
     // Closing the listener drains its delegated Chat admission and the Chat
     // pipeline service behind it; the mounted lease stays its own owner's.
-    close: () => closePromise ??= server.close(),
+    close: () => (closePromise ??= server.close()),
   });
 }
 
@@ -295,7 +300,15 @@ function composeReferenceTavernProfile(): ComposedTavernProfile {
   return composeTavernProfile({
     profileId: "gamebuddy.chat-core.reference-pipeline",
     releaseTier: "chat_core",
-    routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status", "events"],
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "chat.submit",
+      "chat.cancel",
+      "chat.submission_status",
+      "events",
+    ],
     operationIds: ["chat.submit", "chat.cancel"],
     navigationItemIds: ["chat"],
   });
@@ -311,8 +324,30 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
   return composeTavernProfile({
     profileId: "gamebuddy.tavern-management.chat-list-title",
     releaseTier: "tavern_management",
-    routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "memory.read", "memory.mutate", "world-info.read", "world-info.bind"],
-    operationIds: ["draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"],
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "draft.save",
+      "draft.discard",
+      "chat.list",
+      "chat.rename",
+      "memory.read",
+      "memory.mutate",
+      "world-info.read",
+      "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+    ],
+    operationIds: [
+      "draft.save",
+      "draft.discard",
+      "chat.rename",
+      "memory.mutate",
+      "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+    ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds.
     navigationItemIds: ["chat", "memory"],

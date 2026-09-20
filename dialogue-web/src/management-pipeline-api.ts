@@ -45,7 +45,16 @@ type BrowserTurnV1 = Readonly<{
 }>;
 
 type TavernBrowserOperationV1 = Readonly<{
-  operationId: "chat.submit" | "chat.cancel" | "draft.save" | "draft.discard" | "chat.rename" | "memory.mutate" | "world-info.bind";
+  operationId:
+    | "chat.submit"
+    | "chat.cancel"
+    | "draft.save"
+    | "draft.discard"
+    | "chat.rename"
+    | "memory.mutate"
+    | "world-info.bind"
+    | "settings.voice.read"
+    | "settings.voice.consent";
   labelKey:
     | "tavern.nav.chat"
     | "tavern.nav.memory"
@@ -55,7 +64,9 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.draft.discard"
     | "tavern.operation.rename"
     | "tavern.operation.memory.mutate"
-    | "tavern.operation.world-info.bind";
+    | "tavern.operation.world-info.bind"
+    | "tavern.operation.settings.voice.read"
+    | "tavern.operation.settings.voice.consent";
   availability: "available" | "busy" | "unavailable";
   routeId: string;
 }>;
@@ -80,6 +91,17 @@ export type SetWorldInfoBindingCommandV1 = Readonly<{
   expectedRevision: string;
   sourceHandle: string | null;
 }>;
+
+export type TavernVoicePreferenceV1 = Readonly<{
+  revision: number;
+  disclosureVersion: "mimo-cloud-tts-v1" | null;
+  consent: "undecided" | "accepted" | "revoked";
+  decidedAtMs: number | null;
+}>;
+
+export type TavernVoicePreferenceConsentCommandV1 =
+  | Readonly<{ expectedRevision: number; action: "accept"; disclosureVersion: "mimo-cloud-tts-v1" }>
+  | Readonly<{ expectedRevision: number; action: "revoke" }>;
 
 export type TavernStateSnapshotV1 = Readonly<{
   apiVersion: 1;
@@ -159,7 +181,13 @@ export type MemoryReadV1 = Readonly<{
 
 export type MemoryMutationCommandV1 =
   | Readonly<{ apiVersion: 1; operation: "create"; expectedProjectionRevision: string; content: string }>
-  | Readonly<{ apiVersion: 1; operation: "update"; expectedProjectionRevision: string; handle: string; content: string }>
+  | Readonly<{
+      apiVersion: 1;
+      operation: "update";
+      expectedProjectionRevision: string;
+      handle: string;
+      content: string;
+    }>
   | Readonly<{ apiVersion: 1; operation: "archive"; expectedProjectionRevision: string; handle: string }>;
 
 export type TavernProblemV1 = Readonly<{
@@ -220,7 +248,17 @@ const TURN_PROBLEM_CODES = [
   "runtime_unavailable",
   "storage_unavailable",
 ] as const;
-const OPERATION_IDS = ["chat.submit", "chat.cancel", "draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"] as const;
+const OPERATION_IDS = [
+  "chat.submit",
+  "chat.cancel",
+  "draft.save",
+  "draft.discard",
+  "chat.rename",
+  "memory.mutate",
+  "world-info.bind",
+  "settings.voice.read",
+  "settings.voice.consent",
+] as const;
 const LABEL_KEYS = [
   "tavern.nav.chat",
   "tavern.nav.memory",
@@ -231,11 +269,15 @@ const LABEL_KEYS = [
   "tavern.operation.rename",
   "tavern.operation.memory.mutate",
   "tavern.operation.world-info.bind",
+  "tavern.operation.settings.voice.read",
+  "tavern.operation.settings.voice.consent",
 ] as const;
 const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const NAVIGATION_ITEM_IDS = ["chat", "memory"] as const;
 const NAVIGATION_AVAILABILITY = ["available", "unavailable"] as const;
 const WORLD_INFO_STATES = ["none", "selected", "locked", "unavailable"] as const;
+const VOICE_DISCLOSURE_VERSIONS = ["mimo-cloud-tts-v1"] as const;
+const VOICE_CONSENTS = ["undecided", "accepted", "revoked"] as const;
 const PROBLEM_CODES = [
   "unauthorized",
   "csrf_failed",
@@ -256,6 +298,7 @@ const PROBLEM_CODES = [
   "presentation_unavailable",
   "storage_unavailable",
   "state_reconciliation_required",
+  "settings_revision_conflict",
 ] as const;
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;
@@ -265,7 +308,12 @@ const OPERATION_KEYS = ["operationId", "labelKey", "availability", "routeId"] as
 const NAVIGATION_ITEM_KEYS = ["itemId", "labelKey", "availability"] as const;
 const WORLD_INFO_KEYS = ["state", "revision", "items"] as const;
 const WORLD_INFO_ITEM_KEYS = ["handle", "title", "summary", "selected"] as const;
-const SET_WORLD_INFO_BINDING_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "sourceHandle"] as const;
+const SET_WORLD_INFO_BINDING_COMMAND_KEYS = [
+  "apiVersion",
+  "selectionGeneration",
+  "expectedRevision",
+  "sourceHandle",
+] as const;
 const SNAPSHOT_KEYS = [
   "apiVersion",
   "build",
@@ -288,7 +336,13 @@ const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"]
 const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "pinned"] as const;
 const MEMORY_READ_KEYS = ["apiVersion", "projectionRevision", "memories"] as const;
 const MEMORY_MUTATION_CREATE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "content"] as const;
-const MEMORY_MUTATION_UPDATE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "handle", "content"] as const;
+const MEMORY_MUTATION_UPDATE_KEYS = [
+  "apiVersion",
+  "operation",
+  "expectedProjectionRevision",
+  "handle",
+  "content",
+] as const;
 const MEMORY_MUTATION_ARCHIVE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "handle"] as const;
 const MEMORY_CATEGORIES = ["semantic", "interaction"] as const;
 const MEMORY_STATUSES = ["active", "permanent", "archived"] as const;
@@ -308,6 +362,9 @@ const RENAME_COMMAND_KEYS = [
 ] as const;
 const CHAT_TITLE_KEYS = ["apiVersion", "title", "managementRevision"] as const;
 const PROBLEM_KEYS = ["type", "title", "status", "code", "requestId", "retryable"] as const;
+const VOICE_PREFERENCE_KEYS = ["revision", "disclosureVersion", "consent", "decidedAtMs"] as const;
+const VOICE_PREFERENCE_ACCEPT_KEYS = ["expectedRevision", "action", "disclosureVersion"] as const;
+const VOICE_PREFERENCE_REVOKE_KEYS = ["expectedRevision", "action"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -482,11 +539,7 @@ function isChat(value: unknown): boolean {
   )
     return false;
   if (value.title !== null && !isLengthBoundedString(value.title, 0, 256)) return false;
-  if (
-    !Array.isArray(value.transcript) ||
-    !value.transcript.every(isBrowserMessage)
-  )
-    return false;
+  if (!Array.isArray(value.transcript) || !value.transcript.every(isBrowserMessage)) return false;
   if (
     !isRecord(value.draft) ||
     !hasExactKeys(value.draft, CHAT_DRAFT_KEYS) ||
@@ -676,13 +729,55 @@ function isMemoryRead(value: unknown): value is MemoryReadV1 {
   );
 }
 
+function isVoicePreference(value: unknown): value is TavernVoicePreferenceV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, VOICE_PREFERENCE_KEYS) &&
+    isNonNegativeSafeInteger(value.revision) &&
+    (value.disclosureVersion === null || isOneOf(value.disclosureVersion, VOICE_DISCLOSURE_VERSIONS)) &&
+    isOneOf(value.consent, VOICE_CONSENTS) &&
+    (value.decidedAtMs === null || isNonNegativeSafeInteger(value.decidedAtMs)) &&
+    (value.consent === "undecided"
+      ? value.disclosureVersion === null && value.decidedAtMs === null
+      : value.decidedAtMs !== null && (value.consent !== "accepted" || value.disclosureVersion === "mimo-cloud-tts-v1"))
+  );
+}
+
+function isVoicePreferenceConsentCommand(value: unknown): value is TavernVoicePreferenceConsentCommandV1 {
+  if (!isRecord(value) || !isNonNegativeSafeInteger(value.expectedRevision)) return false;
+  if (value.action === "accept")
+    return hasExactKeys(value, VOICE_PREFERENCE_ACCEPT_KEYS) && value.disclosureVersion === "mimo-cloud-tts-v1";
+  return value.action === "revoke" && hasExactKeys(value, VOICE_PREFERENCE_REVOKE_KEYS);
+}
+
+export function validateVoicePreference(value: unknown): TavernVoicePreferenceV1 {
+  if (!isVoicePreference(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateVoicePreferenceConsentCommand(value: unknown): TavernVoicePreferenceConsentCommandV1 {
+  if (!isVoicePreferenceConsentCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
 function isMemoryMutationCommand(value: unknown): value is MemoryMutationCommandV1 {
-  if (!isRecord(value) || value.apiVersion !== TAVERN_BROWSER_API_VERSION || !isOpaqueHandle(value.expectedProjectionRevision)) return false;
+  if (
+    !isRecord(value) ||
+    value.apiVersion !== TAVERN_BROWSER_API_VERSION ||
+    !isOpaqueHandle(value.expectedProjectionRevision)
+  )
+    return false;
   if (value.operation === "create")
     return hasExactKeys(value, MEMORY_MUTATION_CREATE_KEYS) && isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES);
   if (value.operation === "update")
-    return hasExactKeys(value, MEMORY_MUTATION_UPDATE_KEYS) && isOpaqueHandle(value.handle) && isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES);
-  return value.operation === "archive" && hasExactKeys(value, MEMORY_MUTATION_ARCHIVE_KEYS) && isOpaqueHandle(value.handle);
+    return (
+      hasExactKeys(value, MEMORY_MUTATION_UPDATE_KEYS) &&
+      isOpaqueHandle(value.handle) &&
+      isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES)
+    );
+  return (
+    value.operation === "archive" && hasExactKeys(value, MEMORY_MUTATION_ARCHIVE_KEYS) && isOpaqueHandle(value.handle)
+  );
 }
 
 // --- Public strict closed validators. ---
@@ -774,16 +869,36 @@ export type ManagementPipelineApi = Readonly<{
   readWorldInfo(): Promise<WorldInfoStateV1>;
   /** PUT exact bind/unbind command with browser-session CSRF protection. */
   setWorldInfoBinding(command: SetWorldInfoBindingCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
+  /** GET /api/tavern/v1/settings/voice-preference (browser session; no CSRF header). */
+  readVoicePreference(): Promise<TavernVoicePreferenceV1>;
+  /** PUT /api/tavern/v1/settings/voice-preference with browser-session CSRF protection. */
+  updateVoicePreference(
+    command: TavernVoicePreferenceConsentCommandV1,
+    csrfToken: string,
+  ): Promise<TavernVoicePreferenceV1>;
 }>;
 
-export type ManagementOperationObservation = Readonly<{ operationId: string; outcome: "passed" | "not_applicable" | "blocked"; projectionRevision?: string }>;
+export type ManagementOperationObservation = Readonly<{
+  operationId: string;
+  outcome: "passed" | "not_applicable" | "blocked";
+  projectionRevision?: string;
+}>;
 
-export function createManagementPipelineApi(fetchLike: typeof fetch = fetch, onOperation?: (observation: ManagementOperationObservation) => void): ManagementPipelineApi {
+export function createManagementPipelineApi(
+  fetchLike: typeof fetch = fetch,
+  onOperation?: (observation: ManagementOperationObservation) => void,
+): ManagementPipelineApi {
   if (typeof fetchLike !== "function") {
     throw new TypeError("createManagementPipelineApi requires a fetch-like function");
   }
-  const observe = (operationId: string, outcome: ManagementOperationObservation["outcome"], projectionRevision?: string): void => {
-    onOperation?.(Object.freeze({ operationId, outcome, ...(projectionRevision === undefined ? {} : { projectionRevision }) }));
+  const observe = (
+    operationId: string,
+    outcome: ManagementOperationObservation["outcome"],
+    projectionRevision?: string,
+  ): void => {
+    onOperation?.(
+      Object.freeze({ operationId, outcome, ...(projectionRevision === undefined ? {} : { projectionRevision }) }),
+    );
   };
   return Object.freeze({
     async bootstrap(token: string): Promise<TavernStateSnapshotV1> {
@@ -812,20 +927,44 @@ export function createManagementPipelineApi(fetchLike: typeof fetch = fetch, onO
     },
     async saveDraft(command: SaveDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1> {
       if (!isSaveDraftCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      const result = await exchange(fetchLike, "PUT", "/api/tavern/v1/draft", 200, validateDraft, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/draft",
+        200,
+        validateDraft,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
       observe("draft.save", "passed", String(result.revision));
       return result;
     },
     async discardDraft(command: DiscardDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1> {
       if (!isDiscardDraftCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      const result = await exchange(fetchLike, "DELETE", "/api/tavern/v1/draft", 200, validateDraft, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      const result = await exchange(
+        fetchLike,
+        "DELETE",
+        "/api/tavern/v1/draft",
+        200,
+        validateDraft,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
       observe("draft.discard", "passed", String(result.revision));
       return result;
     },
     async renameChatTitle(command: RenameChatTitleCommandV1, csrfToken: string): Promise<ChatTitleV1> {
       if (!isRenameChatTitleCommand(command)) throw new TavernProtocolError();
       if (!isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      const result = await exchange(fetchLike, "PUT", "/api/tavern/v1/chat/title", 200, validateChatTitle, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/chat/title",
+        200,
+        validateChatTitle,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
       observe("chat.rename", "passed", String(result.managementRevision));
       return result;
     },
@@ -834,7 +973,15 @@ export function createManagementPipelineApi(fetchLike: typeof fetch = fetch, onO
     },
     async mutateMemory(command: MemoryMutationCommandV1, csrfToken: string): Promise<MemoryReadV1> {
       if (!isMemoryMutationCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      const result = await exchange(fetchLike, "PUT", "/api/tavern/v1/memory", 200, validateMemoryRead, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/memory",
+        200,
+        validateMemoryRead,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
       observe("memory.mutate", "passed", result.projectionRevision);
       return result;
     },
@@ -843,8 +990,36 @@ export function createManagementPipelineApi(fetchLike: typeof fetch = fetch, onO
     },
     async setWorldInfoBinding(command: SetWorldInfoBindingCommandV1, csrfToken: string): Promise<WorldInfoStateV1> {
       if (!isSetWorldInfoBindingCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      const result = await exchange(fetchLike, "PUT", "/api/tavern/v1/world-info", 200, validateWorldInfoState, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/world-info",
+        200,
+        validateWorldInfoState,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
       observe("world-info.bind", "passed", result.revision);
+      return result;
+    },
+    async readVoicePreference(): Promise<TavernVoicePreferenceV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/voice-preference", 200, validateVoicePreference);
+    },
+    async updateVoicePreference(
+      command: TavernVoicePreferenceConsentCommandV1,
+      csrfToken: string,
+    ): Promise<TavernVoicePreferenceV1> {
+      if (!isVoicePreferenceConsentCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/settings/voice-preference",
+        200,
+        validateVoicePreference,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("settings.voice.consent", "passed", String(result.revision));
       return result;
     },
   });

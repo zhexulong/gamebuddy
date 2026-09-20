@@ -30,7 +30,9 @@ const isNfcUtf8Text = (value: string): boolean =>
   value === value.normalize("NFC") &&
   new TextEncoder().encode(value).byteLength <= MAX_TEXT_UTF8_BYTES;
 const isMemoryText = (value: string): boolean =>
-  !hasUnpairedUtf16Surrogate(value) && value === value.normalize("NFC") && new TextEncoder().encode(value).byteLength <= 4096;
+  !hasUnpairedUtf16Surrogate(value) &&
+  value === value.normalize("NFC") &&
+  new TextEncoder().encode(value).byteLength <= 4096;
 const isCanonicalUnpaddedBase64Url = (value: string): boolean => {
   if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) return false;
   const finalValue = BASE64URL_ALPHABET.indexOf(value.at(-1)!);
@@ -81,6 +83,7 @@ const ProblemCode = Type.Union([
   Type.Literal("presentation_unavailable"),
   Type.Literal("storage_unavailable"),
   Type.Literal("state_reconciliation_required"),
+  Type.Literal("settings_revision_conflict"),
 ]);
 
 export const BrowserSwipeInfoV1Schema = strictObject({
@@ -189,6 +192,8 @@ const OperationId = Type.Union([
   Type.Literal("chat.rename"),
   Type.Literal("memory.mutate"),
   Type.Literal("world-info.bind"),
+  Type.Literal("settings.voice.read"),
+  Type.Literal("settings.voice.consent"),
 ]);
 const LabelKey = Type.Union([
   Type.Literal("tavern.nav.chat"),
@@ -200,6 +205,8 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.rename"),
   Type.Literal("tavern.operation.memory.mutate"),
   Type.Literal("tavern.operation.world-info.bind"),
+  Type.Literal("tavern.operation.settings.voice.read"),
+  Type.Literal("tavern.operation.settings.voice.consent"),
 ]);
 export const TavernBrowserOperationV1Schema = strictObject({
   operationId: OperationId,
@@ -259,12 +266,27 @@ export const TavernStateEventStreamV1Schema = strictObject({ epoch: OpaqueHandle
  * `speaking` = companion utterance is playing (barge-in possible).
  */
 export const TavernVoiceSurfaceStateV1Schema = strictObject({
-  state: Type.Union([
-    Type.Literal("unavailable"),
-    Type.Literal("ready"),
-    Type.Literal("speaking"),
-  ]),
+  state: Type.Union([Type.Literal("unavailable"), Type.Literal("ready"), Type.Literal("speaking")]),
 });
+
+/** Host-owned cloud TTS disclosure and consent projection. No credentials or provider facts are expressible. */
+export const TavernVoicePreferenceV1Schema = strictObject({
+  revision: Revision,
+  disclosureVersion: Type.Union([Type.Literal("mimo-cloud-tts-v1"), Type.Null()]),
+  consent: Type.Union([Type.Literal("undecided"), Type.Literal("accepted"), Type.Literal("revoked")]),
+  decidedAtMs: Type.Union([Revision, Type.Null()]),
+});
+export const TavernVoicePreferenceConsentCommandV1Schema = Type.Union([
+  strictObject({
+    expectedRevision: Revision,
+    action: Type.Literal("accept"),
+    disclosureVersion: Type.Literal("mimo-cloud-tts-v1"),
+  }),
+  strictObject({
+    expectedRevision: Revision,
+    action: Type.Literal("revoke"),
+  }),
+]);
 
 const MemoryStateSnapshotV1Schema = Type.Union([
   strictObject({
@@ -470,6 +492,7 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "presentation_unavailable",
   "storage_unavailable",
   "state_reconciliation_required",
+  "settings_revision_conflict",
 ] as const);
 
 const EmptyHeaders = strictObject({});
@@ -696,6 +719,35 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
   }),
   route({
+    routeId: "settings.voice.read",
+    method: "GET",
+    path: "/api/tavern/v1/settings/voice-preference",
+    operationId: "settings.voice.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernVoicePreferenceV1Schema },
+  }),
+  route({
+    routeId: "settings.voice.consent",
+    method: "PUT",
+    path: "/api/tavern/v1/settings/voice-preference",
+    operationId: "settings.voice.consent",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: TavernVoicePreferenceConsentCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernVoicePreferenceV1Schema },
+  }),
+  route({
     routeId: "events",
     method: "GET",
     path: "/api/tavern/v1/events",
@@ -730,6 +782,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernBrowserOperationV1Schema,
     TavernStateEventStreamV1Schema,
     TavernVoiceSurfaceStateV1Schema,
+    TavernVoicePreferenceV1Schema,
+    TavernVoicePreferenceConsentCommandV1Schema,
     TavernStateSnapshotV1Schema,
     SubmitMessageCommandV1Schema,
     SaveDraftCommandV1Schema,
@@ -766,6 +820,8 @@ export type SaveDraftCommandV1 = Static<typeof SaveDraftCommandV1Schema>;
 export type DiscardDraftCommandV1 = Static<typeof DiscardDraftCommandV1Schema>;
 export type TavernStateSnapshotV1 = Static<typeof TavernStateSnapshotV1Schema>;
 export type TavernVoiceSurfaceStateV1 = Static<typeof TavernVoiceSurfaceStateV1Schema>;
+export type TavernVoicePreferenceV1 = Static<typeof TavernVoicePreferenceV1Schema>;
+export type TavernVoicePreferenceConsentCommandV1 = Static<typeof TavernVoicePreferenceConsentCommandV1Schema>;
 export type TavernBrowserOperationV1 = Static<typeof TavernBrowserOperationV1Schema>;
 export type TavernStateEventStreamV1 = Static<typeof TavernStateEventStreamV1Schema>;
 export type TavernBrowserNavigationItemIdV1 = Static<typeof NavigationItemId>;

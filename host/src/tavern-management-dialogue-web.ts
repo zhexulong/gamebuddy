@@ -2,30 +2,33 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { TSchema } from "typebox";
 import { Compile } from "typebox/compile";
+import type { VoicePreference, VoicePreferenceUpdate } from "./settings/voice-preference-store.js";
 import {
   type ChatListQueryV1,
   type ComposedTavernProfile,
   type DiscardDraftCommandV1,
+  isComposedTavernProfile,
   type MemoryMutationCommandV1,
   type MemoryReadV1,
   type RenameChatTitleCommandV1,
   type SaveDraftCommandV1,
   type SetWorldInfoBindingCommandV1,
-  isComposedTavernProfile,
   TAVERN_BROWSER_API_V1,
   TavernBrowserContractV1,
   type TavernBrowserNavigationItemIdV1,
   TavernBrowserValidatorsV1,
   type TavernProblemV1,
   type TavernStateSnapshotV1,
+  type TavernVoicePreferenceConsentCommandV1,
+  type TavernVoicePreferenceV1,
   type WorldInfoStateV1,
 } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
 import type { TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import type {
-  WorldInfoBindingManagementService,
   WorldInfoStateV1 as ManagedWorldInfoStateV1,
+  WorldInfoBindingManagementService,
 } from "./tavern/world-info-binding/world-info-binding-management-service.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -48,6 +51,8 @@ const MANAGEMENT_ROUTE_IDS = [
   "memory.mutate",
   "world-info.read",
   "world-info.bind",
+  "settings.voice.read",
+  "settings.voice.consent",
 ] as const;
 const MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY = [
   "bootstrap",
@@ -59,9 +64,26 @@ const MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY = [
   "chat.rename",
   "world-info.read",
   "world-info.bind",
+  "settings.voice.read",
+  "settings.voice.consent",
 ] as const;
-const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = ["draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"] as const;
-const MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY = ["draft.save", "draft.discard", "chat.rename", "world-info.bind"] as const;
+const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = [
+  "draft.save",
+  "draft.discard",
+  "chat.rename",
+  "memory.mutate",
+  "world-info.bind",
+  "settings.voice.read",
+  "settings.voice.consent",
+] as const;
+const MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY = [
+  "draft.save",
+  "draft.discard",
+  "chat.rename",
+  "world-info.bind",
+  "settings.voice.read",
+  "settings.voice.consent",
+] as const;
 // Legal navigation projections paired with the route sets above: a profile
 // that declares `memory.read` must also declare the `memory` navigation item,
 // and a profile without the Memory route must not. Both derive from the same
@@ -77,12 +99,19 @@ const draftDiscardValidator = Compile(TavernBrowserContractV1.schemas.DiscardDra
 const renameRequestValidator = Compile(TavernBrowserContractV1.schemas.RenameChatTitleCommandV1Schema);
 const worldInfoBindValidator = Compile(TavernBrowserContractV1.schemas.SetWorldInfoBindingCommandV1Schema);
 const memoryMutationValidator = Compile(TavernBrowserContractV1.schemas.MemoryMutationCommandV1Schema);
+const voicePreferenceConsentValidator = Compile(
+  TavernBrowserContractV1.schemas.TavernVoicePreferenceConsentCommandV1Schema,
+);
 
 export type TavernManagementDialogueWebOptions = Readonly<{
   managementStateFacade?: TavernManagementStateFacade;
   managementService?: ChatManagementService;
   memoryService?: MemoryManagementService;
   worldInfoService?: WorldInfoBindingManagementService;
+  voicePreferenceStore?: Readonly<{
+    read(): Promise<VoicePreference>;
+    update(expectedRevision: number, update: VoicePreferenceUpdate): Promise<VoicePreference>;
+  }>;
   profile?: ComposedTavernProfile;
   bootstrapToken?: string;
   readonly [key: string]: unknown;
@@ -102,7 +131,7 @@ type BrowserSession = Readonly<{
   csrf: string;
   expiresAtMs: number;
 }>;
-type ProblemCode = TavernProblemV1["code"] | "payload_too_large";
+type ProblemCode = TavernProblemV1["code"] | "payload_too_large" | "settings_revision_conflict";
 
 /**
  * Closed dispatcher for the independent tavern_management profile. It mounts
@@ -119,6 +148,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const managementService = options.managementService;
   const memoryService = options.memoryService;
   const worldInfoService = options.worldInfoService;
+  const voicePreferenceStore = options.voicePreferenceStore;
   const profile = options.profile;
   const bootstrapToken = options.bootstrapToken;
   if (managementStateFacade === undefined || managementService === undefined)
@@ -127,7 +157,10 @@ export function createTavernManagementDialogueWebRequestHandler(
   // The production profile declares `memory.read`; it is reachable only when a
   // Host-owned MemoryManagementService is injected. A profile that advertises
   // the capability without the bound service fails closed before any route.
-  if ((profile.routeIds.includes("memory.read") || profile.routeIds.includes("memory.mutate")) && memoryService === undefined)
+  if (
+    (profile.routeIds.includes("memory.read") || profile.routeIds.includes("memory.mutate")) &&
+    memoryService === undefined
+  )
     throw new Error("tavern_management_composition_unavailable");
   // The World Info routes are mounted only when the exact binding service is
   // injected; a profile that advertises either route without the bound
@@ -135,6 +168,11 @@ export function createTavernManagementDialogueWebRequestHandler(
   if (
     (profile.routeIds.includes("world-info.read") || profile.routeIds.includes("world-info.bind")) &&
     worldInfoService === undefined
+  )
+    throw new Error("tavern_management_composition_unavailable");
+  if (
+    (profile.routeIds.includes("settings.voice.read") || profile.routeIds.includes("settings.voice.consent")) &&
+    voicePreferenceStore === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
   if (!isOpaqueHandle(bootstrapToken)) throw new Error("tavern_management_bootstrap_token_invalid");
@@ -168,13 +206,62 @@ export function createTavernManagementDialogueWebRequestHandler(
         });
         browser = session;
         response.setHeader("Set-Cookie", `gb_tavern_session=${session.bearer}; HttpOnly; SameSite=Strict; Path=/`);
-        return await sendProjectedSnapshot(response, managementStateFacade, profile, session, memoryService, worldInfoService);
+        return await sendProjectedSnapshot(
+          response,
+          managementStateFacade,
+          profile,
+          session,
+          memoryService,
+          worldInfoService,
+        );
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/state") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
         const session = authenticate(request, browser, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
-        return await sendProjectedSnapshot(response, managementStateFacade, profile, session, memoryService, worldInfoService);
+        return await sendProjectedSnapshot(
+          response,
+          managementStateFacade,
+          profile,
+          session,
+          memoryService,
+          worldInfoService,
+        );
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/voice-preference") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("settings.voice.read") ||
+          !profile.operationIds.includes("settings.voice.read") ||
+          voicePreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const preference: TavernVoicePreferenceV1 = await voicePreferenceStore.read();
+        if (!TavernBrowserValidatorsV1.TavernVoicePreferenceV1Schema.Check(preference))
+          throw new Error("voice_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/voice-preference") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("settings.voice.consent") ||
+          !profile.operationIds.includes("settings.voice.consent") ||
+          voicePreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!voicePreferenceConsentValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as TavernVoicePreferenceConsentCommandV1;
+        const { expectedRevision, ...update } = command;
+        const preference = await voicePreferenceStore.update(expectedRevision, update);
+        if (!TavernBrowserValidatorsV1.TavernVoicePreferenceV1Schema.Check(preference))
+          throw new Error("voice_preference_store_unavailable");
+        return sendJson(response, 200, preference);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/world-info") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
@@ -388,13 +475,15 @@ async function sendProjectedSnapshot(
       ? memoryService.read().catch(() => undefined)
       : undefined,
   ]);
-  const memoryProjection = memoryResult !== undefined
-    ? ({
-        readAvailable: true as const,
-        mutationAvailable: profile.routeIds.includes("memory.mutate") && profile.operationIds.includes("memory.mutate"),
-        projectionRevision: memoryResult.projectionRevision,
-      } as const)
-    : ({ readAvailable: false as const, mutationAvailable: false as const, projectionRevision: null } as const);
+  const memoryProjection =
+    memoryResult !== undefined
+      ? ({
+          readAvailable: true as const,
+          mutationAvailable:
+            profile.routeIds.includes("memory.mutate") && profile.operationIds.includes("memory.mutate"),
+          projectionRevision: memoryResult.projectionRevision,
+        } as const)
+      : ({ readAvailable: false as const, mutationAvailable: false as const, projectionRevision: null } as const);
   // A World Info-capable profile always projects a validated World Info
   // state: the facade supplies it in production; handler-level stubs obtain
   // it from the bound service and it is re-validated before projection.
@@ -503,10 +592,7 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "world_info_binding_conflict" || message === "world_info_binding_locked")
     return { status: 409, code: "state_reconciliation_required" };
   if (message === "context_unavailable") return { status: 503, code: "runtime_unavailable" };
-  if (
-    message === "world_info_binding_service_unavailable" ||
-    message === "world_info_binding_service_closed"
-  )
+  if (message === "world_info_binding_service_unavailable" || message === "world_info_binding_service_closed")
     return { status: 503, code: "runtime_unavailable" };
   if (message === "world_info_binding_storage_unavailable") return { status: 503, code: "storage_unavailable" };
   if (message === "chat_management_service_unavailable" || message === "chat_management_service_closed")
@@ -514,6 +600,11 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "memory_read_service_unavailable" || message === "memory_read_unavailable")
     return { status: 503, code: "runtime_unavailable" };
   if (message === "memory_read_storage_unavailable") return { status: 503, code: "storage_unavailable" };
+  if (message === "voice_preference_revision_conflict") return { status: 409, code: "settings_revision_conflict" };
+  if (message === "invalid_voice_preference_update") return { status: 400, code: "invalid_request" };
+  if (message === "voice_preference_store_unavailable") return { status: 503, code: "runtime_unavailable" };
+  if (message === "invalid_voice_preference_store" || message === "voice_preference_readback_mismatch")
+    return { status: 503, code: "storage_unavailable" };
   if (message === "memory_mutation_conflict" || message === "memory_projection_conflict")
     return { status: 409, code: "state_reconciliation_required" };
   if (message === "invalid_request") return { status: 400, code: "invalid_request" };

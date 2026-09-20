@@ -37,6 +37,8 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "memory.mutate",
       "world-info.read",
       "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
       "events",
     ],
   );
@@ -319,9 +321,15 @@ test("memory mutation command is a strict ordinary CRUD CAS command", () => {
   assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check(update), true);
   assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check(archive), true);
   assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...create, handle }), false);
-  assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...archive, content: "unexpected" }), false);
   assert.equal(
-    TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...create, expectedProjectionRevision: "opaque-but-not-canonical=" }),
+    TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...archive, content: "unexpected" }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({
+      ...create,
+      expectedProjectionRevision: "opaque-but-not-canonical=",
+    }),
     false,
   );
   assert.equal(
@@ -343,12 +351,18 @@ test("memory state requires a read-backed opaque projection revision before it c
     TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "unavailable" } }),
     true,
   );
-  assert.equal(TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "ready" } }), true);
+  assert.equal(
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "ready" } }),
+    true,
+  );
   assert.equal(
     TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "speaking" } }),
     true,
   );
-  assert.equal(TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "bogus" } }), false);
+  assert.equal(
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "bogus" } }),
+    false,
+  );
   assert.equal(
     TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, voice: { state: "ready", extra: 1 } }),
     false,
@@ -828,6 +842,34 @@ test("every route freezes the exact security, binding, and success policy matrix
       "application/json",
     ],
     [
+      "settings.voice.read",
+      "GET",
+      "/api/tavern/v1/settings/voice-preference",
+      "browser_session",
+      "same-origin",
+      "none",
+      "none",
+      [],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "settings.voice.consent",
+      "PUT",
+      "/api/tavern/v1/settings/voice-preference",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
       "events",
       "GET",
       "/api/tavern/v1/events",
@@ -950,20 +992,14 @@ test("world-info DTO projects a bounded opaque pending state without raw durable
     }),
     false,
   );
-  assert.equal(
-    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, state: "locked" }),
-    false,
-  );
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, state: "locked" }), false);
   // "unavailable" is a member of the closed union; only invented states are
   // rejected. The browser can never itself produce a state string.
   assert.equal(
     TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, state: "unavailable", items: [] }),
     true,
   );
-  assert.equal(
-    TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, state: "invented" }),
-    false,
-  );
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({ ...state, state: "invented" }), false);
   // Title length and summary bounds are enforced.
   assert.equal(
     TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check({
@@ -990,9 +1026,21 @@ test("world-info bind command is a strict opaque revision-scoped union", () => {
   assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check(bind), true);
   assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check(unbind), true);
   // Raw title or numeric/storage revision is never expressible.
-  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, expectedRevision: "Pelican Town" }), false);
-  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: "Pelican Town" }), false);
+  assert.equal(
+    TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, expectedRevision: "Pelican Town" }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: "Pelican Town" }),
+    false,
+  );
   assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, extra: true }), false);
-  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, selectionGeneration: 0 }), false);
-  assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: `${handle}=` }), false);
+  assert.equal(
+    TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, selectionGeneration: 0 }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: `${handle}=` }),
+    false,
+  );
 });
