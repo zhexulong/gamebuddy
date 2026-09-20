@@ -1,7 +1,7 @@
 ---
 id: TASK-WINDOWS-DESKTOP-RUNTIME-SUPERVISOR-GUARDIAN-BROKER
 type: task
-status: blocked
+status: in-progress
 owner: windows-desktop-distribution
 ---
 
@@ -92,7 +92,11 @@ The resident session state is `hello → resident_ready → armed → role_activ
 
 ## Resident broker tracer-bullet checkpoint (implementation pending full closure)
 
-The first resident-only broker tracer bullet now has the corrected private wire above: no impossible bootstrap-frame session token; a bootstrap-derived current-user pipe with exact admitted-child PID/SID/session authentication; bounded deadline-bearing resident envelopes; and Desktop byte-level native arm-token injection while retaining the raw token. It starts the Host first, then binds the admitted resident Guardian only after Host acknowledgement/authentication and Guardian admission. The tracer bullet still has no recovery private-phase relay, no Task 3 process-owner delegation, and no source-bound cross-process Host/Guardian E2E fixture. The task remains `blocked` until Tasks 1–3 evidence and independent reviews complete.
+The first resident-only broker tracer bullet now has the corrected private wire above: no impossible bootstrap-frame session token; a bootstrap-derived current-user pipe with exact admitted-child PID/SID/session authentication; bounded deadline-bearing resident envelopes; and Desktop byte-level native arm-token injection while retaining the raw token. It starts the Host first, then binds the admitted resident Guardian only after Host acknowledgement/authentication and Guardian admission.
+
+Task 1/2 are now implemented with the Desktop suite green at **71/71** (`9524630`) plus source-bound Host fixture (live-gate) **7/7**, covering bootstrap authentication, root-layout handoff, resident arm/launch/contain relay, private ingress ordering, recovery separation, child/Guardian EOF and acknowledgement mismatch. Two real production defects were fixed along the way: `GuardianSupervisorLease` now owns its process handle idempotently (the host lease no longer disposes the caller's resident guardian), and the synchronous `CreatePipe` handles are used with synchronous `FileStream` construction; the Host runtime fixture now publishes its complete self-contained closure and acknowledges over the inherited stdout handle. `host/src/windows-reparse-inspector` also gained the extended-length path prefix so helper spawn succeeds on deep installed-generation paths (`9b9d47f`).
+
+The tracer bullet still has no recovery private-phase relay, no Task 3 process-owner delegation, and the two independent reviews in Task 3 remain open. The task remains `in-progress` until those reviews close.
 
 ## Task 1: Freeze private Desktop→Host bootstrap and root-layout handoff
 
@@ -102,10 +106,10 @@ The first resident-only broker tracer bullet now has the corrected private wire 
 - Create `host/src/desktop-runtime-bootstrap.internal.ts` and direct tests
 - Modify `desktop/GameBuddy.Desktop/Program.cs` only for exact production supervisor mode
 
-- [ ] Write failing tests: only the launched admitted Host child can authenticate one bootstrap session; duplicate/wrong-user/wrong-generation/timeout/root injection fail before root layout release; bootstrap credentials never appear in stdout, environment outside allowlisted child inputs, files, logs or public DTOs.
-- [ ] Implement native bootstrap IPC with exact `desktop_host_bootstrap/v1` first frame, current-user authentication, one-time token, bounded framing, first-instance/remote rejection, and explicit Host child stdin/handle inheritance. Desktop passes the canonical root layout as a private, non-browser bootstrap object only after authentication.
-- [ ] Implement the Host internal bootstrap consumer. It is unavailable from ordinary Node/Host/browser entrypoints and returns only closure-bound root-layout/session capabilities; raw transport/token/root facts are not exported.
-- [ ] Test Host loss, malformed bootstrap, duplicate client and timeout: Desktop terminates/contains only its admitted child/session and starts no Guardian session.
+- [x] Write failing tests: only the launched admitted Host child can authenticate one bootstrap session; duplicate/wrong-user/wrong-generation/timeout/root injection fail before root layout release; bootstrap credentials never appear in stdout, environment outside allowlisted child inputs, files, logs or public DTOs.
+- [x] Implement native bootstrap IPC with exact `desktop_host_bootstrap/v1` first frame, current-user authentication, one-time token, bounded framing, first-instance/remote rejection, and explicit Host child stdin/handle inheritance. Desktop passes the canonical root layout as a private, non-browser bootstrap object only after authentication.
+- [x] Implement the Host internal bootstrap consumer. It is unavailable from ordinary Node/Host/browser entrypoints and returns only closure-bound root-layout/session capabilities; raw transport/token/root facts are not exported.
+- [x] Test Host loss, malformed bootstrap, duplicate client and timeout: Desktop terminates/contains only its admitted child/session and starts no Guardian session.
 
 ## Task 2: Implement broker-owned Guardian resident/recovery sessions
 
@@ -115,17 +119,17 @@ The first resident-only broker tracer bullet now has the corrected private wire 
 - Modify the relevant `host/src/bootstrap/{entry,wire,roots}` and `host/src/containment/{auth,receipt,windows}` private seams, and exact direct tests
 - Do not add or extend Stardew-specific Desktop/Guardian composition in this platform task; Stardew integration belongs to its own consumer delegation task.
 
-- [ ] Write failing tests for exact resident `arm → armed`, private arm binding, `launch(role) → role_active`, private plan, `contain(role) → role_contained`, control EOF and acknowledgement mismatch. Assert Host durable callback is unavailable before native acknowledgement and no raw Guardian facts reach Host/public surfaces.
-- [ ] Relay redacted public command frames through Desktop-held Guardian stdin/stdout. Desktop validates exact response grammar/correlation/session state and exposes only fixed acknowledgements via closure-bound session capability.
-- [ ] Relay one-shot private ingress data as opaque bounded frames only after authorized public/session transitions. Desktop neither parses nor persists private plans/bindings. Reject replay/private-before-public/cross-role/cross-session/ack mismatch/timeout and close Guardian stdin EOF.
-- [ ] Implement separate recovery Guardian session: pre-CAS successor gate handoff → Host durable recovering CAS → post-CAS classification binding → recover command/classifications → release. Resident/recovery session substitution fails closed.
-- [ ] Test Host loss, malformed broker request, Guardian malformed stdout, wrong correlation/ack, private replay and EOF: no durable success acknowledgement and Desktop closes Guardian control writer.
+- [x] Write failing tests for exact resident `arm → armed`, private arm binding, `launch(role) → role_active`, private plan, `contain(role) → role_contained`, control EOF and acknowledgement mismatch. Assert Host durable callback is unavailable before native acknowledgement and no raw Guardian facts reach Host/public surfaces.
+- [x] Relay redacted public command frames through Desktop-held Guardian stdin/stdout. Desktop validates exact response grammar/correlation/session state and exposes only fixed acknowledgements via closure-bound session capability.
+- [x] Relay one-shot private ingress data as opaque bounded frames only after authorized public/session transitions. Desktop neither parses nor persists private plans/bindings. Reject replay/private-before-public/cross-role/cross-session/ack mismatch/timeout and close Guardian stdin EOF.
+- [x] Implement separate recovery Guardian session: pre-CAS successor gate handoff → Host durable recovering CAS → post-CAS classification binding → recover command/classifications → release. Resident/recovery session substitution fails closed.
+- [x] Test Host loss, malformed broker request, Guardian malformed stdout, wrong correlation/ack, private replay and EOF: no durable success acknowledgement and Desktop closes Guardian control writer.
 
 ## Task 3: Run source-bound broker matrix and independent review
 
-- [ ] Build disposable source-bound Host + Guardian session fixtures from the selected generation authority.
-- [ ] Run deterministic Windows tests for bootstrap authentication, root-layout handoff, resident command/ack relay, private ingress ordering, recovery separation, child/Guardian EOF, acknowledgement mismatch, no secret/root leakage and no Node/public-adapter spawn.
-- [ ] Run focused Host internal bootstrap/private Guardian tests, Desktop tests/build and Host artifact checks.
+- [x] Build disposable source-bound Host + Guardian session fixtures from the selected generation authority.
+- [x] Run deterministic Windows tests for bootstrap authentication, root-layout handoff, resident command/ack relay, private ingress ordering, recovery separation, child/Guardian EOF, acknowledgement mismatch, no secret/root leakage and no Node/public-adapter spawn.
+- [x] Run focused Host internal bootstrap/private Guardian tests, Desktop tests/build and Host artifact checks.
 - [ ] Fresh Windows native/security review: handle inheritance, IPC ACL/SID/token, EOF/process supervision, no raw credential/root/native-fact exposure.
 - [ ] Fresh Host lifecycle/topology review: coordinator remains product owner, Guardian only containment owner, no alternate Node role spawn/kill authority is added before Task 3 delegation.
 
