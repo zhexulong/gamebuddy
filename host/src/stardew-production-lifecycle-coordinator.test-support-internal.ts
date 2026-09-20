@@ -21,6 +21,7 @@ import type { StardewPrivateFarmhandBridgeConnection, StardewPlayerHostRuntimeLa
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { createTestWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.test-support.js";
 import type { StardewFolderPickerResult } from "./windows-stardew-folder-picker/index.js";
+import type { StardewInstallationDiscoveryProvider } from "./windows-stardew-installation-discovery/index.js";
 import {
   createStardewWorldBindingResolver,
   type CreateWorldBindingSeam,
@@ -73,6 +74,8 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   containedLaunchNowMs?: () => number;
   /** Same clock control for the contained AI-client launch decision. */
   containedAiLaunchNowMs?: () => number;
+  /** Test-only discovery overlay; production composition never accepts this dependency. */
+  installationDiscoveryOverlay?: StardewInstallationDiscoveryProvider;
 }>;
 
 /** Dedicated deterministic adapter; production factory accepts no dependencies. */
@@ -174,5 +177,6 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
     overrides.gameSessionCreationAuthority,
     createWorldBindingSeam,
     overrides.runtimeLaunchContained === undefined ? undefined : containedRuntimeTeardownFromCollaborator(overrides.runtimeLaunchContained),
+    overrides.installationDiscoveryOverlay,
   );
 }
