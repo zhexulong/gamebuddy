@@ -211,6 +211,7 @@ references:
   - Host 与 Gateway 完整跑通 PTT 语音输入 -> LLM Token 流式注入 -> 语音朗读 -> 播放完成闭环（流式 TTS 朗读已无人验证：`run-streaming-3turn.mjs` 三轮真实设备；LLM Token 流式注入已接线，但 Desktop Chat+MiMo 整合门禁仍 `BLOCKED`）；
   - 语音进程被 `kill -9` 时，Host 文字输入与游戏交互完全正常（降级守卫单测覆盖，整合级断连演练待执行）。
   - **当前新增阻塞（product-owned cloud TTS admission）**：`MIMO_API_KEY`/Voice IPC token 不是 Consent。`voice-gateway/main.ts` 仅在 Desktop supervisor 注入一次性 `GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION=desktop-consent-v1` 启动契约时构造 MiMo provider；直接启动或缺少该注入继续纯文字。当前 Desktop/UI 尚未提供 consent/disclosure journey，也尚无正式 Voice process supervisor 注入该值，因此不得运行或宣称 Chat+Voice production gate 通过。
+  - **下一实现切片（Desktop owner，尚未开始）**：由 Desktop/产品设置 owner 提供玩家可见的 cloud-speech disclosure/consent decision，并由 Desktop supervisor 在同一 product composition 中受管启动 Voice child、注入一次性 launch admission、绑定 Voice child close/crash/restart 生命周期。该切片不得新增 v2 wire admission frame，不得把 `MIMO_API_KEY` 或 `GAMEBUDDY_VOICE_TOKEN` 当 Consent；完成前 Chat+Voice Desktop production gate 保持 `BLOCKED`。
 
 ---
 
