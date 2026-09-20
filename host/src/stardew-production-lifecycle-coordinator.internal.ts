@@ -20,6 +20,7 @@ import { readStardewInstallationRegistration } from "./stardew-installation-regi
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "./windows-stardew-folder-picker/index.js";
+import { createStardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProviderResult } from "./windows-stardew-installation-discovery/index.js";
 import {
   createStardewPrivateBootstrapComposition,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.js";
@@ -157,6 +158,9 @@ export type StardewGameSurfaceActionAuthorityReader = Readonly<{
   readActionAuthorityView(): StardewGameSurfaceActionAuthorityView;
 }>;
 
+export type StardewInstallationDiscoveryView = Readonly<StardewInstallationDiscoveryProviderResult>;
+export type StardewInstallationSelectionResult = Readonly<{ status: "registered" | "cancelled" | "unavailable" }>;
+
 export type StardewProductionLifecycleActivationOwner = Readonly<{
   bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
   activate(
@@ -247,6 +251,11 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameDisconnectCommandV1,
   ): Promise<void>;
+  readInstallationDiscovery(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewInstallationDiscoveryView>;
+  confirmInstallation(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission, candidateId: string): Promise<StardewInstallationSelectionResult>;
+  retryInstallationDiscovery(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewInstallationDiscoveryView>;
+  cancelInstallationSelection(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewInstallationSelectionResult>;
+  openInstallationPicker(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewInstallationSelectionResult>;
 }>;
 
 /** Internal production lifecycle authority; no launch or browser admission is returned. */
@@ -455,6 +464,7 @@ function createCoordinator(
   gameSessionCreationAuthority?: StardewGameSessionCreationAuthority,
   createWorldBindingSeam?: CreateWorldBindingSeam,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
+  installationDiscovery?: StardewInstallationDiscoveryProvider,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
   const playerId = `${manifest.principal.playerId}`;
@@ -479,6 +489,7 @@ function createCoordinator(
   // generations are a separate authority and are not implemented in this slice.
   const expectedPlayerHostInstanceGeneration = 1;
   let launchPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
+  const installationDiscoveryProvider = installationDiscovery;
   let launchTerminal = false;
   let playerHostAttestationCorrelated = false;
   // Roles launched through the contained runtime. Containment/close at close()
@@ -769,7 +780,7 @@ function createCoordinator(
 
   const consumeBrowserAdmission = <T>(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create",
+    expectedOperation: "cabin_read" | "cabin_confirm" | "discovery_read" | "discovery_confirm" | "discovery_retry" | "discovery_cancel" | "discovery_picker" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -796,16 +807,21 @@ function createCoordinator(
     return await callback(installation);
   };
 
+  const registerInstallationLocator = async (locator: string): Promise<StardewInstallationSelectionResult> => {
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    const inspector = await createInstallationInspector();
+    await admitStardewInstallation(inspector, locator);
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    const current = await readStardewInstallationRegistration(runtimeRoot);
+    const owner = exactOwner;
+    if (current === null || current.state !== "ready" || owner === undefined) throw new Error("stardew_installation_registration_unavailable");
+    await internal.replaceStagedInstallationLocator(owner, current.revision, locator);
+    return Object.freeze({ status: "registered" });
+  };
   const selectAndRegisterPlayerHostInstallation = async (): Promise<boolean> => {
     const result = await selectStardewFolder(folderPicker);
     if (result.status === "cancelled") return false;
-    const inspector = await createInstallationInspector();
-    await admitStardewInstallation(inspector, result.path);
-    const current = await readStardewInstallationRegistration(runtimeRoot);
-    const owner = exactOwner;
-    if (current === null || current.state !== "ready" || owner === undefined)
-      throw new Error("stardew_installation_registration_unavailable");
-    await internal.replaceStagedInstallationLocator(owner, current.revision, result.path);
+    await registerInstallationLocator(result.path);
     return true;
   };
 
@@ -1592,6 +1608,43 @@ function createCoordinator(
     return promise;
   });
 
+  const readInstallationDiscovery = (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) =>
+    consumeBrowserAdmission(admission, "discovery_read", async () => {
+      if (installationDiscoveryProvider === undefined) throw new Error("stardew_installation_discovery_unavailable");
+      return installationDiscoveryProvider.discover();
+    });
+  const confirmInstallation = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    candidateId: string,
+  ) => consumeBrowserAdmission(admission, "discovery_confirm", async () => {
+    if (isClosing() || installationDiscoveryProvider === undefined)
+      return Object.freeze({ status: "unavailable" as const });
+    try {
+      return await registerInstallationLocator(installationDiscoveryProvider.confirm(candidateId));
+    } catch {
+      return Object.freeze({ status: "unavailable" as const });
+    }
+  });
+  const retryInstallationDiscovery = (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) =>
+    consumeBrowserAdmission(admission, "discovery_retry", async (): Promise<StardewInstallationDiscoveryView> => {
+      if (isClosing() || installationDiscoveryProvider === undefined)
+        throw new Error("stardew_installation_discovery_unavailable");
+      installationDiscoveryProvider.reset();
+      return installationDiscoveryProvider.discover();
+    });
+  const cancelInstallationSelection = (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) =>
+    consumeBrowserAdmission(admission, "discovery_cancel", async () => {
+      if (isClosing()) return { status: "unavailable" as const };
+      installationDiscoveryProvider?.reset();
+      return { status: "cancelled" as const };
+    });
+  const openInstallationPicker = (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) =>
+    consumeBrowserAdmission(admission, "discovery_picker", async () => {
+      if (isClosing()) return { status: "unavailable" as const };
+      try { return (await selectAndRegisterPlayerHostInstallation()) ? { status: "registered" as const } : { status: "cancelled" as const }; }
+      catch { return { status: "unavailable" as const }; }
+    });
+
   const activationOwner: StardewProductionLifecycleActivationOwner = Object.freeze({
     bindBrowserAdmissionIssuer,
     activate,
@@ -1606,6 +1659,11 @@ function createCoordinator(
     reopenActionAuthority,
     stopGame,
     disconnectGame,
+    readInstallationDiscovery,
+    confirmInstallation,
+    retryInstallationDiscovery,
+    cancelInstallationSelection,
+    openInstallationPicker,
   });
 
   /**
@@ -1909,6 +1967,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   gameSessionCreationAuthority?: StardewGameSessionCreationAuthority,
   createWorldBindingSeam?: CreateWorldBindingSeam,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
+  installationDiscoveryProvider?: StardewInstallationDiscoveryProvider,
 ): StardewProductionLifecycleCoordinator {
   return createCoordinator(
     manifest,
@@ -1925,6 +1984,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
     gameSessionCreationAuthority,
     createWorldBindingSeam,
     containedRuntimeTeardown,
+    installationDiscoveryProvider,
   );
 }
 
@@ -1974,5 +2034,6 @@ export function createStardewProductionLifecycleCoordinator(
     game,
     undefined,
     containedRuntimeTeardown,
+    createStardewInstallationDiscoveryProvider({}),
   );
 }

@@ -23,7 +23,7 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationAdmission,
   type ComposedReferenceGameBrowserReadContext,
 } from "./composed-reference-game-browser.js";
-import { GameBrowserValidatorsV1 } from "./game-browser-contract/index.js";
+import { composeGameProfile, GameBrowserFixtureV1, GameBrowserValidatorsV1 } from "./game-browser-contract/index.js";
 import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
@@ -75,6 +75,20 @@ const tavernProfile = composeTavernProfile({
   routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status", "events"],
   operationIds: ["chat.submit", "chat.cancel"],
   navigationItemIds: ["chat"],
+});
+
+const gameProfileWithDiscovery = composeGameProfile({
+  profileId: "gamebuddy.game.preview",
+  releaseTier: "game_preview",
+  operationIds: [
+    "game.state.read",
+    "game.installation.discovery.read",
+    "game.installation.discovery.confirm",
+    "game.installation.discovery.retry",
+    "game.installation.discovery.cancel",
+    "game.installation.discovery.manual_picker",
+  ],
+  navigationItemIds: ["game"],
 });
 
 const temporaryRoots: string[] = [];
@@ -164,6 +178,16 @@ test.after(async () => {
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
+
+function stateForGame(context: ComposedReferenceGameBrowserReadContext) {
+  const base = GameBrowserFixtureV1.state();
+  return {
+    ...base,
+    build: { ...base.build, profileId: gameProfileWithDiscovery.profileId },
+    csrfToken: context.csrfToken,
+    browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+  };
+}
 
 function stateForChat(context: ComposedReferenceGameBrowserReadContext) {
   const base = TavernBrowserFixtureV1.snapshot();
@@ -263,11 +287,21 @@ async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-async function createAdmissionBroker() {
+type DiscoveryBrowserHandler = NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameDiscovery"]>;
+
+async function createAdmissionBroker(gameDiscovery?: DiscoveryBrowserHandler) {
   const handler = createComposedReferenceGameBrowserRequestHandler({
-    profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
     bootstrapToken,
     async readChat(context) { return stateForChat(context); },
+    async readGame(context) { return stateForGame(context); },
+    gameDiscovery: gameDiscovery ?? {
+      read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
+      confirm: async () => ({ apiVersion: 1, status: "registered" }),
+      retry: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
+      cancel: async () => ({ apiVersion: 1, status: "cancelled" }),
+      manualPicker: async () => ({ apiVersion: 1, status: "cancelled" }),
+    },
   });
   const server = createServer((request, response) =>
     handler.handle(request, response, `http://127.0.0.1:${(server.address() as { port: number }).port}`),
@@ -285,30 +319,40 @@ async function createAdmissionBroker() {
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
   const root = await bootstrap.json() as { chat: { csrfToken: string } };
-  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create"): IncomingMessage => {
+  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "discovery_read" | "discovery_confirm" | "discovery_retry" | "discovery_cancel" | "discovery_picker" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create"): IncomingMessage => {
     const originUrl = new URL(origin);
-    const method = operation === "cabin_read" ? "GET" : "POST";
+    const method = operation === "cabin_read" || operation === "discovery_read" ? "GET" : "POST";
     const url = operation === "lifecycle_activation"
       ? "/api/composed-reference-game/v1/lifecycle/activate"
-      : operation === "cabin_read"
-        ? "/api/composed-reference-game/v1/game/stardew/cabins"
-        : operation === "cabin_confirm"
-          ? "/api/composed-reference-game/v1/game/stardew/cabins/confirm"
-           : operation === "game_setup"
-             ? "/api/composed-reference-game/v1/game/prerequisites/setup"
-             : operation === "game_launch"
-               ? "/api/composed-reference-game/v1/game/launch"
-               : operation === "game_stop"
-                 ? "/api/composed-reference-game/v1/game/stop"
-                 : operation === "game_resume"
-                   ? "/api/composed-reference-game/v1/game/resume"
-                   : operation === "game_resume_cancel"
-                     ? "/api/composed-reference-game/v1/game/resume/cancel"
-                     : operation === "game_reopen"
-                       ? "/api/composed-reference-game/v1/game/reopen"
-                       : operation === "game_disconnect"
-                         ? "/api/composed-reference-game/v1/game/disconnect"
-                         : "/api/composed-reference-game/v1/game/create";
+      : operation === "discovery_read"
+        ? "/api/composed-reference-game/v1/game/installation/discovery"
+        : operation === "discovery_confirm"
+          ? "/api/composed-reference-game/v1/game/installation/discovery/confirm"
+          : operation === "discovery_retry"
+            ? "/api/composed-reference-game/v1/game/installation/discovery/retry"
+            : operation === "discovery_cancel"
+              ? "/api/composed-reference-game/v1/game/installation/discovery/cancel"
+              : operation === "discovery_picker"
+                ? "/api/composed-reference-game/v1/game/installation/discovery/manual-picker"
+                : operation === "cabin_read"
+                  ? "/api/composed-reference-game/v1/game/stardew/cabins"
+                  : operation === "cabin_confirm"
+                    ? "/api/composed-reference-game/v1/game/stardew/cabins/confirm"
+                    : operation === "game_setup"
+                      ? "/api/composed-reference-game/v1/game/prerequisites/setup"
+                      : operation === "game_launch"
+                        ? "/api/composed-reference-game/v1/game/launch"
+                        : operation === "game_stop"
+                          ? "/api/composed-reference-game/v1/game/stop"
+                          : operation === "game_resume"
+                            ? "/api/composed-reference-game/v1/game/resume"
+                            : operation === "game_resume_cancel"
+                              ? "/api/composed-reference-game/v1/game/resume/cancel"
+                              : operation === "game_reopen"
+                                ? "/api/composed-reference-game/v1/game/reopen"
+                                : operation === "game_disconnect"
+                                  ? "/api/composed-reference-game/v1/game/disconnect"
+                                  : "/api/composed-reference-game/v1/game/create";
     return {
       method,
       url,
@@ -322,7 +366,7 @@ async function createAdmissionBroker() {
     } as unknown as IncomingMessage;
   };
   const issue = (
-    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create" = "lifecycle_activation",
+    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "discovery_read" | "discovery_confirm" | "discovery_retry" | "discovery_cancel" | "discovery_picker" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create" = "lifecycle_activation",
   ): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       handler.lifecycleActivationIssuer,
@@ -334,6 +378,9 @@ async function createAdmissionBroker() {
   };
   return {
     handler,
+    origin,
+    cookie,
+    csrfToken: root.chat.csrfToken,
     issue,
     async close() {
       const handlerDrain = handler.close();
@@ -371,6 +418,7 @@ async function createFixture(input: Readonly<{
   afterIngressActivation?(): void;
   nowMs?: () => number;
   afterPlayerSpawn?(): void;
+  discoveryBrowserHandlers?: DiscoveryBrowserHandler;
 }> = {}) {
   const runtimeRoot = await canonicalTemporaryRoot("gamebuddy-lifecycle-coordinator-");
   const packageRoot = join(runtimeRoot, "package");
@@ -540,7 +588,7 @@ async function createFixture(input: Readonly<{
       }),
     },
   );
-  const broker = await createAdmissionBroker();
+  const broker = await createAdmissionBroker(input.discoveryBrowserHandlers);
   coordinator.activationOwner.bindBrowserAdmissionIssuer(broker.handler.lifecycleActivationIssuer);
   return {
     runtimeRoot,
@@ -1327,34 +1375,69 @@ test("installation discovery reports unavailable sources and no candidates witho
     const fixture = await createFixture({ overrides: { installationDiscoveryOverlay: provider } });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      const result = await fixture.coordinator.activationOwner.readInstallationDiscovery(fixture.broker.issue("game_setup"));
+      const result = await fixture.coordinator.activationOwner.readInstallationDiscovery(fixture.broker.issue("discovery_read"));
       assert.deepEqual(result, { candidates: [], diagnostics: ["source-unavailable", "no-candidates"] });
       assert.equal(fixture.playerSpawnCalls.length, 0);
     } finally { await fixture.coordinator.close(); await fixture.broker.close(); }
   });
 });
 
+test("installation discovery routes admit each coordinator operation without operation mismatch", async () => {
+  await withWindowsPlatform(async () => {
+    const events: string[] = [];
+    const provider: StardewInstallationDiscoveryProvider = Object.freeze({
+      discover: async () => {
+        events.push("discover");
+        return {
+          candidates: [{ candidateId: "candidate-01", source: "known-location" as const, label: "Stardew Valley", displayPath: "Detected installation (path hidden)", status: "admission_required" as const }],
+          diagnostics: [],
+        };
+      },
+      confirm: (candidateId: string) => {
+        assert.equal(candidateId, "candidate-01");
+        events.push("confirm");
+        return gameDirectoryCandidate;
+      },
+      reset: () => { events.push("reset"); },
+    });
+    const fixture = await createFixture({
+      overrides: {
+        installationDiscoveryOverlay: provider,
+        selectStardewFolder: async () => ({ status: "cancelled" as const }),
+      },
+    });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      const initial = await fixture.coordinator.activationOwner.readInstallationDiscovery(fixture.broker.issue("discovery_read"));
+      assert.equal(initial.candidates.length, 1);
+      assert.deepEqual(await fixture.coordinator.activationOwner.confirmInstallation(fixture.broker.issue("discovery_confirm"), "candidate-01"), { status: "registered" });
+      const retried = await fixture.coordinator.activationOwner.retryInstallationDiscovery(fixture.broker.issue("discovery_retry"));
+      assert.equal(retried.candidates.length, 1);
+      assert.deepEqual(await fixture.coordinator.activationOwner.cancelInstallationSelection(fixture.broker.issue("discovery_cancel")), { status: "cancelled" });
+      assert.deepEqual(await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")), { status: "cancelled" });
+      assert.deepEqual(events, ["discover", "confirm", "reset", "discover", "reset"]);
+    } finally { await fixture.coordinator.close(); await fixture.broker.close(); }
+  });
+});
+
 test("installation discovery retry resets the provider before rediscovery and cancellation", async () => {
   await withWindowsPlatform(async () => {
-    let resets = 0;
-    let discoveries = 0;
+    const events: string[] = [];
     const provider: StardewInstallationDiscoveryProvider = Object.freeze({
-      discover: async () => { discoveries += 1; return { candidates: [], diagnostics: ["no-candidates"] as const }; },
+      discover: async () => { events.push("discover"); return { candidates: [], diagnostics: ["no-candidates"] as const }; },
       confirm: () => { throw new Error("confirm_not_expected"); },
-      reset: () => { resets += 1; },
+      reset: () => { events.push("reset"); },
     });
     const fixture = await createFixture({ overrides: { installationDiscoveryOverlay: provider } });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      await fixture.coordinator.activationOwner.readInstallationDiscovery(fixture.broker.issue("game_setup"));
-      await fixture.coordinator.activationOwner.retryInstallationDiscovery(fixture.broker.issue("game_setup"));
-      assert.equal(discoveries, 2);
-      assert.equal(resets, 1);
+      await fixture.coordinator.activationOwner.readInstallationDiscovery(fixture.broker.issue("discovery_read"));
+      await fixture.coordinator.activationOwner.retryInstallationDiscovery(fixture.broker.issue("discovery_retry"));
       assert.deepEqual(
-        await fixture.coordinator.activationOwner.cancelInstallationSelection(fixture.broker.issue("game_setup")),
+        await fixture.coordinator.activationOwner.cancelInstallationSelection(fixture.broker.issue("discovery_cancel")),
         { status: "cancelled" },
       );
-      assert.equal(resets, 2);
+      assert.deepEqual(events, ["discover", "reset", "discover", "reset"]);
     } finally { await fixture.coordinator.close(); await fixture.broker.close(); }
   });
 });
@@ -1367,7 +1450,7 @@ test("manual installation picker cancellation and failure preserve registration 
         const registrationBefore = await readStardewInstallationRegistration(fixture.runtimeRoot);
         const activationBefore = fixture.coordinator.activationOwner.readPrivateActivationSnapshot();
         const readinessBefore = fixture.coordinator.launchReadinessReader.readLaunchReadinessView();
-        const result = await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("game_setup"));
+        const result = await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker"));
         assert.deepEqual(result, { status: pickerResult instanceof Error ? "unavailable" : "cancelled" });
         const registrationAfter = await readStardewInstallationRegistration(fixture.runtimeRoot);
         assert.deepEqual(registrationAfter, registrationBefore);
