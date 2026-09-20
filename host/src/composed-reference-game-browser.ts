@@ -29,6 +29,10 @@ import {
   type StardewCabinChoicesV1,
   type StardewCabinConfirmCommandV1,
   type StardewCabinConfirmResultV1,
+  type GameDiscoveryReadResultV1,
+  type GameDiscoveryConfirmCommandV1,
+  type GameDiscoveryMutationResultV1,
+  GAME_BROWSER_OPERATION_IDS_V1,
 } from "./game-browser-contract/index.js";
 
 export type ComposedReferenceGameBrowserReadContext = Readonly<{
@@ -77,6 +81,13 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameDisconnectCommandV1,
   ) => Promise<void>;
+  gameDiscovery?: Readonly<{
+    read(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryReadResultV1>;
+    confirm(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission, command: GameDiscoveryConfirmCommandV1): Promise<GameDiscoveryMutationResultV1>;
+    retry(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryMutationResultV1>;
+    cancel(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryMutationResultV1>;
+    manualPicker(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryMutationResultV1>;
+  }>;
   stardewCabins?: Readonly<{
     read(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewCabinChoicesV1>;
     confirm(
@@ -116,6 +127,7 @@ export type ComposedReferenceGameBrowserLifecycleActivationBindingSink = Readonl
   ) => Promise<GameResumeResultV1>;
   createGameSession?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameCreate"]>;
   cancelResume?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameResumeCancel"]>;
+  gameDiscovery?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameDiscovery"]>;
   readCabinChoices?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewCabins"]>["read"];
   confirmCabinChoice?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewCabins"]>["confirm"];
 }>;
@@ -146,6 +158,11 @@ const GAME_REOPEN_PATH = `${GAME_PATH}/reopen`;
 const GAME_DISCONNECT_PATH = `${GAME_PATH}/disconnect`;
 const GAME_CREATE_PATH = `${GAME_PATH}/create`;
 const LIFECYCLE_ACTIVATE_PATH = "/api/composed-reference-game/v1/lifecycle/activate";
+const DISCOVERY_PATH = `${GAME_PATH}/installation/discovery`;
+const DISCOVERY_CONFIRM_PATH = `${DISCOVERY_PATH}/confirm`;
+const DISCOVERY_RETRY_PATH = `${DISCOVERY_PATH}/retry`;
+const DISCOVERY_CANCEL_PATH = `${DISCOVERY_PATH}/cancel`;
+const DISCOVERY_PICKER_PATH = `${DISCOVERY_PATH}/manual-picker`;
 const STARDEW_CABINS_PATH = "/api/composed-reference-game/v1/game/stardew/cabins";
 const STARDEW_CABINS_CONFIRM_PATH = `${STARDEW_CABINS_PATH}/confirm`;
 const SESSION_COOKIE_NAME = "gb_composed_reference_game_session";
@@ -495,6 +512,11 @@ type LifecycleActivationIssuerState = Readonly<{
 type LifecycleAdmissionOperation =
   | "lifecycle_activation"
   | "cabin_read"
+  | "discovery_read"
+  | "discovery_confirm"
+  | "discovery_retry"
+  | "discovery_cancel"
+  | "discovery_picker"
   | "cabin_confirm"
   | "game_setup"
   | "game_launch"
@@ -630,6 +652,16 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
   let operation: LifecycleAdmissionOperation;
   if (request.method === "POST" && requestUrl.pathname === LIFECYCLE_ACTIVATE_PATH) {
     operation = "lifecycle_activation";
+  } else if (request.method === "GET" && requestUrl.pathname === DISCOVERY_PATH) {
+    operation = "discovery_read";
+  } else if (request.method === "POST" && requestUrl.pathname === DISCOVERY_CONFIRM_PATH) {
+    operation = "discovery_confirm";
+  } else if (request.method === "POST" && requestUrl.pathname === DISCOVERY_RETRY_PATH) {
+    operation = "discovery_retry";
+  } else if (request.method === "POST" && requestUrl.pathname === DISCOVERY_CANCEL_PATH) {
+    operation = "discovery_cancel";
+  } else if (request.method === "POST" && requestUrl.pathname === DISCOVERY_PICKER_PATH) {
+    operation = "discovery_picker";
   } else if (request.method === "GET" && requestUrl.pathname === STARDEW_CABINS_PATH) {
     operation = "cabin_read";
   } else if (request.method === "POST" && requestUrl.pathname === STARDEW_CABINS_CONFIRM_PATH) {
@@ -757,10 +789,30 @@ export function createComposedReferenceGameBrowserRequestHandler(
   ) {
     throw new Error(INVALID_GAME_READER_ERROR);
   }
-  const cabinOperationsMounted =
-    options.profile.gameProfile?.operationIds.includes("game.stardew.cabins.read") === true &&
-    options.profile.gameProfile.operationIds.includes("game.stardew.cabins.confirm");
-  if (cabinOperationsMounted !== (options.stardewCabins !== undefined)) {
+  const discoveryOperationIds: readonly (typeof GAME_BROWSER_OPERATION_IDS_V1[number])[] = ["game.installation.discovery.read", "game.installation.discovery.confirm", "game.installation.discovery.retry", "game.installation.discovery.cancel", "game.installation.discovery.manual_picker"];
+  const discoveryOperationsMounted = discoveryOperationIds.map((id) => options.profile.gameProfile?.operationIds.includes(id) === true);
+  const discoveryMounted = discoveryOperationsMounted.some(Boolean);
+  const discoveryCallbacksMounted =
+    options.gameDiscovery !== undefined &&
+    typeof options.gameDiscovery.read === "function" &&
+    typeof options.gameDiscovery.confirm === "function" &&
+    typeof options.gameDiscovery.retry === "function" &&
+    typeof options.gameDiscovery.cancel === "function" &&
+    typeof options.gameDiscovery.manualPicker === "function";
+  if (discoveryMounted !== discoveryCallbacksMounted || discoveryOperationsMounted.some((mounted) => mounted !== discoveryMounted)) {
+    throw new Error("Composed reference-game discovery operations are mismounted");
+  }
+  const cabinOperationIds = ["game.stardew.cabins.read", "game.stardew.cabins.confirm"] as const;
+  const cabinOperationsMounted = cabinOperationIds.map((id) => options.profile.gameProfile?.operationIds.includes(id) === true);
+  const cabinMounted = cabinOperationsMounted.some(Boolean);
+  const cabinCallbacksMounted =
+    options.stardewCabins !== undefined &&
+    typeof options.stardewCabins.read === "function" &&
+    typeof options.stardewCabins.confirm === "function";
+  if (
+    cabinMounted !== cabinCallbacksMounted ||
+    cabinOperationsMounted.some((mounted) => mounted !== cabinMounted)
+  ) {
     throw new Error("Composed reference-game cabin operations are mismounted");
   }
   const gameSetupMounted = options.profile.gameProfile?.operationIds.includes("game.prerequisites.setup") === true;
@@ -992,6 +1044,57 @@ export function createComposedReferenceGameBrowserRequestHandler(
       return;
     }
 
+    if (requestUrl.pathname === DISCOVERY_PATH && request.method === "GET") {
+      if (!isEmptyQuery(requestUrl) || !hasEmptyRequestBodyHeaders(request) || options.gameDiscovery === undefined) {
+        sendProblem(response, options.gameDiscovery === undefined ? 404 : 409, options.gameDiscovery === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      try {
+        const result = await options.gameDiscovery.read(admission);
+        if (result === undefined) { sendProblem(response, 409, "state_unavailable"); return; }
+        if (!GameBrowserValidatorsV1.GameDiscoveryReadResultV1Schema.Check(result)) { sendProblem(response, 409, "state_unavailable"); return; }
+        sendJson(response, 200, result);
+      } catch { sendProblem(response, 503, "game_unavailable"); }
+      return;
+    }
+    if (request.method === "POST" && [DISCOVERY_CONFIRM_PATH, DISCOVERY_RETRY_PATH, DISCOVERY_CANCEL_PATH, DISCOVERY_PICKER_PATH].includes(requestUrl.pathname)) {
+      if (!isEmptyQuery(requestUrl) || options.gameDiscovery === undefined) {
+        sendProblem(response, options.gameDiscovery === undefined ? 404 : 409, options.gameDiscovery === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const operation = requestUrl.pathname === DISCOVERY_CONFIRM_PATH ? "discovery_confirm" : requestUrl.pathname === DISCOVERY_RETRY_PATH ? "discovery_retry" : requestUrl.pathname === DISCOVERY_CANCEL_PATH ? "discovery_cancel" : "discovery_picker";
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      let command: unknown;
+      try {
+        command = JSON.parse((await readBody(request, MAX_BOOTSTRAP_BODY_BYTES)).toString("utf8"));
+      } catch {
+        sendProblem(response, 409, "malformed_request");
+        return;
+      }
+      if (
+        (operation === "discovery_confirm" && !GameBrowserValidatorsV1.GameDiscoveryConfirmCommandV1Schema.Check(command)) ||
+        (operation !== "discovery_confirm" && !GameBrowserValidatorsV1.GameDiscoveryActionCommandV1Schema.Check(command))
+      ) {
+        sendProblem(response, 409, "malformed_request");
+        return;
+      }
+      try {
+        const result = operation === "discovery_confirm"
+          ? await options.gameDiscovery.confirm(admission, command as GameDiscoveryConfirmCommandV1)
+          : operation === "discovery_retry"
+            ? await options.gameDiscovery.retry(admission)
+            : operation === "discovery_cancel"
+              ? await options.gameDiscovery.cancel(admission)
+              : await options.gameDiscovery.manualPicker(admission);
+        if (result === undefined) { sendProblem(response, 409, "state_unavailable"); return; }
+        if (!GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema.Check(result)) { sendProblem(response, 409, "state_unavailable"); return; }
+        sendJson(response, 200, result);
+      } catch { sendProblem(response, 503, "game_unavailable"); }
+      return;
+    }
     if (requestUrl.pathname === GAME_SETUP_PATH && request.method === "POST") {
       if (!isEmptyQuery(requestUrl) || options.gameSetup === undefined) {
         sendProblem(response, options.gameSetup === undefined ? 404 : 409, options.gameSetup === undefined ? "not_found" : "malformed_request");

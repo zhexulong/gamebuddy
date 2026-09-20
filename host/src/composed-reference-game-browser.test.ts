@@ -81,6 +81,31 @@ const gameProfileWithCabins = composeGameProfile({
   operationIds: ["game.state.read", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
   navigationItemIds: ["game"],
 });
+const gameProfileWithCabinReadOnly = composeGameProfile({
+  profileId: "gamebuddy.game.preview",
+  releaseTier: "game_preview",
+  operationIds: ["game.state.read", "game.stardew.cabins.read"],
+  navigationItemIds: ["game"],
+});
+const gameProfileWithCabinConfirmOnly = composeGameProfile({
+  profileId: "gamebuddy.game.preview",
+  releaseTier: "game_preview",
+  operationIds: ["game.state.read", "game.stardew.cabins.confirm"],
+  navigationItemIds: ["game"],
+});
+const gameProfileWithDiscovery = composeGameProfile({
+  profileId: "gamebuddy.game.preview",
+  releaseTier: "game_preview",
+  operationIds: [
+    "game.state.read",
+    "game.installation.discovery.read",
+    "game.installation.discovery.confirm",
+    "game.installation.discovery.retry",
+    "game.installation.discovery.cancel",
+    "game.installation.discovery.manual_picker",
+  ],
+  navigationItemIds: ["game"],
+});
 
 function stateForChat(context: ComposedReferenceGameBrowserReadContext) {
   const base = TavernBrowserFixtureV1.snapshot();
@@ -148,6 +173,113 @@ function lifecycleRequest(
     },
   } as unknown as IncomingMessage;
 }
+
+test("installation discovery confirms a legal opaque candidate and invokes each operation once", async () => {
+  const calls: string[] = [];
+  let handler!: ReturnType<typeof createComposedReferenceGameBrowserRequestHandler>;
+  handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameDiscovery: {
+      read: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        handler.lifecycleActivationIssuer,
+        admission,
+        "discovery_read",
+        () => ({ apiVersion: 1 as const, candidates: [], diagnostics: [] }),
+      )!,
+      confirm: async (admission, command) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        handler.lifecycleActivationIssuer,
+        admission,
+        "discovery_confirm",
+        () => { calls.push("confirm"); assert.deepEqual(command, { apiVersion: 1, candidateId: "Q".repeat(42) + "A" }); return { apiVersion: 1 as const, status: "registered" as const }; },
+      )!,
+      retry: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_retry", () => { calls.push("retry"); return { apiVersion: 1 as const, status: "accepted" as const }; })!,
+      cancel: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_cancel", () => { calls.push("cancel"); return { apiVersion: 1 as const, status: "cancelled" as const }; })!,
+      manualPicker: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_picker", () => { calls.push("manual-picker"); return { apiVersion: 1 as const, status: "accepted" as const }; })!,
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = await initial.json() as { chat: { csrfToken: string } };
+     const candidateId = "Q".repeat(42) + "A";
+     const confirmation = await fetch(`${server.origin}/api/composed-reference-game/v1/game/installation/discovery/confirm`, {
+       method: "POST", headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+       body: JSON.stringify({ apiVersion: 1, candidateId }),
+     });
+     assert.equal(confirmation.status, 200);
+     assert.deepEqual(await confirmation.json(), { apiVersion: 1, status: "registered" });
+     for (const [name, path] of [["retry", "retry"], ["cancel", "cancel"], ["manual-picker", "manual-picker"]] as const) {
+       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/installation/discovery/${path}`, {
+        method: "POST", headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: JSON.stringify({ apiVersion: 1 }),
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { apiVersion: 1, status: name === "cancel" ? "cancelled" : "accepted" });
+    }
+     assert.deepEqual(calls, ["confirm", "retry", "cancel", "manual-picker"]);
+  } finally { await server.close(); }
+});
+
+test("installation discovery boundary rejects unexpected query, wrong content type, and method drift", async () => {
+  const calls: string[] = [];
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameDiscovery: {
+      read: async () => { calls.push("read"); return { apiVersion: 1, candidates: [], diagnostics: [] }; },
+      confirm: async () => { calls.push("confirm"); return { apiVersion: 1, status: "registered" }; },
+      retry: async () => { calls.push("retry"); return { apiVersion: 1, status: "accepted" }; },
+      cancel: async () => { calls.push("cancel"); return { apiVersion: 1, status: "cancelled" }; },
+      manualPicker: async () => { calls.push("manual-picker"); return { apiVersion: 1, status: "accepted" }; },
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = await initial.json() as { chat: { csrfToken: string } };
+    const base = `${server.origin}/api/composed-reference-game/v1/game/installation/discovery`;
+    const authHeaders = { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" };
+    const query = await fetch(`${base}?unexpected=1`, { headers: authHeaders });
+    assert.equal(query.status, 409);
+    assert.deepEqual(await query.json(), { code: "malformed_request" });
+    const wrongContentType = await fetch(`${base}/retry`, {
+      method: "POST",
+      headers: { ...authHeaders, "content-type": "text/plain" },
+      body: JSON.stringify({ apiVersion: 1 }),
+    });
+    assert.equal(wrongContentType.status, 401);
+    const wrongMethod = await fetch(base, { method: "POST", headers: authHeaders, body: JSON.stringify({ apiVersion: 1 }) });
+    assert.equal(wrongMethod.status, 404);
+    const wrongMutationMethod = await fetch(`${base}/retry`, { method: "GET", headers: { origin: server.origin, cookie, "sec-fetch-site": "same-origin" } });
+    assert.equal(wrongMutationMethod.status, 404);
+    assert.deepEqual(calls, []);
+  } finally { await server.close(); }
+});
+
+test("installation discovery mutation requests reject empty, malformed, wrong-version, and extra fields", async () => {
+  const calls: string[] = [];
+  let handler!: ReturnType<typeof createComposedReferenceGameBrowserRequestHandler>;
+  handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }), bootstrapToken,
+    readChat: async (context) => stateForChat(context), readGame: async (context) => stateForGame(context),
+    gameDiscovery: { read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }), confirm: async () => { calls.push("confirm"); return { apiVersion: 1, status: "registered" }; }, retry: async () => { calls.push("retry"); return { apiVersion: 1, status: "accepted" }; }, cancel: async () => { calls.push("cancel"); return { apiVersion: 1, status: "cancelled" }; }, manualPicker: async () => { calls.push("manual-picker"); return { apiVersion: 1, status: "accepted" }; } },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin); const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!; const root = await initial.json() as { chat: { csrfToken: string } };
+    for (const path of ["confirm", "retry", "cancel", "manual-picker"] as const) for (const body of ["", "{", JSON.stringify({ apiVersion: 2 }), JSON.stringify({ apiVersion: 1, extra: true })]) {
+      const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/installation/discovery/${path}`, { method: "POST", headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body });
+      assert.equal(response.status, 409); assert.deepEqual(await response.json(), { code: "malformed_request" });
+    }
+    assert.equal(calls.length, 0);
+  } finally { await server.close(); }
+});
 
 test("game.prerequisites.setup mount is exact and cannot drift from its production callback", () => {
   assert.throws(
@@ -1076,6 +1208,35 @@ test("construction rejects fake or mismounted capabilities", () => {
   assert.throws(() => createComposedReferenceGameBrowserRequestHandler({ profile: {} as never, bootstrapToken, async readChat() { return TavernBrowserFixtureV1.snapshot(); } }), /Invalid composed/);
   assert.throws(() => createComposedReferenceGameBrowserRequestHandler({ profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }), bootstrapToken, async readChat() { return TavernBrowserFixtureV1.snapshot(); } }), /game reader/);
   assert.throws(() => createComposedReferenceGameBrowserRequestHandler({ profile: composeReferenceGameBrowserProfile({ tavernProfile }), bootstrapToken: "short", async readChat() { return TavernBrowserFixtureV1.snapshot(); } }), /bootstrap token/);
+
+  for (const gameProfile of [gameProfileWithCabinReadOnly, gameProfileWithCabinConfirmOnly]) {
+    assert.throws(
+      () => createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+        bootstrapToken,
+        async readChat(context) { return stateForChat(context); },
+        async readGame(context) { return stateForGame(context); },
+        stardewCabins: { read: async () => ({ apiVersion: 1, choices: [] }), confirm: async () => ({ apiVersion: 1, status: "manifest_admitted" }) },
+      }),
+      /cabin operations are mismounted/,
+    );
+  }
+
+  for (const stardewCabins of [
+    { read: async () => ({ apiVersion: 1, choices: [] }) },
+    { confirm: async () => ({ apiVersion: 1, status: "manifest_admitted" as const }) },
+  ]) {
+    assert.throws(
+      () => createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
+        bootstrapToken,
+        async readChat(context) { return stateForChat(context); },
+        async readGame(context) { return stateForGame(context); },
+        stardewCabins: stardewCabins as never,
+      }),
+      /cabin operations are mismounted/,
+    );
+  }
 });
 
 

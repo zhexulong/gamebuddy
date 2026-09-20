@@ -234,6 +234,33 @@ const GameDiagnosticsReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
+// Installation discovery is deliberately redacted: paths and executable identity
+// never cross the browser boundary.
+const GameCandidateV1Schema = strictObject({
+  candidateId: OpaqueHandle,
+  source: Type.String({ minLength: 1, maxLength: 64 }),
+  label: Type.String({ minLength: 1, maxLength: 256 }),
+  hint: Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]),
+  status: Type.Union([Type.Literal("candidate"), Type.Literal("invalid"), Type.Literal("admission_required")]),
+});
+export const GameDiscoveryReadResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  candidates: Type.Array(GameCandidateV1Schema, { maxItems: 64 }),
+  diagnostics: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 32 }),
+});
+export const GameDiscoveryCommandV1Schema = strictObject({ apiVersion: ApiVersion });
+export const GameDiscoveryConfirmCommandV1Schema = strictObject({ apiVersion: ApiVersion, candidateId: OpaqueHandle });
+export const GameDiscoveryActionCommandV1Schema = strictObject({ apiVersion: ApiVersion });
+
+/** Redacted outcomes for installation-discovery mutations. */
+export const GameDiscoveryMutationResultV1Schema = Type.Union([
+  strictObject({ apiVersion: ApiVersion, status: Type.Literal("accepted") }),
+  strictObject({ apiVersion: ApiVersion, status: Type.Literal("registered") }),
+  strictObject({ apiVersion: ApiVersion, status: Type.Literal("cancelled") }),
+  strictObject({ apiVersion: ApiVersion, status: Type.Literal("unavailable") }),
+]);
+export type GameDiscoveryMutationResultV1 = Static<typeof GameDiscoveryMutationResultV1Schema>;
+
 export const StardewCabinChoicesV1Schema = strictObject({
   apiVersion: ApiVersion,
   choices: Type.Array(strictObject({
@@ -419,6 +446,11 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.disconnect",
   "game.create",
   "game.diagnostics.read",
+  "game.installation.discovery.read",
+  "game.installation.discovery.confirm",
+  "game.installation.discovery.retry",
+  "game.installation.discovery.cancel",
+  "game.installation.discovery.manual_picker",
   "game.stardew.cabins.read",
   "game.stardew.cabins.confirm",
 ] as const);
@@ -540,6 +572,11 @@ export const GameBrowserContractV1 = Object.freeze({
     GameReopenActionAuthorityCommandV1Schema,
     GameReopenActionAuthorityResultV1Schema,
     GameDiagnosticsReadCommandV1Schema,
+    GameDiscoveryReadResultV1Schema,
+    GameDiscoveryCommandV1Schema,
+    GameDiscoveryConfirmCommandV1Schema,
+    GameDiscoveryActionCommandV1Schema,
+    GameDiscoveryMutationResultV1Schema,
     StardewCabinChoicesV1Schema,
     StardewCabinConfirmCommandV1Schema,
     StardewCabinConfirmResultV1Schema,
@@ -557,6 +594,10 @@ export const GameBrowserValidatorsV1: Readonly<Record<keyof typeof GameBrowserCo
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type GameOperationId = (typeof GAME_BROWSER_OPERATION_IDS_V1)[number];
+export type GameDiscoveryReadResultV1 = Static<typeof GameDiscoveryReadResultV1Schema>;
+export type GameDiscoveryCommandV1 = Static<typeof GameDiscoveryCommandV1Schema>;
+export type GameDiscoveryConfirmCommandV1 = Static<typeof GameDiscoveryConfirmCommandV1Schema>;
+export type GameDiscoveryActionCommandV1 = Static<typeof GameDiscoveryActionCommandV1Schema>;
 export type GameBrowserStateV1 = Static<typeof GameBrowserStateV1Schema>;
 export type GamePrerequisitesSetupCommandV1 = Static<typeof GamePrerequisitesSetupCommandV1Schema>;
 export type GameLaunchCommandV1 = Static<typeof GameLaunchCommandV1Schema>;

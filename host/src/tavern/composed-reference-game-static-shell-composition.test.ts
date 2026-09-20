@@ -42,6 +42,15 @@ const tavernProfile = composeTavernProfile({
   navigationItemIds: ["chat"],
 });
 const profile = composeReferenceGameBrowserProfile({ tavernProfile });
+const discoveryProfile = composeReferenceGameBrowserProfile({
+  tavernProfile,
+  gameProfile: composeGameProfile({
+    profileId: "gamebuddy.game.preview",
+    releaseTier: "game_preview",
+    operationIds: ["game.state.read", "game.installation.discovery.read", "game.installation.discovery.confirm", "game.installation.discovery.retry", "game.installation.discovery.cancel", "game.installation.discovery.manual_picker"],
+    navigationItemIds: ["game"],
+  }),
+});
 const cabinProfile = composeReferenceGameBrowserProfile({
   tavernProfile,
   gameProfile: composeGameProfile({
@@ -453,6 +462,63 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
     await server.close().catch(() => {});
     await fixture.dispose();
   }
+});
+
+test("composed shell rejects partial cabin callback mounts before listener startup", async () => {
+  const fixture = await artifactFixture();
+  try {
+    for (const lifecycleActivationBindingSink of [
+      { bindBrowserAdmissionIssuer() {}, async readCabinChoices() { return { apiVersion: 1 as const, choices: [] }; } },
+      { bindBrowserAdmissionIssuer() {}, async confirmCabinChoice() { return { apiVersion: 1 as const, status: "manifest_admitted" as const }; } },
+    ]) {
+      await assert.rejects(
+        () => startComposedReferenceGameStaticShellComposition({
+          profile: cabinProfile,
+          bootstrapToken: token,
+          referenceStateFacade: fakeFacade as any,
+          eventStream,
+          readGame: async (context) => ({
+            ...GameBrowserFixtureV1.state(),
+            csrfToken: context.csrfToken,
+            browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+            build: { ...GameBrowserFixtureV1.state().build, profileId: cabinProfile.gameProfile!.profileId },
+          }),
+          artifactRoot: fixture.root,
+          inspector: inspector(),
+          lifecycleActivationBindingSink: lifecycleActivationBindingSink as any,
+        }),
+        /composed_reference_game_cabin_operations_mismounted/,
+      );
+    }
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("composed shell wires all discovery callbacks through authenticated HTTP", async () => {
+  const fixture = await artifactFixture();
+  const candidateId = "Q".repeat(42) + "A";
+  const calls: string[] = [];
+  let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
+  const discovery = {
+    read: async (admission: any) => { calls.push("read"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_read", () => ({ apiVersion: 1 as const, candidates: [], diagnostics: [] }))!; },
+    confirm: async (admission: any, command: any) => { calls.push("confirm"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_confirm", () => { assert.deepEqual(command, { apiVersion: 1, candidateId }); return { apiVersion: 1 as const, status: "registered" as const }; })!; },
+    retry: async (admission: any) => { calls.push("retry"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_retry", () => ({ apiVersion: 1 as const, status: "accepted" as const }))!; },
+    cancel: async (admission: any) => { calls.push("cancel"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_cancel", () => ({ apiVersion: 1 as const, status: "cancelled" as const }))!; },
+    manualPicker: async (admission: any) => { calls.push("manual-picker"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_picker", () => ({ apiVersion: 1 as const, status: "accepted" as const }))!; },
+  };
+  const sink = { bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) { issuer = value; }, gameDiscovery: discovery };
+  const server = await startComposedReferenceGameStaticShellComposition({ profile: discoveryProfile, bootstrapToken: token, referenceStateFacade: fakeFacade as any, eventStream, readGame: async (context) => ({ ...GameBrowserFixtureV1.state(), csrfToken: context.csrfToken, browserSession: { expiresAtMs: context.browserSessionExpiresAtMs }, build: { ...GameBrowserFixtureV1.state().build, profileId: discoveryProfile.gameProfile!.profileId } }), artifactRoot: fixture.root, inspector: inspector(), lifecycleActivationBindingSink: sink as any });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) });
+    const root = await bootstrap.json(); const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const readHeaders = { Origin: server.origin, Cookie: cookie };
+    const mutationHeaders = { Origin: server.origin, Cookie: cookie, "X-CSRF-Token": root.chat.csrfToken, "Content-Type": "application/json" };
+    const base = `${server.origin}/api/composed-reference-game/v1/game/installation/discovery`;
+    assert.equal((await fetch(base, { headers: readHeaders })).status, 200);
+    for (const [path, body] of [["confirm", { apiVersion: 1, candidateId }], ["retry", { apiVersion: 1 }], ["cancel", { apiVersion: 1 }], ["manual-picker", { apiVersion: 1 }]] as const) assert.equal((await fetch(`${base}/${path}`, { method: "POST", headers: mutationHeaders, body: JSON.stringify(body) })).status, 200);
+    assert.deepEqual(calls, ["read", "confirm", "retry", "cancel", "manual-picker"]);
+  } finally { await server.close(); await fixture.dispose(); }
 });
 
 test("composed shell mounts game.launch to the lifecycle owner and returns 204", async () => {
