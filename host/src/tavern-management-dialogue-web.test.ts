@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import test from "node:test";
-
+import type { VoicePreferenceUpdate } from "./settings/voice-preference-store.js";
 import {
   composeTavernProfile,
-  TavernBrowserValidatorsV1,
   type MemoryMutationCommandV1,
   type MemoryReadV1,
+  TavernBrowserValidatorsV1,
   type WorldInfoStateV1,
 } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
@@ -16,8 +16,8 @@ import type { TavernManagementState, TavernManagementStateFacade } from "./taver
 import type { WorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
 import {
   createTavernManagementDialogueWebRequestHandler,
-  startTavernManagementDialogueWebServer,
   MAX_BODY_BYTES,
+  startTavernManagementDialogueWebServer,
 } from "./tavern-management-dialogue-web.js";
 
 const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -26,8 +26,27 @@ const maxDraftText = "a".repeat(16_384);
 const profile = composeTavernProfile({
   profileId: "gamebuddy.tavern-management.chat-list-title",
   releaseTier: "tavern_management",
-  routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "world-info.read", "world-info.bind"],
-  operationIds: ["draft.save", "draft.discard", "chat.rename", "world-info.bind"],
+  routeIds: [
+    "bootstrap",
+    "state.read",
+    "draft.read",
+    "draft.save",
+    "draft.discard",
+    "chat.list",
+    "chat.rename",
+    "world-info.read",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+  ],
+  operationIds: [
+    "draft.save",
+    "draft.discard",
+    "chat.rename",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+  ],
   navigationItemIds: ["chat"],
 });
 
@@ -89,8 +108,30 @@ const renameResult: import("./tavern/browser-contract/index.js").ChatTitleV1 = {
 const memoryProfile = composeTavernProfile({
   profileId: "gamebuddy.tavern-management.chat-list-title",
   releaseTier: "tavern_management",
-  routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "memory.read", "memory.mutate", "world-info.read", "world-info.bind"],
-  operationIds: ["draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"],
+  routeIds: [
+    "bootstrap",
+    "state.read",
+    "draft.read",
+    "draft.save",
+    "draft.discard",
+    "chat.list",
+    "chat.rename",
+    "memory.read",
+    "memory.mutate",
+    "world-info.read",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+  ],
+  operationIds: [
+    "draft.save",
+    "draft.discard",
+    "chat.rename",
+    "memory.mutate",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+  ],
   navigationItemIds: ["chat", "memory"],
 });
 
@@ -165,6 +206,21 @@ function worldInfoService(recorder?: {
   });
 }
 
+const voicePreferenceStore = Object.freeze({
+  async read() {
+    return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null };
+  },
+  async update(expectedRevision: number, update: VoicePreferenceUpdate) {
+    assert.equal(expectedRevision, 0);
+    return {
+      revision: 1,
+      disclosureVersion: update.action === "accept" ? update.disclosureVersion : null,
+      consent: update.action === "accept" ? ("accepted" as const) : ("revoked" as const),
+      decidedAtMs: 1,
+    };
+  },
+});
+
 function service(recorder: {
   lists: number;
   renames: number;
@@ -215,6 +271,7 @@ test("management handler exposes the draft-capable profile and CSRF-protected mu
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   try {
@@ -337,6 +394,7 @@ test("management handler maps foreign binding, wrong generation and stale revisi
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -389,6 +447,7 @@ test("management handler enforces session, CSRF, origin and exact query/body val
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -544,6 +603,7 @@ test("management handler serves memory.read as a same-origin browser session rea
     memoryService: memoryService(),
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   try {
@@ -622,6 +682,7 @@ test("management handler fails closed when the profile advertises memory.read wi
       managementService: service(recorder),
       worldInfoService: worldInfoService(),
       profile: memoryProfile,
+      voicePreferenceStore,
       bootstrapToken: token,
     }),
     /tavern_management_composition_unavailable/,
@@ -645,12 +706,18 @@ test("management handler does not activate an injected memory service when the p
     }),
     worldInfoService: worldInfoService(),
     profile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
   await dispatch(
     handler,
-    request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, { apiVersion: 1, bootstrapToken: token }),
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
     bootstrap,
   );
   assert.equal(bootstrap.status, 200);
@@ -681,6 +748,7 @@ test("management handler closes each service at most once", async () => {
     }),
     worldInfoService: worldInfoService(worldInfoRecorder),
     profile: memoryProfile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   await Promise.all([handler.close(), handler.close()]);
@@ -699,10 +767,20 @@ test("management handler rejects Memory mutation before service work for missing
     memoryService: memoryService(memoryRecorder),
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
-  await dispatch(handler, request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, { apiVersion: 1, bootstrapToken: token }), bootstrap);
+  await dispatch(
+    handler,
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+    bootstrap,
+  );
   const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
   const csrf = (JSON.parse(bootstrap.body) as { csrfToken: string }).csrfToken;
   const command: MemoryMutationCommandV1 = {
@@ -718,7 +796,10 @@ test("management handler rejects Memory mutation before service work for missing
   };
   assert.equal(await run({ cookie, "x-csrf-token": csrf }), 401);
   assert.equal(await run({ origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": "B".repeat(43) }), 403);
-  assert.equal(await run({ origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf }, { ...command, extra: true }), 400);
+  assert.equal(
+    await run({ origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf }, { ...command, extra: true }),
+    400,
+  );
   assert.equal(
     await run(
       { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
@@ -740,6 +821,7 @@ test("management handler rejects memory.read requests without the browser sessio
     memoryService: memoryService(),
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -762,10 +844,7 @@ test("management handler rejects memory.read requests without the browser sessio
   };
 
   // No session cookie: rejected as unauthorized.
-  assert.equal(
-    (await run(request("GET", "/api/tavern/v1/memory", { "sec-fetch-site": "same-origin" }))).status,
-    401,
-  );
+  assert.equal((await run(request("GET", "/api/tavern/v1/memory", { "sec-fetch-site": "same-origin" }))).status, 401);
   // Foreign origin performs a non-safe cross-site fetch: rejected.
   assert.equal(
     (await run(request("GET", "/api/tavern/v1/memory", { origin: "http://evil.example", cookie }))).status,
@@ -773,9 +852,8 @@ test("management handler rejects memory.read requests without the browser sessio
   );
   // Query string is not part of the frozen memory.read route.
   assert.equal(
-    (
-      await run(request("GET", "/api/tavern/v1/memory?apiVersion=1", { cookie, "sec-fetch-site": "same-origin" }))
-    ).status,
+    (await run(request("GET", "/api/tavern/v1/memory?apiVersion=1", { cookie, "sec-fetch-site": "same-origin" })))
+      .status,
     400,
   );
   // Body is not allowed on the read route.
@@ -788,7 +866,10 @@ test("management handler rejects memory.read requests without the browser sessio
     400,
   );
   // Exact browser session read succeeds.
-  assert.equal((await run(request("GET", "/api/tavern/v1/memory", { cookie, "sec-fetch-site": "same-origin" }))).status, 200);
+  assert.equal(
+    (await run(request("GET", "/api/tavern/v1/memory", { cookie, "sec-fetch-site": "same-origin" }))).status,
+    200,
+  );
   await handler.close();
 });
 
@@ -811,12 +892,18 @@ test("management handler maps a Memory projection conflict to a safe 409 without
     memoryService: conflictingMemory,
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
   await dispatch(
     handler,
-    request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, { apiVersion: 1, bootstrapToken: token }),
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
     bootstrap,
   );
   const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
@@ -858,6 +945,7 @@ test("management handler maps memory storage failures to the storage problem cod
     memoryService: failingMemory,
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -897,12 +985,18 @@ test("management handler projects the Memory navigation item as unavailable when
     memoryService: failingMemory,
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
   await dispatch(
     handler,
-    request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, { apiVersion: 1, bootstrapToken: token }),
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
     bootstrap,
   );
   assert.equal(bootstrap.status, 200);
@@ -929,7 +1023,16 @@ test("management handler rejects a Memory-route profile that omits the Memory na
   const mismatchedProfile = composeTavernProfile({
     profileId: "gamebuddy.tavern-management.chat-list-title",
     releaseTier: "tavern_management",
-    routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "memory.read"],
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "draft.save",
+      "draft.discard",
+      "chat.list",
+      "chat.rename",
+      "memory.read",
+    ],
     operationIds: ["draft.save", "draft.discard", "chat.rename"],
     navigationItemIds: ["chat"],
   });
@@ -953,6 +1056,7 @@ test("management handler serves world-info read/bind with session, CSRF and stri
     managementService: service(recorder),
     worldInfoService: worldInfoService(worldInfoRecorder),
     profile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const run = async (input: import("node:http").IncomingMessage) => {
@@ -990,11 +1094,8 @@ test("management handler serves world-info read/bind with session, CSRF and stri
 
   // Query or body on the read route is rejected before the service runs.
   assert.equal(
-    (
-      await run(
-        request("GET", "/api/tavern/v1/world-info?apiVersion=1", { cookie, "sec-fetch-site": "same-origin" }),
-      )
-    ).status,
+    (await run(request("GET", "/api/tavern/v1/world-info?apiVersion=1", { cookie, "sec-fetch-site": "same-origin" })))
+      .status,
     400,
   );
   assert.equal(
@@ -1106,6 +1207,7 @@ test("management handler fails closed when the profile advertises world-info rou
       managementStateFacade: facade,
       managementService: service(recorder),
       profile,
+      voicePreferenceStore,
       bootstrapToken: token,
     }),
     /tavern_management_composition_unavailable/,
@@ -1125,6 +1227,7 @@ test("management handler maps world-info binding conflict and locked errors to 4
     managementService: service(recorder),
     worldInfoService: worldInfoService(worldInfoRecorder),
     profile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -1189,6 +1292,7 @@ test("management handler maps world-info service and storage unavailability to s
     managementService: service(recorder),
     worldInfoService: worldInfoService(worldInfoRecorder),
     profile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -1247,6 +1351,7 @@ test("management handler rejects oversized request bodies with HTTP 413 and clos
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   try {
@@ -1265,8 +1370,8 @@ test("management handler rejects oversized request bodies with HTTP 413 and clos
     assert.equal(problem.status, 413);
 
     // 2. Chunked body exceeding MAX_BODY_BYTES returns 413 payload_too_large
-    const chunk1 = "{\"apiVersion\":1,\"bootstrapToken\":\"" + token + "\",\"padding\":\"";
-    const chunk2 = "x".repeat(MAX_BODY_BYTES + 1024) + "\"}";
+    const chunk1 = '{"apiVersion":1,"bootstrapToken":"' + token + '","padding":"';
+    const chunk2 = "x".repeat(MAX_BODY_BYTES + 1024) + '"}';
     const chunkedRes = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
       method: "POST",
       headers: { Origin: origin, "Content-Type": "application/json" },
@@ -1296,6 +1401,7 @@ test("management dispatcher destroys request socket and returns 413 payload_too_
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
+    voicePreferenceStore,
     bootstrapToken: token,
   });
   try {
@@ -1400,3 +1506,140 @@ async function dispatch(
   await new Promise<void>((resolve) => setImmediate(resolve));
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
+
+test("management handler exposes the Host-owned Voice preference read and consent routes with session and CSRF gating", async () => {
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service(recorder),
+    worldInfoService: worldInfoService(),
+    voicePreferenceStore,
+    profile,
+    bootstrapToken: token,
+  });
+  const run = async (input: import("node:http").IncomingMessage) => {
+    const output = new ControlledResponse("finish");
+    await dispatch(handler, input, output);
+    return output;
+  };
+  assert.equal(
+    (await run(request("GET", "/api/tavern/v1/settings/voice-preference", { "sec-fetch-site": "same-origin" }))).status,
+    401,
+  );
+  const bootstrap = await run(
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+  );
+  assert.equal(bootstrap.status, 200);
+  const csrf = (JSON.parse(bootstrap.body) as { csrfToken: string }).csrfToken;
+  const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+  const read = await run(
+    request("GET", "/api/tavern/v1/settings/voice-preference", { cookie, "sec-fetch-site": "same-origin" }),
+  );
+  assert.equal(read.status, 200);
+  assert.deepEqual(JSON.parse(read.body), {
+    revision: 0,
+    disclosureVersion: null,
+    consent: "undecided",
+    decidedAtMs: null,
+  });
+  const missingCsrf = await run(
+    request(
+      "PUT",
+      "/api/tavern/v1/settings/voice-preference",
+      { origin: "http://127.0.0.1:7331", cookie },
+      { expectedRevision: 0, action: "accept", disclosureVersion: "mimo-cloud-tts-v1" },
+    ),
+  );
+  assert.equal(missingCsrf.status, 403);
+  const invalid = await run(
+    request(
+      "PUT",
+      "/api/tavern/v1/settings/voice-preference",
+      { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
+      { expectedRevision: 0, action: "accept", disclosureVersion: "mimo-cloud-tts-v1", extra: true },
+    ),
+  );
+  assert.equal(invalid.status, 400);
+  const accepted = await run(
+    request(
+      "PUT",
+      "/api/tavern/v1/settings/voice-preference",
+      { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
+      { expectedRevision: 0, action: "accept", disclosureVersion: "mimo-cloud-tts-v1" },
+    ),
+  );
+  assert.equal(accepted.status, 200);
+  assert.deepEqual(JSON.parse(accepted.body), {
+    revision: 1,
+    disclosureVersion: "mimo-cloud-tts-v1",
+    consent: "accepted",
+    decidedAtMs: 1,
+  });
+  await handler.close();
+  assert.equal(recorder.closes, 1);
+});
+
+test("management handler fails closed when the profile advertises Voice preference routes without the Host store", async () => {
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  await assert.rejects(
+    startTavernManagementDialogueWebServer({
+      managementStateFacade: facade,
+      managementService: service(recorder),
+      worldInfoService: worldInfoService(),
+      profile,
+      bootstrapToken: token,
+    }),
+    /tavern_management_composition_unavailable/,
+  );
+});
+
+test("management handler maps Voice preference revision conflicts to the safe settings problem", async () => {
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service(recorder),
+    worldInfoService: worldInfoService(),
+    voicePreferenceStore: Object.freeze({
+      async read() {
+        return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null };
+      },
+      async update() {
+        throw new Error("voice_preference_revision_conflict");
+      },
+    }),
+    profile,
+    bootstrapToken: token,
+  });
+  const bootstrap = new ControlledResponse("finish");
+  await dispatch(
+    handler,
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+    bootstrap,
+  );
+  const csrf = (JSON.parse(bootstrap.body) as { csrfToken: string }).csrfToken;
+  const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+  const output = new ControlledResponse("finish");
+  await dispatch(
+    handler,
+    request(
+      "PUT",
+      "/api/tavern/v1/settings/voice-preference",
+      { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
+      { expectedRevision: 0, action: "revoke" },
+    ),
+    output,
+  );
+  assert.equal(output.status, 409);
+  assert.equal((JSON.parse(output.body) as { code: string }).code, "settings_revision_conflict");
+  await handler.close();
+});
