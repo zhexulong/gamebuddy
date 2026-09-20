@@ -45,6 +45,24 @@ public sealed class GuardianSupervisorTests
     }
 
     [Fact]
+    public void Recovery_release_closes_control_despite_cancellation_and_waits_with_the_command_token()
+    {
+        var source = File.ReadAllText(Source());
+        var release = source.IndexOf("internal async Task ReleaseAndVerifyExitAsync", StringComparison.Ordinal);
+        var helper = source.IndexOf("private async Task<uint> WaitForProcessExitAsync", release, StringComparison.Ordinal);
+        var close = source.IndexOf("await CloseControlAsync(CancellationToken.None)", release, StringComparison.Ordinal);
+        var wait = source.IndexOf("await WaitForProcessExitAsync(cancellationToken)", close, StringComparison.Ordinal);
+        var exitCode = source.IndexOf("WindowsNative.GetExitCodeProcess", wait, StringComparison.Ordinal);
+        var releaseBody = source[release..helper];
+        var waitBody = source[helper..source.IndexOf("internal async Task CloseControlAsync", helper, StringComparison.Ordinal)];
+
+        Assert.True(release >= 0 && helper > release && close > release && wait > close && exitCode > wait);
+        Assert.Contains("finally", releaseBody, StringComparison.Ordinal);
+        Assert.Contains("Task.Run(() => WindowsNative.WaitForSingleObject(process, 100), cancellationToken).WaitAsync(cancellationToken)", waitBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("CancellationToken.None", waitBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task StartResident_test_guardian_observes_exact_environment_only_stdin_inheritance_and_actual_eof()
     {
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();

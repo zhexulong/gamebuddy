@@ -71,17 +71,36 @@ public sealed class InstalledHostRuntimeAdmissionTests
         await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 
         using var runtime = new InstalledHostRuntimeAdmission().Admit(selection);
+        Assert.Equal(Path.Combine(generation.GenerationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js"), runtime.BootstrapPath);
+        runtime.VerifyStillLocked();
         await using var image = await new InstalledGenerationAdmission(generation.ProgramRoot).AdmitGuardianAsync(selection, CancellationToken.None);
         Assert.Equal(generation.GenerationId, image.GenerationId);
     }
 
     [Theory]
     [InlineData("runtime/node.exe")]
-    [InlineData("desktop-host-entry.internal.js")]
+    [InlineData("bootstrap/entry/desktop-host-entry.internal.js")]
     public async Task Admit_rejects_runtime_or_bootstrap_tamper(string admittedFile)
     {
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
-        await File.AppendAllTextAsync(Path.Combine(generation.GenerationRoot, admittedFile), "tamper");
+        await File.AppendAllTextAsync(Path.Combine(generation.GenerationRoot, admittedFile.Replace('/', Path.DirectorySeparatorChar)), "tamper");
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
+
+        Assert.Throws<GuardianLaunchUnavailableException>(() => new InstalledHostRuntimeAdmission().Admit(selection));
+    }
+
+    [Fact]
+    public async Task Admit_rejects_legacy_bootstrap_path_in_admission_contract()
+    {
+        await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
+        var sidecarPath = Path.Combine(generation.GenerationRoot, "host-runtime-admission.json");
+        var currentEntry = Path.Combine(generation.GenerationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
+        var obsoleteEntry = Path.Combine(generation.GenerationRoot, "desktop-runtime-bootstrap.internal.js");
+        File.Copy(currentEntry, obsoleteEntry);
+        File.Delete(currentEntry);
+        var sidecar = await File.ReadAllTextAsync(sidecarPath);
+        await File.WriteAllTextAsync(sidecarPath, sidecar.Replace("bootstrap/entry/desktop-host-entry.internal.js", "desktop-runtime-bootstrap.internal.js", StringComparison.Ordinal));
+        await WritePointerAsync(generation);
         await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 
         Assert.Throws<GuardianLaunchUnavailableException>(() => new InstalledHostRuntimeAdmission().Admit(selection));

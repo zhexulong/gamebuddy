@@ -102,7 +102,7 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
                     continue;
                 }
                 ValidateTransition(parsed);
-                var native = new GuardianRelayCommand(parsed.Operation, parsed.GuardianInstanceId, parsed.GuardianEpoch, parsed.AttemptId, parsed.Role, parsed.PrivateFrame, parsed.DeadlineUnixMs);
+                var native = new GuardianRelayCommand(parsed.Operation, parsed.GuardianInstanceId, parsed.GuardianEpoch, parsed.AttemptId, parsed.Role, parsed.PrivateFrame, parsed.DeadlineUnixMs, parsed.OperationWaitBudgetMs);
                 using var relayClosing = CancellationTokenSource.CreateLinkedTokenSource(commandCancellation);
                 var relay = guardian!.RelayResidentAsync(native, commandCancellation);
                 var pipeRead = WatchForHostPipeReadAsync(relayClosing.Token);
@@ -183,6 +183,16 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             var result = await recovery.ClassifyAsync(role, cancellationToken).ConfigureAwait(false);
             if (result != "contained")
             {
+                // Player recovery is intentionally unavailable: the Player Job is
+                // never opened or drained. Still consume the AI classification so
+                // its kill-on-close Job is cleaned up before reporting the terminal
+                // Player result to the caller. No player CAS, contained ACK, or
+                // release settlement is emitted for this path.
+                if (role == "playerHost")
+                {
+                    command.ThrowIfExpired(cancellationToken);
+                    _ = await recovery.ClassifyAsync("aiClient", cancellationToken).ConfigureAwait(false);
+                }
                 await WriteAcknowledgementAsync(command, result, cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -195,9 +205,9 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         if (!TryParseRecoveryFinalizeAcknowledgement(finalized, command)) throw new GuardianLaunchUnavailableException();
         state.FinalizeAcknowledged();
         var release = await ReadFrameAsync(cancellationToken).ConfigureAwait(false);
-        if (!ExactObject(release, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "deadlineUnixMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId") ||
+        if (!ExactObject(release, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "operationWaitBudgetMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId") ||
             release.GetProperty("schema").GetString() != "gamebuddy-desktop-guardian-session/v1" || release.GetProperty("protocolVersion").GetInt32() != 1 || release.GetProperty("operation").GetString() != "release" ||
-            !release.GetProperty("deadlineUnixMs").TryGetInt64(out var releaseDeadline) || releaseDeadline != command.DeadlineUnixMs || !MatchesRecoveryCorrelation(release, command)) throw new GuardianLaunchUnavailableException();
+            !release.GetProperty("operationWaitBudgetMs").TryGetInt64(out var operationWaitBudgetMs) || operationWaitBudgetMs != command.OperationWaitBudgetMs || !MatchesRecoveryCorrelation(release, command)) throw new GuardianLaunchUnavailableException();
         state.ReleaseRequested();
         await recovery.ReleaseAndVerifyExitAsync(cancellationToken).ConfigureAwait(false);
         state.TerminalVerified();
@@ -211,15 +221,15 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         var operation = operationValue.GetString();
         var names = operation switch
         {
-            "arm_attempt" => new[] { "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "deadlineUnixMs", "guardianInstanceId", "guardianEpoch", "attemptId", "privateFrame" },
+            "arm_attempt" => new[] { "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "operationWaitBudgetMs", "guardianInstanceId", "guardianEpoch", "attemptId", "privateFrame" },
             "launch_role" => new[] { "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "deadlineUnixMs", "guardianInstanceId", "guardianEpoch", "attemptId", "role", "privateFrame" },
-            "contain_role" => new[] { "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "deadlineUnixMs", "guardianInstanceId", "guardianEpoch", "attemptId", "role" },
-            "recover_attempt" => new[] { "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "deadlineUnixMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId", "privateFrame" },
+            "contain_role" => new[] { "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "operationWaitBudgetMs", "guardianInstanceId", "guardianEpoch", "attemptId", "role" },
+            "recover_attempt" => new[] { "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "operationWaitBudgetMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId", "privateFrame" },
             _ => null,
         };
         if (names is null || !ExactObject(value, names) || value.GetProperty("schema").GetString() != "gamebuddy-desktop-guardian-session/v1" || value.GetProperty("protocolVersion").GetInt32() != 1 ||
             value.GetProperty("bootstrapId").GetString() != bootstrapId || value.GetProperty("generation").GetString() != generation || value.GetProperty("inventoryDigest").GetString() != inventoryDigest || value.GetProperty("runtimeAdmissionSha256").GetString() != runtimeAdmissionSha256 ||
-            !value.GetProperty("deadlineUnixMs").TryGetInt64(out var deadline) || deadline <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() || deadline > DateTimeOffset.UtcNow.Add(MaximumDeadline).ToUnixTimeMilliseconds() ||
+            (!TryGetOperationTiming(value, operation!, out var deadline, out var operationWaitBudgetMs)) ||
             !ValidOpaque(value.GetProperty("guardianInstanceId")) || !value.GetProperty("guardianEpoch").TryGetInt32(out var epoch) || epoch < 1 || !ValidOpaque(value.GetProperty("attemptId")) ||
             (operation == "recover_attempt" && !ValidOpaque(value.GetProperty("recoveryInstanceId")))) return false;
         var role = names.Contains("role", StringComparer.Ordinal) ? value.GetProperty("role").GetString() : null;
@@ -228,7 +238,7 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         if (names.Contains("privateFrame", StringComparer.Ordinal) && (!TryDecodeFrame(value.GetProperty("privateFrame"), out privateFrame) || (operation == "arm_attempt" && !ValidTokenlessArmBody(privateFrame)) || (operation == "recover_attempt" && !ValidTokenlessRecoveryPreCasBody(privateFrame)))) return false;
         var recoveryInstanceId = operation == "recover_attempt" && ValidOpaque(value.GetProperty("recoveryInstanceId")) ? value.GetProperty("recoveryInstanceId").GetString() : null;
         if (operation == "recover_attempt" && recoveryInstanceId is null) return false;
-        command = new BrokerCommand(operation!, value.GetProperty("guardianInstanceId").GetString()!, epoch, value.GetProperty("attemptId").GetString()!, recoveryInstanceId, role, privateFrame, deadline);
+        command = new BrokerCommand(operation!, value.GetProperty("guardianInstanceId").GetString()!, epoch, value.GetProperty("attemptId").GetString()!, recoveryInstanceId, role, privateFrame, deadline, operationWaitBudgetMs);
         return true;
     }
 
@@ -265,31 +275,31 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     private bool TryParseRecoveryPostCas(JsonElement value, BrokerCommand command, out byte[] frame)
     {
         frame = Array.Empty<byte>();
-        if (!ExactObject(value, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "deadlineUnixMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId", "privateFrame") ||
+        if (!ExactObject(value, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "operationWaitBudgetMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId", "privateFrame") ||
             value.GetProperty("schema").GetString() != "gamebuddy-desktop-guardian-session/v1" || value.GetProperty("protocolVersion").GetInt32() != 1 || value.GetProperty("operation").GetString() != "recovery_post_cas" ||
-            !MatchesRecoveryCorrelation(value, command) || !value.GetProperty("deadlineUnixMs").TryGetInt64(out var deadline) || deadline != command.DeadlineUnixMs || !TryDecodeFrame(value.GetProperty("privateFrame"), out frame)) return false;
+            !MatchesRecoveryCorrelation(value, command) || !value.GetProperty("operationWaitBudgetMs").TryGetInt64(out var operationWaitBudgetMs) || operationWaitBudgetMs != command.OperationWaitBudgetMs || !TryDecodeFrame(value.GetProperty("privateFrame"), out frame)) return false;
         return true;
     }
 
     private bool TryParseRecoveryCommand(JsonElement value, BrokerCommand command, out byte[] frame)
     {
         frame = Array.Empty<byte>();
-        if (!ExactObject(value, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "deadlineUnixMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId") ||
+        if (!ExactObject(value, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "operationWaitBudgetMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId") ||
             value.GetProperty("schema").GetString() != "gamebuddy-desktop-guardian-session/v1" || value.GetProperty("protocolVersion").GetInt32() != 1 || value.GetProperty("operation").GetString() != "recover_attempt" ||
-            !MatchesRecoveryCorrelation(value, command) || !value.GetProperty("deadlineUnixMs").TryGetInt64(out var deadline) || deadline != command.DeadlineUnixMs) return false;
+            !MatchesRecoveryCorrelation(value, command) || !value.GetProperty("operationWaitBudgetMs").TryGetInt64(out var operationWaitBudgetMs) || operationWaitBudgetMs != command.OperationWaitBudgetMs) return false;
         frame = Encoding.UTF8.GetBytes($"{{\"schemaVersion\":1,\"operation\":\"recover_attempt\",\"guardianInstanceId\":\"{command.GuardianInstanceId}\",\"guardianEpoch\":{command.GuardianEpoch},\"attemptId\":\"{command.AttemptId}\",\"recoveryInstanceId\":\"{command.RecoveryInstanceId}\"}}\n");
         return true;
     }
 
     private bool TryParseRecoveryCasAcknowledgement(JsonElement value, BrokerCommand command, string role) =>
-        ExactObject(value, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "deadlineUnixMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId", "role") &&
+        ExactObject(value, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "operationWaitBudgetMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId", "role") &&
         value.GetProperty("schema").GetString() == "gamebuddy-desktop-guardian-session/v1" && value.GetProperty("protocolVersion").GetInt32() == 1 && value.GetProperty("operation").GetString() == "recovery_role_cas_ack" &&
-        value.GetProperty("role").GetString() == role && value.GetProperty("deadlineUnixMs").TryGetInt64(out var deadline) && deadline == command.DeadlineUnixMs && MatchesRecoveryCorrelation(value, command);
+        value.GetProperty("role").GetString() == role && value.GetProperty("operationWaitBudgetMs").TryGetInt64(out var operationWaitBudgetMs) && operationWaitBudgetMs == command.OperationWaitBudgetMs && MatchesRecoveryCorrelation(value, command);
 
     private bool TryParseRecoveryFinalizeAcknowledgement(JsonElement value, BrokerCommand command) =>
-        ExactObject(value, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "deadlineUnixMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId") &&
+        ExactObject(value, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "operationWaitBudgetMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId") &&
         value.GetProperty("schema").GetString() == "gamebuddy-desktop-guardian-session/v1" && value.GetProperty("protocolVersion").GetInt32() == 1 && value.GetProperty("operation").GetString() == "recovery_finalize_ack" &&
-        value.GetProperty("deadlineUnixMs").TryGetInt64(out var deadline) && deadline == command.DeadlineUnixMs && MatchesRecoveryCorrelation(value, command);
+        value.GetProperty("operationWaitBudgetMs").TryGetInt64(out var operationWaitBudgetMs) && operationWaitBudgetMs == command.OperationWaitBudgetMs && MatchesRecoveryCorrelation(value, command);
 
     private bool MatchesRecoveryCorrelation(JsonElement value, BrokerCommand command) =>
         value.GetProperty("bootstrapId").GetString() == bootstrapId && value.GetProperty("generation").GetString() == generation && value.GetProperty("inventoryDigest").GetString() == inventoryDigest && value.GetProperty("runtimeAdmissionSha256").GetString() == runtimeAdmissionSha256 &&
@@ -402,6 +412,7 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     private static bool ExactObject(JsonElement value, params string[] expected) => value.ValueKind == JsonValueKind.Object && value.EnumerateObject().Select(property => property.Name).SequenceEqual(expected, StringComparer.Ordinal);
     private static bool IsHex(string value) => value.Length == 64 && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
     private static bool ValidOpaque(JsonElement value) => value.ValueKind == JsonValueKind.String && Guid.TryParseExact(value.GetString(), "D", out _);
+    private static bool IsPositiveSafeInteger(long value) => value is > 0 and <= 9_007_199_254_740_991;
     private static bool TryDecodeFrame(JsonElement value, out byte[] frame)
     {
         frame = Array.Empty<byte>();
@@ -425,14 +436,20 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     {
         command.ThrowIfExpired(cancellationToken);
         var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var remaining = TimeSpan.FromMilliseconds(command.DeadlineUnixMs - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        if (remaining <= TimeSpan.Zero)
-        {
-            deadline.Dispose();
-            throw new OperationCanceledException(cancellationToken);
-        }
-        deadline.CancelAfter(remaining);
+        if (command.Operation == "launch_role")
+            deadline.CancelAfter(TimeSpan.FromMilliseconds(command.DeadlineUnixMs - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        else
+            deadline.CancelAfter(TimeSpan.FromMilliseconds(command.OperationWaitBudgetMs));
         return deadline;
+    }
+
+    private static bool TryGetOperationTiming(JsonElement value, string operation, out long deadline, out long operationWaitBudgetMs)
+    {
+        deadline = 0;
+        operationWaitBudgetMs = 0;
+        if (operation == "launch_role")
+            return value.GetProperty("deadlineUnixMs").TryGetInt64(out deadline) && IsPositiveSafeInteger(deadline) && deadline > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() && deadline <= DateTimeOffset.UtcNow.Add(MaximumDeadline).ToUnixTimeMilliseconds();
+        return value.GetProperty("operationWaitBudgetMs").TryGetInt64(out operationWaitBudgetMs) && IsPositiveSafeInteger(operationWaitBudgetMs) && operationWaitBudgetMs <= (long)MaximumDeadline.TotalMilliseconds;
     }
 
     internal sealed class GuardianRecoverySessionState
@@ -467,12 +484,12 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         }
     }
 
-    private sealed record BrokerCommand(string Operation, string GuardianInstanceId, int GuardianEpoch, string AttemptId, string? RecoveryInstanceId, string? Role, byte[]? PrivateFrame, long DeadlineUnixMs)
+    private sealed record BrokerCommand(string Operation, string GuardianInstanceId, int GuardianEpoch, string AttemptId, string? RecoveryInstanceId, string? Role, byte[]? PrivateFrame, long DeadlineUnixMs, long OperationWaitBudgetMs)
     {
         internal void ThrowIfExpired(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (DeadlineUnixMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) throw new OperationCanceledException(cancellationToken);
+            if (Operation == "launch_role" && DeadlineUnixMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) throw new OperationCanceledException(cancellationToken);
         }
     }
 

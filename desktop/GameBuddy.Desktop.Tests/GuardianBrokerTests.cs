@@ -16,7 +16,9 @@ public sealed class GuardianBrokerTests
         Assert.Contains("GuardianRecoverySessionState", source, StringComparison.Ordinal);
         Assert.Contains("recovery_accepted", source, StringComparison.Ordinal);
         Assert.Contains("player_contained", source, StringComparison.Ordinal);
-        Assert.Contains("ai_contained", source, StringComparison.Ordinal);
+         Assert.Contains("ai_contained", source, StringComparison.Ordinal);
+         Assert.Contains("ClassifyAsync(\"aiClient\"", source, StringComparison.Ordinal);
+         Assert.Contains("No player CAS", source, StringComparison.Ordinal);
         Assert.Contains("ReleaseAndVerifyExitAsync", source, StringComparison.Ordinal);
         Assert.Contains("GetNamedPipeClientProcessId", source, StringComparison.Ordinal);
         Assert.Contains("VerifySameCurrentUserSid(child);", source, StringComparison.Ordinal);
@@ -76,6 +78,54 @@ public sealed class GuardianBrokerTests
         Assert.Contains("parsed.ThrowIfExpired(commandCancellation);\n                AdvanceTransition(parsed);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("deadlineUnixMs =", source, StringComparison.Ordinal);
         Assert.DoesNotContain("sessionToken", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Broker_source_uses_exact_operation_timing_fields_and_redacted_acknowledgements()
+    {
+        var broker = File.ReadAllText(Source("DesktopHostBootstrapBroker.cs"));
+        var guardian = File.ReadAllText(Source("GuardianSupervisor.cs"));
+
+        Assert.Contains("operationWaitBudgetMs", broker, StringComparison.Ordinal);
+        Assert.Contains("\"arm_attempt\" => new[] { \"schema\", \"protocolVersion\", \"operation\", \"bootstrapId\", \"generation\", \"inventoryDigest\", \"runtimeAdmissionSha256\", \"operationWaitBudgetMs\"", broker, StringComparison.Ordinal);
+        Assert.Contains("\"contain_role\" => new[] { \"schema\", \"protocolVersion\", \"operation\", \"bootstrapId\", \"generation\", \"inventoryDigest\", \"runtimeAdmissionSha256\", \"operationWaitBudgetMs\"", broker, StringComparison.Ordinal);
+        Assert.Contains("\"launch_role\" => new[] { \"schema\", \"protocolVersion\", \"operation\", \"bootstrapId\", \"generation\", \"inventoryDigest\", \"runtimeAdmissionSha256\", \"deadlineUnixMs\"", broker, StringComparison.Ordinal);
+        Assert.Contains("\"recover_attempt\" => new[] { \"schema\", \"protocolVersion\", \"operation\", \"bootstrapId\", \"generation\", \"inventoryDigest\", \"runtimeAdmissionSha256\", \"operationWaitBudgetMs\"", broker, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"recover_attempt\" => new[] { \"schema\", \"protocolVersion\", \"operation\", \"bootstrapId\", \"generation\", \"inventoryDigest\", \"runtimeAdmissionSha256\", \"deadlineUnixMs\"", broker, StringComparison.Ordinal);
+        Assert.Contains("if (command.Operation == \"launch_role\")", broker, StringComparison.Ordinal);
+        Assert.DoesNotContain("command.Operation == \"launch_role\" || command.Operation == \"recover_attempt\"", broker, StringComparison.Ordinal);
+        Assert.Contains("IsPositiveSafeInteger", broker, StringComparison.Ordinal);
+        Assert.Contains("deadline.CancelAfter(TimeSpan.FromMilliseconds(command.OperationWaitBudgetMs))", broker, StringComparison.Ordinal);
+        Assert.DoesNotContain("operationWaitBudgetMs = command.OperationWaitBudgetMs", broker, StringComparison.Ordinal);
+        Assert.Contains("Operation == \"launch_role\"", guardian, StringComparison.Ordinal);
+        Assert.DoesNotContain("Operation is \"launch_role\" or \"recover_attempt\"", guardian, StringComparison.Ordinal);
+        Assert.Contains("TimeSpan.FromMilliseconds(OperationWaitBudgetMs)", guardian, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Recovery_phase_frames_use_one_budget_without_echoing_it_in_acknowledgements()
+    {
+        var broker = File.ReadAllText(Source("DesktopHostBootstrapBroker.cs"));
+
+        Assert.Contains("\"operationWaitBudgetMs\", \"guardianInstanceId\", \"guardianEpoch\", \"attemptId\", \"recoveryInstanceId\", \"privateFrame\"", broker, StringComparison.Ordinal);
+        Assert.Contains("operationWaitBudgetMs != command.OperationWaitBudgetMs", broker, StringComparison.Ordinal);
+        Assert.DoesNotContain("releaseDeadline", broker, StringComparison.Ordinal);
+        Assert.DoesNotContain("deadline != command.DeadlineUnixMs", broker, StringComparison.Ordinal);
+        var acknowledgementStart = broker.IndexOf("private async Task WriteAcknowledgementAsync", StringComparison.Ordinal);
+        var recoveryAcknowledgement = broker[broker.IndexOf("if (command.Operation == \"recover_attempt\")", acknowledgementStart, StringComparison.Ordinal)..broker.IndexOf("else if (command.Role is null)", acknowledgementStart, StringComparison.Ordinal)];
+        Assert.DoesNotContain("operationWaitBudgetMs", recoveryAcknowledgement, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Recovery_release_passes_the_command_budget_token_before_terminal_acknowledgement()
+    {
+        var source = File.ReadAllText(Source("DesktopHostBootstrapBroker.cs"));
+        var release = source.IndexOf("state.ReleaseRequested();", StringComparison.Ordinal);
+        var verify = source.IndexOf("await recovery.ReleaseAndVerifyExitAsync(cancellationToken)", release, StringComparison.Ordinal);
+        var terminal = source.IndexOf("state.TerminalVerified();", verify, StringComparison.Ordinal);
+        var acknowledgement = source.IndexOf("await WriteAcknowledgementAsync(command, \"contained\", cancellationToken)", terminal, StringComparison.Ordinal);
+
+        Assert.True(release >= 0 && verify > release && terminal > verify && acknowledgement > terminal);
     }
 
     [Fact]
