@@ -51,3 +51,10 @@ branch: main
 ```
 
 `design/` 是独立私有 Git 仓库且被本代码仓库忽略；`ref/`、`docs/` 和本地 Pi/subagent 产物也不进入本仓库。
+
+## License
+
+本项目核心源代码基于 [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE) 开源发布。
+
+- **核心服务与引擎** (`host`, `dialogue-web`, `voice-gateway`): 遵循 AGPL-3.0。
+- **参考内容资产** (`assets/tavern/presets/`): 独立伴侣设定，遵循原作者开放同人许可约束（详见各预设目录下的 `ATTRIBUTION.md`）。

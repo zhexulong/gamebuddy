@@ -24,6 +24,10 @@ import {
   GameDisconnectCommandV1Schema,
   GamePrerequisitesSetupCommandV1Schema,
   GameBrowserStateV1Schema,
+  GameDiscoveryActionCommandV1Schema,
+  GameDiscoveryConfirmCommandV1Schema,
+  GameDiscoveryMutationResultV1Schema,
+  GameDiscoveryReadResultV1Schema,
   isComposedGameProfile,
   StardewCabinChoicesV1Schema,
   StardewCabinConfirmCommandV1Schema,
@@ -73,6 +77,33 @@ test("Stardew cabin handoff contract exposes only opaque choices and exact confi
   assert.equal(Compile(StardewCabinConfirmResultV1Schema).Check({ apiVersion: 1, status: "manifest_admitted" }), true);
   assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes("game.stardew.cabins.read"));
   assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes("game.stardew.cabins.confirm"));
+});
+
+test("Game installation discovery contract is redacted and exact", () => {
+  const opaqueHandle = "A".repeat(43);
+  assert.equal(Compile(GameDiscoveryReadResultV1Schema).Check({
+    apiVersion: 1,
+    candidates: [{ candidateId: opaqueHandle, source: "steam", label: "Stardew Valley", hint: null, status: "candidate" }],
+    diagnostics: [],
+  }), true);
+  assert.equal(Compile(GameDiscoveryReadResultV1Schema).Check({
+    apiVersion: 1,
+    candidates: [{ candidateId: opaqueHandle, source: "steam", label: "Stardew Valley", hint: null, status: "candidate", path: "C:\\\\Games" }],
+    diagnostics: [],
+  }), false);
+  assert.equal(Compile(GameDiscoveryConfirmCommandV1Schema).Check({ apiVersion: 1, candidateId: opaqueHandle }), true);
+  assert.equal(Compile(GameDiscoveryConfirmCommandV1Schema).Check({ apiVersion: 1, candidateId: opaqueHandle, path: "C:\\\\Games" }), false);
+  assert.equal(Compile(GameDiscoveryActionCommandV1Schema).Check({ apiVersion: 1 }), true);
+  assert.equal(Compile(GameDiscoveryActionCommandV1Schema).Check({ apiVersion: 1, candidateId: opaqueHandle }), false);
+  assert.equal(Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "registered" }), true);
+  assert.equal(Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "accepted", path: "C:\\\\Games" }), false);
+  for (const operation of [
+    "game.installation.discovery.read",
+    "game.installation.discovery.confirm",
+    "game.installation.discovery.retry",
+    "game.installation.discovery.cancel",
+    "game.installation.discovery.manual_picker",
+  ] as const) assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes(operation));
 });
 
 test("Game Browser v1 provides a bounded, unmounted Game lifecycle contract", () => {
@@ -934,6 +965,11 @@ test("GameBrowserContractV1 preserves the exact versioned aggregate schema bound
     "GameCreateResultV1Schema",
     "GameDiagnosticsReadCommandV1Schema",
     "GameDisconnectCommandV1Schema",
+    "GameDiscoveryActionCommandV1Schema",
+    "GameDiscoveryCommandV1Schema",
+    "GameDiscoveryConfirmCommandV1Schema",
+    "GameDiscoveryMutationResultV1Schema",
+    "GameDiscoveryReadResultV1Schema",
     "GameInstanceV1Schema",
     "GameInstancesReadCommandV1Schema",
     "GameLaunchCommandV1Schema",

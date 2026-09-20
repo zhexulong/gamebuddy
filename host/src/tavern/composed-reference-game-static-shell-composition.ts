@@ -141,15 +141,30 @@ export async function startComposedReferenceGameStaticShellComposition(
       : {
           gameResumeCancel: options.lifecycleActivationBindingSink.cancelResume.bind(options.lifecycleActivationBindingSink),
         }),
-    ...(options.lifecycleActivationBindingSink?.readCabinChoices === undefined ||
-    options.lifecycleActivationBindingSink.confirmCabinChoice === undefined
+    ...(options.lifecycleActivationBindingSink?.gameDiscovery === undefined
       ? {}
-      : {
-          stardewCabins: Object.freeze({
-            read: options.lifecycleActivationBindingSink.readCabinChoices.bind(options.lifecycleActivationBindingSink),
-            confirm: options.lifecycleActivationBindingSink.confirmCabinChoice.bind(options.lifecycleActivationBindingSink),
-          }),
-        }),
+      : { gameDiscovery: Object.freeze({
+          read: options.lifecycleActivationBindingSink.gameDiscovery.read.bind(options.lifecycleActivationBindingSink.gameDiscovery),
+          confirm: options.lifecycleActivationBindingSink.gameDiscovery.confirm.bind(options.lifecycleActivationBindingSink.gameDiscovery),
+          retry: options.lifecycleActivationBindingSink.gameDiscovery.retry.bind(options.lifecycleActivationBindingSink.gameDiscovery),
+          cancel: options.lifecycleActivationBindingSink.gameDiscovery.cancel.bind(options.lifecycleActivationBindingSink.gameDiscovery),
+          manualPicker: options.lifecycleActivationBindingSink.gameDiscovery.manualPicker.bind(options.lifecycleActivationBindingSink.gameDiscovery),
+        }) }),
+    ...(options.lifecycleActivationBindingSink === undefined ||
+    (options.lifecycleActivationBindingSink.readCabinChoices === undefined &&
+      options.lifecycleActivationBindingSink.confirmCabinChoice === undefined)
+      ? {}
+      : options.lifecycleActivationBindingSink.readCabinChoices !== undefined &&
+        options.lifecycleActivationBindingSink.confirmCabinChoice !== undefined
+        ? {
+            stardewCabins: Object.freeze({
+              read: options.lifecycleActivationBindingSink.readCabinChoices.bind(options.lifecycleActivationBindingSink),
+              confirm: options.lifecycleActivationBindingSink.confirmCabinChoice.bind(options.lifecycleActivationBindingSink),
+            }),
+          }
+        : (() => {
+            throw new Error("composed_reference_game_cabin_operations_mismounted");
+          })()),
   });
   const referenceHandler = createReferencePipelineDialogueWebDelegatedHandler({
     profile: options.profile.tavernProfile,
