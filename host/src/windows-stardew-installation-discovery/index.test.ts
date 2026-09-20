@@ -12,7 +12,7 @@ test("public index does not expose internal discovery helpers", async () => {
 });
 
 test("provider returns opaque candidates without locators", async () => {
-  const provider = createStardewInstallationDiscoveryProvider({ libraryFoldersVdfPath: "vdf", readFile: async (path) => path === "vdf" ? '"libraryfolders" { "0" { "path" "C:\\\\Steam" } }' : '"appid" "413150" "installdir" "Stardew Valley"' });
+  const provider = createStardewInstallationDiscoveryProvider({ source: { read: async () => ({ roots: [["steam-vdf", "C:\\Steam"]], diagnostics: [] }) }, readFile: async () => '"appid" "413150" "installdir" "Stardew Valley"' });
   const result = await provider.discover();
   const candidate = result.candidates[0];
   assert.ok(candidate);
@@ -28,7 +28,7 @@ test("provider reports unavailable when no source producer is composed", async (
 });
 
 test("provider rejects discovery without a valid Stardew manifest", async () => {
-  const provider = createStardewInstallationDiscoveryProvider({ libraryFoldersVdfPath: "vdf", readFile: async (path) => path === "vdf" ? '"libraryfolders" { "0" { "path" "C:\\\\Steam" } }' : '"appid" "1"' });
+  const provider = createStardewInstallationDiscoveryProvider({ source: { read: async () => ({ roots: [["steam-vdf", "C:\\Steam"]], diagnostics: [] }) }, readFile: async () => '"appid" "1"' });
   const result = await provider.discover();
   assert.deepEqual(result.candidates, []);
   assert.ok(result.diagnostics.includes("invalid-app-manifest"));
