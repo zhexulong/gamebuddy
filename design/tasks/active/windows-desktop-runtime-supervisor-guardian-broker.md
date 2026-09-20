@@ -1,7 +1,7 @@
 ---
 id: TASK-WINDOWS-DESKTOP-RUNTIME-SUPERVISOR-GUARDIAN-BROKER
 type: task
-status: in-progress
+status: completed
 owner: windows-desktop-distribution
 ---
 
@@ -20,6 +20,8 @@ owner: windows-desktop-distribution
 `b098b57 Add Windows desktop root registration` closed the sole registered-root prerequisite. `6aaeb75 Add native Guardian generation launcher` closed selected-generation Guardian admission, native image locking, Guardian environment injection and stdin EOF ownership. It deliberately did **not** start Host or provide Desktop↔Host Guardian command/acknowledgement transport.
 
 This task is blocked on `TASK-WINDOWS-DESKTOP-HOST-RUNTIME-ADMISSION`: Desktop must first admit and authenticate the exact bundled Host runtime/entry and Host must fresh-revalidate the private root-layout capability before mutable owner opens. Consequently, Task 3 role delegation remains blocked: the current Host private Guardian owner has only injected test ports, while production Node process owners still own direct spawn/kill. After the runtime-admission predecessor closes, this task activates only the missing Desktop runtime-supervisor and Guardian-session-broker predecessor. It does not activate Task 3 delegation, app instance, browser presentation, installer, installation registration, recovery policy changes, or live Stardew/SMAPI.
+
+**Closed (`9524630`, `9b9d47f`, `b3e62a0`, verdicts doc).** Tasks 1–3 implemented and verified: Desktop suite ran **71/71** on the committed baseline; both independent reviews (Windows native/security, Host lifecycle/topology) returned with dispositions; the ordinary broker-close path now waits for the Guardian terminal outcome (`b3e62a0`) and two runtime/``games``/stardew`` adjudications are handed off (see `Handoff registers`). This unblocks `TASK-STARDEW-BOOTSTRAP-CONTAINMENT-RECOVERY` Task 3 process-owner delegation.
 
 ## Global constraints
 
@@ -163,3 +165,15 @@ Stop and revise rather than add a fallback if:
 ## Acceptance
 
 This predecessor closes only when source-bound native Desktop/Host/Guardian session tests prove exact authenticated Host bootstrap, private root-layout handoff, redacted resident/recovery command acknowledgements, private ingress ordering, Host/Guardian EOF ownership, no root/token/pipe/native fact leakage, no Node/public-adapter spawn, and two independent reviews. It then unblocks Task 3 authority delegation; it does not close Task 3, Task 4, installation registration, topology consolidation, desktop player release or live Stardew.
+
+## Handoff registers
+
+### 1. Runtime verification of close-wait semantics → `113_WINDOWS_RELEASE_AND_STARDEW_WEB_UI_INSTALLATION_IMPLEMENTATION_PLAN.md` Loop 3
+
+`b3e62a0` made ordinary `DesktopHostBootstrapBroker.CloseAsync` wait for the Guardian terminal outcome (`CloseControlAndWaitForExitAsync`) per the task contract. The runtime proof is carried forward to **Loop 3 (Desktop 宿主启动与 Presentation 握手)**, whose Gate — exact bundled Host receives assembly input, returns bootstrap ack, enters composition and shows formal UI — necessarily exercises broker close with the resident Guardian under the production topology; its Acceptance-matrix `Desktop Player Release` bundle covers bootstrap ack, presentation, onboarding, update, recovery and full journey. Loop 3 directly modifies `RuntimeSupervisor.cs`, `DesktopHostBootstrapBroker.cs`, `GuardianSupervisor.cs`, so the close-wait behavior is verified there as part of the product composition, not re-run as a standalone task. Owner: `release-engineering` (113).
+
+### 2. Topology-review adjudications → `stardew-bootstrap-containment-recovery.md` Task 3 process-owner delegation
+
+The independent topology review found `games/stardew` retains raw Player Host / AI Client `spawn()`/`kill()` implementations (`stardew-process-implementations.ts`) and imports runtime/auth/bootstrap seams from `games/stardew` (`contained-game-runtime-platform.private.ts`, `provider.ts`, `stardew-private-bootstrap-composer.internal.ts`). These are the pre-existing Stardew consumer composition (approved depcruise lanes incl. `containment/runtime/{contract,core}`) and are explicitly out of scope for this platform task ("Stardew integration belongs to its own consumer delegation task").
+
+Transfer: when `stardew-bootstrap-containment-recovery.md` activates **Task 3 process-owner delegation**, it must re-audit that Host-side `spawn()`/`kill()` authority for Player Host / AI Client is removed in favor of the Guardian `WindowsRoleLauncher` + Desktop `RuntimeSupervisor` contained paths, and that `games/stardew` boundary imports converge to the single composition assembly point. This predecessor's close does not itself perform that change. Owner: `stardew-integration` (containment-recovery).
