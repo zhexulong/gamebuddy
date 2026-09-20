@@ -14,7 +14,10 @@ export type PrivateModProfileStagingDependencies = Readonly<{
 }>;
 
 export function createProductionStagingDependencies(): PrivateModProfileStagingDependencies {
-  const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+  // This module lives at bootstrap/roots/ inside the immutable generation, so
+  // the artifact root is two levels up (the generation root where
+  // native/…, the mod-package contract, and production-inventory.json live).
+  const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
   return Object.freeze({
     async readPackage() {
       const inspector = await createPublishedWindowsReparseInspector(artifactRoot);

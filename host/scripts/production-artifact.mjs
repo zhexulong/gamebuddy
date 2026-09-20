@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, copyFile, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const TEST_ARTIFACT = /(?:^|\/)(?:[^/]*\.(?:test|test-support)(?:\.[^/]+)?|test-fixtures|[^/]*(?:physical-)?fixture-worker[^/]*)(?:\/|$)|legacy-writer-fixture/i;
@@ -95,6 +95,19 @@ const WINDOWS_BOOTSTRAP_GUARDIAN = Object.freeze({
   destination: "native/windows-bootstrap-guardian/win-x64",
   helper: "GameBuddy.WindowsBootstrapGuardian.exe",
   manifest: "windows-bootstrap-guardian.manifest.json",
+});
+/** The verified Stardew Mod package copied into every production generation. */
+const STARDEW_MOD_PACKAGE = Object.freeze({
+  kind: "verified_stardew_mod_package",
+  destination: "native/stardew-mod/GameBuddy",
+  contract: "stardew-mod-package-contract.json",
+  entries: [
+    "GameBuddy.Stardew.dll",
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "manifest.json",
+  ],
+  manifest: "manifest.json",
 });
 const exactKeys = (value, keys) => value !== null && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
@@ -339,6 +352,40 @@ function validateWindowsBootstrapGuardian(value) {
     throw new Error("invalid_windows_bootstrap_guardian_descriptor");
   return Object.freeze({ ...WINDOWS_BOOTSTRAP_GUARDIAN });
 }
+function validateStardewModPackage(value) {
+  if (!exactKeys(value, ["kind", "destination", "contract", "entries", "manifest"])
+    || Object.keys(STARDEW_MOD_PACKAGE).some((key) => JSON.stringify(value[key]) !== JSON.stringify(STARDEW_MOD_PACKAGE[key])))
+    throw new Error("invalid_stardew_mod_package_descriptor");
+  return Object.freeze({ ...STARDEW_MOD_PACKAGE, entries: Object.freeze([...STARDEW_MOD_PACKAGE.entries]) });
+}
+/** Builds the verified Mod package inside a staging root, copying the contract
+ * and bundle from the repository's Release output, then proves the published
+ * shape by re-running the contract verifier over the staged copy. Sources are
+ * the fixed repository locations (not the caller-supplied hostRoot), so test
+ * fixtures on a temporary root and production builds resolve the same files. */
+async function ensureStardewModPackage({ stagingRoot, descriptor }) {
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const contractSource = resolve(repositoryRoot, "host", "src", descriptor.contract);
+  const packageSource = resolve(repositoryRoot, "integrations", "stardew", "bin", "Release", "net6.0");
+  const destinationRoot = resolve(stagingRoot, descriptor.destination.replaceAll("/", sep));
+  await mkdir(destinationRoot, { recursive: true });
+  await copyFile(contractSource, resolve(stagingRoot, descriptor.contract));
+  await safeAncestors(stagingRoot, resolve(stagingRoot, descriptor.contract), "stardew_mod_package_contract");
+  await regular(resolve(stagingRoot, descriptor.contract), "stardew_mod_package_contract");
+  for (const name of descriptor.entries) {
+    const source = resolve(packageSource, name);
+    const destination = resolve(destinationRoot, name);
+    await copyFile(source, destination);
+    await safeAncestors(stagingRoot, destination, "stardew_mod_package_destination");
+    await regular(destination, "stardew_mod_package_destination");
+  }
+  const contractModule = await import(pathToFileURL(resolve(stagingRoot, "stardew-mod-package-contract.js")).href);
+  const contract = await contractModule.readPublishedStardewModPackageContract(stagingRoot);
+  if (process.platform === "win32") {
+    const inspector = await (await import(pathToFileURL(resolve(stagingRoot, "windows-reparse-inspector", "index.js")).href)).createPublishedWindowsReparseInspector(stagingRoot);
+    await contractModule.verifyPublishedStardewModPackage(stagingRoot, contract, inspector);
+  } else { void contract; }
+}
 function canonicalWindowsReparseManifest(sha256) {
   return `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsReparseInspector.exe","sha256":"${sha256}"}\n`;
 }
@@ -445,7 +492,7 @@ export async function readArtifactConfigFromText(text) {
 }
 
 function validateArtifactConfig(config) {
-  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "bundledRuntime", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "windowsBootstrapGuardian", "externalRuntimeClosure"];
+  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "bundledRuntime", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "windowsBootstrapGuardian", "stardewModPackage", "externalRuntimeClosure"];
   if (config === null || typeof config !== "object" || Array.isArray(config)
     || config.schema !== "gamebuddy-host-production-artifact-config/v3"
     || Object.keys(config).some((key) => !allowedKeys.includes(key))
@@ -467,6 +514,7 @@ function validateArtifactConfig(config) {
   if (config.windowsStaleLockReclaimer !== undefined) config.windowsStaleLockReclaimer = validateWindowsStaleLockReclaimer(config.windowsStaleLockReclaimer);
   if (config.windowsStardewFolderPicker !== undefined) config.windowsStardewFolderPicker = validateWindowsStardewFolderPicker(config.windowsStardewFolderPicker);
   if (config.windowsBootstrapGuardian !== undefined) config.windowsBootstrapGuardian = validateWindowsBootstrapGuardian(config.windowsBootstrapGuardian);
+  if (config.stardewModPackage !== undefined) config.stardewModPackage = validateStardewModPackage(config.stardewModPackage);
   config.externalRuntimeClosure = validateExternalClosure(config.externalRuntimeClosure);
   return config;
 }
@@ -673,6 +721,18 @@ async function verifiedWindowsStardewFolderPickerOrigins({ stagingRoot, descript
   const verified = await verifyWindowsStardewFolderPickerPair({ root: stagingRoot, descriptor });
   const origin = windowsStardewFolderPickerOrigin(descriptor, verified.helperSha256);
   return new Map([...[descriptor.helper, descriptor.manifest].map((name) => [`${descriptor.destination}/${name}`, origin])]);
+}
+async function verifiedStardewModPackageOrigins({ stagingRoot, descriptor }) {
+  const destinationRoot = resolve(stagingRoot, descriptor.destination.replaceAll("/", sep));
+  await regular(resolve(stagingRoot, descriptor.contract), "stardew_mod_package_contract");
+  const contractSha256 = digest(await readFile(resolve(stagingRoot, descriptor.contract)));
+  const origins = new Map([[descriptor.contract, Object.freeze({ kind: descriptor.kind, contract: descriptor.contract, contractSha256 })]]);
+  for (const name of descriptor.entries) {
+    const destination = resolve(destinationRoot, name);
+    await regular(destination, "stardew_mod_package_destination");
+    origins.set(`${descriptor.destination}/${name}`, Object.freeze({ kind: descriptor.kind, destination: descriptor.destination, name, sha256: digest(await readFile(destination)) }));
+  }
+  return origins;
 }
 function windowsBootstrapGuardianOrigin(descriptor, helperSha256) {
   return Object.freeze({ kind: descriptor.kind, destination: descriptor.destination, helper: descriptor.helper, manifest: descriptor.manifest, helperSha256 });
@@ -1166,6 +1226,10 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
       await ensureWindowsBootstrapGuardianPair({ hostRoot, stagingRoot, descriptor: config.windowsBootstrapGuardian });
       for (const [path, origin] of await verifiedWindowsBootstrapGuardianOrigins({ stagingRoot, descriptor: config.windowsBootstrapGuardian })) origins.set(path, origin);
     }
+    if (config.stardewModPackage !== undefined) {
+      await ensureStardewModPackage({ stagingRoot, descriptor: config.stardewModPackage });
+      for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
+    }
     // Freeze the browser descriptor's checked bytes before inventory creation;
     // a final exact-snapshot verification below closes the remaining
     // pre-publish mutation window as far as this pathname-based architecture permits.
@@ -1269,6 +1333,9 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined) {
     for (const [path, origin] of await verifiedWindowsBootstrapGuardianOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsBootstrapGuardian })) origins.set(path, origin);
   }
+  if (config.stardewModPackage !== undefined) {
+    for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot: artifactRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
+  }
   const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
   await verifyRuntimeAdmission({ artifactRoot, inventory, generation: pointer.generation, descriptor: runtimeDescriptor });
   if (pointer.inventoryDigest !== inventory.digest) throw new Error("production_current_pointer_inventory_mismatch");
@@ -1322,6 +1389,9 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   }
   if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined) {
     for (const [path, origin] of await verifiedWindowsBootstrapGuardianOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsBootstrapGuardian })) origins.set(path, origin);
+  }
+  if (config.stardewModPackage !== undefined) {
+    for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
   }
   const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
   await verifyRuntimeAdmission({ artifactRoot: selected.artifactRoot, inventory, generation: selected.generation, descriptor: runtimeDescriptor });
