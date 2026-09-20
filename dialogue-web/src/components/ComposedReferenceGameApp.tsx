@@ -32,6 +32,7 @@ import { Composer } from "./Composer";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
+import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 
 
 const POLL_FIRST_MS = 250;
@@ -1238,7 +1239,8 @@ export function ComposedReferenceGameApp() {
                 {gameReopenActive && <p role="status">{labels().gameReopenInProgress}</p>}
                 {gameReopenFailed && <p role="status">{labels().gameReopenFailed}</p>}
                 {gameReopenUnavailable && <p role="status">{labels().gameReopenUnavailable}</p>}
-               <StardewCabinHandoff
+                <StardewInstallationDiscovery api={composedApiRef.current} />
+                <StardewCabinHandoff
                  state={cabinView}
                  labels={labels()}
                  onConfirm={(choice) => void handleCabinConfirmation(choice)}
