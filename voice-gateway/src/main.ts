@@ -33,7 +33,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535 || !/^[A-Za-z0-9_-]{16,
   // Environment credentials/configuration are not player consent. This
   // executable has no product-owned admission/vault authority, so cloud TTS
   // stays unavailable until its parent composition supplies one explicitly.
-  const candidateTts = await configuredTts(undefined);
+  // Cloud speech is enabled only when the Desktop supervisor explicitly
+  // injects its launch-only admission. A direct `pnpm start` (or a stale
+  // child environment) remains text-only; this is not inferred from the key.
+  const speechAdmission = process.env.GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION === "desktop-consent-v1"
+    ? Object.freeze({ assertCurrent() {} })
+    : undefined;
+  const candidateTts = await configuredTts(speechAdmission);
   const mixer = await configuredMixer();
   const capture = await configuredCapture(asr);
   const tts = candidateTts === undefined ? undefined : await verifyTtsAgainstMixer(candidateTts, mixer);

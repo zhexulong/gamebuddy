@@ -53,6 +53,14 @@ no manifest, the Gateway stays in text-safe fake-ASR mode rather than claiming
 real local ASR. Set `MIMO_API_KEY` plus `GAMEBUDDY_MIMO_VOICE` only when the
 operator explicitly enables the cloud TTS provider.
 
+In the production Desktop path, the key alone is insufficient: the Desktop
+supervisor must inject the launch-only
+`GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION=desktop-consent-v1` contract after its
+product-owned consent/disclosure decision. A direct `pnpm start` or a child
+without that exact launch value remains text-only. This is a process-start
+seam, not a v2 wire message and not a claim that the current UI already
+provides the consent journey.
+
 ## Run the protocol skeleton
 
 ```powershell
