@@ -53,6 +53,7 @@ import {
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import { createTestWindowsReparseInspector } from "./windows-reparse-inspector/index.test-support.js";
 import type { WindowsPathObjectIdentity, WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
+import { createStardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProvider } from "./windows-stardew-installation-discovery/index.js";
 
 const bootstrapToken = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
 const gameDirectoryCandidate = "C:\\Games\\Stardew Valley";
@@ -877,6 +878,30 @@ test("staged Player Host admits internally, direct-spawns once, and projects onl
   });
 });
 
+test("Game setup inspection failure preserves registration and does not spawn Player Host", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture({
+      overrides: { createInstallationInspector: async () => { throw new Error("controlled_inspector_unavailable"); } },
+    });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      const registrationBeforeSetup = await readStardewInstallationRegistration(fixture.runtimeRoot);
+      await assert.rejects(
+        fixture.coordinator.activationOwner.setupPlayerHost(
+          fixture.broker.issue("game_setup"),
+          { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" },
+        ),
+        /stardew_game_setup_failed/,
+      );
+      assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), registrationBeforeSetup);
+      assert.equal(fixture.playerSpawnCalls.length, 0);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
 test("Game setup registers only the selected installation and Player Host fresh-admits it immediately before spawning", async () => {
   await withWindowsPlatform(async () => {
     const setupChain = installationChain.map((entry, index) => index === 2
@@ -911,6 +936,29 @@ test("Game setup registers only the selected installation and Player Host fresh-
       );
       assert.equal(fixture.playerSpawnCalls.length, 1);
       assert.equal(JSON.stringify(fixture.coordinator.activationOwner.readPrivateActivationSnapshot()).includes(gameDirectoryCandidate), false);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("Game setup projects activeAttempt without spawning Player Host", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture();
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      const registration = await readStardewInstallationRegistration(fixture.runtimeRoot);
+      assert.equal(registration?.state, "ready");
+      assert.deepEqual(registration?.activeAttempt, { bootstrapCorrelation: "bootstrap-coordinator-1" });
+      await fixture.coordinator.activationOwner.setupPlayerHost(
+        fixture.broker.issue("game_setup"),
+        { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" },
+      );
+      const staged = await readStardewInstallationRegistration(fixture.runtimeRoot);
+      assert.equal(staged?.state, "ready");
+      assert.deepEqual(staged?.activeAttempt, { bootstrapCorrelation: "bootstrap-coordinator-1" });
+      assert.equal(fixture.playerSpawnCalls.length, 0);
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();
@@ -1268,6 +1316,56 @@ test("Game launch rejects a different key while the first launch is pending", as
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();
+    }
+  });
+});
+
+test("installation discovery reports unavailable sources and no candidates without invoking registration", async () => {
+  await withWindowsPlatform(async () => {
+    const provider = createStardewInstallationDiscoveryProvider({});
+    const fixture = await createFixture({ overrides: { installationDiscoveryProvider: provider } });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      const result = await fixture.coordinator.activationOwner.readInstallationDiscovery(fixture.broker.issue("game_setup"));
+      assert.deepEqual(result, { candidates: [], diagnostics: ["source-unavailable", "no-candidates"] });
+      assert.equal(fixture.playerSpawnCalls.length, 0);
+    } finally { await fixture.coordinator.close(); await fixture.broker.close(); }
+  });
+});
+
+test("installation discovery retry resets consumed candidates and cancel resets admission", async () => {
+  await withWindowsPlatform(async () => {
+    let resets = 0;
+    let discoveries = 0;
+    const provider: StardewInstallationDiscoveryProvider = Object.freeze({
+      discover: async () => { discoveries += 1; return { candidates: [], diagnostics: ["no-candidates"] as const }; },
+      confirm: () => { throw new Error("confirm_not_expected"); },
+      reset: () => { resets += 1; },
+    });
+    const fixture = await createFixture({ overrides: { installationDiscoveryProvider: provider } });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await fixture.coordinator.activationOwner.readInstallationDiscovery(fixture.broker.issue("game_setup"));
+      await fixture.coordinator.activationOwner.retryInstallationDiscovery(fixture.broker.issue("game_setup"));
+      assert.equal(discoveries, 2);
+      assert.equal(resets, 1);
+      assert.deepEqual(await fixture.coordinator.activationOwner.cancelInstallationSelection(fixture.broker.issue("game_setup")), { status: "cancelled" });
+      assert.equal(resets, 2);
+    } finally { await fixture.coordinator.close(); await fixture.broker.close(); }
+  });
+});
+
+test("manual installation picker cancellation and failure remain non-ready and do not launch", async () => {
+  await withWindowsPlatform(async () => {
+    for (const pickerResult of [{ status: "cancelled" as const }, new Error("picker_failure")]) {
+      const fixture = await createFixture({ overrides: { selectStardewFolder: async () => { if (pickerResult instanceof Error) throw pickerResult; return pickerResult; } } });
+      try {
+        await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+        const result = await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("game_setup"));
+        assert.deepEqual(result, { status: pickerResult instanceof Error ? "unavailable" : "cancelled" });
+        assert.equal(fixture.playerSpawnCalls.length, 0);
+        assert.notEqual(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "ready");
+      } finally { await fixture.coordinator.close(); await fixture.broker.close(); }
     }
   });
 });
