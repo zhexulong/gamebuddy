@@ -184,6 +184,7 @@ try {
       (stats === undefined ? "" : ` [maxGap=${stats.maxGapMs}ms overStep=${stats.gapsOverStepMs}/${stats.frames}]`),
   );
   client.close();
+  await gateway.close();
 } catch (error) {
   record.reason = error instanceof Error ? error.message : "deepseek_live_run_failed";
   await writeFile(artifactPath, JSON.stringify(record, null, 2));
