@@ -20,7 +20,12 @@ import { readStardewInstallationRegistration } from "./stardew-installation-regi
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "./windows-stardew-folder-picker/index.js";
-import { createStardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProviderResult } from "./windows-stardew-installation-discovery/index.js";
+import {
+  createStardewInstallationDiscoveryProvider,
+  createWindowsSteamInstallationSource,
+  type StardewInstallationDiscoveryProvider,
+  type StardewInstallationDiscoveryProviderResult,
+} from "./windows-stardew-installation-discovery/index.js";
 import {
   createStardewPrivateBootstrapComposition,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.js";
@@ -2034,6 +2039,6 @@ export function createStardewProductionLifecycleCoordinator(
     game,
     undefined,
     containedRuntimeTeardown,
-    createStardewInstallationDiscoveryProvider({}),
+    createStardewInstallationDiscoveryProvider({ source: createWindowsSteamInstallationSource() }),
   );
 }

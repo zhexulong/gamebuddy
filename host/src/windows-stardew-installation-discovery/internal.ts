@@ -6,8 +6,19 @@ export type DiscoveryDiagnostic = "registry-unavailable" | "vdf-unreadable" | "v
 export type StardewInstallationDiscoveryResult = Readonly<{ candidates: readonly StardewInstallationCandidate[]; diagnostics: readonly DiscoveryDiagnostic[] }>;
 
 type Proposal = Readonly<{ sessionId: string; candidateId: string; root: string; expiresAt: number; used: boolean }>;
-const WINDOWS_ABSOLUTE = /^[A-Za-z]:\\(?:[^\\/:*?"<>|\u0000-\u001f]+\\?)*$/;
-const validPath = (value: string): boolean => WINDOWS_ABSOLUTE.test(value) && !value.endsWith("\\");
+type VdfValue = Readonly<{ kind: "value"; value: string }> | Readonly<{ kind: "object"; entries: readonly VdfEntry[] }>;
+type VdfEntry = Readonly<{ key: string; value: VdfValue }>;
+type VdfToken = Readonly<{ kind: "string" | "open" | "close"; value?: string }>;
+
+/** Normalize only absolute drive paths; do not repair traversal or ambiguous locators. */
+export function normalizeWindowsPath(value: string): string | undefined {
+  const path = value.replaceAll("/", "\\");
+  if (!/^[A-Za-z]:\\/.test(path)) return undefined;
+  const parts = path.slice(3).split("\\").filter((part) => part.length > 0);
+  if (parts.some((part) => /[<>:"|?*\u0000-\u001f]/.test(part) || part.endsWith(".") || part.endsWith(" "))) return undefined;
+  return `${path.charAt(0).toUpperCase()}:\\${parts.join("\\")}`;
+}
+
 const opaque = (): string => randomBytes(24).toString("base64url");
 
 export class StardewDiscoverySession {
@@ -15,9 +26,10 @@ export class StardewDiscoverySession {
   private readonly proposals = new Map<string, Proposal>();
   constructor(private readonly ttlMs = 5 * 60_000, private readonly now = () => Date.now()) {}
   issue(source: StardewInstallationCandidate["source"], root: string): StardewInstallationCandidate {
-    if (!validPath(root)) throw new Error("candidate-invalid");
+    const normalizedRoot = normalizeWindowsPath(root);
+    if (normalizedRoot === undefined || normalizedRoot.endsWith("\\")) throw new Error("candidate-invalid");
     const candidateId = opaque();
-    this.proposals.set(candidateId, { sessionId: this.sessionId, candidateId, root, expiresAt: this.now() + this.ttlMs, used: false });
+    this.proposals.set(candidateId, { sessionId: this.sessionId, candidateId, root: normalizedRoot, expiresAt: this.now() + this.ttlMs, used: false });
     return Object.freeze({ candidateId, source, label: "Stardew Valley", displayPath: "Detected installation (path hidden)", status: "admission_required" });
   }
   reset(): void { this.proposals.clear(); }
@@ -29,17 +41,118 @@ export class StardewDiscoverySession {
   }
 }
 
+function readVdfTokens(text: string): readonly VdfToken[] {
+  const tokens: VdfToken[] = [];
+  let index = 0;
+  while (index < text.length) {
+    while (text[index] !== undefined && /\s/.test(text[index]!)) index += 1;
+    if (index >= text.length) break;
+    if (text[index] === "/" && text[index + 1] === "/") {
+      index += 2;
+      while (index < text.length && text[index] !== "\n" && text[index] !== "\r") index += 1;
+      continue;
+    }
+    if (text[index] === "{") { tokens.push({ kind: "open" }); index += 1; continue; }
+    if (text[index] === "}") { tokens.push({ kind: "close" }); index += 1; continue; }
+    if (text[index] !== '"') throw new Error("vdf-malformed");
+    index += 1;
+    let value = "";
+    let closed = false;
+    while (index < text.length) {
+      const character = text[index];
+      if (character === '"') { index += 1; closed = true; break; }
+      if (character === "\\") {
+        const escaped = text[index + 1];
+        if (escaped !== "\\" && escaped !== '"') throw new Error("vdf-malformed");
+        value += escaped;
+        index += 2;
+        continue;
+      }
+      value += character;
+      index += 1;
+    }
+    if (!closed) throw new Error("vdf-malformed");
+    tokens.push({ kind: "string", value });
+  }
+  return tokens;
+}
+
+function parseVdfEntries(tokens: readonly VdfToken[], start: number, expectClose: boolean): Readonly<{ entries: readonly VdfEntry[]; next: number }> {
+  const entries: VdfEntry[] = [];
+  let index = start;
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token?.kind === "close") {
+      if (!expectClose) throw new Error("vdf-malformed");
+      return { entries: Object.freeze(entries), next: index + 1 };
+    }
+    if (token?.kind !== "string" || token.value === undefined) throw new Error("vdf-malformed");
+    const valueToken = tokens[index + 1];
+    if (valueToken?.kind === "string" && valueToken.value !== undefined) {
+      entries.push(Object.freeze({ key: token.value, value: Object.freeze({ kind: "value", value: valueToken.value }) }));
+      index += 2;
+      continue;
+    }
+    if (valueToken?.kind !== "open") throw new Error("vdf-malformed");
+    const nested = parseVdfEntries(tokens, index + 2, true);
+    entries.push(Object.freeze({ key: token.value, value: Object.freeze({ kind: "object", entries: nested.entries }) }));
+    index = nested.next;
+  }
+  if (expectClose) throw new Error("vdf-malformed");
+  return { entries: Object.freeze(entries), next: index };
+}
+
+function parseVdf(text: string): readonly VdfEntry[] {
+  const tokens = readVdfTokens(text);
+  const parsed = parseVdfEntries(tokens, 0, false);
+  if (parsed.next !== tokens.length) throw new Error("vdf-malformed");
+  return parsed.entries;
+}
+
+function directValue(entries: readonly VdfEntry[], key: string): string | undefined {
+  const matches = entries.filter((candidate) => candidate.key.toLowerCase() === key.toLowerCase());
+  const entry = matches.length === 1 ? matches[0] : undefined;
+  return entry?.value.kind === "value" ? entry.value.value : undefined;
+}
+
+function isDecimalKey(value: string): boolean {
+  if (value.length === 0) return false;
+  for (const character of value) if (character < "0" || character > "9") return false;
+  return true;
+}
+
 export function parseLibraryFoldersVdf(text: string): string[] {
-  if (!text.includes("libraryfolders")) throw new Error("vdf-malformed");
-  return [...text.matchAll(/"path"\s*"((?:\\.|[^"])*)"/gi)].map((m) => (m[1] ?? "").replace(/\\\\/g, "\\").replace(/\\"/g, '"')).filter(validPath);
+  const sections = parseVdf(text);
+  const section = sections[0];
+  const libraryFolders = section?.value;
+  if (sections.length !== 1 || section?.key.toLowerCase() !== "libraryfolders" || libraryFolders?.kind !== "object") throw new Error("vdf-malformed");
+  const roots: string[] = [];
+  for (const entry of libraryFolders.entries) {
+    if (!isDecimalKey(entry.key)) continue;
+    if (entry.value.kind !== "object") throw new Error("vdf-malformed");
+    const root = directValue(entry.value.entries, "path");
+    const normalized = root === undefined ? undefined : normalizeWindowsPath(root);
+    if (normalized === undefined) throw new Error("vdf-malformed");
+    roots.push(normalized);
+  }
+  return roots;
 }
+
+function findManifestValues(entries: readonly VdfEntry[]): string | null {
+  const appId = directValue(entries, "appid");
+  const installDir = directValue(entries, "installdir");
+  if (appId === STARDEW_APP_ID && installDir === "Stardew Valley") return installDir;
+  for (const entry of entries) {
+    if (entry.value.kind !== "object") continue;
+    const result = findManifestValues(entry.value.entries);
+    if (result !== null) return result;
+  }
+  return null;
+}
+
 export function parseAppManifest(text: string): string | null {
-  const appid = text.match(/"appid"\s*"(\d+)"/i)?.[1];
-  const installDir = text.match(/"installdir"\s*"([^"]+)"/i)?.[1];
-  return appid === STARDEW_APP_ID && installDir === "Stardew Valley" ? installDir : null;
-}
-export function issueBoundCandidate(session: StardewDiscoverySession, source: StardewInstallationCandidate["source"], installRoot: string, manifest: string): StardewInstallationCandidate | undefined {
-  return parseAppManifest(manifest) === null ? undefined : session.issue(source, installRoot);
+  try { return findManifestValues(parseVdf(text)); }
+  catch { return null; }
 }
 
 /** The single normalization boundary for already verified, source-bound roots. */
@@ -49,26 +162,18 @@ export function normalizeBoundCandidates(
 ): readonly StardewInstallationCandidate[] {
   const seen = new Set<string>();
   const normalized = roots
+    .map(([source, root]) => [source, normalizeWindowsPath(root)] as const)
+    .filter((entry): entry is readonly [StardewInstallationCandidate["source"], string] => entry[1] !== undefined)
     .filter(([, root]) => {
       const key = root.toLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
-    .sort(([sourceA, rootA], [sourceB, rootB]) =>
-      `${sourceA}\u0000${rootA.toLowerCase()}`.localeCompare(`${sourceB}\u0000${rootB.toLowerCase()}`),
-    );
+    .sort(([sourceA, rootA], [sourceB, rootB]) => `${sourceA}\u0000${rootA.toLowerCase()}`.localeCompare(`${sourceB}\u0000${rootB.toLowerCase()}`));
   return Object.freeze(normalized.map(([source, root]) => session.issue(source, root)));
 }
-const APPROVED_KNOWN_LOCATIONS: readonly string[] = [];
 
-export function discoverCandidates(input: Readonly<{ registryPath?: string; vdf?: string; manifest?: string; session?: StardewDiscoverySession }>): StardewInstallationDiscoveryResult {
-  const diagnostics: DiscoveryDiagnostic[] = []; const session = input.session ?? new StardewDiscoverySession(); const roots: Array<readonly [StardewInstallationCandidate["source"], string]> = [];
-  const manifestValid = input.manifest !== undefined && parseAppManifest(input.manifest) !== null;
-  if (input.registryPath && validPath(input.registryPath)) { if (manifestValid) roots.push(["steam-registry", input.registryPath]); else diagnostics.push("invalid-app-manifest"); } else if (input.registryPath !== undefined) diagnostics.push("registry-unavailable");
-  if (input.vdf !== undefined) { try { for (const root of parseLibraryFoldersVdf(input.vdf)) { if (manifestValid) roots.push(["steam-vdf", `${root}\\steamapps\\common\\Stardew Valley`]); else diagnostics.push("invalid-app-manifest"); } } catch { diagnostics.push("vdf-malformed"); } }
-  for (const root of APPROVED_KNOWN_LOCATIONS) if (validPath(root) && manifestValid) roots.push(["known-location", root]);
-  const candidates = normalizeBoundCandidates(session, roots);
-  if (!candidates.length) diagnostics.push("no-candidates");
-  return Object.freeze({ candidates: Object.freeze(candidates), diagnostics: Object.freeze(diagnostics) });
+export function issueBoundCandidate(session: StardewDiscoverySession, source: StardewInstallationCandidate["source"], installRoot: string, manifest: string): StardewInstallationCandidate | undefined {
+  return parseAppManifest(manifest) === null ? undefined : session.issue(source, installRoot);
 }

@@ -4,4 +4,5 @@ export {
   type StardewInstallationCandidate,
   type StardewInstallationDiscoveryResult,
 } from "./internal.js";
-export { createStardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProviderInput, type StardewInstallationDiscoveryProviderResult, type StardewVerifiedSteamRegistry } from "./provider.js";
+export { createStardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProviderInput, type StardewInstallationDiscoveryProviderResult } from "./provider.js";
+export { createWindowsSteamInstallationSource, type StardewSteamSource, type StardewSteamSourceFacts, type StardewWindowsSteamSourceInput } from "./source.js";
