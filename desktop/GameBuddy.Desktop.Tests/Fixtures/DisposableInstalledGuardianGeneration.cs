@@ -68,12 +68,24 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
     internal void ReplaceHostRuntimeWithFixture()
     {
         var sourceDirectory = Path.GetDirectoryName(HostRuntimeFixturePath)!;
+        if (sourceDirectory is null || !Directory.Exists(sourceDirectory)) throw new InvalidOperationException("The Desktop Host runtime fixture was not published.");
         var destinationDirectory = Path.GetDirectoryName(ExactChildRuntimePath)!;
+        // The fixture is a self-contained managed runtime image: the runtime/
+        // directory must receive the entire publish closure (hostfxr, coreclr,
+        // hostpolicy and the framework DLLs) so the renamed node.exe can start.
+        foreach (var sourceFile in Directory.EnumerateFiles(sourceDirectory))
+        {
+            var destination = Path.Combine(destinationDirectory, Path.GetFileName(sourceFile));
+            File.Copy(sourceFile, destination, overwrite: true);
+        }
+        // The replacement node.exe is the managed fixture host; it is always
+        // run through the hostfxr apphost of the copied fixture pair.
         File.Copy(Path.Combine(sourceDirectory, "DesktopHostRuntimeFixture.exe"), ExactChildRuntimePath, overwrite: true);
         foreach (var extension in new[] { ".dll", ".deps.json", ".runtimeconfig.json" })
         {
-            File.Copy(Path.Combine(sourceDirectory, "DesktopHostRuntimeFixture" + extension), Path.Combine(destinationDirectory, "DesktopHostRuntimeFixture" + extension), overwrite: true);
-            File.Copy(Path.Combine(sourceDirectory, "DesktopHostRuntimeFixture" + extension), Path.Combine(destinationDirectory, "node" + extension), overwrite: true);
+            var source = Path.Combine(sourceDirectory, "DesktopHostRuntimeFixture" + extension);
+            var destination = Path.Combine(destinationDirectory, "node" + extension);
+            if (source != destination) File.Copy(source, destination, overwrite: true);
         }
         var admissionPath = Path.Combine(GenerationRoot, "host-runtime-admission.json");
         using var admission = JsonDocument.Parse(File.ReadAllBytes(admissionPath));

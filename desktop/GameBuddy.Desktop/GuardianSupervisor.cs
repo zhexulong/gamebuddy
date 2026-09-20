@@ -308,7 +308,7 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
     private async Task WritePublicCommandAsync(GuardianRelayCommand command, CancellationToken cancellationToken)
     {
         var writer = controlWriter ?? throw new GuardianLaunchUnavailableException();
-        var stream = publicInputStream ??= new FileStream(writer, FileAccess.Write, bufferSize: 4096, isAsync: true);
+        var stream = publicInputStream ??= new FileStream(writer, FileAccess.Write, bufferSize: 4096, isAsync: false);
         await stream.WriteAsync(command.ToNativeFrame(), cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -316,7 +316,7 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
     private async Task<string> ReadPublicResultAsync(CancellationToken cancellationToken)
     {
         var output = publicOutput ?? throw new GuardianLaunchUnavailableException();
-        var stream = publicOutputStream ??= new FileStream(output, FileAccess.Read, bufferSize: 4096, isAsync: true);
+        var stream = publicOutputStream ??= new FileStream(output, FileAccess.Read, bufferSize: 4096, isAsync: false);
         var line = await ReadLineAsync(stream, cancellationToken).ConfigureAwait(false);
         using var document = System.Text.Json.JsonDocument.Parse(line);
         var root = document.RootElement;
@@ -369,13 +369,15 @@ internal sealed class GuardianPrivateIngress : IDisposable
 }
 
 internal sealed record GuardianRelayResult(string Status);
-internal sealed record GuardianRelayCommand(string Operation, string GuardianInstanceId, int GuardianEpoch, string AttemptId, string? Role, byte[]? PrivateFrame, long DeadlineUnixMs)
+internal sealed record GuardianRelayCommand(string Operation, string GuardianInstanceId, int GuardianEpoch, string AttemptId, string? Role, byte[]? PrivateFrame, long DeadlineUnixMs, long OperationWaitBudgetMs)
 {
     internal CancellationTokenSource BindDeadline(CancellationToken cancellationToken)
     {
         ThrowIfExpired(cancellationToken);
         var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var remaining = TimeSpan.FromMilliseconds(DeadlineUnixMs - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var remaining = Operation == "launch_role"
+            ? TimeSpan.FromMilliseconds(DeadlineUnixMs - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            : TimeSpan.FromMilliseconds(OperationWaitBudgetMs);
         if (remaining <= TimeSpan.Zero)
         {
             deadline.Dispose();
@@ -388,7 +390,7 @@ internal sealed record GuardianRelayCommand(string Operation, string GuardianIns
     internal void ThrowIfExpired(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (DeadlineUnixMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) throw new OperationCanceledException(cancellationToken);
+        if (Operation == "launch_role" && DeadlineUnixMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) throw new OperationCanceledException(cancellationToken);
     }
 
     internal byte[] ToNativeFrame()
@@ -449,19 +451,35 @@ internal sealed class GuardianRecoverySupervisorLease : IAsyncDisposable
     internal async Task RecoverAttemptAsync(byte[] frame, CancellationToken cancellationToken)
     {
         var writer = controlWriter ?? throw new GuardianLaunchUnavailableException();
-        publicInputStream ??= new FileStream(writer, FileAccess.Write, bufferSize: 4096, isAsync: true);
+        publicInputStream ??= new FileStream(writer, FileAccess.Write, bufferSize: 4096, isAsync: false);
         await publicInputStream.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
         await publicInputStream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task ReleaseAndVerifyExitAsync(CancellationToken cancellationToken)
     {
-        var stream = await ConnectPrivateAsync(cancellationToken).ConfigureAwait(false);
-        await WritePrivateFrameAsync(stream, Encoding.UTF8.GetBytes("{\"operation\":\"release\"}"), cancellationToken).ConfigureAwait(false);
-        await CloseControlAsync(CancellationToken.None).ConfigureAwait(false);
-        var wait = await Task.Run(() => WindowsNative.WaitForSingleObject(process, 30_000), CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            var stream = await ConnectPrivateAsync(cancellationToken).ConfigureAwait(false);
+            await WritePrivateFrameAsync(stream, Encoding.UTF8.GetBytes("{\"operation\":\"release\"}"), cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // The control writer must close even if release delivery is
+            // cancelled: the guardian otherwise hangs waiting for the control
+            // pipe and the recovery lease never settles.
+            await CloseControlAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        // After the native release frame is delivered, wait for the guardian
+        // process with the caller's token and verify a clean exit.
+        var wait = await WaitForProcessExitAsync(cancellationToken).ConfigureAwait(false);
         if (wait != WindowsNative.WaitObject0 || !WindowsNative.GetExitCodeProcess(process, out var exitCode) || exitCode != 0)
             throw new GuardianLaunchUnavailableException();
+    }
+
+    private async Task<uint> WaitForProcessExitAsync(CancellationToken cancellationToken)
+    {
+        return await Task.Run(() => WindowsNative.WaitForSingleObject(process, 100), cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task CloseControlAsync(CancellationToken cancellationToken)

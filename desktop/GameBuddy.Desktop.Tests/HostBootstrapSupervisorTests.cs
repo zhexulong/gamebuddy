@@ -77,7 +77,11 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Contains("await currentBroker.AttachResidentGuardianAsync(lease, cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.WaitForSingleObject(child, 0) != WindowsNative.WaitTimeout", source, StringComparison.Ordinal);
         Assert.Contains("await (Interlocked.Exchange(ref broker, null)?.DisposeAsync()", source, StringComparison.Ordinal);
-        Assert.Contains("await (Interlocked.Exchange(ref residentGuardian, null)?.DisposeAsync()", source, StringComparison.Ordinal);
+        // Closing the authenticated broker is the only guardian signal the host
+        // lease owns; it drives the native control EOF so the guardian exits by
+        // itself. The resident guardian lease belongs to its caller, so the host
+        // lease must not dispose it (that would null the caller's handle).
+        Assert.DoesNotContain("Interlocked.Exchange(ref residentGuardian, null)?.DisposeAsync()", source, StringComparison.Ordinal);
         Assert.Contains("if (exited) await CloseAsync(CancellationToken.None)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new GuardianSupervisor", source, StringComparison.Ordinal);
         Assert.DoesNotContain("GuardianRecovery", source, StringComparison.Ordinal);

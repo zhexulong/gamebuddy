@@ -502,8 +502,12 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
         await guardianGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
+            // The authenticated broker closure is the only guardian signal we own:
+            // closing it drives the guardian's control EOF so the native guardian
+            // exits by itself. The resident guardian lease belongs to its caller
+            // (the composition/test scope that created and attached it); the host
+            // lease must not dispose it, or the caller observes a nulled handle.
             await (Interlocked.Exchange(ref broker, null)?.DisposeAsync() ?? ValueTask.CompletedTask).ConfigureAwait(false);
-            await (Interlocked.Exchange(ref residentGuardian, null)?.DisposeAsync() ?? ValueTask.CompletedTask).ConfigureAwait(false);
         }
         finally { guardianGate.Release(); }
         Interlocked.Exchange(ref bootstrap, null)?.Dispose();
