@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 
 export const STARDEW_APP_ID = "413150" as const;
+export const WINDOWS_PATH_MAX_LENGTH = 32_767;
+export const STEAM_METADATA_MAX_BYTES = 4 * 1024 * 1024;
 export type StardewInstallationCandidate = Readonly<{ candidateId: string; source: "steam-registry" | "steam-vdf" | "known-location"; label: string; displayPath: string; status: "candidate" | "invalid" | "admission_required" }>;
 export type DiscoveryDiagnostic = "registry-unavailable" | "vdf-unreadable" | "vdf-malformed" | "invalid-app-manifest" | "no-candidates" | "source-unavailable" | "candidate-invalid";
 export type StardewInstallationDiscoveryResult = Readonly<{ candidates: readonly StardewInstallationCandidate[]; diagnostics: readonly DiscoveryDiagnostic[] }>;
@@ -12,11 +14,12 @@ type VdfToken = Readonly<{ kind: "string" | "open" | "close"; value?: string }>;
 
 /** Normalize only absolute drive paths; do not repair traversal or ambiguous locators. */
 export function normalizeWindowsPath(value: string): string | undefined {
-  const path = value.replaceAll("/", "\\");
-  if (!/^[A-Za-z]:\\/.test(path)) return undefined;
-  const parts = path.slice(3).split("\\").filter((part) => part.length > 0);
-  if (parts.some((part) => /[<>:"|?*\u0000-\u001f]/.test(part) || part.endsWith(".") || part.endsWith(" "))) return undefined;
-  return `${path.charAt(0).toUpperCase()}:\\${parts.join("\\")}`;
+  if (value.length === 0 || value.length > WINDOWS_PATH_MAX_LENGTH || value.includes("/")) return undefined;
+  if (!/^[A-Za-z]:\\/.test(value)) return undefined;
+  const parts = value.slice(3).split("\\");
+  if (parts.length === 0 || parts.some((part) => part.length === 0 || part === "." || part === ".." || /[<>:"|?*\u0000-\u001f]/.test(part) || part.endsWith(".") || part.endsWith(" "))) return undefined;
+  const normalized = `${value.charAt(0).toUpperCase()}:\\${parts.join("\\")}`;
+  return normalized.length <= WINDOWS_PATH_MAX_LENGTH ? normalized : undefined;
 }
 
 const opaque = (): string => randomBytes(24).toString("base64url");

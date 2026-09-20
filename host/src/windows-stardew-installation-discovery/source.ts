@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { win32 } from "node:path";
 import { promisify } from "node:util";
-import { normalizeWindowsPath, parseLibraryFoldersVdf, type DiscoveryDiagnostic } from "./internal.js";
+import { normalizeWindowsPath, parseLibraryFoldersVdf, STEAM_METADATA_MAX_BYTES, type DiscoveryDiagnostic } from "./internal.js";
 
 const execFileAsync = promisify(execFile);
 type SourceRoot = readonly ["steam-registry" | "steam-vdf", string];
@@ -59,7 +59,7 @@ async function readWindowsSteamRegistryRoots(): Promise<readonly string[]> {
   });
   if (result.stderr.trim() !== "") throw new Error("registry-unavailable");
   const roots: unknown = JSON.parse(result.stdout.trim());
-  if (!Array.isArray(roots) || roots.length > 3 || !roots.every((root) => typeof root === "string")) throw new Error("registry-unavailable");
+  if (!Array.isArray(roots) || roots.length > 3 || !roots.every((root) => typeof root === "string" && root.length <= 32767)) throw new Error("registry-unavailable");
   return roots;
 }
 
@@ -99,8 +99,11 @@ export function createWindowsSteamInstallationSource(input: StardewWindowsSteamS
       const roots: SourceRoot[] = [...registryRoots];
       for (const [, steamRoot] of registryRoots) {
         let vdf: string;
-        try { vdf = await read(win32.join(steamRoot, "steamapps", "libraryfolders.vdf")); }
+        const metadataPath = win32.join(steamRoot, "steamapps", "libraryfolders.vdf");
+        if (metadataPath.length > 32767) { diagnostics.add("vdf-malformed"); diagnostics.add("source-unavailable"); continue; }
+        try { vdf = await read(metadataPath); }
         catch { diagnostics.add("vdf-unreadable"); diagnostics.add("source-unavailable"); continue; }
+        if (Buffer.byteLength(vdf, "utf8") > STEAM_METADATA_MAX_BYTES) { diagnostics.add("vdf-malformed"); diagnostics.add("source-unavailable"); continue; }
         try {
           for (const root of parseLibraryFoldersVdf(vdf)) roots.push(["steam-vdf", root]);
         } catch { diagnostics.add("vdf-malformed"); diagnostics.add("source-unavailable"); }

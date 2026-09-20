@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.test.json",
+  "compilerOptions": {
+    "outDir": ".dist-discovery-review",
+    "noEmit": false,
+    "noEmitOnError": true
+  },
+  "include": [
+    "src/windows-stardew-installation-discovery/**/*.ts"
+  ]
+}

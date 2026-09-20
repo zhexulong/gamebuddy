@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createWindowsSteamInstallationSource } from "./index.js";
+import { normalizeWindowsPath } from "./internal.js";
 
 const registryRoots = ["C:\\Steam 中文", "D:\\Steam32", "D:\\Steam32"] as const;
 const libraryFolders = '"libraryfolders" { "0" { "path" "E:\\\\Library 中文" } }';
@@ -16,6 +17,23 @@ test("non-Windows source is unavailable without querying registry or files", asy
   assert.deepEqual(await source.read(), { roots: [], diagnostics: ["source-unavailable"] });
   assert.equal(queried, false);
   assert.equal(read, false);
+});
+
+test("normalization rejects unsafe Windows paths and preserves valid Unicode", () => {
+  assert.equal(normalizeWindowsPath(""), undefined);
+  assert.equal(normalizeWindowsPath("C:\\"), undefined);
+  assert.equal(normalizeWindowsPath("C:\\Steam\\\\Other"), undefined);
+  assert.equal(normalizeWindowsPath("C:/Steam"), undefined);
+  assert.equal(normalizeWindowsPath("C:\\Steam\\..\\Other"), undefined);
+  assert.equal(normalizeWindowsPath("C:\\Steam\\."), undefined);
+  assert.equal(normalizeWindowsPath("C:\\Steam."), undefined);
+  assert.equal(normalizeWindowsPath("C:\\Steam "), undefined);
+  assert.equal(normalizeWindowsPath("relative\\Steam"), undefined);
+  assert.equal(normalizeWindowsPath("C:\\Steam<bad"), undefined);
+  assert.equal(normalizeWindowsPath("C:\\Steam\\bad\u0001"), undefined);
+  assert.equal(normalizeWindowsPath(`C:\\${"x".repeat(32764)}`), `C:\\${"x".repeat(32764)}`);
+  assert.equal(normalizeWindowsPath(`C:\\${"x".repeat(32766)}`), undefined);
+  assert.equal(normalizeWindowsPath("c:\\Steam 中文"), "C:\\Steam 中文");
 });
 
 test("Windows source reads bounded registry roots and library folders with stable deduplication", async () => {
@@ -36,6 +54,34 @@ test("Windows source reads bounded registry roots and library folders with stabl
     "C:\\Steam 中文\\steamapps\\libraryfolders.vdf",
     "D:\\Steam32\\steamapps\\libraryfolders.vdf",
   ]);
+});
+
+test("Windows source preserves exact MAX_PATH roots but rejects overlong roots", async () => {
+  const exactRoot = `C:\\${"x".repeat(32764)}`;
+  let exactRead = false;
+  const exact = createWindowsSteamInstallationSource({
+    platform: "win32",
+    readRegistryRoots: async () => [exactRoot],
+    readFile: async () => { exactRead = true; return ""; },
+  });
+  assert.deepEqual(await exact.read(), {
+    roots: [["steam-registry", exactRoot]],
+    diagnostics: ["vdf-malformed", "source-unavailable"],
+  });
+  assert.equal(exactRead, false);
+
+  const overlongRoot = `C:\\${"x".repeat(32765)}`;
+  let overlongRead = false;
+  const overlong = createWindowsSteamInstallationSource({
+    platform: "win32",
+    readRegistryRoots: async () => [overlongRoot],
+    readFile: async () => { overlongRead = true; return ""; },
+  });
+  assert.deepEqual(await overlong.read(), { roots: [], diagnostics: ["registry-unavailable", "source-unavailable"] });
+  assert.equal(overlongRead, false);
+
+  const oversized = createWindowsSteamInstallationSource({ platform: "win32", readRegistryRoots: async () => ["C:\\Steam"], readFile: async () => "x".repeat(4 * 1024 * 1024 + 1) });
+  assert.deepEqual(await oversized.read(), { roots: [["steam-registry", "C:\\Steam"]], diagnostics: ["vdf-malformed", "source-unavailable"] });
 });
 
 test("Windows source reports registry unavailable, permission failure, and malformed metadata", async () => {
