@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { StardewDiscoverySession, normalizeBoundCandidates, parseAppManifest, type DiscoveryDiagnostic, type StardewInstallationCandidate } from "./internal.js";
+import { StardewDiscoverySession, normalizeBoundCandidates, normalizeWindowsPath, parseAppManifest, WINDOWS_PATH_MAX_LENGTH, STEAM_METADATA_MAX_BYTES, type DiscoveryDiagnostic, type StardewInstallationCandidate } from "./internal.js";
 import type { StardewSteamSource } from "./source.js";
 
 export type StardewInstallationDiscoveryProviderResult = Readonly<{ candidates: readonly StardewInstallationCandidate[]; diagnostics: readonly DiscoveryDiagnostic[] }>;
@@ -28,9 +28,14 @@ export function createStardewInstallationDiscoveryProvider(input: StardewInstall
       }
       diagnostics.push(...facts.diagnostics);
       const addRoot = async (sourceKind: "steam-registry" | "steam-vdf", steamLibraryRoot: string) => {
-        const installRoot = `${steamLibraryRoot}\\steamapps\\common\\Stardew Valley`;
+        const normalizedLibraryRoot = normalizeWindowsPath(steamLibraryRoot);
+        if (normalizedLibraryRoot === undefined) { diagnostics.push("invalid-app-manifest"); return; }
+        const installRoot = `${normalizedLibraryRoot}\\steamapps\\common\\Stardew Valley`;
+        const manifestPath = `${normalizedLibraryRoot}\\steamapps\\appmanifest_413150.acf`;
+        if (installRoot.length > WINDOWS_PATH_MAX_LENGTH || manifestPath.length > WINDOWS_PATH_MAX_LENGTH) { diagnostics.push("invalid-app-manifest"); return; }
         try {
-          const manifest = await read(`${steamLibraryRoot}\\steamapps\\appmanifest_413150.acf`);
+          const manifest = await read(manifestPath);
+          if (Buffer.byteLength(manifest, "utf8") > STEAM_METADATA_MAX_BYTES) { diagnostics.push("invalid-app-manifest"); return; }
           if (parseAppManifest(manifest) === null) { diagnostics.push("invalid-app-manifest"); return; }
           roots.push([sourceKind, installRoot]);
         } catch { diagnostics.push("invalid-app-manifest"); }
