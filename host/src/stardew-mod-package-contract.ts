@@ -13,7 +13,7 @@ import {
 export type StardewModPackageContract = Readonly<{
   schema: "gamebuddy-stardew-mod-package-contract/v1";
   descriptor: Readonly<{ kind: "verified_stardew_mod_package"; destination: "native/stardew-mod/GameBuddy"; project: string; manifest: "manifest.json" }>;
-  entries: readonly [string, string, string, string, string];
+  entries: readonly [string, string, string, string];
   manifestIdentity: Readonly<Record<string, string>>;
   dependencyAuthority: Readonly<Record<string, unknown>>;
 }>;
@@ -57,7 +57,11 @@ export async function verifyPublishedStardewModPackage(
       await assertCleanIdentityChain(inspector, path, "regular_file");
     }
     const manifest = JSON.parse(await readFile(resolve(root, contract.descriptor.manifest), "utf8")) as unknown;
-    if (!isRecord(manifest) || !exactEntries(manifest, contract.manifestIdentity)) throw new Error();
+    // The published SMAPI manifest legitimately carries non-identity fields
+    // (Name/Author/Description/UpdateKeys). Identity comparison is a
+    // subset check: every identity field must be present with the exact same
+    // primitive value; extra manifest fields do not break the fixed identity.
+    if (!isRecord(manifest) || !containsIdentity(manifest, contract.manifestIdentity)) throw new Error();
     const deps = JSON.parse(await readFile(resolve(root, "GameBuddy.Stardew.deps.json"), "utf8")) as unknown;
     validateDependencies(deps, contract.dependencyAuthority);
     // Byte provenance is intentionally owned by the wrapper's complete pinned
@@ -78,7 +82,7 @@ function parseContract(value: unknown): StardewModPackageContract {
     || !isRecord(value.manifestIdentity) || !isRecord(value.dependencyAuthority)
     || value.descriptor.kind !== "verified_stardew_mod_package" || value.descriptor.destination !== "native/stardew-mod/GameBuddy"
     || value.descriptor.manifest !== "manifest.json" || typeof value.descriptor.project !== "string"
-    || value.entries.length !== 5 || new Set(value.entries).size !== 5 || value.entries.some((entry) => typeof entry !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry))) throw unavailable();
+    || value.entries.length !== 4 || new Set(value.entries).size !== 4 || value.entries.some((entry) => typeof entry !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry))) throw unavailable();
   return Object.freeze({
     schema: contractSchema,
     descriptor: Object.freeze({ kind: value.descriptor.kind, destination: value.descriptor.destination, project: value.descriptor.project, manifest: value.descriptor.manifest }),
@@ -100,6 +104,13 @@ async function safeDirectory(root: string, path: string): Promise<void> {
 function contained(root: string, value: string): boolean { const remainder = relative(root, value); return remainder !== "" && remainder !== ".." && !remainder.startsWith(`..${sep}`); }
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function exactEntries(actual: Record<string, unknown>, expected: Record<string, unknown>): boolean { const a = Object.keys(actual).sort(); const b = Object.keys(expected).sort(); return JSON.stringify(a) === JSON.stringify(b) && b.every((key) => actual[key] === expected[key]); }
+function containsIdentity(actual: Record<string, unknown>, identity: Record<string, unknown>): boolean {
+  return Object.keys(identity).every((key) =>
+    Object.hasOwn(actual, key) &&
+    typeof actual[key] === "string" && typeof identity[key] === "string" &&
+    actual[key] === identity[key],
+  );
+}
 function exactRuntimeEntries(actual: Record<string, unknown>, expected: Record<string, unknown>): boolean {
   const keys = Object.keys(expected).sort();
   return JSON.stringify(Object.keys(actual).sort()) === JSON.stringify(keys)

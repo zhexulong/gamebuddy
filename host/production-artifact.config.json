@@ -108,5 +108,17 @@
         "occurrence": 0
       }
     ]
+  },
+  "stardewModPackage": {
+    "kind": "verified_stardew_mod_package",
+    "destination": "native/stardew-mod/GameBuddy",
+    "contract": "stardew-mod-package-contract.json",
+    "entries": [
+      "GameBuddy.Stardew.dll",
+      "GameBuddy.Stardew.Core.dll",
+      "GameBuddy.Stardew.deps.json",
+      "manifest.json"
+    ],
+    "manifest": "manifest.json"
   }
 }

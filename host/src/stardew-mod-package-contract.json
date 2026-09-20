@@ -10,7 +10,6 @@
     "GameBuddy.Stardew.Core.dll",
     "GameBuddy.Stardew.deps.json",
     "GameBuddy.Stardew.dll",
-    "Raffinert.FuzzySharp.dll",
     "manifest.json"
   ],
   "manifestIdentity": {
@@ -30,13 +29,11 @@
     "libraryKeys": [
       "GameBuddy.Stardew/1.0.0",
       "Pathoschild.Stardew.ModBuildConfig/4.4.0",
-      "Raffinert.FuzzySharp/5.0.3",
       "GameBuddy.Stardew.Core/1.0.0"
     ],
     "targetKeys": [
       "GameBuddy.Stardew/1.0.0",
       "Pathoschild.Stardew.ModBuildConfig/4.4.0",
-      "Raffinert.FuzzySharp/5.0.3",
       "GameBuddy.Stardew.Core/1.0.0"
     ],
     "packages": {
@@ -44,8 +41,7 @@
         "keys": ["dependencies", "runtime"],
         "dependencies": {
           "GameBuddy.Stardew.Core": "1.0.0",
-          "Pathoschild.Stardew.ModBuildConfig": "4.4.0",
-          "Raffinert.FuzzySharp": "5.0.3"
+          "Pathoschild.Stardew.ModBuildConfig": "4.4.0"
         },
         "runtime": {
           "GameBuddy.Stardew.dll": []
@@ -53,15 +49,6 @@
       },
       "Pathoschild.Stardew.ModBuildConfig/4.4.0": {
         "keys": []
-      },
-      "Raffinert.FuzzySharp/5.0.3": {
-        "keys": ["runtime"],
-        "runtime": {
-          "lib/net6.0/Raffinert.FuzzySharp.dll": {
-            "assemblyVersion": "5.0.3.0",
-            "fileVersion": "5.0.3.0"
-          }
-        }
       },
       "GameBuddy.Stardew.Core/1.0.0": {
         "keys": ["runtime"],
