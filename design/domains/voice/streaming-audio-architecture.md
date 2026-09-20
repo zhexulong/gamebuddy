@@ -23,6 +23,7 @@ references:
 > 1. **非生产依据**：本文属于 **Phase 2 全双工流式音频长远演进提案（Future Architectural Horizon）**，作为技术调研与架构设计储备，**不构成当前 v1 PTT Voice Gateway 的实现要求，亦绝不作为当前阶段任何 release gate、production gate 或 Chat/Game/Desktop 的准出依据**。  
 > 2. **当前生产与已验证基线（Current Verified Baseline）**：当前生产路径严格锁定为 [`packages/voice-protocol`](file:///E:/projects/ai-game-companion/packages/voice-protocol/)（v1 PTT 线缆协议）与 [`voice-gateway/`](file:///E:/projects/ai-game-companion/voice-gateway/)（受管 PTT 批处理网关），其静态与局部集成验证（`deterministic/integration verified`）由 [`design/domains/voice/overview.md`](overview.md) 权威拥有。  
 > 3. **协议演进约束**：本文 §7 的 v2 线缆契约草案已按 [`voice-gateway-streaming-submodule.md`](../tasks/active/voice-gateway-streaming-submodule.md) Slice 1 完成冻结，**权威实现位于 [`packages/voice-protocol/src/v2.ts`](file:///E:/projects/ai-game-companion/packages/voice-protocol/src/v2.ts)，本文 §7 仅作历史草案与设计意图参考，不再作为线缆契约的代码形态依据**。在协议实现同步完成前，严禁对现行 v1 代码进行破坏性替换。
+> 4. **宿主侧流式接线已落地（Implementation Update，2026-09-19）**：Slice 5 的 Chat delta → Voice 流式朗读生产接线已完成（`ChatVoiceSpeechPublisher` + `createChatVoiceStreamingSink()` + `runMountedProviderStart` speechSink 分发，详见任务文档 Slice 5 第 3 节），并严格遵守 §1.1 硬不变量——`raw Chat token delta ≠ admissible speech expression`：delta 仅在既有 presentation admission（`canPreviewNativeContent`）通过后、与浏览器预览同源分发；语音 job 由 healthy Voice client 的 epoch 与 v2 线缆门控，Host-owned、surface-scoped、epoch-bound。**注**：此接线属 Phase 2 落地证据，不改变本文 `draft / not implementation-ready for the full streaming stack` 状态；完整流式栈（L4 输入链路制造、L5 玩家级门禁）仍未实施。
 
 ---
 

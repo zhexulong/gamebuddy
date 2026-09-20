@@ -22,7 +22,7 @@ references:
 
 ## 1. 状态与治理边界（Status & Governance）
 
-**Status：`in-progress` — Slice 1（Protocol v2 Freeze）已完成并验证；Slice 2（下行流式）核心接线已完成；Slice 3–5 部分接线/仍 Blocked。**
+**Status：`in-progress` — Slice 1（Protocol v2 Freeze）已完成并验证；Slice 2（下行流式）核心接线已完成（L4 输出链路含真实设备 + 真实 MiMo + 三轮流式无人 gate 证据）；Slice 3–5 部分接线/仍 Blocked（Slice 5 宿主侧流式接线已闭合，整合级门禁未执行）。**
 
 ### 1.1 现状与目标分层对齐
 根据审查结论，严格区分当前已验证事实与未来演进目标：
@@ -150,11 +150,16 @@ references:
   2. `voice-gateway/src/server.ts`：v1 hello 仍认证 socket，认证后冻结 v2 帧路由到 per-socket runtime 并推送事件；socket 关闭即关闭其流。`gateway.ts` 暴露 core tts/mixer/asr 只读访问器；`streaming-pipeline.ts` 增加 `playedBytes`（`audioEndMs` 诚实换算）。
   3. `host/src/voice-gateway-client.ts`：`streamSpeechChunk` 发送（以健康 gateway epoch 为 connectionEpoch）、`onPlaybackObservation`/`onV2GatewayState` 接收推送事件；`quarantined` gateway_state 同步吊销 audio admission（优雅降级纯文字，游戏动作不受影响）。
   4. 测试：runtime 7 项 + wire 3 项 + host vgc 12 项（含 v2 lane 与降级守卫）—— gateway 115/115、host voice 闭包 typecheck 干净；`npm run v2-wire-rehearsal` 真实设备 + 真实 MiMo 实测通过（completed 观察、232 帧、maxGap 279ms / overStep 2/232，残余间隙为 MiMo SSE 突发节奏非渲染缺陷）。
+  5. **播放恒定性（pacing，2026-09-19）**：`v2-streaming.ts` pump 循环改为按设备时钟步进（每 20ms 微块一帧，320ms 预灌后按帧节奏），不再瞬间灌爆 stdin。此前 `completed` 观察在帧写入管道时即触发（早于物理播完数秒），close 需再等积压排空（三轮流式 gate 曾 obs@9.3s + close 16.8s）；现观测在设备真正播完时落地（三轮流式 gate close+394ms），语音表面状态与听感对齐。
+  6. **角色卡台词提取（speakable-text，2026-09-19）**：`speakable-text.ts` 在 voice 层剥离角色卡 `*…*` 动作/旁白（ST v2 约定），保留引号台词、无标记叙述与括号情绪标签（MiMo 原生演绎指令）—— 只朗读角色说的话。deepseek-chan 卡 first_mes 159 字提取后 46 字纯台词。
+  7. **官方音色与人格预设（mimo.ts，2026-09-19）**：`MIMO_TTS_VOICES` 白名单（mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean，附语言/性别/风格元数据），未知音色构造期 fail-fast（`mimo_voice_unknown`）；`MIMO_TTS_PERSONAS`（如 `soft_maid`=冰糖+慢半拍软糯）作为 voice 层与角色卡的适配点，profile 按 `GAMEBUDDY_MIMO_PERSONA` 解析，显式 voice/style 可覆盖。
+  8. **Chat delta → Voice 流式生产接线（2026-09-19，Slice 5 宿主侧关键缺口闭合）**：`ChatVoiceSpeechPublisher`（begin/append/finalize/cancel）+ `createChatVoiceStreamingSink()` 把 Chat `onPreviewDelta` 的同一 delta 流（NFC 归一化）喂给 v2 `stream_speech_chunk`：每 turn 一个 job、chunkIndex 连续、3 分钟 deadline、final 以噪音符号 `。` 落定（chunker 跳过、零附加音频）、cancel 精确取消语音 job（Voice-local）。上游：`runMountedProviderStart`/`startMountedChatProvider`/`ChatPipelineServiceOptions`/桌面组合（bootstrap→composition→admission-owner）全程可选注入，缺失/失败优雅降级纯文字。host voice 闭包 15/15 测试；voice 相关文件 typecheck 干净。
 - **准出门禁（L2 deterministic 全部满足；L4 输出链路有真实证据：真实设备 + 真实 MiMo 流式播放 + 自动 gap 断言 + 用户听感确认；L4 输入链路已实机验证，见下；L5 未执行，整体仍 Blocked）**：
-  - 连续输入 3 句话，首包合成发声延迟 < 300ms（需真实 TTS 链路首包计时，L4 未记录）；
+  - 连续输入 3 句话，首包合成发声延迟 < 300ms（需真实 TTS 链路首包计时，L4 未记录）；三轮流式 gate 已测得句子级流式：turn 内首 chunk 发出后即开始出声（obs 与 last chunk 发送间隔即剩余播放；词级延迟待 L5 计时）；
   - 发声过程中发送 `CancelSpeech`，输出在 10ms 内静音（sink 层 5ms 淡出 + 10ms 静音垫可证；真实设备打断时延待 L5 验证）；
   - 波形分析无瞬态突变（算法层断言通过；真实输出 rehearsal 多次实测 `maxGapMs` 21~260ms、超步长间隙 ≤8 帧，播放实时性 100%）；
-  - **L4 输入链路（已实机验证，2026-09-18）：** `voice-gateway live-gate --mode live` 完整跑通：PTT 录音（真实麦克风）→ Groq Whisper 转录（经代理）→ MiMo 朗读（常驻流式渲染）→ `voice_gate_passed`；artifact `scripts/pipeline-live-gate.json`（gitignored）记录 `passed: true, transcript, ttsProvider: xiaomi-mimo, renderPath: winmm_resident_stream`。**诚实声明**：转录文本含识别噪音（环境音干扰），转录准确率不是本 gate 的判定项；gate 证明的是端点到端点链路可用（录音→ASR→TTS→播放→事件），非 ASR 质量。
+  - **L4 输出链路三轮流式 gate（无人，2026-09-19）：** `voice-gateway/scripts/run-streaming-3turn.mjs`（新增）三轮连续朗读（deepseek-chan first_mes 台词 + 两轮模拟 LLM 后续回复），每轮按句切分、逐句流式 `stream_speech_chunk` 发送，模拟 LLM 边生成边出声；真实 MiMo + 常驻流式设备，观测：obs 精确落在设备播完（`close+394ms` 残余仅进程退出），`maxGap=159ms`、`gapsOverStep=0`，用户听感确认；artifact gitignored（`pipeline-streaming-3turn.json`）。
+  - **L4 输入链路（已实机验证，2026-09-18）：** `voice-gateway live-gate --mode live` 完整跑通：PTT 录音（真实麦克风）→ Groq Whisper 转录（经代理）→ MiMo 朗读（常驻流式渲染）→ `voice_gate_passed`；artifact `scripts/pipeline-live-gate.json`（gitignored）记录 `passed: true, transcript, ttsProvider: xiaomi-mimo, renderPath: winmm_resident_stream`。**诚实声明**：转录文本含识别噪音（环境音干扰），转录准确率不是本 gate 的判定项；gate 证明的是端点到端点链路可用（录音→ASR→TTS→播放→事件），非 ASR 质量；ASR 输入链路的流式（边录边转写）不在本门禁范围，保持 L5/Phase 2 future。
 
 ### Slice 3: 上行按键状态机与受管流式捕获（Blocked on Slice 1；纯状态机切片已落地）
 - **目标**：提升按键说话体验，消除冷启动吞首字问题，保持纯 PTT 受管边界。
@@ -187,7 +192,7 @@ references:
   - 模拟 50 个排队音频帧积压时注入 `CancelSpeech`，在 1ms 内触发清空（队列层可证；真实事件循环时序需 L3）；
   - 模拟断网重连，旧会话未播完的音频被安全丢弃，不发生二次复读（需 v2 运行时与 L3）。
 
-### Slice 5: Host 客户端对齐与受管集成（Blocked on Slice 1）
+### Slice 5: Host 客户端对齐与受管集成（Blocked on Slice 1；宿主侧流式接线已闭合，整合级门禁仍 Blocked）
 - **目标**：在 [`host/src/voice-gateway-client.ts`](file:///E:/projects/ai-game-companion/host/src/voice-gateway-client.ts) 中对齐 Protocol v2，保持 Core 零音频边界。
 - **具体工作**：
   1. 更新 `LocalVoiceGatewayClient`：
@@ -196,9 +201,15 @@ references:
      - 监听 `playback_observation` 并仅作为日志/遥测记录，**坚决不调用任何 `ChatThreadStore` 改写方法**。
   2. 降级与安全守卫：
      - 网关不可用或报告 `quarantined` 时，Host 优雅降级为纯文字输入，不影响游戏动作执行。
+  3. **流式朗读生产接线（已实现，2026-09-19）**：
+     - `host/src/voice.ts` 新增 `ChatVoiceSpeechPublisher`（begin/append/finalize/cancel，Host-owned 窄接口，不泄露 client/token/epoch）；
+     - `voice-gateway-client.ts` 新增 `createChatVoiceStreamingSink()`（每 turn 一个 job、连续 chunkIndex、3 分钟 deadline、`。` 噪音 final、精确 cancel）+ `cancelSpeechStreamJob()`；
+     - `p4-provider-start-execution.ts` 的 `runMountedProviderStart` 接受可选 `NativeChatSpeechSink`：`onPreviewDelta` 与浏览器预览同源分发（Voice 失败每次 catch，优雅降级纯文字，不毒化 observer/durable commit），`onFinalText` finalize、`onRejected` cancel、每 turn begin 一次；
+     - 上游全链可选注入：`startMountedChatProvider` → `ChatPipelineServiceOptions.speechSink` → desktop 组合（bootstrap→composition→admission-owner，chat-only/management/composed-reference-game 三变体）；
+     - 测试：host voice 闭包 15/15（sink 帧序列、cancel 精确性、空 job 静默）；voice 相关文件 typecheck 零错误。
 - **准出门禁**：
-  - Host 与 Gateway 完整跑通 PTT 语音输入 -> LLM Token 流式注入 -> 语音朗读 -> 播放完成闭环；
-  - 语音进程被 `kill -9` 时，Host 文字输入与游戏交互完全正常。
+  - Host 与 Gateway 完整跑通 PTT 语音输入 -> LLM Token 流式注入 -> 语音朗读 -> 播放完成闭环（流式 TTS 朗读已无人验证：`run-streaming-3turn.mjs` 三轮真实设备；LLM Token 流式注入即本接线，实测待 Chat 全链整合门禁）；
+  - 语音进程被 `kill -9` 时，Host 文字输入与游戏交互完全正常（降级守卫单测覆盖，整合级断连演练待执行）。
 
 ---
 
