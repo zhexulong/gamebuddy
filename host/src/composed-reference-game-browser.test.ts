@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import test from "node:test";
+import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
 import {
-  consumeComposedReferenceGameBrowserLifecycleActivationAdmission,
-  createComposedReferenceGameBrowserRequestHandler,
-  issueComposedReferenceGameBrowserLifecycleActivationAdmission,
   type ComposedReferenceGameBrowserLifecycleActivationAdmission,
   type ComposedReferenceGameBrowserLifecycleActivationIssuer,
   type ComposedReferenceGameBrowserReadContext,
+  consumeComposedReferenceGameBrowserLifecycleActivationAdmission,
+  createComposedReferenceGameBrowserRequestHandler,
+  issueComposedReferenceGameBrowserLifecycleActivationAdmission,
 } from "./composed-reference-game-browser.js";
-import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
-import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
 import { composeGameProfile, GameBrowserFixtureV1 } from "./game-browser-contract/index.js";
+import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
 
 const bootstrapToken = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
 const tavernProfile = composeTavernProfile({
@@ -187,7 +187,7 @@ test("installation discovery confirms a legal opaque candidate and invokes each 
         handler.lifecycleActivationIssuer,
         admission,
         "discovery_read",
-        () => ({ apiVersion: 1 as const, candidates: [], diagnostics: [] }),
+        () => { calls.push("read"); return { apiVersion: 1 as const, candidates: [], diagnostics: [] }; },
       )!,
       confirm: async (admission, command) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         handler.lifecycleActivationIssuer,
@@ -195,7 +195,7 @@ test("installation discovery confirms a legal opaque candidate and invokes each 
         "discovery_confirm",
         () => { calls.push("confirm"); assert.deepEqual(command, { apiVersion: 1, candidateId: "Q".repeat(42) + "A" }); return { apiVersion: 1 as const, status: "registered" as const }; },
       )!,
-      retry: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_retry", () => { calls.push("retry"); return { apiVersion: 1 as const, status: "accepted" as const }; })!,
+      retry: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_retry", () => { calls.push("retry"); return { apiVersion: 1 as const, candidates: [], diagnostics: [] }; })!,
       cancel: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_cancel", () => { calls.push("cancel"); return { apiVersion: 1 as const, status: "cancelled" as const }; })!,
       manualPicker: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_picker", () => { calls.push("manual-picker"); return { apiVersion: 1 as const, status: "accepted" as const }; })!,
     },
@@ -205,21 +205,43 @@ test("installation discovery confirms a legal opaque candidate and invokes each 
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
     const root = await initial.json() as { chat: { csrfToken: string } };
-     const candidateId = "Q".repeat(42) + "A";
-     const confirmation = await fetch(`${server.origin}/api/composed-reference-game/v1/game/installation/discovery/confirm`, {
-       method: "POST", headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-       body: JSON.stringify({ apiVersion: 1, candidateId }),
-     });
-     assert.equal(confirmation.status, 200);
-     assert.deepEqual(await confirmation.json(), { apiVersion: 1, status: "registered" });
-     for (const [name, path] of [["retry", "retry"], ["cancel", "cancel"], ["manual-picker", "manual-picker"]] as const) {
-       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/installation/discovery/${path}`, {
-        method: "POST", headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: JSON.stringify({ apiVersion: 1 }),
+    const discoveryPath = `${server.origin}/api/composed-reference-game/v1/game/installation/discovery`;
+    const read = await fetch(discoveryPath, { headers: { origin: server.origin, cookie } });
+    assert.equal(read.status, 200);
+    assert.deepEqual(await read.json(), { apiVersion: 1, candidates: [], diagnostics: [] });
+    const candidateId = "Q".repeat(42) + "A";
+    const confirmation = await fetch(`${discoveryPath}/confirm`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ apiVersion: 1, candidateId }),
+    });
+    assert.equal(confirmation.status, 200);
+    assert.deepEqual(await confirmation.json(), { apiVersion: 1, status: "registered" });
+    for (const [name, path] of [["retry", "retry"], ["cancel", "cancel"], ["manual-picker", "manual-picker"]] as const) {
+      const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/installation/discovery/${path}`, {
+        method: "POST",
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ apiVersion: 1 }),
       });
       assert.equal(response.status, 200);
-      assert.deepEqual(await response.json(), { apiVersion: 1, status: name === "cancel" ? "cancelled" : "accepted" });
+      assert.deepEqual(
+        await response.json(),
+        name === "retry"
+          ? { apiVersion: 1, candidates: [], diagnostics: [] }
+          : { apiVersion: 1, status: name === "cancel" ? "cancelled" : "accepted" },
+      );
     }
-     assert.deepEqual(calls, ["confirm", "retry", "cancel", "manual-picker"]);
+    assert.deepEqual(calls, ["read", "confirm", "retry", "cancel", "manual-picker"]);
   } finally { await server.close(); }
 });
 
@@ -233,7 +255,7 @@ test("installation discovery boundary rejects unexpected query, wrong content ty
     gameDiscovery: {
       read: async () => { calls.push("read"); return { apiVersion: 1, candidates: [], diagnostics: [] }; },
       confirm: async () => { calls.push("confirm"); return { apiVersion: 1, status: "registered" }; },
-      retry: async () => { calls.push("retry"); return { apiVersion: 1, status: "accepted" }; },
+      retry: async () => { calls.push("retry"); return { apiVersion: 1, candidates: [], diagnostics: [] }; },
       cancel: async () => { calls.push("cancel"); return { apiVersion: 1, status: "cancelled" }; },
       manualPicker: async () => { calls.push("manual-picker"); return { apiVersion: 1, status: "accepted" }; },
     },
@@ -268,7 +290,7 @@ test("installation discovery mutation requests reject empty, malformed, wrong-ve
   handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }), bootstrapToken,
     readChat: async (context) => stateForChat(context), readGame: async (context) => stateForGame(context),
-    gameDiscovery: { read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }), confirm: async () => { calls.push("confirm"); return { apiVersion: 1, status: "registered" }; }, retry: async () => { calls.push("retry"); return { apiVersion: 1, status: "accepted" }; }, cancel: async () => { calls.push("cancel"); return { apiVersion: 1, status: "cancelled" }; }, manualPicker: async () => { calls.push("manual-picker"); return { apiVersion: 1, status: "accepted" }; } },
+    gameDiscovery: { read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }), confirm: async () => { calls.push("confirm"); return { apiVersion: 1, status: "registered" }; }, retry: async () => { calls.push("retry"); return { apiVersion: 1, candidates: [], diagnostics: [] }; }, cancel: async () => { calls.push("cancel"); return { apiVersion: 1, status: "cancelled" }; }, manualPicker: async () => { calls.push("manual-picker"); return { apiVersion: 1, status: "accepted" }; } },
   });
   const server = await start(handler);
   try {
@@ -279,6 +301,92 @@ test("installation discovery mutation requests reject empty, malformed, wrong-ve
     }
     assert.equal(calls.length, 0);
   } finally { await server.close(); }
+});
+
+test("installation discovery admissions bind exact operation, expire, and consume once", async () => {
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameDiscovery: {
+      read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
+      confirm: async () => ({ apiVersion: 1, status: "registered" }),
+      retry: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
+      cancel: async () => ({ apiVersion: 1, status: "cancelled" }),
+      manualPicker: async () => ({ apiVersion: 1, status: "accepted" }),
+    },
+  });
+  const server = await start(handler);
+  const originalDateNow = Date.now;
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = await initial.json() as { chat: { csrfToken: string; browserSession: { expiresAtMs: number } } };
+    const request = lifecycleRequest(server.origin, cookie, root.chat.csrfToken, {
+      method: "GET",
+      url: "/api/composed-reference-game/v1/game/installation/discovery",
+    });
+    const issuer = handler.lifecycleActivationIssuer;
+    const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, request, server.origin);
+    assert.ok(admission);
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, admission, "discovery_confirm", () => "wrong-operation"),
+      undefined,
+    );
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, admission, "discovery_read", () => "read"),
+      "read",
+    );
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, admission, "discovery_read", () => "replayed"),
+      undefined,
+    );
+    const expired = issueComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, request, server.origin);
+    assert.ok(expired);
+    Date.now = () => root.chat.browserSession.expiresAtMs;
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, expired, "discovery_read", () => "expired"),
+      undefined,
+    );
+  } finally {
+    Date.now = originalDateNow;
+    await server.close();
+  }
+});
+test("installation discovery read and retry reject mutation projections", async () => {
+  for (const operation of ["read", "retry"] as const) {
+    const wrongProjection = { apiVersion: 1, status: "accepted" };
+    const handler = createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
+      bootstrapToken,
+      readChat: async (context) => stateForChat(context),
+      readGame: async (context) => stateForGame(context),
+      gameDiscovery: {
+        read: async () => wrongProjection as never,
+        confirm: async () => ({ apiVersion: 1, status: "registered" }),
+        retry: async () => wrongProjection as never,
+        cancel: async () => ({ apiVersion: 1, status: "cancelled" }),
+        manualPicker: async () => ({ apiVersion: 1, status: "accepted" }),
+      },
+    });
+    const server = await start(handler);
+    try {
+      const initial = await bootstrap(server.origin);
+      const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+      const root = await initial.json() as { chat: { csrfToken: string } };
+      const base = `${server.origin}/api/composed-reference-game/v1/game/installation/discovery`;
+      const response = operation === "read"
+        ? await fetch(base, { headers: { origin: server.origin, cookie } })
+        : await fetch(`${base}/retry`, {
+            method: "POST",
+            headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+            body: JSON.stringify({ apiVersion: 1 }),
+          });
+      assert.equal(response.status, 409);
+      assert.deepEqual(await response.json(), { code: "state_unavailable" });
+    } finally { await server.close(); }
+  }
 });
 
 test("game.prerequisites.setup mount is exact and cannot drift from its production callback", () => {
