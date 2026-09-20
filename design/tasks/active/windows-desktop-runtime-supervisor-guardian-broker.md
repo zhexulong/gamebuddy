@@ -130,8 +130,25 @@ The tracer bullet still has no recovery private-phase relay, no Task 3 process-o
 - [x] Build disposable source-bound Host + Guardian session fixtures from the selected generation authority.
 - [x] Run deterministic Windows tests for bootstrap authentication, root-layout handoff, resident command/ack relay, private ingress ordering, recovery separation, child/Guardian EOF, acknowledgement mismatch, no secret/root leakage and no Node/public-adapter spawn.
 - [x] Run focused Host internal bootstrap/private Guardian tests, Desktop tests/build and Host artifact checks.
-- [ ] Fresh Windows native/security review: handle inheritance, IPC ACL/SID/token, EOF/process supervision, no raw credential/root/native-fact exposure.
-- [ ] Fresh Host lifecycle/topology review: coordinator remains product owner, Guardian only containment owner, no alternate Node role spawn/kill authority is added before Task 3 delegation.
+- [x] Independent Windows native/security review (fresh reviewer): handle inheritance, IPC ACL/SID/token, EOF/process supervision, no raw credential/root/native-fact exposure.
+- [x] Independent Host lifecycle/topology review (fresh reviewer): coordinator remains product owner, Guardian only containment owner, no alternate Node role spawn/kill authority is added before Task 3 delegation.
+
+### Review verdicts and disposition (`9524630` + `9b9d47f` baseline)
+
+**Security review — FAIL with disposition; one real gap fixed, one axis-mismatch accepted:**
+- PASS: handle-list inheritance, current-user pipe DACL/PID/SID/session binding, byte-level arm-token injection + one-shot token + fixed-time compare, one-shot planId, resident/recovery mutual exclusion, coordinated EOF waits on the command-EOF path.
+- REAL GAP (fixed in this task): ordinary broker `CloseAsync` closed the control writer and disposed the server without waiting for the guardian terminal outcome. It now calls `CloseControlAndWaitForExitAsync` (idempotent; teardown swallows close errors so they never mask the original failure). Task contract: "Desktop shutdown … closes only the retained Guardian control writer and waits for its redacted terminal outcome."
+- AXIS MISMATCH (accepted, no change): guardian token is injected into the child environment (`GAMEBUDDY_GUARDIAN_CONTROL_*`). This is the allowlisted child-inputs environment the task contract explicitly permits ("environment outside allowlisted child inputs"), matches the established launcher-injected short-lived control token pattern, is asserted exact by `StartResident_test_guardian_observes_exact_environment_only_stdin_inheritance_and_actual_eof`, and never reaches argv/stdout/files/logs/browser/public DTOs. The token is Desktop-held and its native comparison is fixed-time with one-shot consumption.
+- Runtime evidence for the close-wait fix is pending an inter-lane TS build unblock; the C# production project compiles clean.
+
+**Topology review — BLOCKED items adjudicated to owned-lane follow-ups, not this task:**
+- PASS: coordinator remains the Host product authority (durable session/world bindings, owner reservation, lifecycle revision); Guardian is only an OS-process containment owner; Desktop is the sole native child/transport supervisor; Host receives only closure-bound no-raw-facts capabilities.
+- Adjudicated: `games/stardew` raw role spawn/kill implementations and broad boundary imports are the pre-existing Stardew consumer composition (approved depcruise lanes incl. `containment/runtime/{contract,core}`), belong to the Stardew consumer delegation task per this task's own scope line ("Stardew integration belongs to its own consumer delegation task"), and are unchanged by this predecessor. They do not block this broker task's closure but must be re-audited when that consumer task activates Task 3 process-owner delegation.
+- Baselines confirmed: `desktop-guardian-session.internal.ts` 2-line deletion remains other-lane WIP; `productionSpawn` `\\?\` prefix is the committed spawn-layer MAX_PATH fix (`9b9d47f`).
+
+### Blocking note (inter-lane, not this task)
+
+A parallel lane's in-flight `host/src/windows-stardew-installation-discovery/internal.ts` currently fails production tsc (TS6133/TS2532), which blocks the Desktop fixture's canonical artifact build and therefore the full runtime suite re-run. Verified clean: C# project compiles; prior full run `71/71` on the committed baseline. Re-run the suite once the discovery lane's WIP clears.
 
 ## Stop conditions
 
