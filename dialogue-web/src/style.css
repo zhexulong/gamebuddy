@@ -1322,6 +1322,48 @@ body {
   text-overflow: ellipsis;
 }
 
+[data-profile="management"] .management-settings-section {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-subtle);
+  background-color: var(--surface-panel);
+  padding: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+[data-profile="management"] .management-settings-section h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+[data-profile="management"] .management-settings-section p {
+  margin: 0;
+}
+
+[data-profile="management"] .management-settings-details {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+[data-profile="management"] .management-settings-details div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+[data-profile="management"] .management-settings-details dt {
+  color: var(--text-secondary);
+}
+
+[data-profile="management"] .management-settings-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 [data-profile="management"] .reference-draft-section {
   flex-shrink: 0;
   border-top: 1px solid var(--border-subtle);
