@@ -104,6 +104,8 @@ async function withProductionRuntimeContractProbe(run) {
     const source = await readFile(join(scriptRoot, "production-artifact.mjs"), "utf8");
     await writeFile(probePath, `${source}\nexport { copyVerifiedBundledRuntimeSource, publishProductionArtifactWithRuntimeCopier, currentGeneration, verifyCurrentRuntimeAdmissionAssociation, verifyRuntimeAdmission };\n`);
     await cp(join(scriptRoot, "production-artifact-esm-resolution-probe.mjs"), join(probeRoot, "production-artifact-esm-resolution-probe.mjs"));
+    // The probe copy resolves the shared voice fixture publisher relatively.
+    await cp(join(scriptRoot, "voice-artifact-fixture-publisher.mjs"), join(probeRoot, "voice-artifact-fixture-publisher.mjs"));
     return await run(await import(`${pathToFileURL(probePath).href}?test=${Date.now()}`));
   } finally { await rm(probeRoot, { recursive: true, force: true }); }
 }
@@ -1383,7 +1385,7 @@ test("Game launcher credentials are fresh, grammar-valid, child-only, and absent
 test("launcher rejects any environment-selected control handoff before child spawn", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "voice-artifact-fixture-publisher.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   await writeFile(join(emitted, "main.js"), 'import "typebox"; process.send?.({ schema: "ordinary-production-ipc", value: 1 }); setTimeout(() => process.exit(0), 40);');
@@ -1399,7 +1401,7 @@ test("launcher rejects any environment-selected control handoff before child spa
 test("launcher rejects a test-fixture runtime generation before relaying source evidence", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs", ])  await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "voice-artifact-fixture-publisher.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs", ])  await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   const valid = { schema: "gamebuddy-production-live-source-attestation/v1", evidence: { schema: "gamebuddy-production-live-source-attestation/v1", protocolVersion: 1, evidenceClass: "production_live_source_attestation", launchBindingSha256: "d".repeat(64), runtimeInstanceSha256: "a".repeat(64), kind: "stop_settled", sourceEventSha256: "b".repeat(64), batchIdSha256: null, stopIdSha256: "c".repeat(64), epoch: 1, disposition: null, observationRevision: null } };
@@ -1425,6 +1427,7 @@ test("active STOP proof receipt is wrapper-owned and leaves the Preview child li
   for (const script of [
     "active-stop-proof.mjs",
     "production-artifact.mjs",
+    "voice-artifact-fixture-publisher.mjs",
     "production-artifact-esm-resolution-probe.mjs",
     "production-control-launch.mjs",
     "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs",
@@ -1519,7 +1522,7 @@ else {
 test("non-D0 starter relays ordinary child IPC and leaves the child live", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "voice-artifact-fixture-publisher.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   await writeFile(join(emitted, "main.js"), 'import "typebox"; process.on("message", (message) => process.send?.({ schema: "ordinary-parent-ipc-ack", received: message })); process.send?.({ schema: "ordinary-production-ipc", value: 1 }); setTimeout(() => process.exit(0), 80);');
@@ -1540,7 +1543,7 @@ test("non-D0 starter relays ordinary child IPC and leaves the child live", async
 test("Task 9 starter relays one exact correlated task and one validated v2 terminal aggregate", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "voice-artifact-fixture-publisher.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   const nonceSha256 = "a".repeat(64);
@@ -1581,7 +1584,7 @@ process.on("message", (message) => {
 test("Task 9 starter rejects dispatch before ready and every malformed, foreign, or duplicate terminal protocol message", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "voice-artifact-fixture-publisher.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   const nonceSha256 = "b".repeat(64);
@@ -1629,7 +1632,7 @@ test("Task 9 starter rejects dispatch before ready and every malformed, foreign,
 test("Task 9 starter terminates its direct child when the parent IPC disconnects", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])
+  for (const script of ["production-artifact.mjs", "voice-artifact-fixture-publisher.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])
     await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
@@ -1658,7 +1661,7 @@ setInterval(() => undefined, 1000);
 test("starter forwards a fixed ingress stage from its immutable child stdout", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])
+  for (const script of ["production-artifact.mjs", "voice-artifact-fixture-publisher.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])
     await cp(join(scriptRoot, script), join(root, "scripts", script));
   await installArtifactTestDependencies(root);
   const emitted = await emit(root);
@@ -1678,7 +1681,7 @@ test("starter forwards a fixed ingress stage from its immutable child stdout", a
 test("starter accepts exactly one configured root then forwards config arguments", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
-  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
+  for (const script of ["production-artifact.mjs", "voice-artifact-fixture-publisher.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-test-artifact.mjs", "start-artifact.internal.mjs", "production-artifact-test-support.mjs", "node-runtime-release-acquisition.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
   // Use Host-local regular package directories in this isolated fixture.
   await installArtifactTestDependencies(root);
   const start = join(root, "scripts", "start-test-artifact.mjs");
