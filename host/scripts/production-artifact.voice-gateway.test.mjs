@@ -150,10 +150,10 @@ async function publishWithTestSupport({ root, outputRoot }) {
 const withFixture = async (run) => { const root = await fixture(); try { await run(root); } finally { await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } };
 const generationRoot = (outputRoot, generation) => join(outputRoot, "generations", generation);
 
-test("default production config never enables the voice gateway descriptor", async () => {
+test("production config carries the canonical voice gateway descriptor", async () => {
   const config = JSON.parse(await readFile(join(hostRoot, "production-artifact.config.json"), "utf8"));
   assert.equal(config.schema, "gamebuddy-host-production-artifact-config/v3");
-  assert.equal(Object.hasOwn(config, "voiceGateway"), false);
+  assert.deepEqual(config.voiceGateway, VOICE_GATEWAY_DESCRIPTOR);
 });
 
 test("voice gateway absent leaves the published generation voice-free with a stable inventory digest", async () => withFixture(async (root) => {

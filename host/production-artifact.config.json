@@ -121,5 +121,14 @@
       "manifest.json"
     ],
     "manifest": "manifest.json"
+  },
+  "voiceGateway": {
+    "kind": "verified_voice_gateway",
+    "entry": {
+      "destination": "voice-gateway/entry"
+    },
+    "protocol": {
+      "destination": "voice-gateway/protocol"
+    }
   }
 }
