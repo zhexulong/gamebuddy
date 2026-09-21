@@ -28,20 +28,25 @@ owner: architecture
 
 #### 1a. Surface 防耦合义务清单（dialogue-web）
 
-以下 obligation 由 `.dependency-cruiser.dialogue-web.cjs`（Tier-1 gate，已接入 `ci.yml`、`release-windows.yml`、`quality:check`）机械执行，规则均为 `error` 且保持默认失败语义；`tools/check-dialogue-web-boundaries.test.mjs` 同时验证：zone manifest（每个 src 文件恰好属于一个 surface）、drift ledger（违规集合必须精确等于文档化当前边）与负向 fixture（每条规则必须真的会触发）。
+以下 obligation 由 `.dependency-cruiser.dialogue-web.cjs`（Tier-1 gate，已接入 `ci.yml`、`release-windows.yml`、`quality:check`）机械执行，规则均为 `error` 且保持默认失败语义；`tools/check-dialogue-web-boundaries.test.mjs` 同时验证：zone manifest（每个 src 文件恰好属于一个 surface）、drift ledger（当前必须为空）与负向 fixture（每条规则必须真的会触发）。
+
+Zone 模型（lifecycle assemblies only）：三个 pane assembler —— `ReferenceApp`（Chat）、`ComposedReferenceGameApp`（Game）、`ManagementApp`（Management）——互不 import，各自拥有独立生命周期/状态/错误路径；被它们共享的是两类能力：**wire contract**（`reference-pipeline-api` + `reference-pipeline-session`，均为 React-free、依赖零、由 frozen `tavern_browser_api/v1`/composed profile 约束）与 **展示原语**（`MessageBubble`/`Timeline`/`ProblemView`/`SkipLink`/`Composer`/`ChatsDrawer`，纯 props 驱动、无 surface 生命周期）。
 
 | Obligation | 边界 | 语义 | 状态 |
 |---|---|---|---|
-| `no-chat-runtime-to-game-surface` | Chat 运行时 → Game | Chat 不得 import Game 内部 | 已落地 |
-| `no-chat-runtime-to-management-surface` | Chat 运行时 → Management | 同上 | 已落地 |
-| `no-game-surface-to-chat-runtime` | Game → Chat 运行时 | Game 只经 tavern wire contract 与 Chat 交流 | 已落地；ledger 5 条待 Loop 2 削减 |
+| `no-chat-runtime-to-game-surface` | Chat assembler → Game | Chat 不得 import Game 内部 | 已落地 |
+| `no-chat-runtime-to-management-surface` | Chat assembler → Management | 同上 | 已落地 |
+| `no-game-surface-to-chat-runtime` | Game → Chat assembler | Game 只经 tavern wire contract 与 Chat 交流 | 已落地 |
 | `no-game-surface-to-management-surface` | Game → Management | 同上 | 已落地 |
-| `no-management-surface-to-chat-runtime` | Management → Chat 运行时 | Management 只经 management wire 读状态 | 已落地；ledger 4 条待 Loop 2 削减 |
+| `no-management-surface-to-chat-runtime` | Management → Chat assembler | Management 只经 management wire 读状态 | 已落地 |
 | `no-management-surface-to-game-surface` | Management → Game | 同上 | 已落地 |
-| `no-contract-imports-surfaces` | wire contract 纯净 | `reference-pipeline-api` 保持零依赖 | 已落地 |
+| `no-contract-imports-surfaces` | wire contract 纯净 | `reference-pipeline-api`/`session` 保持零依赖且不 import surface/shared-ui | 已落地 |
+| `no-shared-ui-imports-surfaces` | 展示原语纯净 | props 原语不得 import 任何 surface assembler | 已落地 |
 | `no-shared-imports-surfaces` | leaf 纯净 | `i18n`/`types` 不得 import surface | 已落地 |
 | shell 唯一汇合点 | `main.tsx` | 唯一 allowed assembler，面不得反向依赖宿主 | 已落地 |
 | Voice ↔ Chat/Game | `voice-protocol` wire | Chat/Game 只 import wire，wire 不得 import chat/game | **留置**（voice owner 开发中） |
+
+**Drift ledger 状态：当前为空。** 三个 pane assembler 已生命周期隔离；gate 绿。任何新增跨 assembler 边、contract 杂质或展示原语反向依赖 surface 一律 fail。
 
 **Drift ledger 退役边界：** ledger 不是长期 baseline 或豁免。Loop 2（ChatPane/GamePane 解耦）完成时 ledger 必须削减为 0；每个 ledger 条目只能在切割该边的同一变更中移除。ledger 期间任何新增违规一律 fail。
 
