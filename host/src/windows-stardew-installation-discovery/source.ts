@@ -6,12 +6,12 @@ import { normalizeWindowsPath, parseLibraryFoldersVdf, STEAM_METADATA_MAX_BYTES,
 
 const execFileAsync = promisify(execFile);
 type SourceRoot = readonly ["steam-registry" | "steam-vdf", string];
-export type StardewSteamSourceFacts = Readonly<{
+type StardewSteamSourceFacts = Readonly<{
   roots: readonly SourceRoot[];
   diagnostics: readonly DiscoveryDiagnostic[];
 }>;
 export type StardewSteamSource = Readonly<{ read(): Promise<StardewSteamSourceFacts> }>;
-export type StardewWindowsSteamSourceInput = Readonly<{
+type StardewWindowsSteamSourceInput = Readonly<{
   platform?: NodeJS.Platform;
   readFile?: (path: string) => Promise<string>;
   readRegistryRoots?: () => Promise<readonly string[]>;

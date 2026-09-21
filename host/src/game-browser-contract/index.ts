@@ -248,7 +248,6 @@ export const GameDiscoveryReadResultV1Schema = strictObject({
   candidates: Type.Array(GameCandidateV1Schema, { maxItems: 64 }),
   diagnostics: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 32 }),
 });
-export const GameDiscoveryCommandV1Schema = strictObject({ apiVersion: ApiVersion });
 export const GameDiscoveryConfirmCommandV1Schema = strictObject({ apiVersion: ApiVersion, candidateId: OpaqueHandle });
 export const GameDiscoveryActionCommandV1Schema = strictObject({ apiVersion: ApiVersion });
 
@@ -573,7 +572,6 @@ export const GameBrowserContractV1 = Object.freeze({
     GameReopenActionAuthorityResultV1Schema,
     GameDiagnosticsReadCommandV1Schema,
     GameDiscoveryReadResultV1Schema,
-    GameDiscoveryCommandV1Schema,
     GameDiscoveryConfirmCommandV1Schema,
     GameDiscoveryActionCommandV1Schema,
     GameDiscoveryMutationResultV1Schema,
@@ -595,9 +593,7 @@ export const GameBrowserValidatorsV1: Readonly<Record<keyof typeof GameBrowserCo
 
 export type GameOperationId = (typeof GAME_BROWSER_OPERATION_IDS_V1)[number];
 export type GameDiscoveryReadResultV1 = Static<typeof GameDiscoveryReadResultV1Schema>;
-export type GameDiscoveryCommandV1 = Static<typeof GameDiscoveryCommandV1Schema>;
 export type GameDiscoveryConfirmCommandV1 = Static<typeof GameDiscoveryConfirmCommandV1Schema>;
-export type GameDiscoveryActionCommandV1 = Static<typeof GameDiscoveryActionCommandV1Schema>;
 export type GameBrowserStateV1 = Static<typeof GameBrowserStateV1Schema>;
 export type GamePrerequisitesSetupCommandV1 = Static<typeof GamePrerequisitesSetupCommandV1Schema>;
 export type GameLaunchCommandV1 = Static<typeof GameLaunchCommandV1Schema>;
