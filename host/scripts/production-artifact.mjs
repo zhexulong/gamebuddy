@@ -121,6 +121,10 @@ const VOICE_GATEWAY = Object.freeze({
   entry: { destination: "voice-gateway/entry" },
   protocol: { destination: "voice-gateway/protocol" },
 });
+/** PowerShell helpers the bundled entry spawns through `-File`; they are
+ * staged next to the entry (voice-gateway/) so the bundle's relative
+ * `../windows-*.ps1` URL resolves inside the immutable generation. */
+const VOICE_GATEWAY_HELPER_SCRIPTS = Object.freeze(["windows-waveout.ps1", "windows-wavein.ps1"]);
 const exactKeys = (value, keys) => value !== null && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const artifactRelativeModule = (artifactRoot, importer, specifier, artifactFileSet) => {
@@ -755,12 +759,12 @@ async function verifiedStardewModPackageOrigins({ stagingRoot, descriptor }) {
   }
   return origins;
 }
-/** Stages the voice gateway entry and protocol from the fixed repository
- * release bundle into the generation staging root and returns the verified
- * origin facts. Sources are the fixed repository locations (not the
- * caller-supplied hostRoot), so test fixtures on a temporary root and
- * production builds resolve the same files — the same rule
- * `ensureStardewModPackage` follows. Missing, multi-file, traversal or
+/** Stages the voice gateway entry, protocol and native PowerShell helpers
+ * from the fixed repository release bundle into the generation staging root
+ * and returns the verified origin facts. Sources are the fixed repository
+ * locations (not the caller-supplied hostRoot), so test fixtures on a
+ * temporary root and production builds resolve the same files — the same
+ * rule `ensureStardewModPackage` follows. Missing, multi-file, traversal or
  * symlinked sources fail closed through the shared fixture publisher, and
  * the read-only admission check re-verifies the staged copy before inventory
  * creation. */
@@ -775,12 +779,28 @@ async function ensureVoiceGateway({ stagingRoot, descriptor, generation, voiceDi
       protocol: { source: resolve(distRoot, "protocol"), destination: descriptor.protocol.destination },
     },
   });
+  const destinationRoot = resolve(stagingRoot, "voice-gateway");
+  await safeAncestors(stagingRoot, destinationRoot, "voice_helper_destination");
+  await mkdir(destinationRoot, { recursive: true });
+  for (const scriptName of VOICE_GATEWAY_HELPER_SCRIPTS) {
+    const source = resolve(distRoot, scriptName);
+    await regular(source, "voice_helper");
+    await copyFile(source, resolve(destinationRoot, scriptName));
+    await regular(resolve(destinationRoot, scriptName), "voice_helper");
+  }
   return verifiedVoiceGatewayOrigins({ stagingRoot, descriptor });
 }
 async function verifiedVoiceGatewayOrigins({ stagingRoot, descriptor }) {
   const verified = await verifyPublishedVoiceGateway({ artifactRoot: stagingRoot, descriptor });
   const origin = Object.freeze({ kind: descriptor.kind, entryPath: verified.entryPath, entrySha256: verified.entrySha256, protocolPath: verified.protocolPath, protocolSha256: verified.protocolSha256 });
-  return new Map([[verified.entryPath, origin], [verified.protocolPath, origin]]);
+  const origins = new Map([[verified.entryPath, origin], [verified.protocolPath, origin]]);
+  for (const scriptName of VOICE_GATEWAY_HELPER_SCRIPTS) {
+    const helperPath = `voice-gateway/${scriptName}`;
+    await regular(resolve(stagingRoot, helperPath), "voice_helper");
+    const helperDigest = digest(await readFile(resolve(stagingRoot, helperPath)));
+    origins.set(helperPath, Object.freeze({ kind: descriptor.kind, helper: scriptName, helperSha256: helperDigest }));
+  }
+  return origins;
 }
 function windowsBootstrapGuardianOrigin(descriptor, helperSha256) {
   return Object.freeze({ kind: descriptor.kind, destination: descriptor.destination, helper: descriptor.helper, manifest: descriptor.manifest, helperSha256 });
