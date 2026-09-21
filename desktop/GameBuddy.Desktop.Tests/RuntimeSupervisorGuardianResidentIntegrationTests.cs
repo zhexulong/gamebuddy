@@ -125,6 +125,7 @@ public sealed class RuntimeSupervisorGuardianResidentIntegrationTests
                 var registration = new CurrentUserRootRegistrationRecord(CurrentUserRootRegistration.SchemaVersion, generation.ProgramRoot,
                     Path.Combine(generation.LocalApplicationData, "GameBuddy", "data"), Path.Combine(generation.LocalApplicationData, "GameBuddy", "operational"), Path.Combine(generation.LocalApplicationData, "GameBuddy", "presentation"));
                 foreach (var path in new[] { registration.DataRoot, registration.OperationalRoot, registration.PresentationRoot }) Directory.CreateDirectory(path);
+                TestDeploymentManifest.WriteDeploymentManifest(registration.OperationalRoot);
                 var layout = CurrentUserRootLayout.DeriveForTesting(registration, new LocalApplicationDataProvider(generation.LocalApplicationData));
                 selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
                 runtime = new InstalledHostRuntimeAdmission().Admit(selection);

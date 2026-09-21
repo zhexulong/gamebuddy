@@ -1,3 +1,4 @@
+using System.Collections;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -35,6 +36,13 @@ try
         reportWriter.WritePropertyName("frame");
         frame.WriteTo(reportWriter);
         reportWriter.WriteString("executablePath", Environment.ProcessPath);
+        reportWriter.WritePropertyName("environment");
+        reportWriter.WriteStartObject();
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            reportWriter.WriteString((string)entry.Key, (string?)entry.Value);
+        }
+        reportWriter.WriteEndObject();
         reportWriter.WriteEndObject();
     }
     File.WriteAllBytes(reportPath, report.ToArray());
