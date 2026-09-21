@@ -1,0 +1,10 @@
+{
+  "schema": "gamebuddy-voice-bundle-live-rehearsal/v1",
+  "passed": true,
+  "reason": "ok",
+  "persona": "soft_maid",
+  "terminalStatus": "completed",
+  "audioEndMs": 4960,
+  "playoutStatsLine": null,
+  "childReadyLine": "GameBuddy Voice Gateway listening on 127.0.0.1:49744 (protocol v1; voice ready)."
+}

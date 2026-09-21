@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolvePowerShellExecutable } from "./windows-powershell.js";
+
 const MAX_CAPTURE_BYTES = 960_000;
 const POWERSHELL_TIMEOUT_MS = 65_000;
 const SCRIPT_PATH = fileURLToPath(new URL("../windows-wavein.ps1", import.meta.url));
@@ -407,7 +409,7 @@ function isMissingPath(error: unknown): boolean {
 function runPowerShell(arguments_: readonly string[], signal: AbortSignal): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(
-      "powershell.exe",
+      resolvePowerShellExecutable(),
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", SCRIPT_PATH, ...arguments_],
       { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
     );
