@@ -22,7 +22,28 @@ owner: architecture
 
 ### 1. 独立产品 Surface 隔离
 * **Chat 与 Game 并行独立：** Chat UI/Session 与 Game UI/Session 拥有独立的生命周期、状态和恢复路径。一方不得接管、暂停或恢复另一方。
+* **Management 独立 manufacturing：** Management 面（chat/voice/game 的配置、内存、人物、凭据管理与导入导出）是独立 surface，不得 import Chat 或 Game 运行时内部；它只经自己的 management wire contract 读产品状态。
+* **VOICE（留置）：** Voice 是跨表面能力，不是 Chat/Game 的私有实现；Chat/Game 只经 `voice-protocol` wire 消费它。Voice 由 voice owner 当前开发中，wire 冻结后落地防耦合规则。
 * **桌面环境防脱轨：** Desktop shell 持有 installed generation selection、runtime admission、Guardian launch/supervision 和桌面生命周期边界；Host distribution 持有 production generation composition、provenance 和 generation/artifact publication authority。该 publication authority 不包含游戏 capability membership 或 native execution authority。两者都不得依赖未受治理的系统 PATH 或环境隐式回退。
+
+#### 1a. Surface 防耦合义务清单（dialogue-web）
+
+以下 obligation 由 `.dependency-cruiser.dialogue-web.cjs`（Tier-1 gate，已接入 `ci.yml`、`release-windows.yml`、`quality:check`）机械执行，规则均为 `error` 且保持默认失败语义；`tools/check-dialogue-web-boundaries.test.mjs` 同时验证：zone manifest（每个 src 文件恰好属于一个 surface）、drift ledger（违规集合必须精确等于文档化当前边）与负向 fixture（每条规则必须真的会触发）。
+
+| Obligation | 边界 | 语义 | 状态 |
+|---|---|---|---|
+| `no-chat-runtime-to-game-surface` | Chat 运行时 → Game | Chat 不得 import Game 内部 | 已落地 |
+| `no-chat-runtime-to-management-surface` | Chat 运行时 → Management | 同上 | 已落地 |
+| `no-game-surface-to-chat-runtime` | Game → Chat 运行时 | Game 只经 tavern wire contract 与 Chat 交流 | 已落地；ledger 5 条待 Loop 2 削减 |
+| `no-game-surface-to-management-surface` | Game → Management | 同上 | 已落地 |
+| `no-management-surface-to-chat-runtime` | Management → Chat 运行时 | Management 只经 management wire 读状态 | 已落地；ledger 4 条待 Loop 2 削减 |
+| `no-management-surface-to-game-surface` | Management → Game | 同上 | 已落地 |
+| `no-contract-imports-surfaces` | wire contract 纯净 | `reference-pipeline-api` 保持零依赖 | 已落地 |
+| `no-shared-imports-surfaces` | leaf 纯净 | `i18n`/`types` 不得 import surface | 已落地 |
+| shell 唯一汇合点 | `main.tsx` | 唯一 allowed assembler，面不得反向依赖宿主 | 已落地 |
+| Voice ↔ Chat/Game | `voice-protocol` wire | Chat/Game 只 import wire，wire 不得 import chat/game | **留置**（voice owner 开发中） |
+
+**Drift ledger 退役边界：** ledger 不是长期 baseline 或豁免。Loop 2（ChatPane/GamePane 解耦）完成时 ledger 必须削减为 0；每个 ledger 条目只能在切割该边的同一变更中移除。ledger 期间任何新增违规一律 fail。
 
 ### 2. 游戏能力生产权威（Capability Authority）
 * **Mod 侧为能力源头：** Mod 的 action registrations 和 live enabled policy 生成唯一 immutable capability surface；游戏能力的生产权威归属于 Mod/游戏线程。Stardew-specific owner chain 见 [Stardew integration](../domains/stardew/integration.md)；当前实现中的注册来源和发布类型由该 owner 与 [Game Action 模型](game-action-model.md) 定义，治理政策不另行指定代码类型名。

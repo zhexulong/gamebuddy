@@ -60,11 +60,15 @@ const GOLDEN = {
  * deliberately in the same change that cuts the edge).
  */
 const DRIFT_LEDGER = [
-  ["no-game-surface-to-chat-side", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/Composer.tsx"],
-  ["no-game-surface-to-chat-side", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/ProblemView.tsx"],
-  ["no-game-surface-to-chat-side", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/SkipLink.tsx"],
-  ["no-game-surface-to-chat-side", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/Timeline.tsx"],
-  ["no-game-surface-to-chat-side", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/reference-pipeline-session.ts"],
+  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/Composer.tsx"],
+  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/ProblemView.tsx"],
+  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/SkipLink.tsx"],
+  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/Timeline.tsx"],
+  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/reference-pipeline-session.ts"],
+  ["no-management-surface-to-chat-runtime", "dialogue-web/src/components/ManagementApp.tsx", "dialogue-web/src/components/drawers/ChatsDrawer.tsx"],
+  ["no-management-surface-to-chat-runtime", "dialogue-web/src/components/ManagementApp.tsx", "dialogue-web/src/components/ProblemView.tsx"],
+  ["no-management-surface-to-chat-runtime", "dialogue-web/src/components/ManagementApp.tsx", "dialogue-web/src/components/SkipLink.tsx"],
+  ["no-management-surface-to-chat-runtime", "dialogue-web/src/components/ManagementApp.tsx", "dialogue-web/src/components/Timeline.tsx"],
 ];
 
 function depcruiseBin() {
@@ -195,21 +199,24 @@ test("boundary rules actually fire on a fixture violating every direction", () =
     };
     // contract imports a game module → no-contract-imports-surfaces
     write("src/reference-pipeline-api.ts", 'import "./components/ComposedReferenceGameApp";\n');
-    // chat runtime → game → no-chat-side-to-game-surface
-    write("src/reference-pipeline-session.ts", 'import "./reference-pipeline-api";\n');
-    write("src/components/Composer.tsx", 'import "../reference-pipeline-session";\n');
+    // chat runtime → game → no-chat-runtime-to-game-surface
+    write("src/reference-pipeline-session.ts", 'import "./components/ComposedReferenceGameApp";\n');
+    // chat runtime → management → no-chat-runtime-to-management-surface
+    write("src/components/Composer.tsx", 'import "../reference-pipeline-session";\nimport "./ManagementApp";\n');
     write("src/components/ReferenceApp.tsx", 'import "./ComposedReferenceGameApp";\n');
     write("src/components/MessageBubble.tsx", "");
     write("src/components/Timeline.tsx", "");
     write("src/components/ProblemView.tsx", "");
     write("src/components/SkipLink.tsx", "");
     write("src/components/drawers/ChatsDrawer.tsx", "");
-    // game → chat runtime + management → game
-    write("src/components/ComposedReferenceGameApp.tsx", 'import "../reference-pipeline-session";\n');
-    write("src/components/StardewInstallationDiscovery.tsx", 'import "../reference-pipeline-api";\n');
-    write("src/management-pipeline-api.ts", "");
+    // chat runtime → management → no-chat-runtime-to-management-surface
+    write("src/components/ManagementApp.tsx", 'import "./Composer";\n');
+    // management → chat runtime → no-management-surface-to-chat-runtime
+    write("src/management-pipeline-api.ts", 'import "./reference-pipeline-session";\n');
     write("src/management-pipeline-session.ts", "");
-    write("src/components/ManagementApp.tsx", 'import "./ComposedReferenceGameApp";\n');
+    // game → chat runtime + management
+    write("src/components/ComposedReferenceGameApp.tsx", 'import "../reference-pipeline-session";\nimport "../components/ManagementApp";\n');
+    write("src/components/StardewInstallationDiscovery.tsx", 'import "../reference-pipeline-api";\n');
     // shared → chat runtime
     write("src/i18n.ts", 'import "./reference-pipeline-session";\n');
     write("src/types.ts", "");
@@ -226,7 +233,7 @@ test("boundary rules actually fire on a fixture violating every direction", () =
     const rulesFired = new Set(violations.map(([rule]) => rule));
     assert.deepEqual(
       [...rulesFired].sort(),
-      ["no-chat-side-to-game-surface", "no-contract-imports-surfaces", "no-game-surface-to-chat-side", "no-shared-imports-surfaces"].sort(),
+      ["no-chat-runtime-to-game-surface", "no-chat-runtime-to-management-surface", "no-contract-imports-surfaces", "no-game-surface-to-chat-runtime", "no-game-surface-to-management-surface", "no-management-surface-to-chat-runtime", "no-shared-imports-surfaces"].sort(),
       `fixture must fire all four surrogate rules; fired: ${[...rulesFired].join(", ")}`,
     );
   } finally {
