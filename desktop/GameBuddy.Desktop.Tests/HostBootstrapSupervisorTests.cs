@@ -20,6 +20,7 @@ public sealed class HostBootstrapSupervisorTests
             Path.Combine(generation.LocalApplicationData, "GameBuddy", "operational"),
             Path.Combine(generation.LocalApplicationData, "GameBuddy", "presentation"));
         foreach (var path in new[] { registration.DataRoot, registration.OperationalRoot, registration.PresentationRoot }) Directory.CreateDirectory(path);
+        TestDeploymentManifest.WriteDeploymentManifest(registration.OperationalRoot);
         var layout = CurrentUserRootLayout.DeriveForTesting(registration, new LocalApplicationDataProvider(generation.LocalApplicationData));
 
         await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
@@ -46,6 +47,22 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Equal(layout.PresentationRoot, rootLayout.GetProperty("presentationRoot").GetString());
         Assert.Equal(NormalizeWindowsPath(generation.ExactChildRuntimePath), NormalizeWindowsPath(report.RootElement.GetProperty("executablePath").GetString()!));
         Assert.True(new FileInfo(generation.ExactChildRuntimePath).Length < 33_554_432);
+
+        // The child environment is wholly replaced by the governed bootstrap block:
+        // the admitted bundled Host must receive the frozen wire environment and
+        // nothing inherited from the launcher, and no narrative nonce by default.
+        var environment = report.RootElement.GetProperty("environment");
+        Assert.Equal(
+            new[] { "GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST", "GAMEBUDDY_HOST_GAME_SESSION_MODE", "GAMEBUDDY_HOST_SURFACE", "LOCALAPPDATA", "SystemRoot", "TEMP", "TMP" },
+            environment.EnumerateObject().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal));
+        Assert.Equal(Path.Combine(layout.OperationalRoot, "deployment-manifest.json"), environment.GetProperty("GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST").GetString());
+        Assert.Equal("fresh", environment.GetProperty("GAMEBUDDY_HOST_GAME_SESSION_MODE").GetString());
+        Assert.Equal("composed-reference-game", environment.GetProperty("GAMEBUDDY_HOST_SURFACE").GetString());
+        Assert.DoesNotContain(environment.EnumerateObject(), property => property.Name == "GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256");
+        Assert.Equal(Environment.GetEnvironmentVariable("SystemRoot"), environment.GetProperty("SystemRoot").GetString());
+        Assert.Equal(Environment.GetEnvironmentVariable("TEMP"), environment.GetProperty("TEMP").GetString());
+        Assert.Equal(Environment.GetEnvironmentVariable("TMP"), environment.GetProperty("TMP").GetString());
+        Assert.Equal(Environment.GetEnvironmentVariable("LOCALAPPDATA"), environment.GetProperty("LOCALAPPDATA").GetString());
 
         using var livenessTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lease.WaitForExitAsync(livenessTimeout.Token));

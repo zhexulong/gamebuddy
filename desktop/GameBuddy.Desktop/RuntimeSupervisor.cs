@@ -10,12 +10,13 @@ namespace GameBuddy.Desktop;
 internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxWireBytes = 32_768;
+    private const string DeploymentManifestFileName = "deployment-manifest.json";
     private static readonly TimeSpan BootstrapTimeout = TimeSpan.FromSeconds(30);
 
     // Test-only hooks. Production composition neither sets nor exposes them.
     internal Func<Task>? BeforeFrameWriteForTesting { get; set; }
 
-    internal async Task<RuntimeSupervisorLease> StartHostAsync(InstalledGenerationSelection selection, AdmittedHostRuntime runtime, CurrentUserRootLayout layout, CancellationToken cancellationToken)
+    internal async Task<RuntimeSupervisorLease> StartHostAsync(InstalledGenerationSelection selection, AdmittedHostRuntime runtime, CurrentUserRootLayout layout, CancellationToken cancellationToken, HostBootstrapEnvironmentOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(selection);
         ArgumentNullException.ThrowIfNull(runtime);
@@ -39,7 +40,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         {
             runtime.VerifyStillLocked();
             CreateBootstrapPipes(out childStdinReader, out parentStdinWriter, out parentStdoutReader, out childStdoutWriter);
-            var environmentBlock = BuildBootstrapEnvironment();
+            var environmentBlock = BuildBootstrapEnvironment(layout, options);
             environment = Marshal.StringToHGlobalUni(environmentBlock);
 
             _ = WindowsNative.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeSize);
@@ -167,17 +168,40 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         }
     }
 
-    private static string BuildBootstrapEnvironment()
+    internal static string BuildBootstrapEnvironment(CurrentUserRootLayout layout, HostBootstrapEnvironmentOptions? options = null)
     {
+        ArgumentNullException.ThrowIfNull(layout);
+        options ??= new HostBootstrapEnvironmentOptions();
+
+        // The manifest content authority stays with the Host (loadHostDeploymentManifest);
+        // the Desktop only fails closed when the provisioning-written file is provably absent,
+        // so a launch that can never enter composition fails before the handshake starts.
+        var manifestPath = Path.Combine(layout.OperationalRoot, DeploymentManifestFileName);
+        if (!File.Exists(manifestPath)) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+        if (options.GameSessionMode is not (HostBootstrapEnvironmentOptions.FreshGameSessionMode or HostBootstrapEnvironmentOptions.KnownGameSessionMode))
+            throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+        if (options.Surface is not (HostBootstrapEnvironmentOptions.ComposedReferenceGameSurface or HostBootstrapEnvironmentOptions.ChatOnlySurface or HostBootstrapEnvironmentOptions.ManagementSurface))
+            throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+        var nonce = options.TavernNarrativeGateNonceSha256;
+        if (nonce is not null && !ValidTavernNarrativeGateNonceSha256(nonce))
+            throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+
         var values = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["SystemRoot"] = RequiredEnvironment("SystemRoot"),
             ["TEMP"] = RequiredEnvironment("TEMP"),
             ["TMP"] = RequiredEnvironment("TMP"),
             ["LOCALAPPDATA"] = RequiredEnvironment("LOCALAPPDATA"),
+            ["GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST"] = manifestPath,
+            ["GAMEBUDDY_HOST_GAME_SESSION_MODE"] = options.GameSessionMode,
+            ["GAMEBUDDY_HOST_SURFACE"] = options.Surface,
         };
+        if (nonce is not null) values["GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256"] = nonce;
         return string.Concat(values.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => $"{item.Key}={item.Value}\0")) + "\0";
     }
+
+    private static bool ValidTavernNarrativeGateNonceSha256(string value) =>
+        value.Length == 64 && value.All(static character => (character >= 'a' && character <= 'f') || (character >= '0' && character <= '9'));
 
     private static string RequiredEnvironment(string name)
     {
