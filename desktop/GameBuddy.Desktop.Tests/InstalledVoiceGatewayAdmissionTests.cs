@@ -12,7 +12,9 @@ public sealed class InstalledVoiceGatewayAdmissionTests
         using var root = TemporaryRoot.Create();
         var entry = root.Write("voice/entry.js", "entry");
         var protocol = root.Write("voice/protocol.js", "protocol");
-        root.WriteSidecar("g-test-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b".PadLeft(64, 'a'), "voice/entry.js", entry, "voice/protocol.js", protocol);
+        root.WriteSidecar("g-test-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b".PadLeft(64, 'a'),
+            "voice/entry.js", root.Digest("voice/entry.js"),
+            "voice/protocol.js", root.Digest("voice/protocol.js"));
 
         var admitted = new InstalledVoiceGatewayAdmission().Admit(root.Path, "g-test-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b".PadLeft(64, 'a'));
 
@@ -26,9 +28,9 @@ public sealed class InstalledVoiceGatewayAdmissionTests
     public void Admit_rejects_wrong_binding(string field)
     {
         using var root = TemporaryRoot.Create();
-        var entry = root.Write("entry.js", "entry");
-        var protocol = root.Write("protocol.js", "protocol");
-        root.WriteSidecar("g", "d", "entry.js", entry, "protocol.js", protocol);
+        root.Write("entry.js", "entry");
+        root.Write("protocol.js", "protocol");
+        root.WriteSidecar("g", "d", "entry.js", root.Digest("entry.js"), "protocol.js", root.Digest("protocol.js"));
         Assert.Throws<GuardianLaunchUnavailableException>(() => new InstalledVoiceGatewayAdmission().Admit(root.Path, field == "generation" ? "other" : "g", field == "inventoryDigest" ? "other" : "d"));
     }
 
@@ -39,9 +41,9 @@ public sealed class InstalledVoiceGatewayAdmissionTests
         Assert.Throws<GuardianLaunchUnavailableException>(() => new InstalledVoiceGatewayAdmission().Admit(root.Path, "g", "d"));
         var entry = root.Write("entry.js", "entry");
         var protocol = root.Write("protocol.js", "protocol");
-        root.WriteSidecar("g", "d", "entry.js", entry, "missing.js", "0".PadLeft(64, '0'));
+        root.WriteSidecar("g", "d", "entry.js", root.Digest("entry.js"), "missing.js", "0".PadLeft(64, '0'));
         Assert.Throws<GuardianLaunchUnavailableException>(() => new InstalledVoiceGatewayAdmission().Admit(root.Path, "g", "d"));
-        root.WriteSidecar("g", "d", "entry.js", "0".PadLeft(64, '0'), "protocol.js", protocol);
+        root.WriteSidecar("g", "d", "entry.js", "0".PadLeft(64, '0'), "protocol.js", root.Digest("protocol.js"));
         Assert.Throws<GuardianLaunchUnavailableException>(() => new InstalledVoiceGatewayAdmission().Admit(root.Path, "g", "d"));
     }
 
@@ -49,9 +51,9 @@ public sealed class InstalledVoiceGatewayAdmissionTests
     public void Admit_rejects_traversal_and_unknown_keys()
     {
         using var root = TemporaryRoot.Create();
-        var entry = root.Write("entry.js", "entry");
-        var protocol = root.Write("protocol.js", "protocol");
-        root.WriteSidecar("g", "d", "../entry.js", entry, "protocol.js", protocol, unknown: true);
+        root.Write("entry.js", "entry");
+        root.Write("protocol.js", "protocol");
+        root.WriteSidecar("g", "d", "../entry.js", root.Digest("entry.js"), "protocol.js", root.Digest("protocol.js"), unknown: true);
         Assert.Throws<GuardianLaunchUnavailableException>(() => new InstalledVoiceGatewayAdmission().Admit(root.Path, "g", "d"));
     }
 
@@ -60,6 +62,7 @@ public sealed class InstalledVoiceGatewayAdmissionTests
         internal string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName());
         internal static TemporaryRoot Create() { var root = new TemporaryRoot(); Directory.CreateDirectory(root.Path); return root; }
         internal string Write(string relative, string content) { var path = System.IO.Path.Combine(Path, relative.Replace('/', System.IO.Path.DirectorySeparatorChar)); Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!); File.WriteAllText(path, content); return path; }
+        internal string Digest(string relative) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(System.IO.Path.Combine(Path, relative.Replace('/', System.IO.Path.DirectorySeparatorChar))))).ToLowerInvariant();
         internal void WriteSidecar(string generation, string digest, string entryPath, string entryDigest, string protocolPath, string protocolDigest, bool unknown = false) => File.WriteAllText(System.IO.Path.Combine(Path, "voice-gateway-admission.json"), JsonSerializer.Serialize(new { schema = "gamebuddy-host-voice-gateway-admission/v1", generation, inventoryDigest = digest, entryPath, entrySha256 = entryDigest.Length == 64 ? entryDigest : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(System.IO.Path.Combine(Path, entryPath.Replace('/', System.IO.Path.DirectorySeparatorChar))))).ToLowerInvariant(), protocolPath, protocolSha256 = protocolDigest.Length == 64 ? protocolDigest : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(System.IO.Path.Combine(Path, protocolPath.Replace('/', System.IO.Path.DirectorySeparatorChar))))).ToLowerInvariant(), nodeVersion = "v24.20.0", platform = "win32", arch = "x64", extra = unknown ? "x" : null }, new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull }));
         public void Dispose() { if (Directory.Exists(Path)) Directory.Delete(Path, true); }
     }
