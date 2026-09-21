@@ -113,6 +113,10 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   #capabilities: readonly string[] = [];
   #catalogRegistrations: readonly ActionRegistration[] = [];
   #snapshot: Snapshot | null = null;
+  /** True right after an unsolicited receipt advanced only the revision: the
+   * cached world fields still describe the pre-action location until a fresh
+   * solicited snapshot admits (same revision allowed) and replaces them. */
+  #snapshotPlaceholder = false;
   #catalogRevision: number | undefined;
   #policyIdentity: FarmhandPolicyIdentity | undefined;
   readonly #acceptedPolicyIdentityValues = new Set<string>();
@@ -665,8 +669,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         this.transport.close("invalid_hello_ack");
         return;
       }
-      this.#snapshot = null;
-      this.#initialSnapshotReceived = false;
+  this.#snapshot = null;
+  this.#snapshotPlaceholder = false;
+  this.#initialSnapshotReceived = false;
       this.#latestReceipt = null;
        this.#catalogRevision = message.payload.catalogRevision;
        this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
@@ -735,6 +740,23 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       if (snapshotAdmitted) this.#initialSnapshotReceived = true;
     } else if (message.type === "execution_receipt" && !isSolicitedReceiptQueryResponse) {
       this.#latestReceipt = message.payload;
+      // The Mod mints a fresh revision for every durable execution receipt and
+      // the presentation gate requires expectedRevision == executions.Revision.
+      // Synchronize the admitted snapshot's monotonic revision (nothing else)
+      // so an Agent turn that drove a native action can still present its
+      // companion text without an extra observe race. Never rewrite world
+      // fields; a later fresh observe reconciles the full projection.
+      const currentSnapshot = this.#snapshot;
+      if (currentSnapshot !== null && message.payload.revision > currentSnapshot.revision) {
+        this.#snapshot = Object.freeze({
+          ...currentSnapshot,
+          revision: message.payload.revision,
+        });
+        // The revision advanced but the world fields are still from before the
+        // action; a fresh solicited snapshot with the same revision must be
+        // admitted so the Agent observes the actual new location.
+        this.#snapshotPlaceholder = true;
+      }
     } else if (message.type === "semantic_event" || message.type === "lifecycle" || message.type === "error") {
       this.#latestReasonCode = message.payload.reasonCode;
     }
@@ -776,10 +798,15 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   }
 
   private acceptSnapshot(snapshot: Snapshot): boolean {
+    // A placeholder revision advanced by an unsolicited receipt admits an equal
+    // fresh snapshot (same revision, real world fields); an older or equal
+    // non-placeholder snapshot stays fail-closed.
     if (
       snapshot.catalogRevision !== this.#catalogRevision ||
       !sameActionIds(snapshot.enabledActionIds, this.#enabledActionIds ?? []) ||
-      (this.#snapshot !== null && snapshot.revision <= this.#snapshot.revision)
+      (this.#snapshot !== null &&
+        (snapshot.revision < this.#snapshot.revision ||
+          (snapshot.revision === this.#snapshot.revision && !this.#snapshotPlaceholder)))
     )
       return false;
     this.#snapshot = Object.freeze({
@@ -787,6 +814,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       capabilities: Object.freeze([...snapshot.capabilities]),
       enabledActionIds: Object.freeze([...snapshot.enabledActionIds]),
     });
+    this.#snapshotPlaceholder = false;
     return true;
   }
 

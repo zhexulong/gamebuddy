@@ -801,7 +801,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -828,6 +828,51 @@ public sealed partial class ModEntry : Mod
             }
             if (player.MaxItems < 36)
                 player.increaseBackpackSize(36 - player.MaxItems);
+
+            if (fixture.FixtureScenario == "native_machine_navigate_ab_v1")
+            {
+                // Ladder 1: real body movement before work. The player stays in
+                // the initial FarmHouse; this fixture places one idle Keg on the
+                // Bus Stop door landing (Farm→BusStop native warp target) so a
+                // real navigate_to_destination("Bus Stop") walk crosses the map
+                // and stops one tile from the machine. Coffee Beans stay in the
+                // backpack. Production alone navigates, inspects, loads and
+                // emits receipts; no travel/inspect/load/result mutation
+                // happens here.
+                GameLocation? busStop = Game1.locations?.FirstOrDefault(location => location is StardewValley.Locations.BusStop);
+                if (busStop is null)
+                    throw new InvalidOperationException("fixture_native_local_machine_navigate_busstop_missing");
+                StardewValley.Warp? busDoorWarp = busStop.warps.FirstOrDefault(warp => !warp.npcOnly.Value
+                    && string.Equals(warp.TargetName, farm.Name, StringComparison.Ordinal));
+                if (busDoorWarp is null || busDoorWarp.X < 0 || busDoorWarp.Y < 0)
+                    throw new InvalidOperationException("fixture_native_local_machine_navigate_busstop_warp_missing");
+                // The real navigate_to_destination("Bus Stop") walk lands at the
+                // spot native navigation confirmed on this target version (the
+                // door warp exists but completion parks the actor on the map's
+                // confirmed landing, Bus Stop 11,23 — verified by the live probe
+                // and the historical navigation gate tile log). The Keg must sit
+                // within its Chebyshev-1 window (IsMachineTargetInRange).
+                Vector2 navigateLanding = new(11f, 23f);
+                Vector2? kegTile = FindNativeLocalFarmFixtureTile(busStop, navigateLanding, 1, requireEmptyObjectTile: true);
+                if (kegTile is null)
+                    throw new InvalidOperationException("fixture_native_local_machine_navigate_keg_placement_missing");
+                StardewValley.Object keg = ItemRegistry.Create<StardewValley.Object>("(BC)12", 1);
+                // The Keg may sit beyond the player's dropObject reach from the
+                // spawn tile; direct add (as rock/artifact fixtures do) after
+                // ItemRegistry creates the full native machine data.
+                if (keg.GetMachineData() is null || busStop.objects.ContainsKey(kegTile.Value))
+                    throw new InvalidOperationException("fixture_native_local_machine_navigate_keg_setup_missing");
+                busStop.objects.Add(kegTile.Value, keg);
+                if (!busStop.objects.TryGetValue(kegTile.Value, out StardewValley.Object? placedKeg)
+                    || !ReferenceEquals(keg, placedKeg) || placedKeg.GetMachineData() is null)
+                    throw new InvalidOperationException("fixture_native_local_machine_navigate_keg_setup_missing");
+                StardewValley.Object coffeeBeans = ItemRegistry.Create<StardewValley.Object>("(O)433", 5);
+                if (player.addItemToInventory(coffeeBeans) is not null || player.Items.OfType<StardewValley.Object>().Count(item => item.QualifiedItemId == "(O)433" && item.Stack == 5) != 1)
+                    throw new InvalidOperationException("fixture_native_local_machine_navigate_coffee_input_missing");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized machine-navigate-ab precondition before bridge attachment: keg={placedKeg.QualifiedItemId}; keg_tile={(int)kegTile.Value.X},{(int)kegTile.Value.Y}; busstop_landing={(int)navigateLanding.X},{(int)navigateLanding.Y}; coffee_stack=5; production alone navigates to Bus Stop, inspects and loads.", LogLevel.Info);
+                return;
+            }
 
             if (fixture.FixtureScenario == "native_till_soil_v1")
             {
