@@ -76,6 +76,9 @@ export interface StardewBridgeConnection extends GameConnection {
   /** Compatibility execution methods remain adapter-owned and optional. */
   readonly execute?: (...args: any[]) => any;
   readonly cancel?: (...args: any[]) => any;
+  /** Mod-owned fresh snapshot observation; the tool refreshes before reading so
+   * cached state can never present a world the Agent already left. */
+  readonly observe?: () => Promise<Snapshot>;
   /** Mod-owned read-only Navigation discovery; never a game action. */
   readonly navigationRead?: (request: NavigationReadRequest) => Promise<NavigationReadResult>;
   /** Mod-owned read-only live scene observation; scene refs never authorize mutation. */

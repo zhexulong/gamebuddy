@@ -335,6 +335,14 @@ export function fixtureActions(action) {
   // the machine_load node are enabled in one profile so the program verify /
   // submit path can run the whole RFC 6901-bound dependency in one world.
   if (action === "machine_a_to_b") return ["move_to_tile", "machine_inspect", "machine_load"];
+  // Ladder 1: walk → look → do. The player starts inside FarmHouse; the
+  // fixture places one idle Keg adjacent to the native FarmHouse→Farm door
+  // landing so a real navigate_to_destination("Farm") walk leaves the actor
+  // within one tile of the machine. find_destination/observe_scene stay
+  // read-only for the agent's retrieval/observation; navigate, inspect and
+  // load are the three actual mutation nodes.
+  if (action === "machine_navigate_ab")
+    return ["find_destination", "navigate_to_destination", "machine_inspect", "machine_load", "observe_scene"];
   // Fixture establishes an idle native Keg and exactly five owned Coffee
   // Beans. The production bridge alone enters GameLocation.checkAction,
   // consuming the item and starting the native machine lifecycle.
@@ -374,6 +382,10 @@ export function fixtureActions(action) {
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions) {
+  // Ladder 1 walk→look→do must win over the plain navigation scenario: the
+  // action set is exactly the three-node DAG plus read-only retrieval.
+  if (actions.includes("navigate_to_destination") && actions.includes("machine_inspect") && actions.includes("machine_load"))
+    return "native_machine_navigate_ab_v1";
   if (actions.includes("navigate_to_destination")) return "navigation_mutation_v1";
   if (actions.includes("till_soil")) return "native_till_soil_v1";
   if (actions.includes("water_crop")) return "native_water_crop_v1";

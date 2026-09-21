@@ -210,6 +210,141 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
   }
 });
 
+test("local Stardew bridge advances the admitted snapshot revision on an unsolicited execution receipt", async () => {
+  const pipeName = `gamebuddy_execution_receipt_revision_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let snapshotsWritten: (() => void) | undefined;
+  const written = new Promise<void>((resolvePromise) => {
+    snapshotsWritten = resolvePromise;
+  });
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    socket.once("data", (chunk: Buffer) => {
+      const request = JSON.parse(chunk.subarray(4).toString("utf8")) as BridgeMessage;
+      socket.write(
+        frame({
+          ...request,
+          messageId: "mod_hello_01",
+          type: "hello_ack",
+          payload: {
+            sessionId: "session_01",
+            capabilities: ["inspect_self"],
+            catalogRevision: 1,
+            policyIdentity: mockPolicyIdentity,
+            enabledActionIds: [],
+            presentationLocale: "en-US",
+            registrations: [
+              {
+                actionId: "navigate_to_destination",
+                familyId: "world_navigation",
+                identityVersion: 1,
+                lifecycle: "published",
+                kind: "execution",
+              },
+            ],
+            runtimeRole: "native_local_fixture",
+            launchGeneration: null,
+          },
+        }),
+      );
+      const replies = new Map<string, (message: BridgeMessage) => void>();
+      let executionCount = 0;
+      replies.set("execution_request", (message) => {
+        executionCount += 1;
+        socket.write(
+          frame({
+            ...message,
+            messageId: "mod_receipt_01",
+            type: "execution_receipt",
+            correlationId: message.correlationId,
+            payload: {
+              requestId: "request_receipt_01",
+              executionId: "execution_receipt_01",
+              actionId: "navigate_to_destination",
+              state: "succeeded",
+              reasonCode: "navigation_completed",
+              revision: 9,
+              evidence: { detail: "location=Farm;destination=Bus Stop" },
+              observation: null,
+            },
+          }),
+        );
+      });
+      replies.set("observe_request", (message) => {
+        // After the execution receipt advanced the revision, the Mod serves a
+        // fresh snapshot at that same revision with the real new location;
+        // the placeholder must not reject it.
+        const revision = executionCount > 0 ? 9 : 7;
+        socket.write(
+          frame({
+            ...message,
+            messageId: "snapshot_base",
+            type: "snapshot",
+            correlationId: message.correlationId,
+            payload: {
+              revision,
+              location: revision === 9 ? "BusStop" : "Farm",
+              tile: revision === 9 ? { x: 11, y: 23 } : { x: 64, y: 15 },
+              stamina: 250,
+              health: 100,
+              actionable: true,
+              capabilities: ["inspect_self"],
+              catalogRevision: 1,
+              enabledActionIds: [],
+              presentationLocale: "en-US",
+              activeExecution: null,
+            },
+          }),
+        );
+      });
+      socket.on("data", (nextChunk: Buffer) => {
+        try {
+          const message = JSON.parse(nextChunk.subarray(4).toString("utf8")) as BridgeMessage;
+          const responder = replies.get(message.type);
+          if (responder !== undefined) responder(message);
+        } catch {
+          // Ignore malformed probe frames; the bridge itself fails closed.
+        }
+      });
+      // Allow the client's first post-hello requests to flow.
+      setTimeout(() => snapshotsWritten?.(), 20);
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
+    await client.observe();
+    assert.equal(client.state.snapshot?.revision, 7);
+    // Driving a native action yields an unsolicited terminal receipt with a
+    // fresh Mod revision; the admitted snapshot revision must advance so a
+    // subsequent presentation request can bind executions.Revision.
+    await client.execute({
+      requestId: "request_receipt_01",
+      idempotencyKey: "idempotency_receipt_01",
+      action: "navigate_to_destination",
+      args: { destination: { kind: "label", label: "Bus Stop" } },
+      expectedRevision: 7,
+      deadlineMs: Date.now() + 30_000,
+    });
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
+    assert.equal(client.state.snapshot?.revision, 9);
+    assert.equal(client.state.latestReceipt?.reasonCode, "navigation_completed");
+    // A fresh solicited observe at the placeholder revision carries the real
+    // post-action world (BusStop); it must replace the stale placeholder
+    // fields so the Agent never sees the pre-action location again.
+    const fresh = await client.observe();
+    assert.equal(fresh.revision, 9);
+    assert.equal(client.state.snapshot?.revision, 9);
+    assert.equal(client.state.snapshot?.location, "BusStop");
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
 test("local Stardew bridge never returns a solicited snapshot that fails admission", async () => {
   const pipeName = `gamebuddy_observe_stale_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;

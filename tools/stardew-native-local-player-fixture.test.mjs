@@ -448,6 +448,35 @@ test("native-local machine-load fixture supplies only an idle Keg and exact Coff
   await restoreNativeLocalPlayerFixture(options);
 });
 
+test("native-local machine-navigate-ab fixture preps a door-side Keg and coffee for walk→inspect→load", async (t) => {
+  const options = { ...(await createFixture(t, "machine-navigate-ab")), action: "machine_navigate_ab" };
+  await prepareNativeLocalPlayerFixture(options);
+  const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
+  assert.deepEqual(configured.EnabledActions, [
+    "find_destination",
+    "navigate_to_destination",
+    "machine_inspect",
+    "machine_load",
+    "observe_scene",
+  ]);
+  assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_machine_navigate_ab_v1");
+  const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
+  const setupStart = entry.indexOf('if (fixture.FixtureScenario == "native_machine_navigate_ab_v1")');
+  assert.ok(setupStart >= 0, "ModEntry must own the ladder-1 fixture branch");
+  const setup = entry.slice(
+    setupStart,
+    entry.indexOf('if (fixture.FixtureScenario == "native_till_soil_v1")', setupStart),
+  );
+  assert.match(setup, /FindNativeLocalFarmFixtureTile\(busStop, navigateLanding, 1/);
+  assert.match(setup, /ItemRegistry\.Create<StardewValley\.Object>\("\(BC\)12", 1\)/);
+  assert.match(setup, /ItemRegistry\.Create<StardewValley\.Object>\("\(O\)433", 5\)/);
+  assert.doesNotMatch(
+    setup,
+    /\.checkAction\(|PlaceInMachine|performObjectDropInAction|RequestLocalLoadCoffeeIntoKeg|RequestLocalInspectMachine|PublishReceipt/,
+  );
+  await restoreNativeLocalPlayerFixture(options);
+});
+
 test("native-local machine-collect fixture starts from loading only; production owns ready-time and collection", async (t) => {
   const options = { ...(await createFixture(t, "machine-collect")), action: "machine_collect_output" };
   await prepareNativeLocalPlayerFixture(options);

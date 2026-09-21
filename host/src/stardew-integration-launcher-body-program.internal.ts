@@ -269,6 +269,7 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
         executionGate.executable ? bridge.execute(request) : Promise.reject(new Error("integration_not_ready")),
       cancel: (requestId: string, executionId: string, reasonCode: string) =>
         executionGate.executable ? bridge.cancel(requestId, executionId, reasonCode) : Promise.reject(new Error("integration_not_ready")),
+      observe: () => bridge.observe(),
     });
     // Mint exactly one authenticated association for the exact frozen wrapper
     // returned by this launch handle. The adapter refuses any structural copy,

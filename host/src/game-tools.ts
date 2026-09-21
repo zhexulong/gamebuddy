@@ -121,26 +121,49 @@ export function createStardewObservationTools(
     name: "stardew_observe",
     label: "Observe Stardew",
     description:
-      "Read the latest authoritative Stardew Farmhand snapshot. This never changes the game.",
+      "Read the latest authoritative Stardew Farmhand snapshot by asking the Mod for a fresh observation. This never changes the game. Always call this again after any action that changes location or world state; the previous result may describe a location you have already left.",
     parameters: Type.Object({}),
     execute: async () => {
       const state = integration.state;
-      const available = state.connected && state.snapshot !== null;
+      // A fresh solicited observe is the only way the Agent can see the world
+      // after its own navigate/execute advanced the Mod revision; the Host
+      // cache alone would still describe the pre-action location. The observed
+      // snapshot is admitted into the connection state by the receive path, so
+      // re-read the cache afterwards (works for both the Promise-returning
+      // production client and the synchronous test client).
+      let refresh: "fresh" | "cached" = "cached";
+      let refreshError: string | null = null;
+      if (typeof integration.observe === "function") {
+        try {
+          await integration.observe();
+          refresh = "fresh";
+        } catch (error) {
+          refreshError = String(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+      const snapshot = integration.state.snapshot;
+      const available = state.connected && snapshot !== null;
       return {
         content: [
           {
             type: "text" as const,
             text: available
-              ? JSON.stringify(state.snapshot)
+              ? JSON.stringify(snapshot)
               : "No authoritative Stardew snapshot is available.",
           },
         ],
         details: {
           available,
+          refresh,
+          refreshError,
           reasonCode: available
-            ? "available"
+            ? refresh === "fresh"
+              ? "available_fresh"
+              : "available_cached"
             : (state.latestReasonCode ?? "integration_not_ready"),
-          snapshotJson: available ? JSON.stringify(state.snapshot) : null,
+          snapshotJson: available ? JSON.stringify(snapshot) : null,
         },
       };
     },
@@ -901,7 +924,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.machine_inspect,
         label: "Inspect Stardew Machine",
         description:
-          "Read a live native machine state without opening a menu or changing the machine. requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
+          "Read a live native machine state without opening a menu or changing the machine. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates, never reuse coordinates observed in a different location). requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -928,7 +951,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.machine_load,
         label: "Load Coffee Beans into Keg",
         description:
-          "Load exactly five Coffee Beans into a live idle Keg through the normal native machine interaction. A receipt proves native input consumption and Coffee processing start. requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
+          "Load exactly five Coffee Beans into a live idle Keg through the normal native machine interaction. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the machineTargets entry of the MOST RECENT observe result for the current location (use the loadInputSlot/loadInputQualifiedItemId fields, never invent or guess coordinates, never reuse coordinates observed in a different location). A receipt proves native input consumption and Coffee processing start. requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
