@@ -1,0 +1,124 @@
+{
+  "schema": "chat_conversational_quality_gate/v1",
+  "description": "Synthetic four-dimension transcript for the conversational quality gate CLI smoke (M0 stable, needle recall, superseded memory, lorebook trigger).",
+  "turns": [
+    {
+      "turnIndex": 1,
+      "contextComponents": {
+        "m0StableContextXml": "<gamebuddy-authored-context version=\"v2\" continuity-id=\"cont_01\" session-id=\"sess_01\" thread-id=\"thread_01\" canonical-hash=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"><persona><name>Emily</name><backstory>An empathetic farm companion.</backstory></persona><scenario><description>Pelican Town everyday life.</description></scenario><dialogue-examples><example><player>Hi Emily</player><companion>Hello there!</companion></example></dialogue-examples></gamebuddy-authored-context>"
+      },
+      "m1VolatileContextXml": "",
+      "playerInput": "How is the weather today?",
+      "modelResponse": "Sunny and warm in the valley.",
+      "expectations": {
+        "lorebook": { "expectedTriggered": [], "expectedEvicted": ["lore-herbalist"] }
+      }
+    },
+    {
+      "turnIndex": 2,
+      "contextComponents": {
+        "m0StableContextXml": "<gamebuddy-authored-context version=\"v2\" continuity-id=\"cont_01\" session-id=\"sess_01\" thread-id=\"thread_01\" canonical-hash=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"><persona><name>Emily</name><backstory>An empathetic farm companion.</backstory></persona><scenario><description>Pelican Town everyday life.</description></scenario><dialogue-examples><example><player>Hi Emily</player><companion>Hello there!</companion></example></dialogue-examples></gamebuddy-authored-context>"
+      },
+      "m1VolatileContextXml": "<gamebuddy-volatile-context canonical-hash=\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"><gamebuddy-volatile-source source-id=\"lore-herbalist\" revision=\"rev_v01\" canonical-hash=\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\">The herbalist lives in a secluded tower in Cindersap Forest.</gamebuddy-volatile-source></gamebuddy-volatile-context>",
+      "playerInput": "Where can I find the herbalist in the valley?",
+      "modelResponse": "The herbalist lives in a secluded tower in Cindersap Forest.",
+      "expectations": {
+        "lorebook": { "expectedTriggered": ["lore-herbalist"], "expectedEvicted": [] }
+      }
+    },
+    {
+      "turnIndex": 3,
+      "contextComponents": {
+        "m0StableContextXml": "<gamebuddy-authored-context version=\"v2\" continuity-id=\"cont_01\" session-id=\"sess_01\" thread-id=\"thread_01\" canonical-hash=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"><persona><name>Emily</name><backstory>An empathetic farm companion.</backstory></persona><scenario><description>Pelican Town everyday life.</description></scenario><dialogue-examples><example><player>Hi Emily</player><companion>Hello there!</companion></example></dialogue-examples></gamebuddy-authored-context>"
+      },
+      "m1VolatileContextXml": "",
+      "playerInput": "Let's go fishing by the ocean docks.",
+      "modelResponse": "Good idea, the tide is perfect.",
+      "expectations": {
+        "lorebook": { "expectedTriggered": [], "expectedEvicted": ["lore-herbalist"] }
+      }
+    },
+    {
+      "turnIndex": 4,
+      "contextComponents": {
+        "m0StableContextXml": "<gamebuddy-authored-context version=\"v2\" continuity-id=\"cont_01\" session-id=\"sess_01\" thread-id=\"thread_01\" canonical-hash=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"><persona><name>Emily</name><backstory>An empathetic farm companion.</backstory></persona><scenario><description>Pelican Town everyday life.</description></scenario><dialogue-examples><example><player>Hi Emily</player><companion>Hello there!</companion></example></dialogue-examples></gamebuddy-authored-context>"
+      },
+      "m1VolatileContextXml": "",
+      "playerInput": "I used to drink mint tea before bed.",
+      "modelResponse": "Mint tea is refreshing."
+    },
+    {
+      "turnIndex": 5,
+      "contextComponents": {
+        "m0StableContextXml": "<gamebuddy-authored-context version=\"v2\" continuity-id=\"cont_01\" session-id=\"sess_01\" thread-id=\"thread_01\" canonical-hash=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"><persona><name>Emily</name><backstory>An empathetic farm companion.</backstory></persona><scenario><description>Pelican Town everyday life.</description></scenario><dialogue-examples><example><player>Hi Emily</player><companion>Hello there!</companion></example></dialogue-examples></gamebuddy-authored-context>"
+      },
+      "m1VolatileContextXml": "",
+      "playerInput": "Because of acid reflux, I completely quit mint tea. I now only drink roasted barley tea.",
+      "modelResponse": "Understood, health comes first! I noted that you quit mint tea and only drink barley tea now."
+    },
+    {
+      "turnIndex": 6,
+      "contextComponents": {
+        "m0StableContextXml": "<gamebuddy-authored-context version=\"v2\" continuity-id=\"cont_01\" session-id=\"sess_01\" thread-id=\"thread_01\" canonical-hash=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"><persona><name>Emily</name><backstory>An empathetic farm companion.</backstory></persona><scenario><description>Pelican Town everyday life.</description></scenario><dialogue-examples><example><player>Hi Emily</player><companion>Hello there!</companion></example></dialogue-examples></gamebuddy-authored-context>"
+      },
+      "m1VolatileContextXml": "",
+      "playerInput": "I need a warm drink tonight. What would you recommend for me?",
+      "modelResponse": "I recommend a cup of warm roasted barley tea! It is soothing on the stomach and won't trigger acid reflux.",
+      "promptDump": "<memory>\n[Active Memory: Player exclusively drinks roasted barley tea before bed]\n</memory>",
+      "expectations": {
+        "memorySupersede": {
+          "testId": "supersede_tea_preference",
+          "oldFactContent": "mint tea",
+          "newFactContent": "barley tea",
+          "requiredNewKeywords": ["barley tea"],
+          "forbiddenOldKeywords": ["mint tea"]
+        }
+      }
+    },
+    {
+      "turnIndex": 7,
+      "contextComponents": {
+        "m0StableContextXml": "<gamebuddy-authored-context version=\"v2\" continuity-id=\"cont_01\" session-id=\"sess_01\" thread-id=\"thread_01\" canonical-hash=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"><persona><name>Emily</name><backstory>An empathetic farm companion.</backstory></persona><scenario><description>Pelican Town everyday life.</description></scenario><dialogue-examples><example><player>Hi Emily</player><companion>Hello there!</companion></example></dialogue-examples></gamebuddy-authored-context>"
+      },
+      "m1VolatileContextXml": "",
+      "playerInput": "Do you still remember the dessert recipe my grandmother taught me?",
+      "modelResponse": "Of course! Your grandmother taught you how to bake blackberry cobbler, and the special secret was a pinch of cardamom.",
+      "expectations": {
+        "needleFact": {
+          "needleId": "needle_grandma_cobbler",
+          "probeTurn": 7,
+          "requiredKeywords": ["blackberry cobbler", "cardamom"],
+          "forbiddenKeywords": ["water pump"]
+        }
+      }
+    }
+  ],
+  "dbSnapshot": {
+    "memories": [
+      {
+        "id": 101,
+        "category": "semantic",
+        "content": "Player likes drinking mint tea before bed",
+        "status": "archived",
+        "superseded_by_memory_id": 102
+      },
+      {
+        "id": 102,
+        "category": "semantic",
+        "content": "Player quit mint tea due to acid reflux, now drinks barley tea",
+        "status": "active",
+        "superseded_by_memory_id": null
+      }
+    ]
+  },
+  "expectations": {
+    "needleFacts": [
+      {
+        "needleId": "needle_grandma_cobbler",
+        "probeTurn": 7,
+        "requiredKeywords": ["blackberry cobbler", "cardamom"],
+        "forbiddenKeywords": ["water pump"]
+      }
+    ]
+  }
+}
