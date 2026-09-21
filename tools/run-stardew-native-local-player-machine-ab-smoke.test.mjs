@@ -35,7 +35,7 @@ const config = {
 };
 
 test("buildABProgram emits an RFC 6901-bound inspect→load program", () => {
-  const program = buildABProgram(target, { programId: "ab_1", deadlineMs: 1_234_567 });
+  const program = buildABProgram(target, { programId: "ab_1" });
   assert.equal(program.programId, "ab_1");
   assert.equal(program.nodes.length, 2);
   assert.equal(program.nodes[0].actionId, "machine_inspect");
@@ -44,6 +44,9 @@ test("buildABProgram emits an RFC 6901-bound inspect→load program", () => {
   assert.deepEqual(program.nodes[1].bindings, { expectedTargetId: { nodeId: "inspect", factName: "machine_target_id" } });
   assert.equal(program.nodes[0].arguments.expectedTargetId.canonicalValue, "keg-target");
   assert.equal(program.nodes[1].arguments.expectedQualifiedItemId.canonicalValue, "(O)433");
+  // Nodes never carry a clock field; the Mod derives the watchdog at admission.
+  assert.equal("deadlineMs" in program.nodes[0], false);
+  assert.equal("deadlineMs" in program.nodes[1], false);
 });
 
 test("admission responder grants only visible actions and rejects stale catalog", async () => {
@@ -97,12 +100,10 @@ function makeSuccessMock() {
   const client = {
     state: { snapshot, catalogRevision: 1, policyIdentity: { value: "policy/1", capabilityRevision: 1 } },
     observe: async () => snapshot,
-    programVerify: async (program) => {
+    programSubmit: async (program) => {
+      assert.equal("deadlineMs" in (program.nodes[0] ?? {}), false);
       assert.equal(program.nodes[0].actionId, "machine_inspect");
       assert.equal(program.nodes[1].actionId, "machine_load");
-      return { accepted: true, catalogRevision: 1, diagnostics: [] };
-    },
-    programSubmit: async (program) => {
       programAccepted = true;
       return { code: "accepted", verification: { accepted: true, catalogRevision: 1, diagnostics: [] }, snapshot: { programId: program.programId, state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } };
     },
@@ -160,7 +161,7 @@ function makeSuccessMock() {
   return { client, receipts };
 }
 
-test("A→B smoke verifies, submits, auto-advances to succeeded, and proves the postcondition", async () => {
+test("A→B smoke submits, auto-advances to succeeded, and proves the postcondition", async () => {
   const { client, receipts } = makeSuccessMock();
   const result = await runMachineABSmoke(client, receipts, config, {
     bindAdmission: () => {},
@@ -169,7 +170,6 @@ test("A→B smoke verifies, submits, auto-advances to succeeded, and proves the 
   });
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "a_to_b_machine_loaded");
-  assert.equal(result.verify.accepted, true);
   assert.equal(result.submit.code, "accepted");
   assert.equal(result.terminal.state, "succeeded");
   assert.equal(result.receipt.reasonCode, "machine_coffee_loaded");
@@ -192,7 +192,6 @@ test("A→B smoke stays blocked (not forged) when the program never reaches term
   const client = {
     state: { snapshot },
     observe: async () => snapshot,
-    programVerify: async () => ({ accepted: true, catalogRevision: 1, diagnostics: [] }),
     programSubmit: async (program) => ({ code: "accepted", verification: { accepted: true, catalogRevision: 1, diagnostics: [] }, snapshot: { programId: program.programId, state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } }),
     programStatus: async ({ programId }) => ({
       code: "found",

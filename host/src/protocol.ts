@@ -695,7 +695,6 @@ type BodyProgramNode = Readonly<{
   arguments: Readonly<Record<string, BodyProgramRuntimeValue>>;
   dependsOn: readonly string[];
   bindings: Readonly<Record<string, BodyProgramFactReference>>;
-  deadlineMs: number;
 }>;
 /** Frozen maximum Body Program node count, shared with C# BodyProgramValidation.MaximumNodes. */
 const MAX_BODY_PROGRAM_NODES = 16;
@@ -2200,11 +2199,10 @@ export function validateBodyProgramCandidateRequest(value: Record<string, unknow
 }
 
 function isBodyProgramNode(value: unknown): boolean {
-  if (!isRecord(value) || !hasExactKeys(value, ["nodeId", "actionId", "arguments", "dependsOn", "bindings", "deadlineMs"]) ||
+  if (!isRecord(value) || !hasExactKeys(value, ["nodeId", "actionId", "arguments", "dependsOn", "bindings"]) ||
     !isOpaqueId(value.nodeId) || !isOpaqueId(value.actionId) || !isRecord(value.arguments) || !hasUniqueKeys(value.arguments) ||
     !Array.isArray(value.dependsOn) || value.dependsOn.length > 8 || !value.dependsOn.every(isOpaqueId) ||
-    !isRecord(value.bindings) || !hasUniqueKeys(value.bindings) || Object.keys(value.bindings).length > MAX_BODY_PROGRAM_BINDINGS_PER_NODE ||
-    !Number.isSafeInteger(value.deadlineMs) || (value.deadlineMs as number) <= 0)
+    !isRecord(value.bindings) || !hasUniqueKeys(value.bindings) || Object.keys(value.bindings).length > MAX_BODY_PROGRAM_BINDINGS_PER_NODE)
     return false;
   return Object.entries(value.arguments).every(([name, argument]) => isOpaqueId(name) && isBodyProgramRuntimeValue(argument)) &&
     Object.entries(value.bindings).every(([name, binding]) => isOpaqueId(name) && isBodyProgramFactReference(binding));

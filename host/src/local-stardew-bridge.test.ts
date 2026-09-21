@@ -1325,7 +1325,7 @@ test("body program requests forward exact authenticated messages and retain mode
   await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
-    const candidate = { programId: "program_01", nodes: [{ nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: Date.now() + 10_000 }] } as const;
+      const candidate = { programId: "program_01", nodes: [{ nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }] } as const;
     assert.equal((await client.programSubmit(candidate)).code, "rejected");
     assert.equal((await client.programStatus({ programId: "program_01" })).snapshot?.catalogRevision, 1);
     assert.equal((await client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 })).nextCursor, 1);

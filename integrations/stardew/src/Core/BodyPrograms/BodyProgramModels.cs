@@ -23,9 +23,16 @@ public sealed record BodyProgramResourceTemplateClaim(string Key, BodyProgramRes
 /// <summary>Mod registration projection used to verify candidates; it is the only action membership source for this Core slice.</summary>
 /// <summary>Canonical descriptor metadata retained opaquely by the Body Program catalog.</summary>
 public sealed record BodyProgramActionMetadata(string Lifecycle, string OperationKind, string Effect, string Postcondition);
+
+/// <summary>
+/// Mod-owned action descriptor. <see cref="WatchdogMs"/> is the descriptor-owned
+/// static execution budget for ordinary short actions; the Mod derives a fresh
+/// absolute deadline from it at admission time. Agent-authored candidates never
+/// carry a clock field (watchdog governing authority; see open-gameplay-release).
+/// </summary>
 public sealed record BodyProgramActionDescriptor(string ActionId, int IdentityVersion, IReadOnlyList<BodyProgramArgumentDescriptor> Arguments,
     IReadOnlyList<BodyProgramFactDescriptor> OutputFacts, IReadOnlyList<BodyProgramResourceTemplateClaim> ResourceTemplate,
-    BodyProgramActionMetadata? Metadata = null);
+    BodyProgramActionMetadata? Metadata = null, long WatchdogMs = 60000);
 
 public sealed class BodyProgramActionCatalog
 {
@@ -69,7 +76,7 @@ public sealed record BodyProgramCanonicalValue(
 /// <summary>Strict Host transport candidate. Program-level deadline and resources are deliberately absent from the frozen wire contract.</summary>
 public sealed record ActionProgramCandidate(string ProgramId, IReadOnlyList<ActionProgramCandidateNode> Nodes);
 public sealed record ActionProgramCandidateNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramRuntimeValue> Arguments,
-    IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, long DeadlineMs);
+    IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings);
 public sealed record ActionProgramBinding(string ProducerNodeId, string FactName);
 
 public enum BodyProgramDiagnosticSeverity { Error = 1 }
@@ -90,7 +97,7 @@ public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, B
     string? ReceiptId, string? Evidence, string? PostconditionVerification);
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
-    IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs);
+    IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims);
 public sealed record VerifiedBodyProgram(string ProgramId, long CatalogRevision, IReadOnlyList<VerifiedBodyProgramNode> Nodes);
 
 /// <summary>Exact diagnostic projection for one accepted node attempt. Claim
@@ -101,6 +108,7 @@ public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState 
     IReadOnlyDictionary<string, BodyProgramCanonicalValue>? CanonicalBoundArguments = null,
     BodyProgramPolicyIdentity? AttemptPolicyIdentity = null,
     IReadOnlyDictionary<string, BodyProgramClaimOwnershipState>? ClaimOwnership = null,
+    long? DerivedDeadlineMs = null,
     string? ReceiptId = null,
     string? Evidence = null,
     string? PostconditionVerification = null,
@@ -141,7 +149,10 @@ internal static class BodyProgramValidation
 {
     internal const int MaximumNodes = 16;
     internal const long MaximumJavaScriptSafeInteger = 9007199254740991L;
-    internal static bool IsValidDeadlineMs(long value) => value is > 0 and <= MaximumJavaScriptSafeInteger;
+    /// <summary>Descriptor-owned static watchdog budget for ordinary short actions (hang protection, not ETA).</summary>
+    internal const long DefaultWatchdogMs = 60_000;
+    internal static bool IsValidWatchdogMs(long value) => value is > 0 and <= MaximumJavaScriptSafeInteger;
+    internal static bool IsValidDerivedDeadlineMs(long? value) => value is not null and > 0 and <= MaximumJavaScriptSafeInteger;
     internal static bool IsIdentifier(string? value) => value is { Length: >= 1 and <= 128 } && value.All(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c is '_' or '-');
     internal static bool IsValidExecutionBinding(NodeExecutionBinding? value) => value is not null
         && IsIdentifier(value.ProgramId) && IsIdentifier(value.NodeId) && value.NodeAttempt > 0
@@ -153,6 +164,7 @@ internal static class BodyProgramValidation
         or "schema_rejected" or "scope_mismatch" or "stop_epoch_closed" or "policy_identity_mismatch";
     internal static bool IsValidActionDescriptor(BodyProgramActionDescriptor? action) => action is not null && IsIdentifier(action.ActionId) && action.IdentityVersion > 0
         && (action.Metadata is null || IsOpaqueDescriptorMetadata(action.Metadata))
+        && IsValidWatchdogMs(action.WatchdogMs)
         && action.Arguments is { Count: <= 32 } && action.OutputFacts is { Count: <= 32 } && action.ResourceTemplate is { Count: <= 16 }
         && action.Arguments.All(argument => argument is not null && IsIdentifier(argument.Name) && Enum.IsDefined(argument.Kind) && argument.Kind != BodyProgramArgumentKind.DestinationArrival)
         && action.OutputFacts.All(fact => fact is not null && IsIdentifier(fact.Name) && Enum.IsDefined(fact.Kind) && fact.Kind != BodyProgramArgumentKind.DestinationSelector)
@@ -165,7 +177,7 @@ internal static class BodyProgramValidation
         && IsOpaqueMetadataValue(metadata.Effect) && IsOpaqueMetadataValue(metadata.Postcondition);
     private static bool IsOpaqueMetadataValue(string? value) => value is { Length: >= 1 and <= 128 } && !value.Any(char.IsControl);
     internal static BodyProgramActionDescriptor FreezeActionDescriptor(BodyProgramActionDescriptor action) => new(action.ActionId, action.IdentityVersion,
-        Array.AsReadOnly(action.Arguments.ToArray()), Array.AsReadOnly(action.OutputFacts.ToArray()), Array.AsReadOnly(action.ResourceTemplate.ToArray()), action.Metadata!);
+        Array.AsReadOnly(action.Arguments.ToArray()), Array.AsReadOnly(action.OutputFacts.ToArray()), Array.AsReadOnly(action.ResourceTemplate.ToArray()), action.Metadata!, action.WatchdogMs);
     internal static IReadOnlyDictionary<T, U> FreezeMap<T, U>(IReadOnlyDictionary<T, U> values) where T : notnull => new ReadOnlyDictionary<T, U>(new Dictionary<T, U>(values));
     internal static bool TryDecodeRuntimeValue(BodyProgramRuntimeValue? value, BodyProgramArgumentKind kind, out BodyProgramCanonicalValue? canonical)
     {

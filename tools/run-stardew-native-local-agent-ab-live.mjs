@@ -18,10 +18,22 @@ const config = JSON.parse(await (await import("node:fs/promises")).readFile(conf
 const scope = Object.freeze({ integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId });
 const runContinuityId = `native-agent-${Date.now()}`;
 const identity = Object.freeze({ playerId: config.PlayerId, companionId: config.CompanionId, continuityId: runContinuityId, saveId: config.SaveId, worldId: config.WorldId });
-const deadline = Date.now() + 180_000;
+const deadline = Date.now() + 600_000;
 const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken, STARDEW_GAME_INTEGRATION_ADAPTER, undefined, "1.6.15");
 const factLog = [];
 client.onFact((fact) => { if (fact.type === "execution_receipt" || fact.type === "semantic_event" || fact.type === "error" || fact.type === "lifecycle") { factLog.push({ type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId }); console.error("BRIDGE_FACT", JSON.stringify(factLog.at(-1))); } });
+// Capture the Agent-authored program id from any submit the runtime tools send
+// over this connection; the Agent chooses the id autonomously, so a fixed
+// programId probe can never observe it.
+let agentProgramId = null;
+const originalProgramSubmit = client.programSubmit.bind(client);
+client.programSubmit = async (program) => {
+  if (program?.programId !== undefined) agentProgramId = program.programId;
+  const submit = await originalProgramSubmit(program);
+  if (submit?.snapshot?.programId !== undefined) agentProgramId = submit.snapshot.programId;
+  console.error("AGENT_PROGRAM_SUBMIT", JSON.stringify({ programId: agentProgramId, code: submit?.code }));
+  return submit;
+};
 const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, { module: STARDEW_GAME_INTEGRATION_ADAPTER });
 const root = await mkdtemp(join(tmpdir(), "gamebuddy-agent-ab-"));
 const runtimeRoot = join(root, "runtime");
@@ -48,9 +60,11 @@ try {
   let turn = null;
   for (let i = 0; i < Number(process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ?? 600); i++) {
     await new Promise((r) => setTimeout(r, 1000));
-    try { status = await client.programStatus({ programId: "live_agent_ab" }); } catch {}
+    try {
+      if (agentProgramId !== null) status = await client.programStatus({ programId: agentProgramId });
+    } catch {}
     if (status?.code === "found" && ["succeeded", "failed", "recovery_required", "cancelled"].includes(status.snapshot?.state)) break;
-    if (i % 10 === 0) console.error(JSON.stringify({ seconds: i, programStatus: status, revision: client.state.snapshot?.revision }));
+    if (i % 10 === 0) console.error(JSON.stringify({ seconds: i, programStatus: status, agentProgramId, revision: client.state.snapshot?.revision }));
     const quick = await Promise.race([agentTurn, Promise.resolve(null)]);
     if (quick !== null) { turn = quick; break; }
   }

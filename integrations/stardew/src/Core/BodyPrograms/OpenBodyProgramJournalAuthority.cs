@@ -238,7 +238,11 @@ public sealed class OpenBodyProgramJournalAuthority
         BodyProgramJournalNode? node = program!.Nodes.OrderBy(item => item.NodeId, StringComparer.Ordinal).FirstOrDefault(item => item.State == BodyProgramNodeState.Pending && DependenciesSatisfied(program, item.NodeId));
         if (node is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible);
         VerifiedBodyProgramNode descriptor = program.Program.Nodes.Single(item => item.NodeId == node.NodeId);
-        if (descriptor.DeadlineMs < this.nowMs()) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.DeadlineExpired);
+        // The watchdog budget is descriptor-owned; the Mod derives a fresh
+        // absolute deadline at admission time. Agent-authored candidates never
+        // carry a clock field, so nothing here trusts a model-supplied value.
+        long derivedDeadlineMs = DeriveWatchdogDeadlineMs(descriptor);
+        if (derivedDeadlineMs <= this.nowMs()) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.DeadlineExpired);
         // A successor declares typed fact bindings; the challenge is only minted
         // after the exact producing attempt's RuntimeFacts are proven from the
         // durable journal and the bound canonical arguments are materialized from
@@ -257,6 +261,7 @@ public sealed class OpenBodyProgramJournalAuthority
             CanonicalBoundArguments = BodyProgramValidation.FreezeMap(materialized),
             AttemptPolicyIdentity = policy,
             ClaimOwnership = BodyProgramValidation.FreezeMap(descriptor.DerivedResourceClaims.Keys.ToDictionary(key => key, _ => BodyProgramClaimOwnershipState.NotAcquired, StringComparer.Ordinal)),
+            DerivedDeadlineMs = derivedDeadlineMs,
             ReceiptId = null,
             Evidence = null,
             PostconditionVerification = null,
@@ -264,6 +269,20 @@ public sealed class OpenBodyProgramJournalAuthority
         };
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, ReplaceNode(program, changed)), program.Program.ProgramId, "admission_challenge", changed.NodeId, changed.NodeAttempt))) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.PersistenceWriteFailed);
         return BodyProgramControllerResult.Success(Challenge(program, changed, descriptor, changed.AttemptPolicyIdentity!, changed.CanonicalBoundArguments!));
+    }
+
+    /// <summary>
+    /// Derives the action's ordinary dispatch budget from its descriptor-owned
+    /// static watchdog. This is hang protection, not an ETA prediction: the
+    /// value is a fixed action budget, never computed from route distance,
+    /// shoes, buffs, or frame-level physics.
+    /// </summary>
+    private long DeriveWatchdogDeadlineMs(VerifiedBodyProgramNode descriptor)
+    {
+        long watchdogMs = this.catalog.TryGetAction(descriptor.ActionId, out BodyProgramActionDescriptor? action) && action is not null
+            ? BodyProgramValidation.IsValidWatchdogMs(action.WatchdogMs) ? action.WatchdogMs : BodyProgramValidation.DefaultWatchdogMs
+            : BodyProgramValidation.DefaultWatchdogMs;
+        return checked(this.nowMs() + watchdogMs);
     }
 
     /// <summary>
@@ -483,7 +502,7 @@ public sealed class OpenBodyProgramJournalAuthority
             && challenge.CanonicalArguments is not null && challenge.DerivedResourceClaims is not null
             && node.AttemptPolicyIdentity is not null && challenge.PolicyIdentity.Equals(node.AttemptPolicyIdentity)
             && (!requireCurrentPolicy || PolicyMatches(policy, challenge.PolicyIdentity)) && challenge.ActionId == descriptor.ActionId
-            && challenge.DeadlineMs == descriptor.DeadlineMs && node.CanonicalBoundArguments is not null
+            && challenge.DeadlineMs == node.DerivedDeadlineMs && node.CanonicalBoundArguments is not null
             && BodyProgramCanonical.CanonicalMapsEqual(challenge.CanonicalArguments, node.CanonicalBoundArguments)
             && BodyProgramCanonical.StringMapsEqual(challenge.DerivedResourceClaims, descriptor.DerivedResourceClaims)
             && DescriptorMatchesLive(descriptor);
@@ -498,7 +517,7 @@ public sealed class OpenBodyProgramJournalAuthority
         descriptor = program.Program.Nodes.SingleOrDefault(item => item.NodeId == grant.NodeId);
         BodyProgramPolicyIdentity policy = ObservePolicy();
         if (!PolicyMatches(policy, this.state.PolicyIdentity) || !PolicyMatches(policy, grant.PolicyIdentity)) { failure = BodyProgramControllerResultCode.PolicyIdentityStale; return false; }
-        if (node is null || descriptor is null || descriptor.DeadlineMs < this.nowMs()) { failure = descriptor is not null && descriptor.DeadlineMs < this.nowMs() ? BodyProgramControllerResultCode.DeadlineExpired : failure; return false; }
+        if (node is null || descriptor is null || node.DerivedDeadlineMs is null || node.DerivedDeadlineMs.Value < this.nowMs()) { failure = node is not null && node.DerivedDeadlineMs is not null && node.DerivedDeadlineMs.Value < this.nowMs() ? BodyProgramControllerResultCode.DeadlineExpired : failure; return false; }
         if (node.State != expected || !ExactGrantIdentity(grant, program, node, descriptor)) return false;
         failure = BodyProgramControllerResultCode.Succeeded;
         return true;
@@ -517,7 +536,7 @@ public sealed class OpenBodyProgramJournalAuthority
     private bool ExactGrantIdentity(HostAdmissionGrant grant, BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor) =>
         node.NodeAttempt == grant.NodeAttempt && node.AdmissionAttempt == grant.AdmissionAttempt && node.AttemptPolicyIdentity is not null
         && node.AttemptPolicyIdentity.Equals(grant.PolicyIdentity) && grant.StopEpoch == program.StopEpoch
-        && grant.CatalogRevision == program.Program.CatalogRevision && grant.CatalogRevision == this.catalog.Revision && grant.ActionId == descriptor.ActionId && grant.DeadlineMs == descriptor.DeadlineMs
+        && grant.CatalogRevision == program.Program.CatalogRevision && grant.CatalogRevision == this.catalog.Revision && grant.ActionId == descriptor.ActionId && grant.DeadlineMs == node.DerivedDeadlineMs
         && CanonicalArgumentsMatch(grant, node) && BodyProgramCanonical.StringMapsEqual(grant.DerivedResourceClaims, descriptor.DerivedResourceClaims)
         && DescriptorMatchesLive(descriptor);
 
@@ -597,7 +616,7 @@ public sealed class OpenBodyProgramJournalAuthority
         return action.OutputFacts.All(output => names.Contains(output.Name));
     }
     private BodyProgramStatusSnapshot SnapshotFor(BodyProgramJournalProgram program) => new(program.Program.ProgramId, program.State, program.Program.CatalogRevision, program.StopEpoch, this.state.EventHighWater, Array.AsReadOnly(program.Nodes.ToArray()));
-    private static NodeAdmissionChallenge Challenge(BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor, BodyProgramPolicyIdentity policy, IReadOnlyDictionary<string, BodyProgramCanonicalValue> materialized) => new(program.Program.ProgramId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt, program.StopEpoch, program.Program.CatalogRevision, policy, descriptor.ActionId, materialized, descriptor.DerivedResourceClaims, descriptor.DeadlineMs);
+    private static NodeAdmissionChallenge Challenge(BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor, BodyProgramPolicyIdentity policy, IReadOnlyDictionary<string, BodyProgramCanonicalValue> materialized) => new(program.Program.ProgramId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt, program.StopEpoch, program.Program.CatalogRevision, policy, descriptor.ActionId, materialized, descriptor.DerivedResourceClaims, node.DerivedDeadlineMs ?? throw new InvalidOperationException("admission challenge without derived deadline"));
      private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency;
       private static bool HasExecutableWork(BodyProgramJournalProgram program)
       {
@@ -613,7 +632,7 @@ public sealed class OpenBodyProgramJournalAuthority
           return program.Nodes.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected) ? BodyProgramState.Failed : BodyProgramState.Succeeded;
       }
     private static BodyProgramVerificationReport Rejected(string code, string? node, string path) => new(false, 0, null, new[] { new BodyProgramDiagnostic(BodyProgramDiagnosticSeverity.Error, code, node, path, code) });
-    private static ActionProgramCandidate ToCandidate(VerifiedBodyProgram program) => new(program.ProgramId, program.Nodes.Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, node.CanonicalArguments.ToDictionary(pair => pair.Key, pair => BodyProgramValidation.ToRuntimeValue(pair.Value), StringComparer.Ordinal), node.DependsOn, node.Bindings, node.DeadlineMs)).ToArray());
+    private static ActionProgramCandidate ToCandidate(VerifiedBodyProgram program) => new(program.ProgramId, program.Nodes.Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, node.CanonicalArguments.ToDictionary(pair => pair.Key, pair => BodyProgramValidation.ToRuntimeValue(pair.Value), StringComparer.Ordinal), node.DependsOn, node.Bindings)).ToArray());
     private static BodyProgramJournalState RestartFence(BodyProgramJournalState persisted, out bool changed)
     {
         changed = persisted.Programs.Any(program => program.State != BodyProgramState.RecoveryRequired
@@ -645,7 +664,7 @@ internal static class BodyProgramVerifier
         foreach (ActionProgramCandidateNode node in candidate.Nodes)
         {
             string path = $"/nodes/{nodes.Count}";
-            if (node is null || !BodyProgramValidation.IsIdentifier(node.NodeId) || !BodyProgramValidation.IsIdentifier(node.ActionId) || node.Arguments is null || node.DependsOn is null || node.Bindings is null || !BodyProgramValidation.IsValidDeadlineMs(node.DeadlineMs) || node.DependsOn.Count > 8 || node.Bindings.Count > 4 || !nodes.TryAdd(node.NodeId, node)) { diagnostics.Add(Error("invalid_node", node?.NodeId, path)); continue; }
+            if (node is null || !BodyProgramValidation.IsIdentifier(node.NodeId) || !BodyProgramValidation.IsIdentifier(node.ActionId) || node.Arguments is null || node.DependsOn is null || node.Bindings is null || node.DependsOn.Count > 8 || node.Bindings.Count > 4 || !nodes.TryAdd(node.NodeId, node)) { diagnostics.Add(Error("invalid_node", node?.NodeId, path)); continue; }
             edges += node.DependsOn.Count;
             if (!catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action)) diagnostics.Add(Error("unknown_action", node.NodeId, path + "/actionId"));
             else if (restrictiveActionIds is not null && !restrictiveActionIds.Contains(node.ActionId)) diagnostics.Add(Error("action_not_enabled", node.NodeId, path + "/actionId"));
@@ -660,7 +679,7 @@ internal static class BodyProgramVerifier
         ValidateResourceConflicts(nodes, catalog, diagnostics);
         return diagnostics.Count > 0 ? Reject(catalog, diagnostics) : new(true, catalog.Revision, Canonicalize(candidate), Array.Empty<BodyProgramDiagnostic>());
     }
-    internal static VerifiedBodyProgram Accept(ActionProgramCandidate candidate, BodyProgramActionCatalog catalog, BridgeScope scope) => new(candidate.ProgramId, catalog.Revision, Array.AsReadOnly(candidate.Nodes.Select(node => new VerifiedBodyProgramNode(node.NodeId, node.ActionId, CanonicalArguments(node, catalog), Array.AsReadOnly(node.DependsOn.OrderBy(id => id, StringComparer.Ordinal).ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), DeriveClaims(catalog, node.ActionId, scope), node.DeadlineMs)).ToArray()));
+    internal static VerifiedBodyProgram Accept(ActionProgramCandidate candidate, BodyProgramActionCatalog catalog, BridgeScope scope) => new(candidate.ProgramId, catalog.Revision, Array.AsReadOnly(candidate.Nodes.Select(node => new VerifiedBodyProgramNode(node.NodeId, node.ActionId, CanonicalArguments(node, catalog), Array.AsReadOnly(node.DependsOn.OrderBy(id => id, StringComparer.Ordinal).ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), DeriveClaims(catalog, node.ActionId, scope))).ToArray()));
     internal static bool ArgumentsMatch(IReadOnlyDictionary<string, BodyProgramCanonicalValue> values, BodyProgramActionDescriptor action) => values.Count == action.Arguments.Count && action.Arguments.All(argument => values.TryGetValue(argument.Name, out BodyProgramCanonicalValue? value) && BodyProgramValidation.IsValidCanonicalValue(value, argument.Kind));
     internal static bool ResourceClaimsMatch(IReadOnlyDictionary<string, string> actual, BodyProgramActionDescriptor action, BridgeScope scope) => BodyProgramCanonical.StringMapsEqual(actual, DeriveClaims(action, scope));
     private static void ValidateArguments(ActionProgramCandidateNode node, BodyProgramActionDescriptor action, List<BodyProgramDiagnostic> diagnostics, string path) { if (node.Arguments.Count != action.Arguments.Count || action.Arguments.Any(argument => !node.Arguments.TryGetValue(argument.Name, out BodyProgramRuntimeValue? value) || !BodyProgramValidation.TryDecodeRuntimeValue(value, argument.Kind, out _))) diagnostics.Add(Error("invalid_arguments", node.NodeId, path + "/arguments")); }
@@ -671,14 +690,14 @@ internal static class BodyProgramVerifier
     private static IReadOnlyDictionary<string, string> DeriveClaims(BodyProgramActionCatalog catalog, string actionId, BridgeScope scope) => DeriveClaims(catalog.TryGetAction(actionId, out BodyProgramActionDescriptor? found) ? found! : throw new InvalidOperationException(), scope);
     private static IReadOnlyDictionary<string, string> DeriveClaims(BodyProgramActionDescriptor action, BridgeScope scope) { Dictionary<string, string> claims = new(StringComparer.Ordinal); foreach (BodyProgramResourceTemplateClaim claim in action.ResourceTemplate) if (!claims.TryAdd(claim.Key, claim.Value switch { BodyProgramResourceTemplateValue.ScopePlayer => scope.PlayerId, BodyProgramResourceTemplateValue.ActionId => action.ActionId, _ => throw new InvalidOperationException() })) throw new InvalidOperationException(); return new ReadOnlyDictionary<string, string>(claims); }
     private static bool HasCycle(IReadOnlyDictionary<string, ActionProgramCandidateNode> nodes) { HashSet<string> visited = new(StringComparer.Ordinal), active = new(StringComparer.Ordinal); bool Visit(string id) { if (!visited.Add(id)) return active.Contains(id); active.Add(id); bool cycle = nodes[id].DependsOn.Any(dependency => nodes.ContainsKey(dependency) && Visit(dependency)); active.Remove(id); return cycle; } return nodes.Keys.Any(Visit); }
-    private static ActionProgramCandidate Canonicalize(ActionProgramCandidate candidate) => new(candidate.ProgramId, Array.AsReadOnly(candidate.Nodes.OrderBy(node => node.NodeId, StringComparer.Ordinal).Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.Arguments), Array.AsReadOnly(node.DependsOn.OrderBy(id => id, StringComparer.Ordinal).ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), node.DeadlineMs)).ToArray()));
+    private static ActionProgramCandidate Canonicalize(ActionProgramCandidate candidate) => new(candidate.ProgramId, Array.AsReadOnly(candidate.Nodes.OrderBy(node => node.NodeId, StringComparer.Ordinal).Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.Arguments), Array.AsReadOnly(node.DependsOn.OrderBy(id => id, StringComparer.Ordinal).ToArray()), BodyProgramValidation.FreezeMap(node.Bindings))).ToArray()));
     private static BodyProgramDiagnostic Error(string code, string? node, string path) => new(BodyProgramDiagnosticSeverity.Error, code, node, path, code);
     private static BodyProgramVerificationReport Reject(BodyProgramActionCatalog catalog, List<BodyProgramDiagnostic> diagnostics, string? code = null, string? node = null, string path = "/") { if (code is not null) diagnostics.Add(Error(code, node, path)); return new(false, catalog.Revision, null, Array.AsReadOnly(diagnostics.OrderBy(diagnostic => diagnostic.Path, StringComparer.Ordinal).ThenBy(diagnostic => diagnostic.Code, StringComparer.Ordinal).Take(64).ToArray())); }
 }
 
 internal static class BodyProgramCanonical
 {
-    internal static bool CandidateEquals(ActionProgramCandidate left, ActionProgramCandidate right) => left.ProgramId == right.ProgramId && left.Nodes.Count == right.Nodes.Count && left.Nodes.Zip(right.Nodes).All(pair => pair.First.NodeId == pair.Second.NodeId && pair.First.ActionId == pair.Second.ActionId && pair.First.DeadlineMs == pair.Second.DeadlineMs && RuntimeMapsEqual(pair.First.Arguments, pair.Second.Arguments) && pair.First.DependsOn.SequenceEqual(pair.Second.DependsOn) && pair.First.Bindings.OrderBy(item => item.Key).SequenceEqual(pair.Second.Bindings.OrderBy(item => item.Key)));
+    internal static bool CandidateEquals(ActionProgramCandidate left, ActionProgramCandidate right) => left.ProgramId == right.ProgramId && left.Nodes.Count == right.Nodes.Count && left.Nodes.Zip(right.Nodes).All(pair => pair.First.NodeId == pair.Second.NodeId && pair.First.ActionId == pair.Second.ActionId && RuntimeMapsEqual(pair.First.Arguments, pair.Second.Arguments) && pair.First.DependsOn.SequenceEqual(pair.Second.DependsOn) && pair.First.Bindings.OrderBy(item => item.Key).SequenceEqual(pair.Second.Bindings.OrderBy(item => item.Key)));
     internal static bool RuntimeMapsEqual(IReadOnlyDictionary<string, BodyProgramRuntimeValue> left, IReadOnlyDictionary<string, BodyProgramRuntimeValue> right) => left.Count == right.Count && left.All(pair => right.TryGetValue(pair.Key, out BodyProgramRuntimeValue? other) && pair.Value == other);
     internal static bool CanonicalMapsEqual(IReadOnlyDictionary<string, BodyProgramCanonicalValue> left, IReadOnlyDictionary<string, BodyProgramCanonicalValue> right) => left.Count == right.Count && left.All(pair => right.TryGetValue(pair.Key, out BodyProgramCanonicalValue? other) && pair.Value == other);
     internal static bool StringMapsEqual(IReadOnlyDictionary<string, string> left, IReadOnlyDictionary<string, string> right) => left.Count == right.Count && left.All(pair => right.TryGetValue(pair.Key, out string? other) && pair.Value == other);
@@ -698,8 +717,8 @@ public static class ActionProgramCandidateCodec
             List<ActionProgramCandidateNode> nodes = new();
             foreach (JsonElement node in root.GetProperty("nodes").EnumerateArray())
             {
-                if (!Exact(node, "nodeId", "actionId", "arguments", "dependsOn", "bindings", "deadlineMs") || node.GetProperty("nodeId").ValueKind != JsonValueKind.String || node.GetProperty("actionId").ValueKind != JsonValueKind.String || !node.GetProperty("deadlineMs").TryGetInt64(out long deadline) || !BodyProgramValidation.IsValidDeadlineMs(deadline) || !ReadRuntimeMap(node.GetProperty("arguments"), out IReadOnlyDictionary<string, BodyProgramRuntimeValue>? arguments) || !ReadStringList(node.GetProperty("dependsOn"), out IReadOnlyList<string>? dependsOn) || !ReadBindings(node.GetProperty("bindings"), out IReadOnlyDictionary<string, ActionProgramBinding>? bindings)) return false;
-                nodes.Add(new ActionProgramCandidateNode(node.GetProperty("nodeId").GetString()!, node.GetProperty("actionId").GetString()!, arguments!, dependsOn!, bindings!, deadline));
+                if (!Exact(node, "nodeId", "actionId", "arguments", "dependsOn", "bindings") || node.GetProperty("nodeId").ValueKind != JsonValueKind.String || node.GetProperty("actionId").ValueKind != JsonValueKind.String || !ReadRuntimeMap(node.GetProperty("arguments"), out IReadOnlyDictionary<string, BodyProgramRuntimeValue>? arguments) || !ReadStringList(node.GetProperty("dependsOn"), out IReadOnlyList<string>? dependsOn) || !ReadBindings(node.GetProperty("bindings"), out IReadOnlyDictionary<string, ActionProgramBinding>? bindings)) return false;
+                nodes.Add(new ActionProgramCandidateNode(node.GetProperty("nodeId").GetString()!, node.GetProperty("actionId").GetString()!, arguments!, dependsOn!, bindings!));
             }
             candidate = new ActionProgramCandidate(root.GetProperty("programId").GetString()!, Array.AsReadOnly(nodes.ToArray()));
             return true;

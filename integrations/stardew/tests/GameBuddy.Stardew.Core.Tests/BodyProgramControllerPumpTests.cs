@@ -266,21 +266,29 @@ public sealed class BodyProgramControllerPumpTests
     }
 
     [Fact]
-    public void DeadlineBetweenNodesBlocksTheAutomaticSuccessor()
+    public void WatchdogDeadlineIsDerivedFreshPerAdmissionAndBlocksStaleHostGrant()
     {
         long now = 10;
         OpenBodyProgramJournalAuthority authority = Open(now: () => now);
-        var admission = new ImmediateAdmissionTransport();
+        var admission = new NoGrantAdmissionTransport();
         var controller = new FarmhandBodyProgramController(authority, admission, new MachineNodeExecutor("opaque-machine-7"));
-        authority.Submit(MachineProgram(deadline: 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
-        controller.Update();
-        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State.Should().Be(BodyProgramNodeState.Succeeded);
-
-        now = 1001;
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         controller.Update();
 
-        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "load").State.Should().Be(BodyProgramNodeState.Pending);
-        admission.Sent.Should().NotContain(challenge => challenge.NodeId == "load");
+        // The watchdog deadline is Mod-derived at each admission boundary:
+        // now(10) + descriptor WatchdogMs(1000) = 1010. It is never authored by
+        // the Agent or present on the candidate wire.
+        NodeAdmissionChallenge challenge = admission.Sent.Should().ContainSingle().Subject;
+        challenge.DeadlineMs.Should().Be(1010);
+
+        // Host never answers before the watchdog expires; a grant that lands
+        // after the derived deadline is rejected fail-closed (blocked), with the
+        // node remaining awaiting and no native side effect occurring.
+        now = 1011;
+        var staleGrant = GrantFor(challenge);
+        authority.TryConsumeHostGrant(staleGrant).IsSuccess.Should().BeFalse();
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State.Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
+        authority.Snapshot.Programs.Single().Facts.Should().BeEmpty();
     }
 
     [Fact]
@@ -418,7 +426,7 @@ public sealed class BodyProgramControllerPumpTests
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = OpenBodyProgramJournalAuthority.Open(store, MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
         var admission = new ImmediateAdmissionTransport();
-        var executor = new DeadlineOverrunExecutor(new MachineNodeExecutor("opaque-machine-7"), clock, overrunMs: 1001);
+        var executor = new DeadlineOverrunExecutor(new MachineNodeExecutor("opaque-machine-7"), clock, overrunMs: 1100);
         var controller = new FarmhandBodyProgramController(authority, admission, executor);
         authority.Submit(MachineProgramWithTerminalCheck()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
@@ -566,9 +574,9 @@ public sealed class BodyProgramControllerPumpTests
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = OpenBodyProgramJournalAuthority.Open(store, MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
         var admission = new ImmediateAdmissionTransport();
-        var executor = new DeadlineDrivenSteppingExecutor(new MachineNodeExecutor("opaque-machine-7"), clock, overrunMs: 1001);
+        var executor = new DeadlineDrivenSteppingExecutor(new MachineNodeExecutor("opaque-machine-7"), clock, overrunMs: 1100);
         var controller = new FarmhandBodyProgramController(authority, admission, executor);
-        authority.Submit(MachineProgram(deadline: 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         // Tick 1: inspect completes in a single pass.
         controller.Update();
@@ -632,9 +640,9 @@ public sealed class BodyProgramControllerPumpTests
         var store = new FailSettleWriteStore();
         OpenBodyProgramJournalAuthority authority = OpenBodyProgramJournalAuthority.Open(store, MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
         var admission = new ImmediateAdmissionTransport();
-        var executor = new DeadlineDrivenSteppingExecutor(new MachineNodeExecutor("opaque-machine-7"), clock, overrunMs: 1001);
+        var executor = new DeadlineDrivenSteppingExecutor(new MachineNodeExecutor("opaque-machine-7"), clock, overrunMs: 1100);
         var controller = new FarmhandBodyProgramController(authority, admission, executor);
-        authority.Submit(MachineProgram(deadline: 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         // Tick 1: inspect completes.
         controller.Update();
@@ -701,17 +709,19 @@ public sealed class BodyProgramControllerPumpTests
         new BodyProgramActionDescriptor("machine_inspect", 1,
             new[] { new BodyProgramArgumentDescriptor("x", BodyProgramArgumentKind.Integer), new BodyProgramArgumentDescriptor("y", BodyProgramArgumentKind.Integer), new BodyProgramArgumentDescriptor("expectedTargetId", BodyProgramArgumentKind.String) },
             new[] { new BodyProgramFactDescriptor("machine_target_id", BodyProgramArgumentKind.String) },
-            new[] { new BodyProgramResourceTemplateClaim("embodied_actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
+            new[] { new BodyProgramResourceTemplateClaim("embodied_actor", BodyProgramResourceTemplateValue.ScopePlayer) },
+            null, WatchdogMs: 1000),
         new BodyProgramActionDescriptor("machine_load", 1,
             new[] { new BodyProgramArgumentDescriptor("x", BodyProgramArgumentKind.Integer), new BodyProgramArgumentDescriptor("y", BodyProgramArgumentKind.Integer), new BodyProgramArgumentDescriptor("slot", BodyProgramArgumentKind.Integer), new BodyProgramArgumentDescriptor("expectedQualifiedItemId", BodyProgramArgumentKind.String), new BodyProgramArgumentDescriptor("expectedTargetId", BodyProgramArgumentKind.String) },
             Array.Empty<BodyProgramFactDescriptor>(),
-            new[] { new BodyProgramResourceTemplateClaim("embodied_actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
+            new[] { new BodyProgramResourceTemplateClaim("embodied_actor", BodyProgramResourceTemplateValue.ScopePlayer) },
+            null, WatchdogMs: 1000),
     });
 
-    private static ActionProgramCandidate MachineProgram(string targetLiteral = "candidate-target|1", long deadline = 1000) => new("program", new[]
+    private static ActionProgramCandidate MachineProgram(string targetLiteral = "candidate-target|1") => new("program", new[]
     {
-        new ActionProgramCandidateNode("inspect", "machine_inspect", Args(("x", "integer", "1"), ("y", "integer", "1"), ("expectedTargetId", "string", targetLiteral)), Array.Empty<string>(), Bindings(), deadline),
-        new ActionProgramCandidateNode("load", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "placeholder-target")), new[] { "inspect" }, Bindings("expectedTargetId", new ActionProgramBinding("inspect", "machine_target_id")), deadline),
+        new ActionProgramCandidateNode("inspect", "machine_inspect", Args(("x", "integer", "1"), ("y", "integer", "1"), ("expectedTargetId", "string", targetLiteral)), Array.Empty<string>(), Bindings()),
+        new ActionProgramCandidateNode("load", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "placeholder-target")), new[] { "inspect" }, Bindings("expectedTargetId", new ActionProgramBinding("inspect", "machine_target_id"))),
     });
 
     /// <summary>
@@ -720,11 +730,11 @@ public sealed class BodyProgramControllerPumpTests
     /// successor: verify depends on load and must stay Pending after load
     /// settles to RecoveryRequired.
     /// </summary>
-    private static ActionProgramCandidate MachineProgramWithTerminalCheck(long deadline = 1000) => new("program", new[]
+    private static ActionProgramCandidate MachineProgramWithTerminalCheck() => new("program", new[]
     {
-        new ActionProgramCandidateNode("inspect", "machine_inspect", Args(("x", "integer", "1"), ("y", "integer", "1"), ("expectedTargetId", "string", "candidate-target|1")), Array.Empty<string>(), Bindings(), deadline),
-        new ActionProgramCandidateNode("load", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "placeholder-target")), new[] { "inspect" }, Bindings("expectedTargetId", new ActionProgramBinding("inspect", "machine_target_id")), deadline),
-        new ActionProgramCandidateNode("verify", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "opaque-target")), new[] { "load" }, Bindings(), deadline),
+        new ActionProgramCandidateNode("inspect", "machine_inspect", Args(("x", "integer", "1"), ("y", "integer", "1"), ("expectedTargetId", "string", "candidate-target|1")), Array.Empty<string>(), Bindings()),
+        new ActionProgramCandidateNode("load", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "placeholder-target")), new[] { "inspect" }, Bindings("expectedTargetId", new ActionProgramBinding("inspect", "machine_target_id"))),
+        new ActionProgramCandidateNode("verify", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "opaque-target")), new[] { "load" }, Bindings()),
     });
 
     private sealed class ImmediateAdmissionTransport : IBodyProgramAdmissionTransport
