@@ -13,6 +13,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import type { Mixer } from "./gateway.js";
+import { resolvePowerShellExecutable } from "./windows-powershell.js";
 
 const SCRIPT_PATH = fileURLToPath(new URL("../windows-waveout.ps1", import.meta.url));
 const MAX_FRAME_BYTES = 1_920_000;
@@ -41,7 +42,7 @@ export async function createStreamingWindowsAudioMixer(
 ): Promise<StreamingWindowsAudioMixer> {
   const device = validateSelection(selection);
   const child = spawnStream(
-    "powershell.exe",
+    resolvePowerShellExecutable(),
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", SCRIPT_PATH, "-Mode", "stream", "-Device", device],
     { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
   );

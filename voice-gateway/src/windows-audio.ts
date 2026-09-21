@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { Mixer } from "./gateway.js";
+import { resolvePowerShellExecutable } from "./windows-powershell.js";
 
 const MAX_PCM_BYTES = 1_920_000;
 const POWERSHELL_TIMEOUT_MS = 12_000;
@@ -166,7 +167,7 @@ class WaveOutMixer implements WindowsAudioMixer {
 function runPowerShell(arguments_: readonly string[], signal: AbortSignal): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(
-      "powershell.exe",
+      resolvePowerShellExecutable(),
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", SCRIPT_PATH, ...arguments_],
       { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
     );
