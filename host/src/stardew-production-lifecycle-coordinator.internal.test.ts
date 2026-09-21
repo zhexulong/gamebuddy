@@ -3617,15 +3617,17 @@ test("game.create persists pending intent, registers + completes the world bindi
 });
 
 test("game.create fails closed as unavailable with a failed pending row when world creation is unavailable or fails", async () => {
-  for (const seamMode of ["absent", "throwing"] as const) {
+  for (const seamMode of ["absent", "authority-only", "throwing"] as const) {
     const fake = fakeGameSessionCreationAuthority();
     const fixture = await createFixture({
       overrides: seamMode === "absent"
         ? {}
-        : {
-            gameSessionCreationAuthority: fake.authority,
-            createWorldBinding: async () => { throw new Error("controlled-world-creation-failure"); },
-          },
+        : seamMode === "authority-only"
+          ? { gameSessionCreationAuthority: fake.authority }
+          : {
+              gameSessionCreationAuthority: fake.authority,
+              createWorldBinding: async () => { throw new Error("controlled-world-creation-failure"); },
+            },
     });
     try {
       const result = await fixture.coordinator.activationOwner.createGameSession(
@@ -3634,8 +3636,9 @@ test("game.create fails closed as unavailable with a failed pending row when wor
       );
       assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
       assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
-      if (seamMode === "absent") {
-        // A sealed/unmounted seam fails before any durable write: no rows at all.
+      if (seamMode === "absent" || seamMode === "authority-only") {
+        // A sealed/unmounted seam fails before any durable write: no rows at all,
+        // regardless of whether the authority alone was already connected.
         assert.deepEqual(fake.sessions(), []);
         assert.deepEqual(fake.inputs(), []);
       } else {
