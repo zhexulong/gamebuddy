@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-export const STARDEW_APP_ID = "413150" as const;
+const STARDEW_APP_ID = "413150" as const;
 export const WINDOWS_PATH_MAX_LENGTH = 32_767;
 export const STEAM_METADATA_MAX_BYTES = 4 * 1024 * 1024;
 export type StardewInstallationCandidate = Readonly<{ candidateId: string; source: "steam-registry" | "steam-vdf" | "known-location"; label: string; displayPath: string; status: "candidate" | "invalid" | "admission_required" }>;

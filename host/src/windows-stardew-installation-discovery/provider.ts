@@ -4,7 +4,7 @@ import type { StardewSteamSource } from "./source.js";
 
 export type StardewInstallationDiscoveryProviderResult = Readonly<{ candidates: readonly StardewInstallationCandidate[]; diagnostics: readonly DiscoveryDiagnostic[] }>;
 export type StardewInstallationDiscoveryProvider = Readonly<{ discover(): Promise<StardewInstallationDiscoveryProviderResult>; confirm(candidateId: string): string; reset(): void }>;
-export type StardewInstallationDiscoveryProviderInput = Readonly<{
+type StardewInstallationDiscoveryProviderInput = Readonly<{
   source?: StardewSteamSource;
   readFile?: (path: string) => Promise<string>;
 }>;
