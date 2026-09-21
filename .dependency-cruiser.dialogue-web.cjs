@@ -90,6 +90,13 @@ module.exports = {
       to: { path: `(${CHAT_RUNTIME}|${GAME_SURFACE}|${MANAGEMENT_SURFACE}|${SHARED_UI})` },
     },
     {
+      name: "no-contract-internal-dependency",
+      comment: "The wire contract stays dependency-free: its own members must not import each other (api and session remain standalone).",
+      severity: "error",
+      from: { path: CHAT_CONTRACT },
+      to: { path: CHAT_CONTRACT },
+    },
+    {
       name: "no-shared-ui-imports-surfaces",
       comment: "Shared presentation primitives carry no surface lifecycle and must not import surface assemblers.",
       severity: "error",

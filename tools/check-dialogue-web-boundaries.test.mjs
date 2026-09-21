@@ -190,32 +190,32 @@ test("boundary rules actually fire on a fixture violating every direction", () =
       writeFileSync(full, content);
     };
     // --- chat-contract: reference-pipeline-api + reference-pipeline-session ---
-    // contract must not import any surface or shared UI.
-    write("src/reference-pipeline-api.ts", 'import "./components/Composer";\n');
-    write("src/reference-pipeline-session.ts", "");
+    // contract must not import any surface (all four alternatives) nor its own member.
+    write("src/reference-pipeline-api.ts", 'import "./components/Composer";\nimport "./components/ReferenceApp";\n');
+    write("src/reference-pipeline-session.ts", 'import "./reference-pipeline-api";\nimport "./components/ComposedReferenceGameApp";\nimport "./components/ManagementApp";\n');
     // --- chat-runtime: ReferenceApp ---
     write("src/components/ReferenceApp.tsx", 'import "./ComposedReferenceGameApp";\nimport "./ManagementApp";\n');
     // --- shared-ui: props-driven primitives ---
     write("src/components/MessageBubble.tsx", "");
-    write("src/components/Timeline.tsx", "");
+    write("src/components/Timeline.tsx", 'import "./ComposedReferenceGameApp";\n');
     write("src/components/ProblemView.tsx", "");
     write("src/components/SkipLink.tsx", "");
     write("src/components/Composer.tsx", 'import "./ReferenceApp";\n');
-    write("src/components/drawers/ChatsDrawer.tsx", "");
+    write("src/components/drawers/ChatsDrawer.tsx", 'import "./ManagementApp";\n');
     // --- game-surface ---
     // game imports chat-runtime and management.
     write("src/components/ComposedReferenceGameApp.tsx", 'import "./ReferenceApp";\nimport "./ManagementApp";\n');
     write("src/components/StardewInstallationDiscovery.tsx", "");
-    write("src/composed-reference-game-browser-api.ts", 'import "./components/Composer";\n');
+    write("src/composed-reference-game-browser-api.ts", "");
     // --- management-surface ---
     // management imports chat-runtime and game.
     write("src/management-pipeline-api.ts", "");
     write("src/management-pipeline-session.ts", "");
     write("src/components/ManagementApp.tsx", 'import "./ReferenceApp";\nimport "./ComposedReferenceGameApp";\n');
     // --- shared ---
-    // i18n imports chat-runtime.
-    write("src/i18n.ts", 'import "./components/ReferenceApp";\n');
-    write("src/types.ts", "");
+    // shared leaf imports each surface/contract/shared-ui alternative once.
+    write("src/i18n.ts", 'import "./components/ReferenceApp";\nimport "./reference-pipeline-api";\n');
+    write("src/types.ts", 'import "./components/ComposedReferenceGameApp";\nimport "./components/ManagementApp";\nimport "./components/Composer";\n');
 
     const rebased = { ...structuredClone(config), options: { ...structuredClone(config.options), includeOnly: "^src/", tsConfig: { fileName: join(fixture, "tsconfig.json") } } };
     for (const rule of rebased.forbidden) {
@@ -229,7 +229,7 @@ test("boundary rules actually fire on a fixture violating every direction", () =
     const rulesFired = new Set(violations.map(([rule]) => rule));
     assert.deepEqual(
       [...rulesFired].sort(),
-      ["no-chat-runtime-to-game-surface", "no-chat-runtime-to-management-surface", "no-contract-imports-surfaces", "no-game-surface-to-chat-runtime", "no-game-surface-to-management-surface", "no-management-surface-to-chat-runtime", "no-management-surface-to-game-surface", "no-shared-imports-surfaces", "no-shared-ui-imports-surfaces"].sort(),
+      ["no-chat-runtime-to-game-surface", "no-chat-runtime-to-management-surface", "no-contract-imports-surfaces", "no-contract-internal-dependency", "no-game-surface-to-chat-runtime", "no-game-surface-to-management-surface", "no-management-surface-to-chat-runtime", "no-management-surface-to-game-surface", "no-shared-imports-surfaces", "no-shared-ui-imports-surfaces"].sort(),
       `fixture must fire every boundary rule; fired: ${[...rulesFired].join(",")}`,
     );
   } finally {
