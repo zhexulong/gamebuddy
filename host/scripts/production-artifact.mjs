@@ -755,13 +755,18 @@ async function verifiedStardewModPackageOrigins({ stagingRoot, descriptor }) {
   }
   return origins;
 }
-/** Stages the voice gateway entry and protocol from the fixed `.dist` build
- * output into the generation staging root and returns the verified origin
- * facts. Missing, multi-file, traversal or symlinked sources fail closed
- * through the shared fixture publisher, and the read-only admission check
- * re-verifies the staged copy before inventory creation. */
-async function ensureVoiceGateway({ hostRoot, stagingRoot, descriptor, generation }) {
-  const distRoot = resolve(hostRoot, "voice-gateway", ".dist");
+/** Stages the voice gateway entry and protocol from the fixed repository
+ * release bundle into the generation staging root and returns the verified
+ * origin facts. Sources are the fixed repository locations (not the
+ * caller-supplied hostRoot), so test fixtures on a temporary root and
+ * production builds resolve the same files — the same rule
+ * `ensureStardewModPackage` follows. Missing, multi-file, traversal or
+ * symlinked sources fail closed through the shared fixture publisher, and
+ * the read-only admission check re-verifies the staged copy before inventory
+ * creation. */
+async function ensureVoiceGateway({ stagingRoot, descriptor, generation, voiceDistRoot }) {
+  if (typeof voiceDistRoot !== "string" || voiceDistRoot.length === 0) throw new Error("voice_gateway_dist_root_required");
+  const distRoot = resolve(voiceDistRoot);
   await publishVoiceGatewayFixture({
     stagingRoot,
     descriptor: {
@@ -1234,8 +1239,9 @@ async function assertOutputRootLayout(outputRoot) {
   const entries = await readdir(outputRoot);
   if (entries.some((entry) => entry !== GENERATIONS && entry !== POINTER && entry !== PUBLISHER_LOCK)) throw new Error("production_output_root_contains_direct_artifact");
 }
-async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoot, outputRoot }, copyRuntime, runtimeDescriptorOverride, cleanupRuntimeSource = undefined) {
+async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoot, outputRoot, voiceDistRoot }, copyRuntime, runtimeDescriptorOverride, cleanupRuntimeSource = undefined) {
   if (typeof copyRuntime !== "function") throw new Error("verified_bundled_runtime_input_required");
+  if (typeof voiceDistRoot !== "string" || voiceDistRoot.length === 0) throw new Error("voice_gateway_dist_root_required");
   const config = await readArtifactConfig(hostRoot);
   const runtimeDescriptor = runtimeDescriptorOverride ?? config.bundledRuntime;
   const generation = `g-${Date.now().toString(36)}-${process.pid}-${randomUUID().replaceAll("-", "")}`;
@@ -1274,7 +1280,12 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
       for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
     }
     if (config.voiceGateway !== undefined) {
-      for (const [path, origin] of await ensureVoiceGateway({ hostRoot, stagingRoot, descriptor: config.voiceGateway, generation })) origins.set(path, origin);
+      for (const [path, origin] of await ensureVoiceGateway({
+        stagingRoot,
+        descriptor: config.voiceGateway,
+        generation,
+        voiceDistRoot,
+      })) origins.set(path, origin);
     }
     // Freeze the browser descriptor's checked bytes before inventory creation;
     // a final exact-snapshot verification below closes the remaining
@@ -1338,6 +1349,7 @@ export async function publishFixedReleaseArtifactFromVerifiedRuntime() {
 /** Test-only counterpart: its source is available only through fixed composition. */
 export async function publishFixedReleaseArtifactFromVerifiedRuntimeForTest({ outputRoot }) {
   const fixedHostRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+  const fixedVoiceDistRoot = resolve(fixedHostRoot, "..", "voice-gateway", ".dist");
   if (typeof outputRoot !== "string" || outputRoot.length === 0) throw new Error("invalid_release_runtime_composition");
   const [{ takeComposedFixedReleaseRuntimeForPublisher }, { takeComposedFixedReleaseEmittedRootForPublisher }] = await Promise.all([
     import("./node-runtime-release-acquisition.mjs"),
@@ -1352,7 +1364,7 @@ export async function publishFixedReleaseArtifactFromVerifiedRuntimeForTest({ ou
   const testSource = Object.freeze({ ...source, descriptor });
   const emittedRoot = takeComposedFixedReleaseEmittedRootForPublisher();
   return await publishProductionArtifactWithRuntimeCopier(
-    { hostRoot: fixedHostRoot, emittedRoot, outputRoot: resolve(outputRoot) },
+    { hostRoot: fixedHostRoot, emittedRoot, outputRoot: resolve(outputRoot), voiceDistRoot: fixedVoiceDistRoot },
     async (stagingRoot, admittedDescriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor: admittedDescriptor, source: testSource }),
     descriptor,
     source.dispose,
