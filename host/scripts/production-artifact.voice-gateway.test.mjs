@@ -70,6 +70,8 @@ async function voiceSources(root, { entryBytes = Buffer.from("voice gateway entr
   await mkdir(entryRoot, { recursive: true }); await mkdir(protocolRoot, { recursive: true });
   await writeFile(join(entryRoot, "voice-gateway-entry.mjs"), entryBytes);
   await writeFile(join(protocolRoot, "voice-gateway-protocol.json"), protocolBytes);
+  await writeFile(join(root, "voice-gateway", ".dist", "windows-waveout.ps1"), "waveout helper\n");
+  await writeFile(join(root, "voice-gateway", ".dist", "windows-wavein.ps1"), "wavein helper\n");
   return { entryBytes, protocolBytes };
 }
 
@@ -192,6 +194,15 @@ test("a legal voice fixture stages single-file entry and protocol bound to the p
   assert.deepEqual(entry.origin, { kind: "verified_voice_gateway", entryPath, entrySha256: testHash(entryBytes), protocolPath, protocolSha256: testHash(protocolBytes) });
   assert.deepEqual(protocol.origin, entry.origin);
   assert.ok(!inventory.entries.some((item) => item.path === VOICE_GATEWAY_ADMISSION), "admission sidecar must be excluded from the inventory");
+  // The PowerShell helpers the bundle spawns are staged next to the entry and
+  // bound into the inventory with their own verified origin.
+  for (const scriptName of ["windows-waveout.ps1", "windows-wavein.ps1"]) {
+    const helperPath = `voice-gateway/${scriptName}`;
+    assert.equal(await readFile(join(artifactRoot, "voice-gateway", scriptName), "utf8"), `${scriptName === "windows-waveout.ps1" ? "waveout" : "wavein"} helper\n`);
+    const helperEntry = inventory.entries.find((item) => item.path === helperPath);
+    assert.ok(helperEntry, `helper ${scriptName} must be in the inventory`);
+    assert.equal(helperEntry.origin.kind, "verified_voice_gateway");
+  }
   await writeFile(join(artifactRoot, "voice-gateway", "entry", "voice-gateway-entry.mjs"), "tampered");
   await assert.rejects(verifyPublishedVoiceGateway({ artifactRoot, descriptor: VOICE_GATEWAY_DESCRIPTOR }), /voice_gateway_entry_mismatch/);
 }));
