@@ -107,7 +107,7 @@ test("composed browser client and Host listener complete a real bootstrap/state 
   }
 });
 
-test("composed browser listener rejects bootstrap token replay and additive client input", async () => {
+test("composed browser listener rejects bootstrap token replay", async () => {
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile,
     bootstrapToken: BOOTSTRAP_TOKEN,
@@ -125,9 +125,101 @@ test("composed browser listener rejects bootstrap token replay and additive clie
     const replay = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
       method: "POST",
       headers: { origin: server.origin, "content-type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, bootstrapToken: BOOTSTRAP_TOKEN, extra: true }),
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: BOOTSTRAP_TOKEN }),
     });
     assert.equal(replay.status, 401);
+  } finally {
+    await server.close();
+  }
+});
+
+test("composed browser listener rejects additive client input on bootstrap", async () => {
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile,
+    bootstrapToken: BOOTSTRAP_TOKEN,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+  });
+  const server = await start(handler);
+  try {
+    const extraField = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+      method: "POST",
+      headers: { origin: server.origin, "content-type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: BOOTSTRAP_TOKEN, extra: true }),
+    });
+    assert.equal(extraField.status, 401);
+  } finally {
+    await server.close();
+  }
+});
+
+test("composed browser listener enforces CSRF on POST operations", async () => {
+  let retryCalls = 0;
+  const discoveryGameProfile = composeGameProfile({
+    profileId: "gamebuddy.game.preview",
+    releaseTier: "game_preview",
+    operationIds: [
+      "game.state.read",
+      "game.installation.discovery.read",
+      "game.installation.discovery.confirm",
+      "game.installation.discovery.retry",
+      "game.installation.discovery.cancel",
+      "game.installation.discovery.manual_picker",
+    ],
+    navigationItemIds: ["game"],
+  });
+  const discoveryProfile = composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: discoveryGameProfile });
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: discoveryProfile,
+    bootstrapToken: BOOTSTRAP_TOKEN,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameDiscovery: {
+      read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
+      confirm: async () => ({ apiVersion: 1, status: "accepted" }),
+      retry: async () => { retryCalls += 1; return { apiVersion: 1, candidates: [], diagnostics: [] }; },
+      cancel: async () => ({ apiVersion: 1, status: "accepted" }),
+      manualPicker: async () => ({ apiVersion: 1, status: "requested" }),
+    },
+  });
+  const server = await start(handler);
+  try {
+    const boot = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+      method: "POST",
+      headers: { origin: server.origin, "content-type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: BOOTSTRAP_TOKEN }),
+    });
+    assert.equal(boot.status, 200);
+    const root = await boot.json();
+    const sessionCookie = boot.headers.get("set-cookie")?.split(";", 1)[0];
+    assert.ok(sessionCookie);
+    const csrf = root.chat.csrfToken;
+    assert.ok(csrf);
+
+    const retryPath = "/api/composed-reference-game/v1/game/installation/discovery/retry";
+    const retryBody = JSON.stringify({ apiVersion: 1 });
+
+    const noCsrf = await fetch(`${server.origin}${retryPath}`, {
+      method: "POST",
+      headers: { origin: server.origin, "content-type": "application/json", cookie: sessionCookie },
+      body: retryBody,
+    });
+    assert.equal(noCsrf.status, 401);
+
+    const wrongCsrf = await fetch(`${server.origin}${retryPath}`, {
+      method: "POST",
+      headers: { origin: server.origin, "content-type": "application/json", cookie: sessionCookie, "x-csrf-token": "B".repeat(43) },
+      body: retryBody,
+    });
+    assert.equal(wrongCsrf.status, 401);
+
+    const rightCsrf = await fetch(`${server.origin}${retryPath}`, {
+      method: "POST",
+      headers: { origin: server.origin, "content-type": "application/json", cookie: sessionCookie, "x-csrf-token": csrf },
+      body: retryBody,
+    });
+    assert.equal(rightCsrf.status, 200);
+    assert.equal(retryCalls, 1);
   } finally {
     await server.close();
   }
