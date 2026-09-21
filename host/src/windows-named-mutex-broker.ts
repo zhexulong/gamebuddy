@@ -336,7 +336,7 @@ export class WindowsNamedMutexBroker {
           : (this.failed ?? new WindowsNamedMutexBrokerError("windows_named_mutex_broker_closed"));
     const id = randomUUID();
     const reply = new Promise<BrokerReply>((resolve, reject) =>
-      this.pending.set(id, { op, name, targetId, resolve, reject }),
+      this.pending.set(id, { op, name, ...(targetId === undefined ? {} : { targetId }), resolve, reject }),
     );
     const payload =
       op === "cancel" || op === "safety_seal" ? { id, op, name, timeoutMs, targetId } : { id, op, name, timeoutMs };

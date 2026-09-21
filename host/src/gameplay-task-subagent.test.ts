@@ -21,7 +21,6 @@ import {
 import type { ExecutionWake } from "./integration-launcher.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import type { RuntimePaths } from "./runtime.js";
-import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const paths: RuntimePaths = {
   root: tmpdir(),

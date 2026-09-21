@@ -4,6 +4,7 @@ import type {
   ExecutionCorrelationOwner,
   ExecutionDispatchObserver,
 } from "./execution-correlation-ledger.js";
+import type { FarmhandPolicyIdentity } from "./protocol.js";
 import type { GameConnection } from "./game-connection.js";
 
 /** Host-owned companion and world facts bound to one authenticated integration connection. */
@@ -56,8 +57,12 @@ export type IntegrationStateView = Readonly<{
   capabilities: readonly string[];
   /** Authenticated live execution availability; absent fails closed. */
   enabledActionIds?: readonly string[];
-  /** Monotone integration-owned availability publication, distinct from world snapshot revision. */
+  /** Static descriptor catalog revision projected by the action-surface authority. */
+  catalogRevision?: number | null;
+  /** Monotone Mod-owned capability publication revision; distinct from catalogRevision. */
   capabilityRevision: number | null;
+  /** Exact authenticated Mod capability publication identity; never substituted with a revision. */
+  policyIdentity?: FarmhandPolicyIdentity | null;
   /** Authenticated adapter-owned registration facts for the current connection generation. Absence is an empty catalog. */
   registrations?: readonly IntegrationActionRegistration[];
   snapshotRevision: number | null;
@@ -383,11 +388,11 @@ export function assertIntegrationAdapterConformance(
     throw new Error("integration_adapter_scope_mismatch");
   }
   assertIntegrationAdapter(adapter, connection.scope.integrationId);
-  const tools = adapter.createToolSet({
-    connection,
-    knowledge: connection.knowledge,
-    gameVersion: connection.gameVersion,
-  });
+    const tools = adapter.createToolSet({
+      connection,
+      knowledge: connection.knowledge,
+      ...(connection.gameVersion === undefined ? {} : { gameVersion: connection.gameVersion }),
+    });
   const status = adapter.status(connection);
   if (
     !Array.isArray(status.capabilities) ||
@@ -461,12 +466,6 @@ function isRegistration(
     value.identityVersion >= 1 &&
     isLifecycle(value.lifecycle) &&
     (value.kind === undefined || value.kind === "execution" || value.kind === "read_only")
-  );
-}
-
-function boundedText(value: unknown, maxLength: number): value is string {
-  return (
-    typeof value === "string" && value.length > 0 && value.length <= maxLength
   );
 }
 

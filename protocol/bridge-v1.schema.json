@@ -43,6 +43,7 @@
         "execution_request",
         "body_node_admission_challenge",
         "body_node_admission_grant",
+        "body_node_admission_result",
         "execution_receipt_query",
         "cancel_request",
         "companion_presentation_request",
@@ -69,6 +70,10 @@
     {
       "if": { "properties": { "type": { "const": "body_node_admission_grant" } } },
       "then": { "properties": { "payload": { "$ref": "#/$defs/bodyNodeAdmissionGrant" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "body_node_admission_result" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/bodyNodeAdmissionResult" } } }
     },
     {
       "if": {
@@ -448,6 +453,22 @@
           ]
         }
       }
+    },
+    "bodyNodeAdmissionResult": {
+      "oneOf": [
+        { "allOf": [
+          { "$ref": "#/$defs/bodyNodeAdmissionGrant" },
+          { "required": ["result"], "properties": { "result": { "const": "granted" } } }
+        ] },
+        { "allOf": [
+          { "$ref": "#/$defs/bodyNodeAdmissionChallenge" },
+          { "required": ["result", "code"], "properties": { "result": { "const": "rejected" }, "code": { "$ref": "#/$defs/reasonCode" } } }
+        ] },
+        { "allOf": [
+          { "$ref": "#/$defs/bodyNodeAdmissionChallenge" },
+          { "required": ["result", "code"], "properties": { "result": { "const": "unavailable" }, "code": { "const": "admission_unavailable" } } }
+        ] }
+      ]
     },
     "observationBinding": { "type": "object", "additionalProperties": false, "required": ["observationId", "ref"], "properties": { "observationId": { "$ref": "#/$defs/opaqueId" }, "ref": { "$ref": "#/$defs/opaqueId" } } },
     "opaqueId": {

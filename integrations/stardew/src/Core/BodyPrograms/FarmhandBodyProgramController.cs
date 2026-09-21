@@ -135,7 +135,12 @@ public sealed class FarmhandBodyProgramController
         while (true)
         {
             BodyProgramControllerResult<NodeAdmissionChallenge> started = this.authority.TryCreateAdmissionChallenge(programId);
-            if (!started.IsSuccess || !this.authority.IsLifecycleOpen) return;
+            if (!started.IsSuccess)
+            {
+                Console.WriteLine($"[GameBuddy-body-program-diagnostic] challenge_not_created;program={programId};code={started.Code}");
+                return;
+            }
+            if (!this.authority.IsLifecycleOpen) return;
             this.admission!.Send(started.Value!);
             if (!this.authority.IsLifecycleOpen) return;
         }

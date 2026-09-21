@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
@@ -9,6 +10,89 @@ namespace GameBuddy.Stardew.Core.Tests;
 
 public sealed class BodyProgramAuthorityTests
 {
+    [Theory]
+    [InlineData(BodyProgramJournalReadStatus.Empty, BodyProgramJournalOpenStatus.Empty)]
+    [InlineData(BodyProgramJournalReadStatus.ReadFailed, BodyProgramJournalOpenStatus.PersistenceReadFailed)]
+    public void OpenMapsExplicitStoreReadStatusWithoutUsingAbsenceSentinels(BodyProgramJournalReadStatus readStatus, BodyProgramJournalOpenStatus expectedStatus)
+    {
+        var store = new MemoryStore();
+        if (readStatus == BodyProgramJournalReadStatus.ReadFailed)
+        {
+            store.Set("committed-old-target");
+            store.ReadResult = new BodyProgramJournalReadResult(readStatus, null);
+        }
+        else
+        {
+            store.ReadResult = new BodyProgramJournalReadResult(readStatus, null);
+        }
+
+        OpenBodyProgramJournalAuthority authority = Open(store);
+
+        authority.OpenStatus.Should().Be(expectedStatus);
+        store.WriteCount.Should().Be(0);
+        if (readStatus == BodyProgramJournalReadStatus.ReadFailed)
+            store.Value.Should().Be("committed-old-target");
+        if (expectedStatus != BodyProgramJournalOpenStatus.Empty)
+            authority.Submit(Program("blocked", 1000)).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+    }
+
+    [Fact]
+    public void CloseIsIdempotentAndRetainedAuthorityQueriesAndMutationsFailClosed()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        authority.Close().Should().Be(BodyProgramAuthorityLifecycleState.Closed);
+        authority.Close().Should().Be(BodyProgramAuthorityLifecycleState.Closed);
+        authority.LifecycleState.Should().Be(BodyProgramAuthorityLifecycleState.Closed);
+
+        Action query = () => authority.Status("program");
+        Action verify = () => authority.Verify(Program("program", 1000));
+        query.Should().Throw<ObjectDisposedException>();
+        verify.Should().Throw<ObjectDisposedException>();
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+        authority.TryStop("program", 1).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
+    }
+
+    [Fact]
+    public void OpenTreatsPresentEmptyOrMalformedPayloadAsCorruptWithoutClearingIt()
+    {
+        foreach (string payload in new[] { string.Empty, "not-json" })
+        {
+            var store = new MemoryStore { ReadResult = new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, payload) };
+
+            OpenBodyProgramJournalAuthority authority = Open(store);
+
+            authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+            store.WriteCount.Should().Be(0);
+            authority.Submit(Program("blocked", 1000)).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+        }
+    }
+
+    [Fact]
+    public void OpenUsesPresentPayloadForStrictDecode()
+    {
+        BodyProgramJournalState emptyState = new(BodyProgramJournalPersistence.SchemaVersion, Scope(), Policy(), 0, Array.Empty<BodyProgramJournalProgram>(), Array.Empty<BodyProgramJournalEvent>());
+        string encoded = BodyProgramJournalPersistence.Encode(emptyState, Catalog(), Scope());
+        var store = new MemoryStore { ReadResult = new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, encoded) };
+
+        OpenBodyProgramJournalAuthority authority = Open(store);
+
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        authority.Snapshot.Programs.Should().BeEmpty();
+        store.WriteCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void OpenFailsClosedOnUnknownStoreReadStatus()
+    {
+        var store = new MemoryStore { ReadResult = new BodyProgramJournalReadResult((BodyProgramJournalReadStatus)999, "ignored") };
+
+        OpenBodyProgramJournalAuthority authority = Open(store);
+
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.PersistenceReadFailed);
+        authority.Submit(Program("blocked", 1000)).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+        store.WriteCount.Should().Be(0);
+    }
+
     [Fact]
     public void CodecMatchesFrozenHostCandidateShapeAndDecodesTypedArguments()
     {
@@ -69,9 +153,10 @@ public sealed class BodyProgramAuthorityTests
             persisted.RootElement.GetProperty("policyIdentity").GetProperty("value").GetString().Should().Be("policy-a");
             persisted.RootElement.GetProperty("policyIdentity").GetProperty("capabilityRevision").GetInt64().Should().Be(1);
         }
-        reopened.Snapshot.PolicyIdentity.Should().Be(Policy());
-        reopened.Snapshot.Programs.Single().Facts.Single().Values["arrival"].Arrival.Should()
-            .Be(new BodyProgramDestinationArrival("destination_arrived", new BodyProgramArrivalDestination("Town", null)));
+         reopened.Snapshot.PolicyIdentity.Should().Be(Policy());
+         reopened.Snapshot.Programs.Single().Nodes.Single().ExecutionBinding.Should().Be(grant.ExecutionBinding);
+         reopened.Snapshot.Programs.Single().Facts.Single().Values["arrival"].Arrival.Should()
+             .Be(new BodyProgramDestinationArrival("destination_arrived", new BodyProgramArrivalDestination("Town", null)));
     }
 
     [Fact]
@@ -362,14 +447,17 @@ public sealed class BodyProgramAuthorityTests
         grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
         authority.TryComplete(grant, TerminalOutcome(grant, outcome)).IsSuccess.Should().BeTrue();
 
-        OpenBodyProgramJournalAuthority reopened = Open(store, policy: () => Policy("policy-b", 2));
-        reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+         OpenBodyProgramJournalAuthority reopened = Open(store, policy: () => Policy("policy-b", 2));
+         BodyProgramJournalPersistence.TryValidate(reopened.Snapshot, out string? restartValidationReason).Should().BeTrue(restartValidationReason);
+         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
         BodyProgramJournalProgram program = reopened.Snapshot.Programs.Single();
         program.State.Should().Be(BodyProgramState.RecoveryRequired);
-        program.Nodes.Single(node => node.NodeId == "first").State.Should().Be(outcome == BodyProgramNodeOutcome.Failed ? BodyProgramNodeState.Failed : BodyProgramNodeState.Cancelled);
-        program.Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.RecoveryRequired);
+         BodyProgramJournalNode terminal = program.Nodes.Single(node => node.NodeId == "first");
+         terminal.State.Should().Be(outcome == BodyProgramNodeOutcome.Failed ? BodyProgramNodeState.Failed : BodyProgramNodeState.Cancelled);
+         terminal.ExecutionBinding.Should().NotBeNull();
+         terminal.GrantId.Should().BeNull();
+         program.Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.Pending);
     }
-
     [Fact]
     public void ReopenRejectsPersistedFactWithTamperedOutputKind()
     {
@@ -659,16 +747,244 @@ public sealed class BodyProgramAuthorityTests
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
-        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+        NodeExecutionBinding execution = Execution(grant);
+        authority.TryBeginNativeDispatch(grant, execution).IsSuccess.Should().BeTrue();
         authority.TryComplete(grant, TerminalOutcome(grant, BodyProgramNodeOutcome.Uncertain)).IsSuccess.Should().BeTrue();
         BodyProgramJournalProgram program = authority.Snapshot.Programs.Single();
         program.State.Should().Be(BodyProgramState.RecoveryRequired);
-        program.Nodes.Single(node => node.NodeId == "first").State.Should().Be(BodyProgramNodeState.RecoveryRequired);
+        BodyProgramJournalNode uncertain = program.Nodes.Single(node => node.NodeId == "first");
+        uncertain.State.Should().Be(BodyProgramNodeState.RecoveryRequired);
+        uncertain.GrantId.Should().BeNull();
+        uncertain.ExecutionBinding.Should().Be(execution);
+        uncertain.CanonicalBoundArguments.Should().NotBeNull();
+        uncertain.AttemptPolicyIdentity.Should().Be(Policy());
+        uncertain.ClaimOwnership.Should().NotBeNull();
+        uncertain.ReceiptId.Should().BeNull();
+        uncertain.Evidence.Should().BeNull();
+        uncertain.PostconditionVerification.Should().BeNull();
+        uncertain.RecoveryDiagnostic.Should().Be("execution_uncertain");
+        program.Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.Pending);
         program.Facts.Should().BeEmpty();
+
+        OpenBodyProgramJournalAuthority reopened = Open(store);
+        reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+        BodyProgramJournalNode persisted = reopened.Snapshot.Programs.Single().Nodes.Single(node => node.NodeId == "first");
+        persisted.ExecutionBinding.Should().Be(execution);
+        persisted.CanonicalBoundArguments.Should().BeEquivalentTo(uncertain.CanonicalBoundArguments);
+        persisted.AttemptPolicyIdentity.Should().Be(Policy());
+        persisted.ClaimOwnership.Should().BeEquivalentTo(uncertain.ClaimOwnership);
     }
 
-    [Fact]
-    public void StopAfterNativeDispatchCancelsNodeAndClearsExecutionBinding()
+      [Fact]
+      public void ReopenRejectsRecoveryRequiredNodeWithZeroAttempt()
+      {
+          var store = new MemoryStore();
+          string valid = PersistRecoveryRequiredState(store);
+
+          OpenBodyProgramJournalAuthority reopened = Open(store);
+          reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+          BodyProgramJournalPersistence.TryValidate(reopened.Snapshot, out string? reason).Should().BeTrue(reason);
+
+          store.Set(MutatePersistedNode(valid, node => node["nodeAttempt"] = 0));
+
+          Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+      }
+
+      [Theory]
+      [InlineData("receiptId")]
+      [InlineData("evidence")]
+      [InlineData("postconditionVerification")]
+      [InlineData("grantId")]
+      public void ReopenRejectsRecoveryRequiredNodeWithTerminalProofOrGrant(string propertyName)
+      {
+          var store = new MemoryStore();
+          string valid = PersistRecoveryRequiredState(store);
+          Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+
+          store.Set(MutatePersistedNode(valid, node => node[propertyName] = "forged"));
+
+          Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+      }
+
+      [Theory]
+      [InlineData(BodyProgramNodeState.HostAdmitted)]
+      [InlineData(BodyProgramNodeState.Running)]
+      public void ReopenRejectsRecoveryRequiredProgramWithExecutableNodeResidue(BodyProgramNodeState executableState)
+      {
+          var store = new MemoryStore();
+          string valid = PersistRecoveryRequiredState(store);
+          Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+
+          store.Set(MutatePersistedNode(valid, node =>
+          {
+              node["state"] = (int)executableState;
+              node["grantId"] = "grant";
+              node["recoveryDiagnostic"] = null;
+          }));
+
+          Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+      }
+
+      [Fact]
+      public void FailedTerminalPreservesExecutionLineageAfterReopen()
+     {
+         var store = new MemoryStore();
+         OpenBodyProgramJournalAuthority authority = Open(store);
+         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+         NodeExecutionBinding execution = Execution(grant);
+         authority.TryBeginNativeDispatch(grant, execution).IsSuccess.Should().BeTrue();
+
+         authority.TryComplete(grant, TerminalOutcome(grant, BodyProgramNodeOutcome.Failed)).IsSuccess.Should().BeTrue();
+
+         BodyProgramJournalNode failed = authority.Snapshot.Programs.Single().Nodes.Single();
+         failed.State.Should().Be(BodyProgramNodeState.Failed);
+         failed.NodeAttempt.Should().Be(1);
+         failed.GrantId.Should().BeNull();
+         failed.ExecutionBinding.Should().Be(execution);
+         failed.ReceiptId.Should().BeNull();
+         failed.Evidence.Should().BeNull();
+         failed.PostconditionVerification.Should().BeNull();
+         OpenBodyProgramJournalAuthority reopened = Open(store);
+         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+         reopened.Snapshot.Programs.Single().Nodes.Single().ExecutionBinding.Should().Be(execution);
+     }
+
+     [Fact]
+     public void CancelledBoundTerminalPreservesExecutionLineageAfterReopen()
+     {
+         var store = new MemoryStore();
+         OpenBodyProgramJournalAuthority authority = Open(store);
+         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+         NodeExecutionBinding execution = Execution(grant);
+         authority.TryBeginNativeDispatch(grant, execution).IsSuccess.Should().BeTrue();
+
+         authority.TryComplete(grant, TerminalOutcome(grant, BodyProgramNodeOutcome.Cancelled)).IsSuccess.Should().BeTrue();
+
+         BodyProgramJournalNode cancelled = authority.Snapshot.Programs.Single().Nodes.Single();
+         cancelled.State.Should().Be(BodyProgramNodeState.Cancelled);
+         cancelled.GrantId.Should().BeNull();
+         cancelled.ExecutionBinding.Should().Be(execution);
+         OpenBodyProgramJournalAuthority reopened = Open(store);
+         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+         reopened.Snapshot.Programs.Single().Nodes.Single().ExecutionBinding.Should().Be(execution);
+     }
+
+     [Fact]
+     public void PreAdmissionCancellationRemainsUnboundAndPreservesAttemptProjection()
+     {
+         var store = new MemoryStore();
+         OpenBodyProgramJournalAuthority authority = Open(store);
+         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         authority.TryCreateAdmissionChallenge("program").IsSuccess.Should().BeTrue();
+
+         authority.TryStop("program", 1).IsSuccess.Should().BeTrue();
+
+         BodyProgramJournalNode cancelled = authority.Snapshot.Programs.Single().Nodes.Single();
+         cancelled.State.Should().Be(BodyProgramNodeState.Cancelled);
+         cancelled.NodeAttempt.Should().Be(1);
+         cancelled.GrantId.Should().BeNull();
+         cancelled.ExecutionBinding.Should().BeNull();
+         cancelled.CanonicalBoundArguments.Should().NotBeNull();
+         OpenBodyProgramJournalAuthority reopened = Open(store);
+         reopened.Snapshot.Programs.Single().Nodes.Single().ExecutionBinding.Should().BeNull();
+     }
+
+     [Fact]
+     public void UnboundAwaitingAdmissionIsQuarantinedWithoutFabricatedExecutionLineage()
+     {
+         var store = new MemoryStore();
+         OpenBodyProgramJournalAuthority authority = Open(store);
+         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         authority.TryCreateAdmissionChallenge("program").IsSuccess.Should().BeTrue();
+
+         OpenBodyProgramJournalAuthority reopened = Open(store);
+
+         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+         BodyProgramJournalProgram program = reopened.Snapshot.Programs.Single();
+         program.State.Should().Be(BodyProgramState.RecoveryRequired);
+         BodyProgramJournalNode node = program.Nodes.Single();
+         node.State.Should().Be(BodyProgramNodeState.RecoveryRequired);
+         node.NodeAttempt.Should().Be(1);
+         node.GrantId.Should().BeNull();
+         node.ExecutionBinding.Should().BeNull();
+         node.RecoveryDiagnostic.Should().Be("recovery_required");
+         BodyProgramJournalPersistence.TryValidate(reopened.Snapshot, out string? reason).Should().BeTrue(reason);
+         reopened.TryCreateAdmissionChallenge("program").Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
+     }
+
+     [Fact]
+     public void ReopenRejectsTerminalBindingWithCrossAttemptOrCrossProgramLineage()
+     {
+         var store = new MemoryStore();
+         OpenBodyProgramJournalAuthority authority = Open(store);
+         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+         authority.TryComplete(grant, TerminalOutcome(grant, BodyProgramNodeOutcome.Failed)).IsSuccess.Should().BeTrue();
+         string valid = store.Value!;
+
+         store.Set(valid.Replace("\"executionBinding\":{\"programId\":\"program\",\"nodeId\":\"first\",\"nodeAttempt\":1", "\"executionBinding\":{\"programId\":\"other\",\"nodeId\":\"first\",\"nodeAttempt\":1", StringComparison.Ordinal));
+         Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+
+         store.Set(valid.Replace("\"executionBinding\":{\"programId\":\"program\",\"nodeId\":\"first\",\"nodeAttempt\":1", "\"executionBinding\":{\"programId\":\"program\",\"nodeId\":\"first\",\"nodeAttempt\":2", StringComparison.Ordinal));
+         Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+     }
+
+     [Fact]
+      public void ReopenRejectsSucceededTerminalBindingWithCrossAttemptOrCrossProgramLineage()
+      {
+          var store = new MemoryStore();
+          OpenBodyProgramJournalAuthority authority = Open(store);
+          authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+          NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+          HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+          NodeExecutionBinding execution = Execution(grant);
+          authority.TryBeginNativeDispatch(grant, execution).IsSuccess.Should().BeTrue();
+          authority.TryComplete(grant, TerminalSuccess(grant, Fact(grant))).IsSuccess.Should().BeTrue();
+
+          authority.Snapshot.Programs.Single().State.Should().Be(BodyProgramState.Succeeded);
+          authority.Snapshot.Programs.Single().Nodes.Single().State.Should().Be(BodyProgramNodeState.Succeeded);
+          Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+          string valid = store.Value!;
+
+          store.Set(MutatePersistedNode(valid, node => node["executionBinding"]!.AsObject()["programId"] = "other"));
+          Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+
+          store.Set(MutatePersistedNode(valid, node => node["executionBinding"]!.AsObject()["nodeAttempt"] = 2));
+          Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+      }
+
+       [Fact]
+       public void ReopenRejectsPersistedActiveProgramWithOnlySucceededNodes()
+       {
+           var store = new MemoryStore();
+           OpenBodyProgramJournalAuthority authority = Open(store);
+           authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+           NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+           HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+           authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+           authority.TryComplete(grant, TerminalSuccess(grant, Fact(grant))).IsSuccess.Should().BeTrue();
+
+           BodyProgramJournalProgram persistedProgram = authority.Snapshot.Programs.Single();
+           persistedProgram.State.Should().Be(BodyProgramState.Succeeded);
+           persistedProgram.Nodes.Should().OnlyContain(node => node.State == BodyProgramNodeState.Succeeded);
+           string valid = store.Value!;
+           JsonObject root = JsonNode.Parse(valid)?.AsObject() ?? throw new InvalidOperationException("Persisted journal root is not an object.");
+           JsonArray programs = root["programs"]?.AsArray() ?? throw new InvalidOperationException("Persisted journal has no programs.");
+           JsonObject program = programs[0]?.AsObject() ?? throw new InvalidOperationException("Persisted journal has no program object.");
+           program["state"] = (int)BodyProgramState.Active;
+           store.Set(root.ToJsonString());
+
+           Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+       }
+
+       [Fact]
+       public void StopAfterNativeDispatchCancelsNodeAndPreservesExecutionBinding()
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
@@ -684,16 +1000,16 @@ public sealed class BodyProgramAuthorityTests
         stopped.IsSuccess.Should().BeTrue();
         stopped.Code.Should().Be(BodyProgramControllerResultCode.Succeeded);
         stopped.Value!.State.Should().Be(BodyProgramState.Cancelled);
-        stopped.Value.Nodes.Single().State.Should().Be(BodyProgramNodeState.Cancelled);
-        stopped.Value.Nodes.Single().ExecutionBinding.Should().BeNull();
-        BodyProgramJournalNode persisted = Open(store).Snapshot.Programs.Single().Nodes.Single();
-        persisted.State.Should().Be(BodyProgramNodeState.Cancelled);
-        persisted.ExecutionBinding.Should().BeNull();
+         stopped.Value.Nodes.Single().State.Should().Be(BodyProgramNodeState.Cancelled);
+         stopped.Value.Nodes.Single().ExecutionBinding.Should().Be(execution);
+         BodyProgramJournalNode persisted = Open(store).Snapshot.Programs.Single().Nodes.Single();
+         persisted.State.Should().Be(BodyProgramNodeState.Cancelled);
+         persisted.ExecutionBinding.Should().Be(execution);
         authority.OpenStatus.Should().NotBe(BodyProgramJournalOpenStatus.PersistenceWriteFailed);
     }
 
     [Fact]
-    public void RestartFenceClearsExecutionBindingFromRunningNode()
+    public void RestartFencePreservesExecutionLineageAndFencesPendingSuccessor()
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
@@ -701,15 +1017,36 @@ public sealed class BodyProgramAuthorityTests
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
-        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+        NodeExecutionBinding execution = Execution(grant);
+        authority.TryBeginNativeDispatch(grant, execution).IsSuccess.Should().BeTrue();
+        BodyProgramJournalNode beforeRestart = authority.Snapshot.Programs.Single().Nodes.Single(node => node.NodeId == "first");
 
         OpenBodyProgramJournalAuthority reopened = Open(store);
 
         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
-        BodyProgramJournalNode running = reopened.Snapshot.Programs.Single().Nodes.Single(node => node.NodeId == "first");
+        BodyProgramJournalProgram program = reopened.Snapshot.Programs.Single();
+        BodyProgramJournalNode running = program.Nodes.Single(node => node.NodeId == "first");
         running.State.Should().Be(BodyProgramNodeState.RecoveryRequired);
-        running.ExecutionBinding.Should().BeNull();
-        reopened.Snapshot.Programs.Single().Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.RecoveryRequired);
+        running.GrantId.Should().BeNull();
+        running.ExecutionBinding.Should().Be(execution);
+        running.CanonicalBoundArguments.Should().BeEquivalentTo(beforeRestart.CanonicalBoundArguments);
+        running.AttemptPolicyIdentity.Should().Be(beforeRestart.AttemptPolicyIdentity);
+        running.ClaimOwnership.Should().NotBeNull();
+        running.ClaimOwnership!.Values.Should().AllBeEquivalentTo(BodyProgramClaimOwnershipState.Released,
+            "a restart fence durably releases every claim the interrupted attempt held (acquire→release transition)");
+        beforeRestart.ClaimOwnership!.Values.Should().AllBeEquivalentTo(BodyProgramClaimOwnershipState.Acquired,
+            "the running attempt held the claims before the restart fence");
+        running.RecoveryDiagnostic.Should().Be("recovery_required");
+         BodyProgramJournalNode pending = program.Nodes.Single(node => node.NodeId == "second");
+         pending.State.Should().Be(BodyProgramNodeState.Pending);
+         pending.NodeAttempt.Should().Be(0);
+         pending.GrantId.Should().BeNull();
+         pending.ExecutionBinding.Should().BeNull();
+         pending.RecoveryDiagnostic.Should().BeNull();
+
+        reopened.TryCreateAdmissionChallenge("program").Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
+        reopened.TryConsumeHostGrant(grant).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
+        reopened.TryBeginNativeDispatch(grant, execution).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
     }
     [Fact]
     public void SuccessorChallengeMaterializesDeclaredBindingFromExactProducingAttempt()
@@ -731,7 +1068,69 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
-    public void SuccessorGrantMustEchoMaterializedArgumentsBeforeConsumeDispatchAndComplete()
+    public void ExactAdmissionRejectionPersistsCodeCascadesPendingDescendantsAndIsIdempotent()
+    {
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store);
+        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+
+        authority.TryRejectAdmission(challenge, "policy_denied").IsSuccess.Should().BeTrue();
+
+        BodyProgramJournalProgram rejected = authority.Snapshot.Programs.Single();
+        rejected.State.Should().Be(BodyProgramState.Failed);
+        BodyProgramJournalNode first = rejected.Nodes.Single(node => node.NodeId == "first");
+        first.State.Should().Be(BodyProgramNodeState.Rejected);
+        first.RejectionCode.Should().Be("policy_denied");
+        first.RecoveryDiagnostic.Should().BeNull();
+        first.GrantId.Should().BeNull();
+        first.ExecutionBinding.Should().BeNull();
+        first.ReceiptId.Should().BeNull();
+        first.Evidence.Should().BeNull();
+        first.PostconditionVerification.Should().BeNull();
+        BodyProgramJournalNode second = rejected.Nodes.Single(node => node.NodeId == "second");
+        second.State.Should().Be(BodyProgramNodeState.SkippedDependency);
+        second.NodeAttempt.Should().Be(0);
+        second.AdmissionAttempt.Should().Be(0);
+        second.CanonicalBoundArguments.Should().BeNull();
+        second.AttemptPolicyIdentity.Should().BeNull();
+        second.ClaimOwnership.Should().BeNull();
+        second.RejectionCode.Should().BeNull();
+        authority.Events("program", 0, 32).Events.Should().ContainSingle(@event => @event.Kind == "admission_rejected")
+            .Which.NodeAttempt.Should().Be(1);
+        authority.Events("program", 0, 32).Events.Should().ContainSingle(@event => @event.Kind == "node_skipped")
+            .Which.NodeAttempt.Should().Be(0);
+        int eventCount = authority.Snapshot.Events.Count;
+
+        authority.TryRejectAdmission(challenge, "policy_denied").IsSuccess.Should().BeTrue();
+        authority.Snapshot.Events.Should().HaveCount(eventCount);
+        authority.TryRejectAdmission(challenge, "deadline_expired").Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+        authority.TryRejectAdmission(challenge with { StopEpoch = challenge.StopEpoch + 1 }, "policy_denied")
+            .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+        authority.Snapshot.Events.Should().HaveCount(eventCount);
+
+        OpenBodyProgramJournalAuthority reopened = Open(store);
+        reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        reopened.Snapshot.Programs.Single().Nodes.Single(node => node.NodeId == "first").RejectionCode.Should().Be("policy_denied");
+        reopened.Snapshot.Programs.Single().Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.SkippedDependency);
+    }
+
+    [Fact]
+    public void RejectionCodeMustBeAllowlistedAndStrictlyLowerSnakeCase()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+
+        foreach (string code in new[] { "POLICY_DENIED", "policy-denied", "policy_denied_extra", " policy_denied", "policy_denied " })
+            authority.TryRejectAdmission(challenge, code).Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+
+        authority.Snapshot.Programs.Single().Nodes.Single().State.Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
+        authority.Snapshot.Events.Should().ContainSingle(@event => @event.Kind == "admission_challenge");
+    }
+
+    [Fact]
+     public void SuccessorGrantMustEchoMaterializedArgumentsBeforeConsumeDispatchAndComplete()
     {
         OpenBodyProgramJournalAuthority authority = Open();
         authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
@@ -758,6 +1157,39 @@ public sealed class BodyProgramAuthorityTests
         events.Events.Should().Contain(@event => @event.Kind == "admission_challenge" && @event.NodeId == "second" && @event.NodeAttempt == 1);
     }
 
+        [Fact]
+    public void ReopenRejectsAdmissionRejectionEventWithTamperedNodeState()
+    {
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store);
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        authority.TryRejectAdmission(challenge, "policy_denied").IsSuccess.Should().BeTrue();
+
+        JsonObject root = JsonNode.Parse(store.Value!)!.AsObject();
+        root["programs"]!.AsArray()[0]!.AsObject()["state"] = (int)BodyProgramState.Failed;
+        root["programs"]!.AsArray()[0]!.AsObject()["nodes"]!.AsArray()[0]!.AsObject()["state"] = (int)BodyProgramNodeState.Failed;
+        store.Set(root.ToJsonString());
+
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+    }
+
+    [Fact]
+    public void ReopenRejectsAdmissionRejectionEventWithWrongExactAttempt()
+    {
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store);
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        authority.TryRejectAdmission(challenge, "policy_denied").IsSuccess.Should().BeTrue();
+        JsonObject root = JsonNode.Parse(store.Value!)!.AsObject();
+        JsonObject rejection = root["events"]!.AsArray().Single(item => item!.AsObject()["kind"]!.GetValue<string>() == "admission_rejected")!.AsObject();
+        rejection["nodeAttempt"] = 2;
+        store.Set(root.ToJsonString());
+
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+    }
+
     [Fact]
     public void ReopenRejectsPersistedSuccessorFactWithWrongProducingAttemptOrProgram()
     {
@@ -778,7 +1210,30 @@ public sealed class BodyProgramAuthorityTests
         Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
     }
 
-    private static BodyProgramActionCatalog ArrivalCatalog() => new(7, new[]
+     private static string PersistRecoveryRequiredState(MemoryStore store)
+     {
+         OpenBodyProgramJournalAuthority authority = Open(store);
+         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+         NodeExecutionBinding execution = Execution(grant);
+         authority.TryBeginNativeDispatch(grant, execution).IsSuccess.Should().BeTrue();
+         authority.TryComplete(grant, TerminalOutcome(grant, BodyProgramNodeOutcome.Uncertain)).IsSuccess.Should().BeTrue();
+         return store.Value!;
+     }
+
+     private static string MutatePersistedNode(string encoded, Action<JsonObject> mutate)
+     {
+         JsonObject root = JsonNode.Parse(encoded)?.AsObject() ?? throw new InvalidOperationException("Persisted journal root is not an object.");
+         JsonArray programs = root["programs"]?.AsArray() ?? throw new InvalidOperationException("Persisted journal has no programs.");
+         JsonObject program = programs[0]?.AsObject() ?? throw new InvalidOperationException("Persisted journal has no program object.");
+         JsonArray nodes = program["nodes"]?.AsArray() ?? throw new InvalidOperationException("Persisted journal has no nodes.");
+         JsonObject node = nodes[0]?.AsObject() ?? throw new InvalidOperationException("Persisted journal has no node object.");
+         mutate(node);
+         return root.ToJsonString();
+     }
+
+     private static BodyProgramActionCatalog ArrivalCatalog() => new(7, new[]
     {
         new BodyProgramActionDescriptor("move_to_tile", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramFactDescriptor("arrival", BodyProgramArgumentKind.DestinationArrival) }, new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
     });
@@ -823,7 +1278,7 @@ public sealed class BodyProgramAuthorityTests
     {
         new ActionProgramCandidateNode("first", "till_soil", RuntimeMap("tile", 8), Array.Empty<string>(), Bindings(), deadline),
     });
-    private static HostAdmissionGrant Grant(NodeAdmissionChallenge challenge) => new(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision, challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalArguments, challenge.DerivedResourceClaims, challenge.DeadlineMs, "grant");
+    private static HostAdmissionGrant Grant(NodeAdmissionChallenge challenge) => new(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision, challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalArguments, challenge.DerivedResourceClaims, challenge.DeadlineMs, "grant", "attachment_01", "host-policy_01");
     private static RuntimeFact Fact(HostAdmissionGrant grant) => new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "arrival", CanonicalMap("arrival", 7));
     private static BodyProgramPolicyIdentity Policy(string value = "policy-a", long revision = 1) => new(value, revision);
     private static BridgeScope Scope() => new("stardew", "save", "world", "player", "companion");
@@ -832,5 +1287,15 @@ public sealed class BodyProgramAuthorityTests
     private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalMap(string key, long value) => new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal) { [key] = new(BodyProgramArgumentKind.Integer, value.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
     private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalBooleanMap(string key, bool value) => new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal) { [key] = new(BodyProgramArgumentKind.Boolean, value ? "true" : "false") };
     private static IReadOnlyDictionary<string, string> Claims(string key, string value) => new Dictionary<string, string>(StringComparer.Ordinal) { [key] = value };
-    private sealed class MemoryStore : IBodyProgramJournalStore { internal string? Value { get; private set; } public string? Read() => this.Value; public bool TryWrite(string encodedState) { this.Value = encodedState; return true; } internal void Set(string value) => this.Value = value; }
+     private sealed class MemoryStore : IBodyProgramJournalStore
+     {
+         internal string? Value { get; private set; }
+         internal BodyProgramJournalReadResult? ReadResult { get; set; }
+         internal int WriteCount { get; private set; }
+         public BodyProgramJournalReadResult Read() => this.ReadResult ?? (this.Value is null
+             ? new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Empty, null)
+             : new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, this.Value));
+         public bool TryWrite(string encodedState) { this.WriteCount++; this.Value = encodedState; return true; }
+         internal void Set(string value) { this.ReadResult = null; this.Value = value; }
+     }
 }

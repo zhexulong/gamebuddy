@@ -72,8 +72,11 @@ export async function verifyPublishedStardewModPackage(
       const content = await readFile(resolve(root, name));
       if (content.length === 0) throw new Error();
     }
-  } catch {
-    throw unavailable();
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    const wrapped = new Error(`stardew_published_mod_package_invalid: ${cause}`);
+    if (error instanceof Error && error.stack !== undefined) wrapped.stack = error.stack;
+    throw wrapped;
   }
 }
 

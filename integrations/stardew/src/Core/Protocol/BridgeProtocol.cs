@@ -13,7 +13,12 @@ namespace GameBuddy.Stardew.Core.Protocol;
 public static class BridgeProtocol
 {
     public const int Version = 1;
-    public const int MaximumMessageBytes = 16 * 1024;
+    // hello_ack carries the complete published action catalog (every registered
+    // action's wire descriptor). With a 34-action catalog the serialized
+    // acknowledgement is ~16.7 KiB, so the framing bound must admit the full
+    // publication plus growth; 32 KiB keeps a margin while staying well below
+    // the 64 KiB named-pipe buffer ceiling.
+    public const int MaximumMessageBytes = 32 * 1024;
 
     /// <summary>
     /// Frozen per-node wire binding-map bound on the inbound Body program candidate,

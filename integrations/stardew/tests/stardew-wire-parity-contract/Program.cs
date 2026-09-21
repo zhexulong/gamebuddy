@@ -46,7 +46,7 @@ internal static class Program
             return Fail(reasonCode);
 
         BridgeExecutionRequest request = envelope.Payload;
-        Console.WriteLine($"accepted|execution_request|{request.RequestId}|{request.IdempotencyKey}|{request.Action}|{request.Args.Slot?.ToString() ?? "null"}|{request.ExpectedRevision}|{request.DeadlineMs}");
+        Console.WriteLine($"accepted|execution_request|{request.RequestId}|{request.IdempotencyKey}|{request.Action}|{request.Args.Tool?.ToString() ?? "null"}|{request.ExpectedRevision}|{request.DeadlineMs}");
         return 0;
     }
 

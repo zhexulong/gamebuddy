@@ -39,7 +39,7 @@ module.exports = {
       },
       to: {
         path: "^host/src/(?:bootstrap|containment|composition)/",
-        pathNot: "^host/src/(?:containment/auth/desktop-guardian-session\\.internal|bootstrap/roots/stardew-private-mod-profile-staging)",
+        pathNot: "^host/src/(?:containment/auth/desktop-guardian-session\\.internal|containment/runtime/contract|containment/runtime/core|bootstrap/roots/stardew-private-mod-profile-staging)",
       },
     },
   ],

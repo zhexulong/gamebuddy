@@ -217,7 +217,14 @@ public sealed class OpenBodyProgramJournalAuthority
         if (!TryProgram(programId, out BodyProgramJournalProgram? program)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
         if (stopEpoch <= program!.StopEpoch) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramJournalProgram stopped = program with { State = BodyProgramState.Cancelled, StopEpoch = stopEpoch,
-            Nodes = Array.AsReadOnly(program.Nodes.Select(node => IsTerminal(node.State) ? node : node with { State = BodyProgramNodeState.Cancelled, GrantId = null }).ToArray()) };
+            Nodes = Array.AsReadOnly(program.Nodes.Select(node => IsTerminal(node.State) ? node : node with
+            {
+                State = BodyProgramNodeState.Cancelled,
+                GrantId = null,
+                // Mid-run cancellation settles the durable ownership transition
+                // exactly like TryComplete: any acquired claim is released.
+                ClaimOwnership = node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)),
+            }).ToArray()) };
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, stopped), program.Program.ProgramId, "stopped", null, null))) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PersistenceWriteFailed);
         return BodyProgramControllerResult.Success(SnapshotFor(this.state.Programs.Single(item => item.Program.ProgramId == programId)));
     }
@@ -343,7 +350,14 @@ public sealed class OpenBodyProgramJournalAuthority
         if (!TryGrant(grant, BodyProgramNodeState.AwaitingHostAdmission, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out VerifiedBodyProgramNode? descriptor, out BodyProgramControllerResultCode failure)) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(failure);
         NodeExecutionBinding execution = new(program!.Program.ProgramId, node!.NodeId, node.NodeAttempt, Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"));
         HostAdmissionGrant boundGrant = grant! with { ExecutionBinding = execution };
-        if (!TryPersist(AppendEvent(ReplaceProgram(this.state, ReplaceNode(program, node with { State = BodyProgramNodeState.HostAdmitted, GrantId = grant.GrantId, ExecutionBinding = execution })), program.Program.ProgramId, "host_admitted", node.NodeId, node.NodeAttempt))) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(BodyProgramControllerResultCode.PersistenceWriteFailed);
+        // Fresh-acquire each descriptor-derived claim at the exact admission
+        // boundary: the grant is Host-approved and DescriptorMatchesLive already
+        // revalidated live scope/catalog/args/claims on the game thread. The
+        // durable HostAdmitted ownership transition is the Mod-owned
+        // acquire point (ADR-006 "fresh-acquire concrete claims").
+        IReadOnlyDictionary<string, BodyProgramClaimOwnershipState> acquired = BodyProgramValidation.FreezeMap(
+            descriptor!.DerivedResourceClaims.Keys.ToDictionary(key => key, _ => BodyProgramClaimOwnershipState.Acquired, StringComparer.Ordinal));
+        if (!TryPersist(AppendEvent(ReplaceProgram(this.state, ReplaceNode(program, node with { State = BodyProgramNodeState.HostAdmitted, GrantId = grant.GrantId, ExecutionBinding = execution, ClaimOwnership = acquired })), program.Program.ProgramId, "host_admitted", node.NodeId, node.NodeAttempt))) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(BodyProgramControllerResultCode.PersistenceWriteFailed);
         return BodyProgramControllerResult.Success(boundGrant);
     }
 
@@ -372,6 +386,9 @@ public sealed class OpenBodyProgramJournalAuthority
         }
         else if (result.Facts is null || result.Facts.Count != 0 || result.ReceiptId is not null || result.Evidence is not null || result.PostconditionVerification is not null) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramNodeState nodeState = result.Outcome switch { BodyProgramNodeOutcome.Succeeded => BodyProgramNodeState.Succeeded, BodyProgramNodeOutcome.Failed => BodyProgramNodeState.Failed, BodyProgramNodeOutcome.Cancelled => BodyProgramNodeState.Cancelled, _ => BodyProgramNodeState.RecoveryRequired };
+        // Terminal settle releases every claim this attempt acquired at the
+        // HostAdmitted boundary (ADR-006 durable acquire/release transition).
+        IReadOnlyDictionary<string, BodyProgramClaimOwnershipState>? released = node.ClaimOwnership is { } claims ? BodyProgramValidation.FreezeMap(claims.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) : null;
         BodyProgramJournalNode completed = node with
         {
             State = nodeState,
@@ -381,6 +398,7 @@ public sealed class OpenBodyProgramJournalAuthority
             Evidence = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.Evidence : null,
             PostconditionVerification = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.PostconditionVerification : null,
             RecoveryDiagnostic = result.Outcome == BodyProgramNodeOutcome.Uncertain ? "execution_uncertain" : null,
+            ClaimOwnership = released,
         };
         BodyProgramJournalProgram updated = ReplaceNode(program!, completed) with { Facts = result.Outcome == BodyProgramNodeOutcome.Succeeded ? Array.AsReadOnly(program!.Facts.Concat(result.Facts!).ToArray()) : program!.Facts };
          updated = updated with { State = result.Outcome switch
@@ -425,7 +443,7 @@ public sealed class OpenBodyProgramJournalAuthority
             || !Equals(node.ExecutionBinding, grant.ExecutionBinding) || !Equals(execution, grant.ExecutionBinding)
             || !ExactGrantIdentity(grant, program, node, descriptor))
             return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.GrantMismatch);
-        BodyProgramJournalNode settled = node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = node.ExecutionBinding, RecoveryDiagnostic = "recovery_required" };
+        BodyProgramJournalNode settled = node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = node.ExecutionBinding, RecoveryDiagnostic = "recovery_required", ClaimOwnership = node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) };
         BodyProgramJournalProgram updated = ReplaceNode(program, settled) with { State = BodyProgramState.RecoveryRequired };
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, updated), program.Program.ProgramId, "node_settled", node.NodeId, node.NodeAttempt)))
             return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PersistenceWriteFailed);
@@ -610,7 +628,7 @@ public sealed class OpenBodyProgramJournalAuthority
                 {
                     BodyProgramNodeState.Pending when node.NodeAttempt == 0 => node,
                     BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired => node,
-                    _ => node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = node.ExecutionBinding, RecoveryDiagnostic = "recovery_required" },
+                    _ => node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = node.ExecutionBinding, RecoveryDiagnostic = "recovery_required", ClaimOwnership = node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) },
                 }).ToArray())
             }).ToArray();
         return new BodyProgramJournalState(persisted.SchemaVersion, persisted.Scope, persisted.PolicyIdentity, persisted.EventHighWater, Array.AsReadOnly(programs), persisted.Events);

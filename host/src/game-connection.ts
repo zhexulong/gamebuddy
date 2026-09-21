@@ -1,8 +1,9 @@
 import type { GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { KnowledgeBundle } from "./knowledge.js";
 import type {
-  ActionRegistration,
-  ExecutionReceipt,
+   ActionRegistration,
+   ExecutionReceipt,
+   FarmhandPolicyIdentity,
   NavigationReadRequest,
   NavigationReadResult,
   ObserveSceneRequest,
@@ -26,8 +27,9 @@ export type StardewBridgeConnectionState = Readonly<{
    */
   catalogRegistrations?: readonly ActionRegistration[];
   /** Current authenticated Mod availability projection; absent means no action may materialize. */
-  catalogRevision?: number;
-  enabledActionIds?: readonly string[];
+   catalogRevision?: number;
+   policyIdentity?: FarmhandPolicyIdentity;
+   enabledActionIds?: readonly string[];
   snapshot: Snapshot | null;
   latestReceipt: ExecutionReceipt | null;
   latestReasonCode: string | null;
@@ -55,7 +57,7 @@ export interface GameConnection {
   /** Optional adapter-owned advisory data mounted by the Host. */
   readonly knowledge?: unknown;
   /** Optional version binding owned by the selected integration. */
-  readonly gameVersion?: string;
+  readonly gameVersion?: string | undefined;
 }
 
 /**
@@ -68,9 +70,9 @@ export interface StardewBridgeConnection extends GameConnection {
   readonly scope: StardewScope;
   readonly state: StardewBridgeConnectionState;
   /** Stardew compatibility data; generic Host code only sees opaque knowledge. */
-  readonly knowledge?: KnowledgeBundle;
+  readonly knowledge?: KnowledgeBundle | undefined;
   /** Target integration version owned by Host configuration, never Agent input. */
-  readonly gameVersion?: string;
+  readonly gameVersion?: string | undefined;
   /** Compatibility execution methods remain adapter-owned and optional. */
   readonly execute?: (...args: any[]) => any;
   readonly cancel?: (...args: any[]) => any;

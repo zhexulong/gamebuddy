@@ -120,6 +120,7 @@ export function createReferencePipelineDialogueWebDelegatedHandler(
           return sendProblem(response, 400, "invalid_request");
         if (pipelineService === undefined) return sendProblem(response, 503, "runtime_unavailable");
         const turnHandle = url.pathname.split("/")[5];
+        if (turnHandle === undefined) return sendProblem(response, 400, "invalid_request");
         const turn = await pipelineService.cancel(
           turnHandle,
           body as import("./tavern/browser-contract/index.js").CancelTurnCommandV1,

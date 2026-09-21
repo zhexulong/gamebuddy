@@ -26,6 +26,21 @@ const registrations = [
     kind: "execution" as const,
   }
 ];
+const policyIdentityValues = [
+  "0123456789abcdef0123456789abcdef",
+  "abcdef0123456789abcdef0123456789",
+  "fedcba9876543210fedcba9876543210",
+  "00112233445566778899aabbccddeeff",
+  "ffeeddccbbaa99887766554433221100",
+  "102030405060708090a0b0c0d0e0f000",
+  "000f0e0d0c0b0a090807060504030201",
+  "13579bdf2468ace013579bdf2468ace0",
+  "0eca8642fdb975310eca8642fdb97531",
+  "1234567890abcdef1234567890abcdef",
+  "fedcba0987654321fedcba0987654321",
+  "89abcdef0123456789abcdef01234567",
+  "76543210fedcba9876543210fedcba98",
+] as const;
 
 function sendSnapshot(
   endpoint: ReturnType<typeof createDeterministicBridgePair>[1],
@@ -72,9 +87,10 @@ test("Catalog PBT: Host projection follows complete monotone Mod publications", 
               scope,
               {
                 sessionId: "session_01",
-                capabilities: ["inspect_self", "move_to_tile"],
-                catalogRevision: 1,
-                enabledActionIds: ["move_to_tile"],
+                 capabilities: ["inspect_self", "move_to_tile"],
+                 catalogRevision: 1,
+                 policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+                 enabledActionIds: ["move_to_tile"],
                 presentationLocale: "en-US",
                 registrations,
                 ...TEST_RUNTIME_ATTESTATION,
@@ -89,17 +105,23 @@ test("Catalog PBT: Host projection follows complete monotone Mod publications", 
           let snapshotRevision = 1;
           sendSnapshot(mod, snapshotRevision, catalogRevision, enabled);
 
-          for (const nextEnabled of desiredMemberships) {
-            if (nextEnabled !== enabled) {
-              catalogRevision++;
-              enabled = nextEnabled;
+           let capabilityRevision = 1;
+           let policyIdentityIndex = 0;
+           let policyIdentityValue = policyIdentityValues[policyIdentityIndex];
+           for (const nextEnabled of desiredMemberships) {
+             if (nextEnabled !== enabled) {
+               capabilityRevision++;
+               policyIdentityIndex++;
+               policyIdentityValue = policyIdentityValues[policyIdentityIndex]!;
+               enabled = nextEnabled;
               mod.send(
                 newEnvelope(
                   "catalog_update",
                   scope,
                   {
-                    catalogRevision,
-                    enabledActionIds: enabled ? ["move_to_tile"] : [],
+                     catalogRevision,
+                     policyIdentity: { value: policyIdentityValue, capabilityRevision },
+                     enabledActionIds: enabled ? ["move_to_tile"] : [],
                   },
                   `catalog_${catalogRevision}`,
                   now,
@@ -112,8 +134,10 @@ test("Catalog PBT: Host projection follows complete monotone Mod publications", 
               sendSnapshot(mod, snapshotRevision, catalogRevision, enabled);
             }
 
-            assert.equal(client.state.catalogRevision, catalogRevision);
-            assert.deepEqual(
+             assert.equal(client.state.catalogRevision, 1);
+             assert.equal(client.state.policyIdentity?.capabilityRevision, capabilityRevision);
+             assert.equal(client.state.policyIdentity?.value, policyIdentityValue);
+             assert.deepEqual(
               client.state.enabledActionIds,
               enabled ? ["move_to_tile"] : [],
             );

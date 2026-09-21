@@ -902,3 +902,112 @@ test("language-neutral schema validates exact navigate_to_destination execution 
     false,
   );
 });
+
+
+test("language-neutral schema closes body-node admission challenge and grant frames", async () => {
+  const validate = await schemaValidator();
+  const [base] = (await fixture("golden-sequence.json")).messages as readonly Record<string, unknown>[];
+  const challenge = {
+    programId: "program_01", nodeId: "node_01", nodeAttempt: 1, admissionAttempt: 1,
+    stopEpoch: 0, catalogRevision: 1, policyIdentity: { value: "policy:01", capabilityRevision: 1 },
+    actionId: "navigate", deadlineMs: 9007199254740991,
+    canonicalBoundArgs: {
+      count: { type: "integer", canonicalValue: "9223372036854775807" },
+      text: { type: "string", canonicalValue: "Farm" },
+      enabled: { type: "boolean", canonicalValue: "true" },
+      destination: { type: "destination_selector", destination: { kind: "label", label: "Farm" } },
+      ref: { type: "destination_selector", destination: { kind: "ref", ref: `dr1_${"A".repeat(22)}` } },
+    },
+    derivedResourceClaims: { actor: "farmhand_01" },
+  };
+  const binding = { programId: challenge.programId, nodeId: challenge.nodeId, nodeAttempt: 1,
+    requestId: "request_01", idempotencyKey: "idempotency_01", executionId: "execution_01" };
+  const grant = { ...challenge, grantId: "grant_01", attachmentGeneration: "attachment:01",
+    policyRevision: "revision:01", executionBinding: binding };
+  const frame = (payload: unknown, type = "body_node_admission_challenge") => ({ ...base, type, payload });
+  for (const message of [frame(challenge), frame(grant, "body_node_admission_grant"),
+    frame({ ...grant, executionBinding: null }, "body_node_admission_grant")]) {
+    assert.equal(validate(message), true, JSON.stringify(validate.errors));
+    const record = message as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
+      const missing = { ...record };
+      delete missing[key];
+      assert.equal(validate(missing), false, `missing envelope ${key}`);
+    }
+    assert.equal(validate({ ...message, extra: true }), false);
+    for (const [key, value] of Object.entries({ protocolVersion: 2, messageId: "!", correlationId: "!",
+      timestampMs: 1.5, scope: { ...(base.scope as object), extra: true }, payload: [] })) {
+      assert.equal(validate({ ...message, [key]: value }), false, `invalid envelope ${key}`);
+    }
+  }
+  for (const [payload, type] of [[challenge, "body_node_admission_challenge"], [grant, "body_node_admission_grant"]] as const) {
+    for (const key of Object.keys(payload)) {
+      const missing: Record<string, unknown> = { ...payload };
+      delete missing[key];
+      assert.equal(validate(frame(missing, type)), false, `missing ${type}.${key}`);
+    }
+    assert.equal(validate(frame({ ...payload, extra: true }, type)), false);
+  }
+  assert.equal(validate(frame(grant)), false, "grant is not a challenge");
+  assert.equal(validate(frame(challenge, "body_node_admission_grant")), false, "challenge is not a grant");
+  assert.equal(validate(frame({ ...challenge,
+    nodeAttempt: 2147483647, admissionAttempt: 2147483647,
+    canonicalBoundArgs: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "" }])),
+    derivedResourceClaims: Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`claim_${i}`, "actor"])),
+  })), true, JSON.stringify(validate.errors));
+  const badChallenges = [
+    { nodeAttempt: 0 }, { admissionAttempt: 2147483648 }, { stopEpoch: -1 },
+    { catalogRevision: 9007199254740992 }, { deadlineMs: 0 }, { deadlineMs: 9007199254740992 },
+    { policyIdentity: { value: "policy" } }, { policyIdentity: { ...challenge.policyIdentity, extra: true } },
+    { policyIdentity: { value: "x".repeat(4097), capabilityRevision: 0 } },
+    { policyIdentity: { value: "bad\u0085policy", capabilityRevision: 0 } },
+    { policyIdentity: { value: "policy", capabilityRevision: 9007199254740992 } },
+    { canonicalBoundArgs: Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`arg_${i}`, challenge.canonicalBoundArgs.text])) },
+    { canonicalBoundArgs: { "bad key": challenge.canonicalBoundArgs.text } },
+    { derivedResourceClaims: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`claim_${i}`, "actor"])) },
+    { derivedResourceClaims: { "bad key": "actor" } }, { derivedResourceClaims: { actor: 1 } },
+  ];
+  for (const patch of badChallenges) {
+    assert.equal(validate(frame({ ...challenge, ...patch })), false, JSON.stringify(patch));
+    assert.equal(validate(frame({ ...grant, ...patch }, "body_node_admission_grant")), false, JSON.stringify(patch));
+  }
+  for (const executionBinding of [undefined, {}, { ...binding, extra: true }, { ...binding, nodeAttempt: 0 },
+    { ...binding, requestId: "!" }, { ...binding, executionId: null }, { ...binding, idempotencyKey: 1 }]) {
+    assert.equal(validate(frame({ ...grant, executionBinding }, "body_node_admission_grant")), false);
+  }
+  for (const key of ["attachmentGeneration", "policyRevision"]) {
+    for (const value of [1, "", "x".repeat(4097), "bad\nvalue", "bad\u007fvalue", "bad\n"]) {
+      assert.equal(validate(frame({ ...grant, [key]: value }, "body_node_admission_grant")), false);
+    }
+  }
+  const canonicalFrame = (value: unknown) => frame({ ...challenge, canonicalBoundArgs: { arg: value } });
+  for (const value of [
+    { type: "destination_selector", selector: { kind: "label", label: "Farm" } },
+    { type: "destination_selector", destination: { kind: "label", label: "Farm", ref: null } },
+    { type: "destination_selector", destination: { kind: "label", label: " " } },
+    { type: "destination_selector", destination: { kind: "label", label: "x".repeat(129) } },
+    { type: "destination_selector", destination: { kind: "ref", ref: `dr1_${"A".repeat(21)}B` } },
+    { type: "string", canonicalValue: "x".repeat(513) }, { type: "string" },
+    { type: "string", canonicalValue: "ok", extra: true }, { type: "boolean", canonicalValue: true },
+    { type: "boolean", canonicalValue: "False" },
+  ]) assert.equal(validate(canonicalFrame(value)), false, JSON.stringify(value));
+  for (const canonicalValue of ["0", "-1", "9223372036854775807", "-9223372036854775808"]) {
+    assert.equal(validate(canonicalFrame({ type: "integer", canonicalValue })), true, canonicalValue);
+  }
+  for (const canonicalValue of ["-0", "+1", "01", "1.0", "1e3", "1\n", "9223372036854775808", "-9223372036854775809", 9007199254740992]) {
+    assert.equal(validate(canonicalFrame({ type: "integer", canonicalValue })), false, String(canonicalValue));
+  }
+  // Exercise every decimal boundary in the Int64 regex against the native BigInt range oracle.
+  for (let digits = 0n; digits < 20n; digits++) {
+    const step = 10n ** digits;
+    for (const limit of [9223372036854775807n, 9223372036854775808n]) {
+      const boundary = limit / step * step;
+      for (const candidate of [boundary - 1n, boundary, boundary + 1n]) {
+        for (const integer of [candidate, -candidate]) {
+          assert.equal(validate(canonicalFrame({ type: "integer", canonicalValue: String(integer) })),
+            integer >= -9223372036854775808n && integer <= 9223372036854775807n, String(integer));
+        }
+      }
+    }
+  }
+});

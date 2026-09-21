@@ -9,7 +9,8 @@ import {
   HostNodeAdmissionService,
 } from "./action-execution-coordinator.internal.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
-import { StardewLogicalActionRecoveryJournal, type NodeAdmissionChallenge } from "./stardew-logical-action-recovery-journal.js";
+import { StardewLogicalActionRecoveryJournal } from "./stardew-logical-action-recovery-journal.js";
+import type { BodyNodeAdmissionChallenge } from "./protocol.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
 import type { ExecutionReceipt, ExecutionState } from "./protocol.js";
@@ -27,12 +28,13 @@ function receipt(overrides: Partial<ExecutionReceipt> = {}): ExecutionReceipt {
   };
 }
 
-function challenge(overrides: Partial<NodeAdmissionChallenge> = {}): NodeAdmissionChallenge {
+function challenge(overrides: Partial<BodyNodeAdmissionChallenge> = {}): BodyNodeAdmissionChallenge {
   return {
     programId: "program_01", nodeId: "node_source", nodeAttempt: 1, admissionAttempt: 1,
-    stopEpoch: 4, scopeIdentity: { scope: "fixture" }, policyIdentity: { identity: "mod-policy_01" },
-    catalogRevision: "catalog_01", actionIdentity: "move_to_tile", canonicalBoundArgs: { x: 1, y: 2 },
-    derivedResourceClaims: [{ resource: "actor" }], deadlineMs: Date.now() + 10_000, ...overrides,
+    stopEpoch: 4, catalogRevision: 11, policyIdentity: { value: "mod-policy_01", capabilityRevision: 7 },
+    actionId: "move_to_tile",
+    canonicalBoundArgs: { x: { type: "integer", canonicalValue: "1" }, y: { type: "integer", canonicalValue: "2" } },
+    derivedResourceClaims: { actor: "embodied_actor" }, deadlineMs: Date.now() + 10_000, ...overrides,
   };
 }
 
@@ -92,10 +94,10 @@ function coordinatorFixture(
 
 test("one exact-node admission state machine grants controller-named source and successor nodes without rewriting them", async () => {
   const journal = new StardewLogicalActionRecoveryJournal();
-  const seen: NodeAdmissionChallenge[] = [];
+  const seen: BodyNodeAdmissionChallenge[] = [];
   const service = new HostNodeAdmissionService(journal, (item) => {
     seen.push(item);
-    return { result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01", catalogRevision: item.catalogRevision };
+     return { result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01" };
   });
   const source = challenge();
   const successor = challenge({ nodeId: "node_successor" });
@@ -104,7 +106,7 @@ test("one exact-node admission state machine grants controller-named source and 
   assert.equal(successorResult.result, "granted");
   assert.deepEqual(seen, [source, successor]);
   if (sourceResult.result === "granted") {
-    assert.deepEqual(sourceResult.grant.challenge.canonicalBoundArgs, source.canonicalBoundArgs);
+    assert.deepEqual(sourceResult.grant.canonicalBoundArgs, source.canonicalBoundArgs);
     assert.deepEqual(sourceResult.grant.policyIdentity, source.policyIdentity);
   }
   assert.equal(journal.admissionRecord(source)?.state, "grant_issued");
@@ -115,15 +117,14 @@ test("node admission binds grants to opaque Mod policy identity and rejects mism
   const service = new HostNodeAdmissionService(journal, (item) => ({
     result: "granted",
     attachmentGeneration: "attachment_01",
-    policyRevision: "host-policy_01",
-    catalogRevision: item.catalogRevision,
+     policyRevision: "host-policy_01",
   }));
   const issued = await service.admit(challenge());
   assert.equal(issued.result, "granted");
-  if (issued.result === "granted") assert.deepEqual(issued.grant.policyIdentity, { identity: "mod-policy_01" });
+   if (issued.result === "granted") assert.deepEqual(issued.grant.policyIdentity, { value: "mod-policy_01", capabilityRevision: 7 });
 
   // Same node lineage but a substituted Mod identity cannot replay its earlier grant.
-  const substituted = challenge({ policyIdentity: { identity: "mod-policy_02" } });
+   const substituted = challenge({ policyIdentity: { value: "mod-policy_02", capabilityRevision: 7 } });
   assert.throws(() => journal.admissionRecord(substituted), /node_admission_challenge_mismatch/);
   assert.deepEqual(await service.admit(substituted), { result: "rejected", code: "policy_identity_mismatch" });
 });
@@ -132,31 +133,55 @@ test("node admission journals before reply and treats write loss, response loss,
   const item = challenge();
   const lostWrite = new HostNodeAdmissionService(
     new StardewLogicalActionRecoveryJournal({ write: () => { throw new Error("disk"); } }),
-    () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01", catalogRevision: "catalog_01" }),
+     () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01" }),
   );
-  assert.deepEqual(await lostWrite.admit(item), { result: "unavailable" });
+  assert.deepEqual(await lostWrite.admit(item), { result: "unavailable", code: "admission_unavailable" });
 
   const journal = new StardewLogicalActionRecoveryJournal();
-  const service = new HostNodeAdmissionService(journal, () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01", catalogRevision: "catalog_01" }));
+   const service = new HostNodeAdmissionService(journal, () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01" }));
   const issued = await service.admit(item);
   assert.equal(issued.result, "granted");
   // A lost response is replayed from durable grant correlation, not recomputed.
   assert.deepEqual(await service.admit(item), issued);
   const unavailable = new HostNodeAdmissionService(journal, () => { throw new Error("bridge_lost"); });
-  assert.deepEqual(await unavailable.admit(challenge({ admissionAttempt: 2 })), { result: "unavailable" });
+  assert.deepEqual(await unavailable.admit(challenge({ admissionAttempt: 2 })), { result: "unavailable", code: "admission_unavailable" });
+
+  const decisionUnavailable = new HostNodeAdmissionService(journal, () => ({
+    result: "unavailable",
+    code: "admission_unavailable",
+  }));
+  assert.deepEqual(await decisionUnavailable.admit(challenge({ admissionAttempt: 3 })), {
+    result: "unavailable",
+    code: "admission_unavailable",
+  });
 });
 
 test("node admission deterministically rejects deadline, STOP, catalog, and policy vetoes without calling execute", async () => {
   const journal = new StardewLogicalActionRecoveryJournal();
-  const service = new HostNodeAdmissionService(journal, (item) => {
-    if (item.stopEpoch !== 4) return { result: "rejected", code: "stop_epoch_closed" };
-    if (item.catalogRevision !== "catalog_01") return { result: "rejected", code: "catalog_revision_mismatch" };
+   const service = new HostNodeAdmissionService(journal, (item) => {
+     if (item.stopEpoch !== 4) return { result: "rejected", code: "stop_epoch_closed" };
+     if (item.catalogRevision !== 11) return { result: "rejected", code: "catalog_revision_mismatch" };
     return { result: "rejected", code: "policy_denied" };
   });
   assert.deepEqual(await service.admit(challenge({ deadlineMs: Date.now() - 1 })), { result: "rejected", code: "deadline_expired" });
   assert.deepEqual(await service.admit(challenge({ admissionAttempt: 2, stopEpoch: 5 })), { result: "rejected", code: "stop_epoch_closed" });
-  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 3, catalogRevision: "catalog_02" })), { result: "rejected", code: "catalog_revision_mismatch" });
+  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 3, catalogRevision: 12 })), { result: "rejected", code: "catalog_revision_mismatch" });
   assert.deepEqual(await service.admit(challenge({ admissionAttempt: 4 })), { result: "rejected", code: "policy_denied" });
+});
+
+test("Host admission grants preserve independent catalog and Mod capability revisions", async () => {
+  const journal = new StardewLogicalActionRecoveryJournal();
+  const item = challenge({ catalogRevision: 19, policyIdentity: { value: "mod-policy_02", capabilityRevision: 3 } });
+  const service = new HostNodeAdmissionService(journal, () => ({ result: "granted", attachmentGeneration: "attachment_02", policyRevision: "host-policy_02" }));
+  const admitted = await service.admit(item);
+  assert.equal(admitted.result, "granted");
+  if (admitted.result === "granted") {
+    assert.equal(admitted.grant.catalogRevision, 19);
+    assert.equal(admitted.grant.policyIdentity.capabilityRevision, 3);
+    assert.notEqual(admitted.grant.catalogRevision, admitted.grant.policyIdentity.capabilityRevision);
+    assert.deepEqual(admitted.grant.canonicalBoundArgs, item.canonicalBoundArgs);
+    assert.deepEqual(admitted.grant.derivedResourceClaims, item.derivedResourceClaims);
+  }
 });
 
 test("coordinator mints an admission whose response receipt and fact-route receipt are the same bridge transition", async () => {

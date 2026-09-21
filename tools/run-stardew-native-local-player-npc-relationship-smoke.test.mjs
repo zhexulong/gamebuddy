@@ -67,7 +67,7 @@ function createFake() {
       client.state.snapshot = snapshot;
       return snapshot;
     },
-    execute: async ({ requestId, action, args }) => {
+    execute: async ({ requestId, action }) => {
       const executionId = `execution-${action}`;
       revision += 1;
       const receipt = { requestId, executionId, state: "accepted", reasonCode: "accepted", revision };

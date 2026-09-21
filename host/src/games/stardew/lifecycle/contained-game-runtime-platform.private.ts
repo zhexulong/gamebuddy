@@ -1,13 +1,13 @@
-import type { TypedPrivateGameFacts } from "../containment/runtime/contract/game-runtime.js";
-import type { ContainedGameRuntimePlatform } from "../containment/runtime/core/contained-game-runtime.js";
-import { createContainedGameRuntime } from "../containment/runtime/core/contained-game-runtime.js";
-import type { DesktopGuardianSession } from "../containment/auth/desktop-guardian-session.internal.js";
-import type { StardewOwnedPlayerHostBootstrap } from "../games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
+import type { TypedPrivateGameFacts } from "../../../containment/runtime/contract/game-runtime.js";
+import type { ContainedGameRuntimePlatform } from "../../../containment/runtime/core/contained-game-runtime.js";
+import { createContainedGameRuntime } from "../../../containment/runtime/core/contained-game-runtime.js";
+import type { DesktopGuardianSession } from "../../../containment/auth/desktop-guardian-session.internal.js";
+import type { StardewOwnedPlayerHostBootstrap } from "./stardew-private-bootstrap-composer.js";
 import {
   createStardewBootstrapGuardianOwnerBinding,
   readStardewBootstrapGuardianNativeArmFrame,
   type StardewPlayerHostRuntimeLaunchCollaborator,
-} from "../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+} from "./stardew-private-bootstrap-composer.core.js";
 import {
   isFullyQualifiedWindowsPath,
   modelStardewNativeRoleLaunchPlan,

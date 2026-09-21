@@ -20,7 +20,6 @@ import {
 
 // ─── API identity ───────────────────────────────────────────────────────────
 
-const COMPOSED_REFERENCE_GAME_API_V1 = "composed_reference_game_browser_api/v1" as const;
 const COMPOSED_REFERENCE_GAME_API_VERSION = 1 as const;
 
 // ─── Error types ────────────────────────────────────────────────────────────
@@ -108,7 +107,7 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
       response = await fetch(url, {
         method: options.method,
         headers: { ...options.headers },
-        body: options.body,
+        ...(options.body === undefined ? {} : { body: options.body }),
         credentials: "same-origin",
       });
     } catch (error) {

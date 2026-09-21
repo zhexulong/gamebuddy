@@ -333,15 +333,6 @@ function canonicalPresentationSource(batch: SerializedBatch): string | undefined
   return undefined;
 }
 
-function _isHeldWorldEvent(event: Readonly<{ kind?: string; payload?: Readonly<{ state?: unknown }> }>): boolean {
-  return (
-    event.kind === "snapshot" ||
-    (event.kind === "execution_receipt" &&
-      typeof event.payload?.state === "string" &&
-      ["accepted", "running", "meaningful_progress", "blocked"].includes(event.payload.state))
-  );
-}
-
 function isOpaqueSource(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }

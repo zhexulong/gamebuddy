@@ -24,18 +24,22 @@ export async function createMaterializedGameCompanionRuntime(
     resolvedPolicy: IntegrationActionPolicy;
   }>,
 ): Promise<RuntimeSession> {
+  const actionExecutionOptions = attachment?.recoveryJournal === undefined
+    ? Object.freeze({})
+    : Object.freeze({
+        recoveryJournal: attachment.recoveryJournal,
+        ...(attachment.recoveryBinding === undefined ? {} : { recoveryBinding: attachment.recoveryBinding }),
+        ...(attachment.recoveryPort === undefined ? {} : { recoveryPort: attachment.recoveryPort }),
+      });
   return createRuntimeWithFixedToolsCore(
     identity, root, integration, attachment?.modelConfig, undefined, undefined,
     attachment?.gameplaySubagentEnabled ?? false, undefined, gameSessionId,
     undefined, "game", attachment?.disableMagicContextMemory === true
       ? Object.freeze({ loadExtension: false, memoryEnabled: false, historianEnabled: false })
       : undefined,
-     undefined, gameOperationalGate,
+    undefined, gameOperationalGate,
     attachment?.hostBindingFactory ?? gameHostBindingFactory,
-    attachment?.recoveryJournal === undefined ? {} : Object.freeze({
-      recoveryJournal: attachment.recoveryJournal,
-      ...(attachment.recoveryBinding === undefined ? {} : { recoveryBinding: attachment.recoveryBinding }),
-    }),
+    actionExecutionOptions,
     options.fixedTools,
     options.resolvedPolicy,
   );
