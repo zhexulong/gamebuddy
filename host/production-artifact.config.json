@@ -1,6 +1,10 @@
 {
   "schema": "gamebuddy-host-production-artifact-config/v3",
-  "entryRoots": ["main.js", "stardew-attachment.js", "farmhand-companion-preview.js"],
+  "entryRoots": [
+    "main.js",
+    "stardew-attachment.js",
+    "farmhand-companion-preview.js"
+  ],
   "bundledRuntime": {
     "kind": "verified_host_bundled_node_runtime",
     "sourceUrl": "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip",
@@ -13,7 +17,16 @@
     "runtimePlatform": "win32",
     "runtimeArch": "x64"
   },
-  "verificationRoots": ["tavern/player-turn-acceptance.js", "tavern/provider-attempt-claim.js", "tavern/chat-provider-start.js", "tavern/reference-pipeline-static-shell-composition.js", "reference-pipeline-dialogue-web.js", "tavern-management-dialogue-web.js", "tavern/tavern-management-static-shell-composition.js", "tavern/static-artifact/index.js"],
+  "verificationRoots": [
+    "tavern/player-turn-acceptance.js",
+    "tavern/provider-attempt-claim.js",
+    "tavern/chat-provider-start.js",
+    "tavern/reference-pipeline-static-shell-composition.js",
+    "reference-pipeline-dialogue-web.js",
+    "tavern-management-dialogue-web.js",
+    "tavern/tavern-management-static-shell-composition.js",
+    "tavern/static-artifact/index.js"
+  ],
   "resources": [
     {
       "source": "resources/windows-named-mutex-broker.ps1",
@@ -68,43 +81,31 @@
       {
         "package": "@cortexkit/pi-magic-context",
         "module": "runtime-core.internal.js",
-        "expression": "pathToFileURL(magicContextEntry).href",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
         "occurrence": 0
       },
       {
         "package": "@cortexkit/pi-magic-context",
         "module": "runtime-core.internal.js",
-        "expression": "pathToFileURL(magicContextEntry).href",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
         "occurrence": 1
       },
       {
         "package": "@cortexkit/pi-magic-context",
         "module": "runtime-core.internal.js",
-        "expression": "pathToFileURL(magicContextEntry).href",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
         "occurrence": 2
       },
       {
         "package": "@cortexkit/pi-magic-context",
         "module": "runtime-core.internal.js",
-        "expression": "pathToFileURL(magicContextEntry).href",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
         "occurrence": 3
       },
       {
         "package": "@cortexkit/pi-magic-context",
-        "module": "runtime-core.internal.js",
-        "expression": "pathToFileURL(magicContextEntry).href",
-        "occurrence": 4
-      },
-      {
-        "package": "@cortexkit/pi-magic-context",
         "module": "tavern/memory-management/memory-management.js",
-        "expression": "pathToFileURL(magicContextEntry).href",
-        "occurrence": 0
-      },
-      {
-        "package": "@cortexkit/pi-magic-context",
-        "module": "continuity-semantic-chat-runtime-materializer/continuity-semantic-chat-runtime-materializer.js",
-        "expression": "pathToFileURL(magicContextEntry).href",
+        "expression": "\"@cortexkit/pi-magic-context/memory\"",
         "occurrence": 0
       }
     ]
