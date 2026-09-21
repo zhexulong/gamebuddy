@@ -133,7 +133,7 @@ async function publishWithPrivateCopier({ root, outputRoot }) {
   return withSyntheticVerifiedReleaseBundledRuntimeForTest({ descriptor, zipBytes: bytes }, async (runtimeSource) =>
     withProductionPublisherProbe(async ({ copyVerifiedBundledRuntimeSource, publishProductionArtifactWithRuntimeCopier }) => {
       return publishProductionArtifactWithRuntimeCopier(
-        { hostRoot: root, emittedRoot: await emit(root), outputRoot },
+        { hostRoot: root, emittedRoot: await emit(root), outputRoot, voiceDistRoot: join(root, "voice-gateway", ".dist") },
         async (stagingRoot, runtimeDescriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor: runtimeDescriptor, source: runtimeSource }),
         descriptor,
       );
