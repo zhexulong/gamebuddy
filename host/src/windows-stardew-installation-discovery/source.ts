@@ -85,19 +85,23 @@ export function createWindowsSteamInstallationSource(input: StardewWindowsSteamS
     read: async (): Promise<StardewSteamSourceFacts> => {
       if (platform !== "win32") return Object.freeze({ roots: Object.freeze([]), diagnostics: Object.freeze(["source-unavailable"] as const) });
       const diagnostics = new Set<DiscoveryDiagnostic>();
-      let registryRoots: readonly SourceRoot[];
+      let registryValues: readonly string[];
       try {
-        registryRoots = uniqueRoots((await readRegistryRoots()).map((value): SourceRoot => {
-          const root = normalizeWindowsPath(value);
-          if (root === undefined) throw new Error("registry-unavailable");
-          return ["steam-registry", root];
-        }));
+        registryValues = await readRegistryRoots();
       } catch {
         return Object.freeze({ roots: Object.freeze([]), diagnostics: Object.freeze(["registry-unavailable", "source-unavailable"] as const) });
       }
-      if (registryRoots.length === 0) return Object.freeze({ roots: Object.freeze([]), diagnostics: Object.freeze(["registry-unavailable", "source-unavailable"] as const) });
-      const roots: SourceRoot[] = [...registryRoots];
-      for (const [, steamRoot] of registryRoots) {
+      // Per-value normalization: one malformed registry value never aborts discovery of the others.
+      const registryRoots: SourceRoot[] = [];
+      for (const value of registryValues) {
+        const root = normalizeWindowsPath(value);
+        if (root === undefined) continue;
+        registryRoots.push(["steam-registry", root]);
+      }
+      const uniqueRegistryRoots = uniqueRoots(registryRoots);
+      if (uniqueRegistryRoots.length === 0) return Object.freeze({ roots: Object.freeze([]), diagnostics: Object.freeze(["registry-unavailable", "source-unavailable"] as const) });
+      const roots: SourceRoot[] = [...uniqueRegistryRoots];
+      for (const [, steamRoot] of uniqueRegistryRoots) {
         let vdf: string;
         const metadataPath = win32.join(steamRoot, "steamapps", "libraryfolders.vdf");
         if (metadataPath.length > 32767) { diagnostics.add("vdf-malformed"); diagnostics.add("source-unavailable"); continue; }

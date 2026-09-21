@@ -14,11 +14,13 @@ type VdfToken = Readonly<{ kind: "string" | "open" | "close"; value?: string }>;
 
 /** Normalize only absolute drive paths; do not repair traversal or ambiguous locators. */
 export function normalizeWindowsPath(value: string): string | undefined {
-  if (value.length === 0 || value.length > WINDOWS_PATH_MAX_LENGTH || value.includes("/")) return undefined;
-  if (!/^[A-Za-z]:\\/.test(value)) return undefined;
-  const parts = value.slice(3).split("\\");
+  if (value.length === 0 || value.length > WINDOWS_PATH_MAX_LENGTH) return undefined;
+  // Steam writes forward-slash drive paths (e.g. "d:/steam"); Windows accepts both separators.
+  const drivePath = value.replaceAll("/", "\\");
+  if (!/^[A-Za-z]:\\/.test(drivePath)) return undefined;
+  const parts = drivePath.slice(3).split("\\");
   if (parts.length === 0 || parts.some((part) => part.length === 0 || part === "." || part === ".." || /[<>:"|?*\u0000-\u001f]/.test(part) || part.endsWith(".") || part.endsWith(" "))) return undefined;
-  const normalized = `${value.charAt(0).toUpperCase()}:\\${parts.join("\\")}`;
+  const normalized = `${drivePath.charAt(0).toUpperCase()}:\\${parts.join("\\")}`;
   return normalized.length <= WINDOWS_PATH_MAX_LENGTH ? normalized : undefined;
 }
 

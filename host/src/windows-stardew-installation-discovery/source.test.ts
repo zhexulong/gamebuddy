@@ -23,7 +23,8 @@ test("normalization rejects unsafe Windows paths and preserves valid Unicode", (
   assert.equal(normalizeWindowsPath(""), undefined);
   assert.equal(normalizeWindowsPath("C:\\"), undefined);
   assert.equal(normalizeWindowsPath("C:\\Steam\\\\Other"), undefined);
-  assert.equal(normalizeWindowsPath("C:/Steam"), undefined);
+  assert.equal(normalizeWindowsPath("C:/Steam"), "C:\\Steam");
+  assert.equal(normalizeWindowsPath("d:/steam"), "D:\\steam");
   assert.equal(normalizeWindowsPath("C:\\Steam\\..\\Other"), undefined);
   assert.equal(normalizeWindowsPath("C:\\Steam\\."), undefined);
   assert.equal(normalizeWindowsPath("C:\\Steam."), undefined);
@@ -54,6 +55,22 @@ test("Windows source reads bounded registry roots and library folders with stabl
     "C:\\Steam 中文\\steamapps\\libraryfolders.vdf",
     "D:\\Steam32\\steamapps\\libraryfolders.vdf",
   ]);
+});
+
+test("Windows source skips malformed registry values without aborting discovery", async () => {
+  const reads: string[] = [];
+  const source = createWindowsSteamInstallationSource({
+    platform: "win32",
+    readRegistryRoots: async () => ["d:/steam", "not-a-path", "D:\\Steam"],
+    readFile: async (path) => { reads.push(path); return libraryFolders; },
+  });
+  const result = await source.read();
+  assert.deepEqual(result.roots, [
+    ["steam-registry", "D:\\steam"],
+    ["steam-vdf", "E:\\Library 中文"],
+  ]);
+  assert.deepEqual(result.diagnostics, []);
+  assert.deepEqual(reads, ["D:\\steam\\steamapps\\libraryfolders.vdf"]);
 });
 
 test("Windows source preserves exact MAX_PATH roots but rejects overlong roots", async () => {
