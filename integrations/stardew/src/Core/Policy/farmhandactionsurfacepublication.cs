@@ -1,11 +1,15 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace GameBuddy.Stardew.Core.Policy;
 
 /// <summary>
 /// The canonical descriptor shape consumed by game-action-program. It is a
 /// static Mod projection, not a live capability publication or grant.
+/// <see cref="WatchdogMs"/> is a Body Program execution budget derived from the
+/// Mod registration; it never appears on the exact-key surface artifact
+/// (JsonIgnore) because it is not an Agent-facing contract field.
 /// </summary>
 public sealed record FarmhandActionDescriptorProjection(
     string ActionId,
@@ -16,7 +20,8 @@ public sealed record FarmhandActionDescriptorProjection(
     IReadOnlyDictionary<string, string> OutputFacts,
     FarmhandActionResourceTemplate ResourceTemplate,
     string Effect,
-    FarmhandActionPostcondition Postcondition
+    FarmhandActionPostcondition Postcondition,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Always)] long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs
 );
 
 public sealed record FarmhandActionArgumentSchema(string Type);
@@ -78,7 +83,8 @@ public static class FarmhandActionSurfacePublication
             new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(descriptor.OutputFacts, StringComparer.Ordinal)),
             new FarmhandActionResourceTemplate(resourceClaims),
             descriptor.Effect,
-            new FarmhandActionPostcondition(descriptor.Postcondition));
+            new FarmhandActionPostcondition(descriptor.Postcondition),
+            WatchdogMs: descriptor.WatchdogMs);
     }
 
     private static void ValidateIdentity(string value, string name)

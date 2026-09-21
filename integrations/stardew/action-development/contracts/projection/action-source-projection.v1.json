@@ -1116,11 +1116,11 @@
           "kind": "execution",
           "argumentSchema": {
             "destination": {
-              "type": "object"
+              "type": "destination_selector"
             }
           },
           "outputFacts": {
-            "arrival": "object"
+            "arrival": "destination_arrival"
           },
           "resourceTemplate": {
             "claims": [

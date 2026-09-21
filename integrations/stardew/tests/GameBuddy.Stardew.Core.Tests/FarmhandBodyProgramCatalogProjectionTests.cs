@@ -48,6 +48,25 @@ public sealed class FarmhandBodyProgramCatalogProjectionTests
         navigate!.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("destination", BodyProgramArgumentKind.DestinationSelector));
         navigate.OutputFacts.Should().Contain(new BodyProgramFactDescriptor("arrival", BodyProgramArgumentKind.DestinationArrival));
         navigate.Metadata.Should().Be(new BodyProgramActionMetadata("published", "execution", "write", "arrived_at_destination"));
+        // Watchdog authority: navigate carries an action-specific 10-minute budget
+        // matching its ordinary deadline ceiling; ordinary short actions keep the
+        // descriptor default of 60s.
+        navigate.WatchdogMs.Should().Be(FarmhandActionCatalog.NavigationWatchdogMs);
+        result.Catalog.TryGetAction("machine_load", out BodyProgramActionDescriptor? load).Should().BeTrue();
+        load!.WatchdogMs.Should().Be(FarmhandActionCatalog.DefaultWatchdogMs);
+    }
+
+    [Fact]
+    public void SurfaceArtifactOmitsWatchdogMsToPreserveExactKeyContract()
+    {
+        string json = FarmhandActionSurfaceExport.SerializeToJson();
+
+        json.Should().NotContain("watchdogMs");
+        FarmhandActionSurfacePublication.Actions
+            .Should().OnlyContain(action => action.WatchdogMs > 0);
+        FarmhandActionSurfacePublication.Actions
+            .Single(action => action.ActionId == "navigate_to_destination")
+            .WatchdogMs.Should().Be(FarmhandActionCatalog.NavigationWatchdogMs);
     }
 
     [Fact]
