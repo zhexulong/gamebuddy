@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
+    "build:release-artifact": "node scripts/build-release-artifact.mjs",
     "test": "pnpm run build && node --test dist/**/*.test.js",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "start": "node --use-env-proxy dist/main.js",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "24.10.1",
+    "esbuild": "0.27.7",
     "typescript": "5.9.3"
   }
 }
