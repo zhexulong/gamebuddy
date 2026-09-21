@@ -33,7 +33,7 @@ public sealed class BodyProgramAuthorityTests
         if (readStatus == BodyProgramJournalReadStatus.ReadFailed)
             store.Value.Should().Be("committed-old-target");
         if (expectedStatus != BodyProgramJournalOpenStatus.Empty)
-            authority.Submit(Program("blocked", 1000)).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+            authority.Submit(Program("blocked")).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
     }
 
     [Fact]
@@ -45,10 +45,10 @@ public sealed class BodyProgramAuthorityTests
         authority.LifecycleState.Should().Be(BodyProgramAuthorityLifecycleState.Closed);
 
         Action query = () => authority.Status("program");
-        Action verify = () => authority.Verify(Program("program", 1000));
+        Action verify = () => authority.Verify(Program("program"));
         query.Should().Throw<ObjectDisposedException>();
         verify.Should().Throw<ObjectDisposedException>();
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
         authority.TryStop("program", 1).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
     }
 
@@ -63,7 +63,7 @@ public sealed class BodyProgramAuthorityTests
 
             authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
             store.WriteCount.Should().Be(0);
-            authority.Submit(Program("blocked", 1000)).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+            authority.Submit(Program("blocked")).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
         }
     }
 
@@ -89,28 +89,28 @@ public sealed class BodyProgramAuthorityTests
         OpenBodyProgramJournalAuthority authority = Open(store);
 
         authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.PersistenceReadFailed);
-        authority.Submit(Program("blocked", 1000)).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+        authority.Submit(Program("blocked")).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
         store.WriteCount.Should().Be(0);
     }
 
     [Fact]
     public void CodecMatchesFrozenHostCandidateShapeAndDecodesTypedArguments()
     {
-        const string json = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"7\"}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        const string json = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"7\"}},\"dependsOn\":[],\"bindings\":{}}]}";
         ActionProgramCandidateCodec.TryDecode(json, out ActionProgramCandidate? candidate, out _).Should().BeTrue();
-        candidate!.Nodes.Single().DeadlineMs.Should().Be(1000);
-        Open().Verify(candidate).Accepted.Should().BeTrue();
+        Open().Verify(candidate!).Accepted.Should().BeTrue();
         ActionProgramCandidateCodec.TryDecode(json.Replace("\"7\"", "\"07\"", StringComparison.Ordinal), out _, out _).Should().BeTrue();
         ActionProgramCandidateCodec.TryDecode(json.Replace("\"7\"", "\"07\"", StringComparison.Ordinal), out ActionProgramCandidate? invalid, out _).Should().BeTrue();
         Open().Verify(invalid!).Accepted.Should().BeFalse();
+        // Agent-facing candidates never carry a clock field; any deadlineMs is rejected.
         ActionProgramCandidateCodec.TryDecode(json.Replace("\"nodes\"", "\"deadlineMs\":1000,\"nodes\"", StringComparison.Ordinal), out _, out _).Should().BeFalse();
-        ActionProgramCandidateCodec.TryDecode(json.Replace("\"deadlineMs\":1000", "", StringComparison.Ordinal).Replace(",}", "}", StringComparison.Ordinal), out _, out _).Should().BeFalse();
+        ActionProgramCandidateCodec.TryDecode(json.Replace("\"bindings\":{}", "\"bindings\":{},\"deadlineMs\":9007199254740992", StringComparison.Ordinal), out _, out _).Should().BeFalse();
     }
 
     [Fact]
     public void CandidateCodecRoundTripsNonEmptyBindingUsingCanonicalCamelCaseKeys()
     {
-        ActionProgramCandidate source = Program("program", 1000, twoNodes: true);
+        ActionProgramCandidate source = Program("program", twoNodes: true);
         string json = JsonSerializer.Serialize(source, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
         json.Should().Contain("producerNodeId").And.NotContain("\"nodeId\":\"first\",\"factName\"");
@@ -123,7 +123,7 @@ public sealed class BodyProgramAuthorityTests
     [Fact]
     public void CandidateCodecAcceptsDestinationSelectorObjectAndRejectsScalarizedSelector()
     {
-        const string json = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"Town\"}}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        const string json = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"Town\"}}},\"dependsOn\":[],\"bindings\":{}}]}";
         ActionProgramCandidateCodec.TryDecode(json, out ActionProgramCandidate? candidate, out _).Should().BeTrue();
         candidate!.Nodes.Single().Arguments["destination"].CanonicalValue.Should().BeNull();
         candidate.Nodes.Single().Arguments["destination"].Destination!.Label.Should().Be("Town");
@@ -213,7 +213,7 @@ public sealed class BodyProgramAuthorityTests
     public void CandidateCodecAcceptsDestinationSelectorRefAndRejectsExtraSelectorKeys()
     {
         const string reference = "dr1_AAAAAAAAAAAAAAAAAAAAAA";
-        string json = $"{{\"programId\":\"program\",\"nodes\":[{{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{{\"destination\":{{\"type\":\"destination_selector\",\"destination\":{{\"kind\":\"ref\",\"ref\":\"{reference}\"}}}}}},\"dependsOn\":[],\"bindings\":{{}},\"deadlineMs\":1000}}]}}";
+        string json = $"{{\"programId\":\"program\",\"nodes\":[{{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{{\"destination\":{{\"type\":\"destination_selector\",\"destination\":{{\"kind\":\"ref\",\"ref\":\"{reference}\"}}}}}},\"dependsOn\":[],\"bindings\":{{}}}}]}}";
         ActionProgramCandidateCodec.TryDecode(json, out ActionProgramCandidate? candidate, out _).Should().BeTrue();
         candidate!.Nodes.Single().Arguments["destination"].Destination!.Ref.Should().Be(reference);
         ActionProgramCandidateCodec.TryDecode(json.Replace("\"ref\":\"" + reference, "\"ref\":\"" + reference + "\",\"extra\":null", StringComparison.Ordinal), out _, out _).Should().BeFalse();
@@ -222,11 +222,14 @@ public sealed class BodyProgramAuthorityTests
     [Fact]
     public void VerifyIsPureWhileSubmitDurablyAcceptsAndIsIdempotent()
     {
-        var store = new MemoryStore(); var authority = Open(store); ActionProgramCandidate candidate = Program("program", 1000);
+        var store = new MemoryStore(); var authority = Open(store); ActionProgramCandidate candidate = Program("program");
         authority.Verify(candidate).Accepted.Should().BeTrue(); store.Value.Should().BeNull();
         authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Accepted); store.Value.Should().NotBeNull();
         authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Idempotent);
-        authority.Submit(Program("program", 2000)).Code.Should().Be(BodyProgramSubmitCode.Conflict);
+        // A candidate with a different bound argument is a distinct program.
+        string other = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"8\"}},\"dependsOn\":[],\"bindings\":{}}]}";
+        ActionProgramCandidateCodec.TryDecode(other, out ActionProgramCandidate? otherCandidate, out _).Should().BeTrue();
+        authority.Submit(otherCandidate!).Code.Should().Be(BodyProgramSubmitCode.Conflict);
     }
 
     [Fact]
@@ -235,7 +238,7 @@ public sealed class BodyProgramAuthorityTests
         BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store, policy: () => policy);
-        ActionProgramCandidate candidate = Program("program", 1000);
+        ActionProgramCandidate candidate = Program("program");
         authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         policy = Policy("policy-b", 2);
@@ -252,10 +255,10 @@ public sealed class BodyProgramAuthorityTests
         BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store, policy: () => policy);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         policy = Policy("policy-a", 3);
-        BodyProgramSubmitResult stale = authority.Submit(Program("program", 2000));
+        BodyProgramSubmitResult stale = authority.Submit(Program("program"));
 
         stale.Code.Should().Be(BodyProgramSubmitCode.Rejected);
         stale.Verification.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "policy_identity_stale");
@@ -267,7 +270,7 @@ public sealed class BodyProgramAuthorityTests
     {
         BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
         var authority = Open(policy: () => policy);
-        ActionProgramCandidate candidate = Program("program", 1000);
+        ActionProgramCandidate candidate = Program("program");
         authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Idempotent);
@@ -279,11 +282,11 @@ public sealed class BodyProgramAuthorityTests
         BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store, policy: () => policy);
-        authority.Submit(Program("accepted", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("accepted")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         string persistedPolicy = store.Value!;
 
         policy = Policy("policy-b", 2);
-        BodyProgramSubmitResult stale = authority.Submit(Program("stale", 1000));
+        BodyProgramSubmitResult stale = authority.Submit(Program("stale"));
 
         stale.Code.Should().Be(BodyProgramSubmitCode.Rejected);
         stale.Verification.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "policy_identity_stale");
@@ -298,15 +301,15 @@ public sealed class BodyProgramAuthorityTests
         BodyProgramPolicyIdentity policy = Policy("policy-a", 2);
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store, policy: () => policy);
-        authority.Submit(Program("accepted", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("accepted")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         string persistedPolicy = store.Value!;
 
         policy = Policy("policy-a", 3);
-        authority.Submit(Program("revision-stale", 1000)).Code.Should().Be(BodyProgramSubmitCode.Rejected);
+        authority.Submit(Program("revision-stale")).Code.Should().Be(BodyProgramSubmitCode.Rejected);
         policy = Policy("policy-b", 2);
-        authority.Submit(Program("value-stale", 1000)).Code.Should().Be(BodyProgramSubmitCode.Rejected);
+        authority.Submit(Program("value-stale")).Code.Should().Be(BodyProgramSubmitCode.Rejected);
         policy = Policy("policy-a", 2);
-        BodyProgramSubmitResult aba = authority.Submit(Program("aba-stale", 1000));
+        BodyProgramSubmitResult aba = authority.Submit(Program("aba-stale"));
 
         aba.Code.Should().Be(BodyProgramSubmitCode.Rejected);
         aba.Verification.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "policy_identity_stale");
@@ -322,7 +325,7 @@ public sealed class BodyProgramAuthorityTests
     {
         BodyProgramPolicyIdentity policy = Policy("policy-a", 1);
         var authority = Open(policy: () => policy);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         policy = Policy("policy-b", 1);
@@ -342,7 +345,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         string persisted = store.Value!;
         store.Set(persisted.Replace("\"value\":\"policy-a\",\"capabilityRevision\":1", "\"embodimentId\":\"policy-a\",\"generation\":1", StringComparison.Ordinal));
         Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
@@ -354,7 +357,7 @@ public sealed class BodyProgramAuthorityTests
     [Fact]
     public void StatusAndEventsCarryHostAddressedCatalogProjection()
     {
-        var authority = Open(); authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        var authority = Open(); authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
         status.CatalogRevision.Should().Be(7); status.EventHighWater.Should().BeGreaterThan(0);
         BodyProgramEventsResult events = authority.Events("program", 0, 1);
@@ -366,7 +369,7 @@ public sealed class BodyProgramAuthorityTests
     public void EventsPastHighWaterProjectAndSerializeAsAnEmptyContinuationPage()
     {
         OpenBodyProgramJournalAuthority authority = Open();
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         long highWater = authority.Status("program").Snapshot!.EventHighWater;
 
         BodyProgramEventsResult page = authority.Events("program", highWater + 1, 1);
@@ -380,7 +383,7 @@ public sealed class BodyProgramAuthorityTests
     public void DispatchAndCompletionRejectModifiedGrantDeadlineStopCatalogArgsResourcesAndPolicyAba()
     {
         BodyProgramPolicyIdentity policy = Policy(); long now = 10; var authority = Open(policy: () => policy, now: () => now);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
         NodeExecutionBinding execution = Execution(grant);
@@ -399,7 +402,7 @@ public sealed class BodyProgramAuthorityTests
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
         var controller = new FarmhandBodyProgramController(authority);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = controller.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = controller.TryConsumeHostGrant(grant).Value!;
@@ -419,7 +422,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -442,7 +445,7 @@ public sealed class BodyProgramAuthorityTests
     public void RestartFencesTerminalFailedOrCancelledProgramsWithAnyNonterminalSibling(BodyProgramNodeOutcome outcome)
     {
         var store = new MemoryStore(); var authority = Open(store);
-        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
         authority.TryComplete(grant, TerminalOutcome(grant, outcome)).IsSuccess.Should().BeTrue();
@@ -462,7 +465,7 @@ public sealed class BodyProgramAuthorityTests
     public void ReopenRejectsPersistedFactWithTamperedOutputKind()
     {
         var store = new MemoryStore(); var authority = Open(store);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
         authority.TryComplete(grant, TerminalSuccess(grant, Fact(grant))).IsSuccess.Should().BeTrue();
@@ -479,8 +482,8 @@ public sealed class BodyProgramAuthorityTests
     {
         ActionProgramCandidate candidate = new("program", new[]
         {
-            new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), 1000),
-            new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first", "first" }, Bindings(), 1000),
+            new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings()),
+            new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first", "first" }, Bindings()),
         });
 
         BodyProgramVerificationReport verification = Open().Verify(candidate);
@@ -510,13 +513,14 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
-    public void CandidateCodecAndVerifierRejectDeadlinePastJavaScriptSafeInteger()
+    public void CandidateCodecRejectsAgentAuthoredDeadlineField()
     {
-        const long maximumSafeInteger = 9007199254740991L;
-        string tooLarge = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"7\"}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":9007199254740992}]}";
-        ActionProgramCandidateCodec.TryDecode(tooLarge, out _, out _).Should().BeFalse();
-        Open().Verify(Program("program", maximumSafeInteger + 1)).Accepted.Should().BeFalse();
-        ActionProgramCandidateCodec.TryDecode(tooLarge.Replace("9007199254740992", "9007199254740991", StringComparison.Ordinal), out ActionProgramCandidate? candidate, out _).Should().BeTrue();
+        string withDeadline = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"7\"}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":9007199254740992}]}";
+        ActionProgramCandidateCodec.TryDecode(withDeadline, out _, out _).Should().BeFalse();
+        // The descriptor/Mod derives the watchdog deadline at admission time;
+        // a candidate without any clock field is the only accepted shape.
+        string clean = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"7\"}},\"dependsOn\":[],\"bindings\":{}}]}";
+        ActionProgramCandidateCodec.TryDecode(clean, out ActionProgramCandidate? candidate, out _).Should().BeTrue();
         Open().Verify(candidate!).Accepted.Should().BeTrue();
     }
 
@@ -526,7 +530,7 @@ public sealed class BodyProgramAuthorityTests
         BodyProgramArgumentDescriptor[] arguments = Enumerable.Range(0, 32).Select(index => new BodyProgramArgumentDescriptor($"arg{index:D2}", BodyProgramArgumentKind.String)).ToArray();
         BodyProgramActionCatalog catalog = new(7, new[] { new BodyProgramActionDescriptor("large_action", 1, arguments, Array.Empty<BodyProgramFactDescriptor>(), Array.Empty<BodyProgramResourceTemplateClaim>()) });
         IReadOnlyDictionary<string, BodyProgramRuntimeValue> values = arguments.ToDictionary(argument => argument.Name, _ => new BodyProgramRuntimeValue("string", new string('x', 400)), StringComparer.Ordinal);
-        ActionProgramCandidate source = new("program", new[] { new ActionProgramCandidateNode("first", "large_action", values, Array.Empty<string>(), Bindings(), 1000) });
+        ActionProgramCandidate source = new("program", new[] { new ActionProgramCandidateNode("first", "large_action", values, Array.Empty<string>(), Bindings()) });
         string json = JsonSerializer.Serialize(source, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
         System.Text.Encoding.UTF8.GetByteCount(json).Should().BeGreaterThan(12 * 1024);
@@ -539,7 +543,7 @@ public sealed class BodyProgramAuthorityTests
     {
         Action invalidTemplate = () => _ = new BodyProgramActionCatalog(7, new[] { new BodyProgramActionDescriptor("move_to_tile", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, Array.Empty<BodyProgramFactDescriptor>(), new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer), new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ActionId) }) });
         invalidTemplate.Should().Throw<ArgumentException>();
-        var store = new MemoryStore(); var authority = Open(store); authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        var store = new MemoryStore(); var authority = Open(store); authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         string corrupt = store.Value!.Replace("\"canonicalValue\":\"7\"", "\"canonicalValue\":\"07\"", StringComparison.Ordinal);
         store.Set(corrupt);
         Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
@@ -550,7 +554,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -573,7 +577,7 @@ public sealed class BodyProgramAuthorityTests
     public void DispatchRejectsExecutionBindingWithMismatchedNodeAttempt()
     {
         var authority = Open();
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -585,7 +589,7 @@ public sealed class BodyProgramAuthorityTests
     public void CompletionRejectsExecutionBindingNotEqualToDispatchBinding()
     {
         var authority = Open();
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -599,7 +603,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
@@ -619,7 +623,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
@@ -639,7 +643,7 @@ public sealed class BodyProgramAuthorityTests
     public void SuccessRequiresNonemptyEvidenceReceiptAndPostconditionVerification()
     {
         var authority = Open();
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -654,7 +658,7 @@ public sealed class BodyProgramAuthorityTests
     public void SuccessRequiresNonemptyFactWithValidProvenance()
     {
         var authority = Open();
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -694,7 +698,7 @@ public sealed class BodyProgramAuthorityTests
     public void SuccessWithoutDeclaredOutputFactsRequiresProofButAllowsNoFact()
     {
         var authority = Open();
-        authority.Submit(NoOutputFactProgram("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(NoOutputFactProgram("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
@@ -714,7 +718,7 @@ public sealed class BodyProgramAuthorityTests
     public void SuccessWithoutDeclaredOutputFactsRejectsFact()
     {
         var authority = Open();
-        authority.Submit(NoOutputFactProgram("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(NoOutputFactProgram("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
         authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
@@ -727,7 +731,7 @@ public sealed class BodyProgramAuthorityTests
     public void NonSuccessOutcomeRejectsFactReceiptEvidenceAndPostcondition()
     {
         var authority = Open();
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -743,7 +747,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -830,7 +834,7 @@ public sealed class BodyProgramAuthorityTests
      {
          var store = new MemoryStore();
          OpenBodyProgramJournalAuthority authority = Open(store);
-         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
          NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
          HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
          NodeExecutionBinding execution = Execution(grant);
@@ -856,7 +860,7 @@ public sealed class BodyProgramAuthorityTests
      {
          var store = new MemoryStore();
          OpenBodyProgramJournalAuthority authority = Open(store);
-         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
          NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
          HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
          NodeExecutionBinding execution = Execution(grant);
@@ -878,7 +882,7 @@ public sealed class BodyProgramAuthorityTests
      {
          var store = new MemoryStore();
          OpenBodyProgramJournalAuthority authority = Open(store);
-         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
          authority.TryCreateAdmissionChallenge("program").IsSuccess.Should().BeTrue();
 
          authority.TryStop("program", 1).IsSuccess.Should().BeTrue();
@@ -898,7 +902,7 @@ public sealed class BodyProgramAuthorityTests
      {
          var store = new MemoryStore();
          OpenBodyProgramJournalAuthority authority = Open(store);
-         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
          authority.TryCreateAdmissionChallenge("program").IsSuccess.Should().BeTrue();
 
          OpenBodyProgramJournalAuthority reopened = Open(store);
@@ -921,7 +925,7 @@ public sealed class BodyProgramAuthorityTests
      {
          var store = new MemoryStore();
          OpenBodyProgramJournalAuthority authority = Open(store);
-         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
          NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
          HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
          authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
@@ -940,7 +944,7 @@ public sealed class BodyProgramAuthorityTests
       {
           var store = new MemoryStore();
           OpenBodyProgramJournalAuthority authority = Open(store);
-          authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+          authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
           NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
           HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
           NodeExecutionBinding execution = Execution(grant);
@@ -964,7 +968,7 @@ public sealed class BodyProgramAuthorityTests
        {
            var store = new MemoryStore();
            OpenBodyProgramJournalAuthority authority = Open(store);
-           authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+           authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
            NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
            HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
            authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
@@ -988,7 +992,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -1013,7 +1017,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(challenge);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -1052,7 +1056,7 @@ public sealed class BodyProgramAuthorityTests
     public void SuccessorChallengeMaterializesDeclaredBindingFromExactProducingAttempt()
     {
         OpenBodyProgramJournalAuthority authority = Open();
-        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge first = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(first);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -1072,7 +1076,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
 
         authority.TryRejectAdmission(challenge, "policy_denied").IsSuccess.Should().BeTrue();
@@ -1119,7 +1123,7 @@ public sealed class BodyProgramAuthorityTests
     public void RejectionCodeMustBeAllowlistedAndStrictlyLowerSnakeCase()
     {
         OpenBodyProgramJournalAuthority authority = Open();
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
 
         foreach (string code in new[] { "POLICY_DENIED", "policy-denied", "policy_denied_extra", " policy_denied", "policy_denied " })
@@ -1133,7 +1137,7 @@ public sealed class BodyProgramAuthorityTests
      public void SuccessorGrantMustEchoMaterializedArgumentsBeforeConsumeDispatchAndComplete()
     {
         OpenBodyProgramJournalAuthority authority = Open();
-        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge first = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(first);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -1162,7 +1166,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         authority.TryRejectAdmission(challenge, "policy_denied").IsSuccess.Should().BeTrue();
 
@@ -1179,7 +1183,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
         authority.TryRejectAdmission(challenge, "policy_denied").IsSuccess.Should().BeTrue();
         JsonObject root = JsonNode.Parse(store.Value!)!.AsObject();
@@ -1195,7 +1199,7 @@ public sealed class BodyProgramAuthorityTests
     {
         var store = new MemoryStore();
         OpenBodyProgramJournalAuthority authority = Open(store);
-        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge first = authority.TryCreateAdmissionChallenge("program").Value!;
         HostAdmissionGrant grant = Grant(first);
         grant = authority.TryConsumeHostGrant(grant).Value!;
@@ -1213,7 +1217,7 @@ public sealed class BodyProgramAuthorityTests
      private static string PersistRecoveryRequiredState(MemoryStore store)
      {
          OpenBodyProgramJournalAuthority authority = Open(store);
-         authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
          NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
          HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
          NodeExecutionBinding execution = Execution(grant);
@@ -1239,7 +1243,7 @@ public sealed class BodyProgramAuthorityTests
     });
     private static ActionProgramCandidate ArrivalProgram() => new("program", new[]
     {
-        new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), 1000),
+        new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings()),
     });
     private static RuntimeFact ArrivalFact(HostAdmissionGrant grant) => new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "arrival", new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal)
     {
@@ -1257,7 +1261,7 @@ public sealed class BodyProgramAuthorityTests
     });
     private static ActionProgramCandidate MultiFactProgram() => new("program", new[]
     {
-        new ActionProgramCandidateNode("first", "measure", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), 1000),
+        new ActionProgramCandidateNode("first", "measure", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings()),
     });
     private static BodyProgramActionCatalog Catalog() => new(7, new[]
     {
@@ -1266,17 +1270,17 @@ public sealed class BodyProgramAuthorityTests
     });
     private static ActionProgramCandidate OrderedConflictingProgram() => new("program", new[]
     {
-        new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), 1000),
-        new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first" }, Bindings(), 1000),
+        new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings()),
+        new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first" }, Bindings()),
     });
-    private static ActionProgramCandidate Program(string programId, long deadline, bool twoNodes = false)
+    private static ActionProgramCandidate Program(string programId, bool twoNodes = false)
     {
-        ActionProgramCandidateNode first = new("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), deadline);
-        return twoNodes ? new(programId, new[] { first, new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first" }, Bindings("tile", new ActionProgramBinding("first", "arrival")), deadline) }) : new(programId, new[] { first });
+        ActionProgramCandidateNode first = new("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings());
+        return twoNodes ? new(programId, new[] { first, new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first" }, Bindings("tile", new ActionProgramBinding("first", "arrival"))) }) : new(programId, new[] { first });
     }
-    private static ActionProgramCandidate NoOutputFactProgram(string programId, long deadline) => new(programId, new[]
+    private static ActionProgramCandidate NoOutputFactProgram(string programId) => new(programId, new[]
     {
-        new ActionProgramCandidateNode("first", "till_soil", RuntimeMap("tile", 8), Array.Empty<string>(), Bindings(), deadline),
+        new ActionProgramCandidateNode("first", "till_soil", RuntimeMap("tile", 8), Array.Empty<string>(), Bindings()),
     });
     private static HostAdmissionGrant Grant(NodeAdmissionChallenge challenge) => new(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision, challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalArguments, challenge.DerivedResourceClaims, challenge.DeadlineMs, "grant", "attachment_01", "host-policy_01");
     private static RuntimeFact Fact(HostAdmissionGrant grant) => new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "arrival", CanonicalMap("arrival", 7));

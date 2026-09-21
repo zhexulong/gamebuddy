@@ -460,8 +460,7 @@ public sealed record BridgeBodyProgramCandidateNode(
     string ActionId,
     IReadOnlyDictionary<string, BodyProgramRuntimeValue> Arguments,
     IReadOnlyList<string> DependsOn,
-    IReadOnlyDictionary<string, BridgeBodyProgramBinding> Bindings,
-    long DeadlineMs
+    IReadOnlyDictionary<string, BridgeBodyProgramBinding> Bindings
 );
 
 public sealed record BridgeBodyProgramBinding(string NodeId, string FactName);

@@ -770,7 +770,6 @@ public static class BridgeProtocol
         && candidate.Nodes.All(node => node is not null
             && BodyProgramValidation.IsIdentifier(node.NodeId)
             && BodyProgramValidation.IsIdentifier(node.ActionId)
-            && BodyProgramValidation.IsValidDeadlineMs(node.DeadlineMs)
             && node.Arguments is not null && node.Arguments.Count <= 32
             && node.Arguments.All(argument => IsValidBodyProgramRuntimeArgument(argument.Key, argument.Value))
             && node.DependsOn is not null && node.DependsOn.Count <= 8 && node.DependsOn.All(BodyProgramValidation.IsIdentifier)
@@ -918,8 +917,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     public static BridgeBodyProgramCandidate ProjectBodyProgramCandidate(ActionProgramCandidate candidate) =>
         new(candidate.ProgramId, candidate.Nodes.Select(node => new BridgeBodyProgramCandidateNode(
             node.NodeId, node.ActionId, node.Arguments, node.DependsOn,
-            node.Bindings.ToDictionary(pair => pair.Key, pair => new BridgeBodyProgramBinding(pair.Value.ProducerNodeId, pair.Value.FactName), StringComparer.Ordinal),
-            node.DeadlineMs)).ToArray());
+            node.Bindings.ToDictionary(pair => pair.Key, pair => new BridgeBodyProgramBinding(pair.Value.ProducerNodeId, pair.Value.FactName), StringComparer.Ordinal))).ToArray());
 
     private static string ToWireValue(this BodyProgramSubmitCode code) => code switch
     {
@@ -1004,16 +1002,14 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         List<ActionProgramCandidateNode> nodes = new();
         foreach (JsonElement node in value.GetProperty("nodes").EnumerateArray())
         {
-            if (node.ValueKind != JsonValueKind.Object || !HasExactProperties(node, "nodeId", "actionId", "arguments", "dependsOn", "bindings", "deadlineMs")
+            if (node.ValueKind != JsonValueKind.Object || !HasExactProperties(node, "nodeId", "actionId", "arguments", "dependsOn", "bindings")
                 || !ReadOpaqueString(node.GetProperty("nodeId"), out string? nodeId)
                 || !ReadOpaqueString(node.GetProperty("actionId"), out string? actionId)
-                || !node.GetProperty("deadlineMs").TryGetInt64(out long deadlineMs)
-                || !BodyProgramValidation.IsValidDeadlineMs(deadlineMs)
                 || !TryReadRuntimeArguments(node.GetProperty("arguments"), out IReadOnlyDictionary<string, BodyProgramRuntimeValue>? arguments)
                 || !TryReadIdentifierList(node.GetProperty("dependsOn"), 8, out IReadOnlyList<string>? dependsOn)
                 || !TryReadBodyProgramBindings(node.GetProperty("bindings"), out IReadOnlyDictionary<string, ActionProgramBinding>? bindings))
                 return false;
-            nodes.Add(new ActionProgramCandidateNode(nodeId!, actionId!, arguments!, dependsOn!, bindings!, deadlineMs));
+            nodes.Add(new ActionProgramCandidateNode(nodeId!, actionId!, arguments!, dependsOn!, bindings!));
         }
         candidate = new ActionProgramCandidate(value.GetProperty("programId").GetString()!, Array.AsReadOnly(nodes.ToArray()));
         return true;

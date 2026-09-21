@@ -108,7 +108,7 @@ function createBodyProgramTools(
     Object.freeze(defineTool({
       name,
       label: name,
-    description: "Submit a typed ActionProgram. Submission performs authoritative validation; rejected candidates return bounded diagnostics and create no journal, claim, grant, execution, receipt, or native side effects. For successor bindings, bindings keys are consumer argument names, not fact names; keep the bound argument in arguments with its literal canonical value and point factReference to the producer node/fact. Do not use type json_pointer. Every node deadlineMs is an absolute Unix epoch millisecond timestamp, never a duration.",
+    description: "Submit a typed ActionProgram. Submission performs authoritative validation; rejected candidates return bounded diagnostics and create no journal, claim, grant, execution, receipt, or native side effects. Nodes carry no deadline field: the Mod derives each action's execution budget from its descriptor-owned static watchdog at admission time, so never invent or submit a clock value. For successor bindings, bindings keys are consumer argument names, not fact names; keep the bound argument in arguments with its literal canonical value and point factReference to the producer node/fact. Do not use type json_pointer.",
     parameters: bodyProgramToolParameters(name),
       execute: async (_toolCallId, params) => {
         if (!isBodyProgramCandidateRequest(params))
@@ -168,7 +168,6 @@ function bodyProgramToolParameters(name: string) {
     arguments: Type.Record(opaque, runtimeValue, { maxProperties: 32 }),
     dependsOn: Type.Array(opaque, { maxItems: 8 }),
     bindings: Type.Record(opaque, factReference, { maxProperties: 32, description: "Map consumer argument name → producer fact reference. Example: {expectedTargetId:{nodeId:inspect_keg,factName:machine_target_id}}. The key is not the fact name." }),
-    deadlineMs: Type.Integer({ minimum: 1, description: "Absolute Unix epoch time in milliseconds, not a duration. Use Date.now() plus a bounded window, for example 1789926000000; do not use 30000 or 60000 as a duration." }),
   }, { additionalProperties: false });
   if (name === "stardew_submit_action_program")
     return Type.Object({ programId: opaque, nodes: Type.Array(node, { minItems: 1, maxItems: 16 }) }, { additionalProperties: false });

@@ -10,11 +10,11 @@
  * and postcondition.
  *
  * Reuses the same fixture/flags and dist-test client loading as the
- * Navigation mutation smoke. The program wire calls (programVerify /
- * programSubmit / programStatus / programEvents) are the same wire the
- * materializer's stardew_verify_action_program / stardew_submit_action_program
- * tools send; the admission responder here mirrors the Host side of the
- * body_node_admission_challenge/result contract.
+ * Navigation mutation smoke. The program wire calls (programSubmit /
+ * programStatus / programEvents) are the same wire the materializer's
+ * stardew_submit_action_program tool sends (submit performs authoritative
+ * validation with zero-side-effect rejection); the admission responder here
+ * mirrors the Host side of the body_node_admission_challenge/result contract.
  */
 import {
   assertExactCapabilities,
@@ -44,8 +44,7 @@ async function loadDistTestClient(entry) {
 }
 
 /** One RFC 6901-bound A→B candidate: inspect produces machine_target_id, load consumes it. */
-export function buildABProgram(target, { programId, deadlineMs }) {
-  if (deadlineMs === undefined) throw new Error("invalid_program_deadline");
+export function buildABProgram(target, { programId }) {
   return {
     programId,
     nodes: [
@@ -59,7 +58,6 @@ export function buildABProgram(target, { programId, deadlineMs }) {
         },
         dependsOn: [],
         bindings: {},
-        deadlineMs,
       },
       {
         nodeId: "load",
@@ -75,7 +73,6 @@ export function buildABProgram(target, { programId, deadlineMs }) {
         },
         dependsOn: ["inspect"],
         bindings: { expectedTargetId: { nodeId: "inspect", factName: "machine_target_id" } },
-        deadlineMs,
       },
     ],
   };
@@ -139,21 +136,18 @@ export async function runMachineABSmoke(
     const before = await requireActionableMachineSnapshot(client);
     assertExactCapabilities(before, EXPECTED_CAPABILITIES);
     const target = chooseOnlyLoadableKeg(before);
-    // Machine actions are fast local interactions whose native entry enforces a
-    // 60-second deadline ceiling (see machinesanimalsitemsactions.cs), so the
-    // RFC 6901-bound node deadlines must sit inside that window, not the
-    // longer navigation ceiling the smoke harness otherwise tolerates.
-    const deadlineMs = Date.now() + 60_000;
-    const program = buildABProgram(target, { programId, deadlineMs });
+    // Nodes carry no clock field: the Mod derives each action's execution budget
+    // from its descriptor-owned static watchdog at admission time (watchdog
+    // authority; Agent-facing candidates never submit deadlines).
+    const program = buildABProgram(target, { programId });
 
-    const verify = await client.programVerify(program);
-    trace.push({ phase: "program_verify", accepted: verify.accepted, diagnostics: verify.diagnostics ?? [] });
-    if (verify.accepted !== true) throw new Error(`program_verify_rejected:${JSON.stringify(verify.diagnostics ?? [])}`);
-
+    // submit performs authoritative validation; rejected candidates return
+    // bounded diagnostics with zero side effects, so no separate verify round
+    // trip exists.
     const submit = await client.programSubmit(program);
-    trace.push({ phase: "program_submit", code: submit.code });
+    trace.push({ phase: "program_submit", code: submit.code, diagnostics: submit.verification?.diagnostics ?? [] });
     if (submit.code !== "accepted")
-      throw new Error(`program_submit_not_accepted:${submit.code}`);
+      throw new Error(`program_submit_not_accepted:${submit.code}:${JSON.stringify(submit.verification?.diagnostics ?? [])}`);
 
     // The Mod-owned controller now advances the graph on the game thread:
     // inspect executes first, its machine_target_id fact materializes B's
@@ -203,8 +197,7 @@ export async function runMachineABSmoke(
       reasonCode: passed ? "a_to_b_machine_loaded" : "a_to_b_postcondition_mismatch",
       programId,
       program: { nodes: program.nodes.map((node) => ({ nodeId: node.nodeId, actionId: node.actionId })) },
-      verify: { accepted: verify.accepted, diagnostics: verify.diagnostics ?? [] },
-      submit: { code: submit.code },
+      submit: { code: submit.code, diagnostics: submit.verification?.diagnostics ?? [] },
       terminal: { state: terminal.state, nodeState: loadNode?.state ?? null },
       receipt: summarizeReceipt(terminalReceipt),
       evidence,

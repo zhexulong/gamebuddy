@@ -339,7 +339,7 @@ test("actual attested pipe materializes exactly four fixed body-program tools an
         return await tool.execute("body-program-test", params, new AbortController().signal, () => undefined);
       };
       const candidate = Object.freeze({ programId: "program_01", nodes: [{
-        nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: 1,
+        nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {},
       }] });
       const submitted = await execute("stardew_submit_action_program", candidate);
       const status = await execute("stardew_action_program_status", { programId: "program_01" });
@@ -407,7 +407,7 @@ test("attested fixed body-program closures recheck restrictive live policy witho
          capabilityRevision: 2,
        });
         await assert.rejects(
-         () => submit.execute("policy_recheck_submit", { programId: "program_02", nodes: [{ nodeId: "node_02", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: 1 }] }, new AbortController().signal, () => undefined),
+         () => submit.execute("policy_recheck_submit", { programId: "program_02", nodes: [{ nodeId: "node_02", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }] }, new AbortController().signal, () => undefined),
          /body_program_preflight_rejected/,
         );
       assert.equal(requests.filter((request) => request.type === "program_submit").length, 0);
@@ -476,7 +476,7 @@ test("attested submit timeout emits exactly one program frame and is not retried
     try {
       materialized = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => createHostGameRuntimeMaterializer().materializeEnter(reserveGameRuntimeMaterialization(execution), enterPermit(execution))));
       const submit = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools.find((tool) => tool.name === "stardew_submit_action_program")!;
-      await assert.rejects(() => submit.execute("submit_timeout", { programId: "program_04", nodes: [{ nodeId: "node_04", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: 1 }] }, new AbortController().signal, () => undefined), /bridge_response_timeout/);
+      await assert.rejects(() => submit.execute("submit_timeout", { programId: "program_04", nodes: [{ nodeId: "node_04", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }] }, new AbortController().signal, () => undefined), /bridge_response_timeout/);
       assert.equal(requests.filter((request) => request.type === "program_submit").length, 1);
     } finally {
       await materialized?.close();

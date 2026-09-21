@@ -1901,7 +1901,6 @@ test("body-program wire messages require exact bounded payloads", () => {
       arguments: { x: { type: "integer", canonicalValue: "5" } },
       dependsOn: [],
       bindings: {},
-      deadlineMs: now + 60_000,
     }],
   } as const;
   assert.equal(validateBridgeMessage(newEnvelope("program_submit", scope, candidate, "program_submit_01", now), scope, now), null);
@@ -1953,7 +1952,6 @@ test("body-program candidate supports only the C# typed destination_selector rep
         arguments: { destination },
         dependsOn: [],
         bindings: {},
-        deadlineMs: now + 60_000,
       },
     ],
   });
@@ -2004,7 +2002,6 @@ test("body-program candidate rejects more than 4 bindings per node, matching the
         arguments: {},
         dependsOn: [],
         bindings,
-        deadlineMs: now + 60_000,
       },
     ],
   });
@@ -2092,7 +2089,6 @@ test("body-program destination selector labels enforce NFC canonicalization like
         arguments: { destination: { type: "destination_selector", destination: { kind: "label", label } } },
         dependsOn: [],
         bindings: {},
-        deadlineMs: now + 60_000,
       },
     ],
   });

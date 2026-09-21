@@ -95,11 +95,12 @@ public static class BodyProgramJournalPersistence
             node.CanonicalBoundArguments is null ? null : BodyProgramValidation.FreezeMap(node.CanonicalBoundArguments),
             node.AttemptPolicyIdentity is null ? null : node.AttemptPolicyIdentity with { },
             node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership),
-             node.ReceiptId, node.Evidence, node.PostconditionVerification, node.RecoveryDiagnostic, node.RejectionCode)).ToArray()),
+            node.DerivedDeadlineMs,
+            node.ReceiptId, node.Evidence, node.PostconditionVerification, node.RecoveryDiagnostic, node.RejectionCode)).ToArray()),
         Array.AsReadOnly(program.Facts.Select(fact => new RuntimeFact(fact.ProgramId, fact.NodeId, fact.NodeAttempt, fact.FactName, BodyProgramValidation.FreezeMap(fact.Values))).ToArray()));
 
     internal static VerifiedBodyProgram FreezeVerified(VerifiedBodyProgram program) => new(program.ProgramId, program.CatalogRevision,
-        Array.AsReadOnly(program.Nodes.Select(node => new VerifiedBodyProgramNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.CanonicalArguments), Array.AsReadOnly(node.DependsOn.ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), BodyProgramValidation.FreezeMap(node.DerivedResourceClaims), node.DeadlineMs)).ToArray()));
+        Array.AsReadOnly(program.Nodes.Select(node => new VerifiedBodyProgramNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.CanonicalArguments), Array.AsReadOnly(node.DependsOn.ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), BodyProgramValidation.FreezeMap(node.DerivedResourceClaims))).ToArray()));
 
     private static bool ValidateProgram(BodyProgramJournalProgram program, BodyProgramPolicyIdentity journalPolicy)
     {
@@ -146,6 +147,7 @@ public static class BodyProgramJournalPersistence
         if (!hasAttempt)
         {
             if (node.AdmissionAttempt != 0 || node.CanonicalBoundArguments is not null || node.AttemptPolicyIdentity is not null || node.ClaimOwnership is not null
+                || node.DerivedDeadlineMs is not null
                 || node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null || node.RejectionCode is not null)
                 return false;
         }
@@ -153,6 +155,7 @@ public static class BodyProgramJournalPersistence
         {
             if (node.AdmissionAttempt != node.NodeAttempt || node.CanonicalBoundArguments is null || node.AttemptPolicyIdentity is null || !node.AttemptPolicyIdentity.IsValid
                 || !node.AttemptPolicyIdentity.Equals(journalPolicy) || node.ClaimOwnership is null || node.ClaimOwnership.Count != descriptor.DerivedResourceClaims.Count
+                || !BodyProgramValidation.IsValidDerivedDeadlineMs(node.DerivedDeadlineMs)
                 || !descriptor.DerivedResourceClaims.Keys.OrderBy(key => key, StringComparer.Ordinal).SequenceEqual(node.ClaimOwnership.Keys.OrderBy(key => key, StringComparer.Ordinal), StringComparer.Ordinal)
                 || node.ClaimOwnership.Any(pair => !BodyProgramValidation.IsIdentifier(pair.Key) || !Enum.IsDefined(pair.Value) || !IsClaimOwnershipValidForState(node.State, pair.Value))
                 || node.CanonicalBoundArguments.Count != descriptor.CanonicalArguments.Count
@@ -177,6 +180,7 @@ public static class BodyProgramJournalPersistence
         {
             if (hasAttempt || node.NodeAttempt != 0 || node.AdmissionAttempt != 0 || node.GrantId is not null || node.ExecutionBinding is not null
                 || node.CanonicalBoundArguments is not null || node.AttemptPolicyIdentity is not null || node.ClaimOwnership is not null
+                || node.DerivedDeadlineMs is not null
                 || hasProof || node.RecoveryDiagnostic is not null || node.RejectionCode is not null) return false;
         }
         else if (node.State == BodyProgramNodeState.Succeeded)
@@ -252,7 +256,7 @@ public static class BodyProgramJournalPersistence
       private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency;
 
     internal static bool IsValidVerified(VerifiedBodyProgram? program) => program is not null && BodyProgramValidation.IsIdentifier(program.ProgramId) && program.CatalogRevision >= 0
-        && program.Nodes is { Count: >= 1 and <= BodyProgramValidation.MaximumNodes } && program.Nodes.All(node => node is not null && BodyProgramValidation.IsIdentifier(node.NodeId) && BodyProgramValidation.IsIdentifier(node.ActionId) && BodyProgramValidation.IsValidDeadlineMs(node.DeadlineMs)
+        && program.Nodes is { Count: >= 1 and <= BodyProgramValidation.MaximumNodes } && program.Nodes.All(node => node is not null && BodyProgramValidation.IsIdentifier(node.NodeId) && BodyProgramValidation.IsIdentifier(node.ActionId)
             && node.CanonicalArguments is { Count: <= 32 } && node.DependsOn is { Count: <= 8 } && node.Bindings is { Count: <= 4 } && node.DerivedResourceClaims is { Count: <= 16 }
             && node.CanonicalArguments.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is not null && BodyProgramValidation.IsValidCanonicalValue(pair.Value, pair.Value.Kind))
             && node.DependsOn.All(BodyProgramValidation.IsIdentifier) && node.DependsOn.Distinct(StringComparer.Ordinal).Count() == node.DependsOn.Count
@@ -384,29 +388,38 @@ public static class BodyProgramJournalPersistence
     private static bool ReadVerifiedNode(JsonElement value, out VerifiedBodyProgramNode? node)
     {
         node = null;
-        if (!Exact(value, "nodeId", "actionId", "canonicalArguments", "dependsOn", "bindings", "derivedResourceClaims", "deadlineMs")
+        if (!Exact(value, "nodeId", "actionId", "canonicalArguments", "dependsOn", "bindings", "derivedResourceClaims")
             || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadString(value.GetProperty("actionId"), out string? action)
             || !ReadCanonicalMap(value.GetProperty("canonicalArguments"), out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? arguments)
             || !ReadStringArray(value.GetProperty("dependsOn"), out string[] dependsOn) || !ReadBindings(value.GetProperty("bindings"), out IReadOnlyDictionary<string, ActionProgramBinding>? bindings)
-            || !ReadStringMap(value.GetProperty("derivedResourceClaims"), out IReadOnlyDictionary<string, string>? claims)
-            || !value.GetProperty("deadlineMs").TryGetInt64(out long deadline)) return false;
-        node = new(id!, action!, arguments!, dependsOn, bindings!, claims!, deadline); return true;
+            || !ReadStringMap(value.GetProperty("derivedResourceClaims"), out IReadOnlyDictionary<string, string>? claims)) return false;
+        node = new(id!, action!, arguments!, dependsOn, bindings!, claims!); return true;
     }
 
     private static bool ReadNode(JsonElement value, out BodyProgramJournalNode? node)
     {
         node = null;
-        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode")
+        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode")
             || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadEnum<BodyProgramNodeState>(value.GetProperty("state"), out BodyProgramNodeState state)
             || !value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) || !value.GetProperty("admissionAttempt").TryGetInt32(out int admission)
             || !ReadNullableString(value.GetProperty("grantId"), out string? grant) || !ReadNullableExecutionBinding(value.GetProperty("executionBinding"), out NodeExecutionBinding? binding)
             || !ReadNullableCanonicalMap(value.GetProperty("canonicalBoundArguments"), out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? canonical)
             || !ReadNullablePolicy(value.GetProperty("attemptPolicyIdentity"), out BodyProgramPolicyIdentity? policy)
             || !ReadNullableClaimOwnership(value.GetProperty("claimOwnership"), out IReadOnlyDictionary<string, BodyProgramClaimOwnershipState>? ownership)
+            || !ReadNullableDeadline(value.GetProperty("derivedDeadlineMs"), out long? derivedDeadline)
             || !ReadNullableProof(value.GetProperty("receiptId"), out string? receipt) || !ReadNullableProof(value.GetProperty("evidence"), out string? evidence)
              || !ReadNullableProof(value.GetProperty("postconditionVerification"), out string? postcondition) || !ReadNullableDiagnostic(value.GetProperty("recoveryDiagnostic"), out string? diagnostic)
              || !ReadNullableString(value.GetProperty("rejectionCode"), out string? rejectionCode)) return false;
-         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, receipt, evidence, postcondition, diagnostic, rejectionCode); return true;
+         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode); return true;
+    }
+
+    private static bool ReadNullableDeadline(JsonElement value, out long? deadline)
+    {
+        deadline = null;
+        if (value.ValueKind == JsonValueKind.Null) return true;
+        if (!value.TryGetInt64(out long parsed) || !BodyProgramValidation.IsValidDerivedDeadlineMs(parsed)) return false;
+        deadline = parsed;
+        return true;
     }
 
     private static bool ReadNullableExecutionBinding(JsonElement value, out NodeExecutionBinding? binding)

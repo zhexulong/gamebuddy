@@ -753,7 +753,7 @@ public sealed class BridgeBodyProgramProtocolTests
     [Fact]
     public void CandidateAdapterMapsSelectorVariantsAndWireBindingNodeIdToProducerNodeId()
     {
-        const string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"label\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"Town\"}},\"ref\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"ref\",\"ref\":\"dr1_AAAAAAAAAAAAAAAAAAAAAA\"}}},\"dependsOn\":[],\"bindings\":{\"destination\":{\"nodeId\":\"producer\",\"factName\":\"arrival\"}},\"deadlineMs\":1000}]}";
+        const string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"label\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"Town\"}},\"ref\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"ref\",\"ref\":\"dr1_AAAAAAAAAAAAAAAAAAAAAA\"}}},\"dependsOn\":[],\"bindings\":{\"destination\":{\"nodeId\":\"producer\",\"factName\":\"arrival\"}}}]}";
         BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out BridgeEnvelope<ActionProgramCandidate>? envelope, out string reason).Should().BeTrue();
         reason.Should().Be("accepted");
         envelope!.Payload.Nodes.Single().Bindings["destination"].ProducerNodeId.Should().Be("producer");
@@ -765,7 +765,7 @@ public sealed class BridgeBodyProgramProtocolTests
     public void CandidateAdapterEnforcesMaximumBodyProgramBindingsPerNode()
     {
         const string head = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{},\"dependsOn\":[],\"bindings\":";
-        const string tail = ",\"deadlineMs\":1000}]}";
+        const string tail = "}]}";
         string bindingMap(int count) => "{" + string.Join(",", Enumerable.Range(0, count).Select(i => $"\"k{i}\":{{\"nodeId\":\"producer\",\"factName\":\"f{i}\"}}")) + "}";
         int maximum = BridgeProtocol.MaximumBodyProgramBindingsPerNode;
 
@@ -786,7 +786,7 @@ public sealed class BridgeBodyProgramProtocolTests
     [InlineData("{\"type\":\"string\",\"canonicalValue\":null}")]
     public void CandidateAdapterRejectsScalarizedSelectorDestinationRefExtraAndNull(string argument)
     {
-        string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":" + argument + "},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":" + argument + "},\"dependsOn\":[],\"bindings\":{}}]}";
         BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out _, out string reason).Should().BeFalse();
         reason.Should().Be("invalid_body_program_request");
     }
@@ -796,7 +796,7 @@ public sealed class BridgeBodyProgramProtocolTests
     [InlineData(" Town")]
     public void CandidateAdapterRejectsSelectorBoundaryWhitespace(string label)
     {
-        string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"" + label + "\"}}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"destination\":{\"type\":\"destination_selector\",\"destination\":{\"kind\":\"label\",\"label\":\"" + label + "\"}}},\"dependsOn\":[],\"bindings\":{}}]}";
         BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out _, out string reason).Should().BeFalse();
         reason.Should().Be("invalid_body_program_request");
     }
@@ -804,7 +804,7 @@ public sealed class BridgeBodyProgramProtocolTests
     [Fact]
     public void CandidateAdapterRejectsArrivalAsArgument()
     {
-        const string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"arrival\":{\"type\":\"destination_arrival\",\"canonicalValue\":\"arrived\"}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        const string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{\"arrival\":{\"type\":\"destination_arrival\",\"canonicalValue\":\"arrived\"}},\"dependsOn\":[],\"bindings\":{}}]}";
         BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out _, out string reason).Should().BeFalse();
         reason.Should().Be("invalid_body_program_request");
     }
@@ -843,7 +843,7 @@ public sealed class BridgeBodyProgramProtocolTests
     }
 
     private static string IntegerCandidatePayload(string canonicalValue) =>
-        "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"" + canonicalValue + "\"}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"" + canonicalValue + "\"}},\"dependsOn\":[],\"bindings\":{}}]}";
 
     [Fact]
     public void ResultProjectionIncludesStatusHighWaterAndEventContinuationFields()
@@ -878,26 +878,25 @@ public sealed class BridgeBodyProgramProtocolTests
     [Fact]
     public void TrySerialize_BodyProgramCandidateRejectsMalformedRuntimeArguments()
     {
-        var bogus = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue> { ["destination"] = new("bogus", "x") }, Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>(), 1000) });
+        var bogus = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue> { ["destination"] = new("bogus", "x") }, Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>()) });
         BridgeProtocol.TrySerialize(bogus, out _, out string reason).Should().BeFalse();
         reason.Should().Be("invalid_body_program_result");
-        var malformedSelector = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue> { ["destination"] = new("destination_selector", null, new BodyProgramDestinationSelector("label", "Town", "dr1_bad")) }, Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>(), 1000) });
+        var malformedSelector = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue> { ["destination"] = new("destination_selector", null, new BodyProgramDestinationSelector("label", "Town", "dr1_bad")) }, Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>()) });
         BridgeProtocol.TrySerialize(malformedSelector, out _, out reason).Should().BeFalse();
         reason.Should().Be("invalid_body_program_result");
         foreach (string label in new[] { " Town", "Town " })
         {
-            var boundaryWhitespace = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue> { ["destination"] = new("destination_selector", null, new BodyProgramDestinationSelector("label", label, null)) }, Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>(), 1000) });
+            var boundaryWhitespace = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue> { ["destination"] = new("destination_selector", null, new BodyProgramDestinationSelector("label", label, null)) }, Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>()) });
             BridgeProtocol.TrySerialize(boundaryWhitespace, out _, out reason).Should().BeFalse();
             reason.Should().Be("invalid_body_program_result");
         }
     }
 
     [Fact]
-    public void TrySerialize_BodyProgramCandidateRejectsUnsafeDeadline()
+    public void TrySerialize_BodyProgramCandidateRejectsUnsafeWatchdogDeadline()
     {
-        var candidate = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue>(), Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>(), 9007199254740992) });
-        BridgeProtocol.TrySerialize(candidate, out _, out string reason).Should().BeFalse();
-        reason.Should().Be("invalid_body_program_result");
+        var candidate = new BridgeBodyProgramCandidate("program_1", new[] { new BridgeBodyProgramCandidateNode("first", "navigate", new Dictionary<string, BodyProgramRuntimeValue>(), Array.Empty<string>(), new Dictionary<string, BridgeBodyProgramBinding>()) });
+        BridgeProtocol.TrySerialize(candidate, out _, out string reason).Should().BeTrue(reason);
     }
 
     [Fact]
