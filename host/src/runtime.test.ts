@@ -591,7 +591,6 @@ test("public Game runtime cannot mount Body Program tools while the internal mat
   const registrations = [{ actionId: "activate_console", familyId: "arcade", identityVersion: 1, lifecycle: "published" as const, kind: "execution" as const }];
   const policy = Object.freeze({ policyVersion: 1 as const, deniedActions: [], deniedFamilies: [] });
   const fixedTools = Object.freeze([
-    "stardew_verify_action_program",
     "stardew_submit_action_program",
     "stardew_action_program_status",
     "stardew_action_program_events",
@@ -631,7 +630,7 @@ test("public Game runtime cannot mount Body Program tools while the internal mat
   try {
     assert.deepEqual(publicRuntime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status"]);
     assert.deepEqual(materializedRuntime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", ...fixedTools.map((tool) => tool.name)].sort());
-    assert.deepEqual(fixedTools.map((tool) => tool.name), ["stardew_verify_action_program", "stardew_submit_action_program", "stardew_action_program_status", "stardew_action_program_events"]);
+    assert.deepEqual(fixedTools.map((tool) => tool.name), ["stardew_submit_action_program", "stardew_action_program_status", "stardew_action_program_events"]);
   } finally {
     publicRuntime.session.dispose();
     materializedRuntime.session.dispose();
@@ -640,7 +639,7 @@ test("public Game runtime cannot mount Body Program tools while the internal mat
 
 test("fixed Game tools fail closed unless frozen, unique, and non-colliding", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-fixed-tool-rejections-"));
-  const tool = defineTool({ name: "stardew_verify_action_program", label: "x", description: "x", parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) });
+  const tool = defineTool({ name: "stardew_external_probe", label: "x", description: "x", parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) });
   const connection = { scope: { integrationId: "test-arcade" }, executionGate: { executable: true }, state: {}, module: { descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" }, actionCatalog: createIntegrationActionCatalog([]), defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] }, parsePolicy: (value: unknown) => value as never, actorId: () => identity.playerId, assertIdentityBinding: () => undefined, worldScope: () => null, createToolSet: () => ({ observation: [], actions: [], knowledge: [] }), knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }), status: () => ({ connected: true, capabilities: [], capabilityRevision: 1, snapshotRevision: 1, latestReceiptState: null, latestReasonCode: null }), readState: () => ({ connected: true, sessionId: "session_01", capabilities: [], registrations: [], capabilityRevision: 1, snapshotRevision: 1, activeExecution: null, latestReceipt: null, latestReasonCode: null }), cancelExecution: () => "not_supported", parseReceipt: () => null, actionIdForToolName: () => null, isCancellationTool: () => false } } as unknown as GameConnection;
   const options = { gameplaySubagentEnabled: false, disableMagicContextMemory: true as const, hostBindingFactory: () => undefined };
   await assert.rejects(() => createMaterializedGameCompanionRuntime(identity, join(root, "mutable"), connection, "game_mutable_01", undefined, undefined, options, { fixedTools: [tool], resolvedPolicy: connection.module.defaultPolicy }), /fixed_runtime_tools_must_be_frozen/);

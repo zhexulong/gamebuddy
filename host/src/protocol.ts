@@ -726,7 +726,6 @@ type BodyProgramStatusSnapshot = Readonly<{
   eventHighWater: number;
   nodes: readonly BodyProgramNodeStatus[];
 }>;
-export type BodyProgramVerifyResult = BodyProgramVerification;
 export type BodyProgramSubmitResult = Readonly<{
   code: "accepted" | "rejected" | "idempotent" | "conflict" | "persistence_failure" | "quarantined";
   verification: BodyProgramVerification;
@@ -786,8 +785,6 @@ export type BridgeMessage =
   | Envelope<"companion_presentation_receipt", Readonly<{ expressionId: string; revision: number; presentationEpoch: number }>>
   | Envelope<"player_control_receipt", PlayerControlReceipt>
   | Envelope<"execution_receipt", ExecutionReceipt>
-  | Envelope<"program_verify", BodyProgramCandidateRequest>
-  | Envelope<"program_verify_result", BodyProgramVerifyResult>
   | Envelope<"program_submit", BodyProgramCandidateRequest>
   | Envelope<"program_submit_result", BodyProgramSubmitResult>
   | Envelope<"program_status", BodyProgramStatusRequest>
@@ -803,7 +800,7 @@ const BRIDGE_MESSAGE_TYPES = [
   "hello", "hello_ack", "observe_request", "navigation_read_request", "navigation_read_result", "observe_scene_request", "observe_scene_result", "snapshot", "catalog_update",
   "execution_request", "body_node_admission_challenge", "body_node_admission_grant", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
   "system_notice_receipt", "companion_presentation_receipt", "player_control_receipt", "execution_receipt",
-  "program_verify", "program_verify_result", "program_submit", "program_submit_result", "program_status", "program_status_result",
+  "program_submit", "program_submit_result", "program_status", "program_status_result",
   "program_events", "program_events_result", "error", "semantic_event", "lifecycle", "world_fact",
 ] as const;
 
@@ -1076,11 +1073,8 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
       return validateBodyNodeAdmissionChallenge(payload);
     case "body_node_admission_grant":
       return validateBodyNodeAdmissionGrant(payload);
-    case "program_verify":
     case "program_submit":
       return validateBodyProgramCandidateRequest(payload);
-    case "program_verify_result":
-      return validateBodyProgramVerifyResult(payload);
     case "program_submit_result":
       return validateBodyProgramSubmitResult(payload);
     case "program_status":
@@ -2207,7 +2201,7 @@ function isBodyProgramSelectorLabel(value: unknown): value is string {
 function isBodyProgramFactReference(value: unknown): boolean {
   return isRecord(value) && hasExactKeys(value, ["nodeId", "factName"]) && isOpaqueId(value.nodeId) && isOpaqueId(value.factName);
 }
-export function validateBodyProgramVerifyResult(value: Record<string, unknown>): string | null {
+export function validateBodyProgramVerificationResult(value: Record<string, unknown>): string | null {
   return hasExactKeys(value, ["accepted", "catalogRevision", "diagnostics"]) &&
     typeof value.accepted === "boolean" &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
@@ -2217,7 +2211,7 @@ export function validateBodyProgramVerifyResult(value: Record<string, unknown>):
 export function validateBodyProgramSubmitResult(value: Record<string, unknown>): string | null {
   if (!hasExactKeys(value, ["code", "verification", "snapshot"]) ||
     !isBodyProgramSubmitCode(value.code) ||
-    validateBodyProgramVerifyResult(value.verification as Record<string, unknown>) !== null)
+    validateBodyProgramVerificationResult(value.verification as Record<string, unknown>) !== null)
     return "invalid_body_program_result";
   const code = value.code;
   const verification = value.verification as Readonly<{ accepted: boolean }>;

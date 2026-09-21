@@ -1904,7 +1904,7 @@ test("body-program wire messages require exact bounded payloads", () => {
       deadlineMs: now + 60_000,
     }],
   } as const;
-  assert.equal(validateBridgeMessage(newEnvelope("program_verify", scope, candidate, "program_verify_01", now), scope, now), null);
+  assert.equal(validateBridgeMessage(newEnvelope("program_submit", scope, candidate, "program_submit_01", now), scope, now), null);
   assert.equal(
     validateBridgeMessage(
       newEnvelope("program_submit", scope, { ...candidate, nodes: [] }, "program_submit_01", now),
@@ -1963,7 +1963,7 @@ test("body-program candidate supports only the C# typed destination_selector rep
     destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" },
   });
   for (const payload of [label, ref])
-    assert.equal(validateBridgeMessage(newEnvelope("program_verify", scope, payload, "selector_ok", now), scope, now), null);
+    assert.equal(validateBridgeMessage(newEnvelope("program_submit", scope, payload, "selector_submit_ok", now), scope, now), null);
 
   for (const destination of [
     { type: "destination_selector", destination: { kind: "label", label: "" } },
@@ -1981,7 +1981,7 @@ test("body-program candidate supports only the C# typed destination_selector rep
     { type: "destination_selector", destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAA" } },
   ])
     assert.equal(
-      validateBridgeMessage(newEnvelope("program_verify", scope, nodesFor(destination), "selector_bad", now), scope, now),
+      validateBridgeMessage(newEnvelope("program_submit", scope, nodesFor(destination), "selector_submit_bad", now), scope, now),
       "invalid_body_program_request",
       JSON.stringify(destination),
     );
@@ -2010,11 +2010,11 @@ test("body-program candidate rejects more than 4 bindings per node, matching the
   });
 
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_verify", scope, candidate(bindingsFor(4)), "binding_4_ok", now), scope, now),
+    validateBridgeMessage(newEnvelope("program_submit", scope, candidate(bindingsFor(4)), "binding_4_submit_ok", now), scope, now),
     null,
   );
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_verify", scope, candidate(bindingsFor(5)), "binding_5_bad", now), scope, now),
+    validateBridgeMessage(newEnvelope("program_submit", scope, candidate(bindingsFor(5)), "binding_5_submit_bad", now), scope, now),
     "invalid_body_program_request",
   );
 });
@@ -2050,7 +2050,7 @@ test("body-program events result accepts an empty page above the event high-wate
   );
 });
 
-test("body-program verify result admits the C# 64-diagnostic bound", () => {
+test("body-program submit result preserves embedded verification and admits the C# 64-diagnostic bound", () => {
   const diagnostics = Array.from({ length: 64 }, (_, index) => ({
     severity: "error",
     code: "diagnostic",
@@ -2061,10 +2061,10 @@ test("body-program verify result admits the C# 64-diagnostic bound", () => {
   assert.equal(
     validateBridgeMessage(
       newEnvelope(
-        "program_verify_result",
+        "program_submit_result",
         scope,
-        { accepted: false, catalogRevision: 1, diagnostics: [...diagnostics, { severity: "error", code: "diagnostic", nodeId: null, path: "node", message: "x" }] },
-        "verify_65",
+        { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [...diagnostics, { severity: "error", code: "diagnostic", nodeId: null, path: "node", message: "x" }] }, snapshot: null },
+        "submit_verify_65",
         now,
       ),
       scope,
@@ -2074,7 +2074,7 @@ test("body-program verify result admits the C# 64-diagnostic bound", () => {
   );
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_verify_result", scope, { accepted: false, catalogRevision: 1, diagnostics }, "verify_64", now),
+      newEnvelope("program_submit_result", scope, { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics }, snapshot: null }, "submit_verify_64", now),
       scope,
       now,
     ),
@@ -2098,12 +2098,12 @@ test("body-program destination selector labels enforce NFC canonicalization like
   });
   // Already-canonicalized precomposed NFC label is exchangeable, exactly as C# ReadPlayerText admits it.
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_verify", scope, candidate("Caf\u00e9"), "selector_nfc", now), scope, now),
+    validateBridgeMessage(newEnvelope("program_submit", scope, candidate("Caf\u00e9"), "selector_nfc", now), scope, now),
     null,
   );
   // Decomposed FormD label is not NFC-canonical, so the C# ingress rejects it; the Host must fail closed too.
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_verify", scope, candidate("Cafe\u0301"), "selector_decomposed", now), scope, now),
+    validateBridgeMessage(newEnvelope("program_submit", scope, candidate("Cafe\u0301"), "selector_decomposed", now), scope, now),
     "invalid_body_program_request",
   );
 });

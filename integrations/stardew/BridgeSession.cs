@@ -701,23 +701,6 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
         return true;
     }
 
-    /// <summary>
-    /// Pure authenticated verification report for one Body Program candidate.
-    /// It never mutates the journal, never admits a program, and never routes
-    /// an action; actions outside the current capability publication's enabled
-    /// set are reported as diagnostics by the Mod authority.
-    /// </summary>
-    internal bool TryProgramVerify(long generation, BridgeEnvelope<ActionProgramCandidate>? envelope, out BridgeEnvelope<BridgeBodyProgramVerification>? response, out string reasonCode)
-    {
-        response = null;
-        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "program_verify", out reasonCode)) return false;
-        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
-        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason; return false; }
-        BodyProgramVerificationReport report = this.bodyProgramAuthority.Verify(envelope!.Payload, this.EnabledBodyProgramActionIds());
-        response = Reply("program_verify_result", envelope.CorrelationId, ToBridgeVerification(report));
-        reasonCode = "accepted";
-        return true;
-    }
 
     /// <summary>
     /// Authenticated durable accept/reject of one Body Program candidate. The
@@ -1404,7 +1387,7 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
         BodyProgramNodeState.Rejected => "rejected",
         _ => "recovery_required",
     };
-    private static BridgeBodyProgramVerification ToBridgeVerification(BodyProgramVerificationReport report) => new(
+    private static BridgeBodyProgramSubmitVerification ToBridgeVerification(BodyProgramVerificationReport report) => new(
         report.Accepted,
         report.CatalogRevision,
         report.Diagnostics.Select(diagnostic => new BridgeBodyProgramDiagnostic(

@@ -474,7 +474,7 @@ public sealed record BridgeBodyProgramDiagnostic(
     string Message
 );
 
-public sealed record BridgeBodyProgramVerification(
+public sealed record BridgeBodyProgramSubmitVerification(
     bool Accepted,
     long CatalogRevision,
     IReadOnlyList<BridgeBodyProgramDiagnostic> Diagnostics
@@ -498,7 +498,7 @@ public sealed record BridgeBodyProgramStatusSnapshot(
 
 public sealed record BridgeBodyProgramSubmitResult(
     string Code,
-    BridgeBodyProgramVerification Verification,
+    BridgeBodyProgramSubmitVerification Verification,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeBodyProgramStatusSnapshot? Snapshot
 );
 

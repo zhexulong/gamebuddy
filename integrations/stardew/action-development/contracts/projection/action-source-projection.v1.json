@@ -1600,8 +1600,6 @@
       "companion_presentation_receipt",
       "player_control_receipt",
       "execution_receipt",
-      "program_verify",
-      "program_verify_result",
       "program_submit",
       "program_submit_result",
       "program_status",

@@ -1308,7 +1308,7 @@ test("body program requests forward exact authenticated messages and retain mode
           continue;
         }
         const bodyProgramRequest = request as Readonly<{
-          type: "program_verify" | "program_submit" | "program_status" | "program_events";
+          type: "program_submit" | "program_status" | "program_events";
           payload: Readonly<{ programId: string; cursor?: number }>;
         }>;
         const nextCursor = (bodyProgramRequest.payload.cursor ?? 0) + 1;
@@ -1316,10 +1316,8 @@ test("body program requests forward exact authenticated messages and retain mode
           ? { code: "found", snapshot: { programId: bodyProgramRequest.payload.programId, state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } }
           : bodyProgramRequest.type === "program_events"
             ? { programId: bodyProgramRequest.payload.programId, code: "found", nextCursor, highWater: nextCursor, events: [{ cursor: nextCursor, programId: bodyProgramRequest.payload.programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }] }
-            : bodyProgramRequest.type === "program_verify"
-              ? { accepted: true, catalogRevision: 1, diagnostics: [] }
-              : { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [] }, snapshot: null };
-        const type = request.type === "program_verify" ? "program_verify_result" : request.type === "program_submit" ? "program_submit_result" : request.type === "program_status" ? "program_status_result" : "program_events_result";
+            : { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [] }, snapshot: null };
+        const type = request.type === "program_submit" ? "program_submit_result" : request.type === "program_status" ? "program_status_result" : "program_events_result";
         socket.write(frame({ ...request, messageId: `body_program_${type}`, type, payload }));
       }
     });
@@ -1328,11 +1326,10 @@ test("body program requests forward exact authenticated messages and retain mode
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const candidate = { programId: "program_01", nodes: [{ nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: Date.now() + 10_000 }] } as const;
-    assert.equal((await client.programVerify(candidate)).accepted, true);
     assert.equal((await client.programSubmit(candidate)).code, "rejected");
     assert.equal((await client.programStatus({ programId: "program_01" })).snapshot?.catalogRevision, 1);
     assert.equal((await client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 })).nextCursor, 1);
-    assert.deepEqual(requests.slice(1).map((request) => request.type), ["program_verify", "program_submit", "program_status", "program_events"]);
+    assert.deepEqual(requests.slice(1).map((request) => request.type), ["program_submit", "program_status", "program_events"]);
     for (const request of requests.slice(1)) assert.deepEqual(request.scope, scope);
     client.close();
     await assert.rejects(client.programStatus({ programId: "program_01" }), /bridge_not_authenticated/);

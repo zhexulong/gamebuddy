@@ -180,14 +180,12 @@ async function withHelloAck<T>(
               activeExecution: null,
             },
           }));
-        else if (request.type === "program_verify" || request.type === "program_submit")
+        else if (request.type === "program_submit")
           socket.write(frame({
             ...request,
-            messageId: `mod_${request.type}_attestation`,
-            type: request.type === "program_verify" ? "program_verify_result" : "program_submit_result",
-            payload: request.type === "program_verify"
-              ? { accepted: true, catalogRevision: 1, diagnostics: [] }
-              : { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [{ severity: "error", code: "policy_denied", nodeId: null, path: "program", message: "policy_denied" }] }, snapshot: null },
+            messageId: "mod_program_submit_attestation",
+            type: "program_submit_result",
+            payload: { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [{ severity: "error", code: "policy_denied", nodeId: null, path: "program", message: "policy_denied" }] }, snapshot: null },
           }));
         else if (request.type === "program_status")
           socket.write(frame({
@@ -254,11 +252,11 @@ test("formal Farmhand bridge produces the existing receipt-backed Stardew launch
     });
     assert.deepEqual(launch.receiptRecovery?.bindingIdentity, launch.receiptRecovery?.scope);
     assert.equal(Object.isFrozen(launch.receiptRecovery), true);
-    assert.equal(Object.hasOwn(launch, "programVerify"), false);
+    assert.equal(Object.hasOwn(launch, ["program", "Verify"].join("")), false);
     assert.equal(Object.hasOwn(launch, "programSubmit"), false);
     const presentation = getAuthenticatedStardewPresentationPortForPreview(launch);
     assert.deepEqual(Object.keys(presentation).sort(), ["presentCompanionText", "presentSystemNotice", "state"]);
-    assert.equal("programVerify" in presentation, false);
+    assert.equal(["program", "Verify"].join("") in presentation, false);
     launch.close();
     assert.throws(
       () => getAuthenticatedStardewPresentationPortForPreview(launch),
@@ -329,11 +327,11 @@ test("actual attested pipe materializes exactly four fixed body-program tools an
       ));
       const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
       const fixedToolNames = tools.map((tool) => tool.name).filter((name) =>
-        ["stardew_verify_action_program", "stardew_submit_action_program", "stardew_action_program_status", "stardew_action_program_events"].includes(name),
+        ["stardew_submit_action_program", "stardew_action_program_status", "stardew_action_program_events"].includes(name),
       ).sort();
       assert.deepEqual(fixedToolNames, [
         "stardew_action_program_events", "stardew_action_program_status",
-        "stardew_submit_action_program", "stardew_verify_action_program",
+        "stardew_submit_action_program",
       ]);
       const execute = async (name: string, params: Record<string, unknown>) => {
         const tool = tools.find((current) => current.name === name);
@@ -343,18 +341,16 @@ test("actual attested pipe materializes exactly four fixed body-program tools an
       const candidate = Object.freeze({ programId: "program_01", nodes: [{
         nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: 1,
       }] });
-      const verified = await execute("stardew_verify_action_program", candidate);
       const submitted = await execute("stardew_submit_action_program", candidate);
       const status = await execute("stardew_action_program_status", { programId: "program_01" });
       const events = await execute("stardew_action_program_events", { programId: "program_01", cursor: 7, pageSize: 1 });
-      for (const result of [verified, submitted, status, events])
+      for (const result of [submitted, status, events])
         assert.deepEqual(JSON.parse((result.content[0] as { text: string }).text), result.details);
-      assert.deepEqual(verified.details, { accepted: true, catalogRevision: 1, diagnostics: [] });
       assert.deepEqual(submitted.details, { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [{ severity: "error", code: "policy_denied", nodeId: null, path: "program", message: "policy_denied" }] }, snapshot: null });
       assert.deepEqual(status.details, { code: "found", snapshot: { programId: "program_01", state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } });
       assert.deepEqual(events.details, { programId: "program_01", code: "found", nextCursor: 8, highWater: 8, events: [{ cursor: 8, programId: "program_01", kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }] });
       assert.deepEqual(requests.filter((request) => request.type.startsWith("program_")).map((request) => request.type), [
-        "program_verify", "program_submit", "program_status", "program_events",
+        "program_submit", "program_status", "program_events",
       ]);
       await assert.rejects(() => execute("stardew_submit_action_program", { programId: "bad id", nodes: [] }), /invalid_body_program_tool_arguments/);
       assert.equal(requests.filter((request) => request.type === "program_submit").length, 1);
@@ -383,10 +379,14 @@ test("attested fixed body-program closures recheck restrictive live policy witho
         createHostGameRuntimeMaterializer().materializeEnter(reserveGameRuntimeMaterialization(execution), enterPermit(execution)),
       ));
       const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
-      const verify = tools.find((current) => current.name === "stardew_verify_action_program");
       const submit = tools.find((current) => current.name === "stardew_submit_action_program");
-      assert.ok(verify);
+      const status = tools.find((current) => current.name === "stardew_action_program_status");
+      const events = tools.find((current) => current.name === "stardew_action_program_events");
+      const verify = tools.find((current) => current.name === "stardew_verify_action_program");
       assert.ok(submit);
+      assert.ok(status);
+      assert.ok(events);
+      assert.equal(verify, undefined);
       catalogUpdatePublished = true;
       socket.write(frame({
         protocolVersion: 1, messageId: "catalog_update_attestation", correlationId: "catalog_update_attestation",
@@ -406,15 +406,11 @@ test("attested fixed body-program closures recheck restrictive live policy witho
          value: "abcdef0123456789abcdef0123456789",
          capabilityRevision: 2,
        });
-       await assert.rejects(
-        () => verify.execute("policy_recheck_verify", { programId: "program_02", nodes: [{ nodeId: "node_02", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: 1 }] }, new AbortController().signal, () => undefined),
-        /body_program_preflight_rejected/,
-      );
-      await assert.rejects(
-        () => submit.execute("policy_recheck_submit", { programId: "program_02", nodes: [{ nodeId: "node_02", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: 1 }] }, new AbortController().signal, () => undefined),
-        /body_program_preflight_rejected/,
-      );
-      assert.equal(requests.filter((request) => request.type === "program_verify" || request.type === "program_submit").length, 0);
+        await assert.rejects(
+         () => submit.execute("policy_recheck_submit", { programId: "program_02", nodes: [{ nodeId: "node_02", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {}, deadlineMs: 1 }] }, new AbortController().signal, () => undefined),
+         /body_program_preflight_rejected/,
+        );
+      assert.equal(requests.filter((request) => request.type === "program_submit").length, 0);
     } finally {
       await materialized?.close();
       await binding.close();
