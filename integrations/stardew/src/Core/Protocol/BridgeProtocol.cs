@@ -491,7 +491,7 @@ public static class BridgeProtocol
         }
     }
 
-    /// <summary>Decodes the program_verify/program_submit wire candidate and maps binding.nodeId to Core ProducerNodeId.</summary>
+    /// <summary>Decodes the program_submit wire candidate and maps binding.nodeId to Core ProducerNodeId.</summary>
     public static bool TryDeserializeBodyProgramCandidateRequest(
         string json,
         string expectedType,
@@ -500,7 +500,7 @@ public static class BridgeProtocol
     {
         envelope = null;
         reasonCode = "invalid_body_program_request";
-        if (expectedType is not ("program_verify" or "program_submit")
+        if (expectedType is not "program_submit"
             || !TryReadInboundPayload(json, expectedType, out JsonDocument? document, out JsonElement payload, out reasonCode))
             return false;
 
@@ -531,8 +531,6 @@ public static class BridgeProtocol
         }
     }
 
-    public static bool TryDeserializeBodyProgramVerifyRequest(string json, out BridgeEnvelope<ActionProgramCandidate>? envelope, out string reasonCode) =>
-        TryDeserializeBodyProgramCandidateRequest(json, "program_verify", out envelope, out reasonCode);
 
     public static bool TryDeserializeBodyProgramSubmitRequest(string json, out BridgeEnvelope<ActionProgramCandidate>? envelope, out string reasonCode) =>
         TryDeserializeBodyProgramCandidateRequest(json, "program_submit", out envelope, out reasonCode);
@@ -623,30 +621,6 @@ public static class BridgeProtocol
         }
     }
 
-    public static bool TryDeserializeBodyProgramVerificationResult(
-        string json,
-        out BridgeEnvelope<BridgeBodyProgramVerification>? envelope,
-        out string reasonCode)
-    {
-        envelope = null;
-        if (!TryReadBodyProgramResultEnvelope(json, "program_verify_result", out JsonDocument? document, out JsonElement payload, out reasonCode)
-            || !HasExactProperties(payload, "accepted", "catalogRevision", "diagnostics")
-            || !TryReadBodyProgramVerification(payload, out BridgeBodyProgramVerification? verification)
-            || !IsValidBodyProgramVerification(verification))
-        {
-            reasonCode = "invalid_body_program_result";
-            document?.Dispose();
-            return false;
-        }
-        using (document!)
-        {
-            JsonElement root = document!.RootElement;
-            envelope = new BridgeEnvelope<BridgeBodyProgramVerification>(Version, root.GetProperty("messageId").GetString()!, root.GetProperty("correlationId").GetString()!,
-                root.GetProperty("timestampMs").GetInt64(), ReadScope(root.GetProperty("scope")), "program_verify_result", verification!);
-            reasonCode = "accepted";
-            return true;
-        }
-    }
 
     public static bool TryDeserializeBodyProgramSubmitResult(
         string json,
@@ -657,7 +631,7 @@ public static class BridgeProtocol
         if (!TryReadBodyProgramResultEnvelope(json, "program_submit_result", out JsonDocument? document, out JsonElement payload, out reasonCode)
             || !HasExactProperties(payload, "code", "verification", "snapshot")
             || !IsBodyProgramSubmitCode(payload.GetProperty("code"))
-            || !TryReadBodyProgramVerification(payload.GetProperty("verification"), out BridgeBodyProgramVerification? verification)
+            || !TryReadBodyProgramVerification(payload.GetProperty("verification"), out BridgeBodyProgramSubmitVerification? verification)
             || !TryReadNullableBodyProgramSnapshot(payload.GetProperty("snapshot"), out BridgeBodyProgramStatusSnapshot? snapshot)
             || !IsValidBodyProgramSubmitResult(new BridgeBodyProgramSubmitResult(payload.GetProperty("code").GetString()!, verification!, snapshot)))
         {
@@ -738,13 +712,13 @@ public static class BridgeProtocol
     private static bool TryReadBodyProgramResultEnvelope(string json, string expectedType, out JsonDocument? document, out JsonElement payload, out string reasonCode) =>
         TryReadInboundPayload(json, expectedType, out document, out payload, out reasonCode);
 
-    private static bool TryReadBodyProgramVerification(JsonElement value, out BridgeBodyProgramVerification? verification)
+    private static bool TryReadBodyProgramVerification(JsonElement value, out BridgeBodyProgramSubmitVerification? verification)
     {
         verification = null;
         if (!HasExactProperties(value, "accepted", "catalogRevision", "diagnostics") || value.GetProperty("accepted").ValueKind is not (JsonValueKind.True or JsonValueKind.False)
             || !value.GetProperty("catalogRevision").TryGetInt64(out long revision) || !IsJavaScriptSafeInteger(revision) || value.GetProperty("diagnostics").ValueKind != JsonValueKind.Array
             || !value.GetProperty("diagnostics").EnumerateArray().All(IsValidBodyProgramDiagnostic)) return false;
-        verification = JsonSerializer.Deserialize<BridgeBodyProgramVerification>(value.GetRawText(), JsonOptions);
+        verification = JsonSerializer.Deserialize<BridgeBodyProgramSubmitVerification>(value.GetRawText(), JsonOptions);
         return verification is not null;
     }
 
@@ -768,8 +742,6 @@ public static class BridgeProtocol
     {
         BridgeBodyProgramCandidate result => IsValidBodyProgramCandidate(result),
         BridgeEnvelope<BridgeBodyProgramCandidate> envelope => IsValidBodyProgramCandidateEnvelope(envelope),
-        BridgeBodyProgramVerification result => IsValidBodyProgramVerification(result),
-        BridgeEnvelope<BridgeBodyProgramVerification> envelope => IsValidBodyProgramOutboundEnvelope(envelope, "program_verify_result", IsValidBodyProgramVerification),
         BridgeBodyProgramSubmitResult result => IsValidBodyProgramSubmitResult(result),
         BridgeEnvelope<BridgeBodyProgramSubmitResult> envelope => IsValidBodyProgramOutboundEnvelope(envelope, "program_submit_result", IsValidBodyProgramSubmitResult),
         BridgeBodyProgramStatusResult result => IsValidBodyProgramStatusResult(result),
@@ -784,7 +756,7 @@ public static class BridgeProtocol
         && isValidPayload(envelope.Payload);
 
     private static bool IsValidBodyProgramCandidateEnvelope(BridgeEnvelope<BridgeBodyProgramCandidate>? envelope) => envelope is not null
-        && IsValidEnvelope(envelope.ProtocolVersion, envelope.MessageId, envelope.CorrelationId, envelope.TimestampMs, envelope.Scope, envelope.Type, envelope.Type is "program_verify" or "program_submit" ? envelope.Type : "")
+        && IsValidEnvelope(envelope.ProtocolVersion, envelope.MessageId, envelope.CorrelationId, envelope.TimestampMs, envelope.Scope, envelope.Type, envelope.Type is "program_submit" ? envelope.Type : "")
         && IsValidBodyProgramCandidate(envelope.Payload);
 
     private static bool IsValidBodyProgramCandidate(BridgeBodyProgramCandidate? candidate) => candidate is not null
@@ -827,7 +799,7 @@ public static class BridgeProtocol
         };
     }
 
-    private static bool IsValidBodyProgramVerification(BridgeBodyProgramVerification? result) => result is not null
+    private static bool IsValidBodyProgramVerification(BridgeBodyProgramSubmitVerification? result) => result is not null
         && IsJavaScriptSafeInteger(result.CatalogRevision)
         && result.Diagnostics is not null
         && result.Diagnostics.Count <= 64
@@ -944,9 +916,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             node.Bindings.ToDictionary(pair => pair.Key, pair => new BridgeBodyProgramBinding(pair.Value.ProducerNodeId, pair.Value.FactName), StringComparer.Ordinal),
             node.DeadlineMs)).ToArray());
 
-    public static BridgeBodyProgramVerification ProjectBodyProgramVerification(BodyProgramVerificationReport report) =>
-        new(report.Accepted, report.CatalogRevision, report.Diagnostics.Select(ProjectDiagnostic).ToArray());
-
     private static string ToWireValue(this BodyProgramSubmitCode code) => code switch
     {
         BodyProgramSubmitCode.Accepted => "accepted",
@@ -1000,7 +969,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     };
 
     public static BridgeBodyProgramSubmitResult ProjectBodyProgramSubmitResult(BodyProgramSubmitResult result) =>
-        new(result.Code.ToWireValue(), ProjectBodyProgramVerification(result.Verification), result.Snapshot is null ? null : ProjectBodyProgramStatusSnapshot(result.Snapshot));
+        new(result.Code.ToWireValue(), new BridgeBodyProgramSubmitVerification(result.Verification.Accepted, result.Verification.CatalogRevision, result.Verification.Diagnostics.Select(ProjectDiagnostic).ToArray()), result.Snapshot is null ? null : ProjectBodyProgramStatusSnapshot(result.Snapshot));
 
     public static BridgeBodyProgramStatusResult ProjectBodyProgramStatusResult(BodyProgramStatusResult result) =>
         new(result.Code.ToWireValue(), result.Snapshot is null ? null : ProjectBodyProgramStatusSnapshot(result.Snapshot));

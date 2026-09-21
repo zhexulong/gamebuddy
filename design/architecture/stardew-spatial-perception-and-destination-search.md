@@ -33,7 +33,9 @@ owner: stardew-integration
     - `navigate_to_destination` 是一个单目的地 ordinary action，只负责从当前位置抵达一个已解析并经实时校验的最终目的地。购买、对话、采集及其它后续目标不属于该 action。
     - 星露谷原生 `PathFindController` 仅支持单张地图寻路。若最终目的地跨地图，Mod/adapter 在该 action 内部根据当前 live world 的 warp topology 分段驱动单图原生寻路；中间路径段和 warp 不产生独立 public action、Goal 或长期任务状态。
     - 跨地图移动前执行营业时间与节日门禁预检，避免已经开始移动后才发现目的地不可进入。
-     - 到达目的地后，Mod 可在同一 action result 中附带 bounded 的目标地点微观场景摘要；大模型无需为确认到达而额外轮询。
+      - 到达目的地后，Mod 可在同一 action result 中附带 bounded 的目标地点微观场景摘要；大模型无需为确认到达而额外轮询。
+     - **BodyProgram control-plane 与 Action 分类：** `stardew_submit_action_program` 是唯一 Agent-facing program command，内部执行 authoritative validation；rejected candidate 只返回 bounded diagnostics 且不创建 journal、claim、grant、execution identity、receipt 或 native mutation，accepted candidate 只创建一个 Mod-owned program lineage。`stardew_action_program_status`/`events` 是只读查询；它们都不是 published Game Action。实际 machine/navigation/pickup 等具身能力仍按 Service/Action 语义分类。
+     - **Watchdog 与跨图连续性红线：** `navigate_to_destination` 是一个 public action、一个 embodied-actor lease 和一个 execution lineage。跨图 leg 切换完全属于 Mod-private continuation；不得在 warp 后向 Host/Named Pipe 发起第二次 `BodyNodeAdmissionChallenge/Grant`，不得产生第二个 public action 或 node。Navigation 只使用 action-specific 的粗粒度安全上界与 progress watchdog：可按瓦片距离、固定 BaseBuffer、保守移动因子及有限 warp allowance 给出宽松 hang 上界，严禁鞋速、Buff、拐角或帧级物理模拟。普通短动作继续使用 descriptor 的静态默认 watchdog，不进入通用动态预算计算器。
      - 当前 Navigation 状态为 `implementation: live-verified (offline partial → live)`、`publication: published`、`liveEligibility: target-version live run completed`。`navigate_to_destination` 已完成真实 target-version live run(native-local fixture):真实三幅地图连续导航 FarmHouse → Farm → BusStop → Backwoods,产出单一 terminal receipt `navigation_completed`,关联性/证据/事后条件全部验证通过(提交 `6125602`、`3ababe0`)。它保留在 ordinary action pipeline 中并已正式纳入 live publish（publication 决策 2026-09-19：live gate 三场景证据闭合后批准，见阶段 5）。
 5. **明确以 `equip_tool/v2` 替换 `equip_tool/v1`（彻底消除 authority 含混与兼容层）**：
    - 绝不搞“一边宣称旧契约不可变、一边提出新别名”的假意图层。根据 `AGENTS.md`“不为向后兼容优化、移除旧路径而非维护兼容层”的原则，做出明确设计决定：
@@ -189,7 +191,7 @@ Game1.content (1.6 核心数据字典)
 
 ## 5. 跨地图位移、营业时间门禁与到达感知边界
 
-> 本节描述 Navigation 的目标运行语义与实现边界。`navigate_to_destination` 已在真实 target-version live fixture 中完成多图导航并产出 `navigation_completed` terminal receipt(关联性/证据/事后条件验证通过);这些 live 证据不替代正式 publication 决策,发布与否仍由 publication gate 定夺。fixture、静态 planner 或离线测试仅作补充,不构成 live 撤销证据。
+> 本节描述 Navigation 的目标运行语义与实现边界。`navigate_to_destination` 已在真实 target-version live fixture 中完成多图导航并产出 `navigation_completed` terminal receipt(关联性/证据/事后条件验证通过);真实 live 证据与单独 publication gate 已闭合，Navigation 于 2026-09-19 正式发布（`publication: published`，见第 5 节）。fixture、静态 planner 或离线测试仅作补充，不构成 live 撤销证据。
 
 针对跨地图移动长达数十秒的物理过程，系统建立严格的前置预检与事件驱动闭环：
 

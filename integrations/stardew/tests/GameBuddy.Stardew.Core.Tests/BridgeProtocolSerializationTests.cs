@@ -865,18 +865,6 @@ public sealed class BridgeBodyProgramProtocolTests
     }
 
     [Fact]
-    public void VerifyResultHasIndependentExactShapeAndRoundTrips()
-    {
-        BridgeProtocol.TryDeserializeBodyProgramVerificationResult(ResultEnvelope("program_verify_result", "{\"accepted\":true,\"catalogRevision\":7,\"diagnostics\":[]}"), out var envelope, out string reason).Should().BeTrue();
-        reason.Should().Be("accepted");
-        envelope!.Payload.Accepted.Should().BeTrue();
-        BridgeProtocol.TrySerialize(envelope, out string serialized, out string serializeReason).Should().BeTrue();
-        serializeReason.Should().Be("accepted");
-        using JsonDocument document = JsonDocument.Parse(serialized);
-        document.RootElement.GetProperty("payload").EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("accepted", "catalogRevision", "diagnostics");
-    }
-
-    [Fact]
     public void BodyProgramNodeAttemptsRejectValuesBeyondCoreInt32()
     {
         const string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"active\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"first\",\"state\":\"running\",\"nodeAttempt\":2147483648,\"admissionAttempt\":4}]}}";
@@ -915,11 +903,8 @@ public sealed class BridgeBodyProgramProtocolTests
     [Fact]
     public void BodyProgramResultsRejectJavaScriptUnsafeNumbers()
     {
-        string verification = "{\"accepted\":true,\"catalogRevision\":9007199254740992,\"diagnostics\":[]}";
-        BridgeProtocol.TryDeserializeBodyProgramVerificationResult(ResultEnvelope("program_verify_result", verification), out _, out string reason).Should().BeFalse();
-        reason.Should().Be("invalid_body_program_result");
         string events = "{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[],\"nextCursor\":9007199254740992,\"highWater\":9007199254740992}";
-        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result", events), out _, out reason).Should().BeFalse();
+        BridgeProtocol.TryDeserializeBodyProgramEventsResult(ResultEnvelope("program_events_result", events), out _, out string reason).Should().BeFalse();
         reason.Should().Be("invalid_body_program_result");
         var unsafeEvent = new BridgeBodyProgramEventsResult("program_1", "found", new[] { new BridgeBodyProgramEvent(9, "program_1", "native_dispatch", 9007199254740992, "first", 3) }, 9, 11);
         BridgeProtocol.TrySerialize(unsafeEvent, out _, out string eventReason).Should().BeFalse();
@@ -1055,10 +1040,10 @@ public sealed class BridgeBodyProgramProtocolTests
     public static IEnumerable<object[]> InvalidOutboundResults()
     {
         BridgeBodyProgramStatusSnapshot snapshot = new("program_1", "active", 7, 2, 11, Array.Empty<BridgeBodyProgramNodeStatus>());
-        yield return new object[] { new BridgeBodyProgramSubmitResult("unknown", new BridgeBodyProgramVerification(true, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), snapshot) };
-        yield return new object[] { new BridgeBodyProgramSubmitResult("accepted", new BridgeBodyProgramVerification(false, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), snapshot) };
-        yield return new object[] { new BridgeBodyProgramSubmitResult("rejected", new BridgeBodyProgramVerification(true, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), null) };
-        yield return new object[] { new BridgeBodyProgramSubmitResult("persistence_failure", new BridgeBodyProgramVerification(false, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), null) };
+        yield return new object[] { new BridgeBodyProgramSubmitResult("unknown", new BridgeBodyProgramSubmitVerification(true, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), snapshot) };
+        yield return new object[] { new BridgeBodyProgramSubmitResult("accepted", new BridgeBodyProgramSubmitVerification(false, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), snapshot) };
+        yield return new object[] { new BridgeBodyProgramSubmitResult("rejected", new BridgeBodyProgramSubmitVerification(true, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), null) };
+        yield return new object[] { new BridgeBodyProgramSubmitResult("persistence_failure", new BridgeBodyProgramSubmitVerification(false, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), null) };
         yield return new object[] { new BridgeBodyProgramStatusResult("unknown", null) };
         yield return new object[] { new BridgeBodyProgramStatusResult("found", null) };
         yield return new object[] { new BridgeBodyProgramStatusResult("not_found", snapshot) };
@@ -1224,7 +1209,7 @@ public sealed class BridgeBodyProgramProtocolTests
     [InlineData("quarantined")]
     public void TrySerialize_SubmitSnapshotForRejectedOrQuarantined_IsExplicitNull(string code)
     {
-        var result = new BridgeBodyProgramSubmitResult(code, new BridgeBodyProgramVerification(false, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), null);
+        var result = new BridgeBodyProgramSubmitResult(code, new BridgeBodyProgramSubmitVerification(false, 7, Array.Empty<BridgeBodyProgramDiagnostic>()), null);
 
         BridgeProtocol.TrySerialize(result, out string json, out string reason).Should().BeTrue();
         reason.Should().Be("accepted");
@@ -1262,7 +1247,7 @@ public sealed class BridgeBodyProgramProtocolTests
     [Fact]
     public void TrySerialize_DiagnosticWithNullNodeId_EmitsExplicitNullNodeKey()
     {
-        var verification = new BridgeBodyProgramVerification(false, 7, new[]
+        var verification = new BridgeBodyProgramSubmitVerification(false, 7, new[]
         {
             new BridgeBodyProgramDiagnostic("error", "invalid_program", null, "/", "invalid_program"),
         });

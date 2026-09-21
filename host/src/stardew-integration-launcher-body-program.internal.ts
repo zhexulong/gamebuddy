@@ -30,7 +30,6 @@ import type {
   BodyProgramStatusRequest,
   BodyProgramStatusResult,
   BodyProgramSubmitResult,
-  BodyProgramVerifyResult,
   BodyNodeAdmissionChallenge,
   BodyNodeAdmissionResult,
 } from "./protocol.js";
@@ -92,7 +91,6 @@ export function assertAuthenticatedStardewConnection(
 
 /** Private authenticated Farmhand Body Program transport, never carried by a launch handle. */
 export type StardewAuthenticatedBodyProgramPort = Readonly<{
-  verify(request: BodyProgramCandidateRequest): Promise<BodyProgramVerifyResult>;
   submit(request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult>;
   status(request: BodyProgramStatusRequest): Promise<BodyProgramStatusResult>;
   events(request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult>;
@@ -336,12 +334,10 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
         return bridge.presentSystemNotice(request as never);
       },
     });
-    const bodyProgram = bridge.hasExactFarmhandRuntimeAttestation
+    // Body Program tools are gated by the authenticated pipe session. Runtime
+    // attestation remains provenance/recovery evidence, not a second tool gate.
+    const bodyProgram = bridge.state.authenticated
       ? Object.freeze({
-          verify: (request: BodyProgramCandidateRequest): Promise<BodyProgramVerifyResult> => {
-            assertLauncherPortsLive();
-            return bridge.programVerify(request);
-          },
           submit: (request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult> => {
             assertLauncherPortsLive();
             return bridge.programSubmit(request);

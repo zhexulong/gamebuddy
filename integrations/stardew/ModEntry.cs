@@ -2056,7 +2056,7 @@ public sealed partial class ModEntry : Mod
                 bodyProgramAuthority,
                 state.BridgeSession,
                 new RouteReenteringBodyProgramExecutor(router, state.Executions));
-            this.Monitor.Log("GameBuddy body program journal opened for this scope; program_verify/submit/status/events routes are live.", LogLevel.Info);
+            this.Monitor.Log("GameBuddy body program journal opened for this scope; program_submit/status/events routes are live.", LogLevel.Info);
         }
         state.BodyProgramController = farmhandBodyProgramController;
         state.LastPublishedCatalogRevision = state.CapabilityPublication.CapabilityRevision;
@@ -3568,7 +3568,6 @@ public sealed partial class ModEntry : Mod
                     "execution_request" => this.HandleExecute(state, inbound.Generation, inbound.Json),
                     "cancel_request" => this.HandleCancel(state, inbound.Generation, inbound.Json),
                     "execution_receipt_query" => this.HandleExecutionReceiptQuery(state, inbound.Generation, inbound.Json, correlationId),
-                    "program_verify" => this.HandleProgramVerify(state, inbound.Generation, inbound.Json, correlationId),
                     "program_submit" => this.HandleProgramSubmit(state, inbound.Generation, inbound.Json, correlationId),
                     "program_status" => this.HandleProgramStatus(state, inbound.Generation, inbound.Json, correlationId),
                     "program_events" => this.HandleProgramEvents(state, inbound.Generation, inbound.Json, correlationId),
@@ -3921,13 +3920,6 @@ public sealed partial class ModEntry : Mod
             (BridgeEnvelope<BridgeExecutionReceiptQuery> r, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryQueryExecutionReceipt(generation, r, out response, out reason), out _);
     }
 
-    private string? HandleProgramVerify(ScreenEmbodimentState state, long generation, string json, string? correlationId)
-    {
-        if (!BridgeProtocol.TryDeserializeBodyProgramVerifyRequest(json, out BridgeEnvelope<ActionProgramCandidate>? request, out string parseReason) || request is null)
-            return this.SerializeError(state, correlationId, parseReason);
-        return this.SerializeBridgeResponse<ActionProgramCandidate, BridgeBodyProgramVerification>(state, request,
-            (BridgeEnvelope<ActionProgramCandidate> r, out BridgeEnvelope<BridgeBodyProgramVerification>? response, out string reason) => state.BridgeSession!.TryProgramVerify(generation, r, out response, out reason), out _);
-    }
 
     private string? HandleProgramSubmit(ScreenEmbodimentState state, long generation, string json, string? correlationId)
     {

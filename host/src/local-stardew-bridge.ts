@@ -11,7 +11,6 @@ import {
   type BodyProgramStatusRequest,
   type BodyProgramStatusResult,
   type BodyProgramSubmitResult,
-  type BodyProgramVerifyResult,
   type BodyNodeAdmissionChallenge,
   type BodyNodeAdmissionResult,
   type BridgeMessage,
@@ -99,7 +98,6 @@ type OutboundRequestType =
   | "cancel_request"
   | "companion_presentation_request"
   | "system_notice_request"
-  | "program_verify"
   | "program_submit"
   | "program_status"
   | "program_events";
@@ -434,15 +432,6 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     return response.payload;
   }
 
-  public async programVerify(request: BodyProgramCandidateRequest): Promise<BodyProgramVerifyResult> {
-    this.requireAuthenticated();
-    const response = await this.request("program_verify", request);
-    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
-    if (response.type !== "program_verify_result")
-      return this.rejectBodyProgramProtocol();
-    return response.payload;
-  }
-
   public async programSubmit(request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult> {
     this.requireAuthenticated();
     const response = await this.request("program_submit", request);
@@ -605,7 +594,6 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       message.type === "cancel_request" ||
       message.type === "companion_presentation_request" ||
       message.type === "system_notice_request" ||
-      message.type === "program_verify" ||
       message.type === "program_submit" ||
       message.type === "program_status" ||
       message.type === "program_events" ||
@@ -841,8 +829,6 @@ function isExpectedResponse(requestType: OutboundRequestType, responseType: Brid
       return responseType === "companion_presentation_receipt";
     case "system_notice_request":
       return responseType === "system_notice_receipt";
-    case "program_verify":
-      return responseType === "program_verify_result";
     case "program_submit":
       return responseType === "program_submit_result";
     case "program_status":
@@ -853,10 +839,10 @@ function isExpectedResponse(requestType: OutboundRequestType, responseType: Brid
 }
 
 function isBodyProgramRequest(type: OutboundRequestType): boolean {
-  return type === "program_verify" || type === "program_submit" || type === "program_status" || type === "program_events";
+  return type === "program_submit" || type === "program_status" || type === "program_events";
 }
 function isBodyProgramResponse(type: BridgeMessage["type"]): boolean {
-  return type === "program_verify_result" || type === "program_submit_result" ||
+  return type === "program_submit_result" ||
     type === "program_status_result" || type === "program_events_result";
 }
 

@@ -40,7 +40,6 @@ import {
   validateBodyProgramEventsResult,
   validateBodyProgramStatusResult,
   validateBodyProgramSubmitResult,
-  validateBodyProgramVerifyResult,
   type BodyNodeAdmissionChallenge,
   type BodyNodeAdmissionResult,
   type BodyProgramCandidateRequest,
@@ -102,7 +101,7 @@ function createBodyProgramTools(
     }
   };
   const candidateTool = (
-    name: "stardew_verify_action_program" | "stardew_submit_action_program",
+    name: "stardew_submit_action_program",
     validateResult: (value: Record<string, unknown>) => string | null,
     call: (port: BodyProgramPort, request: BodyProgramCandidateRequest) => Promise<unknown>,
   ): ToolDefinition =>
@@ -119,7 +118,6 @@ function createBodyProgramTools(
       },
     }));
   return Object.freeze([
-    candidateTool("stardew_verify_action_program", validateBodyProgramVerifyResult, (port, request) => port.verify(request)),
     candidateTool("stardew_submit_action_program", validateBodyProgramSubmitResult, (port, request) => port.submit(request)),
     Object.freeze(defineTool({
       name: "stardew_action_program_status",
@@ -169,7 +167,7 @@ function bodyProgramToolParameters(name: string) {
     bindings: Type.Record(opaque, factReference, { maxProperties: 32 }),
     deadlineMs: Type.Integer({ minimum: 1 }),
   }, { additionalProperties: false });
-  if (name === "stardew_verify_action_program" || name === "stardew_submit_action_program")
+  if (name === "stardew_submit_action_program")
     return Type.Object({ programId: opaque, nodes: Type.Array(node, { minItems: 1, maxItems: 16 }) }, { additionalProperties: false });
   if (name === "stardew_action_program_status")
     return Type.Object({ programId: opaque }, { additionalProperties: false });
