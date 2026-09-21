@@ -18,58 +18,50 @@ const config = require(configPath);
  */
 const ZONES = {
   chatContract:
-    "^dialogue-web/src/reference-pipeline-api\\.ts$",
-  chatRuntime:
-    "^dialogue-web/src/(reference-pipeline-session\\.ts|components/(ReferenceApp|Composer|MessageBubble|Timeline|ProblemView|SkipLink|drawers/ChatsDrawer)\\.tsx)$",
-  management:
-    "^dialogue-web/src/(management-pipeline-(api|session)\\.ts|components/ManagementApp\\.tsx)$",
+    "^dialogue-web/src/(reference-pipeline-api|reference-pipeline-session)\\.ts$",
+  chatRuntime: "^dialogue-web/src/components/ReferenceApp\\.tsx$",
   gameSurface:
     "^dialogue-web/src/(composed-reference-game-browser-api\\.ts|components/(ComposedReferenceGameApp|StardewInstallationDiscovery)\\.tsx)$",
+  managementSurface:
+    "^dialogue-web/src/(management-pipeline-(api|session)\\.ts|components/ManagementApp\\.tsx)$",
+  sharedUi:
+    "^dialogue-web/src/components/(MessageBubble|Timeline|ProblemView|SkipLink|Composer|drawers/ChatsDrawer)\\.tsx$",
   shared: "^dialogue-web/src/(i18n|types)\\.ts$",
 };
 
 const GOLDEN = {
-  chatContract: ["reference-pipeline-api.ts"],
-  chatRuntime: [
-    "reference-pipeline-session.ts",
-    "components/ReferenceApp.tsx",
-    "components/Composer.tsx",
-    "components/MessageBubble.tsx",
-    "components/Timeline.tsx",
-    "components/ProblemView.tsx",
-    "components/SkipLink.tsx",
-    "components/drawers/ChatsDrawer.tsx",
-  ],
-  management: [
-    "management-pipeline-api.ts",
-    "management-pipeline-session.ts",
-    "components/ManagementApp.tsx",
-  ],
+  chatContract: ["reference-pipeline-api.ts", "reference-pipeline-session.ts"],
+  chatRuntime: ["components/ReferenceApp.tsx"],
   gameSurface: [
     "composed-reference-game-browser-api.ts",
     "components/ComposedReferenceGameApp.tsx",
     "components/StardewInstallationDiscovery.tsx",
   ],
+  managementSurface: [
+    "management-pipeline-api.ts",
+    "management-pipeline-session.ts",
+    "components/ManagementApp.tsx",
+  ],
+  sharedUi: [
+    "components/MessageBubble.tsx",
+    "components/Timeline.tsx",
+    "components/ProblemView.tsx",
+    "components/SkipLink.tsx",
+    "components/Composer.tsx",
+    "components/drawers/ChatsDrawer.tsx",
+  ],
   shared: ["i18n.ts", "types.ts"],
 };
 
 /**
- * Current drift ledger — cross-surface edges that Loop 2 (ChatPane/GamePane
- * decoupling) must cut. The check fails on ANY violation outside this exact
- * ledger, and on any ledger entry that disappears (ledger must be shrunk
- * deliberately in the same change that cuts the edge).
+ * Current drift ledger — must be empty. The three pane assemblers
+ * (ReferenceApp = Chat, ComposedReferenceGameApp = Game, ManagementApp =
+ * Management) own independent lifecycles; shared access is limited to the
+ * frozen tavern_browser_api/v1 wire contract and props-driven presentation
+ * primitives. Any new cross-assembler edge, contract impurity, or UI
+ * primitive depending on a surface fails this check.
  */
-const DRIFT_LEDGER = [
-  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/Composer.tsx"],
-  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/ProblemView.tsx"],
-  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/SkipLink.tsx"],
-  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/components/Timeline.tsx"],
-  ["no-game-surface-to-chat-runtime", "dialogue-web/src/components/ComposedReferenceGameApp.tsx", "dialogue-web/src/reference-pipeline-session.ts"],
-  ["no-management-surface-to-chat-runtime", "dialogue-web/src/components/ManagementApp.tsx", "dialogue-web/src/components/drawers/ChatsDrawer.tsx"],
-  ["no-management-surface-to-chat-runtime", "dialogue-web/src/components/ManagementApp.tsx", "dialogue-web/src/components/ProblemView.tsx"],
-  ["no-management-surface-to-chat-runtime", "dialogue-web/src/components/ManagementApp.tsx", "dialogue-web/src/components/SkipLink.tsx"],
-  ["no-management-surface-to-chat-runtime", "dialogue-web/src/components/ManagementApp.tsx", "dialogue-web/src/components/Timeline.tsx"],
-];
+const DRIFT_LEDGER = [];
 
 function depcruiseBin() {
   const pkgDir = join(repoRoot, "node_modules", "dependency-cruiser");
@@ -197,28 +189,32 @@ test("boundary rules actually fire on a fixture violating every direction", () =
       mkdirSync(dirname(full), { recursive: true });
       writeFileSync(full, content);
     };
-    // contract imports a game module → no-contract-imports-surfaces
-    write("src/reference-pipeline-api.ts", 'import "./components/ComposedReferenceGameApp";\n');
-    // chat runtime → game → no-chat-runtime-to-game-surface
-    write("src/reference-pipeline-session.ts", 'import "./components/ComposedReferenceGameApp";\n');
-    // chat runtime → management → no-chat-runtime-to-management-surface
-    write("src/components/Composer.tsx", 'import "../reference-pipeline-session";\nimport "./ManagementApp";\n');
-    write("src/components/ReferenceApp.tsx", 'import "./ComposedReferenceGameApp";\n');
+    // --- chat-contract: reference-pipeline-api + reference-pipeline-session ---
+    // contract must not import any surface or shared UI.
+    write("src/reference-pipeline-api.ts", 'import "./components/Composer";\n');
+    write("src/reference-pipeline-session.ts", "");
+    // --- chat-runtime: ReferenceApp ---
+    write("src/components/ReferenceApp.tsx", 'import "./ComposedReferenceGameApp";\nimport "./ManagementApp";\n');
+    // --- shared-ui: props-driven primitives ---
     write("src/components/MessageBubble.tsx", "");
     write("src/components/Timeline.tsx", "");
     write("src/components/ProblemView.tsx", "");
     write("src/components/SkipLink.tsx", "");
+    write("src/components/Composer.tsx", 'import "./ReferenceApp";\n');
     write("src/components/drawers/ChatsDrawer.tsx", "");
-    // chat runtime → management → no-chat-runtime-to-management-surface
-    write("src/components/ManagementApp.tsx", 'import "./Composer";\n');
-    // management → chat runtime → no-management-surface-to-chat-runtime
-    write("src/management-pipeline-api.ts", 'import "./reference-pipeline-session";\n');
+    // --- game-surface ---
+    // game imports chat-runtime and management.
+    write("src/components/ComposedReferenceGameApp.tsx", 'import "./ReferenceApp";\nimport "./ManagementApp";\n');
+    write("src/components/StardewInstallationDiscovery.tsx", "");
+    write("src/composed-reference-game-browser-api.ts", 'import "./components/Composer";\n');
+    // --- management-surface ---
+    // management imports chat-runtime and game.
+    write("src/management-pipeline-api.ts", "");
     write("src/management-pipeline-session.ts", "");
-    // game → chat runtime + management
-    write("src/components/ComposedReferenceGameApp.tsx", 'import "../reference-pipeline-session";\nimport "../components/ManagementApp";\n');
-    write("src/components/StardewInstallationDiscovery.tsx", 'import "../reference-pipeline-api";\n');
-    // shared → chat runtime
-    write("src/i18n.ts", 'import "./reference-pipeline-session";\n');
+    write("src/components/ManagementApp.tsx", 'import "./ReferenceApp";\nimport "./ComposedReferenceGameApp";\n');
+    // --- shared ---
+    // i18n imports chat-runtime.
+    write("src/i18n.ts", 'import "./components/ReferenceApp";\n');
     write("src/types.ts", "");
 
     const rebased = { ...structuredClone(config), options: { ...structuredClone(config.options), includeOnly: "^src/", tsConfig: { fileName: join(fixture, "tsconfig.json") } } };
@@ -233,8 +229,8 @@ test("boundary rules actually fire on a fixture violating every direction", () =
     const rulesFired = new Set(violations.map(([rule]) => rule));
     assert.deepEqual(
       [...rulesFired].sort(),
-      ["no-chat-runtime-to-game-surface", "no-chat-runtime-to-management-surface", "no-contract-imports-surfaces", "no-game-surface-to-chat-runtime", "no-game-surface-to-management-surface", "no-management-surface-to-chat-runtime", "no-shared-imports-surfaces"].sort(),
-      `fixture must fire all four surrogate rules; fired: ${[...rulesFired].join(", ")}`,
+      ["no-chat-runtime-to-game-surface", "no-chat-runtime-to-management-surface", "no-contract-imports-surfaces", "no-game-surface-to-chat-runtime", "no-game-surface-to-management-surface", "no-management-surface-to-chat-runtime", "no-management-surface-to-game-surface", "no-shared-imports-surfaces", "no-shared-ui-imports-surfaces"].sort(),
+      `fixture must fire every boundary rule; fired: ${[...rulesFired].join(",")}`,
     );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
