@@ -21,4 +21,10 @@ internal sealed record HostBootstrapEnvironmentOptions
 
     /// <summary>Optional tavern narrative gate nonce; omitted from the child environment when null.</summary>
     internal string? TavernNarrativeGateNonceSha256 { get; init; }
+
+    /// <summary>Optional per-launch Voice loopback port delivered to the Host wire; must be paired with VoiceToken.</summary>
+    internal int? VoicePort { get; init; }
+
+    /// <summary>Optional per-launch Voice token delivered to the Host wire; must be paired with VoicePort.</summary>
+    internal string? VoiceToken { get; init; }
 }
