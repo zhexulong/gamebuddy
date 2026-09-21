@@ -35,6 +35,7 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm check:host-module-graph
+      - run: pnpm check:dialogue-web-boundaries
       - run: pnpm check:host-production-import-boundary
       - run: pnpm typecheck
       - run: node tools/check-publint.mjs

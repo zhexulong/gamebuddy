@@ -45,6 +45,9 @@ jobs:
       # Repository-wide formatting/linting belongs to ordinary contributor CI.
       # This protected lane validates the fixed Host release composition only.
       - run: pnpm check:host-production-import-boundary
+      # Chat/Game surface decoupling guard: fails while the documented drift
+      # ledger is non-empty; Loop 2 must cut the last edges to go green.
+      - run: pnpm check:dialogue-web-boundaries
       # Build the workspace-owned protocol before Host typecheck so a clean
       # checkout never depends on stale generated protocol declarations.
       - run: pnpm --filter @gamebuddy/voice-protocol typecheck
