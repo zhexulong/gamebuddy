@@ -137,7 +137,8 @@ public static class FarmhandBodyProgramCatalogProjection
             new ReadOnlyCollection<BodyProgramArgumentDescriptor>(arguments),
             new ReadOnlyCollection<BodyProgramFactDescriptor>(facts),
             new ReadOnlyCollection<BodyProgramResourceTemplateClaim>(resources),
-            new BodyProgramActionMetadata(source.Lifecycle, source.Kind, source.Effect, source.Postcondition.Name));
+            new BodyProgramActionMetadata(source.Lifecycle, source.Kind, source.Effect, source.Postcondition.Name),
+            WatchdogMs: source.WatchdogMs);
         return true;
     }
 

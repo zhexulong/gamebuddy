@@ -11,7 +11,13 @@ public sealed record FarmhandActionResourceTemplateClaim(string Key, FarmhandRes
 /// <summary>Action-specific typed binding metadata owned exclusively by Mod registration.</summary>
 public sealed record FarmhandActionObservationBindingDescriptor(string Type, int Version, bool Required, IReadOnlyList<string> RequiredProperties);
 /// <summary>Versioned descriptor contract owned exclusively by Mod registration.</summary>
-public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null);
+/// <remarks><see cref="WatchdogMs"/> is the descriptor-owned static execution
+/// budget for Body Program nodes of this action (default 60s). It is a Mod
+/// registration fact, not an Agent-facing field: the Mod derives a fresh
+/// absolute deadline at admission time (watchdog authority decision
+/// 2026-09-20). `navigate_to_destination` declares an action-specific 10-minute
+/// budget matching its ordinary-pipeline deadline ceiling.</remarks>
+public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
 public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression }
@@ -55,6 +61,15 @@ public static class FarmhandActionCatalog
         new FarmhandActionResourceTemplateClaim("embodied_actor", FarmhandResourceTemplateValue.ScopePlayer),
     });
 
+    /// <summary>Descriptor-owned static watchdog for ordinary short actions</summary>
+    /// (hang protection, not ETA; watchdog authority decision 2026-09-20).</summary>
+    public const long DefaultWatchdogMs = 60_000;
+
+    /// <summary>Action-specific Body Program watchdog for navigate_to_destination,</summary>
+    /// matching its ordinary-pipeline 10-minute deadline ceiling
+    /// (BridgeSession.IsFreshExecutionRequest; action-specific coarse upper bound).</summary>
+    public const long NavigationWatchdogMs = 600_000;
+
     public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
     {
         E("move_to_tile", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
@@ -69,7 +84,11 @@ public static class FarmhandActionCatalog
         E("harvest_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, TargetItem()), E("place_wood_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)322")), E("place_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)710")), E("bait_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)685")),
         E("chop_tree_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("break_rock_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget()), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()),
         R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"), R("observe_scene", "world_perception"),
-        E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, A(new Dictionary<string,string>{{"arrival","destination_arrival"}}, null, "arrived_at_destination", ("destination","destination_selector"))),
+        E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(
+            new[] { new FarmhandActionArgument("destination", "destination_selector") },
+            new Dictionary<string, string> { ["arrival"] = "destination_arrival" },
+            EmbodiedActorResource, "write", "arrived_at_destination",
+            WatchdogMs: NavigationWatchdogMs)),
         E("clear_debris", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.Experimental), E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental), E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental),
         E("express_emote", "expression", FarmhandActionHandlerGroup.Expression, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("emote", "string", EmoteEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "emote_finished_or_overridden", "Farmer.doEmote"), FarmhandActionLifecycle.Experimental),
         E("face_direction", "movement_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("direction", "string", DirectionEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "actor_facing_matches", "Farmer.faceDirection"), FarmhandActionLifecycle.Experimental),
