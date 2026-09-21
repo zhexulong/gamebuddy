@@ -62,7 +62,44 @@ internal static class Program
             await using var image = await new InstalledGenerationAdmission(layout).AdmitGuardianAsync(selection, cancellationToken).ConfigureAwait(false);
             await using var runtimeSupervisor = new RuntimeSupervisor();
             await using var guardianSupervisor = new GuardianSupervisor();
-            await using var host = await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken).ConfigureAwait(false);
+
+            // Voice is an optional capability: the coordinator resolves null
+            // (no admitted artifact, consent not accepted, or unreadable
+            // preference) and the composition stays on pure-text Chat. When it
+            // resolves, the same loopback port/token pair goes into both the
+            // Voice child and the exact Host child so the Host wire can reach it.
+            var voiceLaunch = VoiceLaunchCoordinator.Resolve(
+                selection.GenerationRoot,
+                selection.Generation,
+                selection.InventoryDigest,
+                Path.Combine(layout.DataRoot, "settings", "voice-preference.json"));
+            await using var voiceSupervisor = voiceLaunch is null ? null : new VoiceGatewaySupervisor();
+            VoiceGatewayLease? voiceLease = null;
+            try
+            {
+                if (voiceLaunch is not null && voiceSupervisor is not null)
+                {
+                    var plan = VoiceGatewaySupervisor.BuildLaunchPlan(
+                        runtime.RuntimePath,
+                        voiceLaunch.Gateway,
+                        voiceLaunch.Port,
+                        voiceLaunch.Token,
+                        cloudTtsAdmitted: true);
+                    voiceLease = await voiceSupervisor.StartAsync(plan, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (GuardianLaunchUnavailableException)
+            {
+                // Voice child could not start: Host continues on pure text.
+                voiceLease = null;
+            }
+
+            var hostOptions = new HostBootstrapEnvironmentOptions
+            {
+                VoicePort = voiceLease is null ? null : voiceLaunch!.Port,
+                VoiceToken = voiceLease is null ? null : voiceLaunch!.Token,
+            };
+            await using var host = await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions).ConfigureAwait(false);
             GuardianSupervisorLease? resident = null;
             try
             {

@@ -1,4 +1,5 @@
 using Microsoft.Win32.SafeHandles;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -185,6 +186,18 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var nonce = options.TavernNarrativeGateNonceSha256;
         if (nonce is not null && !ValidTavernNarrativeGateNonceSha256(nonce))
             throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+        // Voice is an optional capability delivered to the Host wire
+        // (connectOptionalVoiceSurface) as a strictly paired port/token pair:
+        // both absent means pure text, one absent is a composition bug and
+        // fails closed rather than silently dropping the Voice surface.
+        var voicePort = options.VoicePort;
+        var voiceToken = options.VoiceToken;
+        if (voicePort is null != voiceToken is null)
+            throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+        if (voicePort is not null && (voicePort < 1 || voicePort > 65_535))
+            throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+        if (voiceToken is not null && !ValidVoiceToken(voiceToken))
+            throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
 
         var values = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -197,8 +210,17 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             ["GAMEBUDDY_HOST_SURFACE"] = options.Surface,
         };
         if (nonce is not null) values["GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256"] = nonce;
+        if (voicePort is not null && voiceToken is not null)
+        {
+            values["GAMEBUDDY_VOICE_PORT"] = voicePort.Value.ToString(CultureInfo.InvariantCulture);
+            values["GAMEBUDDY_VOICE_TOKEN"] = voiceToken;
+        }
         return string.Concat(values.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => $"{item.Key}={item.Value}\0")) + "\0";
     }
+
+    private static bool ValidVoiceToken(string value) =>
+        value.Length is >= 16 and <= 256 && value.All(static character =>
+            character is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '-' or '_');
 
     private static bool ValidTavernNarrativeGateNonceSha256(string value) =>
         value.Length == 64 && value.All(static character => (character >= 'a' && character <= 'f') || (character >= '0' && character <= '9'));
