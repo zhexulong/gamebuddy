@@ -1334,6 +1334,12 @@ test("production lifecycle coordinator has no direct-spawn fallback and both rol
   assert.match(productionFactory, /stardew_ai_client_launch_runtime_unavailable/);
   assert.match(productionFactory, /containedRuntimeTeardownFromCollaborator/);
   assert.doesNotMatch(productionFactory, /installationDiscoveryOverlay/);
+  // Loop 4 composition seam: the production factory forwards the one semantic
+  // Game authority, while deliberately leaving the not-yet-real Stardew world
+  // producer unmounted. This keeps create fail-closed rather than fabricating a
+  // binding merely to make the provider path appear live.
+  assert.match(productionFactory, /createStardewWorldBindingResolverFromGameAuthority\(game\)/);
+  assert.match(productionFactory, /\n\s*game,\n\s*undefined,\n\s*containedRuntimeTeardown/);
 });
 
 test("Game launch rejects a different key while the first launch is pending", async () => {
