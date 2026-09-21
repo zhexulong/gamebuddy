@@ -8,6 +8,7 @@ import { buildWindowsReparseInspector, outputRoot as windowsReparseInspectorBuil
 import { buildWindowsBootstrapGuardian, outputRoot as windowsBootstrapGuardianBuildRoot } from "./build-windows-bootstrap-guardian.mjs";
 import { buildWindowsStardewFolderPicker, outputRoot as windowsStardewFolderPickerBuildRoot } from "./build-windows-stardew-folder-picker.mjs";
 import { runBoundedChild } from "./child-process-tool.mjs";
+import { buildReleaseArtifact as buildVoiceGatewayReleaseArtifact } from "../../voice-gateway/scripts/build-release-artifact.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const hostRoot = resolve(dirname(scriptPath), "..");
@@ -408,6 +409,14 @@ async function buildComposedProductionArtifact({
   await rm(browserStagingRoot, { recursive: true, force: true });
   try {
     await verifyMagicContext();
+    const compositionConfig = await readArtifactConfig(hostRoot);
+    // The voice gateway artifact participates only when the release config
+    // carries the voiceGateway descriptor. Its single-file bundle and
+    // PowerShell helpers are built first (the .dist output is gitignored and
+    // never committed), so the publisher always stages fresh verified bytes.
+    if (compositionConfig.voiceGateway !== undefined) {
+      await buildVoiceGatewayReleaseArtifact();
+    }
     // The version-locked native provenance and emitted policy adapter must exist
     // before Vite imports Lane C's manifest generator on Windows.
     if (process.platform === "win32") {
