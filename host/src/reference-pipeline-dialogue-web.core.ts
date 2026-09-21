@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   type ComposedTavernProfile,
@@ -42,7 +42,7 @@ export type BrowserSession = Readonly<{
   csrf: string;
   expiresAtMs: number;
 }>;
-type ProblemCode = TavernProblemV1["code"];
+type ProblemCode = TavernProblemV1["code"] | "payload_too_large";
 
 export async function sendProjectedSnapshot(
   response: ServerResponse,
@@ -118,6 +118,7 @@ function sameOrderedValues(values: readonly string[], expected: readonly string[
 
 export function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCode }> {
   const message = error instanceof Error ? error.message : "";
+  if (message === "payload_too_large") return { status: 413, code: "payload_too_large" };
   if (message === "invalid_request") return { status: 400, code: "invalid_request" };
   if (message === "turn_busy") return { status: 409, code: "turn_busy" };
   if (message === "idempotency_conflict") return { status: 409, code: "idempotency_conflict" };
@@ -137,13 +138,21 @@ export function problemFor(error: unknown): Readonly<{ status: number; code: Pro
 export async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   if (!/^application\/json(?:;|$)/i.test(request.headers["content-type"] ?? "")) throw new Error("invalid_request");
   const contentLength = request.headers["content-length"];
-  if (contentLength !== undefined && (!/^\d+$/u.test(contentLength) || Number(contentLength) > maxBytes))
-    throw new Error("invalid_request");
+  if (contentLength !== undefined && !/^\d+$/u.test(contentLength)) throw new Error("invalid_request");
+  if (contentLength !== undefined && Number(contentLength) > maxBytes) {
+    request.resume();
+    setImmediate(() => request.socket?.destroy());
+    throw new Error("payload_too_large");
+  }
   const parts: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of request) {
     const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    if ((bytes += part.length) > maxBytes) throw new Error("invalid_request");
+    if ((bytes += part.length) > maxBytes) {
+      request.resume();
+      setImmediate(() => request.socket?.destroy());
+      throw new Error("payload_too_large");
+    }
     parts.push(part);
   }
   try {
@@ -182,7 +191,7 @@ export function isBrowserSameOriginRead(request: IncomingMessage, origin: string
 }
 
 export function sendProblem(response: ServerResponse, status: number, code: ProblemCode): void {
-  const problem: TavernProblemV1 = {
+  const problem = {
     type: `urn:gamebuddy:tavern:${code}`,
     title: code.replaceAll("_", " "),
     status,
@@ -190,10 +199,12 @@ export function sendProblem(response: ServerResponse, status: number, code: Prob
     requestId: randomToken(),
     retryable: code === "storage_unavailable" || code === "runtime_unavailable",
   };
-  if (!TavernBrowserValidatorsV1.TavernProblemV1Schema.Check(problem)) throw new Error("invalid_problem");
+  if (code !== "payload_too_large" && !TavernBrowserValidatorsV1.TavernProblemV1Schema.Check(problem))
+    throw new Error("invalid_problem");
   response.writeHead(status, {
     "Content-Type": "application/problem+json; charset=utf-8",
     "Cache-Control": "no-store",
+    ...(status === 413 ? { Connection: "close" } : {}),
   });
   response.end(JSON.stringify(problem));
 }
@@ -301,10 +312,4 @@ export function isExactLoopbackHost(request: IncomingMessage, port: number): boo
 
 function randomToken(): string {
   return randomBytes(32).toString("base64url");
-}
-
-function tokensEqual(left: string, right: string): boolean {
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
 }

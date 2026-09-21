@@ -19,6 +19,7 @@ import {
   type ExactReceiptRecoveryPort,
   StardewExecutionRecoverySupervisor,
 } from "./stardew-execution-recovery-supervisor.js";
+import { type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { StardewLogicalActionRecoveryJournal } from "./stardew-logical-action-recovery-journal.js";
 
@@ -31,6 +32,30 @@ const config = {
   bridge: { pipeName: "gamebuddy_preview", bridgeToken: "a".repeat(32) },
 };
 
+const testModule: GameIntegrationAdapter = {
+  ...STARDEW_GAME_INTEGRATION_ADAPTER,
+  actorId: () => "player_01",
+  assertIdentityBinding: () => {},
+  readState: (connection: GameConnection) => {
+    const s = connection.state as Record<string, unknown>;
+    const snap = s.snapshot as { revision?: number } | undefined;
+    const caps = (s.capabilities as string[]) ?? [];
+    return {
+      connected: Boolean(s.connected),
+      sessionId: (s.sessionId as string) ?? null,
+      capabilities: caps,
+      catalogRevision: 1,
+      capabilityRevision: 1,
+      snapshotRevision: snap?.revision ?? null,
+      enabledActionIds: caps,
+      registrations: (s.catalogRegistrations as unknown[]) as any,
+      activeExecution: null,
+      latestReceipt: null,
+      latestReasonCode: null,
+    };
+  },
+};
+
 function handle(presentationLocale = "zh-CN"): IntegrationLaunchHandle {
   const connection = {
     scope: {
@@ -40,7 +65,7 @@ function handle(presentationLocale = "zh-CN"): IntegrationLaunchHandle {
       playerId: "player_01",
       companionId: "companion_01",
     },
-    module: STARDEW_GAME_INTEGRATION_ADAPTER,
+    module: testModule,
     state: {
       connected: true,
       sessionId: "stardew_session",
@@ -90,7 +115,7 @@ function dependencies(
   return {
     launcher: {
       integrationId: "stardew",
-      module: STARDEW_GAME_INTEGRATION_ADAPTER,
+      module: testModule,
       launch: async () => {
         events.push("launch");
         return launch;
@@ -518,7 +543,7 @@ test("relaunch is single-flight; a concurrent explicit relaunch fails closed", a
   const deps = {
     launcher: {
       integrationId: "stardew",
-      module: STARDEW_GAME_INTEGRATION_ADAPTER,
+      module: testModule,
       launch: async () => {
         launchCount++;
         await gate;

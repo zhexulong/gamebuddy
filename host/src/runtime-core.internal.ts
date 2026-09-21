@@ -363,9 +363,11 @@ function createIntegrationToolRefresher(input: Readonly<{
         const toolSet = input.module.createToolSet({
           connection: input.connection,
           knowledge: input.knowledge,
-          gameVersion: input.gameVersion,
+          ...(input.gameVersion === undefined ? {} : { gameVersion: input.gameVersion }),
           policy: input.policy,
-          dispatchAdmissionFactory: input.dispatchAdmissionFactory,
+          ...(input.dispatchAdmissionFactory === undefined
+            ? {}
+            : { dispatchAdmissionFactory: input.dispatchAdmissionFactory }),
         });
         const adapterTools = [
           ...toolSet.observation,
@@ -872,12 +874,11 @@ export async function createRuntimeWithFixedToolsCore(
       ? integrationModule.createToolSet({
           connection: integration,
           knowledge: integration.knowledge,
-          gameVersion: integration.gameVersion,
+          ...(integration.gameVersion === undefined ? {} : { gameVersion: integration.gameVersion }),
           policy: mountedPolicy,
-          dispatchAdmissionFactory:
-            dispatchController === undefined
-              ? undefined
-              : () => dispatchController.createAdmission(),
+          ...(dispatchController === undefined
+            ? {}
+            : { dispatchAdmissionFactory: () => dispatchController.createAdmission() }),
         })
       : undefined;
   const rawIntegrationTools =
@@ -939,8 +940,8 @@ export async function createRuntimeWithFixedToolsCore(
       ? []
       : [
           ...PHASE_0B_ALLOWED_TOOL_NAMES,
-           ...(loadMagicContextExtension ? ["todowrite"] : []),
-           ...fixedToolNames,
+          ...(loadMagicContextExtension ? ["todowrite"] : []),
+          ...fixedToolNames,
            ...integrationTools.map((tool) => tool.name),
           ...worldBookTools.map((tool) => tool.name),
           ...gameplayTools.map((tool) => tool.name),
@@ -966,7 +967,7 @@ export async function createRuntimeWithFixedToolsCore(
       settingsManager: settings,
       sessionManager,
       modelRuntime,
-      model,
+      ...(model === undefined ? {} : { model }),
       noTools: "all",
       tools: allowedToolNames,
       customTools,
@@ -1148,9 +1149,11 @@ export async function createRuntimeWithFixedToolsCore(
         integrationModule === undefined
           ? { mounted: false, gameVersion: null, bundleVersion: null }
           : integrationModule.knowledgeMetadata({
-              connection: integration,
+              ...(integration === undefined ? {} : { connection: integration }),
               knowledge: integration?.knowledge,
-              gameVersion: integration?.gameVersion,
+              ...(integration?.gameVersion === undefined
+                ? {}
+                : { gameVersion: integration?.gameVersion }),
             }),
       identityProfile: profileMetadata,
       worldBook: worldBook === undefined ? null : worldBook.metadata,

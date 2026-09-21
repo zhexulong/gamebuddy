@@ -158,7 +158,7 @@ export function createActionExecutionCoordinator(
       (await Promise.resolve(
         connection.module.cancelExecution(connection, requestId, executionId, reasonCode),
       )) as never,
-    { recoveryJournal: options.recoveryJournal },
+    options.recoveryJournal === undefined ? {} : { recoveryJournal: options.recoveryJournal },
   );
   if (options.recoveryJournal !== undefined)
     ledger.rehydrate(options.recoveryJournal.recoverableRecords());

@@ -364,7 +364,7 @@ function boundedMultilineText(value: unknown, max: number): string | undefined {
   return typeof value === "string" &&
     utf8Bytes(value) > 0 &&
     utf8Bytes(value) <= max &&
-    !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
+    !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(value)
     ? value
     : undefined;
 }

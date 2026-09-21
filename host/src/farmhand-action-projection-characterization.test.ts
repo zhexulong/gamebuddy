@@ -248,6 +248,10 @@ test("every materialized published Farmhand tool routes its exact action-specifi
         y: 20,
         expectedQualifiedItemId: "(O)16",
         expectedTargetId: "forage_target_01",
+        sceneTarget: {
+          observationId: "observation_forage_01",
+          ref: "sr1_AAAAAAAAAAAAAAAA",
+        },
       },
       pickup_item: {
         x: 21,

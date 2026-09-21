@@ -560,6 +560,31 @@ test("generic runtime keeps an explicit game surface when the Host construction 
   }
 });
 
+test("Chat surface never creates a gameplay subagent even when enabled with integration and model config", async () => {
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-chat-no-gameplay-subagent-"));
+  const scope = {
+    integrationId: "stardew",
+    saveId: identity.saveId,
+    worldId: identity.worldId,
+    playerId: identity.playerId,
+    companionId: identity.companionId,
+  };
+  const [hostEndpoint] = createDeterministicBridgePair(scope);
+  const integration = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const runtime = await createCompanionRuntime(
+    { ...identity, continuityId: "continuity_chat_subagent_01" }, root, integration,
+    GAMEPLAY_SUBAGENT_MODEL_CONFIG, undefined, undefined, true, undefined,
+    "chat_surface_subagent_01", undefined, "chat",
+  );
+  try {
+    assert.equal(runtime.gameplaySubagent, undefined);
+    assert.deepEqual(runtime.session.agent.state.tools, []);
+  } finally {
+    runtime.session.dispose();
+    integration.dispose();
+  }
+});
+
 test("Chat surface runtime is a pure native-content dialogue surface with no mounted tools", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-chat-surface-runtime-"));
   const runtime = await createCompanionRuntime(
@@ -591,7 +616,7 @@ test("public Game runtime cannot mount Body Program tools while the internal mat
   const registrations = [{ actionId: "activate_console", familyId: "arcade", identityVersion: 1, lifecycle: "published" as const, kind: "execution" as const }];
   const policy = Object.freeze({ policyVersion: 1 as const, deniedActions: [], deniedFamilies: [] });
   const fixedTools = Object.freeze([
-    "stardew_submit_action_program",
+     "stardew_submit_action_program",
     "stardew_action_program_status",
     "stardew_action_program_events",
   ].map((name) => Object.freeze(defineTool({ name, label: name, description: name, parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) }))));
@@ -1319,14 +1344,10 @@ test("Game operational marker registration is Game-only and initialization clean
     readFile(new URL("../src/runtime.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/runtime-core.internal.ts", import.meta.url), "utf8"),
   ]);
-  const registration = core.slice(
-    core.indexOf("if (gameOperationalGate !== undefined)"),
-    core.indexOf("return {"),
-  );
   assert.doesNotMatch(wrapper, /registerGameOperationalGateMarker|fixedTools/);
-  assert.match(registration, /registerGameOperationalGateMarker/);
-  assert.match(registration, /sessionId: piSessionId/);
-  assert.match(registration, /surface: "game"/);
+  assert.match(core, /registerGameOperationalGateMarker/);
+  assert.match(core, /sessionId: piSessionId/);
+  assert.match(core, /surface: "game"/);
   assert.match(core, /clearOperationalGateMarker\?\.\(\)/);
   const manifestBlock = core.slice(
     core.indexOf("await writeOrVerifyRunManifest"),

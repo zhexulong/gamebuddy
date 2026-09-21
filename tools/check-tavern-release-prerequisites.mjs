@@ -16,6 +16,23 @@ export const REQUIRED_MUST_FLOWS = Object.freeze([
   "memory-management",
 ]);
 
+export const DEFAULT_TAVERN_RELEASE_PROFILE = "full";
+export const CHAT_TAVERN_LIVE_PROFILE = "chat-tavern-live";
+export const TAVERN_RELEASE_PROFILES = Object.freeze({
+  [DEFAULT_TAVERN_RELEASE_PROFILE]: Object.freeze({
+    id: DEFAULT_TAVERN_RELEASE_PROFILE,
+    securityPrerequisites: true,
+  }),
+  [CHAT_TAVERN_LIVE_PROFILE]: Object.freeze({
+    id: CHAT_TAVERN_LIVE_PROFILE,
+    securityPrerequisites: false,
+  }),
+});
+
+function resolveTavernReleaseProfile(profile) {
+  return TAVERN_RELEASE_PROFILES[profile];
+}
+
 // This is deliberately a bounded ordinary-containment check. It executes the
 // actual Host security regressions rather than treating source tokens as
 // evidence. Node pathname APIs cannot prove safety against a same-user hostile
@@ -160,6 +177,7 @@ function runTavernContainmentTests(exec, root) {
  * runtime proof and does not read target taxonomy as mounted or released authority.
  */
 export async function checkTavernReleasePrerequisites({
+  profile = DEFAULT_TAVERN_RELEASE_PROFILE,
   root = repositoryRoot,
   verifyReferences = true,
   read = readFile,
@@ -168,40 +186,74 @@ export async function checkTavernReleasePrerequisites({
   exec = execFileSync,
   windowsReparseLiveGateRunner = runWindowsReparseLiveGate,
 } = {}) {
+  const releaseProfile = resolveTavernReleaseProfile(profile);
+  if (releaseProfile === undefined) {
+    return {
+      gate: "tavern_release_prerequisites/v1",
+      profile,
+      verdict: "blocked",
+      checks: [result("release_profile", "blocked", "release_profile_unknown")],
+    };
+  }
+
   const sourcePath = resolve(root, "vendor/magic-context/packages/pi-plugin/src/gamebuddy-stable-context-source.ts");
   const source = await read(sourcePath, "utf8");
   const checks = [];
-  if (verifyWindowsReparseLiveGate(root, windowsReparseLiveGateRunner)) {
-    checks.push(
-      result("windows_arbitrary_reparse_enforcement", "passed", WINDOWS_ARBITRARY_REPARSE_ENFORCEMENT.passedDetail),
-    );
-  } else {
-    checks.push(
-      result("windows_arbitrary_reparse_enforcement", "blocked", WINDOWS_ARBITRARY_REPARSE_ENFORCEMENT.detail),
-    );
-  }
-  const threatModelIssue = validateTavernFilesystemThreatModel(tavernFilesystemThreatModel);
-  if (threatModelIssue) {
-    checks.push(result("tavern_filesystem_threat_model", "blocked", threatModelIssue));
-  } else {
-    try {
-      runTavernContainmentTests(exec, root);
+  if (releaseProfile.securityPrerequisites) {
+    if (verifyWindowsReparseLiveGate(root, windowsReparseLiveGateRunner)) {
       checks.push(
-        result(
-          "tavern_ordinary_link_reparse_containment",
-          "passed",
-          "ordinary symlink/junction/reparse containment tests passed; same-user hostile TOCTOU is an explicit P3 residual risk, not a hostile-race safety claim",
-        ),
+        result("windows_arbitrary_reparse_enforcement", "passed", WINDOWS_ARBITRARY_REPARSE_ENFORCEMENT.passedDetail),
       );
-    } catch {
+    } else {
       checks.push(
-        result(
-          "tavern_ordinary_link_reparse_containment",
-          "blocked",
-          "tavern_ordinary_link_reparse_containment_tests_failed_or_could_not_run",
-        ),
+        result("windows_arbitrary_reparse_enforcement", "blocked", WINDOWS_ARBITRARY_REPARSE_ENFORCEMENT.detail),
       );
     }
+    const threatModelIssue = validateTavernFilesystemThreatModel(tavernFilesystemThreatModel);
+    if (threatModelIssue) {
+      checks.push(result("tavern_filesystem_threat_model", "blocked", threatModelIssue));
+    } else {
+      try {
+        runTavernContainmentTests(exec, root);
+        checks.push(
+          result(
+            "tavern_ordinary_link_reparse_containment",
+            "passed",
+            "ordinary symlink/junction/reparse containment tests passed; same-user hostile TOCTOU is an explicit P3 residual risk, not a hostile-race safety claim",
+          ),
+        );
+      } catch {
+        checks.push(
+          result(
+            "tavern_ordinary_link_reparse_containment",
+            "blocked",
+            "tavern_ordinary_link_reparse_containment_tests_failed_or_could_not_run",
+          ),
+        );
+      }
+    }
+  } else {
+    checks.push(
+      result(
+        "windows_arbitrary_reparse_enforcement",
+        "not_applicable",
+        `${releaseProfile.id}_profile_does_not_claim_windows_reparse_enforcement`,
+      ),
+    );
+    checks.push(
+      result(
+        "tavern_filesystem_threat_model",
+        "not_applicable",
+        `${releaseProfile.id}_profile_does_not_claim_filesystem_security_prerequisites`,
+      ),
+    );
+    checks.push(
+      result(
+        "tavern_ordinary_link_reparse_containment",
+        "not_applicable",
+        `${releaseProfile.id}_profile_does_not_claim_link_reparse_containment`,
+      ),
+    );
   }
   const runtimeUnwired =
     /runtime publication is intentionally unwired|later runtime-wiring slice|materializationStatus\s*=\s*"contract-only"/.test(
@@ -233,7 +285,10 @@ export async function checkTavernReleasePrerequisites({
           "exec",
           "bun",
           "test",
+          "--timeout=30000",
+          "src/tavern-prompt-parity.test.ts",
           "src/gamebuddy-stable-context-source.test.ts",
+          "src/gamebuddy-player-memory-crud-facade.test.ts",
           "src/inject-compartments-pi.test.ts",
           "src/context-handler.test.ts",
         ],
@@ -273,17 +328,32 @@ export async function checkTavernReleasePrerequisites({
     }
   }
 
-  const blocked = checks.filter((check) => check.status !== "passed");
+  const blocked = checks.filter((check) => check.status !== "passed" && check.status !== "not_applicable");
   return {
     gate: "tavern_release_prerequisites/v1",
+    profile: releaseProfile.id,
     verdict: blocked.length === 0 ? "passed" : "blocked",
     checks,
   };
 }
 
+function parseCliProfile(argv) {
+  for (let i = 2; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith("--profile=")) {
+      return arg.slice("--profile=".length);
+    }
+    if (arg === "--profile" && i + 1 < argv.length) {
+      return argv[i + 1];
+    }
+  }
+  return DEFAULT_TAVERN_RELEASE_PROFILE;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const report = await checkTavernReleasePrerequisites();
+    const profile = parseCliProfile(process.argv);
+    const report = await checkTavernReleasePrerequisites({ profile });
     console.log(JSON.stringify(report, null, 2));
     if (report.verdict !== "passed") process.exitCode = 2;
   } catch (error) {

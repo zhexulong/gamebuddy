@@ -6,17 +6,6 @@
         "tools/lib/stardew-csharp-syntax-structural-canary.mjs"
       ]
     },
-    "packages/game-action-devkit": {
-      "entry": [
-        "tests/fixtures/project/adapter.mjs",
-        "tests/fixtures/project/child.mjs"
-      ],
-      "project": [
-        "src/**/*.mjs",
-        "tests/**/*.mjs",
-        "bin/**/*.mjs"
-      ]
-    },
     "packages/game-action-program": {
       "entry": [],
       "project": [

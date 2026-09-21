@@ -5,7 +5,6 @@ import {
   type ActionPolicy,
   getArgumentEnum,
   getDescriptorArgument,
-  isCandidateActionId,
   isCandidateDescriptorComplete,
   STARDEW_ACTION_TOOL_NAMES,
   type StardewActionId,
@@ -97,17 +96,12 @@ function callerRequestIds(
 ): Readonly<{ requestId?: string; idempotencyKey?: string }> {
   if (typeof params !== "object" || params === null) return {};
   const record = params as Readonly<Record<string, unknown>>;
-  return {
-    requestId:
-      typeof record.requestId === "string" && record.requestId.length > 0
-        ? record.requestId
-        : undefined,
-    idempotencyKey:
-      typeof record.idempotencyKey === "string" &&
-      record.idempotencyKey.length > 0
-        ? record.idempotencyKey
-        : undefined,
-  };
+  const requestId = typeof record.requestId === "string" && record.requestId.length > 0 ? record.requestId : undefined;
+  const idempotencyKey = typeof record.idempotencyKey === "string" && record.idempotencyKey.length > 0 ? record.idempotencyKey : undefined;
+  return Object.freeze({
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+  });
 }
 
 type NavigationActionId = "inspect_world_map" | "find_destination";
@@ -907,7 +901,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.machine_inspect,
         label: "Inspect Stardew Machine",
         description:
-          "Read a live native machine state without opening a menu or changing the machine.",
+          "Read a live native machine state without opening a menu or changing the machine. requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -934,7 +928,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.machine_load,
         label: "Load Coffee Beans into Keg",
         description:
-          "Load exactly five Coffee Beans into a live idle Keg through the normal native machine interaction. A receipt proves native input consumption and Coffee processing start.",
+          "Load exactly five Coffee Beans into a live idle Keg through the normal native machine interaction. A receipt proves native input consumption and Coffee processing start. requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),

@@ -49,7 +49,7 @@ function liveSnapshots() {
   return { before, after };
 }
 
-function liveClient({ reads = 0 } = {}) {
+function liveClient() {
   const { before, after } = liveSnapshots();
   let readsDone = 0;
   return {

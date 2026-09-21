@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 const PROTOCOL_VERSION = 1;
-export const MAX_MESSAGE_BYTES = 16 * 1024;
+// Mirrors BridgeProtocol.MaximumMessageBytes (C#): hello_ack carries the
+// complete published action catalog (~16.7 KiB at 34 actions), so the frame
+// bound must admit the full publication plus growth.
+export const MAX_MESSAGE_BYTES = 32 * 1024;
 /** World-fact JSON is bounded below the frame limit so conversion never accepts an unbounded raw blob. */
 export const MAX_WORLD_FACT_PAYLOAD_JSON_BYTES = 8 * 1024;
 export const MAX_EVENTS_PER_WINDOW = 32;
@@ -32,6 +35,14 @@ export type BodyNodeAdmissionGrant = BodyNodeAdmissionChallenge & Readonly<{
   grantId: string; attachmentGeneration: string; policyRevision: string;
   executionBinding: BodyExecutionBinding | null;
 }>;
+export type BodyNodeAdmissionResult =
+  | (BodyNodeAdmissionGrant & Readonly<{ result: "granted" }>)
+  | (BodyNodeAdmissionChallenge & Readonly<{ result: "rejected"; code: string }>)
+  | (BodyNodeAdmissionChallenge & Readonly<{ result: "unavailable"; code: "admission_unavailable" }>);
+
+export type BodyNodeAdmissionChallengeHandler = (
+  challenge: BodyNodeAdmissionChallenge,
+) => Promise<BodyNodeAdmissionResult> | BodyNodeAdmissionResult;
 
 
 export type Envelope<TType extends string, TPayload> = Readonly<{
@@ -667,13 +678,6 @@ export type ActionRegistration = Readonly<{
   descriptor?: ActionRegistrationDescriptor;
 }>;
 
-/** Mod-declared registrations, ordered exactly as the Mod projected them. */
-type ActionCatalog = Readonly<{
-  /** Ordered, deduplicated action-id index. */
-  byActionId: ReadonlyMap<string, ActionRegistration>;
-  /** Ordered projection preserving Mod declaration order. */
-  entries: readonly ActionRegistration[];
-}>;
 
 /** Typed destination selector accepted by the C# Body Program wire contract. */
 type BodyProgramDestinationSelector = Readonly<
@@ -777,6 +781,7 @@ export type BridgeMessage =
   | Envelope<"execution_request", ExecutionRequest>
   | Envelope<"body_node_admission_challenge", BodyNodeAdmissionChallenge>
   | Envelope<"body_node_admission_grant", BodyNodeAdmissionGrant>
+  | Envelope<"body_node_admission_result", BodyNodeAdmissionResult>
   | Envelope<"execution_receipt_query", ExecutionReceiptQuery>
   | Envelope<"cancel_request", CancelRequestPayload>
   | Envelope<"companion_presentation_request", CompanionPresentationRequest>
@@ -798,7 +803,7 @@ export type BridgeMessage =
 
 const BRIDGE_MESSAGE_TYPES = [
   "hello", "hello_ack", "observe_request", "navigation_read_request", "navigation_read_result", "observe_scene_request", "observe_scene_result", "snapshot", "catalog_update",
-  "execution_request", "body_node_admission_challenge", "body_node_admission_grant", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
+  "execution_request", "body_node_admission_challenge", "body_node_admission_grant", "body_node_admission_result", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
   "system_notice_receipt", "companion_presentation_receipt", "player_control_receipt", "execution_receipt",
   "program_submit", "program_submit_result", "program_status", "program_status_result",
   "program_events", "program_events_result", "error", "semantic_event", "lifecycle", "world_fact",
@@ -935,7 +940,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
   if (envelopeError !== null) return envelopeError;
   const message = value as BridgeMessage;
   const payload = message.payload as Record<string, unknown>;
-  if (message.type === "body_node_admission_challenge" || message.type === "body_node_admission_grant") {
+  if (message.type === "body_node_admission_challenge" || message.type === "body_node_admission_grant" || message.type === "body_node_admission_result") {
     try { serializeBounded(message); } catch (error) { return error instanceof Error ? error.message : "message_not_serializable"; }
   }
   switch (message.type) {
@@ -956,7 +961,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         isOpaqueId(payload.sessionId) &&
         isStringArray(payload.capabilities) &&
          isNonNegativeSafeInteger(payload.catalogRevision) &&
-         isFarmhandPolicyIdentity(payload.policyIdentity, payload.catalogRevision) &&
+         isFarmhandPolicyIdentity(payload.policyIdentity) &&
          isUniqueOpaqueIdArray(payload.enabledActionIds) &&
         isBcp47Locale(payload.presentationLocale) &&
         isValidActionRegistrations(payload.registrations) &&
@@ -978,7 +983,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
     case "catalog_update":
       return hasExactKeys(payload, ["catalogRevision", "policyIdentity", "enabledActionIds"]) &&
         isNonNegativeSafeInteger(payload.catalogRevision) &&
-        isFarmhandPolicyIdentity(payload.policyIdentity, payload.catalogRevision) &&
+        isFarmhandPolicyIdentity(payload.policyIdentity) &&
         isUniqueOpaqueIdArray(payload.enabledActionIds)
         ? null
         : "invalid_catalog_update";
@@ -1073,6 +1078,8 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
       return validateBodyNodeAdmissionChallenge(payload);
     case "body_node_admission_grant":
       return validateBodyNodeAdmissionGrant(payload);
+    case "body_node_admission_result":
+      return validateBodyNodeAdmissionResult(payload);
     case "program_submit":
       return validateBodyProgramCandidateRequest(payload);
     case "program_submit_result":
@@ -1102,13 +1109,36 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
   }
 }
 
+export function validateBodyNodeAdmissionPayload(value: unknown, grant = false): string | null {
+  if (!isRecord(value)) return grant ? "invalid_body_node_admission_grant" : "invalid_body_node_admission_challenge";
+  return grant ? validateBodyNodeAdmissionGrant(value) : validateBodyNodeAdmissionChallenge(value);
+}
+
+function validateBodyNodeAdmissionResult(value: Record<string, unknown>): string | null {
+  if (value.result === "granted") {
+    if (!hasExactKeys(value, ["result", "programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "catalogRevision", "policyIdentity", "actionId", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs", "grantId", "attachmentGeneration", "policyRevision", "executionBinding"]))
+      return "invalid_body_node_admission_result";
+    const { result: _result, ...grant } = value;
+    return validateBodyNodeAdmissionGrant(grant);
+  }
+  if (value.result === "rejected" || value.result === "unavailable") {
+    if (!hasExactKeys(value, ["result", "code", "programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "catalogRevision", "policyIdentity", "actionId", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs"]))
+      return "invalid_body_node_admission_result";
+    if (typeof value.code !== "string" || !isReasonCode(value.code) || (value.result === "unavailable" && value.code !== "admission_unavailable"))
+      return "invalid_body_node_admission_result";
+    const { result: _result, code: _code, ...challenge } = value;
+    return validateBodyNodeAdmissionChallenge(challenge);
+  }
+  return "invalid_body_node_admission_result";
+}
+
 function validateBodyNodeAdmissionChallenge(value: Record<string, unknown>, grant = false): string | null {
   const base = ["programId","nodeId","nodeAttempt","admissionAttempt","stopEpoch","catalogRevision","policyIdentity","actionId","canonicalBoundArgs","derivedResourceClaims","deadlineMs"];
   if (grant) base.push("grantId", "attachmentGeneration", "policyRevision", "executionBinding");
   if (!hasExactKeys(value, base) || !isOpaqueId(value.programId) || !isOpaqueId(value.nodeId) || !isOpaqueId(value.actionId)) return "invalid_body_node_admission_challenge";
   if (!["nodeAttempt","admissionAttempt"].every(k => isPositiveSafeInteger(value[k]) && (value[k] as number) <= 2_147_483_647) || !["stopEpoch","catalogRevision"].every(k => isNonNegativeSafeInteger(value[k])) || !isPositiveSafeInteger(value.deadlineMs)) return "invalid_body_node_admission_challenge";
   if (!isRecord(value.policyIdentity) || !hasExactKeys(value.policyIdentity,["value","capabilityRevision"]) || !isAdmissionOpaque(value.policyIdentity.value) || !isNonNegativeSafeInteger(value.policyIdentity.capabilityRevision) || !isRecord(value.canonicalBoundArgs) || !isRecord(value.derivedResourceClaims)) return "invalid_body_node_admission_challenge";
-  return Object.keys(value.derivedResourceClaims).length <= 16 && Object.keys(value.canonicalBoundArgs).length <= 32 && Object.entries(value.derivedResourceClaims).every(([k,v])=>isOpaqueId(k)&&isOpaqueId(v)) && Object.entries(value.canonicalBoundArgs).every(([k,v])=>isOpaqueId(k)&&isBodyCanonicalValue(v)) ? null : "invalid_body_node_admission_challenge";
+  return Object.keys(value.derivedResourceClaims).length <= 16 && Object.keys(value.canonicalBoundArgs).length <= 32 && Object.entries(value.derivedResourceClaims).every(([k,v])=>isAdmissionMapKey(k)&&isOpaqueId(v)) && Object.entries(value.canonicalBoundArgs).every(([k,v])=>isAdmissionMapKey(k)&&isBodyCanonicalValue(v)) ? null : "invalid_body_node_admission_challenge";
 }
 function validateBodyNodeAdmissionGrant(value: Record<string, unknown>): string | null {
   const err = validateBodyNodeAdmissionChallenge(value, true); if (err) return "invalid_body_node_admission_grant";
@@ -1118,12 +1148,15 @@ function validateBodyNodeAdmissionGrant(value: Record<string, unknown>): string 
     && binding.programId === value.programId && binding.nodeId === value.nodeId && binding.nodeAttempt === value.nodeAttempt
     && isOpaqueId(binding.requestId) && isOpaqueId(binding.idempotencyKey) && isOpaqueId(binding.executionId)) ? null : "invalid_body_node_admission_grant";
 }
-function isFarmhandPolicyIdentity(value: unknown, catalogRevision: unknown): value is FarmhandPolicyIdentity {
+function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdentity {
   return isRecord(value) && hasExactKeys(value, ["value", "capabilityRevision"]) &&
     typeof value.value === "string" && /^[0-9a-f]{32}$/iu.test(value.value) &&
-    isNonNegativeSafeInteger(value.capabilityRevision) && value.capabilityRevision === catalogRevision;
+    isPositiveSafeInteger(value.capabilityRevision);
 }
 
+function isAdmissionMapKey(value: unknown): value is string {
+  return isOpaqueId(value) && value !== "__proto__";
+}
 function isAdmissionOpaque(value: unknown): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= 4096 && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
 }
@@ -1643,11 +1676,12 @@ export function serializeBounded(value: unknown): string {
   }
   if (json === undefined) throw new Error("message_not_serializable");
   if (Buffer.byteLength(json, "utf8") > MAX_MESSAGE_BYTES) throw new Error("message_too_large");
-  if (isRecord(value) && (value.type === "body_node_admission_challenge" || value.type === "body_node_admission_grant")) {
+  if (isRecord(value) && (value.type === "body_node_admission_challenge" || value.type === "body_node_admission_grant" || value.type === "body_node_admission_result")) {
     const serialized = JSON.parse(json) as Record<string, unknown>;
     const envelopeError = validateEnvelope(serialized, serialized.scope as Scope, serialized.timestampMs as number);
     const payloadError = !isRecord(serialized.payload) ? "invalid_payload" : serialized.type === "body_node_admission_grant"
-      ? validateBodyNodeAdmissionGrant(serialized.payload) : validateBodyNodeAdmissionChallenge(serialized.payload);
+      ? validateBodyNodeAdmissionGrant(serialized.payload) : serialized.type === "body_node_admission_result"
+        ? validateBodyNodeAdmissionResult(serialized.payload) : validateBodyNodeAdmissionChallenge(serialized.payload);
     if (envelopeError || payloadError) throw new Error(envelopeError ?? payloadError!);
   }
   return json;
@@ -2056,7 +2090,7 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     Number.isSafeInteger(value.revision) &&
     (value.evidence === null || isRecord(value.evidence)) &&
     (!("observation" in value) || value.observation === null || validateLocalObservation(value.observation) === null) &&
-    (!("piggybackedScene" in value) || value.piggybackedScene === null || validateObserveSceneResult(value.piggybackedScene) === null)
+    (!("piggybackedScene" in value) || value.piggybackedScene === null || validateObserveSceneResult(value.piggybackedScene as Record<string, unknown>) === null)
     ? null
     : "invalid_receipt";
 }

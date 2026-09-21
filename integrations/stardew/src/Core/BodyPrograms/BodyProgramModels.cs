@@ -79,8 +79,9 @@ public enum BodyProgramSubmitCode { Accepted, Rejected, Idempotent, Conflict, Pe
 public sealed record BodyProgramSubmitResult(BodyProgramSubmitCode Code, BodyProgramVerificationReport Verification, BodyProgramStatusSnapshot? Snapshot);
 
 public enum BodyProgramState { Active = 1, Succeeded = 2, Failed = 3, Cancelled = 4, RecoveryRequired = 5, Quarantined = 6 }
-public enum BodyProgramNodeState { Pending = 1, AwaitingHostAdmission = 2, HostAdmitted = 3, Running = 4, Succeeded = 5, Failed = 6, Cancelled = 7, RecoveryRequired = 8, Rejected = 9 }
+public enum BodyProgramNodeState { Pending = 1, AwaitingHostAdmission = 2, HostAdmitted = 3, Running = 4, Succeeded = 5, Failed = 6, Cancelled = 7, RecoveryRequired = 8, Rejected = 9, SkippedDependency = 10 }
 public enum BodyProgramNodeOutcome { Succeeded = 1, Failed = 2, Cancelled = 3, Uncertain = 4 }
+public enum BodyProgramClaimOwnershipState { NotAcquired = 1, Acquired = 2, Released = 3 }
 
 /// <summary>Immutable action dispatch lineage, bound to one exact accepted node attempt.</summary>
 public sealed record NodeExecutionBinding(string ProgramId, string NodeId, int NodeAttempt, string RequestId, string IdempotencyKey, string ExecutionId);
@@ -92,8 +93,19 @@ public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IRe
     IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs);
 public sealed record VerifiedBodyProgram(string ProgramId, long CatalogRevision, IReadOnlyList<VerifiedBodyProgramNode> Nodes);
 
+/// <summary>Exact diagnostic projection for one accepted node attempt. Claim
+/// ownership records the Mod-owned fresh-acquire (HostAdmitted) and release
+/// (terminal settle) transitions; see OpenBodyProgramJournalAuthority.</summary>
 public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState State, int NodeAttempt, int AdmissionAttempt, string? GrantId,
-    NodeExecutionBinding? ExecutionBinding);
+    NodeExecutionBinding? ExecutionBinding,
+    IReadOnlyDictionary<string, BodyProgramCanonicalValue>? CanonicalBoundArguments = null,
+    BodyProgramPolicyIdentity? AttemptPolicyIdentity = null,
+    IReadOnlyDictionary<string, BodyProgramClaimOwnershipState>? ClaimOwnership = null,
+    string? ReceiptId = null,
+    string? Evidence = null,
+    string? PostconditionVerification = null,
+    string? RecoveryDiagnostic = null,
+    string? RejectionCode = null);
 public sealed record RuntimeFact(string ProgramId, string NodeId, int NodeAttempt, string FactName, IReadOnlyDictionary<string, BodyProgramCanonicalValue> Values);
 public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, BodyProgramState State, long StopEpoch, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<RuntimeFact> Facts);
 /// <summary>Addressed event projection. CatalogRevision is persisted at the event, never guessed by an adapter.</summary>
@@ -110,9 +122,16 @@ public sealed record NodeAdmissionChallenge(string ProgramId, string NodeId, int
     IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs);
 public sealed record HostAdmissionGrant(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt, long StopEpoch, long CatalogRevision,
     BodyProgramPolicyIdentity PolicyIdentity, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
-    IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs, string GrantId, NodeExecutionBinding? ExecutionBinding = null);
+    IReadOnlyDictionary<string, string> DerivedResourceClaims, long DeadlineMs, string GrantId, string AttachmentGeneration, string PolicyRevision, NodeExecutionBinding? ExecutionBinding = null);
 
-public interface IBodyProgramJournalStore { string? Read(); bool TryWrite(string encodedState); }
+public abstract record BodyNodeAdmissionResult;
+public sealed record BodyNodeAdmissionGrantedResult(HostAdmissionGrant Grant) : BodyNodeAdmissionResult;
+public sealed record BodyNodeAdmissionRejectedResult(NodeAdmissionChallenge Challenge, string Code) : BodyNodeAdmissionResult;
+public sealed record BodyNodeAdmissionUnavailableResult(NodeAdmissionChallenge Challenge) : BodyNodeAdmissionResult;
+
+public enum BodyProgramJournalReadStatus { Empty, Present, ReadFailed }
+public sealed record BodyProgramJournalReadResult(BodyProgramJournalReadStatus Status, string? Payload);
+public interface IBodyProgramJournalStore { BodyProgramJournalReadResult Read(); bool TryWrite(string encodedState); }
 public enum BodyProgramJournalOpenStatus { Empty, Opened, RecoveryRequired, Corrupt, PersistenceReadFailed, PersistenceWriteFailed }
 public enum BodyProgramControllerResultCode { Succeeded, NotFound, InvalidInput, ProgramNotActive, NodeNotEligible, PolicyIdentityStale, GrantMismatch, ExecutionBindingMismatch, FactProvenanceMismatch, InvalidFact, TerminalProofMissing, RecoveryRequired, PersistenceWriteFailed, DeadlineExpired }
 public readonly record struct BodyProgramControllerResult<T>(BodyProgramControllerResultCode Code, T? Value) where T : class { public bool IsSuccess => this.Code == BodyProgramControllerResultCode.Succeeded && this.Value is not null; }
@@ -128,7 +147,10 @@ internal static class BodyProgramValidation
         && IsIdentifier(value.ProgramId) && IsIdentifier(value.NodeId) && value.NodeAttempt > 0
         && IsIdentifier(value.RequestId) && IsIdentifier(value.IdempotencyKey) && IsIdentifier(value.ExecutionId);
     internal static bool IsOpaqueTerminalProof(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
+    internal static bool IsOpaqueDiagnostic(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
     internal static bool IsOpaquePolicyValue(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
+    internal static bool IsValidRejectionCode(string? value) => value is "policy_denied" or "deadline_expired" or "resource_conflict" or "catalog_stale"
+        or "schema_rejected" or "scope_mismatch" or "stop_epoch_closed" or "policy_identity_mismatch";
     internal static bool IsValidActionDescriptor(BodyProgramActionDescriptor? action) => action is not null && IsIdentifier(action.ActionId) && action.IdentityVersion > 0
         && (action.Metadata is null || IsOpaqueDescriptorMetadata(action.Metadata))
         && action.Arguments is { Count: <= 32 } && action.OutputFacts is { Count: <= 32 } && action.ResourceTemplate is { Count: <= 16 }

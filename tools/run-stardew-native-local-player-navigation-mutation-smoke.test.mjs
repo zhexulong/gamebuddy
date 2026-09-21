@@ -262,10 +262,10 @@ test("observe diagnosis uses fixed content-free phase codes", async () => {
     /if \(this\.config\.NativeLocalPlayerFixture\?\.Enable == true\)[\s\S]*this\.ObserveBridgeGeneration\(nativeLocalState\);\s*this\.ObserveNativeChatPipeDeliveries\(nativeLocalState\);\s*this\.ObserveNavigationPipeDeliveries\(nativeLocalState\);\s*this\.ObserveExecutionResponsePipeDeliveries\(nativeLocalState\);\s*this\.ObserveTerminalReceiptDeliveries\(nativeLocalState\);\s*this\.DrainLocalPipeBridge\(nativeLocalState\);/,
     "Native-local fixture ticks must poll every generation-bound delivery completion before draining new bridge requests",
   );
-  assert.doesNotMatch(observe, /MonitorNativeChatIngress\((?!\")[^)]/);
-  assert.doesNotMatch(delivery, /MonitorNativeChatIngress\((?!\")[^)]/);
-  assert.doesNotMatch(observe, /MonitorNativeChatIngress\(\$|MonitorNativeChatIngress\([^\"]|Monitor\.Log/);
-  assert.doesNotMatch(delivery, /MonitorNativeChatIngress\(\$|MonitorNativeChatIngress\([^\"]|Monitor\.Log/);
+  assert.doesNotMatch(observe, /MonitorNativeChatIngress\((?!")[^)]/);
+  assert.doesNotMatch(delivery, /MonitorNativeChatIngress\((?!")[^)]/);
+  assert.doesNotMatch(observe, /MonitorNativeChatIngress\(\$|MonitorNativeChatIngress\([^"]|Monitor\.Log/);
+  assert.doesNotMatch(delivery, /MonitorNativeChatIngress\(\$|MonitorNativeChatIngress\([^"]|Monitor\.Log/);
 });
 
 test("execution boundary diagnosis uses fixed content-free phase codes", async () => {

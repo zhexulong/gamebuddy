@@ -1,4 +1,5 @@
 using FluentAssertions;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using Xunit;
 
@@ -17,9 +18,9 @@ public sealed class WindowsBodyProgramJournalStoreTests : IDisposable
         WindowsBodyProgramJournalStore store = new(this.root, scope);
 
         store.TryWrite("first").Should().BeTrue();
-        store.Read().Should().Be("first");
-        new WindowsBodyProgramJournalStore(this.root, scope).Read().Should().Be("first");
-        new WindowsBodyProgramJournalStore(this.root, Scope("save-b")).Read().Should().BeNull();
+        store.Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, "first"));
+        new WindowsBodyProgramJournalStore(this.root, scope).Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, "first"));
+        new WindowsBodyProgramJournalStore(this.root, Scope("save-b")).Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Empty, null));
     }
 
     [Fact]
@@ -64,21 +65,58 @@ public sealed class WindowsBodyProgramJournalStoreTests : IDisposable
         Directory.CreateDirectory(directory);
         File.WriteAllText(outside, "outside");
         File.CreateSymbolicLink(target, outside);
-        store.Read().Should().BeNull();
+        store.Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.ReadFailed, null));
         store.TryWrite("replacement").Should().BeFalse();
         File.ReadAllText(outside).Should().Be("outside");
     }
 
     [Fact]
-    public void FailedWriteDoesNotReplaceExistingTarget()
+    public void CloseIsIdempotentRejectsReadsAndWritesAndPreservesCommittedTarget()
+    {
+        WindowsBodyProgramJournalStore store = new(this.root, Scope("save"));
+        store.TryWrite("committed").Should().BeTrue();
+        string target = Path.Combine(this.root, WindowsBodyProgramJournalStore.SchemaNamespace, "stardew", "save", "world", "player", "companion", "journal.json");
+
+        store.Close();
+        store.Close();
+
+        store.Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.ReadFailed, null));
+        store.TryWrite("replacement").Should().BeFalse();
+        File.ReadAllText(target).Should().Be("committed");
+    }
+
+    [Fact]
+    public void ReadClassifiesReadableEmptyFileAsPresent()
+    {
+        WindowsBodyProgramJournalStore store = new(this.root, Scope("save"));
+        store.TryWrite(string.Empty).Should().BeTrue();
+
+        store.Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, string.Empty));
+    }
+
+    [Fact]
+    public void ReplacesExistingTargetWithTheCompleteNewPayload()
+    {
+        WindowsBodyProgramJournalStore store = new(this.root, Scope("save"));
+        store.TryWrite("first").Should().BeTrue();
+        store.TryWrite("second").Should().BeTrue();
+
+        store.Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, "second"));
+    }
+
+    [Fact]
+    public void ReadClassifiesUnavailableTargetAsReadFailedAndPreservesExistingTarget()
     {
         WindowsBodyProgramJournalStore store = new(this.root, Scope("save"));
         store.TryWrite("committed").Should().BeTrue();
 
         string target = Path.Combine(this.root, WindowsBodyProgramJournalStore.SchemaNamespace, "stardew", "save", "world", "player", "companion", "journal.json");
         using (FileStream lockStream = new(target, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            store.Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.ReadFailed, null));
             store.TryWrite("replacement").Should().BeFalse();
-        store.Read().Should().Be("committed");
+        }
+        store.Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, "committed"));
     }
 
     public void Dispose()

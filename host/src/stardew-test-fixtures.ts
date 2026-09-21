@@ -6,7 +6,7 @@ import type { ActionRegistration } from "./protocol.js";
  */
 export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] =
   Object.freeze(
-    [
+    ([
       ["move_to_tile", "movement_navigation"],
       ["equip_tool", "body_tools"],
       ["travel", "transport_warps"],
@@ -32,7 +32,7 @@ export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] =
       ["clear_hoedirt", "farming_crops"],
       ["dig_artifact_spot", "resource_gathering"],
       ["chop_tree_source", "resource_gathering"],
-    ].map(([actionId, familyId]) =>
+    ] as const).map(([actionId, familyId]) =>
        Object.freeze({
          actionId,
          familyId,

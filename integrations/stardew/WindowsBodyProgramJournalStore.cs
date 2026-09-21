@@ -14,6 +14,8 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
     private const int MaximumPathLength = 240;
     private readonly string canonicalRoot;
     private readonly string targetPath;
+    private readonly object lifecycleGate = new();
+    private bool closed;
 
     internal WindowsBodyProgramJournalStore(string canonicalRoot, BridgeScope scope)
     {
@@ -57,13 +59,38 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
         this.targetPath = candidate;
     }
 
-    public string? Read()
+    internal void Close()
+    {
+        lock (this.lifecycleGate)
+            this.closed = true;
+    }
+
+    public BodyProgramJournalReadResult Read()
+    {
+        lock (this.lifecycleGate)
+        {
+            if (this.closed)
+                return new(BodyProgramJournalReadStatus.ReadFailed, null);
+            return this.ReadCore();
+        }
+    }
+
+    private BodyProgramJournalReadResult ReadCore()
     {
         try
         {
             string? directory = Path.GetDirectoryName(this.targetPath);
-            if (directory is null || !IsNonReparseDirectoryTree(this.canonicalRoot, directory) || !TryGetSafeTarget(this.targetPath, out _))
-                return null;
+            if (directory is null)
+                return new(BodyProgramJournalReadStatus.ReadFailed, null);
+            if (!IsNonReparseDirectoryTree(this.canonicalRoot, directory, out bool directoryAbsent))
+                return new(BodyProgramJournalReadStatus.ReadFailed, null);
+            if (directoryAbsent)
+                return new(BodyProgramJournalReadStatus.Empty, null);
+
+            if (!TryGetSafeTarget(this.targetPath, out bool targetExists))
+                return new(BodyProgramJournalReadStatus.ReadFailed, null);
+            if (!targetExists)
+                return new(BodyProgramJournalReadStatus.Empty, null);
 
             using FileStream stream = new(
                 this.targetPath,
@@ -73,25 +100,45 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
                 bufferSize: 4096,
                 options: FileOptions.SequentialScan);
             using StreamReader reader = new(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            return reader.ReadToEnd();
+            return new(BodyProgramJournalReadStatus.Present, reader.ReadToEnd());
         }
         catch (FileNotFoundException)
         {
-            return null;
+            return ReadAbsentOrFailed();
         }
         catch (DirectoryNotFoundException)
         {
-            return null;
+            return ReadAbsentOrFailed();
         }
         catch
         {
-            return null;
+            return new(BodyProgramJournalReadStatus.ReadFailed, null);
         }
+    }
+
+    private BodyProgramJournalReadResult ReadAbsentOrFailed()
+    {
+        string? directory = Path.GetDirectoryName(this.targetPath);
+        if (directory is null || !IsNonReparseDirectoryTree(this.canonicalRoot, directory, out bool directoryAbsent))
+            return new(BodyProgramJournalReadStatus.ReadFailed, null);
+        if (directoryAbsent || (TryGetSafeTarget(this.targetPath, out bool targetExists) && !targetExists))
+            return new(BodyProgramJournalReadStatus.Empty, null);
+        return new(BodyProgramJournalReadStatus.ReadFailed, null);
     }
 
     public bool TryWrite(string encodedState)
     {
         ArgumentNullException.ThrowIfNull(encodedState);
+        lock (this.lifecycleGate)
+        {
+            if (this.closed)
+                return false;
+            return this.TryWriteCore(encodedState);
+        }
+    }
+
+    private bool TryWriteCore(string encodedState)
+    {
         string? temporaryPath = null;
         try
         {
@@ -151,10 +198,21 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
             FileInfo file = new(path);
             if (file.LinkTarget is not null)
                 return false;
-            if (!file.Exists)
-                return !new DirectoryInfo(path).Exists;
 
-            FileAttributes attributes = File.GetAttributes(path);
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(path);
+            }
+            catch (FileNotFoundException)
+            {
+                return true;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return true;
+            }
+
             if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
                 return false;
             exists = true;
@@ -199,22 +257,62 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
         }
     }
 
-    private static bool IsNonReparseDirectoryTree(string fullRoot, string directory)
+    private static bool IsNonReparseDirectoryTree(string fullRoot, string directory, out bool directoryAbsent)
     {
+        directoryAbsent = false;
         try
         {
             string root = Path.GetFullPath(fullRoot);
-            string current = Path.GetFullPath(directory);
-            if (!IsPathWithinRoot(root, current))
+            string fullDirectory = Path.GetFullPath(directory);
+            if (!IsPathWithinRoot(root, fullDirectory)
+                || !TryGetNonReparseDirectoryState(root, out bool rootExists)
+                || !rootExists)
                 return false;
-            while (true)
+
+            string current = root;
+            string relative = fullDirectory[root.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            foreach (string segment in relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries))
             {
-                if (!Directory.Exists(current) || (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                current = Path.Combine(current, segment);
+                if (!TryGetNonReparseDirectoryState(current, out bool exists))
                     return false;
-                if (string.Equals(current.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+                if (!exists)
+                {
+                    directoryAbsent = true;
                     return true;
-                current = Path.GetDirectoryName(current)!;
+                }
             }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetNonReparseDirectoryState(string path, out bool exists)
+    {
+        exists = false;
+        try
+        {
+            DirectoryInfo directory = new(path);
+            if (directory.LinkTarget is not null)
+                return false;
+
+            FileAttributes attributes = File.GetAttributes(path);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+                return false;
+            exists = true;
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return true;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return true;
         }
         catch
         {

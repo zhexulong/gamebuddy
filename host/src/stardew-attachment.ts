@@ -287,10 +287,11 @@ export class StardewAttachmentFlow {
       (this.#options.cabinId !== undefined && manifest.cabinId !== this.#options.cabinId))
       throw new Error("stardew_manifest_identity_mismatch");
     const cabinMatches = current.cabins.filter((cabin) => cabin.cabinId === manifest.cabinId);
+    const boundCabin = cabinMatches.length === 1 ? cabinMatches[0] : undefined;
     if (
-      cabinMatches.length !== 1 ||
-      cabinMatches[0].ownerFarmhandId !== manifest.farmhandId ||
-      (cabinMatches[0].boundCompanionId !== "" && cabinMatches[0].boundCompanionId !== manifest.companionId)
+      boundCabin === undefined ||
+      boundCabin.ownerFarmhandId !== manifest.farmhandId ||
+      (boundCabin.boundCompanionId !== "" && boundCabin.boundCompanionId !== manifest.companionId)
     )
       throw new Error("stardew_manifest_cabin_binding_mismatch");
     if (

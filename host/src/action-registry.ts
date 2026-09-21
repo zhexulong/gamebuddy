@@ -386,7 +386,7 @@ export function getDescriptorArgument(
       return {
         name: argumentName,
         type: schema.type,
-        enum: schema.enum,
+        ...(schema.enum === undefined ? {} : { enum: schema.enum }),
       };
     }
   }

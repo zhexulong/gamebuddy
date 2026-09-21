@@ -235,6 +235,21 @@ test("Stardew launch validates catalog/live capability/policy without materializ
   let createToolSetCalls = 0;
   const module: GameIntegrationAdapter = {
     ...STARDEW_GAME_INTEGRATION_ADAPTER,
+    actorId: () => "player_01",
+    assertIdentityBinding: () => {},
+    readState: (c) => ({
+      connected: (c.state as { connected: boolean }).connected,
+      sessionId: "stardew_session",
+      capabilities: ["move_to_tile"],
+      catalogRevision: 1,
+      capabilityRevision: 1,
+      snapshotRevision: 7,
+      enabledActionIds: ["move_to_tile"],
+      registrations: (c.state as { catalogRegistrations: unknown[] }).catalogRegistrations as any,
+      activeExecution: null,
+      latestReceipt: null,
+      latestReasonCode: null,
+    }),
     createToolSet: (context) => {
       createToolSetCalls++;
       return STARDEW_GAME_INTEGRATION_ADAPTER.createToolSet(context);

@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { withPathLock } from "./path-lock.js";
-import type { RuntimePaths } from "./runtime.js";
 
 const CHAT_TRANSCRIPT_SCHEMA_VERSION = 1 as const;
 /** Bound durable player-visible history; older original content stays in Pi/Magic Context, never in this browser artifact. */
@@ -20,11 +18,6 @@ export type ChatTranscript = Readonly<{
   surfaceSessionId: string;
   entries: readonly ChatTranscriptEntry[];
 }>;
-
-function chatTranscriptPath(paths: RuntimePaths): string {
-  if (paths.surfaceSessionId === undefined) throw new Error("chat_surface_session_required");
-  return join(paths.runtimeCwd, "surface-sessions", paths.surfaceSessionId, "player-visible-chat.json");
-}
 
 /**
  * This is deliberately not a projection of Pi JSONL. It is the small,

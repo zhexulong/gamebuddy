@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkTavernReleasePrerequisites, REQUIRED_MUST_FLOWS } from "./check-tavern-release-prerequisites.mjs";
+import {
+  CHAT_TAVERN_LIVE_PROFILE,
+  checkTavernReleasePrerequisites,
+  DEFAULT_TAVERN_RELEASE_PROFILE,
+  REQUIRED_MUST_FLOWS,
+} from "./check-tavern-release-prerequisites.mjs";
 
 const exactLiveGateSuccess = () => ({
   status: 0,
@@ -56,6 +61,70 @@ test("Tavern prerequisite checker treats target must flows as external target-ga
       detail: "magic_context_source_runtime_proof_missing: version-locked source/marker/render tests were not executed",
     },
   );
+});
+
+test("explicit chat-tavern-live profile skips security prerequisites without passing them", async () => {
+  const calls = [];
+  const report = await checkTavernReleasePrerequisites({
+    profile: CHAT_TAVERN_LIVE_PROFILE,
+    read: async () => "runtime source is wired",
+    exec(command, args) {
+      calls.push([command, args]);
+    },
+    windowsReparseLiveGateRunner: () => {
+      throw new Error("security prerequisite must not run for chat profile");
+    },
+  });
+
+  assert.equal(report.profile, CHAT_TAVERN_LIVE_PROFILE);
+  assert.equal(report.verdict, "passed");
+  assert.deepEqual(
+    report.checks.filter((check) => check.id.includes("reparse") || check.id.includes("filesystem")),
+    [
+      {
+        id: "windows_arbitrary_reparse_enforcement",
+        status: "not_applicable",
+        detail: "chat-tavern-live_profile_does_not_claim_windows_reparse_enforcement",
+      },
+      {
+        id: "tavern_filesystem_threat_model",
+        status: "not_applicable",
+        detail: "chat-tavern-live_profile_does_not_claim_filesystem_security_prerequisites",
+      },
+      {
+        id: "tavern_ordinary_link_reparse_containment",
+        status: "not_applicable",
+        detail: "chat-tavern-live_profile_does_not_claim_link_reparse_containment",
+      },
+    ],
+  );
+  assert.equal(report.checks.some((check) => check.status === "passed" && check.id.includes("reparse")), false);
+  assert.deepEqual(
+    report.checks.filter((check) => check.id === "magic_context_stable_source" || check.id === "semantic_reference_attestation").map((check) => check.id),
+    ["magic_context_stable_source", "semantic_reference_attestation"],
+  );
+  assert.equal(calls.some(([, args]) => args.includes("build:test")), false);
+  assert.equal(calls.some(([, args]) => args.some((arg) => arg.endsWith("verify-tavern-semantic-references.mjs"))), true);
+});
+
+test("default full Tavern profile still invokes and fails closed on security prerequisites", async () => {
+  let securityCalls = 0;
+  const report = await checkTavernReleasePrerequisites({
+    profile: DEFAULT_TAVERN_RELEASE_PROFILE,
+    verifyReferences: false,
+    verifyStableContextRuntime: false,
+    exec() {},
+    windowsReparseLiveGateRunner: () => {
+      securityCalls += 1;
+      return blockedLiveGate();
+    },
+  });
+
+  assert.equal(report.profile, DEFAULT_TAVERN_RELEASE_PROFILE);
+  assert.equal(securityCalls, 1);
+  assert.equal(report.verdict, "blocked");
+  assert.equal(report.checks.find((check) => check.id === "windows_arbitrary_reparse_enforcement")?.status, "blocked");
+  assert.equal(report.checks.some((check) => check.status === "not_applicable"), false);
 });
 
 test("Tavern prerequisite checker remains blocked unless the current live gate has exact success output", async () => {

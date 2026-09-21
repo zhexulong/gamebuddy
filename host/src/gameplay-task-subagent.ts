@@ -180,7 +180,6 @@ type GameplayTaskReport = Readonly<{
  */
 export class GameplayTaskSubagent {
   #active: ActiveTask | undefined;
-  #lastReport: GameplayTaskReport | null = null;
   #lastTaskRecord: GameplayTaskRecord | null = null;
   #lastTaskResult: GameplayTaskResult | null = null;
   #lastTaskSteps: readonly GameplayTaskStep[] = Object.freeze([]);
@@ -192,7 +191,7 @@ export class GameplayTaskSubagent {
     private readonly integration: GameConnection,
     private readonly actionPolicy?: IntegrationActionPolicy,
     private readonly sessionFactory?: GameplayTaskSessionFactory,
-    private readonly executionWakeSource?: ExecutionWakeSource,
+    executionWakeSource?: ExecutionWakeSource,
     private readonly dispatchAdmissionFactory?: GameplayTaskDispatchAdmissionFactory,
   ) {
     this.#executionWakeSource =
@@ -322,7 +321,6 @@ export class GameplayTaskSubagent {
     let taskRoot: string | undefined;
     let session: AgentSession | undefined;
     let taskReport: GameplayTaskReport | null = null;
-    this.#lastReport = null;
     try {
       taskRoot = await (this.sessionFactory?.createWorkspace?.(
         join(this.paths.runtimeCwd, "gameplay-task-"),
@@ -363,7 +361,6 @@ export class GameplayTaskSubagent {
             throw new Error("authoritative_completion_receipt_required");
           }
           taskReport = report;
-          this.#lastReport = report;
           return {
             content: [{ type: "text" as const, text: JSON.stringify(report) }],
             details: report,
@@ -410,8 +407,10 @@ export class GameplayTaskSubagent {
       const integrationToolSet = integrationAdapter.createToolSet({
         connection: this.integration,
         knowledge: this.integration.knowledge,
-        gameVersion: this.integration.gameVersion,
-        policy: this.actionPolicy,
+        ...(this.integration.gameVersion === undefined
+          ? {}
+          : { gameVersion: this.integration.gameVersion }),
+        ...(this.actionPolicy === undefined ? {} : { policy: this.actionPolicy }),
         ...(dispatchAdmissionFactory === undefined
           ? {}
           : { dispatchAdmissionFactory }),
@@ -590,16 +589,13 @@ export class GameplayTaskSubagent {
             report: Object.freeze({ reasonCode: record.terminalReasonCode }),
           };
         }
-        const receipt = integrationAdapter.readState(
-          this.integration,
-        ).latestReceipt;
-        if (receipt === null)
+        if (ownedReceipt === null)
           throw new Error("authoritative_completion_receipt_lost");
         record.terminalReceipt = Object.freeze({
-          requestId: receipt.requestId,
-          executionId: receipt.executionId,
-          state: receipt.state,
-          reasonCode: receipt.reasonCode,
+          requestId: ownedReceipt.requestId,
+          executionId: ownedReceipt.executionId,
+          state: ownedReceipt.state,
+          reasonCode: ownedReceipt.reasonCode,
         });
       }
       record.terminalReasonCode ??= finalReport.reasonCode;
@@ -761,15 +757,6 @@ async function createTaskModelRuntime(
     modelsStorePath: join(agentDir, "models-store.json"),
     allowModelNetwork: true,
   });
-}
-
-function _isPromiseLike(value: unknown): value is Promise<unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "then" in value &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
 }
 
 export function selectTaskOwnedCancellation(

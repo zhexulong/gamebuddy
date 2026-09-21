@@ -7,7 +7,7 @@ type AssistantMessage = Readonly<{
   responseId?: string;
   role: "assistant";
   content: readonly unknown[];
-  stopReason: string;
+  stopReason?: string;
 }>;
 
 /** Pi event subset consumed by the native-content projection seam. */
@@ -29,7 +29,7 @@ export type NativeCompanionContentSinks = Readonly<{
   /** The one final safe native assistant text value, emitted at most once. */
   onFinalText(text: string): void | Promise<void>;
   /** No content is supplied to this sink. */
-  onRejected(reason: "aborted" | "error" | "empty" | "identity_mismatch"): void | Promise<void>;
+  onRejected(reason: "aborted" | "error" | "empty" | "empty_text" | "tool_only" | "unsupported_content" | "identity_mismatch"): void | Promise<void>;
 }>;
 
 export type NativeCompanionContentObserver = Readonly<{
@@ -87,7 +87,7 @@ export function attachNativeCompanionContent(
       // its terminal natural-language response. Bind to exactly one active
       // assistant message at a time; a second start while one is unresolved is
       // foreign/malformed and cannot replace the tracked identity.
-      if (tracked === undefined && !finalizing && isAssistantMessage(event.message)) {
+      if (tracked === undefined && !finalizing && isAssistantLifecycleMessage(event.message)) {
         tracked = event.message;
         trackedIdentity = identityOf(event.message);
         trackedTextContentIndexes = new Set<number>();
@@ -136,7 +136,7 @@ export function attachNativeCompanionContent(
     }
     if (event.type !== "message_end") return;
     const finalMessage = event.message;
-    if (!isAssistantMessage(finalMessage)) return;
+    if (!isAssistantLifecycleMessage(finalMessage)) return;
     // Pi delivers `message_end` serially after the matching assistant
     // lifecycle. Provider metadata may be absent entirely, but when one was
     // observed it must still match; a contradictory ID is foreign output.
@@ -158,17 +158,23 @@ export function attachNativeCompanionContent(
       // terminalize this observer.
       if (finalMessage.stopReason === "toolUse") return;
       finalizing = true;
-      if (finalMessage.stopReason === "aborted") {
+      const stopReason = typeof finalMessage.stopReason === "string" ? finalMessage.stopReason : "stop";
+      if (stopReason === "aborted") {
         dispatch(async () => await sinks.onRejected("aborted"));
         return;
       }
-      if (finalMessage.stopReason === "error") {
+      if (stopReason === "error") {
         dispatch(async () => await sinks.onRejected("error"));
         return;
       }
       const text = readSafeAssistantText(finalMessage);
       if (text === null) {
-        dispatch(async () => await sinks.onRejected("empty"));
+        const hasText = finalMessage.content.some(isTextContent);
+        const hasTool = finalMessage.content.some(
+          (entry) => typeof entry === "object" && entry !== null && (entry as { type?: unknown }).type === "toolCall",
+        );
+        const reason = hasTool ? "tool_only" : hasText ? "unsupported_content" : "empty_text";
+        dispatch(async () => await sinks.onRejected(reason));
         return;
       }
       dispatch(async () => await sinks.onFinalText(text));
@@ -213,11 +219,24 @@ function readSafeAssistantText(message: AssistantMessage): string | null {
     .normalize("NFC");
   if (
     value.length === 0 ||
-    /[\u0000-\u001F\u007F-\u009F]/u.test(value) ||
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value) ||
     Buffer.byteLength(value, "utf8") > MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES
   )
     return null;
   return value;
+}
+
+function isAssistantLifecycleMessage(value: unknown): value is AssistantMessage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as { role?: unknown }).role === "assistant" &&
+    Array.isArray((value as { content?: unknown }).content) &&
+    ((value as { id?: unknown }).id === undefined || typeof (value as { id?: unknown }).id === "string") &&
+    ((value as { responseId?: unknown }).responseId === undefined ||
+      typeof (value as { responseId?: unknown }).responseId === "string")
+  );
 }
 
 function isAssistantMessage(value: unknown): value is AssistantMessage {
@@ -230,7 +249,7 @@ function isAssistantMessage(value: unknown): value is AssistantMessage {
     ((value as { responseId?: unknown }).responseId === undefined ||
       typeof (value as { responseId?: unknown }).responseId === "string") &&
     Array.isArray((value as { content?: unknown }).content) &&
-    typeof (value as { stopReason?: unknown }).stopReason === "string"
+    ((value as { stopReason?: unknown }).stopReason === undefined || typeof (value as { stopReason?: unknown }).stopReason === "string")
   );
 }
 

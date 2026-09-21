@@ -24,10 +24,11 @@ This is only a lockfile-bound Node inventory, not an artifact-scoped or multi-ec
 | Stardew Valley / SMAPI runtime | locally installed Stardew `1.6.15`, SMAPI `4.5.2` | proprietary game / SMAPI license | Required only for local Mod build and game validation; never copied into this repository. |
 | MiMo V2.5 TTS | Xiaomi HTTP/SSE API (`mimo-v2.5-tts`) | service terms | Optional Gateway adapter; disabled without local `MIMO_API_KEY`, removable without Host/Mod interface changes. |
 | SenseVoiceSmall / FSMN-VAD | not yet selected or shipped | pending asset audit | The real CPU ASR asset is not a dependency until provenance, license, hash, and Windows benchmark are recorded. |
+| Groq Whisper Cloud ASR | Groq Cloud HTTP API (`whisper-large-v3-turbo`) | service terms | Optional Gateway ASR adapter; disabled without local `GROQ_API_KEY`, removable without Host/Mod interface changes. |
 
 ## Provider and secret boundary
 
-`MIMO_API_KEY` belongs exclusively in the ignored root `.env.local` or an operator environment. It is never committed, logged, placed in a fixture, or emitted by the SBOM. The redacted MiMo fixture records only request/response contract shape and no user text or audio.
+`MIMO_API_KEY` and `GROQ_API_KEY` belong exclusively in the ignored root `.env.local` or an operator environment. They are never committed, logged, placed in a fixture, or emitted by the SBOM. The redacted MiMo fixture records only request/response contract shape and no user text or audio.
 
 ## Upgrade policy
 

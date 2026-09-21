@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDesktopGuardianGameRuntimePlatform } from "./contained-game-runtime-platform.private.js";
-import type { DesktopGuardianSession, GuardianAck } from "../containment/auth/desktop-guardian-session.internal.js";
+import type { DesktopGuardianSession, GuardianAck } from "../../../containment/auth/desktop-guardian-session.internal.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
-import type { TypedPrivateGameFacts } from "../containment/runtime/contract/game-runtime.js";
+import type { TypedPrivateGameFacts } from "../../../containment/runtime/contract/game-runtime.js";
 
 const ack = (operation: string, role?: string): GuardianAck => ({
   operation,
@@ -79,7 +79,7 @@ test("composition-private platform relays arm facts and encodes launch exactly a
     guardianEpoch: 1,
     attemptId: "attempt",
     operationWaitBudgetMs: 1000,
-    authorization: Object.freeze({ role: "player_host", revision: 7 }),
+    authorization: Object.freeze({ role: "player_host", revision: 7, executable: "C:\\Stardew\\StardewModdingAPI.exe" }),
   });
   const deadlineUnixMs = Date.now() + 60_000;
   await platform.launch({
@@ -98,8 +98,10 @@ test("composition-private platform relays arm facts and encodes launch exactly a
     role: "player_host",
   });
 
-  // Arm stays a simple relay of the typed game facts (arm schema is game-owned).
-  assert.deepEqual(JSON.parse(new TextDecoder().decode(calls[0]!.frame)), { role: "player_host", revision: 7 });
+  // Arm stays a simple relay of the typed game facts (arm schema is game-owned)
+  // plus the fixed approved executable the native ParseArm must enforce at
+  // launch: the launch executable must equal the armed approved executable.
+  assert.deepEqual(JSON.parse(new TextDecoder().decode(calls[0]!.frame)), { role: "player_host", revision: 7, executable: "C:\\Stardew\\StardewModdingAPI.exe", approvedExecutable: "C:\\Stardew\\StardewModdingAPI.exe" });
 
   // Launch is the encoder output: exactly the ten ParseLaunch keys, GUID D
   // planId, fully qualified executable/cwd, and the exact seven-key allowlist.
@@ -109,6 +111,7 @@ test("composition-private platform relays arm facts and encodes launch exactly a
   assert.equal(decoded.role, "player_host");
   assert.equal(decoded.deadlineUnixMs, deadlineUnixMs);
   assert.equal(decoded.executable, "C:\\Stardew\\StardewModdingAPI.exe");
+  assert.equal(decoded.executable, JSON.parse(new TextDecoder().decode(calls[0]!.frame)).approvedExecutable);
   assert.equal(decoded.cwd, "C:\\Stardew");
   assert.deepEqual(decoded.arguments, ["--mods-path", "C:\\tmp\\transaction\\player-host\\Mods"]);
   assert.deepEqual(Object.keys(decoded.environment as Record<string, unknown>).sort(), [...STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS].sort());
@@ -137,10 +140,11 @@ test("every launch invocation mints a fresh GUID D planId so frames are never re
   assert.deepEqual(Object.keys(JSON.parse(new TextDecoder().decode(calls[0]!.frame)) as Record<string, unknown>).sort(), PARSE_LAUNCH_KEYS);
 });
 
-test("launch fails closed before the native session when facts violate the ParseLaunch schema", async () => {
+test("launch and arm fail closed before the native session when facts violate the ParseLaunch/ParseArm schema", async () => {
   const attempted: number[] = [];
+  const arms: number[] = [];
   const platform = createDesktopGuardianGameRuntimePlatform(Object.freeze({
-    arm: async (input) => { return ack("arm"); },
+    arm: async (input) => { arms.push(1); return ack("arm"); },
     launch: async (input) => {
       attempted.push(1);
       return ack("launch", input.role);
@@ -155,6 +159,28 @@ test("launch fails closed before the native session when facts violate the Parse
     deadlineUnixMs: Date.now() + 60_000,
   };
 
+  // The Host wire mirrors the native ParseArm executable constraints and fails
+  // closed before the authenticated session sees a frame the native Guardian
+  // would reject: missing, NUL, non-fully-qualified, and overlong executables
+  // never produce an arm_attempt frame. The ordinal-ignore-case equality gate
+  // itself remains native-only (ParseLaunch).
+  await assert.rejects(
+    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, authorization: Object.freeze({ role: "player_host", revision: 7 }) }),
+    /arm authorization missing approved executable/,
+  );
+  await assert.rejects(
+    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, authorization: Object.freeze({ role: "player_host", executable: "C:\\Stardew\\StardewModdingAPI.exe\0" }) }),
+    /arm authorization missing approved executable/,
+  );
+  await assert.rejects(
+    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, authorization: Object.freeze({ role: "player_host", executable: "relative\\StardewModdingAPI.exe" }) }),
+    /arm authorization missing approved executable/,
+  );
+  await assert.rejects(
+    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, authorization: Object.freeze({ role: "player_host", executable: `C:\\${`a`.repeat(32_768)}.exe` }) }),
+    /arm authorization missing approved executable/,
+  );
+  assert.equal(arms.length, 0);
   await assert.rejects(
     () => platform.launch({ ...base, role: "player_host", authorization: Object.freeze({ revision: 7 }) }),
     /missing executable/,

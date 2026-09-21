@@ -51,5 +51,5 @@ test("actual Mod descriptor projection is accepted by verifyActionProgram", asyn
   });
 
   assert.equal(report.accepted, true, JSON.stringify(report.diagnostics));
-  assert.equal(report.catalogRevision, 1);
+  assert.equal(report.descriptorRevision, 1);
 });

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   assertNoWindowsReparse,
+  BUILD_ARTIFACT_REPARSE_INSPECTION,
   createPublishedWindowsReparseInspector,
   inspectWindowsPathIdentity,
   inspectWindowsPathIdentityChain,
@@ -32,6 +33,15 @@ const directoryIdentity = Object.freeze({
   fileId: "fedcba9876543210fedcba9876543210",
 });
 const ownedDirectorySecurity = Object.freeze({ ...directoryIdentity, currentUserOwner: true });
+
+test("build artifact boundary exports only the frozen adapter contract and keeps the mint unnamed", async () => {
+  assert.equal(Object.isFrozen(BUILD_ARTIFACT_REPARSE_INSPECTION), true);
+  assert.deepEqual(Object.keys(BUILD_ARTIFACT_REPARSE_INSPECTION).sort(), ["assertNoReparse", "create"]);
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /export\s+(?:async\s+)?function\s+createBuildWindowsReparseInspector/);
+  assert.equal(typeof BUILD_ARTIFACT_REPARSE_INSPECTION.create, "function");
+  assert.equal(typeof BUILD_ARTIFACT_REPARSE_INSPECTION.assertNoReparse, "function");
+});
 
 type Outcome = "regular" | "reparse" | "malformed" | "unavailable" | "timeout" | "nonzero" | "stderr" | "overflow";
 

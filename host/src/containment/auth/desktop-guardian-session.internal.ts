@@ -9,8 +9,6 @@ export type ContainmentCorrelation = Readonly<{
 
 export type ContainmentDeadline = Readonly<{ deadlineUnixMs: number }>;
 export type ContainmentOperationWaitBudget = Readonly<{ operationWaitBudgetMs: number }>;
-type ContainmentPrivateFrame = Readonly<{ privateFrame: Uint8Array }>;
-
 export type GuardianAck = Readonly<{
   operation: string;
   status: string;

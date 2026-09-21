@@ -63,7 +63,10 @@ async function recoverDeadOwner(deploymentManifestRef: string, operationId: stri
  */
 async function runOperationalGate(deploymentManifestRef: string, operationalNonceSha256: string): Promise<void> {
   const manifest = await loadHostDeploymentManifest(deploymentManifestRef);
-  const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  // The immutable generation root is the artifact root: main.js sits at the
+  // generation root, and the picker pair lives under native/… in that same
+  // root. `.. ` would escape to the generations pool and fail closed.
+  const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
   const folderPicker = await createPublishedWindowsStardewFolderPicker(artifactRoot);
   const game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
   const coordinator = createStardewProductionLifecycleCoordinator(manifest, folderPicker, game);

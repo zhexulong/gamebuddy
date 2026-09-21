@@ -53,7 +53,7 @@ async function main() {
       requestId: "request_wire_1",
       idempotencyKey: "idempotency_wire_1",
       action: "equip_tool",
-      args: { slot: 2 },
+      args: { tool: "axe" },
       expectedRevision: 7,
       deadlineMs: now + 30_000,
     },
@@ -63,7 +63,7 @@ async function main() {
   const requestBytes = Buffer.from(serializeBounded(request), "utf8");
   assert(requestBytes.byteLength <= MAX_MESSAGE_BYTES, "request_bounded");
   const decodedRequest = await runContract("--decode-execution-request", requestBytes, "decode_execution_request");
-  assert(decodedRequest.stdout.toString("utf8").trim() === "accepted|execution_request|request_wire_1|idempotency_wire_1|equip_tool|2|7|" + String(request.payload.deadlineMs), "request_typed_fields");
+  assert(decodedRequest.stdout.toString("utf8").trim() === "accepted|execution_request|request_wire_1|idempotency_wire_1|equip_tool|axe|7|" + String(request.payload.deadlineMs), "request_typed_fields");
 
   const query = newEnvelope(
     "execution_receipt_query",
@@ -121,7 +121,7 @@ async function main() {
     executionId: "execution_wire_1",
     requestId: "request_wire_1",
     state: "succeeded",
-    reasonCode: "tool_selected",
+    reasonCode: "tool_equipped",
     revision: 8,
     evidence: { target: "工具_2" },
   };

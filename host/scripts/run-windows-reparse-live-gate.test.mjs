@@ -60,7 +60,7 @@ test("live gate emits current source directly into a fresh private host-root chi
   assert.match(source, /current_source_emit_unavailable/);
   assert.doesNotMatch(source, /\.dist-production-emitted/);
   assert.match(source, /"native", "windows-reparse-inspector", "\.dist", "win-x64", "windows-reparse-inspector\.manifest\.json"/);
-  assert.match(source, /createBuildWindowsReparseInspector/);
+  assert.match(source, /BUILD_ARTIFACT_REPARSE_INSPECTION\.create/);
   assert.match(source, /inspectWindowsReparse/);
   assert.match(source, /await rename\(fixture\.entry, fixture\.targetAssets\);[\s\S]*await symlink\(fixture\.targetAssets, fixture\.entry, linkType\);/);
   assert.doesNotMatch(source, /powershell(?:\.exe)?|verifyWindowsReparseInspectorPair/iu);
@@ -70,8 +70,8 @@ test("live gate imports both fresh adapter surfaces directly and passes its opaq
   const source = await readFile(script, "utf8");
   assert.match(source, /resolve\(emittedRoot, "windows-reparse-inspector", "index\.js"\)/);
   assert.match(source, /resolve\(emittedRoot, "tavern", "static-artifact", "index\.js"\)/);
-  assert.match(source, /typeof adapter\.assertNoWindowsReparse !== "function"/);
-  assert.match(source, /Object\.freeze\(\{ inspect: async \(path\) => await inspectorAdapter\.assertNoWindowsReparse\(inspector, path\) \}\)/);
+  assert.match(source, /typeof boundary\?\.assertNoReparse !== "function"/);
+  assert.match(source, /Object\.freeze\(\{ inspect: async \(path\) => await inspectorAdapter\.BUILD_ARTIFACT_REPARSE_INSPECTION\.assertNoReparse\(inspector, path\) \}\)/);
   assert.match(source, /verifyProductionArtifactManifest\(artifact, browserPolicy\)/);
   assert.match(source, /verifyTavernStaticArtifact\(artifact, \{[\s\S]*\}, inspector\)/);
   assert.doesNotMatch(source, /createBuildArtifactInspectionPolicy/);

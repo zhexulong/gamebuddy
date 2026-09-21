@@ -1,13 +1,175 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "gamebuddy-action-program/v1",
+  "title": "GameBuddy ActionProgram v1",
+  "$comment": "This schema intentionally stops at structural and guard-discriminator validation. Canonical plain-data encoding, global depth/UTF-8 limits, ancestor/dominance, descriptor-owned action argument/fact-value/resource-template typing and bounds, descriptor-owned fact membership, DAG/cycle semantics, resource conflicts, restrictive policy, and live admission remain runtime-only checks.",
+  "description": "A bounded finite ActionProgram candidate. This schema enforces the versioned JSON shape and structural bounds; descriptor-owned action argument/fact-value/resource-template typing and bounds, graph semantics, resource conflicts, policy, and live admission remain runtime checks.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "programId", "nodes", "edges"],
+  "x-gamebuddy-maxUtf8Bytes": 12288,
+  "x-gamebuddy-maxJsonDepth": 16,
+  "x-gamebuddy-maxTotalBindings": 32,
+  "x-gamebuddy-maxTotalGuards": 32,
+  "x-gamebuddy-maxDegree": 8,
+  "x-gamebuddy-runtimeChecks": [
+    "canonical plain-data encoding and global JSON depth/UTF-8 size limits",
+    "descriptor argument typing and descriptor-declared output-fact membership/type; descriptor-owned action-specific argument/fact-value/resource-template bounds",
+    "binding and guard references to declared producer facts",
+    "ancestor/dependency dominance for bindings and guards",
+    "DAG/cycle and dependency graph semantics",
+    "descriptor-derived resource conflicts",
+    "restrictive action policy",
+    "live game-thread admission, preconditions, postcondition, STOP, deadline, and idempotency"
+  ],
   "properties": {
     "schema": { "const": "gamebuddy-action-program/v1" },
-    "programId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,127}$" },
-    "nodes": { "type": "array", "maxItems": 16 },
-    "edges": { "type": "array", "maxItems": 32 }
+    "programId": { "$ref": "#/$defs/identifier" },
+    "nodes": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "edges": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/edge" }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,127}$",
+      "minLength": 2,
+      "maxLength": 128
+    },
+    "argumentIdentifier": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9_]{0,127}$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "jsonValue": {
+      "description": "Global nesting is bounded by the root x-gamebuddy-maxJsonDepth annotation; descriptor-owned value typing and action-specific bounds are runtime checks.",
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string" },
+        { "type": "integer" },
+        { "type": "boolean" },
+        { "$ref": "#/$defs/jsonObject" },
+        { "$ref": "#/$defs/jsonArray" }
+      ]
+    },
+    "jsonObject": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/jsonValue" }
+    },
+    "jsonArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/jsonValue" }
+    },
+    "scalarLiteral": {
+      "description": "A fact_equals literal. String bounds are descriptor-owned; integer bounds match JavaScript Number.MAX_SAFE_INTEGER; runtime verification must preserve exact safe-integer compatibility.",
+      "anyOf": [
+        { "type": "string" },
+        { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+        { "type": "boolean" }
+      ]
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeId", "actionId", "args", "bindings", "guards"],
+      "properties": {
+        "nodeId": { "$ref": "#/$defs/identifier" },
+        "actionId": { "$ref": "#/$defs/identifier" },
+        "args": {
+          "$ref": "#/$defs/jsonObject",
+          "description": "Argument names and descriptor-compatible values, including action-specific bounds, are constrained by the authoritative descriptor at runtime."
+        },
+        "bindings": {
+          "type": "array",
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/binding" }
+        },
+        "guards": {
+          "type": "array",
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/guard" }
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "$ref": "#/$defs/identifier" },
+        "to": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["arg", "from", "fact"],
+      "properties": {
+        "arg": { "$ref": "#/$defs/argumentIdentifier" },
+        "from": { "$ref": "#/$defs/identifier" },
+        "fact": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "nodeId", "fact", "operator", "value"],
+      "$comment": "The schema validates only the finite guard grammar. Producer ancestry, descriptor-owned fact membership/type, and fresh runtime fact provenance remain runtime-only checks.",
+      "properties": {
+        "kind": { "enum": ["fact_present", "fact_equals", "node_succeeded"] },
+        "nodeId": { "$ref": "#/$defs/identifier" },
+        "fact": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z][a-z0-9_]{1,127}$",
+          "minLength": 2,
+          "maxLength": 128
+        },
+        "operator": { "const": null },
+        "value": { "$ref": "#/$defs/jsonValue" }
+      },
+      "oneOf": [
+        {
+          "title": "fact_present guard",
+          "required": ["kind", "nodeId", "fact", "operator", "value"],
+          "properties": {
+            "kind": { "const": "fact_present" },
+            "nodeId": { "$ref": "#/$defs/identifier" },
+            "fact": { "$ref": "#/$defs/identifier" },
+            "operator": { "const": null },
+            "value": { "const": null }
+          }
+        },
+        {
+          "title": "fact_equals guard",
+          "required": ["kind", "nodeId", "fact", "operator", "value"],
+          "properties": {
+            "kind": { "const": "fact_equals" },
+            "nodeId": { "$ref": "#/$defs/identifier" },
+            "fact": { "$ref": "#/$defs/identifier" },
+            "operator": { "const": null },
+            "value": { "$ref": "#/$defs/scalarLiteral" }
+          }
+        },
+        {
+          "title": "node_succeeded guard",
+          "required": ["kind", "nodeId", "fact", "operator", "value"],
+          "properties": {
+            "kind": { "const": "node_succeeded" },
+            "nodeId": { "$ref": "#/$defs/identifier" },
+            "fact": { "const": null },
+            "operator": { "const": null },
+            "value": { "const": null }
+          }
+        }
+      ]
+    }
   }
 }
