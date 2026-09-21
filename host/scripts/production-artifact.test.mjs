@@ -279,7 +279,7 @@ test("production-private runtime publisher emits a lexicographically ordered mul
     withProductionRuntimeContractProbe(async ({ copyVerifiedBundledRuntimeSource, publishProductionArtifactWithRuntimeCopier, verifyRuntimeAdmission }) => {
       const outputRoot = join(root, "production-runtime-closure-dist");
       const published = await publishProductionArtifactWithRuntimeCopier(
-        { hostRoot: root, emittedRoot: await emit(root, "production-runtime-closure"), outputRoot },
+        { hostRoot: root, emittedRoot: await emit(root, "production-runtime-closure"), outputRoot, voiceDistRoot: join(root, "voice-gateway", ".dist") },
         async (stagingRoot, runtimeDescriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor: runtimeDescriptor, source: runtimeSource }),
         descriptor,
       );
@@ -323,7 +323,7 @@ test("production-private runtime publisher emits canonical admission/current bin
       const copyRuntime = async (stagingRoot, runtimeDescriptor) =>
         copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor: runtimeDescriptor, source: runtimeSource });
       const published = await publishProductionArtifactWithRuntimeCopier(
-        { hostRoot: root, emittedRoot: await emit(root, "production-private-first"), outputRoot },
+        { hostRoot: root, emittedRoot: await emit(root, "production-private-first"), outputRoot, voiceDistRoot: join(root, "voice-gateway", ".dist") },
         copyRuntime,
         descriptor,
       );
@@ -370,7 +370,7 @@ test("production-private runtime publisher emits canonical admission/current bin
 
       await assert.rejects(
         publishProductionArtifactWithRuntimeCopier(
-          { hostRoot: root, emittedRoot: await emit(root, "production-private-rejected"), outputRoot },
+          { hostRoot: root, emittedRoot: await emit(root, "production-private-rejected"), outputRoot, voiceDistRoot: join(root, "voice-gateway", ".dist") },
           copyRuntime,
           descriptor,
           async () => { throw new Error("injected_runtime_cleanup_failure"); },
