@@ -210,8 +210,17 @@ references:
 - **准出门禁**：
   - Host 与 Gateway 完整跑通 PTT 语音输入 -> LLM Token 流式注入 -> 语音朗读 -> 播放完成闭环（流式 TTS 朗读已无人验证：`run-streaming-3turn.mjs` 三轮真实设备；LLM Token 流式注入已接线，但 Desktop Chat+MiMo 整合门禁仍 `BLOCKED`）；
   - 语音进程被 `kill -9` 时，Host 文字输入与游戏交互完全正常（降级守卫单测覆盖，整合级断连演练待执行）。
-  - **当前新增阻塞（product-owned cloud TTS admission）**：`MIMO_API_KEY`/Voice IPC token 不是 Consent。`voice-gateway/main.ts` 仅在 Desktop supervisor 注入一次性 `GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION=desktop-consent-v1` 启动契约时构造 MiMo provider；直接启动或缺少该注入继续纯文字。当前 Desktop/UI 尚未提供 consent/disclosure journey，也尚无正式 Voice process supervisor 注入该值，因此不得运行或宣称 Chat+Voice production gate 通过。
-  - **下一实现切片（Desktop owner，尚未开始）**：由 Desktop/产品设置 owner 提供玩家可见的 cloud-speech disclosure/consent decision，并由 Desktop supervisor 在同一 product composition 中受管启动 Voice child、注入一次性 launch admission、绑定 Voice child close/crash/restart 生命周期。该切片不得新增 v2 wire admission frame，不得把 `MIMO_API_KEY` 或 `GAMEBUDDY_VOICE_TOKEN` 当 Consent；完成前 Chat+Voice Desktop production gate 保持 `BLOCKED`。
+   - **当前新增阻塞（product-owned cloud TTS admission）**：`MIMO_API_KEY`/Voice IPC token 不是 Consent。`voice-gateway/main.ts` 仅在 Desktop supervisor 注入一次性 `GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION=desktop-consent-v1` 启动契约时构造 MiMo provider；直接启动或缺少该注入继续纯文字。当前 Desktop/UI 尚未提供 consent/disclosure journey，也尚无正式 Voice process supervisor 注入该值，因此不得运行或宣称 Chat+Voice production gate 通过。
+   - **Desktop owner 切片（进行中，部分落地）**：由 Desktop/产品设置 owner 提供玩家可见的 cloud-speech disclosure/consent decision，并由 Desktop supervisor 在同一 product composition 中受管启动 Voice child、注入一次性 launch admission、绑定 Voice child close/crash/restart 生命周期。该切片不得新增 v2 wire admission frame，不得把 `MIMO_API_KEY` 或 `GAMEBUDDY_VOICE_TOKEN` 当 Consent；完成前 Chat+Voice Desktop production gate 保持 `BLOCKED`。
+     - **已落地（2026-09-21）**：
+       1. Host-owned durable consent authority：`host/src/settings/voice-preference-store.ts`（默认 `undecided`、revision CAS、strict schema、`decidedAtMs` 由 Host 生成、不存 credential），提交 `918555d`。
+       2. 现有 authenticated management transport 接入窄 Voice settings route（仅 management profile exact route/operation gate）：`GET/PUT /api/tavern/v1/settings/voice-preference`，stale revision 409、非法 400、storage 不可用 fail closed，不返回 key/token/provider endpoint；提交 `b965b4a`。
+       3. Management UI disclosure/consent（`dialogue-web` Voice Settings 区块、accept/revoke revision CAS、不显示 credential、旧 fixture 无 voice API 时降级）；提交 `dc6ce70`。
+       4. Voice artifact admission sidecar contract（纯函数，`voice-gateway-admission.json`：schema/generation/inventoryDigest/entry/protocol path+sha256/node v24.20.0/win32/x64，strict keys、拒绝 traversal/secret/unknown）；提交 `9fba380`。
+       5. fixture-only Voice artifact publisher helper（descriptor absent 零输出；复制 entry/protocol tree、拒绝 symlink/traversal/multi-file、生成并验证 sidecar/inventory binding）；提交 `3c17e8f`。
+       6. Desktop 独立 artifact admission reader（`InstalledVoiceGatewayAdmission`，绑定 expected generation/inventoryDigest、验证 schema/path/sha256，不启动 Voice、不改 host-runtime-admission/current.json）；提交 `0cf5a85`。
+       7. Desktop Voice child supervisor（`VoiceGatewaySupervisor`：只用 admitted bundled Node、child-only minimal env（SystemRoot/TEMP/TMP/LOCALAPPDATA + Voice port/token）、`cloudTtsAdmitted=true` 才注入 `GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION=desktop-consent-v1`、token 不进 ToString/公开对象、启动失败不涉及 Host、不 auto-restart/replay、幂等 close、真实进程/close 语义由纯 launch-plan 测试覆盖）；提交 `ea5f6eb`。
+     - **仍未接线（不视为完成）**：Desktop `Program.cs`/`RuntimeSupervisor` 尚未读取 Host-owned `voice-preference.json`（Desktop 没有 runtimeRoot/voice-preference 输入 contract，voice-preference 路径在 Host deployment manifest 的 runtimeRoot 下，Desktop 当前只掌握 Windows root layout），生产 artifact publisher 也尚未把 Voice gateway 纳入 immutable generation（fixture-only seam 已独立验证）。因此 Chat+Voice Desktop production gate 仍 `BLOCKED`，未运行也未伪报通过。
 
 ---
 
