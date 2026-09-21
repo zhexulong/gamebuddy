@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { copyApprovedResources, readArtifactConfig, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
+import { publishVoiceGatewayFixture, verifyPublishedVoiceGateway } from "./voice-artifact-fixture-publisher.mjs";
 
 const MARKER = "TEST_ONLY_NOT_A_PRODUCTION_ARTIFACT.txt";
 const POINTER = "test-current.json";
@@ -81,6 +82,20 @@ export async function publishTestArtifact({ hostRoot, emittedRoot, outputRoot, r
     const origins = await copyApprovedResources({ hostRoot, stagingRoot: staging, config });
     await copyRuntime(staging, runtimeSource, origins);
     await copyConfiguredWindowsHelpers({ hostRoot, stagingRoot: staging, config, origins });
+    if (config.voiceGateway !== undefined) {
+      await publishVoiceGatewayFixture({
+        stagingRoot: staging,
+        descriptor: {
+          generation,
+          entry: { source: resolve(hostRoot, "voice-gateway", ".dist", "entry"), destination: config.voiceGateway.entry.destination },
+          protocol: { source: resolve(hostRoot, "voice-gateway", ".dist", "protocol"), destination: config.voiceGateway.protocol.destination },
+        },
+      });
+      const verified = await verifyPublishedVoiceGateway({ artifactRoot: staging, descriptor: config.voiceGateway });
+      const origin = { kind: config.voiceGateway.kind, entryPath: verified.entryPath, entrySha256: verified.entrySha256, protocolPath: verified.protocolPath, protocolSha256: verified.protocolSha256 };
+      origins.set(verified.entryPath, origin);
+      origins.set(verified.protocolPath, origin);
+    }
     const inventory = await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins });
     await writeFile(resolve(staging, "production-inventory.json"), `${JSON.stringify(inventory, null, 2)}\n`);
     await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins, expectedInventory: inventory });
@@ -122,6 +137,12 @@ async function selectedTestArtifact({ hostRoot, outputRoot }) {
         catch (error) { if (error?.code !== "ENOENT") throw error; }
       }
     }
+  }
+  if (config.voiceGateway !== undefined) {
+    const verified = await verifyPublishedVoiceGateway({ artifactRoot, descriptor: config.voiceGateway });
+    const origin = { kind: config.voiceGateway.kind, entryPath: verified.entryPath, entrySha256: verified.entrySha256, protocolPath: verified.protocolPath, protocolSha256: verified.protocolSha256 };
+    origins.set(verified.entryPath, origin);
+    origins.set(verified.protocolPath, origin);
   }
   const sidecar = resolve(artifactRoot, ADMISSION); const sidecarHold = resolve(outputRoot, `.verified-${pointer.generation}-${ADMISSION}`);
   await rename(sidecar, sidecarHold);

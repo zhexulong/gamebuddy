@@ -4,6 +4,7 @@ import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
+import { publishVoiceGatewayFixture, verifyPublishedVoiceGateway, VOICE_GATEWAY_ADMISSION } from "./voice-artifact-fixture-publisher.mjs";
 
 const TEST_ARTIFACT = /(?:^|\/)(?:[^/]*\.(?:test|test-support)(?:\.[^/]+)?|test-fixtures|[^/]*(?:physical-)?fixture-worker[^/]*)(?:\/|$)|legacy-writer-fixture/i;
 // Production is a fresh semantic-continuity authority. Reject legacy module
@@ -108,6 +109,17 @@ const STARDEW_MOD_PACKAGE = Object.freeze({
     "manifest.json",
   ],
   manifest: "manifest.json",
+});
+/** The fixed Voice Gateway artifact the release publisher stages from the
+ * `voice-gateway/.dist` build output into every voice-enabled generation. The
+ * shared fixture publisher copies one entry file and one protocol file into
+ * the two fixed destinations and binds them with the voice-gateway-admission
+ * sidecar; that sidecar is excluded from the production inventory exactly
+ * like the guardian and runtime admission sidecars. */
+const VOICE_GATEWAY = Object.freeze({
+  kind: "verified_voice_gateway",
+  entry: { destination: "voice-gateway/entry" },
+  protocol: { destination: "voice-gateway/protocol" },
 });
 const exactKeys = (value, keys) => value !== null && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
@@ -358,6 +370,14 @@ function validateStardewModPackage(value) {
     throw new Error("invalid_stardew_mod_package_descriptor");
   return Object.freeze({ ...STARDEW_MOD_PACKAGE, entries: Object.freeze([...STARDEW_MOD_PACKAGE.entries]) });
 }
+function validateVoiceGatewayDescriptor(value) {
+  if (!exactKeys(value, ["kind", "entry", "protocol"])
+    || value.kind !== VOICE_GATEWAY.kind
+    || !exactKeys(value.entry, ["destination"]) || value.entry.destination !== VOICE_GATEWAY.entry.destination
+    || !exactKeys(value.protocol, ["destination"]) || value.protocol.destination !== VOICE_GATEWAY.protocol.destination)
+    throw new Error("invalid_voice_gateway_descriptor");
+  return Object.freeze({ ...VOICE_GATEWAY, entry: Object.freeze({ ...VOICE_GATEWAY.entry }), protocol: Object.freeze({ ...VOICE_GATEWAY.protocol }) });
+}
 /** Builds the verified Mod package inside a staging root, copying the contract
  * and bundle from the repository's Release output, then proves the published
  * shape by re-running the contract verifier over the staged copy. Sources are
@@ -492,7 +512,7 @@ export async function readArtifactConfigFromText(text) {
 }
 
 function validateArtifactConfig(config) {
-  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "bundledRuntime", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "windowsBootstrapGuardian", "stardewModPackage", "externalRuntimeClosure"];
+  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "bundledRuntime", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "windowsBootstrapGuardian", "stardewModPackage", "voiceGateway", "externalRuntimeClosure"];
   if (config === null || typeof config !== "object" || Array.isArray(config)
     || config.schema !== "gamebuddy-host-production-artifact-config/v3"
     || Object.keys(config).some((key) => !allowedKeys.includes(key))
@@ -515,6 +535,7 @@ function validateArtifactConfig(config) {
   if (config.windowsStardewFolderPicker !== undefined) config.windowsStardewFolderPicker = validateWindowsStardewFolderPicker(config.windowsStardewFolderPicker);
   if (config.windowsBootstrapGuardian !== undefined) config.windowsBootstrapGuardian = validateWindowsBootstrapGuardian(config.windowsBootstrapGuardian);
   if (config.stardewModPackage !== undefined) config.stardewModPackage = validateStardewModPackage(config.stardewModPackage);
+  if (config.voiceGateway !== undefined) config.voiceGateway = validateVoiceGatewayDescriptor(config.voiceGateway);
   config.externalRuntimeClosure = validateExternalClosure(config.externalRuntimeClosure);
   return config;
 }
@@ -572,7 +593,7 @@ async function verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots
     entryRoots: roots,
   });
   for (const item of artifactFiles) {
-    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION || item === RUNTIME_ADMISSION) continue;
+    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION || item === RUNTIME_ADMISSION || item === VOICE_GATEWAY_ADMISSION) continue;
     if (origins.has(slash(item))) continue;
     if (extname(item) === ".js") {
       if (!reachable.has(item)) throw new Error(`production_module_unreachable_from_entry_roots:${item}`);
@@ -733,6 +754,28 @@ async function verifiedStardewModPackageOrigins({ stagingRoot, descriptor }) {
     origins.set(`${descriptor.destination}/${name}`, Object.freeze({ kind: descriptor.kind, destination: descriptor.destination, name, sha256: digest(await readFile(destination)) }));
   }
   return origins;
+}
+/** Stages the voice gateway entry and protocol from the fixed `.dist` build
+ * output into the generation staging root and returns the verified origin
+ * facts. Missing, multi-file, traversal or symlinked sources fail closed
+ * through the shared fixture publisher, and the read-only admission check
+ * re-verifies the staged copy before inventory creation. */
+async function ensureVoiceGateway({ hostRoot, stagingRoot, descriptor, generation }) {
+  const distRoot = resolve(hostRoot, "voice-gateway", ".dist");
+  await publishVoiceGatewayFixture({
+    stagingRoot,
+    descriptor: {
+      generation,
+      entry: { source: resolve(distRoot, "entry"), destination: descriptor.entry.destination },
+      protocol: { source: resolve(distRoot, "protocol"), destination: descriptor.protocol.destination },
+    },
+  });
+  return verifiedVoiceGatewayOrigins({ stagingRoot, descriptor });
+}
+async function verifiedVoiceGatewayOrigins({ stagingRoot, descriptor }) {
+  const verified = await verifyPublishedVoiceGateway({ artifactRoot: stagingRoot, descriptor });
+  const origin = Object.freeze({ kind: descriptor.kind, entryPath: verified.entryPath, entrySha256: verified.entrySha256, protocolPath: verified.protocolPath, protocolSha256: verified.protocolSha256 });
+  return new Map([[verified.entryPath, origin], [verified.protocolPath, origin]]);
 }
 function windowsBootstrapGuardianOrigin(descriptor, helperSha256) {
   return Object.freeze({ kind: descriptor.kind, destination: descriptor.destination, helper: descriptor.helper, manifest: descriptor.manifest, helperSha256 });
@@ -899,7 +942,7 @@ export async function createInventory({ artifactRoot, origins = new Map(), exter
   if (entryRoots !== undefined) await verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots, origins, runtimeBootstrapPath });
   const entries = [];
   for (const item of artifactFiles) {
-    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION || item === RUNTIME_ADMISSION) continue;
+    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION || item === RUNTIME_ADMISSION || item === VOICE_GATEWAY_ADMISSION) continue;
     // `files` has rejected traversal and symbolic links; normalize only its
     // canonical relative path before exact membership checking. Windows
     // arbitrary-reparse enforcement remains blocked by design/42.
@@ -1230,6 +1273,9 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
       await ensureStardewModPackage({ stagingRoot, descriptor: config.stardewModPackage });
       for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
     }
+    if (config.voiceGateway !== undefined) {
+      for (const [path, origin] of await ensureVoiceGateway({ hostRoot, stagingRoot, descriptor: config.voiceGateway, generation })) origins.set(path, origin);
+    }
     // Freeze the browser descriptor's checked bytes before inventory creation;
     // a final exact-snapshot verification below closes the remaining
     // pre-publish mutation window as far as this pathname-based architecture permits.
@@ -1336,6 +1382,9 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   if (config.stardewModPackage !== undefined) {
     for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot: artifactRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
   }
+  if (config.voiceGateway !== undefined) {
+    for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: artifactRoot, descriptor: config.voiceGateway })) origins.set(path, origin);
+  }
   const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
   await verifyRuntimeAdmission({ artifactRoot, inventory, generation: pointer.generation, descriptor: runtimeDescriptor });
   if (pointer.inventoryDigest !== inventory.digest) throw new Error("production_current_pointer_inventory_mismatch");
@@ -1392,6 +1441,9 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   }
   if (config.stardewModPackage !== undefined) {
     for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
+  }
+  if (config.voiceGateway !== undefined) {
+    for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.voiceGateway })) origins.set(path, origin);
   }
   const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
   await verifyRuntimeAdmission({ artifactRoot: selected.artifactRoot, inventory, generation: selected.generation, descriptor: runtimeDescriptor });
