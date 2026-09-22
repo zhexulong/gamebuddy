@@ -130,6 +130,20 @@ internal sealed class DerivedDestinationSet
 
             TryApplyNativeMetadata(destinations);
 
+            // Water landmark (A.1): publish the farm water destination only
+            // when at least one refillable water tile has a standable walk-in
+            // neighbor (W rule: never bind the water tile itself; empty sets do
+            // not publish). find_destination reaches the farm location; the exact
+            // standable water-side tile is projected by observe_scene's
+            // water_source affordance (A.2) — the chain stays orthogonal.
+            if (locations.TryGetValue("Farm", out GameLocation[]? farmMatches) && farmMatches.Length == 1
+                && TryCreateWaterLandmark(contentOwner, farmMatches[0], out NavigationDestination? water, out _)
+                && water is not null)
+            {
+                destinations.Add(water);
+                sourceNodes.Add(new NavigationSourceNode("water:farm", water.CanonicalLabel, water, null, Array.Empty<NavigationSourceNode>()));
+            }
+
             string generation = ComputeGeneration(destinations);
             set = new DerivedDestinationSet(generation, new NavigationSourceNode("root", null, null, null, sourceNodes), destinations);
             reasonCode = "accepted";
@@ -325,6 +339,57 @@ internal sealed class DerivedDestinationSet
             return null;
         string[] ordered = terms.Distinct(StringComparer.Ordinal).OrderBy(term => term, StringComparer.Ordinal).ToArray();
         return ordered.Length == 0 ? null : ordered;
+    }
+
+    private static bool TryCreateWaterLandmark(
+        string contentOwner,
+        GameLocation farm,
+        out NavigationDestination? destination,
+        out string reasonCode)
+    {
+        destination = null;
+        reasonCode = "farm_water_unavailable";
+        // Surrounding Standable Set: a water tile itself is impassable; the
+        // landmark is only valid while at least one eligible water tile has a
+        // passable neighbor the Farmhand can stand on. The set is derived from
+        // CanRefillWateringCanOnTile + isTilePassable so discovery and arrival
+        // can never target the water tile. Scan only the loaded map bounds.
+        if (farm.map is null || farm.map.Layers.Count == 0)
+            return false;
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        bool hasStandableWaterEdge = false;
+        for (int x = 0; x < width && !hasStandableWaterEdge; x++)
+        {
+            for (int y = 0; y < height && !hasStandableWaterEdge; y++)
+            {
+                if (!farm.CanRefillWateringCanOnTile(x, y))
+                    continue;
+                foreach ((int nx, int ny) in new[] { (x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1) })
+                {
+                    if (nx >= 0 && ny >= 0 && nx < width && ny < height
+                        && farm.isTilePassable(new xTile.Dimensions.Location(nx, ny), Game1.viewport))
+                    {
+                        hasStandableWaterEdge = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!hasStandableWaterEdge)
+            return false;
+        // The canonical identity stays the farm location identity so the
+        // existing route-planner arrival semantics (sources == destination)
+        // keep working; the water marker is the label, not a new authority.
+        destination = new NavigationDestination(
+            contentOwner,
+            "Farm",
+            "Pond",
+            null,
+            null,
+            new[] { "Pond", "Well", "池塘", "水井", "水源" });
+        reasonCode = "accepted";
+        return true;
     }
 }
 
