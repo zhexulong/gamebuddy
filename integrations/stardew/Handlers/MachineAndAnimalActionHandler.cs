@@ -75,6 +75,25 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedQualifiedItemId ?? string.Empty,
                 request.DeadlineMs),
 
+            "chest_store" => this.executions.RequestLocalChestStore(
+                request.RequestId,
+                request.Args.Slot ?? 0,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedQualifiedItemId ?? string.Empty,
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "chest_retrieve" => this.executions.RequestLocalChestRetrieve(
+                request.RequestId,
+                request.Args.Slot ?? 0,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedQualifiedItemId ?? string.Empty,
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+
             _ => new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Blocked, "unsupported_action", ledger.CurrentRevision, null),
         };
     }
