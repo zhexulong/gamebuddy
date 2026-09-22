@@ -55,6 +55,7 @@ const state: ReferencePipelineState = Object.freeze({
     }),
   ]),
   eventStream: Object.freeze({ epoch: eventStream.epoch, cursor: eventStream.cursor }),
+  voice: null,
 });
 const facade: ReferencePipelineStateFacade = Object.freeze({
   read: async () => state,

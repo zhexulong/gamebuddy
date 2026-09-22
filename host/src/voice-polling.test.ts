@@ -234,7 +234,6 @@ test("polling is non-overlapping and close is idempotent", async () => {
 
 test("transient network failures retry with exponential backoff and recover on success", async () => {
   let scheduledDelay = 0;
-  let _scheduledCallback: (() => void) | undefined;
   let pollAttempts = 0;
   let shouldFail = true;
 
@@ -252,8 +251,7 @@ test("transient network failures retry with exponential backoff and recover on s
     minBackoffMs: 1000,
     maxBackoffMs: 10000,
     now: () => 500,
-    setInterval: (callback, delay) => {
-      _scheduledCallback = callback;
+    setInterval: (_callback, delay) => {
       scheduledDelay = delay;
       return {} as ReturnType<typeof setInterval>;
     },

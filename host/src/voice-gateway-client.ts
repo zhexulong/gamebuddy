@@ -288,8 +288,11 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     if (!isVoiceGatewayRequestV2(request)) throw new Error("invalid_voice_gateway_v2_request");
     this.#socket.write(encodeVoiceGatewayMessageV2(request));
     // A streamed job is an in-flight voice surface until its terminal
-    // playback observation arrives back on the same socket.
-    this.#surfaceActiveJobs += 1;
+    // playback observation arrives back on the same socket. The v2 runtime
+    // pushes one observation per job, so the counter increments once per job
+    // (first chunk), not once per chunk: multi-chunk turns must still settle
+    // back to ready after their single terminal observation.
+    if (chunkIndex === 0) this.#surfaceActiveJobs += 1;
   }
 
   public onPlaybackObservation(listener: (observation: VoiceGatewayEventV2) => void): () => void {
