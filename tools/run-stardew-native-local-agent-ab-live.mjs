@@ -253,7 +253,9 @@ try {
   }));
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
   const tools = runtime.connected.host;
-  const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (LADDER === "1" || LADDER === "2"
+  const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (LADDER === "3"
+    ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她说需要一颗新鲜花椰菜做菜，请求你给她带一颗。你刚从农舍醒来：背包里有锄头、装满了水的浇水壶和 2 颗花椰菜种子，屋外的农田还是春天没有耕过的土地。请自主完成这件农场工作：仔细观察你拥有的资源和环境，决定需要哪些步骤让花椰菜真正种下去并浇上水，然后逐步执行（你可以在 observe 返回的真实 soilTiles/seedTargets/cropTargets 中选择合适的目标）。不要只回答文字，要用游戏工具真实完成。完成后用一句话总结你为乔迪做了哪些准备。"
+    : LADDER === "1" || LADDER === "2"
     ? "你现在是星露谷里的 AI 伴侣，站在农舍（FarmHouse）里。任务：屋外的公交站（Bus Stop）门口有一台空的木桶机器（Keg），你的背包里有 5 颗咖啡豆。请严格按以下顺序完成：(1) 先用 find_destination 查询目的地（例如 query=\"bus\"），拿到它的 canonical label 或 dr1_ ref，然后调用 navigate_to_destination 导航到公交站；(2) 导航完成（receipt 成功）后，**必须立即调用 observe**，从最新返回结果的 machineTargets 数组中精确复制该 Keg 的 x、y、expectedTargetId（以及 loadInputSlot）；**绝不允许猜测或从旧位置复制坐标**；(3) 用这些精确坐标调用 machine_inspect 检查机器，确认 receipt 为 machine_inspected；(4) 再用同一 machineTargets 条目的 loadInputSlot/expectedQualifiedItemId/(O)433 和精确 x/y/expectedTargetId 调用 machine_load 把咖啡豆装进木桶。每一步都等 receipt 成功再继续，不要只回答文字。完成后用一句话总结结果。"
     : "你现在是星露谷里的 AI 伴侣。任务：你所在农场屋（FarmHouse）里有一台空的木桶机器（Keg）和 5 颗咖啡豆（Coffee Beans）。请完成两步操作：(1) 先检查（inspect）这台机器，确认它的位置与目标 ID；(2) 然后把咖啡豆装进木桶（load）开始酿造。你必须使用游戏工具（先观察 observe，再调用机器检查与装载工具），根据工具返回的真实结果执行，不要只回答文字。完成后用一句话总结结果。");
   const agentTurn = tools.acceptPlayerText(prompt, "zh-CN").then(() => ({ settled: true })).catch((error) => ({ settled: false, error: String(error?.message ?? error) }));
@@ -296,17 +298,26 @@ try {
   const walkReceipt = receipts.find((receipt) => receipt.reasonCode === "navigation_completed");
   const inspectReceipt = receipts.find((receipt) => receipt.reasonCode === "machine_inspected");
   const loadReceipt = receipts.find((receipt) => receipt.reasonCode === "machine_coffee_loaded");
+  // Ladder 3 (Jodi's Request): the Agent planned the farming chain itself, so
+  // accept the three real farming receipts in any order — no fixed DAG.
+  const tillReceipt = receipts.find((receipt) => receipt.reasonCode === "soil_tilled");
+  const plantReceipt = receipts.find((receipt) => receipt.reasonCode === "seed_planted");
+  const waterReceipt = receipts.find((receipt) => receipt.reasonCode === "crop_watered");
   const programSucceeded = status?.snapshot?.state === "succeeded";
   const ladderOnePassed = LADDER === "1" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined : true;
   const ladderZeroPassed = LADDER === "0" ? inspectReceipt !== undefined && loadReceipt !== undefined && programSucceeded : true;
   const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && voiceResult?.state === "completed" : true;
+  const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined : true;
   console.log(JSON.stringify({
-    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed ? "passed" : "blocked",
+    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed ? "passed" : "blocked",
     ladder: LADDER,
     programStatus: status,
     walkReceipt: walkReceipt ?? null,
     inspectReceipt: inspectReceipt ?? null,
     loadReceipt: loadReceipt ?? null,
+    tillReceipt: tillReceipt ?? null,
+    plantReceipt: plantReceipt ?? null,
+    waterReceipt: waterReceipt ?? null,
     voiceResult,
     agentTurn: turn,
     bridgeFacts: factLog,
