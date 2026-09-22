@@ -39,6 +39,15 @@ internal sealed class FarmingActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "plant_sapling" => this.executions.RequestLocalPlantSapling(
+                request.RequestId,
+                request.Args.Slot ?? 0,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedQualifiedItemId ?? string.Empty,
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "fertilize_tile" => this.executions.RequestLocalFertilizeTile(
                 request.RequestId,
                 request.Args.Slot ?? 0,

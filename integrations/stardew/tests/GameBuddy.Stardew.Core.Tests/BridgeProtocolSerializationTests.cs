@@ -470,6 +470,7 @@ public sealed class BridgeProtocolSerializationTests
             TreeChopSourceTargets: null,
             TreeChopResultTargets: null,
             TreeStumpTargets: null,
+            TreeSaplingTargets: null,
             NpcRelationshipTargets: null,
             PetTargets: null,
             AnimalProductTargets: null,

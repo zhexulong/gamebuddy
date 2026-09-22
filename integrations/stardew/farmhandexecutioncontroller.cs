@@ -1313,6 +1313,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("chop_tree_source", StringComparer.Ordinal) ? DiscoverTreeChopSourceTargets(player) : null,
             advertisedCapabilities.Contains("chop_tree_source", StringComparer.Ordinal) ? DiscoverTreeChopResultTargets(player) : null,
             advertisedCapabilities.Contains("chop_stump", StringComparer.Ordinal) ? DiscoverTreeStumpTargets(player) : null,
+            advertisedCapabilities.Contains("plant_sapling", StringComparer.Ordinal) ? DiscoverTreeSaplingTargets(player) : null,
             advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) ? DiscoverNpcRelationshipTargets(player) : null,
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
@@ -1338,7 +1339,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CrabPotTargets: null, CrabPotResultTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
-        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, NpcRelationshipTargets: null, PetTargets: null,
+        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, NpcRelationshipTargets: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
         PresentationLocale: string.Empty);
     }
@@ -1600,6 +1601,52 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return new BridgeTreeStumpTarget(BuildTreeStumpTargetId(location, x, y, tree), location.NameOrUniqueName, x, y, tree.treeType.Value, tree.health.Value);
             })
             .ToArray();
+    }
+
+    private static IReadOnlyList<BridgeTreeSaplingTarget> DiscoverTreeSaplingTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeTreeSaplingTarget>();
+        List<BridgeTreeSaplingTarget> result = new();
+        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
+        {
+            if (item is not StardewValley.Object sapling || !StardewValley.Object.isWildTreeSeed(sapling.ItemId) || sapling.Stack < 1)
+                continue;
+            for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1 && result.Count < 64; x++)
+            {
+                for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1 && result.Count < 64; y++)
+                {
+                    Vector2 tile = new(x, y);
+                    if (!IsTreeSaplingTargetInRange(player, x, y) || !CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, x, y))
+                        continue;
+                    result.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, slot, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId));
+                }
+            }
+        }
+        return result;
+    }
+
+    private static bool CanPlantWildTreeSeedAt(StardewValley.GameLocation location, string qualifiedItemId, int x, int y)
+    {
+        Vector2 tile = new(x, y);
+        // Mirror of Object.canPlaceWildTreeSeed (target version 1.6): no-spawn
+        // tiles and object-occupied or non-HoeDirt terrainFeature tiles are
+        // rejected; CanPlantTreesHere is the final public admission gate. The
+        // real decision still happens inside Object.placementAction at dispatch.
+        if (location.IsNoSpawnTile(tile, "Tree", ignoreTileSheetProperties: true)) return false;
+        if (location.IsNoSpawnTile(tile, "Tree") && !location.doesEitherTileOrTileIndexPropertyEqual(x, y, "CanPlantTrees", "Back", "T")) return false;
+        if (location.objects.ContainsKey(tile)) return false;
+        if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? tf) && tf is not StardewValley.TerrainFeatures.HoeDirt) return false;
+        string localItemId = StardewValley.ItemRegistry.GetMetadata(qualifiedItemId)?.LocalItemId ?? qualifiedItemId;
+        return location.CanPlantTreesHere(localItemId, x, y, out _);
+    }
+
+    private static bool IsTreeSaplingTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
+
+    private static string BuildTreeSaplingTargetId(StardewValley.GameLocation location, int slot, int x, int y, string qualifiedItemId)
+    {
+        string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:{qualifiedItemId}";
+        return $"tree_sapling_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
     private static string BuildTreeStumpTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)

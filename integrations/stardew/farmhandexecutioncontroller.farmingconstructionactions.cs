@@ -247,6 +247,69 @@ internal sealed partial class ExecutionManager
         return receipt;
     }
 
+    /// <summary>
+    /// Plant exactly one wild-tree sapling item (Acorn/Maple Seed/Pine Cone or
+    /// other Data/WildTrees seed) onto one open, plantable tile through the
+    /// target-version Object.placementAction wild-tree sapling branch. The
+    /// sapling object must be the requested qualified item; the inventory is
+    /// decremented only when the native placement returns true. A fresh
+    /// postcondition requires a new TerrainFeature Tree on the tile.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalPlantSapling(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
+            return existing;
+
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTreeSaplingTargetInRange(Game1.player, targetX, targetY))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object sapling
+            || !StardewValley.Object.isWildTreeSeed(sapling.ItemId) || sapling.Stack < 1)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_not_owned_in_slot", $"slot={slot}");
+        if (!string.Equals(sapling.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_slot_changed", $"slot={slot}");
+
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        if (!CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, targetX, targetY)
+            || !string.Equals(BuildTreeSaplingTargetId(location, slot, targetX, targetY, sapling.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_target_unavailable", $"target={targetX},{targetY}");
+
+        int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
+        int previousSlot = Game1.player.CurrentToolIndex;
+        bool placementHandled;
+        try
+        {
+            Game1.player.CurrentToolIndex = slot;
+            placementHandled = sapling.placementAction(location, targetX * 64 + 32, targetY * 64 + 32, Game1.player);
+            if (placementHandled)
+                Game1.player.reduceActiveItemByOne();
+        }
+        finally
+        {
+            Game1.player.CurrentToolIndex = previousSlot;
+        }
+
+        bool treeCreated = location.terrainFeatures.TryGetValue(new Vector2(targetX, targetY), out StardewValley.TerrainFeatures.TerrainFeature? plantedFeature)
+            && plantedFeature is StardewValley.TerrainFeatures.Tree plantedTree;
+        int afterCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
+        bool inventoryDecremented = afterCount == beforeCount - 1;
+        ExecutionState state = placementHandled && treeCreated && inventoryDecremented ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+        string reasonCode = state == ExecutionState.Succeeded ? "sapling_planted" : "sapling_plant_postcondition_unavailable";
+        string treeType = plantedFeature is StardewValley.TerrainFeatures.Tree pt ? pt.treeType.Value : "none";
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={slot};tree_type={treeType};inventory_before={beforeCount};inventory_after={afterCount};native_placement={placementHandled.ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+    }
+
     public LocalExecutionReceipt RequestLocalPlaceWoodFence(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
