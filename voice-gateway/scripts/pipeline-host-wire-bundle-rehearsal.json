@@ -1,0 +1,11 @@
+{
+  "schema": "gamebuddy-voice-host-wire-bundle-rehearsal/v1",
+  "passed": true,
+  "reason": "ok",
+  "persona": "soft_maid",
+  "capabilitiesReady": true,
+  "terminalStatus": "completed",
+  "beforeSurfaceState": "ready",
+  "afterSurfaceState": "ready",
+  "childReadyLine": "GameBuddy Voice Gateway listening on 127.0.0.1:49745 (protocol v1; voice ready)."
+}

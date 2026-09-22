@@ -977,19 +977,24 @@ test("chat voice streaming sink streams deltas as contiguous v2 chunks and final
             capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 3 },
           });
         else if (request.type === "stream_speech_chunk") {
-          const chunkRequest = request as unknown as { sessionId: string; connectionEpoch: number; speechJobId: string };
-          socket.write(
-            JSON.stringify({
-              protocolVersion: 2,
-              sessionId: chunkRequest.sessionId,
-              connectionEpoch: chunkRequest.connectionEpoch,
-              timestampMs: Date.now(),
-              type: "playback_observation",
-              speechJobId: chunkRequest.speechJobId,
-              audioEndMs: 480,
-              terminalStatus: "completed",
-            }) + "\n",
-          );
+          const chunkRequest = request as unknown as { sessionId: string; connectionEpoch: number; speechJobId: string; isFinalChunk: boolean };
+          // The real v2 runtime pushes one terminal observation per job (after
+          // the final chunk), not one per chunk. Mirror that so the surface
+          // counter is exercised like production.
+          if (chunkRequest.isFinalChunk) {
+            socket.write(
+              JSON.stringify({
+                protocolVersion: 2,
+                sessionId: chunkRequest.sessionId,
+                connectionEpoch: chunkRequest.connectionEpoch,
+                timestampMs: Date.now(),
+                type: "playback_observation",
+                speechJobId: chunkRequest.speechJobId,
+                audioEndMs: 480,
+                terminalStatus: "completed",
+              }) + "\n",
+            );
+          }
         }
       }
     });
@@ -997,10 +1002,15 @@ test("chat voice streaming sink streams deltas as contiguous v2 chunks and final
   try {
     const client = await LocalVoiceGatewayClient.connect({ port: port(server), token: "voice_token_1234567890" });
     await client.health();
+    const reader = client.createVoiceSurfaceReader();
+    assert.deepEqual(reader(), Object.freeze({ state: "ready" }));
     const sink = client.createChatVoiceStreamingSink();
     await sink.begin("turn_0001");
     await sink.append("你好。");
+    // A multi-chunk job is one in-flight surface: the reader stays speaking
+    // from the first chunk until the single terminal observation settles it.
     await sink.append("今天天气很好。");
+    assert.deepEqual(reader(), Object.freeze({ state: "speaking" }), "multi-chunk deltas stay one speaking surface");
     await sink.finalize();
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
     const chunks = seen.filter(
@@ -1025,6 +1035,8 @@ test("chat voice streaming sink streams deltas as contiguous v2 chunks and final
     assert.equal(chunks[2]?.isFinalChunk, true);
     assert.ok(chunks[0]?.speechJobId.startsWith("chat_turn_turn_0001_"), "the job id is scoped to the turn");
     assert.ok(chunks[0]?.sessionId.startsWith("chat_turn_turn_0001"), "the session id is scoped to the turn");
+    // The single terminal observation (pushed for the final chunk) settles the turn.
+    assert.deepEqual(reader(), Object.freeze({ state: "ready" }), "the single terminal observation settles a multi-chunk turn");
     client.close();
   } finally {
     peer?.destroy();
