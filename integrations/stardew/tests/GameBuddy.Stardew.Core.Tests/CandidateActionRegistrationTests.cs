@@ -72,6 +72,38 @@ public sealed class CandidateActionRegistrationTests
     }
 
     [Fact]
+    public void FarmhandActionDefinitions_RegisterLoopClosureActionsWithExpectedFamiliesGroupsAndDescriptorShapes()
+    {
+        var expected = new Dictionary<string, (string Family, FarmhandActionHandlerGroup Group, int ArgumentCount, string[] ArgumentNames)>
+        {
+            ["chest_store"] = ("inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, 5, new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" }),
+            ["chest_retrieve"] = ("inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, 4, new[] { "x", "y", "slot", "expectedTargetId" }),
+            ["chop_stump"] = ("resource_gathering", FarmhandActionHandlerGroup.ResourceTools, 4, new[] { "x", "y", "slot", "expectedTargetId" }),
+            ["plant_sapling"] = ("farming_crops", FarmhandActionHandlerGroup.Farming, 5, new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" }),
+            ["cut_weeds"] = ("resource_gathering", FarmhandActionHandlerGroup.ResourceTools, 4, new[] { "x", "y", "slot", "expectedTargetId" }),
+            ["scythe_crop"] = ("farming_crops", FarmhandActionHandlerGroup.Farming, 4, new[] { "x", "y", "slot", "expectedTargetId" }),
+        };
+
+        foreach (var (actionId, shape) in expected)
+        {
+            FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations.Single(candidate => candidate.ActionId == actionId);
+
+            registration.FamilyId.Should().Be(shape.Family);
+            registration.IdentityVersion.Should().Be(1);
+            registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+            registration.Kind.Should().Be(FarmhandOperationKind.Execution);
+            registration.HandlerGroup.Should().Be(shape.Group);
+            registration.Descriptor.Should().NotBeNull();
+            registration.Descriptor!.Arguments.Should().HaveCount(shape.ArgumentCount);
+            registration.Descriptor.Arguments.Select(argument => argument.Name).Should().Equal(shape.ArgumentNames);
+            registration.Descriptor.Arguments.Should().OnlyContain(argument => argument.Enum == null);
+            registration.Descriptor.OutputFacts.Should().BeEmpty();
+            registration.Descriptor.Effect.Should().Be("write");
+            registration.Descriptor.Postcondition.Should().Be("native_action_postcondition");
+        }
+    }
+
+    [Fact]
     public void CandidateActions_AreExcludedFromDefaultPolicySurface()
     {
         var defaultOptions = new ActionPolicyOptions();
