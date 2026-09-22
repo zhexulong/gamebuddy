@@ -40,6 +40,8 @@ export type StreamingSpeechPipeline = Readonly<{
   pumpAwait(): Promise<boolean>;
   /** True while sentences are still being synthesized or micro-chunks are queued. */
   readonly pendingWork: boolean;
+  /** True after a mixer/device write failed; nothing more can be voiced. */
+  readonly outputFailed: boolean;
   /** Play until every enqueued and in-flight sentence has been voiced (parallel pre-synthesis drain). */
   pumpToIdle(): Promise<void>;
   /** Fade the sounding tail (5ms raised cosine) and pad 10ms silence; drop the unplayed queue. */
@@ -56,12 +58,13 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
   const microQueue: Uint8Array[] = [];
   const sentenceQueue: string[] = [];
   let closed = false;
+  let outputFailed = false;
   let playedBytes = 0;
   let worker: Promise<void> | undefined;
   let workerRunning = false;
 
   const sink = new MicroChunkRenderSink((microChunk) => {
-    if (!closed && microChunk.byteLength > 0) microQueue.push(microChunk);
+    if (!closed && !outputFailed && microChunk.byteLength > 0) microQueue.push(microChunk);
   }, sampleRate);
 
   const synthesizeSentence = async (text: string): Promise<void> => {
@@ -90,7 +93,17 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
       while (!closed) {
         const text = sentenceQueue.shift();
         if (text === undefined) break;
-        await synthesizeSentence(text);
+        try {
+          await synthesizeSentence(text);
+        } catch {
+          // A provider failure is Voice-local: drop the remaining queue and
+          // mark output failed so the runtime settles the job honestly and
+          // the gateway survives (same policy as a mixer write failure).
+          outputFailed = true;
+          sentenceQueue.length = 0;
+          microQueue.length = 0;
+          return;
+        }
       }
     })().finally(() => {
       workerRunning = false;
@@ -125,11 +138,28 @@ export async function createStreamingSpeechPipeline(options: StreamingSpeechPipe
       const microChunk = microQueue.shift();
       if (microChunk === undefined) return false;
       playedBytes += microChunk.byteLength;
-      await options.mixer.play("pipeline", 0, microChunk);
+      try {
+        await options.mixer.play("pipeline", 0, microChunk);
+      } catch {
+        // A device failure must never take the gateway down or hang a job:
+        // drop the unplayed queue, mark the output failed and let pendingWork
+        // drain so the v2 runtime settles the job with an honest outcome
+        // (failed_before_side_effect when nothing played, otherwise
+        // unknown_after_admission) instead of crashing.
+        outputFailed = true;
+        microQueue.length = 0;
+        sentenceQueue.length = 0;
+        return false;
+      }
       return true;
     },
     get pendingWork() {
-      return sentenceQueue.length > 0 || workerRunning || microQueue.length > 0;
+      // Once output has failed, nothing more can be voiced: report idle so
+      // job settlement is not starved.
+      return outputFailed ? false : sentenceQueue.length > 0 || workerRunning || microQueue.length > 0;
+    },
+    get outputFailed() {
+      return outputFailed;
     },
     async pumpToIdle() {
       for (;;) {
