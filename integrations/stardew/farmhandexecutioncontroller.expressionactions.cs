@@ -72,17 +72,30 @@ internal sealed partial class ExecutionManager
                 this.TryCreateLocalObservation(actor));
         }
 
-        // The emote animation's completion boundary cannot be proven at dispatch
-        // time, so the descriptor postcondition (emote_finished_or_overridden)
-        // cannot be established synchronously. Fail closed with the durable
-        // uncertain terminal instead of claiming a Succeeded that was never
-        // observed through an action-specific postcondition.
+        // The emote postcondition is emote_started: Farmer.doEmote arms the
+        // animation synchronously (actor.isEmoting becomes true), so departure
+        // can be proven at dispatch time without waiting for the full animation
+        // lifecycle. Completion/override remains an animation-time fact and is
+        // not required for the terminal receipt; a native dispatch that did not
+        // arm the emote fails closed as Uncertain instead of claiming success.
+        BridgeLocalObservation? observation = this.TryCreateLocalObservation(actor);
+        if (actor.isEmoting)
+        {
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Succeeded,
+                "emote_started",
+                $"emote={request.Args.Emote};native_dispatched=true",
+                observation);
+        }
+
         return this.RememberTerminal(
             request.RequestId,
             executionId,
             ExecutionState.Uncertain,
             "emote_postcondition_unavailable",
             $"emote={request.Args.Emote};native_dispatched=true",
-            this.TryCreateLocalObservation(actor));
+            observation);
     }
 }

@@ -42,6 +42,12 @@ type GameVoicePresentationPayload = Readonly<{
   speechPort: VoiceSpeechPort;
   voiceAudioAdmission: VoiceAudioEpochAdmission;
   stopVoice(reasonCode: string): Promise<void>;
+  /**
+   * Turn-scoped streaming speech sink (the same v2 job lane Chat uses). Game
+   * companion deltas attach to it so the native companion turn is voiced while
+   * it generates, not only after a terminal receipt.
+   */
+  streamingSink: import("./voice.js").ChatVoiceSpeechPublisher;
 }>;
 
 const GAME_VOICE_PRESENTATIONS = new WeakMap<object, GameVoicePresentationPayload>();
@@ -184,6 +190,7 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
         speechPort: this,
         voiceAudioAdmission: this.createAudioEpochAdmission(),
         stopVoice: (reasonCode: string) => this.stopAll(reasonCode),
+        streamingSink: this.createChatVoiceStreamingSink(voiceProfile),
       }),
     );
     return attachment;

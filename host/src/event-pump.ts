@@ -17,6 +17,12 @@ export type WorldFact = Readonly<{
   payload: Readonly<Record<string, unknown>>;
   /** Bounded model-facing context; the authoritative payload stays Host-owned. */
   contextProjection?: Readonly<Record<string, unknown>>;
+  /**
+   * Mod-owned semantic identity of a world_fact (day_started, time_milestone,
+   * …). The Host keeps it only as an opaque label for bounded sensory
+   * presentation leases; it never interprets the payload.
+   */
+  semanticKind?: string;
 }>;
 export type PlayerInput = Readonly<{
   source: "player_text" | "voice_final";
@@ -307,6 +313,7 @@ function normalizeFact(fact: WorldFact): NormalizedEvent {
     ...(fact.executionId === undefined ? {} : { executionId: fact.executionId }),
     ...(fact.requestId === undefined ? {} : { requestId: fact.requestId }),
     ...(fact.sourceEventId === undefined ? {} : { sourceEventId: fact.sourceEventId }),
+    ...(fact.semanticKind === undefined ? {} : { semanticKind: fact.semanticKind }),
     payload: fact.contextProjection ?? fact.payload,
   };
 }

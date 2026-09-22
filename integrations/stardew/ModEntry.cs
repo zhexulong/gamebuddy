@@ -4126,7 +4126,44 @@ public sealed partial class ModEntry : Mod
     }
 
     /// <summary>Final game-thread presentation authority; no UI injection or envelope echo.</summary>
-    private bool TrySendCompanionPresentation(BridgeCompanionPresentationRequest request) => this.TrySendNativeChat(request.Text, request.Locale);
+    private bool TrySendCompanionPresentation(BridgeCompanionPresentationRequest request)
+    {
+        // Embodied presentation: face the local player and play a light emote
+        // before the native chat write. This is best-effort and never blocks
+        // the text write (the presentation itself is the authority).
+        if (this.IsConfiguredAiScreen(out Farmer? farmhand, out _) && farmhand is not null)
+            this.TryPerformPresentationEmbodiment(farmhand);
+        return this.TrySendNativeChat(request.Text, request.Locale);
+    }
+
+    /// <summary>
+    /// Best-effort embodied companion presentation. Turns the companion to
+    /// face the local player (choosing the dominant axis of the tile delta)
+    /// and starts a light emote when idle. Failures are swallowed: a text
+    /// write must still land even if the animation seam is unavailable.
+    /// </summary>
+    private void TryPerformPresentationEmbodiment(Farmer farmhand)
+    {
+        try
+        {
+            Farmer? player = Game1.player;
+            if (player is null || player == farmhand) return;
+            Vector2 delta = player.Tile - farmhand.Tile;
+            int direction = Math.Abs(delta.X) > Math.Abs(delta.Y)
+                ? (delta.X > 0 ? 1 : 3)
+                : (delta.Y > 0 ? 2 : 0);
+            farmhand.faceDirection(direction);
+            // Companion emote index mirrored from the action catalog EmoteMap
+            // (happy = 32); local constant only for presentation, never a new
+            // action surface.
+            if (!farmhand.isEmoting)
+                farmhand.doEmote(32);
+        }
+        catch
+        {
+            // Embodiment is best-effort; the presentation text must still land.
+        }
+    }
 
     private bool TrySendSystemNotice(BridgeSystemNoticeRequest request) => this.TrySendNativeChat(request.Text, request.Locale);
 

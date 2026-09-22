@@ -1,5 +1,7 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import { dehydrateCompanionSpeech } from "./companion-speech-dehydration.js";
+
 const MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES = 16_384;
 
 type AssistantMessage = Readonly<{
@@ -211,12 +213,16 @@ export function attachNativeCompanionContent(
 }
 
 function readSafeAssistantText(message: AssistantMessage): string | null {
-  const value = message.content
+  const joined = message.content
     .filter(isTextContent)
     .map((entry) => entry.text)
     .join("")
     .trim()
     .normalize("NFC");
+  // Dehydrate stage direction first (roleplay beats, asides, reasoning blocks)
+  // so the native chat box never shows the model's scaffolding. Pure-beat
+  // replies dehydrate to empty and are rejected below.
+  const value = dehydrateCompanionSpeech(joined);
   if (
     value.length === 0 ||
     /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value) ||

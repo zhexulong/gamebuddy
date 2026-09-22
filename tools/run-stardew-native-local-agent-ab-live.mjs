@@ -41,13 +41,38 @@ const factLog = [];
 // stream a companion voice line through the real Voice Gateway (MiMo TTS)
 // and wait for its terminal playback observation. Voice stays a one-shot
 // ladder-2 enhancement: it never changes game actions or receipts.
+// Ladder 3 reuses the same voice lane: the Agent's final companion summary
+// (presented to the game via the Mod presentation bridge) is streamed to TTS
+// so the completion report is actually spoken. Voice is fire-and-forget in
+// both cases — a voice failure never fails the game presentation or action.
 let voice = null;
 let voiceChild = null;
 let voiceObservation = null;
 let voiceStarted = false;
+let presentedSummary = null;
 const voiceObservationPromise = new Promise((resolvePromise) => {
   voice = resolvePromise;
 });
+// Ladder-3 presentation hook: called by the Host presentation port after a
+// companion text successfully landed in the game; forwards the exact text to
+// the voice lane. No game/presentation authority is touched here.
+const onCompanionTextPresented = (text, locale) => {
+  if (LADDER !== "3" || voiceStarted || typeof text !== "string" || text.trim().length === 0) return;
+  voiceStarted = true;
+  presentedSummary = text.trim();
+  console.error("AGENT_SUMMARY", JSON.stringify({ text: presentedSummary, locale }));
+  void (async () => {
+    try {
+      const { promiseVoiceObservation } = await startLadder2Voice(text.trim());
+      voiceObservation = await promiseVoiceObservation;
+      voice?.();
+    } catch (error) {
+      console.error("VOICE_ERROR", String(error instanceof Error ? error.message : error));
+      voiceObservation = { terminalStatus: "failed_before_side_effect", error: String(error instanceof Error ? error.message : error) };
+      voice?.();
+    }
+  })();
+};
 client.onFact((fact) => {
   if (fact.type === "execution_receipt" || fact.type === "semantic_event" || fact.type === "error" || fact.type === "lifecycle") {
     factLog.push({ type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId });
@@ -134,7 +159,7 @@ function startVoiceGatewayChild(node, gatewayPath, port, token, mimoKey) {
   return Object.freeze({ child, startedOk, readStderr: () => stderr });
 }
 
-async function startLadder2Voice() {
+async function startLadder2Voice(speakerText = "咖啡豆已经放进桶里啦，大概两小时后酿好！") {
   const node = process.execPath;
   const gatewayPath = new URL("../voice-gateway/dist/main.js", import.meta.url).pathname.replace(/^\//, process.platform === "win32" ? "" : "/");
   const token = process.env.GAMEBUDDY_VOICE_TOKEN ?? randomToken();
@@ -198,8 +223,7 @@ async function startLadder2Voice() {
       });
       const sessionId = `ladder2_${Date.now()}_session`;
       const speechJobId = `ladder2_${Date.now()}_${randomToken(12)}`;
-      const speaker = "咖啡豆已经放进桶里啦，大概两小时后酿好！";
-      await voiceClient.streamSpeechChunk(sessionId, speechJobId, 0, speaker, true, Date.now() + 60_000, "companion.default");
+      await voiceClient.streamSpeechChunk(sessionId, speechJobId, 0, speakerText, true, Date.now() + 60_000, "companion.default");
       const observation = await Promise.race([termination, new Promise((resolvePromise) => setTimeout(() => resolvePromise(null), 45_000))]);
       voiceClient.close();
       if (observation === null) throw new Error("voice_playback_observation_timeout");
@@ -254,7 +278,11 @@ let runtime;
 try {
   runtime = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => {
     const permit = Object.freeze({ principal: execution.principal, operationId: `op-${Date.now()}`, requestId: `req-${Date.now()}`, kind: "enter", gameSessionId: `game-${Date.now()}`, world: execution.world, bindingDigest: execution.bindingFacts.bindingDigest, owner: execution.bindingFacts.owner, deadlineAtMs: deadline, expected: Object.freeze({ partitionRevision: 1, gameRevision: 0, leaseRevision: 0, fenceEpoch: 1 }), payloadDigest: "a".repeat(64), fenceToken: `fence-${Date.now()}`, prepared: Object.freeze({ partitionRevision: 2, gameRevision: 0, leaseRevision: 1, fenceEpoch: 2 }) });
-    return createHostGameRuntimeMaterializer({ gameOperationalGateNonceSha256: "a".repeat(64), companionLocale: COMPANION_LOCALE }).materializeEnter(reserveGameRuntimeMaterialization(execution), permit);
+    return createHostGameRuntimeMaterializer({
+      gameOperationalGateNonceSha256: "a".repeat(64),
+      companionLocale: COMPANION_LOCALE,
+      ...(LADDER === "3" ? { onCompanionTextPresented } : {}),
+    }).materializeEnter(reserveGameRuntimeMaterialization(execution), permit);
   }));
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
   const tools = runtime.connected.host;
@@ -289,7 +317,7 @@ try {
   // job can stream, so ladder 2 budgets 90s overall; without a terminal
   // completed observation the ladder stays blocked.
   let voiceResult = null;
-  if (LADDER === "2") {
+  if (LADDER === "2" || LADDER === "3") {
     if (voiceStarted && voiceObservation === null) {
       await Promise.race([voiceObservationPromise, new Promise((resolvePromise) => setTimeout(resolvePromise, 90_000))]);
     }
@@ -318,7 +346,7 @@ try {
   const ladderOnePassed = LADDER === "1" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined : true;
   const ladderZeroPassed = LADDER === "0" ? inspectReceipt !== undefined && loadReceipt !== undefined && programSucceeded : true;
   const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && voiceResult?.state === "completed" : true;
-  const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined : true;
+  const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   console.log(JSON.stringify({
     state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed ? "passed" : "blocked",
     ladder: LADDER,
@@ -329,6 +357,7 @@ try {
     tillReceipt: tillReceipt ?? null,
     plantReceipt: plantReceipt ?? null,
     waterReceipt: waterReceipt ?? null,
+    presentedSummary,
     voiceResult,
     agentTurn: turn,
     bridgeFacts: factLog,

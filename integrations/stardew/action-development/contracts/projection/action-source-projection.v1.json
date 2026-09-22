@@ -1277,7 +1277,7 @@
           },
           "effect": "write",
           "postcondition": {
-            "name": "emote_finished_or_overridden"
+            "name": "emote_started"
           }
         },
         "handlerGroup": null
@@ -1309,6 +1309,252 @@
           "effect": "write",
           "postcondition": {
             "name": "actor_facing_matches"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "chest_store",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "chest_store",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "chest_retrieve",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "chest_retrieve",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "chop_stump",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "chop_stump",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "plant_sapling",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "plant_sapling",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "cut_weeds",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "cut_weeds",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "scythe_crop",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "scythe_crop",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
           }
         },
         "handlerGroup": null
@@ -1380,7 +1626,13 @@
       "npc_relationship",
       "pet_animal",
       "express_emote",
-      "face_direction"
+      "face_direction",
+      "chest_store",
+      "chest_retrieve",
+      "chop_stump",
+      "plant_sapling",
+      "cut_weeds",
+      "scythe_crop"
     ],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {

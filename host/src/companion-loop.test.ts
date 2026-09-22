@@ -160,6 +160,155 @@ test("CompanionLoop forwards only final native assistant content from an exact c
   assert.deepEqual(lifecycle, ["begin", "end"]);
 });
 
+test("CompanionLoop streams companion speech deltas to the voice sink and finalizes on final text", async () => {
+  const lifecycle: string[] = [];
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const voiceOps: string[] = [];
+  const appended: string[] = [];
+  const voiceSink = {
+    begin: async (turnId: string) => voiceOps.push(`begin:${turnId}`),
+    append: async (delta: string) => {
+      voiceOps.push("append");
+      appended.push(delta);
+    },
+    finalize: async () => voiceOps.push("finalize"),
+    cancel: async () => voiceOps.push("cancel"),
+  };
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_voice", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        const trackedPartial = { id: "assistant_voice", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+        });
+        emit({
+          type: "message_update",
+          message: { ...trackedPartial, content: [{ type: "text", text: "早" }] },
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "早", partial: trackedPartial },
+        });
+        emit({
+          type: "message_update",
+          message: { ...trackedPartial, content: [{ type: "text", text: "早安" }] },
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "安", partial: trackedPartial },
+        });
+        emit({
+          type: "message_end",
+          message: {
+            id: "assistant_voice",
+            role: "assistant",
+            content: [{ type: "text", text: "早安!" }],
+            stopReason: "stop",
+          },
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {
+        lifecycle.push("begin");
+      },
+      endBatch() {
+        lifecycle.push("end");
+      },
+      async presentNativeAssistantContent(content) {
+        presented.push(content);
+      },
+    },
+    undefined,
+    voiceSink as never,
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_voice",
+    eventId: "player_source_voice",
+    text: "早上好",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
+  await loop.flush();
+  assert.deepEqual(lifecycle, ["begin", "end"]);
+  assert.deepEqual(appended, ["早", "安"]);
+  assert.deepEqual(
+    voiceOps
+      .filter((op) => op.startsWith("begin") || op === "finalize")
+      .map((op) => (op.startsWith("begin") ? "begin" : op)),
+    ["begin", "finalize"],
+  );
+  assert.deepEqual(presented, [{ sourceEventId: "player_source_voice", text: "早安!" }]);
+});
+
+test("CompanionLoop cancels the voice job when a consumed batch never produces final text", async () => {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const voiceOps: string[] = [];
+  const voiceSink = {
+    begin: async (turnId: string) => voiceOps.push(`begin:${turnId}`),
+    append: async () => voiceOps.push("append"),
+    finalize: async () => voiceOps.push("finalize"),
+    cancel: async () => voiceOps.push("cancel"),
+  };
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_aborted", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        // No message_end: the turn aborts before final content.
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent() {},
+    },
+    undefined,
+    voiceSink as never,
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_voice_abort",
+    eventId: "player_source_voice_abort",
+    text: "等一下",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
+  await loop.flush();
+  // The voice job opened with the batch but never finalized; cleanup cancels it.
+  assert.ok(voiceOps.some((op) => op.startsWith("begin:")));
+  assert.ok(voiceOps.includes("cancel"));
+  assert.ok(!voiceOps.includes("finalize"));
+});
+
 test("CompanionLoop suppresses foreign, aborted, and post-STOP native content", async () => {
   const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown) => {
@@ -296,9 +445,67 @@ test("CompanionLoop chooses an authenticated world source for fact-only follow-u
     payload: {},
   });
   await loop.flush();
-  // World-trigger batches deliberately cannot mint a native player-chat
-  // presentation lineage; only Pi-consumed authenticated player input can.
+  // Non-salient world-trigger batches deliberately cannot mint a native
+  // player-chat presentation lineage; only Pi-consumed authenticated player
+  // input or a white-listed salient sensory kind may.
   assert.deepEqual(observed, []);
+});
+
+test("CompanionLoop grants a bounded presentation lease to salient sensory world facts", async () => {
+  const lifecycle: string[] = [];
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_salient_1", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        emit({
+          type: "message_end",
+          message: { id: "assistant_salient_1", role: "assistant", content: [{ type: "text", text: "早安!今天也要加油。" }], stopReason: "stop" },
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {
+        lifecycle.push("begin");
+      },
+      endBatch() {
+        lifecycle.push("end");
+      },
+      async presentNativeAssistantContent(content) {
+        presented.push(content);
+      },
+    },
+  );
+  loop.pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: "day_started_day_3",
+    sourceEventId: "day_started_day_3",
+    correlationId: "day_started_day_3",
+    revision: 2,
+    occurredAtMs: 1,
+    semanticKind: "day_started",
+    payload: { day: 3 },
+  });
+  await loop.flush();
+  assert.deepEqual(lifecycle, ["begin", "end"]);
+  assert.deepEqual(presented, [{ sourceEventId: "day_started_day_3", text: "早安!今天也要加油。" }]);
 });
 
 test("CompanionLoop steers a busy Pi session without aborting it", async () => {

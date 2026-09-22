@@ -57,7 +57,7 @@ const VALID_EXPRESS_EMOTE_DESCRIPTOR: ActionRegistrationDescriptor = Object.free
     claims: Object.freeze([{ key: "embodied_actor", value: "ScopePlayer" }]),
   }),
   effect: "write",
-  postcondition: "emote_finished_or_overridden",
+  postcondition: "emote_started",
   nativeBinding: "Farmer.doEmote",
 });
 
@@ -107,7 +107,7 @@ function createIntegration(options: {
     requestId: req.requestId,
     actionId: req.action,
     state: "succeeded",
-    reasonCode: req.action === "express_emote" ? "emote_finished_or_overridden" : "actor_facing_matches",
+      reasonCode: req.action === "express_emote" ? "emote_started" : "actor_facing_matches",
     revision: options.revision ?? 1,
     evidence: { detail: JSON.stringify({ ...req.args }) },
   }));
@@ -200,7 +200,7 @@ test("candidate schemas do NOT hardcode enums: custom Mod descriptor enums are r
 // 2. Strict filtering of candidate actions while Experimental
 // ---------------------------------------------------------------------------
 
-test("candidate actions with lifecycle: 'experimental' are strictly excluded from visibleActionsFromModCatalog", () => {
+test("candidate actions with a complete descriptor are visible despite the experimental lifecycle", () => {
   const experimentalCatalog: readonly ActionRegistration[] = [
     {
       actionId: "express_emote",
@@ -234,13 +234,13 @@ test("candidate actions with lifecycle: 'experimental' are strictly excluded fro
   );
 
   assert.deepEqual(
-    visible.map((e) => e.actionId),
-    ["equip_tool"],
-    "Candidate actions must be hidden from agent visible actions while experimental",
+    visible.map((e) => e.actionId).sort(),
+    ["equip_tool", "express_emote", "face_direction"],
+    "Complete candidate actions must be agent-visible while experimental",
   );
 });
 
-test("createStardewActionTools does NOT mount candidate tools while lifecycle is experimental", () => {
+test("createStardewActionTools mounts candidate tools with a complete descriptor while experimental", () => {
   const experimentalCatalog: readonly ActionRegistration[] = [
     {
       actionId: "express_emote",
@@ -276,11 +276,11 @@ test("createStardewActionTools does NOT mount candidate tools while lifecycle is
   const toolNames = tools.map((t) => t.name);
 
   assert.ok(toolNames.includes(STARDEW_ACTION_TOOL_NAMES.equip_tool), "equip_tool should be mounted");
-  assert.ok(!toolNames.includes("stardew_express_emote"), "express_emote must NOT be mounted while experimental");
-  assert.ok(!toolNames.includes("stardew_face_direction"), "face_direction must NOT be mounted while experimental");
+  assert.ok(toolNames.includes("stardew_express_emote"), "express_emote must be mounted with a complete descriptor");
+  assert.ok(toolNames.includes("stardew_face_direction"), "face_direction must be mounted with a complete descriptor");
 });
 
-test("observation catalog and search tools do not reveal experimental candidate actions", async () => {
+test("observation catalog reveals experimental candidates with a complete descriptor", async () => {
   const experimentalCatalog: readonly ActionRegistration[] = [
     {
       actionId: "express_emote",
@@ -310,9 +310,9 @@ test("observation catalog and search tools do not reveal experimental candidate 
   const details = result.details as { actions: Array<{ actionId: string }> };
 
   assert.deepEqual(
-    details.actions.map((a) => a.actionId),
-    ["equip_tool"],
-    "Observation catalog must not reveal experimental candidate actions",
+    details.actions.map((a) => a.actionId).sort(),
+    ["equip_tool", "express_emote"],
+    "Observation catalog must reveal complete experimental candidate actions",
   );
 });
 
@@ -452,7 +452,7 @@ test("stardew_express_emote forwards { emote } without exposing request/idempote
         requestId: req.requestId,
         actionId: req.action,
         state: "succeeded",
-        reasonCode: "emote_finished_or_overridden",
+        reasonCode: "emote_started",
         revision: 1,
         evidence: { detail: JSON.stringify({ emote: req.args.emote }) },
       };

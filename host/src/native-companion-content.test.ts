@@ -185,6 +185,25 @@ test("final text comes from the final assistant message, excludes thinking/tool 
   assert.deepEqual(finals, ["Café!"]);
 });
 
+test("dehydrates roleplay stage direction before committing final chat text", async () => {
+  const fx = fakeSession();
+  const finals: string[] = [];
+  const observer = attachNativeCompanionContent(fx.session, {
+    onPreviewDelta: async () => undefined,
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
+  });
+  observer.open();
+  const final = assistant([text("*转过身微笑* 早安!今天天气真好。")]);
+  fx.emit({ type: "message_start", message: assistant([text("")]) });
+  fx.emit({ type: "message_end", message: final });
+  await observer.close();
+
+  assert.deepEqual(finals, ["早安!今天天气真好。"]);
+});
+
 test("skips intermediate tool-use assistant messages and commits the following native response", async () => {
   const fx = fakeSession();
   const finals: string[] = [];
