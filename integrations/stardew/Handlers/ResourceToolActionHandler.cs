@@ -36,6 +36,14 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "chop_stump" => this.executions.RequestLocalChopStump(
+                request.RequestId,
+                request.Args.Slot ?? 0,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "break_rock_source" => this.executions.RequestLocalBreakRockSource(
                 request.RequestId,
                 request.Args.Slot ?? 0,
