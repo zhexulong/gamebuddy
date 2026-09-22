@@ -184,10 +184,14 @@ test("a legal voice fixture stages single-file entry and protocol bound to the p
   assert.equal(admission.protocolPath, protocolPath);
   assert.equal(admission.entrySha256, testHash(entryBytes));
   assert.equal(admission.protocolSha256, testHash(protocolBytes));
-  assert.match(admission.inventoryDigest, /^[a-f0-9]{64}$/);
+  // The sidecar's inventoryDigest must be the generation's FULL inventory
+  // digest (same semantics as guardian/runtime admission): the Desktop
+  // InstalledVoiceGatewayAdmission verifies it against the selection's
+  // inventory digest, so a voice-pair-only digest would never admit.
+  assert.equal(admission.inventoryDigest, published.digest);
   assert.equal(await readFile(join(artifactRoot, "voice-gateway", "entry", "voice-gateway-entry.mjs"), "utf8"), entryBytes.toString());
   assert.equal(await readFile(join(artifactRoot, "voice-gateway", "protocol", "voice-gateway-protocol.json"), "utf8"), protocolBytes.toString());
-  await assert.doesNotReject(verifyPublishedVoiceGateway({ artifactRoot, descriptor: VOICE_GATEWAY_DESCRIPTOR }));
+  await assert.doesNotReject(verifyPublishedVoiceGateway({ artifactRoot, descriptor: VOICE_GATEWAY_DESCRIPTOR, expectedInventoryDigest: published.digest }));
   const inventory = JSON.parse(await readFile(join(artifactRoot, "production-inventory.json"), "utf8"));
   const entry = inventory.entries.find((item) => item.path === entryPath);
   const protocol = inventory.entries.find((item) => item.path === protocolPath);
@@ -204,7 +208,7 @@ test("a legal voice fixture stages single-file entry and protocol bound to the p
     assert.equal(helperEntry.origin.kind, "verified_voice_gateway");
   }
   await writeFile(join(artifactRoot, "voice-gateway", "entry", "voice-gateway-entry.mjs"), "tampered");
-  await assert.rejects(verifyPublishedVoiceGateway({ artifactRoot, descriptor: VOICE_GATEWAY_DESCRIPTOR }), /voice_gateway_entry_mismatch/);
+  await assert.rejects(verifyPublishedVoiceGateway({ artifactRoot, descriptor: VOICE_GATEWAY_DESCRIPTOR, expectedInventoryDigest: published.digest }), /voice_gateway_entry_mismatch/);
 }));
 
 test("a voice-enabled generation survives the complete artifact recheck and tampering fails it", async () => withFixture(async (root) => {

@@ -41,9 +41,14 @@ function validateRelative(value, label) {
  * production artifact publisher. `publishVoiceGatewayFixture` copies one
  * entry file and one protocol file into a staging root, rejects symlink,
  * traversal, special and multi-file inputs, and binds both files into a
- * voice-gateway-admission.json sidecar. `verifyPublishedVoiceGateway`
- * rechecks a staged or published copy read-only. */
-export async function publishVoiceGatewayFixture({ stagingRoot, descriptor }) {
+ * voice-gateway-admission.json sidecar. When the production publisher already
+ * knows the generation's full inventory digest it supplies it via
+ * `inventoryDigest` (the same inventory semantics the guardian and bundled
+ * runtime admissions use); fixture-only callers omit it and the sidecar binds
+ * the voice-pair digest instead. `verifyPublishedVoiceGateway` rechecks a
+ * staged or published copy read-only; pass `expectedInventoryDigest` to
+ * enforce the full-inventory binding on a published generation. */
+export async function publishVoiceGatewayFixture({ stagingRoot, descriptor, inventoryDigest: inventoryDigestOverride }) {
   if (descriptor === undefined) return undefined;
   if (!descriptor || typeof descriptor !== "object") throw new Error("voice_fixture_descriptor_invalid");
   const generation = typeof descriptor.generation === "string" && descriptor.generation.length > 0 ? descriptor.generation : "fixture-generation";
@@ -69,7 +74,8 @@ export async function publishVoiceGatewayFixture({ stagingRoot, descriptor }) {
   const entryFile = records[0].files.length === 1 ? records[0].files[0] : undefined;
   const protocolFile = records[1].files.length === 1 ? records[1].files[0] : undefined;
   if (!entryFile || !protocolFile) throw new Error("voice_fixture_entry_protocol_must_be_single_files");
-  const inventoryDigest = voiceInventoryDigest(entryFile, protocolFile);
+  const inventoryDigest = inventoryDigestOverride ?? voiceInventoryDigest(entryFile, protocolFile);
+  if (!/^[a-f0-9]{64}$/.test(inventoryDigest)) throw new Error("voice_fixture_inventory_digest_invalid");
   const sidecar = {
     schema: SCHEMA, generation, inventoryDigest,
     entryPath: entryFile.path, entrySha256: entryFile.sha256,
@@ -90,8 +96,11 @@ export async function publishVoiceGatewayFixture({ stagingRoot, descriptor }) {
  * Re-checks the sidecar shape, path safety, single-file destinations, exact
  * file digests and the canonical voice inventory binding without copying or
  * mutating anything. When `descriptor` is supplied its entry/protocol
- * destinations must each contain exactly the bound single file. */
-export async function verifyPublishedVoiceGateway({ artifactRoot, descriptor }) {
+ * destinations must each contain exactly the bound single file. When
+ * `expectedInventoryDigest` is supplied (a published generation's full
+ * inventory digest) the sidecar must carry exactly that value; otherwise the
+ * voice-pair digest is enforced (fixture semantics). */
+export async function verifyPublishedVoiceGateway({ artifactRoot, descriptor, expectedInventoryDigest }) {
   const root = resolve(artifactRoot);
   const sidecarPath = resolve(root, VOICE_GATEWAY_ADMISSION);
   let sidecarState;
@@ -134,8 +143,12 @@ export async function verifyPublishedVoiceGateway({ artifactRoot, descriptor }) 
       if (names.length !== 1 || names[0] !== basename(file.path)) throw new Error(`voice_gateway_${side}_must_be_single_files`);
     }
   }
-  if (admission.inventoryDigest !== voiceInventoryDigest(files[0], files[1]))
+  if (expectedInventoryDigest !== undefined) {
+    if (admission.inventoryDigest !== expectedInventoryDigest)
+      throw new Error("voice_gateway_inventory_binding_failed");
+  } else if (admission.inventoryDigest !== voiceInventoryDigest(files[0], files[1])) {
     throw new Error("voice_gateway_inventory_binding_failed");
+  }
   return Object.freeze({
     generation: admission.generation,
     inventoryDigest: admission.inventoryDigest,

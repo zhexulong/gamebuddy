@@ -99,6 +99,18 @@ export async function publishTestArtifact({ hostRoot, emittedRoot, outputRoot, r
     const inventory = await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins });
     await writeFile(resolve(staging, "production-inventory.json"), `${JSON.stringify(inventory, null, 2)}\n`);
     await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins, expectedInventory: inventory });
+    if (config.voiceGateway !== undefined) {
+      // Rewrite the voiced sidecar to the full-inventory digest exactly like
+      // the production publisher's emitVoiceGatewayAdmission: the staged sidecar
+      // carries the voice-pair digest until the generation inventory exists.
+      const sidecarPath = resolve(staging, "voice-gateway-admission.json");
+      const staged = JSON.parse(await readFile(sidecarPath, "utf8"));
+      if (!staged || typeof staged !== "object" || Array.isArray(staged)
+        || staged.schema !== "gamebuddy-host-voice-gateway-admission/v1"
+        || !/^[a-f0-9]{64}$/.test(staged.inventoryDigest)) throw new Error("voice_gateway_admission_invalid");
+      await writeFile(sidecarPath, `${JSON.stringify({ ...staged, inventoryDigest: inventory.digest })}\n`);
+      await verifyPublishedVoiceGateway({ artifactRoot: staging, descriptor: config.voiceGateway, expectedInventoryDigest: inventory.digest });
+    }
     if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined) {
       const verified = await verifyWindowsBootstrapGuardianPair({ root: staging, descriptor: config.windowsBootstrapGuardian });
       const manifestSha256 = digest(await readFile(verified.manifest));
@@ -139,7 +151,7 @@ async function selectedTestArtifact({ hostRoot, outputRoot }) {
     }
   }
   if (config.voiceGateway !== undefined) {
-    const verified = await verifyPublishedVoiceGateway({ artifactRoot, descriptor: config.voiceGateway });
+    const verified = await verifyPublishedVoiceGateway({ artifactRoot, descriptor: config.voiceGateway, expectedInventoryDigest: manifest.digest });
     const origin = { kind: config.voiceGateway.kind, entryPath: verified.entryPath, entrySha256: verified.entrySha256, protocolPath: verified.protocolPath, protocolSha256: verified.protocolSha256 };
     origins.set(verified.entryPath, origin);
     origins.set(verified.protocolPath, origin);
