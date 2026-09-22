@@ -790,8 +790,13 @@ async function ensureVoiceGateway({ stagingRoot, descriptor, generation, voiceDi
   }
   return verifiedVoiceGatewayOrigins({ stagingRoot, descriptor });
 }
-async function verifiedVoiceGatewayOrigins({ stagingRoot, descriptor }) {
-  const verified = await verifyPublishedVoiceGateway({ artifactRoot: stagingRoot, descriptor });
+/** Stage-phase origins for the voice entry/protocol pair (sidecar is bound to
+ * the voice-pair digest until the generation inventory exists; exactly like
+ * the guardian/runtime admission pair, the authoritative full-inventory
+ * binding is rewritten by `emitVoiceGatewayAdmission` once the inventory is
+ * created). */
+async function verifiedVoiceGatewayOrigins({ stagingRoot, descriptor, expectedInventoryDigest }) {
+  const verified = await verifyPublishedVoiceGateway({ artifactRoot: stagingRoot, descriptor, expectedInventoryDigest });
   const origin = Object.freeze({ kind: descriptor.kind, entryPath: verified.entryPath, entrySha256: verified.entrySha256, protocolPath: verified.protocolPath, protocolSha256: verified.protocolSha256 });
   const origins = new Map([[verified.entryPath, origin], [verified.protocolPath, origin]]);
   for (const scriptName of VOICE_GATEWAY_HELPER_SCRIPTS) {
@@ -827,6 +832,24 @@ async function emitGuardianAdmission({ stagingRoot, inventory, descriptor }) {
     canonicalGuardianAdmission({ inventoryDigest: inventory.digest, descriptor, helperSha256: verified.helperSha256, manifestSha256 }),
     { flag: "wx" },
   );
+}
+/** Rewrites the voice admission sidecar's inventoryDigest to the generation's
+ * full inventory digest once the inventory exists. The staged sidecar (written
+ * by `ensureVoiceGateway` before the inventory is computable) carries the
+ * voice-pair digest; the immutable generation must expose the same full
+ * inventory binding the guardian and bundled-runtime admissions use, so the
+ * Desktop `InstalledVoiceGatewayAdmission` (which verifies against the
+ * selection's inventory digest) can admit the artifact. */
+async function emitVoiceGatewayAdmission({ stagingRoot, descriptor, expectedInventoryDigest, canCreate = false }) {
+  const sidecarPath = resolve(stagingRoot, VOICE_GATEWAY_ADMISSION);
+  const staged = JSON.parse(await readFile(sidecarPath, "utf8"));
+  if (!staged || typeof staged !== "object" || Array.isArray(staged)
+    || staged.schema !== "gamebuddy-host-voice-gateway-admission/v1"
+    || !/^[a-f0-9]{64}$/.test(staged.inventoryDigest)) throw new Error("voice_gateway_admission_invalid");
+  const rewritten = { ...staged, inventoryDigest: expectedInventoryDigest };
+  await writeFile(sidecarPath, `${JSON.stringify(rewritten)}\n`, canCreate ? { flag: "wx" } : undefined);
+  await verifyPublishedVoiceGateway({ artifactRoot: stagingRoot, descriptor, expectedInventoryDigest });
+  return rewritten;
 }
 async function ensureWindowsBootstrapGuardianPair({ hostRoot, stagingRoot, descriptor }) {
   const buildPairRoot = resolve(hostRoot, "native", "windows-bootstrap-guardian", ".dist", "win-x64");
@@ -1317,6 +1340,8 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
     await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, expectedInventory: inventory, origins, browserArtifactSnapshot, runtimeDescriptor });
     if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined)
       await emitGuardianAdmission({ stagingRoot, inventory, descriptor: config.windowsBootstrapGuardian });
+    if (config.voiceGateway !== undefined)
+      await emitVoiceGatewayAdmission({ stagingRoot, descriptor: config.voiceGateway, expectedInventoryDigest: inventory.digest });
     await emitRuntimeAdmission({ stagingRoot, inventory, generation, descriptor: runtimeDescriptor });
     await verifyRuntimeAdmission({ artifactRoot: stagingRoot, inventory, generation, descriptor: runtimeDescriptor });
     const runtimeAdmissionSha256 = digest(await readFile(resolve(stagingRoot, RUNTIME_ADMISSION)));
@@ -1415,7 +1440,7 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
     for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot: artifactRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
   }
   if (config.voiceGateway !== undefined) {
-    for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: artifactRoot, descriptor: config.voiceGateway })) origins.set(path, origin);
+    for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: artifactRoot, descriptor: config.voiceGateway, expectedInventoryDigest: manifest.digest })) origins.set(path, origin);
   }
   const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
   await verifyRuntimeAdmission({ artifactRoot, inventory, generation: pointer.generation, descriptor: runtimeDescriptor });
@@ -1475,7 +1500,7 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
     for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
   }
   if (config.voiceGateway !== undefined) {
-    for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.voiceGateway })) origins.set(path, origin);
+    for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.voiceGateway, expectedInventoryDigest: manifest.digest })) origins.set(path, origin);
   }
   const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
   await verifyRuntimeAdmission({ artifactRoot: selected.artifactRoot, inventory, generation: selected.generation, descriptor: runtimeDescriptor });
