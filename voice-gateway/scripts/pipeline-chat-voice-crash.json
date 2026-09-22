@@ -1,0 +1,21 @@
+{
+  "schema": "gamebuddy-chat-voice-crash/v1",
+  "passed": true,
+  "reason": "ok: gateway crash mid-stream degrades silently, Chat completes unblocked",
+  "scenario": "crash",
+  "model": "deepseek-v4-flash",
+  "persona": "soft_maid",
+  "llm": {
+    "text": "好呀，今晚陪你。你听，夜风软软的，就像我的声音一样。想聊什么都可以哦。",
+    "deltas": 7,
+    "ttftMs": 6152,
+    "totalMs": 6554
+  },
+  "voice": {
+    "readyLine": "GameBuddy Voice Gateway listening on 127.0.0.1:49761 (protocol v1; voice ready).",
+    "surfaceBefore": "ready",
+    "killedAtMs": 1790070697894,
+    "deltasAfterCrash": 6,
+    "surfaceAfterCrash": null
+  }
+}
