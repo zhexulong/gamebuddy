@@ -20,6 +20,8 @@
  */
 export const ACCUMULATOR_MS = 100;
 export const MAX_CHUNK_LENGTH = 200;
+/** MiMo emotion/direction tags are short, punctuation-free tokens; longer parenthesised spans are action beats. */
+export const MAX_TAG_LENGTH = 12;
 
 export type SentenceChunk = Readonly<{ text: string; complete: boolean }>;
 
@@ -31,6 +33,8 @@ export class StreamingSentenceChunker {
   #segmenter: Intl.Segmenter;
   #firstPushMs: number | undefined;
   #fenceActive = false;
+  #actionBeatActive = false;
+  #boldActive = false;
 
   public constructor(locale = "zh-CN") {
     this.#segmenter = new Intl.Segmenter(locale, { granularity: "sentence" });
@@ -44,6 +48,8 @@ export class StreamingSentenceChunker {
     this.#buffer = "";
     this.#firstPushMs = undefined;
     this.#fenceActive = false;
+    this.#actionBeatActive = false;
+    this.#boldActive = false;
   }
 
   /**
@@ -57,6 +63,14 @@ export class StreamingSentenceChunker {
     // Markdown fenced code is not speakable: strip fenced regions before any
     // segmentation so a fence boundary can never form a sentence edge.
     this.#buffer = this.#stripFenced(this.#buffer);
+    // Character-card action beats (*...*) are stage direction, not speech:
+    // strip them exactly like fenced regions so a beat boundary can never
+    // form a sentence edge either. **emphasis** survives (it is spoken
+    // content, not a beat) exactly like extractSpeakableText.
+    this.#buffer = this.#stripActionBeats(this.#buffer);
+    // Parenthesised spans: short MiMo tags survive, sentence-like action
+    // beats are stripped (same rule as extractSpeakableText, streamed).
+    this.#buffer = this.#stripParenBeats(this.#buffer);
     if (this.#firstPushMs === undefined) this.#firstPushMs = nowMs;
     const chunks: SentenceChunk[] = [];
 
@@ -125,6 +139,81 @@ export class StreamingSentenceChunker {
       start = newline + 1;
     }
     return kept.join("\n");
+  }
+
+  /**
+   * Streaming action-beat stripper, the stream analogue of
+   * `extractSpeakableText` in speakable-text.ts. A single `*` toggles a
+   * `*...*` stage-direction beat (dropped); a `**` pair toggles emphasis
+   * (kept as spoken content, asterisks removed). State persists across
+   * `push` calls so a beat/emphasis boundary split by a delta boundary is
+   * still handled: the buffered text holds only what survived the previous
+   * strip, and the mode flags say whether the next fragment continues inside
+   * a beat or emphasis.
+   */
+  #stripActionBeats(text: string): string {
+    if (!text.includes("*")) return text;
+    const out: string[] = [];
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i];
+      if (ch === "*") {
+        const double = text[i + 1] === "*";
+        if (double) {
+          // **emphasis**: spoken content, drop only the asterisks.
+          this.#boldActive = !this.#boldActive;
+          i += 2;
+          continue;
+        }
+        if (this.#boldActive) {
+          // A single asterisk inside emphasis is emphasis content.
+          out.push(ch);
+          i += 1;
+          continue;
+        }
+        // Single asterisk toggles the action beat.
+        this.#actionBeatActive = !this.#actionBeatActive;
+        i += 1;
+        continue;
+      }
+      if (!this.#actionBeatActive) out.push(ch);
+      i += 1;
+    }
+    return out.join("");
+  }
+
+  /**
+   * Parenthesised-span stripper (matches extractSpeakableText): a short
+   * punctuation-free inner text is a MiMo emotion/direction tag and survives
+   * for the TTS; a sentence-like inner text is a stage-direction action beat
+   * and is dropped. Unclosed spans stay in the buffer (the chunker re-scans
+   * the whole buffer every push), so a beat split across deltas is handled
+   * without cross-call state.
+   */
+  #stripParenBeats(text: string): string {
+    if (!text.includes("(") && !text.includes("（")) return text;
+    const out: string[] = [];
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i];
+      if (ch === "(" || ch === "（") {
+        const closer = ch === "(" ? ")" : "）";
+        const end = text.indexOf(closer, i + 1);
+        if (end < 0) {
+          // Unclosed: keep the whole span buffered for the next push.
+          out.push(text.slice(i));
+          break;
+        }
+        const inner = text.slice(i + 1, end).trim();
+        const keep = inner.length > 0 && inner.length <= MAX_TAG_LENGTH && !/[\p{P}\p{S}]/u.test(inner);
+        out.push(keep ? text.slice(i, end + 1) : " ");
+        i = end + 1;
+        continue;
+      }
+      out.push(ch);
+      i += 1;
+    }
+    return out.join("");
   }
 
   #firstBoundary(text: string): number | null {

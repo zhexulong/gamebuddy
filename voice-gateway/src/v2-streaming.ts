@@ -331,6 +331,23 @@ export class V2StreamingRuntime {
     });
     const playedBytes = this.#pipeline?.playedBytes ?? 0;
     this.#jobs.delete(job.speechJobId);
+    // A hardware/output failure during playback must not look like a clean
+    // completion: settle the job as failed-before-side-effect when nothing
+    // played yet, otherwise unknown-after-admission (side effect may exist
+    // but its extent is unknowable). The gateway itself stays alive so Chat
+    // keeps working and the Host can re-probe.
+    if (this.#pipeline?.outputFailed === true) {
+      this.pushPlayback(
+        job.sessionId,
+        job.connectionEpoch,
+        null,
+        playedBytes > 0 ? "unknown_after_admission" : "failed_before_side_effect",
+        "output_failed",
+        job.speechJobId,
+        job.voiceProfile,
+      );
+      return;
+    }
     this.pushPlayback(
       job.sessionId,
       job.connectionEpoch,

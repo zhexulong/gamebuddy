@@ -1,11 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import {
-  ACCUMULATOR_MS,
-  MAX_CHUNK_LENGTH,
-  StreamingSentenceChunker,
-} from "./streaming-chunker.js";
+import { ACCUMULATOR_MS, MAX_CHUNK_LENGTH, MAX_TAG_LENGTH, StreamingSentenceChunker } from "./streaming-chunker.js";
 
 function collect(chunker: StreamingSentenceChunker, deltas: readonly Readonly<{ text: string; atMs: number }>[]) {
   const out: Array<Readonly<{ text: string; complete: boolean }>> = [];
@@ -92,4 +88,59 @@ test("StreamingSentenceChunker groups newline-terminated sentences and keeps quo
     { text: "Line one.", complete: true },
     { text: "Line two!", complete: true },
   ]);
+});
+
+test("StreamingSentenceChunker strips character-card action beats but keeps dialogue", () => {
+  const chunker = new StreamingSentenceChunker("zh-CN");
+  // *...* action beats are stage direction: dropped, dialogue survives.
+  const chunks = collect(chunker, [
+    { text: "*从屏幕边探出脑袋，尾巴轻轻晃了晃* 唔…今天帮你整理了文件。", atMs: 0 },
+  ]);
+  assert.deepEqual(chunks, [{ text: "唔…今天帮你整理了文件。", complete: true }]);
+});
+
+test("StreamingSentenceChunker keeps **emphasis** but not *beats* across deltas", () => {
+  const chunker = new StreamingSentenceChunker("zh-CN");
+  // A beat can split across deltas; emphasis survives as spoken content.
+  const chunks = collect(chunker, [
+    { text: "*从屏", atMs: 0 },
+    { text: "幕边探出脑袋，尾巴轻轻晃了晃* **很重要** 哦！", atMs: 1 },
+    { text: " 要听吗？", atMs: 2 },
+  ]);
+  assert.deepEqual(chunks, [
+    { text: "很重要 哦！", complete: true },
+    { text: "要听吗？", complete: true },
+  ]);
+});
+
+test("StreamingSentenceChunker drops a pure action-beat utterance entirely", () => {
+  const chunker = new StreamingSentenceChunker("zh-CN");
+  const chunks = collect(chunker, [
+    { text: "*安静地喝了一口茶*", atMs: 0 },
+  ]);
+  assert.deepEqual(chunks, []);
+  assert.deepEqual(chunker.flush(), []);
+});
+
+test("StreamingSentenceChunker strips parenthesised action beats but keeps short MiMo tags", () => {
+  const chunker = new StreamingSentenceChunker("zh-CN");
+  const chunks = collect(chunker, [
+    { text: "（翻出记事本，笔尖轻点）歌词啊……让我想想。", atMs: 0 },
+  ]);
+  assert.deepEqual(chunks, [{ text: "歌词啊……让我想想。", complete: true }]);
+  // Short emotion tags survive for the TTS.
+  const tagChunker = new StreamingSentenceChunker("zh-CN");
+  const tagChunks = collect(tagChunker, [
+    { text: "（轻声）悄悄告诉你，今天风很舒服。", atMs: 0 },
+  ]);
+  assert.deepEqual(tagChunks, [{ text: "（轻声）悄悄告诉你，今天风很舒服。", complete: true }]);
+});
+
+test("StreamingSentenceChunker handles a parenthesised beat split across deltas", () => {
+  const chunker = new StreamingSentenceChunker("zh-CN");
+  const chunks = collect(chunker, [
+    { text: "（翻出记事本，笔尖轻", atMs: 0 },
+    { text: "点）好的，这就来。", atMs: 1 },
+  ]);
+  assert.deepEqual(chunks, [{ text: "好的，这就来。", complete: true }]);
 });

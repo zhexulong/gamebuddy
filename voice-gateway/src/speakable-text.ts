@@ -16,16 +16,35 @@
  *  - A `*...*` span is an action beat and is removed (single asterisks, also
  *    spanning newlines; `**bold**` survives because it is emphasis, not a
  *    beat, and is abbreviated).
- *  - Parenthesised MiMo emotion tags (（轻声）(whisper)) survive: those are
- *    native TTS direction, not narration.
+ *  - A `（...）`/`(...)` span is either a short MiMo emotion/direction tag
+ *    (e.g. `（轻声）` / `(whisper)`, kept for the TTS) or a long action beat
+ *    (stage direction, stripped). The boundary is the tag length: a short
+ *    no-punctuation token is kept, a sentence-like span is stripped, so the
+ *    companion's stage direction never gets read aloud.
  *  - Everything else (quoted or plain dialogue) is kept.
  *  - Whitespace is collapsed and the result trimmed; a pure-beat input yields
  *    the empty string (nothing to say aloud).
  */
+
+/** MiMo emotion/direction tags are short, punctuation-free tokens: keep them
+ * for the TTS. A parenthesised sentence (action beat) is stripped instead. */
+export const MAX_TAG_LENGTH = 12;
+export function isShortMiMoTag(inner: string): boolean {
+  const trimmed = inner.trim();
+  return trimmed.length > 0 && trimmed.length <= MAX_TAG_LENGTH && !/[\p{P}\p{S}]/u.test(trimmed);
+}
+export function stripParenthesizedBeats(input: string): string {
+  return input.replace(/\([^)]*\)|（[^）]*）/g, (match) => {
+    const inner = match.slice(1, -1);
+    return isShortMiMoTag(inner) ? match : " ";
+  });
+}
+
 export function extractSpeakableText(input: string): string {
   if (typeof input !== "string" || input.length === 0) return "";
   let text = input.replace(/\*\*[^*]+\*\*/g, (match) => match.slice(2, -2));
   text = text.replace(/\*[^*]+\*/gs, " ");
+  text = stripParenthesizedBeats(text);
   text = text.replace(/\s+/g, " ").trim();
   return text;
 }
