@@ -326,6 +326,48 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, removed ? ExecutionState.Succeeded : ExecutionState.Uncertain, removed ? "stump_cleared" : "stump_clear_postcondition_unavailable", evidence);
     }
 
+    /// <summary>
+    /// Cut exactly one adjacent Weed object with an equipped scythe through the
+    /// native Object.performToolAction weeds branch (target version 1.6). The
+    /// scythe must be the current tool and the target object must still be the
+    /// requested weed; a removed weed is the only success postcondition. No
+    /// other litter class is touched (stones stay in break_rock_source, debris
+    /// clumps in clear_debris).
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalCutWeeds(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove || Game1.player.UsingTool || Game1.player.toolPower.Value != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? weed) || !weed.IsWeeds()
+            || !string.Equals(BuildWeedTargetId(location, targetX, targetY, weed), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "weed_target_changed", $"target={targetX},{targetY}");
+
+        int healthBefore = weed.MinutesUntilReady;
+        float staminaBefore = Game1.player.Stamina;
+        bool handled = weed.performToolAction(weapon);
+        bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterWeed)
+            || !ReferenceEquals(afterWeed, weed);
+        float staminaAfter = Game1.player.Stamina;
+        string evidence = $"target={expectedTargetId};type=weed;tool=scythe;qualified_item_id={weed.QualifiedItemId};health_before={healthBefore};health_after={(removed ? "removed" : afterWeed!.MinutesUntilReady.ToString(CultureInfo.InvariantCulture))};removed={removed.ToString().ToLowerInvariant()};stamina_delta={staminaBefore - staminaAfter:0.##}";
+        return this.RememberTerminal(requestId, executionId, handled && removed ? ExecutionState.Succeeded : ExecutionState.Uncertain, handled && removed ? "weeds_cut" : "weed_cut_postcondition_unavailable", evidence);
+    }
+
     private static int ItemRankForWeapon(Tool item)
     {
         if (item is MeleeWeapon melee)

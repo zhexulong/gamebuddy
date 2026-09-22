@@ -2310,3 +2310,49 @@ test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
   );
   assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeSaplingTargets: undefined } }, scope, now), "accepted");
 });
+
+test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows", () => {
+  const basePayload: Snapshot = {
+    revision: 8,
+    location: "Farm",
+    tile: { x: 6, y: 7 },
+    stamina: 270,
+    health: 100,
+    actionable: true,
+    capabilities: ["cut_weeds", "scythe_crop"],
+    catalogRevision: 1,
+    enabledActionIds: ["cut_weeds", "scythe_crop"],
+    presentationLocale: "en-US",
+    activeExecution: null,
+    weedTargets: [{ targetId: "weed_0123456789abcdef", location: "Farm", x: 6, y: 7, health: 1 }],
+    scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "(O)262" }],
+  };
+  const base = newEnvelope("snapshot", scope, basePayload, "weed_snapshot_01", now);
+  assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
+  assert.equal(
+    diagnoseBridgeMessage(
+      { ...base, payload: { ...basePayload, weedTargets: [{ targetId: "weed_0123456789abcdef", location: "Farm", x: 6, y: 7, health: -1 }] } },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:weedTargets",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...base,
+        payload: {
+          ...basePayload,
+          scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "" }],
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:scytheCropTargets",
+  );
+  assert.equal(
+    diagnoseBridgeMessage({ ...base, payload: { ...basePayload, weedTargets: undefined, scytheCropTargets: undefined } }, scope, now),
+    "accepted",
+  );
+});

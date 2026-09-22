@@ -245,6 +245,8 @@ public sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, in
 public sealed record BridgeChestStoreTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, int Stack);
 public sealed record BridgeTreeStumpTarget(string TargetId, string Location, int X, int Y, string TreeType, float Health);
 public sealed record BridgeTreeSaplingTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId);
+public sealed record BridgeWeedTarget(string TargetId, string Location, int X, int Y, int Health);
+public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId);
 public sealed record BridgeChestRetrieveTarget(string TargetId, int X, int Y, string QualifiedItemId, int Stack);
 public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, int Stack);
 
@@ -292,6 +294,8 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeTreeChopResultTarget>? TreeChopResultTargets,
     IReadOnlyList<BridgeTreeStumpTarget>? TreeStumpTargets,
     IReadOnlyList<BridgeTreeSaplingTarget>? TreeSaplingTargets,
+    IReadOnlyList<BridgeWeedTarget>? WeedTargets,
+    IReadOnlyList<BridgeScytheCropTarget>? ScytheCropTargets,
     IReadOnlyList<BridgeNpcRelationshipTarget>? NpcRelationshipTargets,
     IReadOnlyList<BridgePetTarget>? PetTargets,
     IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,

@@ -14,7 +14,8 @@
  *  - `<thinking>...</thinking>` / `<thought>...</thought>` blocks are removed
  *    (multi-line allowed).
  *  - `*...*` and `**...**` action beats are removed (multi-line allowed).
- *  - `(...)` parenthesised asides are removed.
+ *  - `(...)` and `（...）` parenthesised asides are removed (full-width included).
+ *  - Markdown `---` separators are removed.
  *  - Remaining dialogue is NFC-normalized and whitespace-collapsed.
  *
  * A reply that is pure stage direction dehydrates to the empty string, so the
@@ -27,9 +28,12 @@ export function dehydrateCompanionSpeech(input: string): string {
   text = text.replace(/<(?:thinking|thought)>[\s\S]*?<\/(?:thinking|thought)>/gi, " ");
   // 2. Asterisk action beats (*...* and **...**), possibly spanning lines.
   text = text.replace(/\*{1,2}[^*]*\*{1,2}/gs, " ");
-  // 3. Parenthesised asides ((轻声)(笑)(smiles)).
+  // 3. Parenthesised asides ((轻声)(笑)(smiles)) — ASCII and full-width.
   text = text.replace(/\([^)]*\)/g, " ");
-  // 4. Collapse whitespace and normalize.
+  text = text.replace(/（[^）]*）/g, " ");
+  // 4. Markdown horizontal-rule separators.
+  text = text.replace(/^[ \t]*---[ \t]*$/gm, " ");
+  // 5. Collapse whitespace and normalize.
   text = text.replace(/\s+/g, " ").trim().normalize("NFC");
   return text;
 }

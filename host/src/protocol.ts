@@ -313,6 +313,17 @@ export type Snapshot = Readonly<{
   }>[];
   /** Nearby open plantable tiles paired with an owned wild-tree sapling slot (plant_sapling). */
   treeSaplingTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; qualifiedItemId: string }>[];
+  /** Nearby Weed objects cuttable by an equipped scythe (cut_weeds). */
+  weedTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; health: number }>[];
+  /** Nearby ready Scythe-method crops harvestable by an equipped scythe (scythe_crop). */
+  scytheCropTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    cropId: string;
+    qualifiedHarvestItemId: string;
+  }>[];
   /** Nearby native machines; an idle Keg may expose the one exact Coffee Bean input slot accepted by machine_load, and a ready Coffee result may expose collection eligibility. */
   machineTargets?: readonly Readonly<{
     targetId: string;
@@ -866,6 +877,8 @@ const SNAPSHOT_KEYS = [
   "treeChopResultTargets",
   "treeStumpTargets",
   "treeSaplingTargets",
+  "weedTargets",
+  "scytheCropTargets",
   "npcRelationshipTargets",
   "petTargets",
   "animalProductTargets",
@@ -1867,6 +1880,20 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:treeSaplingTargets";
   if (
+    value.weedTargets !== undefined &&
+    (!Array.isArray(value.weedTargets) ||
+      value.weedTargets.length > 16 ||
+      !value.weedTargets.every(isWeedTargetFact))
+  )
+    return "invalid_snapshot:weedTargets";
+  if (
+    value.scytheCropTargets !== undefined &&
+    (!Array.isArray(value.scytheCropTargets) ||
+      value.scytheCropTargets.length > 16 ||
+      !value.scytheCropTargets.every(isScytheCropTargetFact))
+  )
+    return "invalid_snapshot:scytheCropTargets";
+  if (
     value.npcRelationshipTargets !== undefined &&
     (!Array.isArray(value.npcRelationshipTargets) ||
       value.npcRelationshipTargets.length > 64 ||
@@ -2053,6 +2080,14 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.treeSaplingTargets) &&
         value.treeSaplingTargets.length <= 64 &&
         value.treeSaplingTargets.every(isTreeSaplingTargetFact))) &&
+    (value.weedTargets === undefined ||
+      (Array.isArray(value.weedTargets) &&
+        value.weedTargets.length <= 16 &&
+        value.weedTargets.every(isWeedTargetFact))) &&
+    (value.scytheCropTargets === undefined ||
+      (Array.isArray(value.scytheCropTargets) &&
+        value.scytheCropTargets.length <= 16 &&
+        value.scytheCropTargets.every(isScytheCropTargetFact))) &&
     (value.npcRelationshipTargets === undefined ||
       (Array.isArray(value.npcRelationshipTargets) &&
         value.npcRelationshipTargets.length <= 64 &&
@@ -2969,6 +3004,42 @@ function isTreeSaplingTargetFact(value: unknown): boolean {
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
     value.qualifiedItemId.length <= 128
+  );
+}
+
+function isWeedTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "health"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.health === "number" &&
+    Number.isSafeInteger(value.health) &&
+    value.health >= 0 &&
+    value.health <= 1000
+  );
+}
+
+function isScytheCropTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "cropId", "qualifiedHarvestItemId"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.cropId === "string" &&
+    value.cropId.length > 0 &&
+    value.cropId.length <= 128 &&
+    typeof value.qualifiedHarvestItemId === "string" &&
+    value.qualifiedHarvestItemId.length > 0 &&
+    value.qualifiedHarvestItemId.length <= 128
   );
 }
 
