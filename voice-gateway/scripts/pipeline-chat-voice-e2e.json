@@ -1,0 +1,21 @@
+{
+  "schema": "gamebuddy-chat-voice-e2e/v1",
+  "passed": true,
+  "reason": "ok",
+  "model": "deepseek-v4-flash",
+  "persona": "soft_maid",
+  "llm": {
+    "text": "嗯嗯，今晚我都陪着你呀。想听星星的故事，还是我学小猫打呼噜给你听？😊",
+    "deltas": 6,
+    "ttftMs": 2648,
+    "totalMs": 3068
+  },
+  "voice": {
+    "readyLine": "GameBuddy Voice Gateway listening on 127.0.0.1:49747 (protocol v1; voice ready).",
+    "connected": true,
+    "surfaceBefore": "ready",
+    "surfaceDuring": "speaking",
+    "terminalStatus": "completed",
+    "surfaceAfter": "ready"
+  }
+}
