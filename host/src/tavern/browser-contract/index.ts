@@ -194,6 +194,8 @@ const OperationId = Type.Union([
   Type.Literal("world-info.bind"),
   Type.Literal("settings.voice.read"),
   Type.Literal("settings.voice.consent"),
+  Type.Literal("settings.language.read"),
+  Type.Literal("settings.language.update"),
 ]);
 const LabelKey = Type.Union([
   Type.Literal("tavern.nav.chat"),
@@ -207,6 +209,8 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.world-info.bind"),
   Type.Literal("tavern.operation.settings.voice.read"),
   Type.Literal("tavern.operation.settings.voice.consent"),
+  Type.Literal("tavern.operation.settings.language.read"),
+  Type.Literal("tavern.operation.settings.language.update"),
 ]);
 export const TavernBrowserOperationV1Schema = strictObject({
   operationId: OperationId,
@@ -287,6 +291,21 @@ export const TavernVoicePreferenceConsentCommandV1Schema = Type.Union([
     action: Type.Literal("revoke"),
   }),
 ]);
+
+/**
+ * Host-owned companion language preference. The Tavern (frontend) is the
+ * single configuration point for the companion language: Agent session
+ * language, companion presentation locale and fixture required-live-locale all
+ * derive from it instead of each side hard-coding its own.
+ */
+export const TavernLanguagePreferenceV1Schema = strictObject({
+  revision: Revision,
+  locale: Type.Union([Type.Literal("zh-CN"), Type.Literal("en-US"), Type.Null()]),
+});
+export const TavernLanguagePreferenceCommandV1Schema = strictObject({
+  expectedRevision: Revision,
+  locale: Type.Union([Type.Literal("zh-CN"), Type.Literal("en-US")]),
+});
 
 const MemoryStateSnapshotV1Schema = Type.Union([
   strictObject({
@@ -748,6 +767,35 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: TavernVoicePreferenceV1Schema },
   }),
   route({
+    routeId: "settings.language.read",
+    method: "GET",
+    path: "/api/tavern/v1/settings/language",
+    operationId: "settings.language.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernLanguagePreferenceV1Schema },
+  }),
+  route({
+    routeId: "settings.language.update",
+    method: "PUT",
+    path: "/api/tavern/v1/settings/language",
+    operationId: "settings.language.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: TavernLanguagePreferenceCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernLanguagePreferenceV1Schema },
+  }),
+  route({
     routeId: "events",
     method: "GET",
     path: "/api/tavern/v1/events",
@@ -784,6 +832,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernVoiceSurfaceStateV1Schema,
     TavernVoicePreferenceV1Schema,
     TavernVoicePreferenceConsentCommandV1Schema,
+    TavernLanguagePreferenceV1Schema,
+    TavernLanguagePreferenceCommandV1Schema,
     TavernStateSnapshotV1Schema,
     SubmitMessageCommandV1Schema,
     SaveDraftCommandV1Schema,
@@ -822,6 +872,8 @@ export type TavernStateSnapshotV1 = Static<typeof TavernStateSnapshotV1Schema>;
 export type TavernVoiceSurfaceStateV1 = Static<typeof TavernVoiceSurfaceStateV1Schema>;
 export type TavernVoicePreferenceV1 = Static<typeof TavernVoicePreferenceV1Schema>;
 export type TavernVoicePreferenceConsentCommandV1 = Static<typeof TavernVoicePreferenceConsentCommandV1Schema>;
+export type TavernLanguagePreferenceV1 = Static<typeof TavernLanguagePreferenceV1Schema>;
+export type TavernLanguagePreferenceCommandV1 = Static<typeof TavernLanguagePreferenceCommandV1Schema>;
 export type TavernBrowserOperationV1 = Static<typeof TavernBrowserOperationV1Schema>;
 export type TavernStateEventStreamV1 = Static<typeof TavernStateEventStreamV1Schema>;
 export type TavernBrowserNavigationItemIdV1 = Static<typeof NavigationItemId>;

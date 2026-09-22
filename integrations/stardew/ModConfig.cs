@@ -18,6 +18,14 @@ public sealed class ModConfig
     public string WindowMode { get; init; } = "visible";
 
     /// <summary>
+    /// Optional BCP-47 companion presentation locale from the frontend-set
+    /// language preference. When present it is the single locale contract for
+    /// companion text presentation and Agent session language; when absent the
+    /// Mod falls back to the live game locale. Empty string means unset.
+    /// </summary>
+    public string PresentationLocale { get; init; } = string.Empty;
+
+    /// <summary>
     /// Disposable one-process harness for the existing shared action runtime.
     /// It binds only the current native local Player and must never start a
     /// LAN server, Farmhand provisioner, or second process.

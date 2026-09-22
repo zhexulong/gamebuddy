@@ -64,6 +64,13 @@ type BodyProgramConsumerRecord = { port: BodyProgramPort; available: boolean; ac
 const bodyProgramConsumers = new WeakMap<BodyProgramConsumer, BodyProgramConsumerRecord>();
 
 /**
+ * Companion presentation locale used when no frontend-set language preference
+ * has been injected yet. Existing callers predate the Tavern language
+ * preference store; production wiring injects the stored preference.
+ */
+export const DEFAULT_COMPANION_LOCALE = "zh-CN" as const;
+
+/**
  * Creates the fixed production S4c materializer. This is construction-zone-only:
  * the eventual composer invokes it inside the live S4b one-shot callback after
  * durable prepare. No facade/model/Mod-wire configuration reaches this factory.
@@ -296,6 +303,13 @@ export type HostGameRuntimeMaterializerOptions = Readonly<{
   gameVoicePresentation?: GameVoicePresentationAttachment;
   /** Preview-only parent IPC attestation; absent for every ordinary production launch. */
   liveSourceAttester?: LiveSourceAttester;
+  /**
+   * Companion presentation locale from the single frontend-set language
+   * preference (Tavern settings). Subsumes every presentation/Agent-session
+   * locale so Host and Mod stay aligned; default zh-CN kept for existing
+   * callers that predate the preference store.
+   */
+  companionLocale?: "zh-CN" | "en-US";
 }>;
 
 export function createHostGameRuntimeMaterializer(
@@ -382,6 +396,7 @@ export function createHostGameRuntimeMaterializer(
             permit.gameSessionId,
             options.gameOperationalGateNonceSha256,
             options.gameVoicePresentation,
+            options.companionLocale ?? DEFAULT_COMPANION_LOCALE,
             fixedTools,
             Object.freeze({
               resolvedPolicy: mountedPolicy,
@@ -667,6 +682,7 @@ async function createMaterializedGameRuntime(
   gameSessionId: string,
   gameOperationalGateNonceSha256: string | undefined,
   _gameVoicePresentation: GameVoicePresentationAttachment | undefined,
+  companionLocale: "zh-CN" | "en-US",
   fixedTools: readonly ToolDefinition[],
   recoveryAttachment?: Pick<import("../runtime.js").GameCompanionRuntimeAttachment, "recoveryJournal" | "recoveryBinding" | "recoveryPort"> & Readonly<{ resolvedPolicy: IntegrationActionPolicy }>,
 ): Promise<Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>> {
@@ -678,7 +694,7 @@ async function createMaterializedGameRuntime(
     worldId: world.worldId,
   });
   const turnTracker = new GameTurnLineageTracker();
-  const presentationLocale = "zh-CN";
+  const presentationLocale = companionLocale;
   const hostBindingFactory = (handle: Readonly<{ interruption: CompanionInterruption }>) => {
     if (!isFarmhandPresentationBridge(presentation))
       throw new Error("game_presentation_bridge_unavailable");

@@ -481,6 +481,12 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
     ["clear_debris", "npc_relationship", "pet_animal"].includes(action),
   );
   result.EnabledActions = actions;
+  // Same single language configuration point as the live runner: the
+  // frontend-set language preference flows into the Mod config, so the
+  // Mod-side companion presentation locale stays aligned with the Agent
+  // session locale.
+  const companionLocale = process.env.GAMEBUDDY_COMPANION_LOCALE === "en-US" ? "en-US" : "zh-CN";
+  result.PresentationLocale = companionLocale;
   return result;
 }
 function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, actions, binding) {
@@ -511,6 +517,12 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
     ["clear_debris", "npc_relationship", "pet_animal"].includes(action),
   );
   result.EnabledActions = actions;
+  // Same single language configuration point as the live runner: the
+  // frontend-set language preference flows into the Mod config, so the
+  // Mod-side companion presentation locale stays aligned with the Agent
+  // session locale.
+  const companionLocale = process.env.GAMEBUDDY_COMPANION_LOCALE === "en-US" ? "en-US" : "zh-CN";
+  result.PresentationLocale = companionLocale;
   return result;
 }
 async function rollbackFailedPreparation(context, backup, backupName, backupCreated, publicError) {
