@@ -1,7 +1,10 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { LocalStardewBridgeClient } from "../host/dist-test/local-stardew-bridge.js";
+import { LocalVoiceGatewayClient } from "../host/dist-test/voice-gateway-client.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER, } from "../host/dist-test/stardew-game-integration-adapter.js";
 import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge, STARDEW_INTEGRATION_LAUNCHER } from "../host/dist-test/stardew-integration-launcher.js";
 import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
@@ -15,8 +18,11 @@ import { createBuildWindowsStaleLockReclaimer } from "../host/dist-test/windows-
 const configPath = process.env.GAMEBUDDY_STARDew_CONFIG ?? "D:/Steam/steamapps/common/Stardew Valley/Mods/GameBuddy.Stardew/config.json";
 // Ladder selector: "0" = A→B (inspect→load, Keg inside FarmHouse), "1" =
 // walk→look→do (navigate out of FarmHouse to the door-side Keg, then inspect
-// and load). The runner is a single evolving live carrier; later ladders add
-// their own acceptance on top instead of new runners.
+// and load), "2" = ladder 1 + live voice: when the Mod returns the terminal
+// machine_coffee_loaded receipt, the Host streams a companion voice line
+// through the real Voice Gateway (MiMo TTS) and waits for its terminal
+// playback observation. The runner is a single evolving live carrier; later
+// ladders add their own acceptance on top instead of new runners.
 const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 const config = JSON.parse(await (await import("node:fs/promises")).readFile(configPath, "utf8"));
@@ -26,7 +32,187 @@ const identity = Object.freeze({ playerId: config.PlayerId, companionId: config.
 const deadline = Date.now() + 600_000;
 const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken, STARDEW_GAME_INTEGRATION_ADAPTER, undefined, "1.6.15");
 const factLog = [];
-client.onFact((fact) => { if (fact.type === "execution_receipt" || fact.type === "semantic_event" || fact.type === "error" || fact.type === "lifecycle") { factLog.push({ type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId }); console.error("BRIDGE_FACT", JSON.stringify(factLog.at(-1))); } });
+// Ladder 2: when the Mod returns the terminal machine_coffee_loaded receipt,
+// stream a companion voice line through the real Voice Gateway (MiMo TTS)
+// and wait for its terminal playback observation. Voice stays a one-shot
+// ladder-2 enhancement: it never changes game actions or receipts.
+let voice = null;
+let voiceChild = null;
+let voiceObservation = null;
+let voiceStarted = false;
+const voiceObservationPromise = new Promise((resolvePromise) => {
+  voice = resolvePromise;
+});
+client.onFact((fact) => {
+  if (fact.type === "execution_receipt" || fact.type === "semantic_event" || fact.type === "error" || fact.type === "lifecycle") {
+    factLog.push({ type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId });
+    console.error("BRIDGE_FACT", JSON.stringify(factLog.at(-1)));
+  }
+  if (LADDER === "2" && fact.type === "execution_receipt" && fact.payload?.reasonCode === "machine_coffee_loaded" && !voiceStarted) {
+    voiceStarted = true;
+    void (async () => {
+      try {
+        const { promiseVoiceObservation } = await startLadder2Voice();
+        voiceObservation = await promiseVoiceObservation;
+        voice?.();
+      } catch (error) {
+        console.error("VOICE_ERROR", String(error instanceof Error ? error.message : error));
+        voiceObservation = { terminalStatus: "failed_before_side_effect", error: String(error instanceof Error ? error.message : error) };
+        voice?.();
+      }
+    })();
+  }
+});
+
+/**
+ * ladder 2: start the real Voice Gateway child on a fresh loopback port/token,
+ * connect the Host v2 client, stream one companion line for the completed
+ * coffee load, and resolve with the terminal playback observation. Env: the
+ * runner reads MIMO_API_KEY from .env.local like the existing voice gates;
+ * GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION=desktop-consent-v1 is the operator
+ * consent contract the gateway checks before cloud TTS.
+ */
+function voiceGatewayCandidates() {
+  const explicit = Number(process.env.GAMEBUDDY_VOICE_PORT ?? 0);
+  return explicit > 0
+    ? [explicit]
+    : [49_731, 49_732, 49_733, 49_734, 49_735];
+}
+/** Probe one loopback port by opening and closing a listener; rejects if used. */
+function tryBindProbe(port) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    void import("node:net").then((net) => {
+      const server = net.createServer();
+      server.once("error", rejectPromise);
+      server.listen(port, "127.0.0.1", () => {
+        server.close(() => resolvePromise());
+      });
+    }, rejectPromise);
+  });
+}
+/**
+ * Spawn the Voice Gateway child with the exact minimal env contract, collect
+ * its stdout/stderr for the "listening on" readiness signal, and return the
+ * child handle.
+ */
+function startVoiceGatewayChild(node, gatewayPath, port, token, mimoKey) {
+  const child = spawn(node, ["--use-env-proxy", gatewayPath], {
+    cwd: new URL("..", import.meta.url),
+    env: {
+      ...process.env,
+      MIMO_API_KEY: mimoKey,
+      GAMEBUDDY_VOICE_PORT: String(port),
+      GAMEBUDDY_VOICE_TOKEN: token,
+      GAMEBUDDY_WINDOWS_OUTPUT_DEVICE: process.env.GAMEBUDDY_WINDOWS_OUTPUT_DEVICE ?? "default",
+      GAMEBUDDY_MIMO_VOICE: process.env.GAMEBUDDY_MIMO_VOICE ?? "冰糖",
+      GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION: "desktop-consent-v1",
+    },
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const startedOk = new Promise((resolvePromise) => {
+    const deadline = Date.now() + 20_000;
+    const poll = () => {
+      if (stdout.includes("listening on")) return resolvePromise(true);
+      if (stderr.length > 0) return resolvePromise(true);
+      if (Date.now() > deadline) return resolvePromise(true);
+      setTimeout(poll, 50);
+    };
+    poll();
+  });
+  return Object.freeze({ child, startedOk, readStderr: () => stderr });
+}
+
+async function startLadder2Voice() {
+  const node = process.execPath;
+  const gatewayPath = new URL("../voice-gateway/dist/main.js", import.meta.url).pathname.replace(/^\//, process.platform === "win32" ? "" : "/");
+  const token = process.env.GAMEBUDDY_VOICE_TOKEN ?? randomToken();
+  let mimoKey = process.env.MIMO_API_KEY;
+  const envPath = new URL("../.env.local", import.meta.url);
+  try {
+    const localEnv = await (await import("node:fs/promises")).readFile(envPath, "utf8");
+    for (const line of localEnv.split(/\r?\n/)) {
+      const match = /^MIMO_API_KEY=(.+)$/.exec(line.trim());
+      if (match) mimoKey = match[1];
+    }
+  } catch {}
+  if (typeof mimoKey !== "string" || mimoKey.length < 16)
+    throw new Error("MIMO_API_KEY_required_for_ladder2_voice");
+
+  // Voice Gateway listens on a documented fixed port by default; an explicit
+  // env overrides it. Candidates avoid Windows reserved exclusion ranges and
+  // are probed until one is free.
+  let started = null;
+  let lastError = null;
+  for (const port of voiceGatewayCandidates()) {
+    try {
+      await tryBindProbe(port);
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+    try {
+      started = startVoiceGatewayChild(node, gatewayPath, port, token, mimoKey);
+      voiceChild = started.child;
+      const ok = await started.startedOk;
+      if (!ok) throw new Error("voice_gateway_start_timeout");
+      const stderrText = started.readStderr();
+      if (stderrText.length > 0) throw new Error(`voice_gateway_start_failed: ${stderrText.slice(0, 300)}`);
+      const voiceClient = await LocalVoiceGatewayClient.connect({ port, token });
+      // connect() only authenticates; capabilities are populated by an explicit
+      // health revalidation (the same boundary Chat mounting uses). Without it
+      // streamSpeechChunk fails with voice_gateway_unavailable.
+      const health = await voiceClient.health("companion.default");
+      if (!health.ready) {
+        voiceClient.close();
+        throw new Error("voice_gateway_not_ready");
+      }
+      const waitReady = new Promise((resolvePromise) => {
+        const pollReady = () => {
+          if (voiceClient.capabilities?.ready === true) return resolvePromise(true);
+          if (!voiceClient.connected) return resolvePromise(false);
+          setTimeout(pollReady, 100);
+        };
+        pollReady();
+      });
+      if (!(await waitReady)) {
+        voiceClient.close();
+        throw new Error("voice_gateway_not_ready");
+      }
+      const termination = new Promise((resolvePromise) => {
+        voiceClient.onPlaybackObservation((observation) => {
+          if (observation?.type === "playback_observation" && observation?.terminalStatus !== undefined)
+            resolvePromise(observation);
+        });
+      });
+      const sessionId = `ladder2_${Date.now()}_session`;
+      const speechJobId = `ladder2_${Date.now()}_${randomToken(12)}`;
+      const speaker = "咖啡豆已经放进桶里啦，大概两小时后酿好！";
+      await voiceClient.streamSpeechChunk(sessionId, speechJobId, 0, speaker, true, Date.now() + 60_000, "companion.default");
+      const observation = await Promise.race([termination, new Promise((resolvePromise) => setTimeout(() => resolvePromise(null), 45_000))]);
+      voiceClient.close();
+      if (observation === null) throw new Error("voice_playback_observation_timeout");
+      return { promiseVoiceObservation: Promise.resolve(observation) };
+    } catch (error) {
+      lastError = error;
+      if (voiceChild !== null) { voiceChild.kill("SIGTERM"); voiceChild = null; }
+      continue;
+    }
+  }
+  throw lastError ?? new Error("voice_gateway_start_failed");
+}
+function randomToken(len = 32) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let out = "";
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
 // Trace every ordinary-action execution request the Agent sends so a
 // rejected coordinate is attributable to the actual submitted args.
 const originalExecute = client.execute.bind(client);
@@ -67,7 +253,7 @@ try {
   }));
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
   const tools = runtime.connected.host;
-  const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (LADDER === "1"
+  const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (LADDER === "1" || LADDER === "2"
     ? "你现在是星露谷里的 AI 伴侣，站在农舍（FarmHouse）里。任务：屋外的公交站（Bus Stop）门口有一台空的木桶机器（Keg），你的背包里有 5 颗咖啡豆。请严格按以下顺序完成：(1) 先用 find_destination 查询目的地（例如 query=\"bus\"），拿到它的 canonical label 或 dr1_ ref，然后调用 navigate_to_destination 导航到公交站；(2) 导航完成（receipt 成功）后，**必须立即调用 observe**，从最新返回结果的 machineTargets 数组中精确复制该 Keg 的 x、y、expectedTargetId（以及 loadInputSlot）；**绝不允许猜测或从旧位置复制坐标**；(3) 用这些精确坐标调用 machine_inspect 检查机器，确认 receipt 为 machine_inspected；(4) 再用同一 machineTargets 条目的 loadInputSlot/expectedQualifiedItemId/(O)433 和精确 x/y/expectedTargetId 调用 machine_load 把咖啡豆装进木桶。每一步都等 receipt 成功再继续，不要只回答文字。完成后用一句话总结结果。"
     : "你现在是星露谷里的 AI 伴侣。任务：你所在农场屋（FarmHouse）里有一台空的木桶机器（Keg）和 5 颗咖啡豆（Coffee Beans）。请完成两步操作：(1) 先检查（inspect）这台机器，确认它的位置与目标 ID；(2) 然后把咖啡豆装进木桶（load）开始酿造。你必须使用游戏工具（先观察 observe，再调用机器检查与装载工具），根据工具返回的真实结果执行，不要只回答文字。完成后用一句话总结结果。");
   const agentTurn = tools.acceptPlayerText(prompt, "zh-CN").then(() => ({ settled: true })).catch((error) => ({ settled: false, error: String(error?.message ?? error) }));
@@ -84,6 +270,21 @@ try {
     if (quick !== null) { turn = quick; break; }
   }
   if (turn === null) turn = await Promise.race([agentTurn, new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000))]);
+  // Ladder 2 additionally waits for the voice gateway's terminal playback
+  // observation for the companion line streamed on machine_coffee_loaded.
+  // The gateway child needs up to ~20s to boot and MiMo probe-ready before the
+  // job can stream, so ladder 2 budgets 90s overall; without a terminal
+  // completed observation the ladder stays blocked.
+  let voiceResult = null;
+  if (LADDER === "2") {
+    if (voiceStarted && voiceObservation === null) {
+      await Promise.race([voiceObservationPromise, new Promise((resolvePromise) => setTimeout(resolvePromise, 90_000))]);
+    }
+    if (voiceObservation !== null && voiceObservation.terminalStatus === "completed")
+      voiceResult = Object.freeze({ state: "completed", terminalStatus: voiceObservation.terminalStatus });
+    else
+      voiceResult = Object.freeze({ state: "blocked", detail: voiceObservation ?? "voice_not_streamed" });
+  }
   // Ladder acceptance: the carrier verifies the walk→look→do receipts actually
   // landed over the live bridge, not merely that a program reached a terminal.
   // ladder 0 accepts inspect→load; ladder 1 requires a real navigation receipt
@@ -98,19 +299,22 @@ try {
   const programSucceeded = status?.snapshot?.state === "succeeded";
   const ladderOnePassed = LADDER === "1" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined : true;
   const ladderZeroPassed = LADDER === "0" ? inspectReceipt !== undefined && loadReceipt !== undefined && programSucceeded : true;
+  const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && voiceResult?.state === "completed" : true;
   console.log(JSON.stringify({
-    state: ladderOnePassed && ladderZeroPassed ? "passed" : "blocked",
+    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed ? "passed" : "blocked",
     ladder: LADDER,
     programStatus: status,
     walkReceipt: walkReceipt ?? null,
     inspectReceipt: inspectReceipt ?? null,
     loadReceipt: loadReceipt ?? null,
+    voiceResult,
     agentTurn: turn,
     bridgeFacts: factLog,
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
   }, null, 2));
 } finally {
+  if (voiceChild !== null) { voiceChild.kill("SIGTERM"); await Promise.race([once(voiceChild, "close"), new Promise((resolvePromise) => setTimeout(resolvePromise, 5000))]); if (!voiceChild.killed) voiceChild.kill("SIGKILL"); }
   await runtime?.close().catch(() => {});
   await binding.close().catch(() => {});
   client.close("agent_ab_complete");
