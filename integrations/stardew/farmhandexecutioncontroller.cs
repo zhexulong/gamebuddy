@@ -1316,6 +1316,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
+            advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal) ? DiscoverChestStoreTargets(player) : null,
+            advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal) ? DiscoverChestRetrieveTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverInventoryItemFacts(player) : null,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             PresentationLocale: string.Empty);
@@ -1336,7 +1338,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
         TreeChopSourceTargets: null, TreeChopResultTargets: null, NpcRelationshipTargets: null, PetTargets: null,
-        AnimalProductTargets: null, FeedTroughTargets: null, InventoryItemFacts: null, FoodTargets: null,
+        AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
         PresentationLocale: string.Empty);
     }
 
@@ -1915,6 +1917,72 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             }
         }
         return result;
+    }
+
+    private IReadOnlyList<BridgeChestStoreTarget> DiscoverChestStoreTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeChestStoreTarget>();
+        List<BridgeChestStoreTarget> result = new();
+        foreach (StardewValley.Object obj in location.objects.Values)
+        {
+            if (obj is not StardewValley.Objects.Chest chest || !IsOwnedOrdinaryChest(chest) || !IsChestTargetInRange(player, (int)chest.TileLocation.X, (int)chest.TileLocation.Y))
+                continue;
+            // Advertise one storable inventory slot per chest: the first
+            // non-tool, non-empty item the Farmhand could move into it.
+            int slot = FindFirstStorableSlot(player);
+            if (slot < 0) continue;
+            StardewValley.Item item = player.Items[slot]!;
+            result.Add(new BridgeChestStoreTarget(
+                BuildChestTargetId(location, (int)chest.TileLocation.X, (int)chest.TileLocation.Y, chest),
+                (int)chest.TileLocation.X, (int)chest.TileLocation.Y, slot, item.QualifiedItemId, item.Stack));
+            if (result.Count >= 16) break;
+        }
+        return result;
+    }
+
+    private IReadOnlyList<BridgeChestRetrieveTarget> DiscoverChestRetrieveTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeChestRetrieveTarget>();
+        List<BridgeChestRetrieveTarget> result = new();
+        foreach (StardewValley.Object obj in location.objects.Values)
+        {
+            if (obj is not StardewValley.Objects.Chest chest || !IsOwnedOrdinaryChest(chest) || !IsChestTargetInRange(player, (int)chest.TileLocation.X, (int)chest.TileLocation.Y))
+                continue;
+            StardewValley.Item? first = chest.GetItemsForPlayer().FirstOrDefault(item => item is not null && item.Stack > 0);
+            if (first is null) continue;
+            if (!player.couldInventoryAcceptThisItem(first)) continue;
+            result.Add(new BridgeChestRetrieveTarget(
+                BuildChestTargetId(location, (int)chest.TileLocation.X, (int)chest.TileLocation.Y, chest),
+                (int)chest.TileLocation.X, (int)chest.TileLocation.Y, first.QualifiedItemId, first.Stack));
+            if (result.Count >= 16) break;
+        }
+        return result;
+    }
+
+    private static bool IsOwnedOrdinaryChest(StardewValley.Objects.Chest chest) =>
+        chest.playerChest.Value
+        && chest.GlobalInventoryId is null
+        && chest.SpecialChestType is StardewValley.Objects.Chest.SpecialChestTypes.None;
+
+    private static bool IsChestTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 6);
+
+    private static int FindFirstStorableSlot(Farmer player)
+    {
+        for (int slot = 0; slot < player.Items.Count; slot++)
+        {
+            StardewValley.Item? item = player.Items[slot];
+            if (item is not null && item.Stack > 0 && item is not Tool)
+                return slot;
+        }
+        return -1;
+    }
+
+    private static string BuildChestTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Objects.Chest chest)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:chest:{chest.QualifiedItemId}";
+        return $"chest_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
     private static string BuildAnimalProductTargetId(StardewValley.GameLocation location, int slot, FarmAnimal animal, Tool tool)

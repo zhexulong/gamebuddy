@@ -242,6 +242,8 @@ public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X,
 
 public sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, int Y, int HayStack);
 
+public sealed record BridgeChestStoreTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, int Stack);
+public sealed record BridgeChestRetrieveTarget(string TargetId, int X, int Y, string QualifiedItemId, int Stack);
 public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, int Stack);
 
 public sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, int Stack, int Edibility, bool IsDrink);
@@ -290,6 +292,8 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgePetTarget>? PetTargets,
     IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,
     IReadOnlyList<BridgeFeedTroughTarget>? FeedTroughTargets,
+    IReadOnlyList<BridgeChestStoreTarget>? ChestStoreTargets,
+    IReadOnlyList<BridgeChestRetrieveTarget>? ChestRetrieveTargets,
     IReadOnlyList<BridgeInventoryItemFact>? InventoryItemFacts,
     IReadOnlyList<BridgeFoodTarget>? FoodTargets,
     string PresentationLocale

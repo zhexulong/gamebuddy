@@ -351,6 +351,10 @@ export type Snapshot = Readonly<{
   }>[];
   /** Nearby empty native AnimalHouse Trough tiles paired with an owned Hay slot. Placement does not prove an animal has eaten. */
   feedTroughTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; hayStack: number }>[];
+  /** Nearby player-owned ordinary Chests with a storable item in the Farmhand inventory (chest_store). */
+  chestStoreTargets?: readonly Readonly<{ targetId: string; x: number; y: number; slot: number; qualifiedItemId: string; stack: number }>[];
+  /** Nearby player-owned ordinary Chests holding an item retrievable into the Farmhand inventory (chest_retrieve). */
+  chestRetrieveTargets?: readonly Readonly<{ targetId: string; x: number; y: number; qualifiedItemId: string; stack: number }>[];
   /** Bounded live inventory facts, currently published only for animal-product output rereads. */
   inventoryItemFacts?: readonly Readonly<{ slot: number; qualifiedItemId: string; stack: number }>[];
   /** Owned, ordinary edible inventory items available through the native eat path. */
@@ -853,6 +857,8 @@ const SNAPSHOT_KEYS = [
   "petTargets",
   "animalProductTargets",
   "feedTroughTargets",
+  "chestStoreTargets",
+  "chestRetrieveTargets",
   "inventoryItemFacts",
   "foodTargets",
 ] as const;
@@ -2012,6 +2018,14 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.feedTroughTargets) &&
         value.feedTroughTargets.length <= 32 &&
         value.feedTroughTargets.every(isFeedTroughTargetFact))) &&
+    (value.chestStoreTargets === undefined ||
+      (Array.isArray(value.chestStoreTargets) &&
+        value.chestStoreTargets.length <= 16 &&
+        value.chestStoreTargets.every(isChestStoreTargetFact))) &&
+    (value.chestRetrieveTargets === undefined ||
+      (Array.isArray(value.chestRetrieveTargets) &&
+        value.chestRetrieveTargets.length <= 16 &&
+        value.chestRetrieveTargets.every(isChestRetrieveTargetFact))) &&
     (value.inventoryItemFacts === undefined ||
       (Array.isArray(value.inventoryItemFacts) &&
         value.inventoryItemFacts.length <= 36 &&
@@ -2974,6 +2988,39 @@ function isFeedTroughTargetFact(value: unknown): boolean {
     Number.isSafeInteger(value.hayStack) &&
     value.hayStack > 0 &&
     value.hayStack <= 999
+  );
+}
+
+function isChestStoreTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack"]) &&
+    isOpaqueId(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    isToolSlot(value.slot) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.stack === "number" &&
+    Number.isSafeInteger(value.stack) &&
+    value.stack > 0
+  );
+}
+
+function isChestRetrieveTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack"]) &&
+    isOpaqueId(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.stack === "number" &&
+    Number.isSafeInteger(value.stack) &&
+    value.stack > 0
   );
 }
 
