@@ -302,6 +302,15 @@ export type Snapshot = Readonly<{
     moss: false;
     tapped: false;
   }>[];
+  /** Nearby TerrainFeature Tree stumps (stump.Value == true) chippable by chop_stump; ResourceClumps stay in debrisTargets. */
+  treeStumpTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    treeType: string;
+    health: number;
+  }>[];
   /** Nearby native machines; an idle Keg may expose the one exact Coffee Bean input slot accepted by machine_load, and a ready Coffee result may expose collection eligibility. */
   machineTargets?: readonly Readonly<{
     targetId: string;
@@ -853,6 +862,7 @@ const SNAPSHOT_KEYS = [
   "machineTargets",
   "treeChopSourceTargets",
   "treeChopResultTargets",
+  "treeStumpTargets",
   "npcRelationshipTargets",
   "petTargets",
   "animalProductTargets",
@@ -1840,6 +1850,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:treeChopResultTargets";
   if (
+    value.treeStumpTargets !== undefined &&
+    (!Array.isArray(value.treeStumpTargets) ||
+      value.treeStumpTargets.length > 16 ||
+      !value.treeStumpTargets.every(isTreeStumpTargetFact))
+  )
+    return "invalid_snapshot:treeStumpTargets";
+  if (
     value.npcRelationshipTargets !== undefined &&
     (!Array.isArray(value.npcRelationshipTargets) ||
       value.npcRelationshipTargets.length > 64 ||
@@ -2018,6 +2035,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.treeChopResultTargets) &&
         value.treeChopResultTargets.length <= 64 &&
         value.treeChopResultTargets.every(isTreeChopResultTargetFact))) &&
+    (value.treeStumpTargets === undefined ||
+      (Array.isArray(value.treeStumpTargets) &&
+        value.treeStumpTargets.length <= 16 &&
+        value.treeStumpTargets.every(isTreeStumpTargetFact))) &&
     (value.npcRelationshipTargets === undefined ||
       (Array.isArray(value.npcRelationshipTargets) &&
         value.npcRelationshipTargets.length <= 64 &&
@@ -2902,6 +2923,27 @@ function isTreeChopResultTargetFact(value: unknown): boolean {
     value.tapped === false
   );
 }
+
+function isTreeStumpTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "treeType", "health"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.treeType === "string" &&
+    value.treeType.length > 0 &&
+    value.treeType.length <= 128 &&
+    typeof value.health === "number" &&
+    Number.isFinite(value.health) &&
+    value.health >= 0 &&
+    value.health <= 1000
+  );
+}
+
 
 function isNpcRelationshipTargetFact(value: unknown): boolean {
   return (
