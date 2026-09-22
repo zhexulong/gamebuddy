@@ -2199,3 +2199,59 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
     "invalid_body_program_result",
   );
 });
+
+test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malformed rows", () => {
+  const basePayload: Snapshot = {
+    revision: 5,
+    location: "Farm",
+    tile: { x: 10, y: 11 },
+    stamina: 270,
+    health: 100,
+    actionable: true,
+    capabilities: ["chest_store", "chest_retrieve"],
+    catalogRevision: 1,
+    enabledActionIds: ["chest_store", "chest_retrieve"],
+    presentationLocale: "en-US",
+    activeExecution: null,
+    chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 2, qualifiedItemId: "(O)24", stack: 5 }],
+    chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "(O)24", stack: 3 }],
+  };
+  const base = newEnvelope("snapshot", scope, basePayload, "chest_snapshot_01", now);
+  assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...base,
+        payload: {
+          ...basePayload,
+          chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 99, qualifiedItemId: "(O)24", stack: 5 }],
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:chestStoreTargets",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...base,
+        payload: {
+          ...basePayload,
+          chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "", stack: 3 }],
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:chestRetrieveTargets",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      { ...base, payload: { ...basePayload, chestStoreTargets: undefined, chestRetrieveTargets: undefined } },
+      scope,
+      now,
+    ),
+    "accepted",
+  );
+});
