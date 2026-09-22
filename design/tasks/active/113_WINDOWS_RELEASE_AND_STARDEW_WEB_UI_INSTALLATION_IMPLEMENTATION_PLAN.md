@@ -255,6 +255,7 @@ type StardewInstallationDiscoveryResult = Readonly<{
 - Modify: `.github/workflows/release-windows.yml`
 - Modify/test: `tools/check-publint.mjs`
 - Review only until owner decision: `jscpd.json`, `knip.json`, dependency-cruiser config
+- Add/test: `tools/check-production-pack-load.mjs` / `tools/check-production-pack-load.test.mjs`（借鉴 magic-context-airp `smoke-tui-pack-install.ts` 的 packed-install load 模式，见下）
 
 - [ ] 先写 command-map tests，明确 root `quality:check`、root `test`/`test:all`、CI、protected release、report-only 和 live gate 的责任与失败语义。
 - [ ] 使 publint 对非 JSON 输出、unknown error code、缺少/非法 status 和 unexpected vendor gap fail closed；只保留 exact owner-approved gaps。
@@ -262,6 +263,8 @@ type StardewInstallationDiscoveryResult = Readonly<{
 - [ ] 在 owner 决定前不改变 clone blocking 语义、不把 dependency-cruiser cycles 偷塞进 quality gate；每个 finding 保留 owner/evidence/claim impact。
 - [ ] 让 release workflow 通过 GitHub checks/status 或 approved protected-environment contract 验证同一 commit 的 required CI；不能假设 YAML 自身提供仓库保护。
 - [ ] 运行 `check:publint`、`check:knip`、`check:text-hygiene`、`check:host-module-graph`、相关 workspace tests 和 workflow validation。
+
+**已落地（2026-09）：packed-install load gate。** `check:production-pack-load` 验证 `host/dist/current.json` 指向的 immutable generation 可真实加载（用 generation 自带 bundled Node runtime 加载具备 `import.meta.main` 守卫的 bootstrap entry 全闭包），而不是只检查文件存在。启发来自 magic-context-airp fork 的一个真实缺陷：artifact 磁盘完整但打包白名单漏掉传递依赖，导致发布后 `Cannot find module`。这是 release 级 protection：任何打包闭包漂移（入口缺失、bundled runtime 缺失、传递模块缺失）都会 fail blocked。本地验证：check passed on current generation；测试 6/6（pointer missing/unreadable、entry missing、runtime missing、broken transitive closure、complete pass）。
 
 **Gate:** 检查入口、失败语义、CI/release 同 commit 约束和剩余 findings 都可解释；未知 finding 仍 blocked，不被遮蔽。
 
