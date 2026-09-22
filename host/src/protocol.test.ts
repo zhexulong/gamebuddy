@@ -2255,3 +2255,24 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
     "accepted",
   );
 });
+
+test("snapshot admits treeStumpTargets and rejects malformed rows", () => {
+  const basePayload: Snapshot = {
+    revision: 6,
+    location: "Farm",
+    tile: { x: 12, y: 13 },
+    stamina: 270,
+    health: 100,
+    actionable: true,
+    capabilities: ["chop_stump"],
+    catalogRevision: 1,
+    enabledActionIds: ["chop_stump"],
+    presentationLocale: "en-US",
+    activeExecution: null,
+    treeStumpTargets: [{ targetId: "tree_stump_0123456789abcdef", location: "Farm", x: 12, y: 13, treeType: "Tree", health: 5 }],
+  };
+  const base = newEnvelope("snapshot", scope, basePayload, "stump_snapshot_01", now);
+  assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
+  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeStumpTargets: [{ targetId: "tree_stump_0123456789abcdef", location: "Farm", x: 12, y: 13, treeType: "", health: 5 }] } }, scope, now), "invalid_snapshot:treeStumpTargets");
+  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeStumpTargets: undefined } }, scope, now), "accepted");
+});

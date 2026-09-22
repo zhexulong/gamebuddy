@@ -1312,6 +1312,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             (advertisedCapabilities.Contains("machine_inspect", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_load", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_collect_output", StringComparer.Ordinal)) ? DiscoverMachineTargets(player) : null,
             advertisedCapabilities.Contains("chop_tree_source", StringComparer.Ordinal) ? DiscoverTreeChopSourceTargets(player) : null,
             advertisedCapabilities.Contains("chop_tree_source", StringComparer.Ordinal) ? DiscoverTreeChopResultTargets(player) : null,
+            advertisedCapabilities.Contains("chop_stump", StringComparer.Ordinal) ? DiscoverTreeStumpTargets(player) : null,
             advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) ? DiscoverNpcRelationshipTargets(player) : null,
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
@@ -1337,7 +1338,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CrabPotTargets: null, CrabPotResultTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
-        TreeChopSourceTargets: null, TreeChopResultTargets: null, NpcRelationshipTargets: null, PetTargets: null,
+        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, NpcRelationshipTargets: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
         PresentationLocale: string.Empty);
     }
@@ -1576,6 +1577,35 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     tree.health.Value, tree.stump.Value, tree.hasMoss.Value, tree.tapped.Value);
             })
             .ToArray();
+    }
+
+    private static IReadOnlyList<BridgeTreeStumpTarget> DiscoverTreeStumpTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null || string.IsNullOrEmpty(location.NameOrUniqueName) || location.NameOrUniqueName.Length > 256)
+            return Array.Empty<BridgeTreeStumpTarget>();
+
+        return location.terrainFeatures.Pairs
+            .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
+                && tree.stump.Value
+                && pair.Key.X >= 0 && pair.Key.X <= 1000
+                && pair.Key.Y >= 0 && pair.Key.Y <= 1000
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player))
+            .Take(16)
+            .Select(pair =>
+            {
+                StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
+                int x = (int)pair.Key.X;
+                int y = (int)pair.Key.Y;
+                return new BridgeTreeStumpTarget(BuildTreeStumpTargetId(location, x, y, tree), location.NameOrUniqueName, x, y, tree.treeType.Value, tree.health.Value);
+            })
+            .ToArray();
+    }
+
+    private static string BuildTreeStumpTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-stump:{tree.treeType.Value}";
+        return $"tree_stump_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
     private static string BuildTreeChopResultTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)

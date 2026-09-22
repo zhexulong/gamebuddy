@@ -284,6 +284,48 @@ internal sealed partial class ExecutionManager
         _ => false,
     };
 
+    /// <summary>
+    /// Chop exactly one TerrainFeature Tree stump (stump.Value == true) with an
+    /// equipped Axe of any upgrade level. ResourceClump stumps (600/602) are
+    /// NOT this action's targets: they belong exclusively to clear_debris, per
+    /// the target-entity orthogonality decision (2026-09-23). The one native
+    /// Axe.DoFunction swing settles the action; a missing/unchanged stump is a
+    /// fresh postcondition failure, never a claimed success.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalChopStump(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove || Game1.player.UsingTool || Game1.player.toolPower.Value != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
+            || !tree.stump.Value
+            || !string.Equals(BuildTreeStumpTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "stump_target_changed", $"target={targetX},{targetY}");
+        float before = tree.health.Value;
+        string treeType = tree.treeType.Value;
+        int axeLevel = axe.UpgradeLevel;
+        axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        bool removed = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+            || !ReferenceEquals(afterFeature, tree);
+        string evidence = $"target={expectedTargetId};type=tree_stump;tree={treeType};tool=axe;tool_level={axeLevel};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={(removed ? "removed" : afterFeature is StardewValley.TerrainFeatures.Tree afterTree ? afterTree.health.Value.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};stump_removed={removed.ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, removed ? ExecutionState.Succeeded : ExecutionState.Uncertain, removed ? "stump_cleared" : "stump_clear_postcondition_unavailable", evidence);
+    }
+
     private static int ItemRankForWeapon(Tool item)
     {
         if (item is MeleeWeapon melee)
