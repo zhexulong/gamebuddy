@@ -438,6 +438,12 @@ export function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
           : {}),
         occurredAtMs: message.timestampMs,
         payload,
+        // The Mod-owned semantic kind (day_started / time_milestone / …) rides
+        // on the wire payload; it is the sensory identity downstream (event
+        // pump → CompanionLoop) uses to decide a bounded presentation lease.
+        ...(typeof message.payload.kind === "string" && message.payload.kind.length > 0
+          ? { semanticKind: message.payload.kind }
+          : {}),
       };
     }
   }

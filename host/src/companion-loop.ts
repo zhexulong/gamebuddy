@@ -45,6 +45,7 @@ export class CompanionLoop {
     private readonly session: CompanionPiSession,
     turnObserver?: CompanionTurnObserver,
     private readonly liveSourceEvidence?: CompanionLiveSourceEvidenceSink,
+    private readonly voiceSink?: import("./voice.js").ChatVoiceSpeechPublisher,
   ) {
     this.#turnObserver = turnObserver;
   }
@@ -129,6 +130,8 @@ export class CompanionLoop {
     let accepted = false;
     let settled = false;
     let beganPresentation = false;
+    let beganVoice = false;
+    let voiceBegin: Promise<void> | undefined;
     let nativeContentObserver: NativeCompanionContentObserver | undefined;
     let nativeContentFinal: Promise<void> | undefined;
     let nativeContentDelivered = false;
@@ -169,15 +172,38 @@ export class CompanionLoop {
           if (sourceEventId !== undefined) {
             this.#turnObserver?.beginPlayerBatch(sourceEventId, batchId);
             beganPresentation = true;
+            // Voice: the same Game turn may stream generated companion speech
+            // (NFC-normalized deltas appended as they arrive, finalized when the
+            // final text lands). Voice stays voice-local: a failure here never
+            // poisons the presentation lineage or the durable Game state.
+            if (this.voiceSink !== undefined) {
+              // Fire-and-forget open ordered before every delta/finalize/cancel:
+              // appends and the terminal settle await this same promise, so a
+              // fast stream can never race the job open.
+              voiceBegin = (async () => {
+                await this.voiceSink!.begin(String(batchId ?? sourceEventId));
+                beganVoice = true;
+              })().catch(() => {
+                // Voice degradation is graceful.
+              });
+            }
             // A production Game composition installs the final-content
             // presenter before ingress opens. Smaller non-Game consumers of
             // CompanionLoop intentionally have no Game presentation surface,
             // so absence means "no projection", never a synthetic fallback.
             if (this.#turnObserver?.presentNativeAssistantContent !== undefined) {
               nativeContentObserver = attachNativeCompanionContent(this.session as AgentSession, {
-                // Game has no unauthoritative streaming projection: only the
-                // final content crosses the existing source-lineage bridge.
-                onPreviewDelta: () => undefined,
+                // Game companion deltas feed the same streaming TTS lane when a
+                // voice sink is attached; without it they stay unprojected.
+                onPreviewDelta: async (delta) => {
+                  if (this.voiceSink === undefined) return;
+                  try {
+                    await voiceBegin;
+                    await this.voiceSink.append(delta.normalize("NFC"));
+                  } catch {
+                    // Voice degradation is graceful.
+                  }
+                },
                 onFinalText: async (text) => {
                   // The observer finalizes once, but keep this local guard at
                   // the Game authority boundary: one consumed batch can admit
@@ -185,6 +211,14 @@ export class CompanionLoop {
                   // malformed or changes its subscription semantics.
                   if (nativeContentDelivered) return;
                   nativeContentDelivered = true;
+                  if (this.voiceSink !== undefined) {
+                    try {
+                      await voiceBegin;
+                      await this.voiceSink.finalize();
+                    } catch {
+                      // Voice degradation is graceful.
+                    }
+                  }
                   const content = Object.freeze({ sourceEventId, text });
                   const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
                   if (presentation !== undefined) nativeContentFinal = presentation;
@@ -193,6 +227,11 @@ export class CompanionLoop {
                 onRejected: () => undefined,
               });
               nativeContentObserver.open();
+              // Voice needs the same incremental delta stream as browser
+              // previews. Game has no browser surface, so openPreviews only
+              // unlocks the delta lane; the only consumer is the voice sink
+              // (final text still crosses the source-lineage bridge).
+              if (this.voiceSink !== undefined) nativeContentObserver.openPreviews();
             }
           }
           if (sourceEventId !== undefined && batchId !== undefined)
@@ -236,6 +275,13 @@ export class CompanionLoop {
       // old epoch must not be revived even if its queued delivery rejects later.
       if (consumption.kind === "failed") throw consumption.error;
       if (consumption.kind === "cancelled") {
+        if (beganVoice && this.voiceSink !== undefined) {
+          try {
+            await this.voiceSink.cancel();
+          } catch {
+            // Voice degradation is graceful.
+          }
+        }
         await deliveryObserved;
         return;
       }
@@ -258,6 +304,17 @@ export class CompanionLoop {
       unsubscribe?.();
       nativeContentObserver?.revoke();
       await nativeContentObserver?.close();
+      // The voice job opened with the batch but never finalized; cleanup
+      // waits for the (already-ordered) open then cancels so the gateway slot
+      // is released even when the presentation lineage already closed.
+      if (beganVoice && !nativeContentDelivered && this.voiceSink !== undefined) {
+        try {
+          await voiceBegin;
+          await this.voiceSink.cancel();
+        } catch {
+          // Voice degradation is graceful.
+        }
+      }
       if (beganPresentation) this.#turnObserver?.endBatch(batchId);
     }
   }
@@ -309,6 +366,7 @@ type SerializedBatch = Readonly<{
     revision?: number;
     input?: Readonly<{ eventId?: string; inputId?: string }>;
     sourceEventId?: string;
+    semanticKind?: string;
     payload?: Readonly<{ state?: unknown }>;
   }>[];
 }>;
@@ -328,9 +386,19 @@ function canonicalPresentationSource(batch: SerializedBatch): string | undefined
     .filter(isOpaqueSource);
   if (playerSources.length > 0) return playerSources.at(-1);
 
-  // World-trigger turns may use their normal tools but never receive the
-  // player-native presentation admission or exact-one obligation.
-  return undefined;
+  // Bounded sensory lease: only explicitly salient world-fact kinds may open a
+  // companion turn (e.g. day_started / time_milestone morning greetings). Every
+  // other world-trigger batch still gets no native presentation lineage.
+  const sensorySources = events
+    .filter((event) => event.kind === "world_fact" && isSalientSensoryKind(event.semanticKind))
+    .map((event) => event.sourceEventId)
+    .filter(isOpaqueSource);
+  return sensorySources.length > 0 ? sensorySources.at(-1) : undefined;
+}
+
+/** White-listed salient sensory kinds allowed to mint a bounded presentation lease. */
+function isSalientSensoryKind(kind: string | undefined): boolean {
+  return kind === "day_started" || kind === "time_milestone";
 }
 
 function isOpaqueSource(value: unknown): value is string {

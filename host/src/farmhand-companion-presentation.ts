@@ -55,6 +55,7 @@ export function createFarmhandSystemNoticePresenter(
 export function createFarmhandCompanionPresentationPort(
   bridge: FarmhandPresentationBridge,
   epochAdmission: FarmhandPresentationEpochAdmission,
+  onTextPresented?: (text: string, locale: string) => void,
 ): CompanionTextPort {
   return Object.freeze({
     async present(expression: GameCompanionTextExpression, admission: PresentationCommitAdmission): Promise<void> {
@@ -84,6 +85,15 @@ export function createFarmhandCompanionPresentationPort(
         expectedRevision: snapshot.revision,
         presentationEpoch: epoch.epoch,
       });
+      // Fire-and-forget companion-language hook (e.g. streaming TTS). A
+      // throwing listener must never fail a presentation that already landed.
+      if (onTextPresented !== undefined) {
+        try {
+          onTextPresented(expression.text, expression.locale);
+        } catch {
+          // Presentation already committed; keep the voice lane optional.
+        }
+      }
     },
   });
 }

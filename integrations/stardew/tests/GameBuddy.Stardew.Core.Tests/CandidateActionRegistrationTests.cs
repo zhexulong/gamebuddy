@@ -37,7 +37,7 @@ public sealed class CandidateActionRegistrationTests
         desc.ResourceTemplate.Should().ContainSingle()
             .Which.Should().Be(new FarmhandActionResourceTemplateClaim("embodied_actor", FarmhandResourceTemplateValue.ScopePlayer));
         desc.Effect.Should().Be("write");
-        desc.Postcondition.Should().Be("emote_finished_or_overridden");
+        desc.Postcondition.Should().Be("emote_started");
         desc.NativeBinding.Should().Be("Farmer.doEmote");
     }
 
@@ -294,7 +294,7 @@ public sealed class CandidateActionRegistrationTests
             "req_001",
             "express_emote",
             "succeeded",
-            "emote_finished_or_overridden",
+            "emote_started",
             1,
             new Dictionary<string, string> { ["test"] = "evidence" },
             observation

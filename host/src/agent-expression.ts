@@ -1,4 +1,6 @@
 /** Extract final ordinary assistant text for private task summaries only. */
+import { dehydrateCompanionSpeech } from "./companion-speech-dehydration.js";
+
 export function finalAssistantText(messages: readonly unknown[]): string | null {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
@@ -10,11 +12,13 @@ export function finalAssistantText(messages: readonly unknown[]): string | null 
       message.stopReason === "aborted"
     )
       continue;
-    const text = message.content
-      .filter(isTextBlock)
-      .map((block) => block.text)
-      .join("")
-      .trim();
+    const text = dehydrateCompanionSpeech(
+      message.content
+        .filter(isTextBlock)
+        .map((block) => block.text)
+        .join("")
+        .trim(),
+    );
     return text.length === 0 ? null : text;
   }
   return null;

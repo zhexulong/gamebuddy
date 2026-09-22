@@ -82,6 +82,74 @@ test("policy only subtracts from the current Mod catalog", () => {
   );
 });
 
+test("complete candidate actions are visible despite the experimental lifecycle", () => {
+  const capabilities = ["express_emote", "face_direction"];
+  const catalog = [
+    {
+      actionId: "express_emote",
+      familyId: "expression",
+      identityVersion: 1,
+      lifecycle: "experimental" as const,
+      kind: "execution" as const,
+      descriptor: Object.freeze({
+        arguments: Object.freeze([
+          Object.freeze({ name: "emote", type: "string", enum: Object.freeze(["happy", "sad"]) }),
+        ]),
+        effect: "write",
+        postcondition: "emote_started",
+        nativeBinding: "Farmer.doEmote",
+      }),
+    },
+    {
+      actionId: "face_direction",
+      familyId: "movement_navigation",
+      identityVersion: 1,
+      lifecycle: "experimental" as const,
+      kind: "execution" as const,
+      descriptor: Object.freeze({
+        arguments: Object.freeze([
+          Object.freeze({ name: "direction", type: "string", enum: Object.freeze(["up", "down"]) }),
+        ]),
+        effect: "write",
+        postcondition: "actor_facing_matches",
+        nativeBinding: "Farmer.faceDirection",
+      }),
+    },
+    {
+      // An experimental non-candidate action stays invisible.
+      actionId: "equip_tool",
+      familyId: "body_tools",
+      identityVersion: 1,
+      lifecycle: "experimental" as const,
+      kind: "execution" as const,
+    },
+  ];
+
+  const visible = visibleActionsFromModCatalog(catalog, capabilities);
+  assert.deepEqual(visible.map((entry) => entry.actionId).sort(), ["express_emote", "face_direction"]);
+  assert.equal(visible.find((entry) => entry.actionId === "express_emote")?.lifecycle, "experimental");
+  assert.equal(visible.find((entry) => entry.actionId === "face_direction")?.lifecycle, "experimental");
+});
+
+test("incomplete candidate descriptors stay invisible", () => {
+  const catalog = [
+    {
+      actionId: "express_emote",
+      familyId: "expression",
+      identityVersion: 1,
+      lifecycle: "experimental" as const,
+      kind: "execution" as const,
+      descriptor: Object.freeze({
+        arguments: Object.freeze([]),
+        effect: "write",
+        postcondition: "emote_started",
+        nativeBinding: "Farmer.doEmote",
+      }),
+    },
+  ];
+  assert.deepEqual(visibleActionsFromModCatalog(catalog, ["express_emote"]), []);
+});
+
 test("retired action identifiers require an explicit fail-closed migration", () => {
   assert.deepEqual(RETIRED_ACTION_POLICY_MIGRATIONS.collect_resource, [
     "chop_tree_source",

@@ -310,6 +310,12 @@ export type HostGameRuntimeMaterializerOptions = Readonly<{
    * callers that predate the preference store.
    */
   companionLocale?: "zh-CN" | "en-US";
+  /**
+   * Optional fire-and-forget companion-language listener invoked after a
+   * companion text successfully presented to the Game (e.g. to stream the
+   * same line to TTS). A throwing listener never fails the presentation.
+   */
+  onCompanionTextPresented?: (text: string, locale: string) => void;
 }>;
 
 export function createHostGameRuntimeMaterializer(
@@ -397,6 +403,7 @@ export function createHostGameRuntimeMaterializer(
             options.gameOperationalGateNonceSha256,
             options.gameVoicePresentation,
             options.companionLocale ?? DEFAULT_COMPANION_LOCALE,
+            options.onCompanionTextPresented,
             fixedTools,
             Object.freeze({
               resolvedPolicy: mountedPolicy,
@@ -421,10 +428,15 @@ export function createHostGameRuntimeMaterializer(
             queryExecutionReceipt: recovery.queryExecutionReceipt,
           }));
         const liveSourceAttester = options.liveSourceAttester;
+        const gameVoicePayload =
+          options.gameVoicePresentation === undefined
+            ? undefined
+            : consumeGameVoicePresentationAttachment(options.gameVoicePresentation);
         const loop = new CompanionLoop(
           runtime.session,
           undefined,
           liveSourceAttester,
+          gameVoicePayload?.streamingSink,
         );
         const lifecycle = new IntegrationLifecycleSnapshot(
           execution.connection.module,
@@ -499,12 +511,8 @@ export function createHostGameRuntimeMaterializer(
             }),
           );
         }
-        if (options.gameVoicePresentation !== undefined)
-          host.attachVoiceStopper(
-            consumeGameVoicePresentationAttachment(
-              options.gameVoicePresentation,
-            ).stopVoice,
-          );
+        if (gameVoicePayload !== undefined)
+          host.attachVoiceStopper(gameVoicePayload.stopVoice);
         let ingressActivated = false;
         const activateIngress = (): void => {
           if (ingressActivated) return;
@@ -683,6 +691,7 @@ async function createMaterializedGameRuntime(
   gameOperationalGateNonceSha256: string | undefined,
   _gameVoicePresentation: GameVoicePresentationAttachment | undefined,
   companionLocale: "zh-CN" | "en-US",
+  onCompanionTextPresented: ((text: string, locale: string) => void) | undefined,
   fixedTools: readonly ToolDefinition[],
   recoveryAttachment?: Pick<import("../runtime.js").GameCompanionRuntimeAttachment, "recoveryJournal" | "recoveryBinding" | "recoveryPort"> & Readonly<{ resolvedPolicy: IntegrationActionPolicy }>,
 ): Promise<Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>> {
@@ -705,6 +714,7 @@ async function createMaterializedGameRuntime(
       textPort: createFarmhandCompanionPresentationPort(
         presentation,
         createFarmhandPresentationEpochAdmission(handle.interruption),
+        onCompanionTextPresented,
       ),
       admissionProvider: createGamePresentationAdmissionProvider(
         turnTracker,

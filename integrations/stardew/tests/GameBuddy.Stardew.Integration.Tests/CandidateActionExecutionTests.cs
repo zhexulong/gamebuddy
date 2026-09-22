@@ -21,7 +21,7 @@ public sealed class CandidateActionExecutionTests
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Expression);
         reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
         reg.Descriptor.Should().NotBeNull();
-        reg.Descriptor!.Postcondition.Should().Be("emote_finished_or_overridden");
+        reg.Descriptor!.Postcondition.Should().Be("emote_started");
         reg.Descriptor.NativeBinding.Should().Be("Farmer.doEmote");
         reg.Descriptor.Arguments.Should().HaveCount(1);
         reg.Descriptor.Arguments[0].Name.Should().Be("emote");
@@ -127,7 +127,7 @@ public sealed class CandidateActionExecutionTests
             emoteAdmission.RequestId,
             emoteAdmission.ActionId,
             ExecutionState.Succeeded,
-            "emote_finished_or_overridden",
+            "emote_started",
             Revision: 6,
             Evidence: "emote=heart",
             Observation: observation);
@@ -199,7 +199,7 @@ public sealed class CandidateActionExecutionTests
             admission.RequestId,
             admission.ActionId,
             ExecutionState.Succeeded,
-            "emote_finished_or_overridden",
+            "emote_started",
             Revision: 1,
             Evidence: "emote=happy",
             Observation: observation)).Code.Should().Be(FarmhandExecutionJournalResultCode.Succeeded);
@@ -236,7 +236,7 @@ public sealed class CandidateActionExecutionTests
         queryResponse.Payload.ExecutionId.Should().Be(admission.ExecutionId);
         queryResponse.Payload.ActionId.Should().Be("express_emote");
         queryResponse.Payload.State.Should().Be("succeeded");
-        queryResponse.Payload.ReasonCode.Should().Be("emote_finished_or_overridden");
+        queryResponse.Payload.ReasonCode.Should().Be("emote_started");
         queryResponse.Payload.Observation.Should().NotBeNull();
         queryResponse.Payload.Observation.Should().BeEquivalentTo(observation);
 
