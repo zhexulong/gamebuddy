@@ -22,6 +22,8 @@
     "check:text-hygiene": "node tools/check-text-hygiene.mjs",
     "check:host-windows-test-preflight": "node tools/check-host-windows-test-preflight.mjs",
     "test:host-windows-test-preflight": "node --test tools/check-host-windows-test-preflight.test.mjs",
+    "check:production-pack-load": "node tools/check-production-pack-load.mjs",
+    "test:production-pack-load": "node --test tools/check-production-pack-load.test.mjs",
     "check:diff": "node tools/check-diff.mjs",
     "quality:check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:host-production-import-boundary && pnpm check:text-hygiene && pnpm check:dialogue-web-boundaries && pnpm test:stardew:core && pnpm test:stardew:integration",
     "dependency-audit": "node tools/generate-sbom.mjs --verify",
