@@ -125,4 +125,58 @@ describe("check-production-pack-load", () => {
     assert.ok(report.failures.some((f) => f.startsWith("bootstrap_import_failed")));
     assert.equal(report.bootstrapImport.ok, false);
   });
+
+  test("voice: a generation with the voice sidecar loads its packed entry", async () => {
+    await stageGeneration("g-voice-ok", {
+      wireModule: "export function runDesktopHostBootstrap() {}\n",
+      bootstrapEntry:
+        'import { runDesktopHostBootstrap } from "../wire/desktop-runtime-bootstrap.internal.js";\nif (import.meta.main) void runDesktopHostBootstrap();\n',
+    });
+    // Stage a voice entry that mirrors the bundle contract: top-level code
+    // reaches an operator token gate and exits 2 without side effects.
+    const root = join(distRoot, "generations", "g-voice-ok");
+    await mkdir(join(root, "voice-gateway", "entry"), { recursive: true });
+    await writeFile(
+      join(root, "voice-gateway", "entry", "voice-gateway-entry.mjs"),
+      'if (!/^[A-Za-z0-9_-]{16,256}$/.test(process.env.GAMEBUDDY_VOICE_TOKEN ?? "")) { console.error("Set GAMEBUDDY_VOICE_TOKEN (16+ opaque characters) and optional GAMEBUDDY_VOICE_PORT before starting Voice Gateway."); process.exitCode = 2; } else { console.log("listening"); }\n',
+      "utf8",
+    );
+    await writeFile(
+      join(root, "voice-gateway-admission.json"),
+      `${JSON.stringify({ schema: "gamebuddy-host-voice-gateway-admission/v1", entryPath: "voice-gateway/entry/voice-gateway-entry.mjs", protocolPath: "voice-gateway/protocol/voice-protocol-index.mjs", inventoryDigest: "a".padStart(64, "a"), entrySha256: "b".padStart(64, "b"), protocolSha256: "c".padStart(64, "c"), generation: "g-voice-ok", nodeVersion: "v24.20.0", platform: "win32", arch: "x64" })}\n`,
+      "utf8",
+    );
+
+    const report = checkProductionPackLoad({ distRoot });
+    assert.equal(report.verdict, "passed");
+    assert.equal(report.voice.sidecar, "present");
+    assert.equal(report.voice.ok, true);
+  });
+
+  test("voice: a broken transitive module fails the packed voice load", async () => {
+    await stageGeneration("g-voice-broken", {
+      wireModule: "export function runDesktopHostBootstrap() {}\n",
+      bootstrapEntry:
+        'import { runDesktopHostBootstrap } from "../wire/desktop-runtime-bootstrap.internal.js";\nif (import.meta.main) void runDesktopHostBootstrap();\n',
+    });
+    const root = join(distRoot, "generations", "g-voice-broken");
+    await mkdir(join(root, "voice-gateway", "entry"), { recursive: true });
+    // The entry imports a module that does not exist in the packed file set:
+    // the exact packed-install bug class for the voice bundle too.
+    await writeFile(
+      join(root, "voice-gateway", "entry", "voice-gateway-entry.mjs"),
+      'import { MISSING } from "./missing-module.mjs";\nif (MISSING) process.exit(0);\n',
+      "utf8",
+    );
+    await writeFile(
+      join(root, "voice-gateway-admission.json"),
+      `${JSON.stringify({ schema: "gamebuddy-host-voice-gateway-admission/v1", entryPath: "voice-gateway/entry/voice-gateway-entry.mjs", protocolPath: "voice-gateway/protocol/voice-protocol-index.mjs", inventoryDigest: "a".padStart(64, "a"), entrySha256: "b".padStart(64, "b"), protocolSha256: "c".padStart(64, "c"), generation: "g-voice-broken", nodeVersion: "v24.20.0", platform: "win32", arch: "x64" })}\n`,
+      "utf8",
+    );
+
+    const report = checkProductionPackLoad({ distRoot });
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.voice.ok, false);
+    assert.ok(report.failures.some((f) => f.startsWith("voice_pack_load_failed")));
+  });
 });

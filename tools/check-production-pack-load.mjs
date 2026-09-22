@@ -151,8 +151,61 @@ export function checkProductionPackLoad({ distRoot = distRootDefault } = {}) {
   };
   if (!loadOk) report.failures.push(`bootstrap_import_failed:${probe.stderr?.trim().slice(0, 500) ?? "no stderr"}`);
 
+  // 5. Voice gateway packed-load probe (only when the generation ships one).
+  verifyVoicePackLoad(report, generationRoot, runtimePath);
+
   report.verdict = report.failures.length === 0 ? "passed" : "blocked";
   return report;
+}
+
+/**
+ * The voice gateway entry has no import.meta.main guard (its main line is
+ * top-level await), so it cannot be imported side-effect free like the host
+ * bootstrap entry. Instead the packed-load probe runs the entry with an empty
+ * GAMEBUDDY_VOICE_TOKEN: a fully-resolved module graph reaches the token gate,
+ * prints the operator guidance and exits 2 without starting a server; a
+ * missing transitive module fails earlier with ERR_MODULE_NOT_FOUND/exit 1.
+ * The sidecar declares the entry path; when no admission sidecar exists the
+ * generation is voice-free and the probe is skipped.
+ */
+function verifyVoicePackLoad(report, generationRoot, runtimePath) {
+  const sidecarPath = join(generationRoot, "voice-gateway-admission.json");
+  if (!existsSync(sidecarPath)) {
+    report.voice = { sidecar: "absent", ok: true };
+    return;
+  }
+  let admission;
+  try {
+    admission = JSON.parse(readFileSync(sidecarPath, "utf8"));
+  } catch (error) {
+    report.failures.push(`voice_sidecar_unreadable:${error instanceof Error ? error.message : String(error)}`);
+    report.voice = { sidecar: "unreadable", ok: false };
+    return;
+  }
+  const entryPath = join(generationRoot, admission.entryPath ?? "");
+  if (!existsSync(entryPath)) {
+    report.failures.push(`voice_entry_missing:${admission.entryPath ?? "(none)"}`);
+    report.voice = { sidecar: "present", entry: "missing", ok: false };
+    return;
+  }
+  // No token: the entry resolves its full module graph, then fails at the
+  // operator-guidance gate without binding a port or spawning PowerShell.
+  const probe = spawnSync(runtimePath, [entryPath], {
+    cwd: generationRoot,
+    encoding: "utf8",
+    timeout: 30_000,
+    env: { ...process.env, GAMEBUDDY_VOICE_TOKEN: "", NODE_NO_WARNINGS: "1" },
+  });
+  const ok = probe.status === 2 && /Set GAMEBUDDY_VOICE_TOKEN/.test(probe.stderr ?? "");
+  report.voice = {
+    sidecar: "present",
+    entry: admission.entryPath,
+    status: probe.status,
+    stdout: (probe.stdout ?? "").trim().slice(0, 500),
+    stderr: (probe.stderr ?? "").trim().slice(0, 500),
+    ok,
+  };
+  if (!ok) report.failures.push(`voice_pack_load_failed:${(probe.stderr ?? "").trim().slice(0, 400) || "unexpected status"}`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
