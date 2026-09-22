@@ -311,6 +311,8 @@ export type Snapshot = Readonly<{
     treeType: string;
     health: number;
   }>[];
+  /** Nearby open plantable tiles paired with an owned wild-tree sapling slot (plant_sapling). */
+  treeSaplingTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; qualifiedItemId: string }>[];
   /** Nearby native machines; an idle Keg may expose the one exact Coffee Bean input slot accepted by machine_load, and a ready Coffee result may expose collection eligibility. */
   machineTargets?: readonly Readonly<{
     targetId: string;
@@ -863,6 +865,7 @@ const SNAPSHOT_KEYS = [
   "treeChopSourceTargets",
   "treeChopResultTargets",
   "treeStumpTargets",
+  "treeSaplingTargets",
   "npcRelationshipTargets",
   "petTargets",
   "animalProductTargets",
@@ -1857,6 +1860,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:treeStumpTargets";
   if (
+    value.treeSaplingTargets !== undefined &&
+    (!Array.isArray(value.treeSaplingTargets) ||
+      value.treeSaplingTargets.length > 64 ||
+      !value.treeSaplingTargets.every(isTreeSaplingTargetFact))
+  )
+    return "invalid_snapshot:treeSaplingTargets";
+  if (
     value.npcRelationshipTargets !== undefined &&
     (!Array.isArray(value.npcRelationshipTargets) ||
       value.npcRelationshipTargets.length > 64 ||
@@ -2039,6 +2049,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.treeStumpTargets) &&
         value.treeStumpTargets.length <= 16 &&
         value.treeStumpTargets.every(isTreeStumpTargetFact))) &&
+    (value.treeSaplingTargets === undefined ||
+      (Array.isArray(value.treeSaplingTargets) &&
+        value.treeSaplingTargets.length <= 64 &&
+        value.treeSaplingTargets.every(isTreeSaplingTargetFact))) &&
     (value.npcRelationshipTargets === undefined ||
       (Array.isArray(value.npcRelationshipTargets) &&
         value.npcRelationshipTargets.length <= 64 &&
@@ -2941,6 +2955,20 @@ function isTreeStumpTargetFact(value: unknown): boolean {
     Number.isFinite(value.health) &&
     value.health >= 0 &&
     value.health <= 1000
+  );
+}
+
+function isTreeSaplingTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId"]) &&
+    isOpaqueId(value.targetId) &&
+    isToolSlot(value.slot) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128
   );
 }
 

@@ -2276,3 +2276,37 @@ test("snapshot admits treeStumpTargets and rejects malformed rows", () => {
   assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeStumpTargets: [{ targetId: "tree_stump_0123456789abcdef", location: "Farm", x: 12, y: 13, treeType: "", health: 5 }] } }, scope, now), "invalid_snapshot:treeStumpTargets");
   assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeStumpTargets: undefined } }, scope, now), "accepted");
 });
+
+test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
+  const basePayload: Snapshot = {
+    revision: 7,
+    location: "Farm",
+    tile: { x: 4, y: 5 },
+    stamina: 270,
+    health: 100,
+    actionable: true,
+    capabilities: ["plant_sapling"],
+    catalogRevision: 1,
+    enabledActionIds: ["plant_sapling"],
+    presentationLocale: "en-US",
+    activeExecution: null,
+    treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 2, x: 4, y: 5, qualifiedItemId: "(O)309" }],
+  };
+  const base = newEnvelope("snapshot", scope, basePayload, "sapling_snapshot_01", now);
+  assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...base,
+        payload: {
+          ...basePayload,
+          treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 99, x: 4, y: 5, qualifiedItemId: "(O)309" }],
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:treeSaplingTargets",
+  );
+  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeSaplingTargets: undefined } }, scope, now), "accepted");
+});
