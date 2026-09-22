@@ -1866,6 +1866,20 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:feedTroughTargets";
   if (
+    value.chestStoreTargets !== undefined &&
+    (!Array.isArray(value.chestStoreTargets) ||
+      value.chestStoreTargets.length > 16 ||
+      !value.chestStoreTargets.every(isChestStoreTargetFact))
+  )
+    return "invalid_snapshot:chestStoreTargets";
+  if (
+    value.chestRetrieveTargets !== undefined &&
+    (!Array.isArray(value.chestRetrieveTargets) ||
+      value.chestRetrieveTargets.length > 16 ||
+      !value.chestRetrieveTargets.every(isChestRetrieveTargetFact))
+  )
+    return "invalid_snapshot:chestRetrieveTargets";
+  if (
     value.inventoryItemFacts !== undefined &&
     (!Array.isArray(value.inventoryItemFacts) ||
       value.inventoryItemFacts.length > 36 ||
