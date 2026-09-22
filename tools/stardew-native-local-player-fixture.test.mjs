@@ -407,6 +407,36 @@ test("native-local bootstrap launcher does not restore an external action templa
   assert.match(launcher, /if \(\$workingSavePrepared\) \{[\s\S]*?\$fixtureSaveHarness/);
 });
 
+test("native-local crop-research fixture preps the Jodi's-Request start state only", async (t) => {
+  const options = { ...(await createFixture(t, "crop-research")), action: "crop_research" };
+  await prepareNativeLocalPlayerFixture(options);
+  const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
+  assert.deepEqual(configured.EnabledActions, [
+    "move_to_tile",
+    "travel",
+    "equip_tool",
+    "till_soil",
+    "plant_seed",
+    "water_crop",
+    "observe_scene",
+    "refill_watering_can",
+  ]);
+  assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_crop_research_v1");
+  const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
+  const setupStart = entry.indexOf('if (fixture.FixtureScenario == "native_crop_research_v1")');
+  assert.ok(setupStart >= 0, "ModEntry must own the crop-research fixture branch");
+  const setup = entry.slice(setupStart, entry.indexOf('if (fixture.FixtureScenario == "native_fertilize_tile_v1")', setupStart));
+  // The fixture only establishes the plannable starting state; the Agent must
+  // till/plant/water through production actions — no receipt or mutation here.
+  assert.match(setup, /const string cauliflowerSeedId = "\(O\)474";/);
+  assert.match(setup, /new WateringCan\(\)/);
+  assert.doesNotMatch(
+    setup,
+    /\.checkAction\(|RequestLocalTillSoil|RequestLocalPlantSeed|RequestLocalWaterCrop|PublishReceipt|SpreadSeeds/,
+  );
+  await restoreNativeLocalPlayerFixture(options);
+});
+
 test("native-local machine-load fixture supplies only an idle Keg and exact Coffee Bean stack", async (t) => {
   const options = { ...(await createFixture(t, "machine-load")), action: "machine_load" };
   await prepareNativeLocalPlayerFixture(options);

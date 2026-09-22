@@ -314,6 +314,12 @@ export function fixtureActions(action) {
   if (action === "clear_debris") return ["move_to_tile", "travel", "equip_tool", "clear_debris"];
   if (action === "enter_exit") return ["move_to_tile", "enter_exit"];
   if (action === "till_soil") return ["move_to_tile", "travel", "equip_tool", "till_soil"];
+  // Ladder 3: Jodi's Request — a real Spring-19 mail quest asking for a fresh
+  // cauliflower. The fixture only supplies the player with a Hoe, a filled
+  // Watering Can and cauliflower seeds; the Agent plans the whole farming
+  // chain (till -> plant -> water) through the production actions.
+  if (action === "crop_research")
+    return ["move_to_tile", "travel", "equip_tool", "till_soil", "plant_seed", "water_crop", "observe_scene", "refill_watering_can"];
   if (action === "water_crop") return ["move_to_tile", "travel", "equip_tool", "water_crop"];
   // plant_seed selects its published seed slot inside the typed production
   // action; equip_tool cannot equip an Object seed, so it is not a prerequisite.
@@ -387,6 +393,8 @@ export function fixtureScenario(actions) {
   if (actions.includes("navigate_to_destination") && actions.includes("machine_inspect") && actions.includes("machine_load"))
     return "native_machine_navigate_ab_v1";
   if (actions.includes("navigate_to_destination")) return "navigation_mutation_v1";
+  if (actions.includes("till_soil") && actions.includes("plant_seed") && actions.includes("water_crop") && actions.includes("refill_watering_can"))
+    return "native_crop_research_v1";
   if (actions.includes("till_soil")) return "native_till_soil_v1";
   if (actions.includes("water_crop")) return "native_water_crop_v1";
   if (actions.includes("plant_seed")) return "native_plant_seed_v1";

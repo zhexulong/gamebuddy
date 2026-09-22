@@ -801,7 +801,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1066,6 +1066,58 @@ public sealed partial class ModEntry : Mod
                     throw new InvalidOperationException("fixture_native_local_seed_target_missing");
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized native plant-seed fixture before bridge attachment: seed={seedId}; eligible_empty_dirt_count={eligibleDirtCount}; production alone plants, consumes, creates crop, and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_crop_research_v1")
+            {
+                // Ladder 3: Jodi's Request (Spring 19 mail quest) — the player
+                // must grow a cauliflower and bring it to her. This fixture
+                // reproduces the beginning of that task: the player is inside
+                // FarmHouse at Spring start with a Hoe, a filled Watering Can
+                // and cauliflower seeds; the Farm has untouched tillable soil.
+                // No tilling, planting, watering or harvest happens here — the
+                // Agent plans and performs every step through production
+                // actions (prepare soil -> plant -> water -> later harvest).
+                if (!player.Items.OfType<Hoe>().Any() && player.addItemToInventory(new Hoe()) is not null)
+                    throw new InvalidOperationException("fixture_native_local_crop_research_hoe_inventory_full");
+                if (!player.Items.OfType<Hoe>().Any())
+                    throw new InvalidOperationException("fixture_native_local_crop_research_hoe_missing_after_add");
+                WateringCan? cropResearchCan = player.Items.OfType<WateringCan>().FirstOrDefault(candidate => candidate.WaterLeft > 0);
+                if (cropResearchCan is null)
+                {
+                    if (player.addItemToInventory(new WateringCan()) is not null)
+                        throw new InvalidOperationException("fixture_native_local_crop_research_watering_can_inventory_full");
+                    cropResearchCan = player.Items.OfType<WateringCan>().FirstOrDefault(candidate => candidate.WaterLeft > 0);
+                }
+                if (cropResearchCan is null)
+                    throw new InvalidOperationException("fixture_native_local_crop_research_watering_can_missing_after_add");
+                const string cauliflowerSeedId = "(O)474";
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == cauliflowerSeedId && item.Stack > 0)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(cauliflowerSeedId, 2)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_crop_research_seed_inventory_full");
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == cauliflowerSeedId && item.Stack > 0))
+                    throw new InvalidOperationException("fixture_native_local_crop_research_seed_missing_after_add");
+                GameLocation? cropResearchPreviousLocation = Game1.currentLocation;
+                bool tillableSoilExists;
+                try
+                {
+                    // Spring start has natural untilled ground; remove any
+                    // leftover debug dirt so a genuine till_soil is required.
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("RemoveDirt", null))
+                        throw new InvalidOperationException("fixture_native_local_crop_research_remove_dirt_command_unavailable");
+                    tillableSoilExists = Enumerable.Range(0, farm.map.Layers[0].LayerWidth)
+                        .SelectMany(x => Enumerable.Range(0, farm.map.Layers[0].LayerHeight).Select(y => new Vector2(x, y)))
+                        .Any(tile => farm.GetHoeDirtAtTile(tile) is null
+                            && farm.doesTileHaveProperty((int)tile.X, (int)tile.Y, "Diggable", "Back") is not null
+                            && !farm.isWaterTile((int)tile.X, (int)tile.Y));
+                }
+                finally { Game1.currentLocation = cropResearchPreviousLocation; }
+                if (!tillableSoilExists)
+                    throw new InvalidOperationException("fixture_native_local_crop_research_tillable_soil_missing");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized crop-research (Jodi's Request) fixture before bridge attachment: hoe=true; watering_can_water={cropResearchCan.WaterLeft}; seed={cauliflowerSeedId}; tillable_soil=true; production alone tills, plants, waters and later harvests.", LogLevel.Info);
                 return;
             }
 
