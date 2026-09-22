@@ -473,6 +473,8 @@ public sealed class BridgeProtocolSerializationTests
             PetTargets: null,
             AnimalProductTargets: null,
             FeedTroughTargets: null,
+            ChestStoreTargets: null,
+            ChestRetrieveTargets: null,
             InventoryItemFacts: null,
             FoodTargets: null,
             PresentationLocale: "en-US");
