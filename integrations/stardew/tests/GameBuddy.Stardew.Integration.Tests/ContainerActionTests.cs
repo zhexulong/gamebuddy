@@ -40,6 +40,40 @@ public sealed class ContainerActionTests
     }
 
     [Fact]
+    public void Catalog_ChestRetrieve_RegisteredAsExperimentalMachinesAnimalsWithSlotItemTarget()
+    {
+        FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
+            .FirstOrDefault(r => r.ActionId == "chest_retrieve");
+
+        reg.Should().NotBeNull();
+        reg!.FamilyId.Should().Be("inventory_items");
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Kind.Should().Be(FarmhandOperationKind.Execution);
+        reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
+        reg.Descriptor.Should().NotBeNull();
+        reg.Descriptor!.Arguments.Select(a => a.Name)
+            .Should().BeEquivalentTo(new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" });
+    }
+
+    [Fact]
+    public void Router_ChestRetrieve_WhenWorldNotReady_Rejects()
+    {
+        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "chest_retrieve" });
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
+        var handler = new MachineAndAnimalActionHandler(executions);
+
+        var request = new BridgeExecutionRequest(
+            "req_chest_retrieve_1", "idemp_chest_retrieve_1", "chest_retrieve",
+            new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "chest_target_1" },
+            1, 5000);
+        var receipt = handler.Execute(request, executions);
+
+        receipt.Should().NotBeNull();
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("native_local_player_required");
+    }
+
+    [Fact]
     public void Router_ChestStore_WhenWorldNotReady_Rejects()
     {
         var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "chest_store" });

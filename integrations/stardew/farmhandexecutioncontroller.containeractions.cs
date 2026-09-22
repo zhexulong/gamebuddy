@@ -58,6 +58,52 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, stored ? ExecutionState.Succeeded : ExecutionState.Rejected, stored ? "chest_stored" : "chest_full", evidence);
     }
 
+    public LocalExecutionReceipt RequestLocalChestRetrieve(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? chestObject)
+            || chestObject is not Chest chest
+            || !IsOwnedOrdinaryChest(chest)
+            || !string.Equals(BuildChestTargetId(location, targetX, targetY, chest), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, chestObject is Chest eligible ? "chest_target_changed" : "chest_not_owned", $"target={targetX},{targetY}");
+
+        Item? target = chest.GetItemsForPlayer().FirstOrDefault(item => item is not null && string.Equals(item.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal) && item.Stack > 0);
+        if (target is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_empty", $"target={targetX},{targetY};item={expectedQualifiedItemId}");
+        if (!Game1.player.couldInventoryAcceptThisItem(target))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={expectedTargetId};item={expectedQualifiedItemId}");
+
+        int chestStackBefore = ChestItemCount(chest, expectedQualifiedItemId);
+        int inventoryBefore = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
+        bool menuBefore = Game1.activeClickableMenu is not null;
+        chest.GetItemsForPlayer().Remove(target);
+        chest.clearNulls();
+        Item? leftover = Game1.player.addItemToInventory(target);
+        bool menuAfter = Game1.activeClickableMenu is not null;
+
+        int chestStackAfter = ChestItemCount(chest, expectedQualifiedItemId);
+        int inventoryAfter = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
+        bool retrieved = leftover is null && chestStackAfter == chestStackBefore - target.Stack && inventoryAfter == inventoryBefore + target.Stack;
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};chest=chest;item={expectedQualifiedItemId};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};inventory_before={inventoryBefore};inventory_after={inventoryAfter};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, retrieved ? ExecutionState.Succeeded : ExecutionState.Uncertain, retrieved ? "chest_retrieved" : "chest_retrieve_postcondition_unavailable", evidence);
+    }
+
     private static int ChestItemCount(Chest chest, string qualifiedItemId) =>
         chest.GetItemsForPlayer().Where(item => item is not null && string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal)).Sum(item => item.Stack);
 }
