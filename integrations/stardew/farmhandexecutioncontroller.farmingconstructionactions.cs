@@ -647,6 +647,62 @@ internal sealed partial class ExecutionManager
         return $"debris_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
+    /// <summary>
+    /// Harvest exactly one ready Scythe-method crop (e.g. wheat/amaranth)
+    /// through the native HoeDirt.performToolAction scythe branch (target
+    /// version 1.6). The equipped scythe must be the current tool. Ordinary
+    /// Grab-method crops stay exclusively in harvest_crop; this action never
+    /// uses the Golden Scythe grab override (HoeDirt line 700), which would
+    /// force-harvest a Grab crop. Fresh postcondition: the harvested item
+    /// entered the inventory and the crop was destroyed/regrown by the native
+    /// call, verified from live game state.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalScytheCrop(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove || Game1.player.UsingTool || Game1.player.toolPower.Value != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsScytheTargetInRange(Game1.player, targetX, targetY))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
+            || dirt.crop is null || dirt.crop.forageCrop.Value || !dirt.readyForHarvest()
+            || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Scythe
+            || weapon.ItemId == "66"
+            || !string.Equals(BuildScytheCropTargetId(location, targetX, targetY, dirt.crop), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_crop_target_unavailable", $"target={targetX},{targetY}");
+
+        StardewValley.Crop crop = dirt.crop;
+        string? harvestId = crop.indexOfHarvest.Value;
+        string? cropSeedId = crop.netSeedIndex.Value ?? harvestId;
+        string harvestQualifiedItemId = StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
+        int inventoryBefore = Game1.player.Items.Sum(item => item?.QualifiedItemId == harvestQualifiedItemId ? item.Stack : 0);
+        float staminaBefore = Game1.player.Stamina;
+        bool nativeReturn = dirt.performToolAction(weapon, 0, tile);
+
+        int inventoryAfter = Game1.player.Items.Sum(item => item?.QualifiedItemId == harvestQualifiedItemId ? item.Stack : 0);
+        bool inventoryGained = inventoryAfter > inventoryBefore;
+        bool cropGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+            || !ReferenceEquals(afterFeature, dirt);
+        float staminaAfter = Game1.player.Stamina;
+        bool succeeded = inventoryGained && cropGone;
+        string evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId};inventory_before={inventoryBefore};inventory_after={inventoryAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_delta={staminaBefore - staminaAfter:0.##};native_scythe={nativeReturn.ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "scythe_crops_harvested" : "scythe_crop_harvest_postcondition_unavailable", evidence);
+    }
+
     private static bool IsValidDebrisTool(StardewValley.TerrainFeatures.ResourceClump clump, Tool tool, out string toolKind, out int requiredUpgrade)
     {
         toolKind = clump.parentSheetIndex.Value switch

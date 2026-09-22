@@ -1314,6 +1314,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("chop_tree_source", StringComparer.Ordinal) ? DiscoverTreeChopResultTargets(player) : null,
             advertisedCapabilities.Contains("chop_stump", StringComparer.Ordinal) ? DiscoverTreeStumpTargets(player) : null,
             advertisedCapabilities.Contains("plant_sapling", StringComparer.Ordinal) ? DiscoverTreeSaplingTargets(player) : null,
+            advertisedCapabilities.Contains("cut_weeds", StringComparer.Ordinal) ? DiscoverWeedTargets(player) : null,
+            advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? DiscoverScytheCropTargets(player) : null,
             advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) ? DiscoverNpcRelationshipTargets(player) : null,
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
@@ -1339,7 +1341,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CrabPotTargets: null, CrabPotResultTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
-        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, NpcRelationshipTargets: null, PetTargets: null,
+        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
         PresentationLocale: string.Empty);
     }
@@ -1642,6 +1644,62 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     private static bool IsTreeSaplingTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
+
+    private static IReadOnlyList<BridgeWeedTarget> DiscoverWeedTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeWeedTarget>();
+        return location.objects.Pairs
+            .Where(pair => pair.Value is not null
+                && pair.Value.IsWeeds()
+                && pair.Key.X >= 0 && pair.Key.X <= 1000
+                && pair.Key.Y >= 0 && pair.Key.Y <= 1000
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, 1))
+            .Take(16)
+            .Select(pair => new BridgeWeedTarget(
+                BuildWeedTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value),
+                location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.MinutesUntilReady))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<BridgeScytheCropTarget> DiscoverScytheCropTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeScytheCropTarget>();
+        List<BridgeScytheCropTarget> result = new();
+        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
+        {
+            if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is null
+                || dirt.crop.forageCrop.Value || !dirt.readyForHarvest()
+                || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Scythe
+                || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
+                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, 1))
+                continue;
+            string? harvestId = dirt.crop.indexOfHarvest.Value;
+            if (string.IsNullOrWhiteSpace(harvestId)) continue;
+            result.Add(new BridgeScytheCropTarget(
+                BuildScytheCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop),
+                location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y,
+                dirt.crop.netSeedIndex.Value ?? harvestId,
+                StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId));
+            if (result.Count >= 16) break;
+        }
+        return result;
+    }
+
+    private static bool IsScytheTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
+
+    private static string BuildWeedTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Object weed)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:weed:{weed.QualifiedItemId}:{weed.MinutesUntilReady}";
+        return $"weed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static string BuildScytheCropTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Crop crop)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:scythe-crop:{crop.netSeedIndex.Value ?? crop.indexOfHarvest.Value}";
+        return $"scythe_crop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
 
     private static string BuildTreeSaplingTargetId(StardewValley.GameLocation location, int slot, int x, int y, string qualifiedItemId)
     {

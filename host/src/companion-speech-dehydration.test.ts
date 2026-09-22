@@ -33,6 +33,17 @@ test("strips parenthesised asides used in character replies", () => {
     dehydrateCompanionSpeech("种子帮你种好了,(轻声)记得浇水哦。"),
     "种子帮你种好了, 记得浇水哦。",
   );
+  assert.equal(
+    dehydrateCompanionSpeech("花椰菜种好啦（浇水壶从40降到38）等你来验收。"),
+    "花椰菜种好啦 等你来验收。",
+  );
+});
+
+test("strips markdown horizontal-rule separators", () => {
+  assert.equal(
+    dehydrateCompanionSpeech("搞定！\n\n---\n**一句话总结：** 种好浇透了。"),
+    "搞定！ 一句话总结： 种好浇透了。",
+  );
 });
 
 test("collapses whitespace and normalizes NFC, trims surrounding beats", () => {
@@ -44,6 +55,7 @@ test("detects pure stage direction as empty after dehydration", () => {
   assert.equal(isEmptyAfterDehydration("*转过身微笑*"), true);
   assert.equal(isEmptyAfterDehydration("<thinking>思考</thinking>"), true);
   assert.equal(isEmptyAfterDehydration("(轻声)"), true);
+  assert.equal(isEmptyAfterDehydration("（轻声）"), true);
   assert.equal(isEmptyAfterDehydration(""), true);
   assert.equal(isEmptyAfterDehydration("早安!"), false);
 });
