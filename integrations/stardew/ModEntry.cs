@@ -603,6 +603,28 @@ public sealed partial class ModEntry : Mod
             return;
         }
 
+        // The configured companion language (frontend-set single preference) is
+        // applied to the game asynchronously from startup_preferences before
+        // the title-menu update. Loading the save before it reaches the
+        // required live locale locks the whole run into the fallback/default
+        // font and chat locale, exactly like HostAutomation does; wait for it
+        // within the same bounded fixture timeout.
+        string configuredPresentationLocale = this.config.PresentationLocale ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(configuredPresentationLocale)
+            && !NativeChatPresentationPolicy.IsFixtureLiveLocaleAvailable(
+                configuredPresentationLocale,
+                NativeChatPresentationPolicy.CurrentBcp47Locale()))
+        {
+            if (this.nativeLocalPlayerFixtureDeadlineUnixMs == 0)
+                this.nativeLocalPlayerFixtureDeadlineUnixMs = now + fixture.TimeoutSeconds * 1_000L;
+            if (now >= this.nativeLocalPlayerFixtureDeadlineUnixMs)
+            {
+                this.nativeLocalPlayerFixtureTerminal = true;
+                this.Monitor.Log($"GameBuddy native-local-player fixture timed out waiting for presentation locale {configuredPresentationLocale} before loading the observed save slot.", LogLevel.Error);
+            }
+            return;
+        }
+
         this.nativeLocalPlayerFixtureStarted = true;
         this.nativeLocalPlayerFixtureDeadlineUnixMs = now + fixture.TimeoutSeconds * 1_000L;
         try
@@ -713,6 +735,10 @@ public sealed partial class ModEntry : Mod
             PlayerId = Game1.player.UniqueMultiplayerID.ToString(),
             CompanionId = this.config.CompanionId,
             NativeLocalPlayerFixture = completedFixture,
+            // Retain the frontend-set companion language preference across the
+            // fixture bootstrap handoff so presentation locale stays aligned
+            // with the Agent session locale after the save is recorded.
+            PresentationLocale = this.config.PresentationLocale,
             ActionPolicyVersion = 0,
             DeniedActions = new List<string>(),
             DeniedActionFamilies = new List<string>(),
@@ -1879,6 +1905,21 @@ public sealed partial class ModEntry : Mod
         return null;
     }
 
+    /// <summary>
+    /// Resolves the companion presentation locale: the frontend-set language
+    /// preference (single configuration point) when present and valid, otherwise
+    /// the live game locale. BridgeSession validates the result as a BCP-47
+    /// locale on every presentation.
+    /// </summary>
+    private static string ResolvePresentationLocale(ModConfig config)
+    {
+        string configured = config.PresentationLocale ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(configured)
+            && NativeChatPresentationPolicy.IsValidBcp47Locale(configured))
+            return configured;
+        return NativeChatPresentationPolicy.CurrentBcp47Locale();
+    }
+
     private static Vector2? FindNativeLocalFarmFixtureTile(GameLocation location, Vector2 arrival, int radius, bool requireEmptyObjectTile, Func<Vector2, bool>? extraPredicate = null)
     {
         return Enumerable.Range(-radius, radius * 2 + 1)
@@ -2132,6 +2173,7 @@ public sealed partial class ModEntry : Mod
                 executionScope,
                 this.config.BridgeToken,
                 () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
+                presentationLocale: () => ResolvePresentationLocale(this.config),
                 navigationSetProvider: () => DerivedDestinationSet.TryCreateCurrent("stardew", out DerivedDestinationSet? set, out _) ? set : null,
                 runtimeAttestation: runtimeAttestation,
                 sceneObservationProvider: this.TryCreateSceneObservationInput,

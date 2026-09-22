@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import test from "node:test";
 import type { VoicePreferenceUpdate } from "./settings/voice-preference-store.js";
+import type { LanguagePreferenceUpdate } from "./settings/language-preference-store.js";
 import {
   composeTavernProfile,
   type MemoryMutationCommandV1,
@@ -1592,6 +1593,196 @@ test("management handler fails closed when the profile advertises Voice preferen
       managementService: service(recorder),
       worldInfoService: worldInfoService(),
       profile,
+      bootstrapToken: token,
+    }),
+    /tavern_management_composition_unavailable/,
+  );
+});
+
+test("management handler exposes the Host-owned language preference read and update routes with session and CSRF gating", async () => {
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  const languageProfile = composeTavernProfile({
+    profileId: "gamebuddy.tavern-management.chat-list-title",
+    releaseTier: "tavern_management",
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "draft.save",
+      "draft.discard",
+      "chat.list",
+      "chat.rename",
+      "world-info.read",
+      "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+      "settings.language.read",
+      "settings.language.update",
+    ],
+    operationIds: [
+      "draft.save",
+      "draft.discard",
+      "chat.rename",
+      "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+      "settings.language.read",
+      "settings.language.update",
+    ],
+    navigationItemIds: ["chat"],
+  });
+  let languageState: { revision: number; locale: "zh-CN" | "en-US" | null } = { revision: 0, locale: null };
+  const languagePreferenceStore = {
+    read: async () => languageState,
+    update: async (expectedRevision: number, update: LanguagePreferenceUpdate) => {
+      if (expectedRevision !== languageState.revision) throw new Error("language_preference_revision_conflict");
+      languageState = { revision: languageState.revision + 1, locale: update.locale };
+      return languageState;
+    },
+  };
+  const voicePreferenceStore = {
+    read: async () => ({
+      revision: 0,
+      disclosureVersion: null,
+      consent: "undecided",
+      decidedAtMs: null,
+    }),
+    update: async (expectedRevision: number, update: VoicePreferenceUpdate) => ({
+      revision: 1,
+      disclosureVersion: "mimo-cloud-tts-v1",
+      consent: "accepted",
+      decidedAtMs: 1,
+    }),
+  };
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service(recorder),
+    worldInfoService: worldInfoService(),
+    languagePreferenceStore,
+    voicePreferenceStore,
+    profile: languageProfile,
+    bootstrapToken: token,
+  });
+  const run = async (input: import("node:http").IncomingMessage) => {
+    const output = new ControlledResponse("finish");
+    await dispatch(handler, input, output);
+    return output;
+  };
+  assert.equal(
+    (await run(request("GET", "/api/tavern/v1/settings/language", { "sec-fetch-site": "same-origin" }))).status,
+    401,
+  );
+  const bootstrap = await run(
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+  );
+  assert.equal(bootstrap.status, 200);
+  const csrf = (JSON.parse(bootstrap.body) as { csrfToken: string }).csrfToken;
+  const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+  const read = await run(
+    request("GET", "/api/tavern/v1/settings/language", { cookie, "sec-fetch-site": "same-origin" }),
+  );
+  assert.equal(read.status, 200);
+  assert.deepEqual(JSON.parse(read.body), { revision: 0, locale: null });
+  const missingCsrf = await run(
+    request(
+      "PUT",
+      "/api/tavern/v1/settings/language",
+      { origin: "http://127.0.0.1:7331", cookie },
+      { expectedRevision: 0, locale: "zh-CN" },
+    ),
+  );
+  assert.equal(missingCsrf.status, 403);
+  const invalid = await run(
+    request(
+      "PUT",
+      "/api/tavern/v1/settings/language",
+      { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
+      { expectedRevision: 0, locale: "ja-JP" },
+    ),
+  );
+  assert.equal(invalid.status, 400);
+  const updated = await run(
+    request(
+      "PUT",
+      "/api/tavern/v1/settings/language",
+      { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
+      { expectedRevision: 0, locale: "zh-CN" },
+    ),
+  );
+  assert.equal(updated.status, 200);
+  assert.deepEqual(JSON.parse(updated.body), { revision: 1, locale: "zh-CN" });
+  const english = await run(
+    request(
+      "PUT",
+      "/api/tavern/v1/settings/language",
+      { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
+      { expectedRevision: 1, locale: "en-US" },
+    ),
+  );
+  assert.equal(english.status, 200);
+  assert.deepEqual(JSON.parse(english.body), { revision: 2, locale: "en-US" });
+  await handler.close();
+  assert.equal(recorder.closes, 1);
+});
+
+test("management handler fails closed when the profile advertises language routes without the Host store", async () => {
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  const languageProfile = composeTavernProfile({
+    profileId: "gamebuddy.tavern-management.chat-list-title",
+    releaseTier: "tavern_management",
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "draft.save",
+      "draft.discard",
+      "chat.list",
+      "chat.rename",
+      "world-info.read",
+      "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+      "settings.language.read",
+      "settings.language.update",
+    ],
+    operationIds: [
+      "draft.save",
+      "draft.discard",
+      "chat.rename",
+      "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+      "settings.language.read",
+      "settings.language.update",
+    ],
+    navigationItemIds: ["chat"],
+  });
+  const voicePreferenceStore = {
+    read: async () => ({
+      revision: 0,
+      disclosureVersion: null,
+      consent: "undecided",
+      decidedAtMs: null,
+    }),
+    update: async (expectedRevision: number, update: VoicePreferenceUpdate) => ({
+      revision: 1,
+      disclosureVersion: "mimo-cloud-tts-v1",
+      consent: "accepted",
+      decidedAtMs: 1,
+    }),
+  };
+  await assert.rejects(
+    startTavernManagementDialogueWebServer({
+      managementStateFacade: facade,
+      managementService: service(recorder),
+      worldInfoService: worldInfoService(),
+      profile: languageProfile,
+      voicePreferenceStore,
       bootstrapToken: token,
     }),
     /tavern_management_composition_unavailable/,

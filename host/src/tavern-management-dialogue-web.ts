@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { TSchema } from "typebox";
 import { Compile } from "typebox/compile";
 import type { VoicePreference, VoicePreferenceUpdate } from "./settings/voice-preference-store.js";
+import type { LanguagePreference, LanguagePreferenceUpdate } from "./settings/language-preference-store.js";
 import {
   type ChatListQueryV1,
   type ComposedTavernProfile,
@@ -17,6 +18,8 @@ import {
   TavernBrowserContractV1,
   type TavernBrowserNavigationItemIdV1,
   TavernBrowserValidatorsV1,
+  type TavernLanguagePreferenceCommandV1,
+  type TavernLanguagePreferenceV1,
   type TavernProblemV1,
   type TavernStateSnapshotV1,
   type TavernVoicePreferenceConsentCommandV1,
@@ -67,6 +70,14 @@ const MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY = [
   "settings.voice.read",
   "settings.voice.consent",
 ] as const;
+/** Optional language-preference extension: only profiles that declare these
+ * routes mount the Tavern language read/update API; other profiles keep the
+ * exact legacy surface. A profile advertising them without the Host store
+ * fails closed at composition. */
+const MANAGEMENT_LANGUAGE_ROUTES = [
+  "settings.language.read",
+  "settings.language.update",
+] as const;
 const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = [
   "draft.save",
   "draft.discard",
@@ -102,6 +113,9 @@ const memoryMutationValidator = Compile(TavernBrowserContractV1.schemas.MemoryMu
 const voicePreferenceConsentValidator = Compile(
   TavernBrowserContractV1.schemas.TavernVoicePreferenceConsentCommandV1Schema,
 );
+const languagePreferenceUpdateValidator = Compile(
+  TavernBrowserContractV1.schemas.TavernLanguagePreferenceCommandV1Schema,
+);
 
 export type TavernManagementDialogueWebOptions = Readonly<{
   managementStateFacade?: TavernManagementStateFacade;
@@ -111,6 +125,11 @@ export type TavernManagementDialogueWebOptions = Readonly<{
   voicePreferenceStore?: Readonly<{
     read(): Promise<VoicePreference>;
     update(expectedRevision: number, update: VoicePreferenceUpdate): Promise<VoicePreference>;
+  }>;
+  /** Single configuration point for the companion language (frontend-set). */
+  languagePreferenceStore?: Readonly<{
+    read(): Promise<LanguagePreference>;
+    update(expectedRevision: number, update: LanguagePreferenceUpdate): Promise<LanguagePreference>;
   }>;
   profile?: ComposedTavernProfile;
   bootstrapToken?: string;
@@ -149,6 +168,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const memoryService = options.memoryService;
   const worldInfoService = options.worldInfoService;
   const voicePreferenceStore = options.voicePreferenceStore;
+  const languagePreferenceStore = options.languagePreferenceStore;
   const profile = options.profile;
   const bootstrapToken = options.bootstrapToken;
   if (managementStateFacade === undefined || managementService === undefined)
@@ -173,6 +193,11 @@ export function createTavernManagementDialogueWebRequestHandler(
   if (
     (profile.routeIds.includes("settings.voice.read") || profile.routeIds.includes("settings.voice.consent")) &&
     voicePreferenceStore === undefined
+  )
+    throw new Error("tavern_management_composition_unavailable");
+  if (
+    (profile.routeIds.includes("settings.language.read") || profile.routeIds.includes("settings.language.update")) &&
+    languagePreferenceStore === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
   if (!isOpaqueHandle(bootstrapToken)) throw new Error("tavern_management_bootstrap_token_invalid");
@@ -261,6 +286,41 @@ export function createTavernManagementDialogueWebRequestHandler(
         const preference = await voicePreferenceStore.update(expectedRevision, update);
         if (!TavernBrowserValidatorsV1.TavernVoicePreferenceV1Schema.Check(preference))
           throw new Error("voice_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/language") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("settings.language.read") ||
+          !profile.operationIds.includes("settings.language.read") ||
+          languagePreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const preference: TavernLanguagePreferenceV1 = await languagePreferenceStore.read();
+        if (!TavernBrowserValidatorsV1.TavernLanguagePreferenceV1Schema.Check(preference))
+          throw new Error("language_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/language") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("settings.language.update") ||
+          !profile.operationIds.includes("settings.language.update") ||
+          languagePreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!languagePreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as TavernLanguagePreferenceCommandV1;
+        const { expectedRevision, ...update } = command;
+        const preference = await languagePreferenceStore.update(expectedRevision, update);
+        if (!TavernBrowserValidatorsV1.TavernLanguagePreferenceV1Schema.Check(preference))
+          throw new Error("language_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/world-info") {
@@ -552,26 +612,26 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
   // composeTavernProfile, so this HTTP ingress rejects it before any dispatch
   // or injected-service use. The exact shape checks below still apply.
   if (!isComposedTavernProfile(profile)) throw new Error("tavern_management_profile_operation_unavailable");
+  const sameAs = (values: readonly string[], expected: readonly string[], extra: readonly string[] = []) =>
+    sameOrderedValues(values, [...expected, ...extra]);
   const mutableMemory =
     profile.profileId === MANAGEMENT_PROFILE_ID &&
     profile.releaseTier === MANAGEMENT_RELEASE_TIER &&
-    sameOrderedValues(profile.routeIds, MANAGEMENT_ROUTE_IDS) &&
-    sameOrderedValues(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY) &&
+    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS) || sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS, MANAGEMENT_LANGUAGE_ROUTES)) &&
+    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY) || sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY, MANAGEMENT_LANGUAGE_ROUTES)) &&
     sameOrderedValues(profile.navigationItemIds, MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY);
   const readOnlyMemory =
     profile.profileId === MANAGEMENT_PROFILE_ID &&
     profile.releaseTier === MANAGEMENT_RELEASE_TIER &&
-    sameOrderedValues(
-      profile.routeIds,
-      MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"),
-    ) &&
-    sameOrderedValues(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY) &&
+    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate")) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"), MANAGEMENT_LANGUAGE_ROUTES)) &&
+    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY) || sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES)) &&
     sameOrderedValues(profile.navigationItemIds, MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY);
   const withoutMemory =
     profile.profileId === MANAGEMENT_PROFILE_ID &&
     profile.releaseTier === MANAGEMENT_RELEASE_TIER &&
-    sameOrderedValues(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY) &&
-    sameOrderedValues(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY) &&
+    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY) || sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES)) &&
+    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY) || sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES)) &&
     sameOrderedValues(profile.navigationItemIds, MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY);
   // A memory-capable profile must declare the Memory navigation item and the
   // inverse (Memory route but no Memory navigation) fails closed.
