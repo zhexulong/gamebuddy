@@ -19,7 +19,7 @@ public sealed class VoicePreferenceFileReaderTests
     public void Read_projects_a_valid_undecided_preference()
     {
         using var root = TemporaryRoot.Create();
-        root.WritePreference("""{"schemaVersion":1,"revision":2,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null}""");
+        root.WritePreference("""{"schemaVersion":1,"revision":2,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""");
 
         var preference = new VoicePreferenceFileReader(root.PreferencePath).Read();
 
@@ -33,7 +33,7 @@ public sealed class VoicePreferenceFileReaderTests
     public void Read_projects_a_valid_accepted_preference_and_admits_cloud_tts()
     {
         using var root = TemporaryRoot.Create();
-        root.WritePreference("""{"schemaVersion":1,"revision":3,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000}""");
+        root.WritePreference("""{"schemaVersion":1,"revision":3,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null}""");
 
         var preference = new VoicePreferenceFileReader(root.PreferencePath).Read();
 
@@ -47,7 +47,7 @@ public sealed class VoicePreferenceFileReaderTests
     public void Read_projects_a_valid_revoked_preference_without_admission()
     {
         using var root = TemporaryRoot.Create();
-        root.WritePreference("""{"schemaVersion":1,"revision":4,"disclosureVersion":"mimo-cloud-tts-v1","consent":"revoked","decidedAtMs":1700000000000}""");
+        root.WritePreference("""{"schemaVersion":1,"revision":4,"disclosureVersion":"mimo-cloud-tts-v1","consent":"revoked","decidedAtMs":1700000000000,"outputDevice":null}""");
 
         var preference = new VoicePreferenceFileReader(root.PreferencePath).Read();
 
@@ -80,9 +80,9 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":2,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null}""")]
-    [InlineData("""{"schemaVersion":"1","revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null}""")]
-    [InlineData("""{"schemaVersion":1.5,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null}""")]
+    [InlineData("""{"schemaVersion":2,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""")]
+    [InlineData("""{"schemaVersion":"1","revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""")]
+    [InlineData("""{"schemaVersion":1.5,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""")]
     public void Read_rejects_a_schema_version_other_than_exactly_one(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -94,7 +94,7 @@ public sealed class VoicePreferenceFileReaderTests
     [Theory]
     [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":"mimo-cloud-tts-v2","consent":"accepted","decidedAtMs":1}""")]
     [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"accepted","decidedAtMs":1}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":null,"outputDevice":null}""")]
     public void Read_rejects_accepted_without_the_exact_disclosure_contract_and_decision_time(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -105,7 +105,7 @@ public sealed class VoicePreferenceFileReaderTests
 
     [Theory]
     [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":1}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":"mimo-cloud-tts-v1","consent":"undecided","decidedAtMs":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":"mimo-cloud-tts-v1","consent":"undecided","decidedAtMs":null,"outputDevice":null}""")]
     [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":0}""")]
     public void Read_rejects_undecided_with_any_decision_data(string json)
     {
@@ -116,9 +116,9 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":1,"disclosureVersion":null,"consent":"maybe","decidedAtMs":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":1,"disclosureVersion":null,"consent":3,"decidedAtMs":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":1,"disclosureVersion":null,"consent":null,"decidedAtMs":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"disclosureVersion":null,"consent":"maybe","decidedAtMs":null,"outputDevice":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"disclosureVersion":null,"consent":3,"decidedAtMs":null,"outputDevice":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"disclosureVersion":null,"consent":null,"decidedAtMs":null,"outputDevice":null}""")]
     public void Read_rejects_unknown_consent_values(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -128,12 +128,12 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":-1,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":"0","disclosureVersion":null,"consent":"undecided","decidedAtMs":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":7,"consent":"undecided","decidedAtMs":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":-1,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":"0","disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":7,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""")]
     [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":"now"}""")]
     [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":-1}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"revoked","decidedAtMs":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"revoked","decidedAtMs":null,"outputDevice":null}""")]
     public void Read_rejects_wrong_field_types_and_missing_decision_time(string json)
     {
         using var root = TemporaryRoot.Create();

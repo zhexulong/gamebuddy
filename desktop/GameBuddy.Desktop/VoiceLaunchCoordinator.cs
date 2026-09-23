@@ -18,7 +18,7 @@ internal static class VoiceLaunchCoordinator
     internal const int MaxPort = 65_535;
 
     /// <summary>One per-launch Voice decision; port and token are always paired and the artifact is already admitted.</summary>
-    internal sealed record VoiceLaunch(AdmittedVoiceGateway Gateway, int Port, string Token);
+    internal sealed record VoiceLaunch(AdmittedVoiceGateway Gateway, int Port, string Token, string OutputDevice);
 
     /// <summary>
     /// Pure decision: admits the Voice artifact in the selected generation,
@@ -69,7 +69,7 @@ internal static class VoiceLaunchCoordinator
             return null;
 
         var port = PickFreeLoopbackPort();
-        return new VoiceLaunch(gateway, port, GenerateToken());
+        return new VoiceLaunch(gateway, port, GenerateToken(), preference.SelectedOutputDevice);
     }
 
     /// <summary>Reserves a free loopback port and releases it for the Voice child to bind.</summary>

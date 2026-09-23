@@ -209,7 +209,7 @@ function worldInfoService(recorder?: {
 
 const voicePreferenceStore = Object.freeze({
   async read() {
-    return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null };
+    return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
   },
   async update(expectedRevision: number, update: VoicePreferenceUpdate) {
     assert.equal(expectedRevision, 0);
@@ -218,6 +218,7 @@ const voicePreferenceStore = Object.freeze({
       disclosureVersion: update.action === "accept" ? update.disclosureVersion : null,
       consent: update.action === "accept" ? ("accepted" as const) : ("revoked" as const),
       decidedAtMs: 1,
+      outputDevice: update.action === "setOutputDevice" ? update.outputDevice : null,
     };
   },
 });
@@ -1547,6 +1548,7 @@ test("management handler exposes the Host-owned Voice preference read and consen
     disclosureVersion: null,
     consent: "undecided",
     decidedAtMs: null,
+    outputDevice: null,
   });
   const missingCsrf = await run(
     request(
@@ -1580,6 +1582,7 @@ test("management handler exposes the Host-owned Voice preference read and consen
     disclosureVersion: "mimo-cloud-tts-v1",
     consent: "accepted",
     decidedAtMs: 1,
+    outputDevice: null,
   });
   await handler.close();
   assert.equal(recorder.closes, 1);
@@ -1646,12 +1649,14 @@ test("management handler exposes the Host-owned language preference read and upd
       disclosureVersion: null,
       consent: "undecided",
       decidedAtMs: null,
+      outputDevice: null,
     }),
     update: async (expectedRevision: number, update: VoicePreferenceUpdate) => ({
       revision: 1,
       disclosureVersion: "mimo-cloud-tts-v1",
       consent: "accepted",
       decidedAtMs: 1,
+      outputDevice: null,
     }),
   };
   const handler = createTavernManagementDialogueWebRequestHandler({
@@ -1768,12 +1773,14 @@ test("management handler fails closed when the profile advertises language route
       disclosureVersion: null,
       consent: "undecided",
       decidedAtMs: null,
+      outputDevice: null,
     }),
     update: async (expectedRevision: number, update: VoicePreferenceUpdate) => ({
       revision: 1,
       disclosureVersion: "mimo-cloud-tts-v1",
       consent: "accepted",
       decidedAtMs: 1,
+      outputDevice: null,
     }),
   };
   await assert.rejects(
@@ -1797,7 +1804,7 @@ test("management handler maps Voice preference revision conflicts to the safe se
     worldInfoService: worldInfoService(),
     voicePreferenceStore: Object.freeze({
       async read() {
-        return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null };
+        return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
       },
       async update() {
         throw new Error("voice_preference_revision_conflict");

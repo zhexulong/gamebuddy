@@ -87,10 +87,13 @@ public sealed class VoiceGatewaySupervisorTests
         var plan = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), root.Gateway("voice/entry.js"), 49731, ValidToken, cloudTtsAdmitted: false);
 
         Assert.Equal(
-            new[] { "GAMEBUDDY_VOICE_PORT", "GAMEBUDDY_VOICE_TOKEN", "LOCALAPPDATA", "SystemRoot", "TEMP", "TMP" },
+            new[] { "GAMEBUDDY_VOICE_PORT", "GAMEBUDDY_VOICE_TOKEN", "GAMEBUDDY_WINDOWS_OUTPUT_DEVICE", "LOCALAPPDATA", "SystemRoot", "TEMP", "TMP" },
             plan.Environment.Keys.OrderBy(key => key, StringComparer.Ordinal));
         Assert.Equal("49731", plan.Environment["GAMEBUDDY_VOICE_PORT"]);
         Assert.Equal(ValidToken, plan.Environment["GAMEBUDDY_VOICE_TOKEN"]);
+        // The player's stored endpoint reaches the child verbatim; the default
+        // plan selects the Windows current default multimedia output.
+        Assert.Equal("default", plan.Environment["GAMEBUDDY_WINDOWS_OUTPUT_DEVICE"]);
         Assert.DoesNotContain(plan.Environment, pair => pair.Key.Equals("GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION", StringComparison.Ordinal));
         Assert.DoesNotContain(plan.Environment.Keys, key => key.Equals("PATH", StringComparison.OrdinalIgnoreCase) || key.Equals("APPDATA", StringComparison.OrdinalIgnoreCase) || key.Equals("USERNAME", StringComparison.OrdinalIgnoreCase));
     }
@@ -104,6 +107,22 @@ public sealed class VoiceGatewaySupervisorTests
         var plan = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true);
 
         Assert.Equal("desktop-consent-v1", plan.Environment["GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION"]);
+    }
+
+    [Fact]
+    public void BuildLaunchPlan_carries_a_pinned_output_endpoint_and_rejects_a_malformed_one()
+    {
+        using var root = TemporaryRoot.Create();
+        var gateway = root.Gateway("voice/entry.js");
+
+        var pinned = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: null, outputDevice: "waveout:3");
+        Assert.Equal("waveout:3", pinned.Environment["GAMEBUDDY_WINDOWS_OUTPUT_DEVICE"]);
+
+        // Only the frozen `default` / `waveout:N` shapes are forwarded: a device
+        // name, path, or free text fails closed instead of reaching the child.
+        Assert.Throws<ArgumentException>(() => VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: null, outputDevice: "Speakers"));
+        Assert.Throws<ArgumentException>(() => VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: null, outputDevice: "C:\\devices\\speakers"));
+        Assert.Throws<ArgumentException>(() => VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: null, outputDevice: "waveout:"));
     }
 
     [Fact]

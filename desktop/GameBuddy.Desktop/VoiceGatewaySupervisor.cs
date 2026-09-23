@@ -4,19 +4,21 @@ using System.Text.RegularExpressions;
 
 namespace GameBuddy.Desktop;
 
-internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath, int Port, string Token, bool CloudTtsAdmitted, string? Persona)
+internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath, int Port, string Token, bool CloudTtsAdmitted, string? Persona, string OutputDevice)
 {
     /// <summary>
-    /// The gateway reads its per-launch port and token exclusively from the
-    /// environment; the child gets only the frozen minimal variables below.
+    /// The gateway reads its per-launch port, token and output endpoint
+    /// exclusively from the environment; the child gets only the frozen minimal
+    /// variables below. The endpoint is the player's stored selection
+    /// (`waveout:N`) or `default` for the Windows default multimedia output.
     /// </summary>
-    internal IReadOnlyDictionary<string, string> Environment => BuildEnvironment(Port, Token, CloudTtsAdmitted);
+    internal IReadOnlyDictionary<string, string> Environment => BuildEnvironment(Port, Token, CloudTtsAdmitted, OutputDevice);
     internal string Arguments => $"{Quote(EntryPath)}" + (Persona is null ? string.Empty : $" --persona {Quote(Persona)}");
 
     // The token is launch-only and never appears in any string representation.
-    public override string ToString() => $"VoiceGatewayLaunchPlan(NodePath={NodePath}, EntryPath={EntryPath}, Port={Port}, CloudTtsAdmitted={CloudTtsAdmitted}, Persona={Persona})";
+    public override string ToString() => $"VoiceGatewayLaunchPlan(NodePath={NodePath}, EntryPath={EntryPath}, Port={Port}, CloudTtsAdmitted={CloudTtsAdmitted}, Persona={Persona}, OutputDevice={OutputDevice})";
 
-    private static IReadOnlyDictionary<string, string> BuildEnvironment(int port, string token, bool cloudTtsAdmitted)
+    private static IReadOnlyDictionary<string, string> BuildEnvironment(int port, string token, bool cloudTtsAdmitted, string outputDevice)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -26,6 +28,7 @@ internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath,
             ["LOCALAPPDATA"] = RequiredEnvironment("LOCALAPPDATA"),
             ["GAMEBUDDY_VOICE_PORT"] = port.ToString(CultureInfo.InvariantCulture),
             ["GAMEBUDDY_VOICE_TOKEN"] = token,
+            ["GAMEBUDDY_WINDOWS_OUTPUT_DEVICE"] = outputDevice,
         };
         if (cloudTtsAdmitted) values.Add("GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION", "desktop-consent-v1");
         return values;
@@ -53,7 +56,12 @@ internal sealed class VoiceGatewaySupervisor : IAsyncDisposable
     private Process? process;
     private int closed;
 
-    internal static VoiceGatewayLaunchPlan BuildLaunchPlan(string nodePath, AdmittedVoiceGateway gateway, int port, string token, bool cloudTtsAdmitted, string? persona = null)
+    // The endpoint is either the frozen `waveout:N` selection or `default`
+    // (Windows current default). Nothing else is ever forwarded to the child.
+    internal static readonly System.Text.RegularExpressions.Regex OutputDeviceRegex =
+        new("^(default|waveout:[0-9]{1,4})$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    internal static VoiceGatewayLaunchPlan BuildLaunchPlan(string nodePath, AdmittedVoiceGateway gateway, int port, string token, bool cloudTtsAdmitted, string? persona = null, string outputDevice = "default")
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(nodePath);
         ArgumentNullException.ThrowIfNull(gateway);
@@ -64,7 +72,8 @@ internal sealed class VoiceGatewaySupervisor : IAsyncDisposable
         // The gateway entry itself rejects any other token shape with exit code 2.
         if (!GatewayTokenRegex.IsMatch(token)) throw new ArgumentException("Gateway token must be 16-256 opaque characters of [A-Za-z0-9_-].", nameof(token));
         if (persona?.Contains('\0') == true) throw new ArgumentException("Invalid persona.", nameof(persona));
-        return new VoiceGatewayLaunchPlan(nodePath, gateway.EntryPath, port, token, cloudTtsAdmitted, persona);
+        if (!OutputDeviceRegex.IsMatch(outputDevice)) throw new ArgumentException("Output device must be `default` or `waveout:N`.", nameof(outputDevice));
+        return new VoiceGatewayLaunchPlan(nodePath, gateway.EntryPath, port, token, cloudTtsAdmitted, persona, outputDevice);
     }
 
     internal Task<VoiceGatewayLease> StartAsync(VoiceGatewayLaunchPlan plan, CancellationToken cancellationToken = default)

@@ -70,6 +70,22 @@ public sealed class VoiceLaunchCoordinatorTests
         Assert.Matches("^[A-Za-z0-9_-]{16,256}$", launch.Token);
         Assert.NotNull(launch.Gateway.EntryPath);
         Assert.NotNull(launch.Gateway.ProtocolPath);
+        // No stored endpoint selection => the Windows default output.
+        Assert.Equal("default", launch.OutputDevice);
+    }
+
+    [Fact]
+    public void Resolve_carries_the_players_stored_output_endpoint()
+    {
+        using var root = TemporaryRoot.Create();
+        WriteSidecar(root);
+        WritePreference(root, "accepted", "mimo-cloud-tts-v1", 3, outputDevice: "waveout:3");
+        const string generation = "g-voice-1-00000000000000000000000000000000";
+
+        var launch = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
+
+        Assert.NotNull(launch);
+        Assert.Equal("waveout:3", launch.OutputDevice);
     }
 
     [Fact]
@@ -109,7 +125,7 @@ public sealed class VoiceLaunchCoordinatorTests
 
     private static void WriteAcceptedPreference(TemporaryRoot root) => WritePreference(root, "accepted", "mimo-cloud-tts-v1", 3);
 
-    private static void WritePreference(TemporaryRoot root, string consent, string? disclosureVersion, long revision)
+    private static void WritePreference(TemporaryRoot root, string consent, string? disclosureVersion, long revision, string? outputDevice = null)
     {
         var preference = new
         {
@@ -118,6 +134,7 @@ public sealed class VoiceLaunchCoordinatorTests
             disclosureVersion,
             consent,
             decidedAtMs = consent == "undecided" ? (long?)null : 1_700_000_000_000L,
+            outputDevice,
         };
         File.WriteAllText(root.PreferencePath, System.Text.Json.JsonSerializer.Serialize(preference));
     }

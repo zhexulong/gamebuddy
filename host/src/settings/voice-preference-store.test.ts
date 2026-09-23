@@ -9,6 +9,16 @@ import {
   VoicePreferenceRevisionConflict,
   VoicePreferenceStore,
 } from "./voice-preference-store.js";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 
 async function canonicalTemporaryRoot(): Promise<string> {
   const root = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
@@ -33,6 +43,7 @@ test("voice cloud TTS preference defaults durably and projects exact public keys
       disclosureVersion: null,
       consent: "undecided",
       decidedAtMs: null,
+      outputDevice: null,
     } satisfies VoicePreference);
 
     const accepted = await store.update(0, {
@@ -43,7 +54,7 @@ test("voice cloud TTS preference defaults durably and projects exact public keys
     assert.equal(accepted.consent, "accepted");
     assert.equal(accepted.disclosureVersion, VOICE_CLOUD_TTS_DISCLOSURE_VERSION);
     assert.equal(typeof accepted.decidedAtMs, "number");
-    assert.deepEqual(Object.keys(accepted).sort(), ["consent", "decidedAtMs", "disclosureVersion", "revision"]);
+    assert.deepEqual(Object.keys(accepted).sort(), ["consent", "decidedAtMs", "disclosureVersion", "outputDevice", "revision"]);
 
     const reopened = await new VoicePreferenceStore(path).read();
     assert.deepEqual(reopened, accepted);
@@ -73,6 +84,7 @@ test("initial revoke has no disclosure revision", async () => {
       disclosureVersion: null,
       consent: "revoked",
       decidedAtMs: revoked.decidedAtMs,
+      outputDevice: null,
     });
     assert.equal(typeof revoked.decidedAtMs, "number");
   });
@@ -107,6 +119,7 @@ test("persisted JSON requires the exact schema and rejects malformed or duplicat
       disclosureVersion: null,
       consent: "undecided",
       decidedAtMs: null,
+      outputDevice: null,
     };
 
     await writeFile(path, JSON.stringify({ ...valid, extra: true }));
@@ -120,5 +133,36 @@ test("persisted JSON requires the exact schema and rejects malformed or duplicat
       '{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"consent":"undecided"}',
     );
     await assert.rejects(store.read(), /invalid_voice_preference_store/);
+  });
+});
+test("output device selection round-trips and rejects malformed endpoints", async () => {
+  await withStore(async (path, store) => {
+    assert.equal((await store.read()).outputDevice, null);
+
+    const pinned = await store.update(0, { action: "setOutputDevice", outputDevice: "waveout:3" });
+    assert.equal(pinned.outputDevice, "waveout:3");
+    assert.equal(pinned.consent, "undecided");
+
+    const reopened = await new VoicePreferenceStore(path).read();
+    assert.equal(reopened.outputDevice, "waveout:3");
+
+    // Clearing back to the Windows default is an explicit selection too.
+    const cleared = await store.update(reopened.revision, { action: "setOutputDevice", outputDevice: null });
+    assert.equal(cleared.outputDevice, null);
+
+    // Only the frozen `waveout:N` endpoint shape is ever stored; anything else
+    // fails closed so a device name/path can never reach the gateway.
+    await assert.rejects(
+      store.update(0, { action: "setOutputDevice", outputDevice: "Speakers" } as never),
+      /invalid_voice_preference_update/,
+    );
+    await assert.rejects(
+      store.update(0, { action: "setOutputDevice", outputDevice: "C:\\devices\\speakers" } as never),
+      /invalid_voice_preference_update/,
+    );
+    await assert.rejects(
+      store.update(0, { action: "setOutputDevice", outputDevice: "waveout:" } as never),
+      /invalid_voice_preference_update/,
+    );
   });
 });

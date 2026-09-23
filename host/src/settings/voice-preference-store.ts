@@ -3,16 +3,27 @@ import { readStrictJsonFile } from "../strict-json-reader.js";
 
 export const VOICE_CLOUD_TTS_DISCLOSURE_VERSION = "mimo-cloud-tts-v1" as const;
 
+/**
+ * Player-selectable Voice output endpoint. `null` means "use the Windows
+ * default multimedia output at each open"; a `waveout:N` value pins one
+ * enumerated endpoint (the Voice Gateway never silently falls back from an
+ * explicit selection). The value is an endpoint selection, not a credential.
+ */
+export type VoiceOutputDevice = string | null;
+
 export type VoiceCloudTtsConsent = "undecided" | "accepted" | "revoked";
 export type VoicePreference = Readonly<{
   revision: number;
   disclosureVersion: typeof VOICE_CLOUD_TTS_DISCLOSURE_VERSION | null;
   consent: VoiceCloudTtsConsent;
   decidedAtMs: number | null;
+  /** Player-chosen output endpoint; null selects the Windows default. */
+  outputDevice: VoiceOutputDevice;
 }>;
 export type VoicePreferenceUpdate =
   | Readonly<{ action: "accept"; disclosureVersion: typeof VOICE_CLOUD_TTS_DISCLOSURE_VERSION }>
-  | Readonly<{ action: "revoke" }>;
+  | Readonly<{ action: "revoke" }>
+  | Readonly<{ action: "setOutputDevice"; outputDevice: VoiceOutputDevice }>;
 
 type StoredVoicePreference = Readonly<VoicePreference>;
 type StoredVoicePreferences = Readonly<{
@@ -21,6 +32,7 @@ type StoredVoicePreferences = Readonly<{
   disclosureVersion: typeof VOICE_CLOUD_TTS_DISCLOSURE_VERSION | null;
   consent: VoiceCloudTtsConsent;
   decidedAtMs: number | null;
+  outputDevice: VoiceOutputDevice;
 }>;
 
 export class VoicePreferenceRevisionConflict extends Error {
@@ -47,8 +59,10 @@ export class VoicePreferenceStore {
         revision: current.revision + 1,
         disclosureVersion:
           update.action === "accept" ? update.disclosureVersion : current.disclosureVersion,
-        consent: update.action === "accept" ? "accepted" : "revoked",
-        decidedAtMs: Date.now(),
+        consent:
+          update.action === "accept" ? "accepted" : update.action === "revoke" ? "revoked" : current.consent,
+        decidedAtMs: update.action === "setOutputDevice" ? current.decidedAtMs : Date.now(),
+        outputDevice: update.action === "setOutputDevice" ? update.outputDevice : current.outputDevice,
       });
       await writeAtomically(this.path, next);
       const readBack = await this.load();
@@ -73,6 +87,7 @@ const DEFAULT_VOICE_PREFERENCE: StoredVoicePreferences = Object.freeze({
   disclosureVersion: null,
   consent: "undecided",
   decidedAtMs: null,
+  outputDevice: null,
 });
 
 function project(value: StoredVoicePreference): VoicePreference {
@@ -81,6 +96,7 @@ function project(value: StoredVoicePreference): VoicePreference {
     disclosureVersion: value.disclosureVersion,
     consent: value.consent,
     decidedAtMs: value.decidedAtMs,
+    outputDevice: value.outputDevice,
   });
 }
 
@@ -92,7 +108,8 @@ function validateStored(value: unknown): StoredVoicePreferences {
     !isDisclosureVersionOrNull(value.disclosureVersion) ||
     !isConsent(value.consent) ||
     !isDecisionTimeOrNull(value.decidedAtMs) ||
-    !hasExactKeys(value, ["schemaVersion", "revision", "disclosureVersion", "consent", "decidedAtMs"])
+    !isOutputDevice(value.outputDevice) ||
+    !hasExactKeys(value, ["schemaVersion", "revision", "disclosureVersion", "consent", "decidedAtMs", "outputDevice"])
   )
     throw new Error("invalid_voice_preference_store");
 
@@ -110,6 +127,7 @@ function validateStored(value: unknown): StoredVoicePreferences {
     disclosureVersion,
     consent: value.consent,
     decidedAtMs: value.decidedAtMs,
+    outputDevice: value.outputDevice,
   });
 }
 
@@ -121,7 +139,19 @@ function isUpdate(value: unknown): value is VoicePreferenceUpdate {
       value.disclosureVersion === VOICE_CLOUD_TTS_DISCLOSURE_VERSION
     );
   }
+  if (value.action === "setOutputDevice") {
+    return hasExactKeys(value, ["action", "outputDevice"]) && isOutputDevice(value.outputDevice);
+  }
   return value.action === "revoke" && hasExactKeys(value, ["action"]);
+}
+
+/**
+ * `null` = Windows default output at each open; `waveout:N` pins one endpoint.
+ * The shape is bounded and exact: no path, device name, or free text is ever
+ * stored, so a stale endpoint cannot be confused with a filesystem target.
+ */
+function isOutputDevice(value: unknown): value is VoiceOutputDevice {
+  return value === null || (typeof value === "string" && /^waveout:\d{1,4}$/.test(value));
 }
 
 function isConsent(value: unknown): value is VoiceCloudTtsConsent {

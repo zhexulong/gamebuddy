@@ -279,6 +279,8 @@ export const TavernVoicePreferenceV1Schema = strictObject({
   disclosureVersion: Type.Union([Type.Literal("mimo-cloud-tts-v1"), Type.Null()]),
   consent: Type.Union([Type.Literal("undecided"), Type.Literal("accepted"), Type.Literal("revoked")]),
   decidedAtMs: Type.Union([Revision, Type.Null()]),
+  /** `null` = Windows default output; `waveout:N` pins one enumerated endpoint. */
+  outputDevice: Type.Union([Type.Null(), Type.String({ pattern: "^waveout:[0-9]{1,4}$", maxLength: 16 })]),
 });
 export const TavernVoicePreferenceConsentCommandV1Schema = Type.Union([
   strictObject({
@@ -289,6 +291,11 @@ export const TavernVoicePreferenceConsentCommandV1Schema = Type.Union([
   strictObject({
     expectedRevision: Revision,
     action: Type.Literal("revoke"),
+  }),
+  strictObject({
+    expectedRevision: Revision,
+    action: Type.Literal("setOutputDevice"),
+    outputDevice: Type.Union([Type.Null(), Type.String({ pattern: "^waveout:[0-9]{1,4}$", maxLength: 16 })]),
   }),
 ]);
 
