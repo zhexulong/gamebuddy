@@ -84,7 +84,9 @@ internal static class Program
                         voiceLaunch.Gateway,
                         voiceLaunch.Port,
                         voiceLaunch.Token,
-                        cloudTtsAdmitted: true);
+                        cloudTtsAdmitted: true,
+                        persona: null,
+                        outputDevice: voiceLaunch.OutputDevice);
                     voiceLease = await voiceSupervisor.StartAsync(plan, cancellationToken).ConfigureAwait(false);
                 }
             }

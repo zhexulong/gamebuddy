@@ -28,15 +28,15 @@ test("strips <thinking>/<thought> blocks, possibly multi-line", () => {
   );
 });
 
-test("strips parenthesised asides used in character replies", () => {
+test("preserves inline bracket audio tags for MiMo V2.5 interpretation", () => {
+  // MiMo V2.5 performs bracketed tone/emotion tags instead of speaking them
+  // (voice-gateway-streaming-submodule §2.5: zero intermediate processing).
+  // Stripping them would delete the companion's emotion channel.
   assert.equal(
-    dehydrateCompanionSpeech("种子帮你种好了,(轻声)记得浇水哦。"),
-    "种子帮你种好了, 记得浇水哦。",
+    dehydrateCompanionSpeech("种子帮你种好了,（轻声）记得浇水哦。"),
+    "种子帮你种好了,（轻声）记得浇水哦。",
   );
-  assert.equal(
-    dehydrateCompanionSpeech("花椰菜种好啦（浇水壶从40降到38）等你来验收。"),
-    "花椰菜种好啦 等你来验收。",
-  );
+  assert.equal(dehydrateCompanionSpeech("[pause] 我看看。"), "[pause] 我看看。");
 });
 
 test("strips bare reasoning frames beyond XML tags", () => {
@@ -47,7 +47,6 @@ test("strips bare reasoning frames beyond XML tags", () => {
   assert.equal(dehydrateCompanionSpeech("（思考：该浇水了）好的!"), "好的!");
   assert.equal(dehydrateCompanionSpeech("【内心：好紧张】加油!"), "加油!");
 });
-
 test("collapses punctuation orphaned by removed beats", () => {
   // `**...**` is markdown emphasis (kept content); `*...*` is a stage beat
   // (removed). A beat orphaned between separators must not leave bare
@@ -79,17 +78,20 @@ test("collapses whitespace and normalizes NFC, trims surrounding beats", () => {
 test("detects pure stage direction as empty after dehydration", () => {
   assert.equal(isEmptyAfterDehydration("*转过身微笑*"), true);
   assert.equal(isEmptyAfterDehydration("<thinking>思考</thinking>"), true);
-  assert.equal(isEmptyAfterDehydration("(轻声)"), true);
-  assert.equal(isEmptyAfterDehydration("（轻声）"), true);
+  assert.equal(isEmptyAfterDehydration("（思考：该浇水了）"), true);
   assert.equal(isEmptyAfterDehydration(""), true);
   assert.equal(isEmptyAfterDehydration("早安!"), false);
+  // Tag-only replies produce a short meaningless sound on MiMo (user-confirmed),
+  // so they count as nothing to say — a tag attached to real dialogue does not.
+  assert.equal(isEmptyAfterDehydration("（轻声）"), true);
+  assert.equal(isEmptyAfterDehydration("（轻声）早。"), false);
 });
 
 test("handles mixed beats and keeps remaining speakable dialogue", () => {
   assert.equal(
     dehydrateCompanionSpeech(
-      '<thinking>他想要种子</thinking>*微笑走近* "给你种子," (轻声) "记得浇水哦。"',
+      '<thinking>他想要种子</thinking>*微笑走近* "给你种子," （轻声）"记得浇水哦。"',
     ),
-    '"给你种子," "记得浇水哦。"',
+    '"给你种子," （轻声）"记得浇水哦。"',
   );
 });

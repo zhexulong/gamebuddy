@@ -12,10 +12,14 @@
  * module strips them and keeps the speakable dialogue:
  *
  *  - `<thinking>...</thinking>` / `<thought>...</thought>` blocks are removed
- *    (multi-line allowed), plus common bare variants (`(thinking)` asides,
- *    `【内心】`/`（os）` frames).
- *  - `*...*` and `**...**` action beats are removed (multi-line allowed).
- *  - `(...)` and `（...）` parenthesised asides are removed (full-width included).
+ *    (multi-line allowed), plus explicit bare reasoning frames
+ *    (`(thinking)`/`[thought]`/`（思考）`/`【内心】`).
+ *  - `*...*` action beats are removed (multi-line allowed); `**...**` markdown
+ *    emphasis keeps its content.
+ *  - **Inline bracket audio tags are preserved.** Round/full-width/square
+ *    brackets carry MiMo V2.5 tone/emotion tags (`（轻声）`, `[pause]`) which the
+ *    synthesizer performs instead of speaking, so stripping them would delete
+ *    the emotion channel. The Voice lane consumes this text unmodified.
  *  - Markdown `---` separators are removed.
  *  - Isolated punctuation orphaned by a removed beat (`：，`、`，、`、trailing
  *    `，`/`。` before another sentence) is collapsed so no bare separator
@@ -40,9 +44,13 @@ export function dehydrateCompanionSpeech(input: string): string {
   //    Bold `**x**` is markdown emphasis, not a stage beat — keep its content.
   text = text.replace(/\*\*([^*\n]+)\*\*/g, "$1");
   text = text.replace(/\*[^*]*\*/gs, " ");
-  // 3. Parenthesised asides ((轻声)(笑)(smiles)) — ASCII and full-width.
-  text = text.replace(/\([^)]*\)/g, " ");
-  text = text.replace(/（[^）]*）/g, " ");
+  // 3. Inline bracket tags are PRESERVED in the utterance: MiMo V2.5 performs a
+  //    sound-related tag (（轻声）/（笑）/[pause]) instead of speaking it, but an
+  //    utterance that consists of tags only produces a short meaningless sound —
+  //    so `isEmptyAfterDehydration` below treats tag-only text as nothing to
+  //    say. Body-action tags (（转身微笑）) are ignored by the synthesizer (and
+  //    skew prosody), so the prompt steers the Agent to express those through
+  //    the in-game express_emote / face_direction actions instead.
   // 4. Markdown horizontal-rule separators.
   text = text.replace(/^[ \t]*---[ \t]*$/gm, " ");
   // 5. Collapse whitespace and normalize.
@@ -69,7 +77,16 @@ export function dehydrateCompanionSpeech(input: string): string {
   return text;
 }
 
-/** True when dehydration leaves nothing speakable (pure stage direction). */
+/** Bracket tag forms MiMo interprets as audio directions (never spoken). */
+const INLINE_TAG_RE = /（[^）]*）|\([^)]*\)|\[[^\]]*\]/g;
+
+/**
+ * True when dehydration leaves nothing speakable: either the text collapses to
+ * empty, or it consists entirely of bracket tags. A tag-only reply would make
+ * the synthesizer emit a short meaningless sound, so it is treated as "nothing
+ * to say" — the caller rejects it instead of publishing empty speech.
+ */
 export function isEmptyAfterDehydration(input: string): boolean {
-  return dehydrateCompanionSpeech(input).length === 0;
+  const stripped = dehydrateCompanionSpeech(input).replace(INLINE_TAG_RE, " ").replace(/\s+/g, " ").trim();
+  return stripped.length === 0;
 }

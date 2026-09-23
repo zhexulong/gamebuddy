@@ -6,10 +6,16 @@ namespace GameBuddy.Desktop;
 /// Cloud TTS consent projected from the Host-owned voice-preference.json.
 /// Narrow and immutable: only the fields the desktop launch gate consumes.
 /// </summary>
-internal sealed record VoicePreference(VoiceCloudTtsConsent Consent, string? DisclosureVersion, long Revision)
+internal sealed record VoicePreference(VoiceCloudTtsConsent Consent, string? DisclosureVersion, long Revision, string? OutputDevice)
 {
     /// <summary>Server TTS is admitted only while the preference is exactly "accepted".</summary>
     internal bool CloudTtsAdmitted => Consent == VoiceCloudTtsConsent.Accepted;
+
+    /// <summary>
+    /// Player-selected output endpoint, or null for the Windows default. The
+    /// gateway receives this verbatim; an explicit endpoint never falls back.
+    /// </summary>
+    internal string SelectedOutputDevice => OutputDevice ?? "default";
 }
 
 internal enum VoiceCloudTtsConsent
@@ -58,7 +64,7 @@ internal sealed class VoicePreferenceFileReader
 
     private static VoicePreference Project(JsonElement value)
     {
-        var properties = new[] { "schemaVersion", "revision", "disclosureVersion", "consent", "decidedAtMs" };
+        var properties = new[] { "schemaVersion", "revision", "disclosureVersion", "consent", "decidedAtMs", "outputDevice" };
         if (!InstalledGenerationPaths.ExactProperties(value, properties) ||
             !value.GetProperty("schemaVersion").TryGetInt32(out var schemaVersion) || schemaVersion != SchemaVersion ||
             !value.GetProperty("revision").TryGetInt64(out var revision) || revision < 0)
@@ -101,10 +107,25 @@ internal sealed class VoicePreferenceFileReader
         if (consent != VoiceCloudTtsConsent.Undecided && decidedAtMs is null)
             throw new InvalidVoicePreferenceException();
 
-        return new VoicePreference(consent, disclosureVersion, revision);
+        // Output endpoint: null selects the Windows default at each open; a
+        // pinned value is the frozen `waveout:N` endpoint shape only.
+        var outputElement = value.GetProperty("outputDevice");
+        string? outputDevice = outputElement.ValueKind switch
+        {
+            JsonValueKind.Null => null,
+            JsonValueKind.String when OutputDeviceRegex.IsMatch(outputElement.GetString() ?? string.Empty) => outputElement.GetString(),
+            _ => throw new InvalidVoicePreferenceException(),
+        };
+
+        return new VoicePreference(consent, disclosureVersion, revision, outputDevice);
     }
 
-    private static VoicePreference Undecided() => new(VoiceCloudTtsConsent.Undecided, null, 0);
+    // The preference file only ever stores the frozen `waveout:N` endpoint shape
+    // (never a device name or path), so a stale/edited value fails closed.
+    private static readonly System.Text.RegularExpressions.Regex OutputDeviceRegex =
+        new("^waveout:[0-9]{1,4}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static VoicePreference Undecided() => new(VoiceCloudTtsConsent.Undecided, null, 0, null);
 }
 
 internal sealed class InvalidVoicePreferenceException : Exception

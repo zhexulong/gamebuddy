@@ -71,7 +71,11 @@ const onCompanionTextPresented = (text, locale) => {
       // TTS lane adds a speech-only stripping pass: the chat box keeps emoji
       // and list markers as flavor, but the MiMo synthesis lane must receive
       // pure speakable sentences (emoji/list chars stall synthesis).
-      const { promiseVoiceObservation } = await startLadder2Voice(stripSpeechOnly(speakable));
+      // Voice lane receives the dehydrated dialogue verbatim: MiMo performs
+      // bracketed audio tags natively, emoji do not stall synthesis (probe:
+      // short emoji text completes), and the frozen Voice contract is zero
+      // intermediate processing (voice-gateway-streaming-submodule §2.5).
+      const { promiseVoiceObservation } = await startLadder2Voice(speakable);
       voiceObservation = await promiseVoiceObservation;
       voice?.();
     } catch (error) {
@@ -305,12 +309,12 @@ try {
   const tools = runtime.connected.host;
   const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (COMPANION_LOCALE === "zh-CN"
     ? (LADDER === "3"
-      ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她说需要一颗新鲜花椰菜做菜，请求你给她带一颗。你刚从农舍醒来：背包里有锄头、装满了水的浇水壶和 2 颗花椰菜种子，屋外的农田还是春天没有耕过的土地。请自主完成这件农场工作：仔细观察你拥有的资源和环境，决定需要哪些步骤让花椰菜真正种下去并浇上水，然后逐步执行（你可以在 observe 返回的真实 soilTiles/seedTargets/cropTargets 中选择合适的目标）。不要只回答文字，要用游戏工具真实完成（需要表达情绪时，请用 express_emote / face_direction 等游戏内动作，而不是在文本里写星号动作或内心独白）。完成后用一句话总结你为乔迪做了哪些准备。"
+      ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她说需要一颗新鲜花椰菜做菜，请求你给她带一颗。你刚从农舍醒来：背包里有锄头、装满了水的浇水壶和 2 颗花椰菜种子，屋外的农田还是春天没有耕过的土地。请自主完成这件农场工作：仔细观察你拥有的资源和环境，决定需要哪些步骤让花椰菜真正种下去并浇上水，然后逐步执行（你可以在 observe 返回的真实 soilTiles/seedTargets/cropTargets 中选择合适的目标）。不要只回答文字，要用游戏工具真实完成（台词之外可以用括号写角色的情绪或内心，例如（轻声）（苦笑）（有点犹豫）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。完成后用一句话总结你为乔迪做了哪些准备。"
       : LADDER === "1" || LADDER === "2"
       ? "你现在是星露谷里的 AI 伴侣，站在农舍（FarmHouse）里。任务：屋外的公交站（Bus Stop）门口有一台空的木桶机器（Keg），你的背包里有 5 颗咖啡豆。请严格按以下顺序完成：(1) 先用 find_destination 查询目的地（例如 query=\"bus\"），拿到它的 canonical label 或 dr1_ ref，然后调用 navigate_to_destination 导航到公交站；(2) 导航完成（receipt 成功）后，**必须立即调用 observe**，从最新返回结果的 machineTargets 数组中精确复制该 Keg 的 x、y、expectedTargetId（以及 loadInputSlot）；**绝不允许猜测或从旧位置复制坐标**；(3) 用这些精确坐标调用 machine_inspect 检查机器，确认 receipt 为 machine_inspected；(4) 再用同一 machineTargets 条目的 loadInputSlot/expectedQualifiedItemId/(O)433 和精确 x/y/expectedTargetId 调用 machine_load 把咖啡豆装进木桶。每一步都等 receipt 成功再继续，不要只回答文字。完成后用一句话总结结果。"
       : "你现在是星露谷里的 AI 伴侣。任务：你所在农场屋（FarmHouse）里有一台空的木桶机器（Keg）和 5 颗咖啡豆（Coffee Beans）。请完成两步操作：(1) 先检查（inspect）这台机器，确认它的位置与目标 ID；(2) 然后把咖啡豆装进木桶（load）开始酿造。你必须使用游戏工具（先观察 observe，再调用机器检查与装载工具），根据工具返回的真实结果执行，不要只回答文字。完成后用一句话总结结果。")
     : (LADDER === "3"
-      ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. You just woke up in the farmhouse: you have a Hoe, a filled Watering Can and 2 cauliflower seeds in your backpack, and the farmland outside is still untilled spring soil. Complete this farming task on your own: carefully inspect what you own and your surroundings, decide which steps are needed to actually plant the cauliflower and water it, then carry them out step by step (choose targets from the real soilTiles/seedTargets/cropTargets in observe results). Do not just reply with text — actually use the game tools; when you feel like expressing emotion, use the in-game express_emote / face_direction actions rather than writing asterisk stage directions or inner monologue. When done, summarize in one sentence what you prepared for Jodi."
+      ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. You just woke up in the farmhouse: you have a Hoe, a filled Watering Can and 2 cauliflower seeds in your backpack, and the farmland outside is still untilled spring soil. Complete this farming task on your own: carefully inspect what you own and your surroundings, decide which steps are needed to actually plant the cauliflower and water it, then carry them out step by step (choose targets from the real soilTiles/seedTargets/cropTargets in observe results). Do not just reply with text — actually use the game tools; besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (bitter smile) / (hesitating) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions. When done, summarize in one sentence what you prepared for Jodi."
       : LADDER === "1" || LADDER === "2"
       ? "You are the AI companion in Stardew Valley, standing inside the FarmHouse. Task: right outside the farmhouse door at Bus Stop there is an empty Keg machine and your backpack has 5 Coffee Beans. Complete in this order: (1) first use find_destination (e.g. query=\"bus\") to get its canonical label or dr1_ ref, then call navigate_to_destination to reach Bus Stop; (2) after navigation succeeds (receipt ok), **immediately call observe** and copy exactly the Keg's x, y, expectedTargetId (and loadInputSlot) from the machineTargets array in the fresh result; **never guess or reuse old-location coordinates**; (3) call machine_inspect with those exact coordinates and confirm the receipt is machine_inspected; (4) then call machine_load with the same machineTargets entry's loadInputSlot/expectedQualifiedItemId/(O)433 and exact x/y/expectedTargetId to load the beans. Wait for each receipt before continuing; do not just reply with text. Summarize in one sentence when done."
       : "You are the AI companion in Stardew Valley. Task: there is an empty Keg machine in your farmhouse with 5 Coffee Beans in your backpack. Complete two steps: (1) inspect the machine first to confirm its location and target ID; (2) then load the coffee beans into the Keg to start brewing. You must use game tools (observe first, then machine inspect/load) based on real tool results; do not just reply with text. Summarize in one sentence when done."));
@@ -415,23 +419,6 @@ try {
   await binding.close().catch(() => {});
   client.close("agent_ab_complete");
 }
-// Strip characters that only make sense visually (emoji, decorative bullets,
-// list numerals) so the TTS lane never hands MiMo unsynthesizable text. The
-// chat-box dehydration keeps these as flavor; speech is a separate lane.
-function stripSpeechOnly(input) {
-  // Emoji (incl. variation selectors / ZWJ sequences), bullets, and decorative
-  // punctuation. Keep CJK/Latin letters, digits used in words, and sentence
-  // punctuation so rhythm and numbers in speech survive.
-  return String(input)
-    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2B05}-\u{2B07}\u{25A0}-\u{25FF}\u{2700}-\u{27BF}]/gu, " ")
-    .replace(/^\s*\d+\.\s*/gm, " ")
-    .replace(/\s+\d+\.\s*/g, " ")
-    .replace(/[–—]{1,3}/g, " ")
-    .replace(/-{1,3}/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 // Split a companion line at sentence boundaries so voice can stream chunks as
 // the gateway synthesizes incrementally. Favors 。！？.!? followed by any
 // whitespace/end; keeps each chunk under the 4000-char delta limit while
