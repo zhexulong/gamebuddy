@@ -319,11 +319,36 @@ internal sealed partial class ExecutionManager
         float before = tree.health.Value;
         string treeType = tree.treeType.Value;
         int axeLevel = axe.UpgradeLevel;
-        axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
-        bool removed = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+        // A stump carries 5 health and a basic axe deals 1 damage per
+        // native swing (Tree.performToolAction upgradeLevel 0 => 1f). One
+        // DoFunction call is never enough; keep swinging the same equipped
+        // axe on the same tile until the stump falls (health <= 0 triggers
+        // native performTreeFall, which marks -100 and drops wood) or the
+        // bounded safety cap stops us. This mirrors the repeated native
+        // seam a holding player executes; no menu, no direct world write,
+        // and every swing runs the native damage/debris path.
+        const int maximumSwingCount = 12;
+        int swingCount = 0;
+        while (tree.health.Value > 0f && swingCount < maximumSwingCount)
+        {
+            axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+            swingCount++;
+        }
+        // native Tree.performTreeFall() on a stump sets health = -100 (the
+        // destroyed marker) and the terrainFeature is then removed by the
+        // native tick (destroy.Value). Accept either the immediate -100
+        // marker or a removed terrainFeature as the fresh postcondition.
+        bool removed = tree.health.Value <= -100f;
+        bool terrainGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
             || !ReferenceEquals(afterFeature, tree);
-        string evidence = $"target={expectedTargetId};type=tree_stump;tree={treeType};tool=axe;tool_level={axeLevel};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={(removed ? "removed" : afterFeature is StardewValley.TerrainFeatures.Tree afterTree ? afterTree.health.Value.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};stump_removed={removed.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, removed ? ExecutionState.Succeeded : ExecutionState.Uncertain, removed ? "stump_cleared" : "stump_clear_postcondition_unavailable", evidence);
+        string healthAfterText = removed ? "destroyed" : terrainGone ? "removed"
+            : afterFeature is StardewValley.TerrainFeatures.Tree afterTree
+                ? afterTree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)
+                : "missing";
+        string evidence = $"target={expectedTargetId};type=tree_stump;tree={treeType};tool=axe;tool_level={axeLevel};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};swings={swingCount};stump_removed={(removed || terrainGone).ToString().ToLowerInvariant()}";
+        if (removed || terrainGone)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "stump_cleared", evidence);
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "stump_clear_postcondition_unavailable", evidence);
     }
 
     /// <summary>
@@ -360,12 +385,47 @@ internal sealed partial class ExecutionManager
 
         int healthBefore = weed.MinutesUntilReady;
         float staminaBefore = Game1.player.Stamina;
-        bool handled = weed.performToolAction(weapon);
-        bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterWeed)
-            || !ReferenceEquals(afterWeed, weed);
+        // A common weed (O)313 carries 2 health and the basic scythe (W)47
+        // deals exactly 1 damage per native swing (Object.performToolAction
+        // weeds branch: damage = 1, only a non-basic scythe deals 2). One
+        // swing therefore never triggers native cutWeed; keep swinging the
+        // same equipped scythe on the same object until it is removed, the
+        // bounded safety cap is reached, or the weed leaves an unhandled
+        // state. Every swing runs the native damage/debris path.
+        const int maximumSwingCount = 8;
+        int swingCount = 0;
+        bool handled = false;
+        bool removed = false;
+        while (!removed && swingCount < maximumSwingCount)
+        {
+            // Native Object.performToolAction weeds branch decrements the
+            // weed health only while shakeTimer <= 0 and then arms that 200ms
+            // cooldown; the scythe caller (MeleeWeapon.DoFunction AoE sweep)
+            // also removes the object from the map only when the action
+            // returns true. Mirror both halves of that native swing here:
+            // reset the shake cooldown as if the next swing started after it
+            // elapsed, call the same native action, and remove the map entry
+            // exactly when the native action reports the weed was cut.
+            weed.shakeTimer = 0;
+            bool cut = weed.performToolAction(weapon);
+            swingCount++;
+            if (cut)
+            {
+                handled = true;
+                location.objects.Remove(tile);
+                removed = true;
+            }
+            else
+            {
+                removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterWeed)
+                    || !ReferenceEquals(afterWeed, weed);
+            }
+        }
         float staminaAfter = Game1.player.Stamina;
-        string evidence = $"target={expectedTargetId};type=weed;tool=scythe;qualified_item_id={weed.QualifiedItemId};health_before={healthBefore};health_after={(removed ? "removed" : afterWeed!.MinutesUntilReady.ToString(CultureInfo.InvariantCulture))};removed={removed.ToString().ToLowerInvariant()};stamina_delta={staminaBefore - staminaAfter:0.##}";
-        return this.RememberTerminal(requestId, executionId, handled && removed ? ExecutionState.Succeeded : ExecutionState.Uncertain, handled && removed ? "weeds_cut" : "weed_cut_postcondition_unavailable", evidence);
+        string evidence = $"target={expectedTargetId};type=weed;tool=scythe;qualified_item_id={weed.QualifiedItemId};health_before={healthBefore};health_after={(removed ? "removed" : location.objects.TryGetValue(tile, out StardewValley.Object? remainingWeed) && remainingWeed is not null ? remainingWeed.MinutesUntilReady.ToString(CultureInfo.InvariantCulture) : "missing")};swings={swingCount};removed={removed.ToString().ToLowerInvariant()};stamina_delta={staminaBefore - staminaAfter:0.##}";
+        if (handled && removed)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "weeds_cut", evidence);
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "weed_cut_postcondition_unavailable", evidence);
     }
 
     private static int ItemRankForWeapon(Tool item)

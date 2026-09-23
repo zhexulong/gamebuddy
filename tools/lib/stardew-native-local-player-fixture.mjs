@@ -385,6 +385,12 @@ export function fixtureActions(action) {
   // discover the ready animal and compatible supplied tool in range.
   if (action === "feed_animal") return ["move_to_tile", "travel", "enter_exit", "feed_animal"];
   if (action === "collect_animal_product") return ["collect_animal_product"];
+  if (action === "chest_store") return ["chest_store"];
+  if (action === "chest_retrieve") return ["chest_retrieve"];
+  if (action === "chop_stump") return ["equip_tool", "chop_stump"];
+  if (action === "plant_sapling") return ["plant_sapling"];
+  if (action === "cut_weeds") return ["equip_tool", "cut_weeds"];
+  if (action === "scythe_crop") return ["equip_tool", "scythe_crop"];
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions) {
@@ -419,6 +425,12 @@ export function fixtureScenario(actions) {
   if (actions.includes("refill_watering_can")) return "native_refill_watering_can_v1";
   if (actions.includes("feed_animal")) return "native_feed_animal_v1";
   if (actions.includes("collect_animal_product")) return "native_collect_animal_product_v1";
+  if (actions.includes("chest_store")) return "native_chest_store_v1";
+  if (actions.includes("chest_retrieve")) return "native_chest_retrieve_v1";
+  if (actions.includes("chop_stump")) return "native_chop_stump_v1";
+  if (actions.includes("plant_sapling")) return "native_plant_sapling_v1";
+  if (actions.includes("cut_weeds")) return "native_cut_weeds_v1";
+  if (actions.includes("scythe_crop")) return "native_scythe_crop_v1";
   return "";
 }
 function assertNativeLocalBinding(binding, observedSaveSlot) {
@@ -478,7 +490,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "pet_animal"].includes(action),
+    ["clear_debris", "npc_relationship", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
@@ -514,7 +526,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "pet_animal"].includes(action),
+    ["clear_debris", "npc_relationship", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the

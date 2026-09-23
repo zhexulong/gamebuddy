@@ -112,7 +112,7 @@ public sealed class ModConfig
         "crafting_cooking", "machines_processing", "animals_pets", "npc_social", "shops_economy",
         "buildings_farm_management", "quests_progression", "story_world_scripts", "festivals_minigames", "calendar_day_progression", "expression",
     }, StringComparer.Ordinal);
-    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "npc_relationship", "pet_animal", "express_emote", "face_direction" }, StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "express_emote", "face_direction", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop" }, StringComparer.Ordinal);
 
     private static string ActionFamily(string action) => action switch
     {
@@ -135,6 +135,7 @@ public sealed class ModConfig
         "clear_debris" => "resource_gathering",
         "machine_inspect" or "machine_load" or "machine_collect_output" => "machines_processing",
         "npc_relationship" => "npc_social",
+        "interact_npc_with_item" => "npc_social",
         "pet_animal" => "animals_pets",
         "collect_animal_product" => "animals_pets",
         "feed_animal" => "animals_pets",
@@ -147,6 +148,11 @@ public sealed class ModConfig
         "refill_watering_can" => "farming_crops",
         "express_emote" => "expression",
         "face_direction" => "movement_navigation",
+        "chest_store" or "chest_retrieve" => "inventory_items",
+        "chop_stump" => "resource_gathering",
+        "plant_sapling" => "farming_crops",
+        "cut_weeds" => "resource_gathering",
+        "scythe_crop" => "farming_crops",
         _ => string.Empty,
     };
 
@@ -184,14 +190,14 @@ public sealed class NativeLocalPlayerFixtureConfig
         && TimeoutSeconds is >= 10 and <= 300
         && NavigationMutationTargetLabel.Length <= 128
         && (FixtureScenario == "navigation_mutation_v1" || NavigationMutationTargetLabel.Length == 0)
-        && (FixtureScenario is "" or "navigation_mutation_v1" or "native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1")
+        && (FixtureScenario is "" or "navigation_mutation_v1" or "native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1")
         && (Bootstrap is null || !Bootstrap.Enable);
 
     internal bool IsBootstrapValid => Enable
         && TimeoutSeconds is >= 10 and <= 300
         && NavigationMutationTargetLabel.Length <= 128
         && (FixtureScenario == "navigation_mutation_v1" || NavigationMutationTargetLabel.Length == 0)
-        && (FixtureScenario is "" or "navigation_mutation_v1" or "native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1")
+        && (FixtureScenario is "" or "navigation_mutation_v1" or "native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1")
         && Bootstrap is { IsValid: true };
 
     private static bool IsObservedFixtureSlot(string slot, string logicalName)

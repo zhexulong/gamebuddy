@@ -689,17 +689,26 @@ internal sealed partial class ExecutionManager
         string? harvestId = crop.indexOfHarvest.Value;
         string? cropSeedId = crop.netSeedIndex.Value ?? harvestId;
         string harvestQualifiedItemId = StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
-        int inventoryBefore = Game1.player.Items.Sum(item => item?.QualifiedItemId == harvestQualifiedItemId ? item.Stack : 0);
+        // Native scythe harvest drops the crop as ground debris
+        // (Crop.harvest Scythe branch calls Game1.createItemDebris), never
+        // into the player inventory, and HoeDirt.performToolAction always
+        // returns false for this path. The real postcondition is therefore
+        // crop-gone + a matching ground drop, not inventory growth.
+        int debrisBefore = location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
         float staminaBefore = Game1.player.Stamina;
-        bool nativeReturn = dirt.performToolAction(weapon, 0, tile);
+        dirt.performToolAction(weapon, 0, tile);
 
-        int inventoryAfter = Game1.player.Items.Sum(item => item?.QualifiedItemId == harvestQualifiedItemId ? item.Stack : 0);
-        bool inventoryGained = inventoryAfter > inventoryBefore;
+        int debrisAfter = location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
+        bool debrisGained = debrisAfter > debrisBefore;
+        // native HoeDirt.destroyCrop() clears crop but keeps the HoeDirt
+        // terrainFeature, so the postcondition is crop-gone (crop is null or
+        // the HoeDirt itself was removed), not HoeDirt-gone.
         bool cropGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
-            || !ReferenceEquals(afterFeature, dirt);
+            || !ReferenceEquals(afterFeature, dirt)
+            || ((StardewValley.TerrainFeatures.HoeDirt)afterFeature).crop is null;
         float staminaAfter = Game1.player.Stamina;
-        bool succeeded = inventoryGained && cropGone;
-        string evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId};inventory_before={inventoryBefore};inventory_after={inventoryAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_delta={staminaBefore - staminaAfter:0.##};native_scythe={nativeReturn.ToString().ToLowerInvariant()}";
+        bool succeeded = cropGone && debrisGained;
+        string evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_delta={staminaBefore - staminaAfter:0.##};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "scythe_crops_harvested" : "scythe_crop_harvest_postcondition_unavailable", evidence);
     }
 
