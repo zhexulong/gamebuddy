@@ -1,12 +1,15 @@
 packages:
   - packages/*
   - host
-  - voice-gateway
   - dialogue-web
   - integrations/stardew/action-development
   # Project-maintained Magic Context fork. Kept out of the main workspace so
   # its Bun build/runtime remains isolated from the GameBuddy Node workspace.
   - '!vendor/magic-context/**'
+  # pi-koe is the split-out Voice repository (see design/domains/voice). Its
+  # protocol package is consumed through the submodule by file: reference in
+  # host/package.json; the repository root is a pnpm workspace itself, so it
+  # stays out of the main workspace to avoid nested-workspace conflicts.
 
 # Phase 0B intentionally disables optional native/model build scripts. Magic
 # Context runs with embeddings off; no optional binary is approved implicitly.

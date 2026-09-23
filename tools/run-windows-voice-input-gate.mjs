@@ -9,7 +9,7 @@ if (
   durationMs > 30_000
 )
   throw new Error("invalid_windows_input_gate_options");
-const script = new URL("../voice-gateway/windows-wavein.ps1", import.meta.url).pathname.replace(
+const script = new URL("../vendor/pi-koe/windows-wavein.ps1", import.meta.url).pathname.replace(
   /^\//,
   process.platform === "win32" ? "" : "/",
 );

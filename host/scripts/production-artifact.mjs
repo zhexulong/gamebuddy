@@ -1394,7 +1394,8 @@ export async function publishFixedReleaseArtifactFromVerifiedRuntime() {
 /** Test-only counterpart: its source is available only through fixed composition. */
 export async function publishFixedReleaseArtifactFromVerifiedRuntimeForTest({ outputRoot }) {
   const fixedHostRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-  const fixedVoiceDistRoot = resolve(fixedHostRoot, "..", "voice-gateway", ".dist");
+  // pi-koe is the split-out Voice repository, mounted as a git submodule.
+  const fixedVoiceDistRoot = resolve(fixedHostRoot, "..", "vendor", "pi-koe", ".dist");
   if (typeof outputRoot !== "string" || outputRoot.length === 0) throw new Error("invalid_release_runtime_composition");
   const [{ takeComposedFixedReleaseRuntimeForPublisher }, { takeComposedFixedReleaseEmittedRootForPublisher }] = await Promise.all([
     import("./node-runtime-release-acquisition.mjs"),

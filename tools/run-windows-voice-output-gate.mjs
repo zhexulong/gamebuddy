@@ -12,7 +12,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535 || !/^[A-Za-z0-9_-]{16,
 const key = process.env.MIMO_API_KEY;
 if (typeof key !== "string" || key.length < 16) throw new Error("MIMO_API_KEY_required_in_process_environment");
 const node = process.execPath;
-const gatewayPath = new URL("../voice-gateway/dist/main.js", import.meta.url);
+const gatewayPath = new URL("../vendor/pi-koe/dist/main.js", import.meta.url);
 const child = spawn(node, [gatewayPath.pathname.replace(/^\//, process.platform === "win32" ? "" : "/")], {
   cwd: new URL("..", import.meta.url),
   env: {

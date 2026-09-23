@@ -4,3 +4,6 @@
 	branch = main
 	ignore = untracked
 
+[submodule "vendor/pi-koe"]
+	path = vendor/pi-koe
+	url = git@github.com:zhexulong/pi-koe.git
