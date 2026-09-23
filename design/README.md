@@ -25,7 +25,7 @@ owner: documentation
 - **Game：** [开放玩法循环](domains/game/gameplay-loop.md)
 - **Stardew：** [集成概览](domains/stardew/integration.md)
 - **Memory：** [Continuity 与 Memory](architecture/continuity-and-memory.md)
-- **Voice：** [语音边界](domains/voice/overview.md)
+- **Voice：** [语音边界](domains/voice/overview.md)；实现侧文档在独立仓库 [`zhexulong/pi-koe`](https://github.com/zhexulong/pi-koe)（pi 扩展 + GameBuddy submodule）
 - **社区游戏：** [社区 Connector](domains/community-connectors/overview.md)
 - **发布与验证：** [发布模型](architecture/release-model.md)
 - **架构治理与防腐：** [架构治理与防腐规范](architecture/architecture-governance-and-anti-erosion.md)

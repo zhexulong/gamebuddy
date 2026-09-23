@@ -14,4 +14,4 @@ owner: documentation
 - [Chat MVP](chat-mvp.md)
 - [Chat/Tavern Context Engine 解耦](chat-tavern-context-engine-decoupling.md) — active; decisions frozen, implementation open; Slice 1 contract discovery is not closed.
 - [Game session survival 与 reconnect 简化](game-session-survival-and-reconnect-simplification.md) — active, implementation pending; current design adds cross-game Game-session creation/world-binding and unified Resume before Stardew-specific reconnect wiring. First mutation slice still proves GameBuddy-owned Player survival with a disposable process fixture.
-- [流式语音网关演进实施计划](voice-gateway-streaming-submodule.md) — blocked; 目标 v2 流式演进设计已收敛但当前阻塞（待线缆协议冻结）；严格确认删除 Chat/Game 越权语义，免提 OpenMic/AEC3 单独作为 Phase 2 提案；当前基准保持 v1 PTT 网关（deterministic/integration verified）。
+- [流式语音网关实施计划](voice-gateway-streaming-submodule.md) — active; 已拆分独立仓库 pi-koe 并完成协议 v2 冻结、下行流式朗读与 Desktop 生产链；整体发布仍 BLOCKED（L5 玩家门禁未执行）。
