@@ -228,6 +228,16 @@ references:
       - **负向/故障/打断门禁（2026-09-22）**：`run-chat-voice-gates.mjs` 三场景真实 E2E——`revoked`（consent revoked → 不启动 Voice child，LLM 文本流正常、零异常）、`crash`（LLM 推流中途强杀 gateway child → Host 优雅静默、后续 delta/finalize 完成不阻塞 Chat）、`bargein`（第 3 delta `sink.cancel()` → terminal=cancelled 非 completed、surface 立即回 ready，未播队列丢弃=clear_buffer 语义，参考 livekit/pipecat 不承诺毫秒级淡出）；提交 `fff36b5`。同时 `run-chat-voice-e2e.mjs`（提交 `ef43c32`）验证真实 LLM delta→真实 MiMo→WinMM 播放全链 `completed`。Voice bundle 挂接 packed-install load gate（`tools/check-production-pack-load.mjs`：空 token probe 验证 entry 全模块图可解析、缺闭包/坏 sidecar fail closed；真实 bundle exit 2 + guidance 无副作用）；提交 `98a53d3`。
       - **仍未验证/未实现**：Chat+Voice Desktop production E2E gate（`BLOCKED`）与 L5 player release gate（未执行）；真实 release CI generation（`protected_windows_release_ci_required` 守卫）的完整 Desktop 启动尚未运行（本机用 fixture generation + synthetic runtime 验证了等价 composition）。
 
+### 已知问题：ASR 输入链路（2026-09-23 记录，未解决）
+
+**状态：`OPEN / 未解决`，不作为当前 release 阻塞项；L5（player release）gate 仍待后续接入。**
+
+- **现象**：L5 gate（`voice-gateway/scripts/run-player-release-gate.mjs`）在真机录音中转录出非玩家语音内容——多次出现「字幕志愿者 李宗盛」「作词 李宗盛」「好 老师。我在。 词曲 李宗盛」等与玩家实际说话无关的文本；用户明确表示当时未播放相关音频。
+- **采集证据（`player-turn-0.wav`，15s @16k mono）**：逐秒 RMS 显示 0–3s 底噪 ~1300，4–6s 出现强语音段（rms 7851/3958/9893，转录为「好 老师。我在。」），7–15s 安静（rms 200–570，转录为「词曲 李宗盛」）。强语音段是真实声音而非纯数字噪声；内容来源不明（环境拾音/回环/扬声器串扰均可疑）。
+- **设备选择问题**：探测发现 Windows 上 `wavein:0` 可能是 Stereo Mix / 回环类设备（会采集系统播放声音），而物理麦克风映射靠 `WAVE_MAPPER`（`default`）也不稳定；参考仓库（pipecat `input_device_index=None` 默认设备 / livekit WebRTC 默认音源）均使用系统默认输入端点，不手工枚举；本 gate 与生产已回归 `default`，但默认端点解析在部分机器仍拾取到环境/回环声。
+- **Groq Whisper 低 SNR 幻觉**：在低能量/近似静音段，Whisper 会编造视频平台风格文案（如「优优独播剧场」「明镜与点点栏目」）；不能把低能量段的转录当作玩家输入。
+- **处置**：本次不修（voice 拆分调整时一并处理输入设备枚举与 VAD 阈值）；L5 gate 需要真实玩家话音采样时，要求静音环境 + 确认默认录音端点后再录，且以 RMS/能量分段为 gate 前置判定，不以 Groq 文本为唯一依据。
+
 ---
 
 ## 5. 五级证据模型与发布门禁（5-Tier Evidence Gate）
