@@ -39,6 +39,30 @@ test("strips parenthesised asides used in character replies", () => {
   );
 });
 
+test("strips bare reasoning frames beyond XML tags", () => {
+  assert.equal(
+    dehydrateCompanionSpeech("(thinking: 玩家在农场西侧)我去看看吧。"),
+    "我去看看吧。",
+  );
+  assert.equal(dehydrateCompanionSpeech("（思考：该浇水了）好的!"), "好的!");
+  assert.equal(dehydrateCompanionSpeech("【内心：好紧张】加油!"), "加油!");
+});
+
+test("collapses punctuation orphaned by removed beats", () => {
+  // `**...**` is markdown emphasis (kept content); `*...*` is a stage beat
+  // (removed). A beat orphaned between separators must not leave bare
+  // punctuation behind.
+  assert.equal(
+    dehydrateCompanionSpeech("我帮你为乔迪做好了准备：**翻土种菜浇水**，现在就等它长大。"),
+    "我帮你为乔迪做好了准备：翻土种菜浇水，现在就等它长大。",
+  );
+  assert.equal(
+    dehydrateCompanionSpeech("准备：*翻土*，然后继续。"),
+    "准备： 然后继续。",
+  );
+  assert.equal(dehydrateCompanionSpeech("，*笑*，你好。"), "你好。");
+});
+
 test("strips markdown horizontal-rule separators", () => {
   assert.equal(
     dehydrateCompanionSpeech("搞定！\n\n---\n**一句话总结：** 种好浇透了。"),
@@ -47,7 +71,8 @@ test("strips markdown horizontal-rule separators", () => {
 });
 
 test("collapses whitespace and normalizes NFC, trims surrounding beats", () => {
-  assert.equal(dehydrateCompanionSpeech("  *笑*  你好 , **粗体强调** 世界。 "), "你好 , 世界。");
+  // *...* stage beats are removed; **...** emphasis keeps its content.
+  assert.equal(dehydrateCompanionSpeech("  *笑*  你好 , **粗体强调** 世界。 "), "你好 , 粗体强调 世界。");
   assert.equal(dehydrateCompanionSpeech("Cafe\u0301"), "Café");
 });
 
