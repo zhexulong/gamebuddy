@@ -10,6 +10,7 @@ internal enum SceneAffordanceKind
     Forage,
     Door,
     Machine,
+    WaterSource,
 }
 
 internal enum SceneDirection
@@ -136,7 +137,8 @@ internal static class SceneAffordanceKindWire
         or SceneAffordanceKind.Crop
         or SceneAffordanceKind.Forage
         or SceneAffordanceKind.Door
-        or SceneAffordanceKind.Machine;
+        or SceneAffordanceKind.Machine
+        or SceneAffordanceKind.WaterSource;
 
     internal static string ToWireValue(SceneAffordanceKind kind) => kind switch
     {
@@ -146,6 +148,7 @@ internal static class SceneAffordanceKindWire
         SceneAffordanceKind.Forage => "forage",
         SceneAffordanceKind.Door => "door",
         SceneAffordanceKind.Machine => "machine",
+        SceneAffordanceKind.WaterSource => "water_source",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown scene affordance kind."),
     };
 
@@ -157,6 +160,7 @@ internal static class SceneAffordanceKindWire
         SceneAffordanceKind.Forage => "f",
         SceneAffordanceKind.Door => "d",
         SceneAffordanceKind.Machine => "m",
+        SceneAffordanceKind.WaterSource => "w",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown scene affordance kind."),
     };
 }

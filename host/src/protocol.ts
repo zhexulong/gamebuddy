@@ -1209,7 +1209,7 @@ function isBodyCanonicalValue(value: unknown): boolean {
 }
 function isPositiveSafeInteger(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) > 0; }
 
-const OBSERVE_SCENE_KINDS = new Set(["npc", "chest", "crop", "forage", "door", "machine"]);
+const OBSERVE_SCENE_KINDS = new Set(["npc", "chest", "crop", "forage", "door", "machine", "water_source"]);
 const OBSERVE_SCENE_DIRECTIONS = new Set(["North", "South", "East", "West", "CurrentTile"]);
 const OBSERVE_SCENE_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit"]);
 
