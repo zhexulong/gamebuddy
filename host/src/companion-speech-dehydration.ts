@@ -12,10 +12,14 @@
  * module strips them and keeps the speakable dialogue:
  *
  *  - `<thinking>...</thinking>` / `<thought>...</thought>` blocks are removed
- *    (multi-line allowed).
+ *    (multi-line allowed), plus common bare variants (`(thinking)` asides,
+ *    `【内心】`/`（os）` frames).
  *  - `*...*` and `**...**` action beats are removed (multi-line allowed).
  *  - `(...)` and `（...）` parenthesised asides are removed (full-width included).
  *  - Markdown `---` separators are removed.
+ *  - Isolated punctuation orphaned by a removed beat (`：，`、`，、`、trailing
+ *    `，`/`。` before another sentence) is collapsed so no bare separator
+ *    survives the strip.
  *  - Remaining dialogue is NFC-normalized and whitespace-collapsed.
  *
  * A reply that is pure stage direction dehydrates to the empty string, so the
@@ -26,8 +30,16 @@ export function dehydrateCompanionSpeech(input: string): string {
   let text = input;
   // 1. Reasoning blocks — the model's private scaffolding, never dialogue.
   text = text.replace(/<(?:thinking|thought)>[\s\S]*?<\/(?:thinking|thought)>/gi, " ");
+  // 1b. Bare reasoning variants: (thinking) / [thinking] / （思考） / 【内心】
+  // frames and their bracketed payload; these never belong in the chat box.
+  text = text.replace(/\((?:thinking|thought)[\s\S]*?\)/gi, " ");
+  text = text.replace(/\[(?:thinking|thought)[\s\S]*?\]/gi, " ");
+  text = text.replace(/（(?:思考|内心|脑内)[\s\S]*?）/g, " ");
+  text = text.replace(/【(?:思考|内心|脑内)[\s\S]*?】/g, " ");
   // 2. Asterisk action beats (*...* and **...**), possibly spanning lines.
-  text = text.replace(/\*{1,2}[^*]*\*{1,2}/gs, " ");
+  //    Bold `**x**` is markdown emphasis, not a stage beat — keep its content.
+  text = text.replace(/\*\*([^*\n]+)\*\*/g, "$1");
+  text = text.replace(/\*[^*]*\*/gs, " ");
   // 3. Parenthesised asides ((轻声)(笑)(smiles)) — ASCII and full-width.
   text = text.replace(/\([^)]*\)/g, " ");
   text = text.replace(/（[^）]*）/g, " ");
@@ -35,6 +47,25 @@ export function dehydrateCompanionSpeech(input: string): string {
   text = text.replace(/^[ \t]*---[ \t]*$/gm, " ");
   // 5. Collapse whitespace and normalize.
   text = text.replace(/\s+/g, " ").trim().normalize("NFC");
+  // 6. Isolated punctuation orphaned by a removed beat: a bare leading
+  //    conjunction/colon or a doubled separator (`， ，`、`： ，`、`。 ，`)
+  //    after stripping must not survive. Keep real sentence punctuation, but
+  //    merge any separator sequence followed by a comma/colon pause into one.
+  text = text
+    // A beat stripped off the very front leaves only a stray comma-class
+    // pause before the real dialogue (`，你好。` from `，*笑*，你好。`); eat
+    // the whole leading pause run (punctuation + spacing) so the dialogue
+    // starts at its first real character.
+    .replace(/^[,，、:：;；]+(?:\s*[,，、;；]+)*/, "")
+    .replace(/[,，、:：;；]{2,}/g, (match) => (match.includes("。") || match.includes(".") ? "。" : match.includes("?") ? "？" : ","))
+    // A colon that introduces stripped content must keep its introduction but
+    // drop the stray comma-class pause directly after it (`： ，现在` → `： 现在`).
+    .replace(/[：:]\s*[,，、;；]+/g, "： ")
+    // Drop stray comma-class punctuation directly before a sentence/stop
+    // separator (e.g. `， 。` after a beat was stripped).
+    .replace(/[,，、;；]+(?=\s*(?:[。！？!?]|$))/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   return text;
 }
 
