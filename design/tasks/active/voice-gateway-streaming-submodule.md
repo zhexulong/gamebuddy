@@ -38,15 +38,13 @@ references:
     - 协议包：[`packages/voice-protocol/`](file:///E:/projects/ai-game-companion/packages/voice-protocol/)
     - 网关包：[`voice-gateway/`](file:///E:/projects/ai-game-companion/voice-gateway/)
   - 在正式执行 Git 拆仓前，严禁在文档与代码中伪造假想路径（如 `vendor/voice-gateway`）。
-- **零侵入物理隔离与独立 Repo / Git Submodule 演进触发条件**：
-  - **解耦现状**：依据 D-02 契约，Host 保持零音频依赖，仅通过 `127.0.0.1` 环回 Socket 走有界 NDJSON 与网关通信。因此 Voice 网关在代码与运行时层面已达到完全的独立服务隔离度。
-  - **当前保留在 Monorepo 的原因**：当前阶段（v1 PTT 稳定与 v2 协议冻结）留在主仓 pnpm workspace 内，能够最小化多仓协同成本、避免版本漂移与 Git submodule 指针维护负担。
-  - **未来拆分为独立 Repo / Git Submodule 的准入条件**：
-    1. Phase 2 流式演进引入了原生 C++ 构建（如 WebRTC AEC3 原生编译）或独立 Python/Rust 服务，导致构建环境与 Node monorepo 产生严重异构；
-    2. 完成独立 GitHub 仓库创建（如 `zhexulong/gamebuddy-voice-gateway`）；
-    3. 在主仓 `.gitmodules` 注册 Submodule URL 与精确的 pinned commit；
-    4. 建立双向 CI 验证流水线与跨仓库发布门禁。
-  在上述 4 项条件未全部满足前，Voice 网关严格维持 in-tree workspace packages 形式。
+- **零侵入物理隔离与独立 Repo / Git Submodule 演进（2026-09-23 已执行拆分）**：
+  - **解耦现状**：依据 D-02 契约，Host 保持零音频依赖，仅通过 `127.0.0.1` 环回 Socket 走有界 NDJSON 与网关通信。
+  - **拆分已执行（2026-09-23）**：Voice 以 `git subtree split` 导出完整历史到独立仓库 `zhexulong/pi-koe`，按 pi-extension 生态命名并提供 `pi` manifest（`extensions/` 入口 + `@earendil-works/pi-coding-agent` peerDependency，`/voice status/start/stop` 命令族 + `session_shutdown` 清理）；主仓以 Git Submodule 挂载于 `vendor/pi-koe`（pinned commit），`voice-gateway/` 与 `packages/voice-protocol/` 从主仓 workspace 移除。npm 发布暂缓。
+  - **主仓消费方式**：`host/package.json` 经 `file:../vendor/pi-koe/packages/voice-protocol` 消费版本化协议包；production artifact bundle 由 `host/scripts/build-production-artifact.mjs` 自动构建 `vendor/pi-koe/.dist` 并 stage 进 generation；tools 门禁统一经 `GAMEBUDDY_HOST_ROOT` 注入主仓 checkout 路径。
+  - **双向 CI**：pi-koe 独立 CI（check-gateway / check-extension / check-release）在 GitHub Actions 全绿；主仓 CI voice job 在 submodule workspace 内独立验证；release lane 先构建 pi-koe 协议再跑 Host typecheck。
+  - **拆分后验证**：真实 bundle + 真实 MiMo + WinMM 设备上 host-wire rehearsal 与 chat-voice E2E 通过（`ready → speaking → ready`，terminal `completed`）；revoked/bargein/crash 负向门禁通过；Desktop Voice 全闭包 96/96（含 packed generation admission）；HostBootstrapSupervisorTests 13/13（真实 canonical generation 含 voice bundle 启动）。
+  - **触发条件回顾**：拆分已满足原准入条件 2/3/4（独立 GitHub 仓库、`.gitmodules` pinned commit、双向 CI）；条件 1（原生 C++ 异构构建）尚未触发，拆分是产品形态决策而非构建强制。
 
 ---
 
