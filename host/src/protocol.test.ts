@@ -2356,3 +2356,57 @@ test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows",
     "accepted",
   );
 });
+
+test("observe_scene result admits water_source affordance kind and rejects unknown kinds", () => {
+  const scene = newEnvelope(
+    "observe_scene_result",
+    scope,
+    {
+      observationId: "so1_WATERABCDEF01",
+      currentLocation: "Farm",
+      currentRegion: "Farm",
+      affordances: [
+        {
+          ref: "sr1_water0abcdefghij",
+          kind: "water_source",
+          name: "Water",
+          distance: 2,
+          direction: "East",
+          actionHint: "refill_watering_can",
+        },
+      ],
+      summary: "1 actionable objects visible in Farm.",
+      partial: false,
+      truncatedReason: null,
+    },
+    "observe_scene_water_01",
+    now,
+  );
+  assert.equal(validateBridgeMessage(scene, scope, now), null);
+
+  const unknownKind = newEnvelope(
+    "observe_scene_result",
+    scope,
+    {
+      observationId: "so1_WATERABCDEF01",
+      currentLocation: "Farm",
+      currentRegion: "Farm",
+      affordances: [
+        {
+          ref: "sr1_water0abcdefghij",
+          kind: "geyser",
+          name: "Water",
+          distance: 2,
+          direction: "East",
+          actionHint: null,
+        },
+      ],
+      summary: "1 actionable objects visible in Farm.",
+      partial: false,
+      truncatedReason: null,
+    },
+    "observe_scene_water_02",
+    now,
+  );
+  assert.equal(diagnoseBridgeMessage(unknownKind, scope, now), "invalid_observe_scene_result");
+});

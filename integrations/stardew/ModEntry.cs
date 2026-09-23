@@ -4247,6 +4247,34 @@ public sealed partial class ModEntry : Mod
                     location.NameOrUniqueName, (int)tile.X, (int)tile.Y, "harvest_crop"));
             }
         }
+        // WaterSource affordance (A.2): project each refillable water tile's
+        // standable neighbors within the player radius. The ref always binds
+        // the standable neighbor tile (never the water tile, which is
+        // impassable); empty sets contribute nothing.
+        for (int x = Math.Max(0, (int)player.Tile.X - SceneObservationProjection.DefaultRadius);
+             x <= (int)player.Tile.X + SceneObservationProjection.DefaultRadius && candidates.Count < SceneObservationProjection.MaximumAffordances;
+             x++)
+        {
+            for (int y = Math.Max(0, (int)player.Tile.Y - SceneObservationProjection.DefaultRadius);
+                 y <= (int)player.Tile.Y + SceneObservationProjection.DefaultRadius && candidates.Count < SceneObservationProjection.MaximumAffordances;
+                 y++)
+            {
+                if (!location.CanRefillWateringCanOnTile(x, y))
+                    continue;
+                foreach ((int nx, int ny) in new[] { (x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1) })
+                {
+                    if (nx < 0 || ny < 0 || nx > 1000 || ny > 1000 || !location.isTilePassable(new xTile.Dimensions.Location(nx, ny), Game1.viewport))
+                        continue;
+                    candidates.Add(new SceneAffordanceSource(
+                        SceneAffordanceKind.WaterSource,
+                        "Water",
+                        $"water_source:{x},{y}",
+                        location.NameOrUniqueName,
+                        nx, ny, "refill_watering_can"));
+                    break;
+                }
+            }
+        }
         foreach (Warp warp in location.warps)
         {
             if (!warp.npcOnly.Value && !string.IsNullOrWhiteSpace(warp.TargetName))
