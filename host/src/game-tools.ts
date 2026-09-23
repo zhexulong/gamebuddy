@@ -466,6 +466,22 @@ export function buildCandidateToolSchema(
     );
   }
 
+  if (actionId === "interact_npc_with_item") {
+    // Exact five-argument shape derived from the frozen descriptor; the
+    // opaque NPC target and qualified item must be copied verbatim from the
+    // most recent observation and are never synthesized by the tool.
+    return Type.Object(
+      {
+        slot: Type.Integer({ minimum: 0, maximum: 36 }),
+        x: Type.Integer({ minimum: 0, maximum: 1000 }),
+        y: Type.Integer({ minimum: 0, maximum: 1000 }),
+        expectedQualifiedItemId: Type.String({ minLength: 1, maxLength: 128 }),
+        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+      },
+      { additionalProperties: false },
+    );
+  }
+
   throw new Error(`Unsupported candidate action: ${actionId}`);
 }
 
@@ -1307,6 +1323,40 @@ export function createStardewActionTools(
           parameters: schema,
           action: "face_direction",
           toArgs: (params) => ({ direction: params.direction }),
+        }),
+      );
+    }
+  }
+  if (isVisible("interact_npc_with_item")) {
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "interact_npc_with_item",
+    );
+    if (
+      registration?.descriptor &&
+      isCandidateDescriptorComplete(
+        "interact_npc_with_item",
+        registration.descriptor,
+      )
+    ) {
+      const schema = buildCandidateToolSchema(
+        "interact_npc_with_item",
+        registration.descriptor,
+      );
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.interact_npc_with_item,
+          label: "Offer Item to NPC",
+          description:
+            "Offer one carried inventory item to an adjacent villager. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A matching native quest delivery completes first and returns quest_item_delivered; the ordinary gift path returns gift_given.",
+          parameters: schema,
+          action: "interact_npc_with_item",
+          toArgs: (params) => ({
+            slot: params.slot,
+            x: params.x,
+            y: params.y,
+            expectedQualifiedItemId: params.expectedQualifiedItemId,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }

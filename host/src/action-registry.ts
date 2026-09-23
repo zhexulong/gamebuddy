@@ -187,6 +187,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Turn the Farmhand to face a cardinal direction.",
     ["character_facing"],
   ),
+  actionAdapter(
+    "interact_npc_with_item",
+    "Offer an item to an NPC",
+    "Offer one carried inventory item to an adjacent villager; a matching quest delivery completes first.",
+    ["npc", "inventory_slot"],
+  ),
 ]) satisfies readonly StardewActionAdapter[];
 
 export type StardewActionId =
@@ -245,6 +251,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   chop_tree_source: "stardew_chop_tree_source",
   express_emote: "stardew_express_emote",
   face_direction: "stardew_face_direction",
+  interact_npc_with_item: "stardew_interact_npc_with_item",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
 /**
@@ -363,6 +370,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export const STARDEW_CANDIDATE_ACTION_IDS = Object.freeze([
   "express_emote",
   "face_direction",
+  "interact_npc_with_item",
 ] as const);
 
 export type StardewCandidateActionId = (typeof STARDEW_CANDIDATE_ACTION_IDS)[number];
@@ -425,6 +433,17 @@ export function isCandidateDescriptorComplete(
     if (descriptor.effect !== "write") return false;
     if (!descriptor.postcondition) return false;
     if (!descriptor.nativeBinding) return false;
+    return true;
+  }
+  if (actionId === "interact_npc_with_item") {
+    // The offer routes through the native GameLocation.checkAction ingress
+    // (not a single method binding), so the complete-descriptor gate covers
+    // the exact five-argument shape and the write postcondition instead.
+    const argumentNames = descriptor.arguments.map((argument) => argument.name);
+    const expected = ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"];
+    if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
+    if (descriptor.effect !== "write") return false;
+    if (!descriptor.postcondition) return false;
     return true;
   }
   return false;
