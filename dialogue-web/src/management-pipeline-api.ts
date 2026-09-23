@@ -97,11 +97,23 @@ export type TavernVoicePreferenceV1 = Readonly<{
   disclosureVersion: "mimo-cloud-tts-v1" | null;
   consent: "undecided" | "accepted" | "revoked";
   decidedAtMs: number | null;
+  /** `null` = Windows default output; `waveout:N` pins one enumerated endpoint. */
+  outputDevice: string | null;
+}>;
+
+export type TavernVoiceDevicesV1 = Readonly<{
+  devices: readonly Readonly<{ id: string; name: string }>[];
+  defaultSelectable: true;
 }>;
 
 export type TavernVoicePreferenceConsentCommandV1 =
   | Readonly<{ expectedRevision: number; action: "accept"; disclosureVersion: "mimo-cloud-tts-v1" }>
-  | Readonly<{ expectedRevision: number; action: "revoke" }>;
+  | Readonly<{ expectedRevision: number; action: "revoke" }>
+  | Readonly<{
+      expectedRevision: number;
+      action: "setOutputDevice";
+      outputDevice: string | null;
+    }>;
 
 export type TavernStateSnapshotV1 = Readonly<{
   apiVersion: 1;
@@ -362,9 +374,12 @@ const RENAME_COMMAND_KEYS = [
 ] as const;
 const CHAT_TITLE_KEYS = ["apiVersion", "title", "managementRevision"] as const;
 const PROBLEM_KEYS = ["type", "title", "status", "code", "requestId", "retryable"] as const;
-const VOICE_PREFERENCE_KEYS = ["revision", "disclosureVersion", "consent", "decidedAtMs"] as const;
+const VOICE_PREFERENCE_KEYS = ["revision", "disclosureVersion", "consent", "decidedAtMs", "outputDevice"] as const;
 const VOICE_PREFERENCE_ACCEPT_KEYS = ["expectedRevision", "action", "disclosureVersion"] as const;
 const VOICE_PREFERENCE_REVOKE_KEYS = ["expectedRevision", "action"] as const;
+const VOICE_PREFERENCE_DEVICE_KEYS = ["expectedRevision", "action", "outputDevice"] as const;
+const VOICE_DEVICES_KEYS = ["devices", "defaultSelectable"] as const;
+const VOICE_DEVICE_KEYS = ["id", "name"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -737,16 +752,50 @@ function isVoicePreference(value: unknown): value is TavernVoicePreferenceV1 {
     (value.disclosureVersion === null || isOneOf(value.disclosureVersion, VOICE_DISCLOSURE_VERSIONS)) &&
     isOneOf(value.consent, VOICE_CONSENTS) &&
     (value.decidedAtMs === null || isNonNegativeSafeInteger(value.decidedAtMs)) &&
+    (value.outputDevice === null || (typeof value.outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(value.outputDevice))) &&
     (value.consent === "undecided"
       ? value.disclosureVersion === null && value.decidedAtMs === null
       : value.decidedAtMs !== null && (value.consent !== "accepted" || value.disclosureVersion === "mimo-cloud-tts-v1"))
   );
 }
 
+function isVoiceDevice(value: unknown): value is Readonly<{ id: string; name: string }> {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, VOICE_DEVICE_KEYS) &&
+    typeof value.id === "string" &&
+    /^waveout:[0-9]{1,4}$/.test(value.id) &&
+    typeof value.name === "string" &&
+    value.name.length >= 1 &&
+    value.name.length <= 128
+  );
+}
+
+function isVoiceDevices(value: unknown): value is TavernVoiceDevicesV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, VOICE_DEVICES_KEYS) &&
+    Array.isArray(value.devices) &&
+    value.devices.length <= 32 &&
+    value.devices.every(isVoiceDevice) &&
+    value.defaultSelectable === true
+  );
+}
+
+export function validateVoiceDevices(value: unknown): TavernVoiceDevicesV1 {
+  if (!isVoiceDevices(value)) throw new TavernProtocolError();
+  return value;
+}
+
 function isVoicePreferenceConsentCommand(value: unknown): value is TavernVoicePreferenceConsentCommandV1 {
   if (!isRecord(value) || !isNonNegativeSafeInteger(value.expectedRevision)) return false;
   if (value.action === "accept")
     return hasExactKeys(value, VOICE_PREFERENCE_ACCEPT_KEYS) && value.disclosureVersion === "mimo-cloud-tts-v1";
+  if (value.action === "setOutputDevice")
+    return (
+      hasExactKeys(value, VOICE_PREFERENCE_DEVICE_KEYS) &&
+      (value.outputDevice === null || (typeof value.outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(value.outputDevice)))
+    );
   return value.action === "revoke" && hasExactKeys(value, VOICE_PREFERENCE_REVOKE_KEYS);
 }
 
@@ -871,6 +920,8 @@ export type ManagementPipelineApi = Readonly<{
   setWorldInfoBinding(command: SetWorldInfoBindingCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
   /** GET /api/tavern/v1/settings/voice-preference (browser session; no CSRF header). */
   readVoicePreference(): Promise<TavernVoicePreferenceV1>;
+  /** GET /api/tavern/v1/settings/voice-devices (browser-session read). */
+  readVoiceDevices(): Promise<TavernVoiceDevicesV1>;
   /** PUT /api/tavern/v1/settings/voice-preference with browser-session CSRF protection. */
   updateVoicePreference(
     command: TavernVoicePreferenceConsentCommandV1,
@@ -1004,6 +1055,9 @@ export function createManagementPipelineApi(
     },
     async readVoicePreference(): Promise<TavernVoicePreferenceV1> {
       return exchange(fetchLike, "GET", "/api/tavern/v1/settings/voice-preference", 200, validateVoicePreference);
+    },
+    async readVoiceDevices(): Promise<TavernVoiceDevicesV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/voice-devices", 200, validateVoiceDevices);
     },
     async updateVoicePreference(
       command: TavernVoicePreferenceConsentCommandV1,

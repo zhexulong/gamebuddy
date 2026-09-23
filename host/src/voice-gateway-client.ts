@@ -337,6 +337,29 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     return () => this.#finalListeners.delete(listener);
   }
 
+  /**
+   * Read-only enumeration of the Windows output endpoints the gateway can
+   * render to. Returns bounded `{ id: waveout:N, name }` entries; an empty
+   * list means no enumerator is available (non-Windows or headless). The
+   * result is always authenticated-loopback-only and never appears in public
+   * gateway state.
+   */
+  public async listOutputDevices(): Promise<readonly Readonly<{ id: string; name: string }>[]> {
+    if (!this.#connected || this.#socket === undefined || this.#socket.destroyed)
+      throw new Error("voice_gateway_disconnected");
+    const response = await this.request("list_output_devices", {});
+    if (response.type !== "output_devices" || !Array.isArray(response.devices))
+      throw new Error("invalid_voice_gateway_devices");
+    return Object.freeze(
+      response.devices.map((device) =>
+        Object.freeze({
+          id: device.id,
+          name: device.name,
+        }),
+      ),
+    );
+  }
+
   public async health(voiceProfile?: string): Promise<
     Readonly<{
       providerId: string;
