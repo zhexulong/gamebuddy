@@ -424,7 +424,13 @@ export type ExecutionRequest = Readonly<{
     | "clear_hoedirt"
     | "dig_artifact_spot"
     | "express_emote"
-    | "face_direction";
+    | "face_direction"
+    | "chest_store"
+    | "chest_retrieve"
+    | "chop_stump"
+    | "plant_sapling"
+    | "cut_weeds"
+    | "scythe_crop";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
@@ -1386,7 +1392,13 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "clear_hoedirt" &&
     value.action !== "dig_artifact_spot" &&
     value.action !== "express_emote" &&
-    value.action !== "face_direction"
+    value.action !== "face_direction" &&
+    value.action !== "chest_store" &&
+    value.action !== "chest_retrieve" &&
+    value.action !== "chop_stump" &&
+    value.action !== "plant_sapling" &&
+    value.action !== "cut_weeds" &&
+    value.action !== "scythe_crop"
   )
     return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
@@ -1694,6 +1706,40 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     
     if (typeof value.args.direction !== "string" || value.args.direction.length === 0 || value.args.direction.length > 64)
       return "invalid_direction";
+  } else if (value.action === "chest_store" || value.action === "chest_retrieve") {
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (
+      !isToolSlot(value.args.slot) ||
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedQualifiedItemId !== "string" ||
+      value.args.expectedQualifiedItemId.length === 0 ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_chest_target";
+  } else if (value.action === "chop_stump" || value.action === "cut_weeds" || value.action === "scythe_crop") {
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+    if (
+      !isToolSlot(value.args.slot) ||
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_tool_target";
+  } else if (value.action === "plant_sapling") {
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (
+      !isToolSlot(value.args.slot) ||
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedQualifiedItemId !== "string" ||
+      value.args.expectedQualifiedItemId.length === 0 ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_sapling_target";
   }
   return null;
 }
@@ -2162,7 +2208,13 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "clear_hoedirt" ||
       value.action === "dig_artifact_spot" ||
       value.action === "express_emote" ||
-      value.action === "face_direction") &&
+      value.action === "face_direction" ||
+      value.action === "chest_store" ||
+      value.action === "chest_retrieve" ||
+      value.action === "chop_stump" ||
+      value.action === "plant_sapling" ||
+      value.action === "cut_weeds" ||
+      value.action === "scythe_crop") &&
     isRecord(value.args) &&
     Object.keys(value.args).length <= 8 &&
     Number.isSafeInteger(value.expectedRevision) &&

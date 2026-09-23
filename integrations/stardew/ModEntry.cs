@@ -827,7 +827,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1562,6 +1562,176 @@ public sealed partial class ModEntry : Mod
                 return;
             }
 
+if (fixture.FixtureScenario == "native_chest_store_v1")
+            {
+                // Pre-attachment fixture only: one current-player-owned ordinary
+                // Chest on an empty Farm tile with a standable neighbor, plus one
+                // ordinary storable item in the backpack. Production alone calls
+                // Chest.addItem and owns all receipt/postcondition evidence.
+                const string storeItemId = "(O)24";
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == storeItemId && item.Stack > 0)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(storeItemId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_chest_store_inventory_full");
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == storeItemId && item.Stack > 0))
+                    throw new InvalidOperationException("fixture_native_local_chest_store_item_missing_after_add");
+                (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalChestFixtureSpot(farm);
+                if (spot is null) throw new InvalidOperationException("fixture_native_local_chest_store_target_missing");
+                StardewValley.Objects.Chest chest = new(playerChest: true, spot.Value.TargetTile);
+                if (farm.objects.TryGetValue(spot.Value.TargetTile, out StardewValley.Object? existingChest))
+                    throw new InvalidOperationException("fixture_native_local_chest_store_occupied");
+                farm.objects.Add(spot.Value.TargetTile, chest);
+                if (!IsFixtureOwnedOrdinaryChest(chest))
+                    throw new InvalidOperationException("fixture_native_local_chest_store_chest_invalid");
+                if (!farm.objects.TryGetValue(spot.Value.TargetTile, out StardewValley.Object? placedChest))
+                    throw new InvalidOperationException("fixture_native_local_chest_store_placement_failed");
+                if (placedChest is not StardewValley.Objects.Chest placedChestTyped || !ReferenceEquals(placedChestTyped, chest))
+                    throw new InvalidOperationException("fixture_native_local_chest_store_placement_failed");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized chest-store precondition before bridge attachment: item={storeItemId}; chest={chest.QualifiedItemId}; standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y}; production alone invokes chest.addItem and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_chest_retrieve_v1")
+            {
+                // Pre-attachment fixture only: one owned ordinary Chest on an
+                // empty Farm tile (standable neighbor) containing one item; the
+                // backpack must accept that item. Production alone removes the
+                // exact target through the native chest take data path and owns
+                // all receipt/postcondition evidence.
+                const string retrieveItemId = "(O)24";
+                (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalChestFixtureSpot(farm);
+                if (spot is null) throw new InvalidOperationException("fixture_native_local_chest_retrieve_target_missing");
+                StardewValley.Objects.Chest chest = new(playerChest: true, spot.Value.TargetTile);
+                if (farm.objects.TryGetValue(spot.Value.TargetTile, out StardewValley.Object? existing))
+                    throw new InvalidOperationException("fixture_native_local_chest_retrieve_occupied");
+                StardewValley.Object contained = ItemRegistry.Create<StardewValley.Object>(retrieveItemId, 1);
+                if (chest.addItem(contained) is not null)
+                    throw new InvalidOperationException("fixture_native_local_chest_retrieve_fill_failed");
+                if (!player.couldInventoryAcceptThisItem(contained))
+                    throw new InvalidOperationException("fixture_native_local_chest_retrieve_inventory_unavailable");
+                farm.objects.Add(spot.Value.TargetTile, chest);
+                if (!IsFixtureOwnedOrdinaryChest(chest) || chest.GetItemsForPlayer().Count(item => item is not null) != 1)
+                    throw new InvalidOperationException("fixture_native_local_chest_retrieve_placement_failed");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized chest-retrieve precondition before bridge attachment: item={retrieveItemId}; chest={chest.QualifiedItemId}; standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y}; production alone invokes the native chest take path and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_chop_stump_v1")
+            {
+                // Pre-attachment fixture only: one target-version Tree stump
+                // (stump.Value == true) on an empty Farm tile with a standable
+                // neighbor. Production alone swings the Axe and owns all
+                // receipt/postcondition evidence. ResourceClump stumps stay
+                // exclusively in the clear_debris fixture world.
+                StardewValley.TerrainFeatures.Tree stumpTree = new("1", 5);
+                stumpTree.stump.Value = true;
+                (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalTreeStumpFixtureSpot(farm);
+                if (spot is null) throw new InvalidOperationException("fixture_native_local_chop_stump_target_missing");
+                if (farm.terrainFeatures.ContainsKey(spot.Value.TargetTile))
+                    throw new InvalidOperationException("fixture_native_local_chop_stump_occupied");
+                farm.terrainFeatures.Add(spot.Value.TargetTile, stumpTree);
+                if (!farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out StardewValley.TerrainFeatures.TerrainFeature? placed) || !ReferenceEquals(placed, stumpTree) || !stumpTree.stump.Value)
+                    throw new InvalidOperationException("fixture_native_local_chop_stump_placement_failed");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized chop-stump precondition before bridge attachment: stump={stumpTree.treeType.Value}; standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y}; production alone swings the Axe and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_plant_sapling_v1")
+            {
+                // Pre-attachment fixture only: one wild-tree sapling item
+                // (Acorn (O)309) in the backpack and a legally plantable Farm
+                // tile. Production alone calls Object.placementAction and owns
+                // all receipt/postcondition evidence.
+                const string saplingId = "(O)309";
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == saplingId && item.Stack > 0)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(saplingId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_plant_sapling_inventory_full");
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == saplingId && item.Stack > 0))
+                    throw new InvalidOperationException("fixture_native_local_plant_sapling_item_missing_after_add");
+                (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalSaplingFixtureSpot(farm);
+                if (spot is null) throw new InvalidOperationException("fixture_native_local_plant_sapling_target_missing");
+                if (farm.objects.ContainsKey(spot.Value.TargetTile) || farm.terrainFeatures.ContainsKey(spot.Value.TargetTile))
+                    throw new InvalidOperationException("fixture_native_local_plant_sapling_occupied");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized plant-sapling precondition before bridge attachment: item={saplingId}; standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y}; production alone invokes Object.placementAction and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_cut_weeds_v1")
+            {
+                // Pre-attachment fixture only: one native Weed object on an
+                // empty Farm tile (standable neighbor) and a Scythe in the
+                // backpack. Production alone invokes Object.performToolAction
+                // and owns all receipt/postcondition evidence.
+                const string scytheId = "(W)47";
+                (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+                if (spot is null) throw new InvalidOperationException("fixture_native_local_cut_weeds_target_missing");
+                if (farm.objects.ContainsKey(spot.Value.TargetTile))
+                    throw new InvalidOperationException("fixture_native_local_cut_weeds_occupied");
+                StardewValley.Object weed = ItemRegistry.Create<StardewValley.Object>("(O)313", 1);
+                if (!weed.IsWeeds())
+                    throw new InvalidOperationException("fixture_native_local_cut_weeds_not_weed");
+                farm.objects.Add(spot.Value.TargetTile, weed);
+                if (!farm.objects.TryGetValue(spot.Value.TargetTile, out StardewValley.Object? placedWeed) || !ReferenceEquals(placedWeed, weed) || !placedWeed.IsWeeds())
+                    throw new InvalidOperationException("fixture_native_local_cut_weeds_placement_failed");
+                if (!player.Items.OfType<StardewValley.Tool>().Any(tool => tool.QualifiedItemId == scytheId)
+                    && player.addItemToInventory(ItemRegistry.Create(scytheId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_cut_weeds_scythe_inventory_full");
+                if (!player.Items.OfType<StardewValley.Tool>().Any(tool => tool.QualifiedItemId == scytheId))
+                    throw new InvalidOperationException("fixture_native_local_cut_weeds_scythe_missing_after_add");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized cut-weeds precondition before bridge attachment: weed=(O)313; scythe={scytheId}; standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y}; production alone invokes Object.performToolAction and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_scythe_crop_v1")
+            {
+                // Pre-attachment fixture only: one ready Scythe-method crop
+                // (wheat (O)483 -> harvest (O)271) on native HoeDirt and a
+                // Scythe in the backpack. Production alone invokes
+                // HoeDirt.performToolAction and owns all receipt/postcondition
+                // evidence. growCompletely() sets currentPhase to the last
+                // phase but does NOT set fullyGrown for seeds that do not
+                // regrow; readyForHarvest() additionally requires dayOfCurrent
+                // Phase <= 0 only when fullyGrown, and currentPhase >= last.
+                const string scytheId = "(W)47";
+                (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalScytheCropFixtureSpot(farm);
+                if (spot is null) throw new InvalidOperationException("fixture_native_local_scythe_crop_target_missing");
+                StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out var maybeDirt)
+                    ? (StardewValley.TerrainFeatures.HoeDirt)maybeDirt!
+                    : new StardewValley.TerrainFeatures.HoeDirt();
+                if (!farm.terrainFeatures.ContainsKey(spot.Value.TargetTile))
+                {
+                    farm.terrainFeatures.Add(spot.Value.TargetTile, dirt);
+                }
+                StardewValley.Crop wheat = new("483", (int)spot.Value.TargetTile.X, (int)spot.Value.TargetTile.Y, farm);
+                dirt.crop = wheat;
+                wheat.growCompletely();
+                // dayOfCurrentPhase is 0 after growCompletely, but
+                // readyForHarvest requires crop.currentPhase >= phaseDays-1;
+                // force the last-phase marker explicitly and re-check.
+                wheat.currentPhase.Value = wheat.phaseDays.Count - 1;
+                wheat.dayOfCurrentPhase.Value = 0;
+                if (!dirt.readyForHarvest() || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Scythe)
+                    throw new InvalidOperationException("fixture_native_local_scythe_crop_not_ready");
+                if (!player.Items.OfType<StardewValley.Tool>().Any(tool => tool.QualifiedItemId == scytheId)
+                    && player.addItemToInventory(ItemRegistry.Create(scytheId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_scythe_crop_scythe_inventory_full");
+                if (!player.Items.OfType<StardewValley.Tool>().Any(tool => tool.QualifiedItemId == scytheId))
+                    throw new InvalidOperationException("fixture_native_local_scythe_crop_scythe_missing_after_add");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized scythe-crop precondition before bridge attachment: crop=wheat; scythe={scytheId}; standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y}; production alone invokes HoeDirt.performToolAction and emits receipt.", LogLevel.Info);
+                return;
+            }
+
             if (fixture.FixtureScenario == "native_feed_animal_v1")
             {
                 // This disposable native-local branch may use the pinned
@@ -1955,6 +2125,140 @@ public sealed partial class ModEntry : Mod
             .Cast<Vector2?>()
             .FirstOrDefault();
     }
+
+private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestFixtureSpot(GameLocation farm)
+    {
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        foreach (Vector2 target in Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y))))
+        {
+            if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target))
+                continue;
+            Vector2[] cardinal =
+            {
+                target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
+                target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
+            };
+            Vector2[] validStanding = cardinal
+                .Where(standing => farm.isTileOnMap(standing)
+                    && farm.isTilePassable(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                .ToArray();
+            if (validStanding.Length == 1)
+                return (target, validStanding[0]);
+        }
+        return null;
+    }
+
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalTreeStumpFixtureSpot(GameLocation farm)
+    {
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        foreach (Vector2 target in Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y))))
+        {
+            if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target)
+                || farm.doesTileHaveProperty((int)target.X, (int)target.Y, "NoSpawn", "Back") is not null)
+                continue;
+            Vector2[] cardinal =
+            {
+                target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
+                target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
+            };
+            Vector2[] validStanding = cardinal
+                .Where(standing => farm.isTileOnMap(standing)
+                    && farm.isTilePassable(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                .ToArray();
+            if (validStanding.Length == 1)
+                return (target, validStanding[0]);
+        }
+        return null;
+    }
+
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalSaplingFixtureSpot(GameLocation farm)
+    {
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        foreach (Vector2 target in Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y))))
+        {
+            if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target)
+                || farm.doesTileHaveProperty((int)target.X, (int)target.Y, "NoSpawn", "Back") is not null)
+                continue;
+            Vector2[] cardinal =
+            {
+                target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
+                target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
+            };
+            Vector2[] validStanding = cardinal
+                .Where(standing => farm.isTileOnMap(standing)
+                    && farm.isTilePassable(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                .ToArray();
+            if (validStanding.Length == 1)
+                return (target, validStanding[0]);
+        }
+        return null;
+    }
+
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalWeedFixtureSpot(GameLocation farm)
+    {
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        foreach (Vector2 target in Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y))))
+        {
+            if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target))
+                continue;
+            Vector2[] cardinal =
+            {
+                target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
+                target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
+            };
+            Vector2[] validStanding = cardinal
+                .Where(standing => farm.isTileOnMap(standing)
+                    && farm.isTilePassable(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                .ToArray();
+            if (validStanding.Length == 1)
+                return (target, validStanding[0]);
+        }
+        return null;
+    }
+
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalScytheCropFixtureSpot(GameLocation farm)
+    {
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        foreach (Vector2 target in Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y))))
+        {
+            if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target)
+                || farm.terrainFeatures.TryGetValue(target, out StardewValley.TerrainFeatures.TerrainFeature? existingDirt)
+                    && existingDirt is not StardewValley.TerrainFeatures.HoeDirt)
+                continue;
+            Vector2[] cardinal =
+            {
+                target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
+                target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
+            };
+            Vector2[] validStanding = cardinal
+                .Where(standing => farm.isTileOnMap(standing)
+                    && farm.isTilePassable(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                .ToArray();
+            if (validStanding.Length == 1)
+                return (target, validStanding[0]);
+        }
+        return null;
+    }
+
+    private static bool IsFixtureOwnedOrdinaryChest(StardewValley.Objects.Chest chest) =>
+        chest.playerChest.Value
+        && chest.GlobalInventoryId is null
+        && chest.SpecialChestType == StardewValley.Objects.Chest.SpecialChestTypes.None;
 
     private static string DescribeNativeLocalFixtureSetupFailure(Exception exception)
     {

@@ -133,6 +133,28 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   ),
 ]);
 
+/**
+ * Experimental-action native-local runner map. These actions are registered in
+ * the Mod catalog as `FarmhandActionLifecycle.Experimental` and are therefore
+ * deliberately absent from `STARDEW_PUBLISHED_ACTION_GATES`, which by contract
+ * is exactly the published action set. This map exists only so the disposable
+ * native-local launcher can resolve an experimental action's shared-harness
+ * runner; it grants no capability, changes no lifecycle, and is not a
+ * publication or success claim. Only experimental actions that actually have a
+ * native-local smoke runner appear here.
+ */
+export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
+  clear_debris: "run-stardew-native-local-player-clear-debris-smoke.mjs",
+  npc_relationship: "run-stardew-native-local-player-npc-relationship-smoke.mjs",
+  pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
+  chest_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
+  chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+  chop_stump: "run-stardew-native-local-player-chop-stump-smoke.mjs",
+  plant_sapling: "run-stardew-native-local-player-plant-sapling-smoke.mjs",
+  cut_weeds: "run-stardew-native-local-player-cut-weeds-smoke.mjs",
+  scythe_crop: "run-stardew-native-local-player-scythe-crop-smoke.mjs",
+});
+
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {
   return Object.freeze({ actionId, identityVersion, runner, terminalReasonCode, fixtureScenario });
 }

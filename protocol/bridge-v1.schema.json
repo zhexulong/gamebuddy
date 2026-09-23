@@ -1812,7 +1812,9 @@
         { "if": { "required": ["action"], "properties": { "action": { "const": "machine_load" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/machineLoadArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "use_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotQualifiedArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "express_emote" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/expressEmoteArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "face_direction" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/faceDirectionArgs" } } } }
+        { "if": { "required": ["action"], "properties": { "action": { "const": "face_direction" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/faceDirectionArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "enum": ["chest_store", "chest_retrieve", "plant_sapling"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "enum": ["chop_stump", "cut_weeds", "scythe_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYTargetArgs" } } } }
       ],
       "properties": {
         "requestId": {
@@ -1853,7 +1855,13 @@
             "dig_artifact_spot",
             "refill_watering_can",
             "express_emote",
-            "face_direction"
+            "face_direction",
+            "chest_store",
+            "chest_retrieve",
+            "chop_stump",
+            "plant_sapling",
+            "cut_weeds",
+            "scythe_crop"
           ]
         },
         "args": {
