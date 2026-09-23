@@ -74,8 +74,8 @@ importers:
         specifier: 0.84.4
         version: 0.84.4(ws@8.21.3)(zod@4.4.3)
       '@gamebuddy/voice-protocol':
-        specifier: workspace:*
-        version: link:../packages/voice-protocol
+        specifier: file:../vendor/pi-koe/packages/voice-protocol
+        version: file:vendor/pi-koe/packages/voice-protocol
       typebox:
         specifier: 1.1.38
         version: 1.1.38
@@ -99,34 +99,6 @@ importers:
   integrations/stardew/action-development: {}
 
   packages/game-action-program: {}
-
-  packages/voice-protocol:
-    devDependencies:
-      '@types/node':
-        specifier: 24.10.1
-        version: 24.10.1
-      tsx:
-        specifier: 4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: 5.9.3
-        version: 5.9.3
-
-  voice-gateway:
-    dependencies:
-      '@gamebuddy/voice-protocol':
-        specifier: workspace:*
-        version: link:../packages/voice-protocol
-    devDependencies:
-      '@types/node':
-        specifier: 24.10.1
-        version: 24.10.1
-      esbuild:
-        specifier: 0.27.7
-        version: 0.27.7
-      typescript:
-        specifier: 5.9.3
-        version: 5.9.3
 
 packages:
 
@@ -518,6 +490,9 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@gamebuddy/voice-protocol@file:vendor/pi-koe/packages/voice-protocol':
+    resolution: {directory: vendor/pi-koe/packages/voice-protocol, type: directory}
 
   '@google/genai@1.52.0':
     resolution: {integrity: sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q==}
@@ -2617,6 +2592,8 @@ snapshots:
 
   '@esbuild/win32-x64@0.27.7':
     optional: true
+
+  '@gamebuddy/voice-protocol@file:vendor/pi-koe/packages/voice-protocol': {}
 
   '@google/genai@1.52.0':
     dependencies:

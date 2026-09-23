@@ -21,7 +21,7 @@
   "dependencies": {
     "@cortexkit/pi-magic-context": "file:..\\vendor\\magic-context\\packages\\pi-plugin",
     "@earendil-works/pi-coding-agent": "0.84.4",
-    "@gamebuddy/voice-protocol": "workspace:*",
+    "@gamebuddy/voice-protocol": "file:../vendor/pi-koe/packages/voice-protocol",
     "typebox": "1.1.38"
   },
   "devDependencies": {

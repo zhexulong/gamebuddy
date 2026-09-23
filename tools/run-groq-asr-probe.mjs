@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { GroqWhisperAsrProvider } from "../voice-gateway/dist/groq.js";
+import { GroqWhisperAsrProvider } from "../vendor/pi-koe/dist/groq.js";
 
 // Load local secrets if present
 for (const envPath of [".env.local", "../.env.local"]) {

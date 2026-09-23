@@ -48,10 +48,11 @@ jobs:
       # Chat/Game surface decoupling guard: fails while the documented drift
       # ledger is non-empty; Loop 2 must cut the last edges to go green.
       - run: pnpm check:dialogue-web-boundaries
-      # Build the workspace-owned protocol before Host typecheck so a clean
+      # Build the split-out pi-koe protocol before Host typecheck so a clean
       # checkout never depends on stale generated protocol declarations.
-      - run: pnpm --filter @gamebuddy/voice-protocol typecheck
-      - run: pnpm --filter @gamebuddy/voice-protocol build
+      # pi-koe is the Voice repository mounted as vendor/pi-koe (git submodule).
+      - run: pnpm run build
+        working-directory: vendor/pi-koe/packages/voice-protocol
       - run: pnpm typecheck
       # Host tests mint only repository-built, fixed Windows helper pairs; they
       # never use an unverified production generation.

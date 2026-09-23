@@ -8,7 +8,9 @@ import { buildWindowsReparseInspector, outputRoot as windowsReparseInspectorBuil
 import { buildWindowsBootstrapGuardian, outputRoot as windowsBootstrapGuardianBuildRoot } from "./build-windows-bootstrap-guardian.mjs";
 import { buildWindowsStardewFolderPicker, outputRoot as windowsStardewFolderPickerBuildRoot } from "./build-windows-stardew-folder-picker.mjs";
 import { runBoundedChild } from "./child-process-tool.mjs";
-import { buildReleaseArtifact as buildVoiceGatewayReleaseArtifact } from "../../voice-gateway/scripts/build-release-artifact.mjs";
+// pi-koe is the split-out Voice repository (git submodule); its release
+// artifact builder produces the single-file bundle consumed by production.
+import { buildReleaseArtifact as buildVoiceGatewayReleaseArtifact } from "../../vendor/pi-koe/scripts/build-release-artifact.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const hostRoot = resolve(dirname(scriptPath), "..");

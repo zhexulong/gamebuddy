@@ -6,7 +6,7 @@ import {
   isVoiceGatewayRequest,
   MAX_NDJSON_FRAME_BYTES,
   parseVoiceGatewayResponse,
-} from "../../packages/voice-protocol/dist/index.js";
+} from "../../vendor/pi-koe/packages/voice-protocol/dist/index.js";
 
 const LOOPBACK = "127.0.0.1";
 const DEFAULT_TIMEOUT_MS = 15_000;
