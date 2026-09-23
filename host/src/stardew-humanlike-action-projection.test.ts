@@ -61,6 +61,22 @@ const VALID_EXPRESS_EMOTE_DESCRIPTOR: ActionRegistrationDescriptor = Object.free
   nativeBinding: "Farmer.doEmote",
 });
 
+const VALID_INTERACT_NPC_WITH_ITEM_DESCRIPTOR: ActionRegistrationDescriptor = Object.freeze({
+  arguments: Object.freeze([
+    Object.freeze({ name: "x", type: "integer" }),
+    Object.freeze({ name: "y", type: "integer" }),
+    Object.freeze({ name: "slot", type: "integer" }),
+    Object.freeze({ name: "expectedQualifiedItemId", type: "string" }),
+    Object.freeze({ name: "expectedTargetId", type: "string" }),
+  ]),
+  outputFacts: Object.freeze({}),
+  resourceTemplate: Object.freeze({
+    claims: Object.freeze([{ key: "embodied_actor", value: "ScopePlayer" }]),
+  }),
+  effect: "write",
+  postcondition: "native_action_postcondition",
+});
+
 const VALID_FACE_DIRECTION_DESCRIPTOR: ActionRegistrationDescriptor = Object.freeze({
   arguments: Object.freeze([
     Object.freeze({
@@ -183,6 +199,21 @@ test("candidate action schemas are derived dynamically from Mod descriptor enums
   assert.equal(Value.Check(directionSchema, { direction: "diagonal" }), false);
   assert.equal(Value.Check(directionSchema, {}), false);
   assert.equal(Value.Check(directionSchema, { direction: "up", idempotencyKey: "idem_01" }), false);
+
+  const npcSchema = buildCandidateToolSchema("interact_npc_with_item", VALID_INTERACT_NPC_WITH_ITEM_DESCRIPTOR);
+  assert.equal((npcSchema as { additionalProperties?: unknown }).additionalProperties, false);
+  const validNpcArgs = {
+    slot: 5,
+    x: 12,
+    y: 34,
+    expectedQualifiedItemId: "(O)190",
+    expectedTargetId: "npc_relationship_0123456789abcdef",
+  };
+  assert.equal(Value.Check(npcSchema, validNpcArgs), true);
+  // Rejects missing or extraneous keys
+  assert.equal(Value.Check(npcSchema, { ...validNpcArgs, requestId: "req_01" }), false);
+  assert.equal(Value.Check(npcSchema, { ...validNpcArgs, expectedQualifiedItemId: undefined }), false);
+  assert.equal(Value.Check(npcSchema, { slot: 5, x: 12, y: 34, expectedQualifiedItemId: "(O)190" }), false);
 });
 
 test("candidate schemas do NOT hardcode enums: custom Mod descriptor enums are respected", () => {
@@ -219,6 +250,14 @@ test("candidate actions with a complete descriptor are visible despite the exper
       descriptor: VALID_FACE_DIRECTION_DESCRIPTOR,
     },
     {
+      actionId: "interact_npc_with_item",
+      familyId: "npc_social",
+      identityVersion: 1,
+      lifecycle: "experimental",
+      kind: "execution",
+      descriptor: VALID_INTERACT_NPC_WITH_ITEM_DESCRIPTOR,
+    },
+    {
       actionId: "equip_tool",
       familyId: "body_tools",
       identityVersion: 1,
@@ -229,13 +268,13 @@ test("candidate actions with a complete descriptor are visible despite the exper
 
   const visible = visibleActionsFromModCatalog(
     experimentalCatalog,
-    ["express_emote", "face_direction", "equip_tool"],
+    ["express_emote", "face_direction", "interact_npc_with_item", "equip_tool"],
     DEFAULT_ACTION_POLICY,
   );
 
   assert.deepEqual(
     visible.map((e) => e.actionId).sort(),
-    ["equip_tool", "express_emote", "face_direction"],
+    ["equip_tool", "express_emote", "face_direction", "interact_npc_with_item"],
     "Complete candidate actions must be agent-visible while experimental",
   );
 });
