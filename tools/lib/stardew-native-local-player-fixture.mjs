@@ -361,6 +361,10 @@ export function fixtureActions(action) {
   // relationship fact as pre-attachment starting state. Movement/travel and
   // the typed read-only inspection remain production-owned.
   if (action === "npc_relationship") return ["move_to_tile", "travel", "npc_relationship"];
+  // The fixture establishes one active native delivery quest plus one carried
+  // target item as starting state. Production alone offers the item to the
+  // villager through the native interaction and emits the receipt.
+  if (action === "interact_npc_with_item") return ["move_to_tile", "travel", "interact_npc_with_item"];
   // The fixture establishes one unpetted Pet as a starting state. Production
   // alone invokes Pet.checkAction, records today's interaction, applies
   // friendship, and emits its terminal receipt.
@@ -412,6 +416,7 @@ export function fixtureScenario(actions) {
   if (actions.includes("machine_collect_output")) return "native_machine_coffee_load_v1";
   if (actions.includes("machine_inspect")) return "native_machine_inspect_v1";
   if (actions.includes("npc_relationship")) return "native_npc_relationship_v1";
+  if (actions.includes("interact_npc_with_item")) return "native_interact_npc_with_item_v1";
   if (actions.includes("pet_animal")) return "native_pet_animal_v1";
   if (actions.includes("use_item")) return "native_use_item_v1";
   if (actions.includes("place_wood_fence")) return "native_place_wood_fence_v1";
@@ -490,7 +495,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
@@ -526,7 +531,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the

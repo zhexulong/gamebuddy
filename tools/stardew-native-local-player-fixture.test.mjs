@@ -1135,6 +1135,40 @@ test("native-local npc-relationship fixture establishes an unchanged persisted f
   await restoreNativeLocalPlayerFixture(options);
 });
 
+test("native-local interact-npc-with-item fixture establishes only an active delivery quest and one carried item", async (t) => {
+  const options = { ...(await createFixture(t, "npc-relationship")), action: "interact_npc_with_item" };
+  await prepareNativeLocalPlayerFixture(options);
+  const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
+  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "interact_npc_with_item"]);
+  assert.deepEqual(configured.ExperimentalActions, ["interact_npc_with_item"]);
+  assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_interact_npc_with_item_v1");
+
+  const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
+  const setupStart = entry.indexOf("private void InitializeNativeLocalInteractNpcWithItemFixture");
+  const setup = entry.slice(setupStart, entry.indexOf("private void InitializeNativeLocalNpcRelationshipFixture", setupStart));
+  // The fixture establishes exactly the declared Given: a clean relationship,
+  // one active native delivery quest, one carried target item, and a reachable
+  // villager placement. It never invokes the interaction or completes the quest.
+  assert.match(setup, /const string npcName = "Jodi"/);
+  assert.match(setup, /const string targetItemId = "\(O\)190"/);
+  assert.match(setup, /relationship\.Clear\(\)/);
+  assert.match(setup, /new StardewValley\.Quests\.ItemDeliveryQuest\(npcName, targetItemId\)/);
+  assert.match(setup, /player\.questLog\.Add\(quest\)/);
+  assert.match(setup, /ItemRegistry\.Create<StardewValley\.Object>\(targetItemId, 1\)/);
+  assert.match(setup, /Game1\.warpCharacter\(npc, farm, targetTile\.Value\)/);
+  assert.doesNotMatch(setup, /RequestLocalInteractNpcWithItem|checkAction|questComplete|changeFriendship|PublishReceipt/);
+
+  const executions = await readExecutionManagerSources();
+  // The executor must route the interaction through the native ingress and
+  // discriminate a quest delivery from an ordinary recorded gift.
+  assert.match(executions, /location\.checkAction\(new xTile\.Dimensions\.Location\(targetX, targetY\), Game1\.viewport, Game1\.player\)/);
+  assert.match(executions, /"quest_item_delivered"/);
+  assert.match(executions, /"gift_given"/);
+  assert.match(executions, /completedQuestsBefore/);
+  assert.match(executions, /"interact_npc_with_item"/);
+  await restoreNativeLocalPlayerFixture(options);
+});
+
 test("native-local chop-tree-source fixture establishes only the terminal-tree precondition", async (t) => {
   const options = { ...(await createFixture(t, "chop-tree-source")), action: "chop_tree_source" };
   await prepareNativeLocalPlayerFixture(options);
