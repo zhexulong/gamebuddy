@@ -112,6 +112,12 @@ export type DesktopHostAssemblyInput = Readonly<{
    * companion reads aloud while it generates. Absent => text-only.
    */
   speechSink?: ChatVoiceSpeechPublisher;
+  /**
+   * Read-only Voice output endpoint enumeration (same Voice client). When
+   * supplied, the Tavern-management settings surface can list physical output
+   * endpoints; absent => the Windows default selection only.
+   */
+  listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
 }>;
 
 /**
@@ -179,8 +185,16 @@ export async function createDesktopProductComposition(
           ...variantInput,
           ...(input.voiceSurface === undefined ? {} : { voiceSurface: input.voiceSurface }),
           ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
+          ...(input.listVoiceOutputDevices === undefined
+            ? {}
+            : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
         })
-        : await startTavernManagementPresentationAdmission(variantInput);
+        : await startTavernManagementPresentationAdmission({
+          ...variantInput,
+          ...(input.listVoiceOutputDevices === undefined
+            ? {}
+            : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
+        });
       // The composed surface is ready at the Host-owned seam: the launch URL is
       // published exactly once and never projects through the composition facade.
       input.publishLaunchUrl?.(presentationAdmission.launchUrl);
@@ -208,6 +222,9 @@ export async function createDesktopProductComposition(
     presentationAdmission = await startDesktopPresentationAdmission({
       ...(input.voiceSurface === undefined ? {} : { voiceSurface: input.voiceSurface }),
       ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
+      ...(input.listVoiceOutputDevices === undefined
+        ? {}
+        : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
       manifest: input.manifest,
       hostArtifactRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
       bootstrapToken: randomBytes(32).toString("base64url"),

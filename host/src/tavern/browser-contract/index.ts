@@ -194,6 +194,7 @@ const OperationId = Type.Union([
   Type.Literal("world-info.bind"),
   Type.Literal("settings.voice.read"),
   Type.Literal("settings.voice.consent"),
+  Type.Literal("settings.voice.devices"),
   Type.Literal("settings.language.read"),
   Type.Literal("settings.language.update"),
 ]);
@@ -209,6 +210,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.world-info.bind"),
   Type.Literal("tavern.operation.settings.voice.read"),
   Type.Literal("tavern.operation.settings.voice.consent"),
+  Type.Literal("tavern.operation.settings.voice.devices"),
   Type.Literal("tavern.operation.settings.language.read"),
   Type.Literal("tavern.operation.settings.language.update"),
 ]);
@@ -298,6 +300,24 @@ export const TavernVoicePreferenceConsentCommandV1Schema = Type.Union([
     outputDevice: Type.Union([Type.Null(), Type.String({ pattern: "^waveout:[0-9]{1,4}$", maxLength: 16 })]),
   }),
 ]);
+
+/**
+ * Read-only enumeration of the output endpoints the Voice Gateway can render
+ * to. `id` is the frozen `waveout:N` selection stored by the preference; `name`
+ * is the driver's bounded display label. An empty list means no enumerable
+ * endpoint is available (gateway absent, non-Windows, or headless).
+ */
+export const TavernVoiceDevicesV1Schema = strictObject({
+  devices: Type.Array(
+    strictObject({
+      id: Type.String({ pattern: "^waveout:[0-9]{1,4}$", maxLength: 16 }),
+      name: Type.String({ minLength: 1, maxLength: 128 }),
+    }),
+    { maxItems: 32 },
+  ),
+  /** The Windows default endpoint is always selectable and is not enumerated. */
+  defaultSelectable: Type.Literal(true),
+});
 
 /**
  * Host-owned companion language preference. The Tavern (frontend) is the
@@ -774,6 +794,20 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: TavernVoicePreferenceV1Schema },
   }),
   route({
+    routeId: "settings.voice.devices",
+    method: "GET",
+    path: "/api/tavern/v1/settings/voice-devices",
+    operationId: "settings.voice.devices",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernVoiceDevicesV1Schema },
+  }),
+  route({
     routeId: "settings.language.read",
     method: "GET",
     path: "/api/tavern/v1/settings/language",
@@ -838,6 +872,7 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernStateEventStreamV1Schema,
     TavernVoiceSurfaceStateV1Schema,
     TavernVoicePreferenceV1Schema,
+  TavernVoiceDevicesV1Schema,
     TavernVoicePreferenceConsentCommandV1Schema,
     TavernLanguagePreferenceV1Schema,
     TavernLanguagePreferenceCommandV1Schema,
@@ -878,6 +913,7 @@ export type DiscardDraftCommandV1 = Static<typeof DiscardDraftCommandV1Schema>;
 export type TavernStateSnapshotV1 = Static<typeof TavernStateSnapshotV1Schema>;
 export type TavernVoiceSurfaceStateV1 = Static<typeof TavernVoiceSurfaceStateV1Schema>;
 export type TavernVoicePreferenceV1 = Static<typeof TavernVoicePreferenceV1Schema>;
+export type TavernVoiceDevicesV1 = Static<typeof TavernVoiceDevicesV1Schema>;
 export type TavernVoicePreferenceConsentCommandV1 = Static<typeof TavernVoicePreferenceConsentCommandV1Schema>;
 export type TavernLanguagePreferenceV1 = Static<typeof TavernLanguagePreferenceV1Schema>;
 export type TavernLanguagePreferenceCommandV1 = Static<typeof TavernLanguagePreferenceCommandV1Schema>;

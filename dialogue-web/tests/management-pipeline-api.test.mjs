@@ -160,8 +160,8 @@ test("management World Info validators reject incomplete, noncanonical, and non-
 });
 
 test("management Voice preference validators and client use exact session and CSRF-bound routes", async () => {
-  const preference = { revision: 0, disclosureVersion: null, consent: "undecided", decidedAtMs: null };
-  const accepted = { revision: 1, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 10 };
+  const preference = { revision: 0, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null };
+  const accepted = { revision: 1, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 10, outputDevice: null };
   assert.deepEqual(validateVoicePreference(preference), preference);
   assert.throws(() => validateVoicePreference({ ...preference, extra: true }), TavernProtocolError);
   const command = { expectedRevision: 0, action: "accept", disclosureVersion: "mimo-cloud-tts-v1" };

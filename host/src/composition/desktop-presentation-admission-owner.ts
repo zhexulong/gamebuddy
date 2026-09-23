@@ -46,6 +46,12 @@ export type DesktopPresentationAdmissionInput = Readonly<{
   voiceSurface?: VoiceSurfaceReader;
   /** Optional Host-owned streaming speech sink: reads the Chat delta aloud while the turn streams. */
   speechSink?: ChatVoiceSpeechPublisher;
+  /**
+   * Optional read-only Voice output endpoint enumeration (forwarded to the
+   * Voice Gateway). Absent => the settings surface offers the Windows default
+   * selection only, never a fabricated device list.
+   */
+  listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
 }>;
 
 /**
@@ -68,6 +74,12 @@ export type ChatOnlyPresentationAdmissionInput = Readonly<{
   voiceSurface?: VoiceSurfaceReader;
   /** Optional Host-owned streaming speech sink: reads the Chat delta aloud while the turn streams. */
   speechSink?: ChatVoiceSpeechPublisher;
+  /**
+   * Optional read-only Voice output endpoint enumeration (forwarded to the
+   * Voice Gateway). Absent => the settings surface offers the Windows default
+   * selection only, never a fabricated device list.
+   */
+  listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
 }>;
 
 export type TavernManagementPresentationAdmissionInput = ChatOnlyPresentationAdmissionInput;
@@ -198,6 +210,9 @@ export async function startTavernManagementPresentationAdmission(
       memoryService,
       worldInfoService,
       voicePreferenceStore,
+      ...(input.listVoiceOutputDevices === undefined
+        ? {}
+        : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
       profile: tavernProfile,
       bootstrapToken: input.bootstrapToken,
       inspector,
@@ -338,6 +353,7 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "world-info.bind",
       "settings.voice.read",
       "settings.voice.consent",
+      "settings.voice.devices",
     ],
     operationIds: [
       "draft.save",
@@ -347,6 +363,7 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "world-info.bind",
       "settings.voice.read",
       "settings.voice.consent",
+      "settings.voice.devices",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds.

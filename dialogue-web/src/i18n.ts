@@ -152,6 +152,8 @@ const en = {
   voiceDisclosureVersion: "Disclosure version",
   voiceAccept: "Accept",
   voiceRevoke: "Revoke",
+  voiceOutputDevice: "Output device",
+  voiceDefaultOutput: "System default",
   voiceSettingsUnavailable: "Voice settings are unavailable.",
 
   problemBootstrapUnavailableTitle: "Unable to open chat",
@@ -315,6 +317,8 @@ const zh: Messages = {
   voiceDisclosureVersion: "披露版本",
   voiceAccept: "接受",
   voiceRevoke: "撤销",
+  voiceOutputDevice: "输出设备",
+  voiceDefaultOutput: "系统默认",
   voiceSettingsUnavailable: "语音设置不可用。",
 
   problemBootstrapUnavailableTitle: "无法打开聊天",

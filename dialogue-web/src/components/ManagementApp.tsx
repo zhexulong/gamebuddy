@@ -7,6 +7,7 @@ import {
   type MemoryItemV1,
   type MemoryReadV1,
   type TavernVoicePreferenceV1,
+  type TavernVoiceDevicesV1,
   TavernProblemError,
   TavernProtocolError,
   type TavernStateSnapshotV1,
@@ -55,7 +56,7 @@ type ReadyView = Readonly<{
 type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail: string }>;
 type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
 
-type VoiceView = Readonly<{ kind: "loading" }> | Readonly<{ kind: "unavailable" }> | Readonly<{ kind: "error" }> | Readonly<{ kind: "ready"; preference: TavernVoicePreferenceV1 }>;
+type VoiceView = Readonly<{ kind: "loading" }> | Readonly<{ kind: "unavailable" }> | Readonly<{ kind: "error" }> | Readonly<{ kind: "ready"; preference: TavernVoicePreferenceV1; devices: TavernVoiceDevicesV1 | null }>;
 
 type MemoryView =
   | Readonly<{ kind: "idle" }>
@@ -131,7 +132,17 @@ export function ManagementApp() {
         if (!voiceLoadedRef.current) {
           voiceLoadedRef.current = true;
           try {
-            setVoiceView({ kind: "ready", preference: await api.readVoicePreference() });
+            const preference = await api.readVoicePreference();
+            // Device enumeration is an optional additive read: when the gateway
+            // is absent or has no Windows endpoints the panel still offers the
+            // Windows default selection through the preference alone.
+            let devices: TavernVoiceDevicesV1 | null = null;
+            try {
+              devices = await api.readVoiceDevices();
+            } catch {
+              devices = null;
+            }
+            setVoiceView({ kind: "ready", preference, devices });
           } catch {
             // Older management fixtures may not publish the optional voice route.
             setVoiceView({ kind: "unavailable" });
@@ -153,16 +164,19 @@ export function ManagementApp() {
     return current.session.withChatList(list);
   };
 
-  const handleVoiceMutation = async (action: "accept" | "revoke"): Promise<void> => {
+  const handleVoiceMutation = async (action: "accept" | "revoke" | "setOutputDevice", outputDevice: string | null = null): Promise<void> => {
     const current = viewRef.current;
     const voice = voiceView;
     if (current.kind !== "ready" || voice.kind !== "ready") return;
     const command = action === "accept"
       ? { action, expectedRevision: voice.preference.revision, disclosureVersion: "mimo-cloud-tts-v1" as const }
-      : { action, expectedRevision: voice.preference.revision };
+      : action === "setOutputDevice"
+        ? { action, expectedRevision: voice.preference.revision, outputDevice }
+        : { action, expectedRevision: voice.preference.revision };
     try {
       await apiRef.current.updateVoicePreference(command, current.session.snapshot.csrfToken);
-      setVoiceView({ kind: "ready", preference: await apiRef.current.readVoicePreference() });
+      const preference = await apiRef.current.readVoicePreference();
+      setVoiceView({ kind: "ready", preference, devices: voice.devices });
       commit({ ...current, notice: { kind: "success", text: labels().success } });
     } catch {
       setVoiceView({ kind: "error" });
@@ -447,8 +461,9 @@ export function ManagementApp() {
             <VoiceSettingsPanel
               voiceView={voiceView}
               labels={labels()}
-              onAccept={() => void handleVoiceMutation("accept")}
-              onRevoke={() => void handleVoiceMutation("revoke")}
+                    onAccept={() => void handleVoiceMutation("accept")}
+                    onRevoke={() => void handleVoiceMutation("revoke")}
+                    onSelectDevice={(deviceId) => void handleVoiceMutation("setOutputDevice", deviceId)}
             />
             {worldInfoBindAvailable && view.session.snapshot.chat.worldInfo !== null && (
               <WorldInfoBindingPanel
@@ -524,11 +539,13 @@ function VoiceSettingsPanel({
   labels,
   onAccept,
   onRevoke,
+  onSelectDevice,
 }: Readonly<{
   voiceView: VoiceView;
   labels: ReturnType<typeof messages>;
   onAccept: () => void;
   onRevoke: () => void;
+  onSelectDevice: (deviceId: string | null) => void;
 }>): ReactElement {
   return (
     <section className="management-settings-section" aria-label={labels.voiceSettings} data-voice-settings>
@@ -547,6 +564,23 @@ function VoiceSettingsPanel({
             <button type="button" className="small-button" onClick={onAccept} disabled={voiceView.preference.consent === "accepted"}>{labels.voiceAccept}</button>
             <button type="button" className="small-button" onClick={onRevoke} disabled={voiceView.preference.consent === "revoked"}>{labels.voiceRevoke}</button>
           </div>
+          {(voiceView.devices === null || voiceView.devices.devices.length > 0) && (
+            <div className="voice-device-selector">
+              <label htmlFor="voice-output-device">{labels.voiceOutputDevice}</label>
+              <select
+                id="voice-output-device"
+                value={voiceView.preference.outputDevice ?? ""}
+                onChange={(event) => onSelectDevice(event.target.value === "" ? null : event.target.value)}
+              >
+                {/* The Windows default endpoint is always selectable and maps
+                    to `outputDevice: null` (resolve at each open). */}
+                <option value="">{labels.voiceDefaultOutput}</option>
+                {(voiceView.devices?.devices ?? []).map((device) => (
+                  <option key={device.id} value={device.id}>{device.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </>
       )}
     </section>

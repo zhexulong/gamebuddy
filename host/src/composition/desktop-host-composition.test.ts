@@ -135,7 +135,7 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   // fails closed rather than inventing one, and the projection is consumed only
   // as the Host-owned assembly input of the presentation child.
   assert.match(source, /const presentation = lifecycleCoordinator\.presentation;\s*if \(presentation === undefined\) throw new Error\("game_integration_presentation_projection_unavailable"\);/);
-  assert.match(source, /presentationAdmission = await startDesktopPresentationAdmission\(\{\s*manifest: input\.manifest,\s*hostArtifactRoot: resolve\(dirname\(fileURLToPath\(import\.meta\.url\)\), "\.\."\),\s*bootstrapToken: randomBytes\(32\)\.toString\("base64url"\),\s*eventStream: createChatEventStream\(\),\s*lease: mountedLease,\s*presentation,\s*\}\)/s);
+  assert.match(source, /presentationAdmission = await startDesktopPresentationAdmission\(\{\s*\.\.\.\(input\.voiceSurface === undefined \? \{\} : \{ voiceSurface: input\.voiceSurface \}\),\s*\.\.\.\(input\.speechSink === undefined \? \{\} : \{ speechSink: input\.speechSink \}\),\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*manifest: input\.manifest,\s*hostArtifactRoot: resolve\(dirname\(fileURLToPath\(import\.meta\.url\)\), "\.\."\),\s*bootstrapToken: randomBytes\(32\)\.toString\("base64url"\),\s*eventStream: createChatEventStream\(\),\s*lease: mountedLease,\s*presentation,\s*\}\)/s);
   // The presentation child is registered after the Game owner, the Chat runtime,
   // and the shared authority, so the reverse-order aggregation closes the one
   // listener before the Chat runtime, the Game owner, and the shared authority
@@ -372,7 +372,7 @@ test("desktop product composition source selects the Chat-only/management varian
   assert.match(source, /surface\?: DesktopHostSurface/);
   assert.match(source, /const surface = input\.surface \?\? "composed-reference-game";/);
   assert.match(source, /if \(surface === "chat-only" \|\| surface === "management"\) \{/);
-  assert.match(source, /surface === "chat-only"\s*\? await startChatOnlyPresentationAdmission\(variantInput\)\s*: await startTavernManagementPresentationAdmission\(variantInput\)/);
+  assert.match(source, /surface === "chat-only"\s*\? await startChatOnlyPresentationAdmission\(\{\s*\.\.\.variantInput,\s*\.\.\.\(input\.voiceSurface === undefined \? \{\} : \{ voiceSurface: input\.voiceSurface \}\),\s*\.\.\.\(input\.speechSink === undefined \? \{\} : \{ speechSink: input\.speechSink \}\),\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*\}\)\s*: await startTavernManagementPresentationAdmission\(\{\s*\.\.\.variantInput,\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*\}\)/);
   assert.match(source, /startChatOnlyPresentationAdmission|startTavernManagementPresentationAdmission/);
   // The Chat-only variants register only the shared authority, Chat runtime,
   // and presentation admission as children; no game child participates.

@@ -24,6 +24,7 @@ import {
   type TavernStateSnapshotV1,
   type TavernVoicePreferenceConsentCommandV1,
   type TavernVoicePreferenceV1,
+  type TavernVoiceDevicesV1,
   type WorldInfoStateV1,
 } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
@@ -95,6 +96,8 @@ const MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY = [
   "settings.voice.read",
   "settings.voice.consent",
 ] as const;
+/** Optional read-only output-device enumeration route/operation (paired with voice read/consent). */
+const MANAGEMENT_VOICE_DEVICES = ["settings.voice.devices"] as const;
 // Legal navigation projections paired with the route sets above: a profile
 // that declares `memory.read` must also declare the `memory` navigation item,
 // and a profile without the Memory route must not. Both derive from the same
@@ -126,6 +129,12 @@ export type TavernManagementDialogueWebOptions = Readonly<{
     read(): Promise<VoicePreference>;
     update(expectedRevision: number, update: VoicePreferenceUpdate): Promise<VoicePreference>;
   }>;
+  /**
+   * Optional read-only output endpoint enumeration forwarded to the Voice
+   * Gateway. Absent (or an empty list) means no enumerable endpoint is
+   * available; the browser still offers the Windows default selection.
+   */
+  listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
   /** Single configuration point for the companion language (frontend-set). */
   languagePreferenceStore?: Readonly<{
     read(): Promise<LanguagePreference>;
@@ -168,6 +177,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const memoryService = options.memoryService;
   const worldInfoService = options.worldInfoService;
   const voicePreferenceStore = options.voicePreferenceStore;
+  const listVoiceOutputDevices = options.listVoiceOutputDevices;
   const languagePreferenceStore = options.languagePreferenceStore;
   const profile = options.profile;
   const bootstrapToken = options.bootstrapToken;
@@ -287,6 +297,33 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.TavernVoicePreferenceV1Schema.Check(preference))
           throw new Error("voice_preference_store_unavailable");
         return sendJson(response, 200, preference);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/voice-devices") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("settings.voice.devices") ||
+          !profile.operationIds.includes("settings.voice.devices")
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        // Reads are strictly non-mutating and never touch the preference file.
+        // Absent enumerator or non-Windows resolves to an empty list; the
+        // Windows default endpoint is always selectable through the preference.
+        const devices = listVoiceOutputDevices === undefined ? [] : await listVoiceOutputDevices();
+        const bounded = devices
+          .filter(
+            (device): device is { id: string; name: string } =>
+              typeof device.id === "string" &&
+              /^waveout:[0-9]{1,4}$/.test(device.id) &&
+              typeof device.name === "string" &&
+              device.name.length >= 1 &&
+              device.name.length <= 128,
+          )
+          .slice(0, 32);
+        const result: TavernVoiceDevicesV1 = Object.freeze({ devices: bounded.map((device) => Object.freeze({ id: device.id, name: device.name })), defaultSelectable: true });
+        if (!TavernBrowserValidatorsV1.TavernVoiceDevicesV1Schema.Check(result))
+          throw new Error("voice_devices_unavailable");
+        return sendJson(response, 200, result);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/language") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
@@ -612,26 +649,43 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
   // composeTavernProfile, so this HTTP ingress rejects it before any dispatch
   // or injected-service use. The exact shape checks below still apply.
   if (!isComposedTavernProfile(profile)) throw new Error("tavern_management_profile_operation_unavailable");
-  const sameAs = (values: readonly string[], expected: readonly string[], extra: readonly string[] = []) =>
-    sameOrderedValues(values, [...expected, ...extra]);
+  const sameAs = (values: readonly string[], expected: readonly string[], ...extras: readonly (readonly string[])[]) =>
+    sameOrderedValues(values, [...expected, ...extras.flat()]);
   const mutableMemory =
     profile.profileId === MANAGEMENT_PROFILE_ID &&
     profile.releaseTier === MANAGEMENT_RELEASE_TIER &&
-    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS) || sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS, MANAGEMENT_LANGUAGE_ROUTES)) &&
-    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY) || sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY, MANAGEMENT_LANGUAGE_ROUTES)) &&
+    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS, MANAGEMENT_VOICE_DEVICES) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS)) &&
+    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY, MANAGEMENT_VOICE_DEVICES) ||
+      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY)) &&
     sameOrderedValues(profile.navigationItemIds, MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY);
   const readOnlyMemory =
     profile.profileId === MANAGEMENT_PROFILE_ID &&
     profile.releaseTier === MANAGEMENT_RELEASE_TIER &&
-    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate")) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"), MANAGEMENT_LANGUAGE_ROUTES)) &&
-    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY) || sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES)) &&
+    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"), MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"), MANAGEMENT_VOICE_DEVICES) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"), MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"))) &&
+    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES) ||
+      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY)) &&
     sameOrderedValues(profile.navigationItemIds, MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY);
   const withoutMemory =
     profile.profileId === MANAGEMENT_PROFILE_ID &&
     profile.releaseTier === MANAGEMENT_RELEASE_TIER &&
-    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY) || sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES)) &&
-    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY) || sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES)) &&
+    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY)) &&
+    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES) ||
+      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES) ||
+      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY)) &&
     sameOrderedValues(profile.navigationItemIds, MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY);
   // A memory-capable profile must declare the Memory navigation item and the
   // inverse (Memory route but no Memory navigation) fails closed.
