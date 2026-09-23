@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { LocalStardewBridgeClient } from "../host/dist-test/local-stardew-bridge.js";
+import { dehydrateCompanionSpeech } from "../host/dist-test/companion-speech-dehydration.js";
 import { LocalVoiceGatewayClient } from "../host/dist-test/voice-gateway-client.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER, } from "../host/dist-test/stardew-game-integration-adapter.js";
 import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge, STARDEW_INTEGRATION_LAUNCHER } from "../host/dist-test/stardew-integration-launcher.js";
@@ -58,12 +59,19 @@ const voiceObservationPromise = new Promise((resolvePromise) => {
 // the voice lane. No game/presentation authority is touched here.
 const onCompanionTextPresented = (text, locale) => {
   if (LADDER !== "3" || voiceStarted || typeof text !== "string" || text.trim().length === 0) return;
+  // Dee-hydate model scaffolding before TTS: the chat box and the voice line
+  // must both speak the same clean dialogue — never read out `**` / `---` / emoji.
+  const speakable = dehydrateCompanionSpeech(text);
+  if (speakable.length === 0) return;
   voiceStarted = true;
-  presentedSummary = text.trim();
+  presentedSummary = speakable;
   console.error("AGENT_SUMMARY", JSON.stringify({ text: presentedSummary, locale }));
   void (async () => {
     try {
-      const { promiseVoiceObservation } = await startLadder2Voice(text.trim());
+      // TTS lane adds a speech-only stripping pass: the chat box keeps emoji
+      // and list markers as flavor, but the MiMo synthesis lane must receive
+      // pure speakable sentences (emoji/list chars stall synthesis).
+      const { promiseVoiceObservation } = await startLadder2Voice(stripSpeechOnly(speakable));
       voiceObservation = await promiseVoiceObservation;
       voice?.();
     } catch (error) {
@@ -149,9 +157,12 @@ function startVoiceGatewayChild(node, gatewayPath, port, token, mimoKey) {
   const startedOk = new Promise((resolvePromise) => {
     const deadline = Date.now() + 20_000;
     const poll = () => {
+      // The readiness signal is stdout "listening on". stderr may carry
+      // benign node warnings (e.g. MODULE_TYPELESS_PACKAGE_JSON) — it is
+      // diagnostic, never a failure signal by itself.
       if (stdout.includes("listening on")) return resolvePromise(true);
-      if (stderr.length > 0) return resolvePromise(true);
-      if (Date.now() > deadline) return resolvePromise(true);
+      if (child.exitCode !== null || child.signalCode !== null) return resolvePromise(false);
+      if (Date.now() > deadline) return resolvePromise(false);
       setTimeout(poll, 50);
     };
     poll();
@@ -161,7 +172,7 @@ function startVoiceGatewayChild(node, gatewayPath, port, token, mimoKey) {
 
 async function startLadder2Voice(speakerText = "咖啡豆已经放进桶里啦，大概两小时后酿好！") {
   const node = process.execPath;
-  const gatewayPath = new URL("../voice-gateway/dist/main.js", import.meta.url).pathname.replace(/^\//, process.platform === "win32" ? "" : "/");
+  const gatewayPath = new URL("../vendor/pi-koe/dist/main.js", import.meta.url).pathname.replace(/^\//, process.platform === "win32" ? "" : "/");
   const token = process.env.GAMEBUDDY_VOICE_TOKEN ?? randomToken();
   let mimoKey = process.env.MIMO_API_KEY;
   const envPath = new URL("../.env.local", import.meta.url);
@@ -191,9 +202,7 @@ async function startLadder2Voice(speakerText = "咖啡豆已经放进桶里啦�
       started = startVoiceGatewayChild(node, gatewayPath, port, token, mimoKey);
       voiceChild = started.child;
       const ok = await started.startedOk;
-      if (!ok) throw new Error("voice_gateway_start_timeout");
-      const stderrText = started.readStderr();
-      if (stderrText.length > 0) throw new Error(`voice_gateway_start_failed: ${stderrText.slice(0, 300)}`);
+      if (!ok) throw new Error(`voice_gateway_start_failed: ${started.readStderr().slice(0, 300)}`);
       const voiceClient = await LocalVoiceGatewayClient.connect({ port, token });
       // connect() only authenticates; capabilities are populated by an explicit
       // health revalidation (the same boundary Chat mounting uses). Without it
@@ -223,8 +232,16 @@ async function startLadder2Voice(speakerText = "咖啡豆已经放进桶里啦�
       });
       const sessionId = `ladder2_${Date.now()}_session`;
       const speechJobId = `ladder2_${Date.now()}_${randomToken(12)}`;
-      await voiceClient.streamSpeechChunk(sessionId, speechJobId, 0, speakerText, true, Date.now() + 60_000, "companion.default");
-      const observation = await Promise.race([termination, new Promise((resolvePromise) => setTimeout(() => resolvePromise(null), 45_000))]);
+      // Real streaming: split the full line at sentence boundaries and push each
+      // chunk with an increasing chunkIndex; the final chunk marks isFinal.
+      // The gateway synthesizes incrementally (DELTA_TEXT_LIMIT=4000/chunk) so
+      // long summaries no longer hit a single-chunk synthesis stall.
+      const chunks = splitSpeakableSentenceChunks(speakerText);
+      const deadlineMs = Date.now() + 180_000;
+      for (let index = 0; index < chunks.length; index += 1) {
+        await voiceClient.streamSpeechChunk(sessionId, speechJobId, index, chunks[index], index === chunks.length - 1, deadlineMs, "companion.default");
+      }
+      const observation = await Promise.race([termination, new Promise((resolvePromise) => setTimeout(() => resolvePromise(null), 170_000))]);
       voiceClient.close();
       if (observation === null) throw new Error("voice_playback_observation_timeout");
       return { promiseVoiceObservation: Promise.resolve(observation) };
@@ -319,7 +336,7 @@ try {
   let voiceResult = null;
   if (LADDER === "2" || LADDER === "3") {
     if (voiceStarted && voiceObservation === null) {
-      await Promise.race([voiceObservationPromise, new Promise((resolvePromise) => setTimeout(resolvePromise, 90_000))]);
+      await Promise.race([voiceObservationPromise, new Promise((resolvePromise) => setTimeout(resolvePromise, 200_000))]);
     }
     if (voiceObservation !== null && voiceObservation.terminalStatus === "completed")
       voiceResult = Object.freeze({ state: "completed", terminalStatus: voiceObservation.terminalStatus });
@@ -347,7 +364,7 @@ try {
   const ladderZeroPassed = LADDER === "0" ? inspectReceipt !== undefined && loadReceipt !== undefined && programSucceeded : true;
   const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && voiceResult?.state === "completed" : true;
   const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
-  console.log(JSON.stringify({
+  const result = {
     state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed ? "passed" : "blocked",
     ladder: LADDER,
     programStatus: status,
@@ -363,10 +380,84 @@ try {
     bridgeFacts: factLog,
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
-  }, null, 2));
+  };
+  // Write the machine-readable result to a dedicated file so stdout logs (e.g.
+  // native chat ingress traces) can never corrupt JSON parsing of the result.
+  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_ladder${LADDER}-${Date.now()}.result.json`);
+  await writeFile(resultFile, JSON.stringify(result, null, 2), "utf8").catch(() => {});
+  console.log(JSON.stringify(result, null, 2));
+} catch (error) {
+  // A turn-completion race (e.g. the runtime refresher asserting the bridge
+  // is no longer live after the final presentation) must never lose the
+  // already-collected evidence. Emit a blocked result with the partial state
+  // and the error, then fall through to cleanup.
+  const partialResult = {
+    state: "blocked",
+    ladder: LADDER,
+    error: String(error instanceof Error ? error.message : error),
+    tillReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "soil_tilled") ?? null,
+    plantReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "seed_planted") ?? null,
+    waterReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_watered") ?? null,
+    presentedSummary,
+    voiceResult,
+    agentTurn: turn,
+    bridgeFacts: factLog,
+    authenticated: client.state.authenticated,
+    revision: client.state.snapshot?.revision,
+  };
+  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_ladder${LADDER}-${Date.now()}.result.json`);
+  await writeFile(resultFile, JSON.stringify(partialResult, null, 2), "utf8").catch(() => {});
+  console.error("RUNNER_CRASH", JSON.stringify({ error: partialResult.error }));
+  console.log(JSON.stringify(partialResult, null, 2));
 } finally {
   if (voiceChild !== null) { voiceChild.kill("SIGTERM"); await Promise.race([once(voiceChild, "close"), new Promise((resolvePromise) => setTimeout(resolvePromise, 5000))]); if (!voiceChild.killed) voiceChild.kill("SIGKILL"); }
   await runtime?.close().catch(() => {});
   await binding.close().catch(() => {});
   client.close("agent_ab_complete");
+}
+// Strip characters that only make sense visually (emoji, decorative bullets,
+// list numerals) so the TTS lane never hands MiMo unsynthesizable text. The
+// chat-box dehydration keeps these as flavor; speech is a separate lane.
+function stripSpeechOnly(input) {
+  // Emoji (incl. variation selectors / ZWJ sequences), bullets, and decorative
+  // punctuation. Keep CJK/Latin letters, digits used in words, and sentence
+  // punctuation so rhythm and numbers in speech survive.
+  return String(input)
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2B05}-\u{2B07}\u{25A0}-\u{25FF}\u{2700}-\u{27BF}]/gu, " ")
+    .replace(/^\s*\d+\.\s*/gm, " ")
+    .replace(/\s+\d+\.\s*/g, " ")
+    .replace(/[–—]{1,3}/g, " ")
+    .replace(/-{1,3}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Split a companion line at sentence boundaries so voice can stream chunks as
+// the gateway synthesizes incrementally. Favors 。！？.!? followed by any
+// whitespace/end; keeps each chunk under the 4000-char delta limit while
+// preferring whole sentences. Fallback: hard split on a safety max length.
+function splitSpeakableSentenceChunks(text) {
+  // Local constant: the module runs top-level awaits before this declaration
+  // in source order, so a hoisted function could execute before the top-level
+  // const initializes (TDZ). Local scope makes the split self-contained.
+  const VOICE_SENTENCE_SPLIT_MAX = 512;
+  const normalized = String(text).trim();
+  if (normalized.length === 0) return [];
+  const chunks = [];
+  let cursor = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    const char = normalized[index];
+    const isBoundary = char === "。" || char === "！" || char === "？" || char === "." || char === "!" || char === "?" || char === "；" || char === ";";
+    if (isBoundary && index - cursor + 1 >= 12) {
+      chunks.push(normalized.slice(cursor, index + 1));
+      cursor = index + 1;
+    } else if (index - cursor + 1 >= VOICE_SENTENCE_SPLIT_MAX) {
+      // No sentence boundary within the safety window: cut a hard chunk so no
+      // single delta ever exceeds the gateway limit.
+      chunks.push(normalized.slice(cursor, index + 1));
+      cursor = index + 1;
+    }
+  }
+  if (cursor < normalized.length) chunks.push(normalized.slice(cursor));
+  return chunks;
 }
