@@ -104,6 +104,50 @@ public sealed class CandidateActionRegistrationTests
     }
 
     [Fact]
+    public void InteractNpcWithItem_RegistrationHasExactArgumentsAndDescriptor()
+    {
+        FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
+            .FirstOrDefault(r => r.ActionId == "interact_npc_with_item");
+
+        reg.Should().NotBeNull();
+        reg!.FamilyId.Should().Be("npc_social");
+        reg.IdentityVersion.Should().Be(1);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Kind.Should().Be(FarmhandOperationKind.Execution);
+        reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
+
+        FarmhandActionDescriptor? desc = reg.Descriptor;
+        desc.Should().NotBeNull();
+        desc!.Arguments.Select(argument => argument.Name)
+            .Should().Equal(new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" });
+        desc.Arguments.Should().OnlyContain(argument => argument.Enum == null);
+        desc.OutputFacts.Should().BeEmpty();
+        desc.ResourceTemplate.Should().ContainSingle()
+            .Which.Should().Be(new FarmhandActionResourceTemplateClaim("embodied_actor", FarmhandResourceTemplateValue.ScopePlayer));
+        desc.Effect.Should().Be("write");
+        desc.Postcondition.Should().Be("native_action_postcondition");
+        desc.NativeBinding.Should().BeNull();
+    }
+
+    [Fact]
+    public void InteractNpcWithItem_IsExcludedFromDefaultPolicySurfaceAndIncludedWhenOptedIn()
+    {
+        var defaultOptions = new ActionPolicyOptions();
+        ActionPolicyEngine.ValidateActionPolicy(defaultOptions).Should().BeTrue();
+        FarmhandCapabilitySet defaults =
+            FarmhandCapabilitySet.FromPolicyEnabledOperations(ActionPolicyEngine.ComputeEnabledActions(defaultOptions));
+        defaults.AllowsExecutionAction("interact_npc_with_item").Should().BeFalse();
+
+        var experimentalOptions = new ActionPolicyOptions(
+            ExperimentalActions: new[] { "interact_npc_with_item" }
+        );
+        ActionPolicyEngine.ValidateActionPolicy(experimentalOptions).Should().BeTrue();
+        FarmhandCapabilitySet optedIn =
+            FarmhandCapabilitySet.FromPolicyEnabledOperations(ActionPolicyEngine.ComputeEnabledActions(experimentalOptions));
+        optedIn.AllowsExecutionAction("interact_npc_with_item").Should().BeTrue();
+    }
+
+    [Fact]
     public void CandidateActions_AreExcludedFromDefaultPolicySurface()
     {
         var defaultOptions = new ActionPolicyOptions();

@@ -1252,6 +1252,49 @@
         "handlerGroup": null
       },
       {
+        "actionId": "interact_npc_with_item",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "interact_npc_with_item",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "express_emote",
         "identityVersion": 1,
         "lifecycle": "experimental",
@@ -1375,6 +1418,9 @@
             },
             "slot": {
               "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
             },
             "expectedTargetId": {
               "type": "string"
@@ -1625,6 +1671,7 @@
       "clear_debris",
       "npc_relationship",
       "pet_animal",
+      "interact_npc_with_item",
       "express_emote",
       "face_direction",
       "chest_store",
@@ -1734,10 +1781,14 @@
     "requestValidatorActionIds": [
       "bait_crab_pot",
       "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
       "chop_tree_source",
       "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
@@ -1757,8 +1808,10 @@
       "pickup_item",
       "place_crab_pot",
       "place_wood_fence",
+      "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "scythe_crop",
       "till_soil",
       "travel",
       "use_item",
@@ -1767,10 +1820,14 @@
     "envelopeValidatorActionIds": [
       "bait_crab_pot",
       "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
       "chop_tree_source",
       "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
@@ -1790,8 +1847,10 @@
       "pickup_item",
       "place_crab_pot",
       "place_wood_fence",
+      "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "scythe_crop",
       "till_soil",
       "travel",
       "use_item",
@@ -1800,10 +1859,14 @@
     "executionRequestUnionActionIds": [
       "bait_crab_pot",
       "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
       "chop_tree_source",
       "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
@@ -1823,8 +1886,10 @@
       "pickup_item",
       "place_crab_pot",
       "place_wood_fence",
+      "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "scythe_crop",
       "till_soil",
       "travel",
       "use_item",
@@ -1927,10 +1992,14 @@
     "schemaExecutionActionIds": [
       "bait_crab_pot",
       "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
       "chop_tree_source",
       "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
@@ -1950,8 +2019,10 @@
       "pickup_item",
       "place_crab_pot",
       "place_wood_fence",
+      "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "scythe_crop",
       "till_soil",
       "travel",
       "use_item",
@@ -1981,7 +2052,9 @@
       "clear_hoedirt",
       "fertilize_tile",
       "harvest_crop",
+      "plant_sapling",
       "plant_seed",
+      "scythe_crop",
       "till_soil",
       "water_crop"
     ],
@@ -1997,8 +2070,11 @@
       "travel"
     ],
     "MachinesAndAnimals": [
+      "chest_retrieve",
+      "chest_store",
       "collect_animal_product",
       "feed_animal",
+      "interact_npc_with_item",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
@@ -2009,8 +2085,10 @@
     "ResourceTools": [
       "bait_crab_pot",
       "break_rock_source",
+      "chop_stump",
       "chop_tree_source",
       "clear_debris",
+      "cut_weeds",
       "dig_artifact_spot",
       "equip_tool",
       "place_crab_pot",

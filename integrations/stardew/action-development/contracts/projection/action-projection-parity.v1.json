@@ -967,6 +967,42 @@
         }
       },
       {
+        "actionId": "interact_npc_with_item",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
         "actionId": "express_emote",
         "identityVersion": 1,
         "lifecycle": "experimental",
@@ -1064,6 +1100,9 @@
           },
           "slot": {
             "type": "integer"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
           },
           "expectedTargetId": {
             "type": "string"
@@ -1262,6 +1301,7 @@
       "clear_debris",
       "npc_relationship",
       "pet_animal",
+      "interact_npc_with_item",
       "express_emote",
       "face_direction",
       "chest_store",

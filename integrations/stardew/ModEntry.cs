@@ -844,6 +844,15 @@ public sealed partial class ModEntry : Mod
                 InitializeNativeLocalNpcRelationshipFixture(player, farm);
                 return;
             }
+            if (fixture.FixtureScenario == "native_interact_npc_with_item_v1")
+            {
+                // Establish only the declared Given: one active native delivery
+                // quest for a naturally-loaded villager, and one carried target
+                // item. Production alone invokes the item interaction and emits
+                // the receipt; no completion is manufactured here.
+                InitializeNativeLocalInteractNpcWithItemFixture(player, farm);
+                return;
+            }
             if (fixture.FixtureScenario == "native_pet_animal_v1")
             {
                 // Establish an unpetted native Pet only. Production alone calls
@@ -1933,6 +1942,69 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log($"GameBuddy native-local-player fixture setup failed: scenario={fixture.FixtureScenario}; error={DescribeNativeLocalFixtureSetupFailure(exception)}; exception_type={exception.GetType().Name}.", LogLevel.Error);
         }
+    }
+
+    private void InitializeNativeLocalInteractNpcWithItemFixture(Farmer player, Farm farm)
+    {
+        // The declared Given is: one naturally-loaded villager standing on a
+        // reachable farm tile with a persisted friendship record, one active
+        // native delivery quest binding that villager to the target item, and
+        // the target item carried by the player. The fixture never calls the
+        // interaction, never completes the quest, and never mutates the result.
+        const string npcName = "Jodi";
+        const string targetItemId = "(O)190";
+        const string questId = "11";
+        StardewValley.NPC? npc = Utility.getAllCharacters()
+            .FirstOrDefault(candidate => candidate.IsVillager && string.Equals(candidate.Name, npcName, StringComparison.Ordinal));
+        if (npc is null)
+            throw new InvalidOperationException("fixture_native_local_interact_npc_npc_missing");
+        if (!player.friendshipData.TryGetValue(npcName, out Friendship? relationship))
+        {
+            relationship = new Friendship();
+            player.friendshipData[npcName] = relationship;
+        }
+        // A clean relationship baseline: the fixture proves the interaction, not
+        // a pre-existing friendship or gift limit.
+        relationship.Clear();
+        if (relationship.Points != 0 || relationship.TalkedToToday || relationship.GiftsToday != 0 || relationship.GiftsThisWeek != 0)
+            throw new InvalidOperationException("fixture_native_local_interact_npc_fact_invalid");
+
+        // Exactly one active native delivery quest for this villager/item. The
+        // quest object is the target-version type; production alone offers the
+        // item and completes it.
+        foreach (StardewValley.Quests.Quest stale in player.questLog.Where(quest => string.Equals(quest.id.Value, questId, StringComparison.Ordinal)).ToArray())
+            player.questLog.Remove(stale);
+        StardewValley.Quests.ItemDeliveryQuest quest = new StardewValley.Quests.ItemDeliveryQuest(npcName, targetItemId);
+        player.questLog.Add(quest);
+        if (quest.completed.Value
+            || !string.Equals(quest.target.Value, npcName, StringComparison.Ordinal)
+            || !string.Equals(quest.ItemId.Value, targetItemId, StringComparison.Ordinal)
+            || quest.number.Value != 1)
+            throw new InvalidOperationException("fixture_native_local_interact_npc_quest_invalid");
+
+        if (player.currentLocation is not StardewValley.Locations.FarmHouse farmHouse)
+            throw new InvalidOperationException("fixture_native_local_interact_npc_farmhouse_missing");
+        StardewValley.Warp? farmWarp = farmHouse.warps.FirstOrDefault(warp => !warp.npcOnly.Value && string.Equals(warp.TargetName, farm.NameOrUniqueName, StringComparison.Ordinal));
+        if (farmWarp is null || farmWarp.TargetX < 0 || farmWarp.TargetY < 0)
+            throw new InvalidOperationException("fixture_native_local_interact_npc_farm_warp_missing");
+        Vector2? targetTile = FindNativeLocalFarmFixtureTile(farm, new Vector2(farmWarp.TargetX, farmWarp.TargetY), 2, requireEmptyObjectTile: true);
+        if (targetTile is null)
+            throw new InvalidOperationException("fixture_native_local_interact_npc_placement_missing");
+        Game1.warpCharacter(npc, farm, targetTile.Value);
+        if (npc.currentLocation != farm || npc.Tile != targetTile.Value)
+            throw new InvalidOperationException("fixture_native_local_interact_npc_placement_validation_failed");
+
+        // Exactly one carried stack of the target item; the player must still
+        // select it through the normal inventory at execution time.
+        foreach (StardewValley.Object stale in player.Items.OfType<StardewValley.Object>().Where(item => item.QualifiedItemId == targetItemId).ToArray())
+            player.removeItemFromInventory(stale);
+        StardewValley.Object delivered = ItemRegistry.Create<StardewValley.Object>(targetItemId, 1);
+        if (player.addItemToInventory(delivered) is not null
+            || player.Items.OfType<StardewValley.Object>().Count(item => item.QualifiedItemId == targetItemId && item.Stack == 1) != 1)
+            throw new InvalidOperationException("fixture_native_local_interact_npc_item_missing");
+
+        this.nativeLocalPlayerFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy native-local-player initialized interact-NPC-with-item precondition before bridge attachment: npc={npcName}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; quest={questId}; item={targetItemId}; stack=1; points=0; gifts_today=0; gifts_this_week=0; production alone offers the item and emits the receipt.", LogLevel.Info);
     }
 
     private void InitializeNativeLocalNpcRelationshipFixture(Farmer player, Farm farm)

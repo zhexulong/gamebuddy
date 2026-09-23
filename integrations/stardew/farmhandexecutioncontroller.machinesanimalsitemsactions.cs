@@ -414,5 +414,111 @@ internal sealed partial class ExecutionManager
     }
 
 
+    /// <summary>
+    /// Experimental native NPC item interaction. The player selects an owned
+    /// inventory slot and the native GameLocation.checkAction path routes to
+    /// NPC.checkAction, which offers the active object: a matching Quest
+    /// delivery completes first (target-version Quest.OnItemOfferedToNpc), then
+    /// the ordinary gift path with its daily/weekly limits. The action owns the
+    /// native interaction only; the receipt distinguishes a completed quest
+    /// delivery from an accepted ordinary gift.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalInteractNpcWithItem(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
+            return existing;
+
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object offered || offered.Stack < 1)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
+        if (!string.Equals(offered.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_slot_changed", $"slot={slot}");
+
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        StardewValley.NPC? npc = location.characters
+            .OfType<StardewValley.NPC>()
+            .FirstOrDefault(candidate => candidate.IsVillager
+                && (int)candidate.Tile.X == targetX
+                && (int)candidate.Tile.Y == targetY
+                && !string.IsNullOrWhiteSpace(candidate.Name)
+                && string.Equals(BuildNpcRelationshipTargetId(location, targetX, targetY, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+        if (npc is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_changed", $"target={targetX},{targetY}");
+        if (!Game1.player.friendshipData.ContainsKey(npc.Name))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "friendship_fact_unavailable", $"npc={npc.Name}");
+
+        Friendship friendshipBefore = Game1.player.friendshipData[npc.Name];
+        int pointsBefore = friendshipBefore.Points;
+        int giftsTodayBefore = friendshipBefore.GiftsToday;
+        int giftsThisWeekBefore = friendshipBefore.GiftsThisWeek;
+        int stackBefore = offered.Stack;
+        // Snapshot the quest completion state. A rewarded delivery quest stays
+        // in the questLog and only flips `completed` (Quest.questComplete keeps
+        // the entry when a money reward exists), so the postcondition must
+        // compare completion flags plus membership, not membership alone.
+        HashSet<string> questsBefore = new(Game1.player.questLog.Select(quest => quest.id.Value), StringComparer.Ordinal);
+        HashSet<string> completedQuestsBefore = new(
+            Game1.player.questLog.Where(quest => quest.completed.Value).Select(quest => quest.id.Value),
+            StringComparer.Ordinal);
+
+        // Native ingress exactly as a player interaction: select the slot and
+        // let GameLocation.checkAction route to NPC.checkAction. It owns the
+        // quest-offer branch, gift limits, dialogue, and friendship mutation.
+        int previousSlot = Game1.player.CurrentToolIndex;
+        bool handled;
+        try
+        {
+            Game1.player.CurrentToolIndex = slot;
+            handled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, Game1.player);
+        }
+        finally
+        {
+            Game1.player.CurrentToolIndex = previousSlot;
+        }
+
+        Item? remainingItem = slot < Game1.player.Items.Count ? Game1.player.Items[slot] : null;
+        int stackAfter = remainingItem is StardewValley.Object remainingObject && string.Equals(remainingObject.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
+            ? remainingObject.Stack
+            : 0;
+        bool consumedExactlyOne = stackAfter == stackBefore - 1;
+        Friendship friendshipAfter = Game1.player.friendshipData[npc.Name];
+        // A quest delivery either removed the entry (no money reward) or flipped
+        // its completion flag (rewarded quest stays in the log).
+        bool questCompleted = Game1.player.questLog.Any(quest => quest.completed.Value && !completedQuestsBefore.Contains(quest.id.Value))
+            || questsBefore.Any(questId => !Game1.player.questLog.Any(quest => string.Equals(quest.id.Value, questId, StringComparison.Ordinal)));
+        bool giftRecorded = friendshipAfter.GiftsToday > giftsTodayBefore || friendshipAfter.GiftsThisWeek > giftsThisWeekBefore;
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};npc={npc.Name};item={expectedQualifiedItemId};slot={slot};stack_before={stackBefore};stack_after={stackAfter};points_before={pointsBefore};points_after={friendshipAfter.Points};gifts_today_before={giftsTodayBefore};gifts_today_after={friendshipAfter.GiftsToday};gifts_this_week_before={giftsThisWeekBefore};gifts_this_week_after={friendshipAfter.GiftsThisWeek};quest_completed={questCompleted.ToString().ToLowerInvariant()};gift_recorded={giftRecorded.ToString().ToLowerInvariant()}";
+
+        if (!handled)
+        {
+            // The native route did not accept the interaction. It never
+            // consumed the item or changed the relationship, so this is a
+            // clean rejection rather than an uncertain mutation.
+            ExecutionState unhandledState = consumedExactlyOne ? ExecutionState.Uncertain : ExecutionState.Rejected;
+            return this.RememberTerminal(requestId, executionId, unhandledState, "npc_interaction_not_handled", evidence);
+        }
+        if (questCompleted && consumedExactlyOne)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "quest_item_delivered", evidence);
+        if (giftRecorded && consumedExactlyOne)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "gift_given", evidence);
+        // The native call reported handled but neither a quest delivery nor a
+        // recorded gift matches the observed inventory delta: the native
+        // outcome is not attributable, so never fabricate success.
+        ExecutionState outcome = consumedExactlyOne || questCompleted || giftRecorded ? ExecutionState.Uncertain : ExecutionState.Rejected;
+        return this.RememberTerminal(requestId, executionId, outcome, "npc_interaction_postcondition_unavailable", evidence);
+    }
+
     /// <summary>One native Axe strike which fells the exact mature health-one tree into its native stump state; drops remain separate pickup targets.</summary>
 }

@@ -430,7 +430,8 @@ export type ExecutionRequest = Readonly<{
     | "chop_stump"
     | "plant_sapling"
     | "cut_weeds"
-    | "scythe_crop";
+    | "scythe_crop"
+    | "interact_npc_with_item";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
@@ -1398,7 +1399,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "chop_stump" &&
     value.action !== "plant_sapling" &&
     value.action !== "cut_weeds" &&
-    value.action !== "scythe_crop"
+    value.action !== "scythe_crop" &&
+    value.action !== "interact_npc_with_item"
   )
     return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
@@ -1740,6 +1742,18 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_sapling_target";
+  } else if (value.action === "interact_npc_with_item") {
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (
+      !isToolSlot(value.args.slot) ||
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedQualifiedItemId !== "string" ||
+      value.args.expectedQualifiedItemId.length === 0 ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_npc_item_interaction_target";
   }
   return null;
 }
