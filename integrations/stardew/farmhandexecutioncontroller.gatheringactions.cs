@@ -120,11 +120,11 @@ internal sealed partial class ExecutionManager
         LocalMoveSpec approach = new(executionId, requestId, new Vector2(liveTargetTile.X, liveTargetTile.Y), true, this.revision, this.tick + deadlineTicks, requestedDeadlineMs);
         this.activeItemPickup = new LocalItemPickupSpec(executionId, requestId, location.NameOrUniqueName, liveTargetTile.X, liveTargetTile.Y, expectedTargetId, expectedQualifiedItemId, target.Value.Stack, beforeCount, this.revision, requestedDeadlineMs);
         this.active = approach;
-        if (!this.controller.TryStart(approach, Game1.player, this.tick, out string reasonCode))
+        if (!this.controller.TryStart(approach, Game1.player, this.tick, out string reasonCode, out string? approachEvidence))
         {
             this.active = null;
             this.activeItemPickup = null;
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, $"target={expectedTargetId};tile={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, approachEvidence ?? $"target={expectedTargetId};tile={targetX},{targetY}");
         }
 
         LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision,
