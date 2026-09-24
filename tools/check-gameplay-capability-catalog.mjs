@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogPath = path.join(root, "design", "gameplay-capability-catalog.json");
 const registrySourcePath = path.join(root, "host", "src", "action-registry.ts");
-const basisSourcePath = path.join(root, "design", "12_STARDEW_PRIMITIVE_ACTION_BASIS.md");
+const basisSourcePath = path.join(root, "design", "legacy", "12_STARDEW_PRIMITIVE_ACTION_BASIS.md");
 
 const requiredRecordFields = Object.freeze([
   "intentVariantId",
@@ -64,18 +64,32 @@ function enumHas(catalog, name, value) {
 }
 
 /** Parse the actual registered implementation surface; test expectations are
- * intentionally not a source of truth for this audit. */
+ * intentionally not a source of truth for this audit.
+ *
+ * The registry moved from a literal `STARDEW_ACTION_REGISTRY: readonly
+ * PublishedAction[]` array of `publishedAction("id", "family")` calls to
+ * `STARDEW_ACTION_ADAPTERS` built from `actionAdapter("id", ...)` calls
+ * (commit b8a027f). Only the action IDs are load-bearing here: the validator
+ * uses `actionId` for coverage comparison and never reads `familyId`. */
 export function publishedRegistryEntries(registrySource) {
-  const match = registrySource.match(
+  const arrayMatch = registrySource.match(
+    /export const STARDEW_ACTION_ADAPTERS\s*=\s*Object\.freeze\(\[([\s\S]*?)\n\]\)\s*satisfies readonly StardewActionAdapter\[\];/,
+  ) ?? registrySource.match(
     /export const STARDEW_ACTION_REGISTRY\s*:\s*readonly PublishedAction\[\]\s*=\s*Object\.freeze\(\[([\s\S]*?)\n\]\);/,
   );
-  if (!match) throw new Error("Unable to locate STARDEW_ACTION_REGISTRY in host/src/action-registry.ts.");
+  if (!arrayMatch) {
+    throw new Error("Unable to locate STARDEW_ACTION_ADAPTERS in host/src/action-registry.ts.");
+  }
   const entries = [];
-  for (const item of match[1].matchAll(/publishedAction\(\s*"([a-z0-9_]+)",\s*"([a-z0-9_]+)"/g)) {
+  for (const item of arrayMatch[1].matchAll(/actionAdapter\(\s*\n?\s*"([a-z0-9_]+)"/g)) {
+    entries.push(Object.freeze({ actionId: item[1], familyId: "", actionClass: "primitive" }));
+  }
+  for (const item of arrayMatch[1].matchAll(/publishedAction\(\s*"([a-z0-9_]+)",\s*"([a-z0-9_]+)"/g)) {
     entries.push(Object.freeze({ actionId: item[1], familyId: item[2], actionClass: "primitive" }));
   }
-  if (entries.length === 0)
+  if (entries.length === 0) {
     throw new Error("Unable to parse published action entries from host/src/action-registry.ts.");
+  }
   return entries;
 }
 

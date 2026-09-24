@@ -10,7 +10,7 @@ import {
 
 const catalogPath = new URL("../design/gameplay-capability-catalog.json", import.meta.url);
 const registrySourcePath = new URL("../host/src/action-registry.ts", import.meta.url);
-const basisSourcePath = new URL("../design/12_STARDEW_PRIMITIVE_ACTION_BASIS.md", import.meta.url);
+const basisSourcePath = new URL("../design/legacy/12_STARDEW_PRIMITIVE_ACTION_BASIS.md", import.meta.url);
 
 async function loadCatalog() {
   return JSON.parse(await readFile(catalogPath, "utf8"));
@@ -61,7 +61,7 @@ test("basis extraction is source-derived and missing basis IDs fail closed", asy
   const [catalog, published, basisSource] = await Promise.all([
     loadCatalog(),
     publishedEntries(),
-    readFile(new URL("../design/12_STARDEW_PRIMITIVE_ACTION_BASIS.md", import.meta.url), "utf8"),
+    readFile(new URL("../design/legacy/12_STARDEW_PRIMITIVE_ACTION_BASIS.md", import.meta.url), "utf8"),
   ]);
   const basisIds = basisPrimitiveIdsFromSource(basisSource);
   assert.ok(basisIds.includes("execute_world_operation"));
