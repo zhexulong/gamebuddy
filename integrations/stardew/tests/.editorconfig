@@ -1,0 +1,26 @@
+# EditorConfig for the Stardew test projects.
+#
+# The repository baseline (../.editorconfig) lets AnalysisLevel and
+# EnforceCodeStyleInBuild apply to every csproj, and every test csproj sets
+# TreatWarningsAsErrors=true. That combination turns three analyzer rules into
+# build errors for test code only. Each is relaxed here with its reason; none of
+# them is relaxed for production sources.
+
+[*.cs]
+
+# Test method names use Method_Scenario_Expectation. Every occurrence of such a
+# name lives under tests/ - verified: 51 files, 0 outside tests/.
+dotnet_diagnostic.CA1707.severity = none
+
+# CA5350 "do not use weak cryptographic algorithms" fires on SHA1.HashData when
+# computing an assembly PublicKeyToken. ECMA-335 defines the token as the low
+# eight bytes of the SHA-1 hash of the public key, so SHA-1 here is the required
+# algorithm and not a security choice. This is a false positive.
+dotnet_diagnostic.CA5350.severity = none
+
+# CA1869 "cache JsonSerializerOptions instances" reports a real allocation
+# pattern, but in these tests the options object is built once per test case, not
+# on a hot path. Kept visible as a suggestion rather than a build break; the
+# underlying allocation is worth cleaning up when the affected files are next
+# edited, not as a drive-by change here.
+dotnet_diagnostic.CA1869.severity = suggestion
