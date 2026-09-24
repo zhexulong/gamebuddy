@@ -69,26 +69,34 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
 
         Dictionary<string, string>? craftingTable = CraftingRecipe.craftingRecipes;
-        if (string.IsNullOrWhiteSpace(expectedRecipeId) || craftingTable is null || !craftingTable.ContainsKey(expectedRecipeId))
+        // wire_identity=recipe_key_or_unique_space_alias: the Host/Mod opaque-arg
+        // alphabet carries no spaces, but many vanilla crafting keys have them
+        // ("Wood Fence"). Accept the exact key first, then the key with spaces
+        // replaced by underscores only when it resolves to exactly one live
+        // recipe; an ambiguous alias fails closed instead of crafting a
+        // different item. Shared with cook_recipe so the rule cannot drift.
+        if (craftingTable is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_recipe_unknown", $"recipe={expectedRecipeId}");
-        if (!Game1.player.craftingRecipes.ContainsKey(expectedRecipeId))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_recipe_not_learned", $"recipe={expectedRecipeId}");
+        if (!TryResolveRecipeIdentity(craftingTable.Keys, expectedRecipeId, out string recipeId, out string recipeReason))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, recipeReason == "recipe_unknown" ? "craft_recipe_unknown" : recipeReason, $"recipe={expectedRecipeId}");
+        if (!Game1.player.craftingRecipes.ContainsKey(recipeId))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_recipe_not_learned", $"recipe={recipeId}");
 
-        CraftingRecipe recipe = new(expectedRecipeId, isCookingRecipe: false);
+        CraftingRecipe recipe = new(recipeId, isCookingRecipe: false);
         // The native constructor silently falls back to "Torch" for an unknown
         // key; never let that fallback produce an unattributable recipe.
-        if (!string.Equals(recipe.name, expectedRecipeId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_recipe_unknown", $"recipe={expectedRecipeId}");
+        if (!string.Equals(recipe.name, recipeId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_recipe_unknown", $"recipe={recipeId}");
         if (!recipe.doesFarmerHaveIngredientsInInventory())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_ingredients_missing", $"recipe={expectedRecipeId};ingredient_count={recipe.recipeList.Count}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_ingredients_missing", $"recipe={recipeId};ingredient_count={recipe.recipeList.Count}");
 
         Item crafted = recipe.createItem();
         if (crafted is null || crafted.Stack < 1 || string.IsNullOrWhiteSpace(crafted.QualifiedItemId))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_output_unavailable", $"recipe={expectedRecipeId}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_output_unavailable", $"recipe={recipeId}");
 
         GameLocation location = Game1.player.currentLocation;
         int producedStack = crafted.Stack;
-        int craftCountBefore = Game1.player.craftingRecipes[expectedRecipeId];
+        int craftCountBefore = Game1.player.craftingRecipes[recipeId];
         int debrisBefore = CountCraftOutputDebris(location, crafted.QualifiedItemId);
         // Every ingredient measurement is taken from the live backpack with the
         // native CraftingRecipe.ItemMatchesForCrafting rule, so category numbers
@@ -118,7 +126,7 @@ internal sealed partial class ExecutionManager
         if (Game1.player.craftingRecipes.ContainsKey(recipe.name))
             Game1.player.craftingRecipes[recipe.name] += recipe.numberProducedPerCraft;
 
-        int craftCountAfter = Game1.player.craftingRecipes.TryGetValue(expectedRecipeId, out int craftedCountAfter) ? craftedCountAfter : 0;
+        int craftCountAfter = Game1.player.craftingRecipes.TryGetValue(recipeId, out int craftedCountAfter) ? craftedCountAfter : 0;
         int producedCountAfterAdd = CountCraftingIngredient(Game1.player, crafted.QualifiedItemId);
         int inventoryGained = producedCountAfterAdd - producedCountBeforeAdd;
         int debrisAfter = CountCraftOutputDebris(location, crafted.QualifiedItemId);
@@ -140,7 +148,7 @@ internal sealed partial class ExecutionManager
             : inventoryGained > 0 ? "partially_dropped_on_ground"
             : "dropped_on_ground";
         string evidence = string.Create(CultureInfo.InvariantCulture,
-            $"location={location.NameOrUniqueName};recipe={expectedRecipeId};output={crafted.QualifiedItemId};produced_stack={producedStack};produced_per_craft={recipe.numberProducedPerCraft};disposition={disposition};inventory_gained_stack={inventoryGained};dropped_stack={remainingStack};inventory_accepting_before={inventoryAcceptingBefore.ToString().ToLowerInvariant()};materials_consumed_exactly={materialsConsumedExactly.ToString().ToLowerInvariant()};inventory_postcondition={inventoryPostcondition.ToString().ToLowerInvariant()};count_before={craftCountBefore};count_after={craftCountAfter};count_postcondition={countPostcondition.ToString().ToLowerInvariant()};ingredients={FormatIngredientDeltas(recipe, ingredientsBefore, ingredientsAfter)};dropped_debris={debrisAfter - debrisBefore};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}");
+            $"location={location.NameOrUniqueName};recipe={recipeId};output={crafted.QualifiedItemId};produced_stack={producedStack};produced_per_craft={recipe.numberProducedPerCraft};disposition={disposition};inventory_gained_stack={inventoryGained};dropped_stack={remainingStack};inventory_accepting_before={inventoryAcceptingBefore.ToString().ToLowerInvariant()};materials_consumed_exactly={materialsConsumedExactly.ToString().ToLowerInvariant()};inventory_postcondition={inventoryPostcondition.ToString().ToLowerInvariant()};count_before={craftCountBefore};count_after={craftCountAfter};count_postcondition={countPostcondition.ToString().ToLowerInvariant()};ingredients={FormatIngredientDeltas(recipe, ingredientsBefore, ingredientsAfter)};dropped_debris={debrisAfter - debrisBefore};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}");
 
         if (!materialsConsumedExactly || !inventoryPostcondition || !countPostcondition || !droppedToGround || menuAfter)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "crafted_item_postcondition_unavailable", evidence);
