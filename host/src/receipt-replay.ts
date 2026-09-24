@@ -22,13 +22,31 @@ const PROGRESS_STATES = new Set<ExecutionState>(["accepted", "running", "meaning
 export class ReceiptReplayLedger {
   readonly #latest = new Map<string, ExecutionReceipt>();
 
+  /**
+   * True when this receipt describes a transition the execution already passed.
+   * The Mod publishes progress transitions as facts while it routes and answers
+   * the execution_request with the transition its router produced, so a response
+   * that arrives after later facts legitimately reports an earlier revision. The
+   * newer transition is authoritative and the stale one must be dropped - binding
+   * it could downgrade correlation and journal state.
+   */
+  public isStaleDelivery(receipt: ExecutionReceipt): boolean {
+    const previous = this.#latest.get(receipt.executionId);
+    return previous !== undefined && receipt.revision < previous.revision;
+  }
+
   public apply(receipt: ExecutionReceipt): string | null {
     if (!PROGRESS_STATES.has(receipt.state) && !TERMINAL_STATES.has(receipt.state)) return "invalid_previous_state";
     const previous = this.#latest.get(receipt.executionId);
     if (previous !== undefined) {
       if (isDeepStrictEqual(previous, receipt)) return null;
       if (previous.requestId !== receipt.requestId) return "execution_request_mismatch";
-      if (receipt.revision <= previous.revision) return "non_monotonic_revision";
+      // A lower revision is a late delivery (see isStaleDelivery) and is dropped
+      // by the caller; if one still reaches here it is a caller bug, not a
+      // rewrite. An equal revision with different content IS a rewrite of a
+      // settled transition and must fail closed.
+      if (receipt.revision < previous.revision) return "stale_revision_delivery";
+      if (receipt.revision === previous.revision) return "non_monotonic_revision";
       if (TERMINAL_STATES.has(previous.state)) return "terminal_state_rewritten";
       if (!PROGRESS_STATES.has(previous.state)) return "invalid_previous_state";
     }

@@ -156,6 +156,7 @@ function admission() {
       beforeWrite: () => undefined,
       bindReceipt: () => undefined,
       markUncertain: () => undefined,
+      markAuthoritativelyRejected: () => undefined,
     },
     async cancelExact() {
       throw new Error("unexpected_cancel");

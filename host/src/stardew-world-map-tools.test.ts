@@ -199,6 +199,7 @@ test("navigate-to-destination mounts only from its live Mod execution publicatio
       beforeWrite: () => undefined,
       bindReceipt: () => undefined,
       markUncertain: () => undefined,
+      markAuthoritativelyRejected: () => undefined,
     },
     async cancelExact() {
       throw new Error("unexpected_cancel");

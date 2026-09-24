@@ -323,9 +323,40 @@ test("coordinator rejects receipt order violations fail-closed on the dispatch p
     () => coordinator.receiveReceipt(receipt({ state: "running", revision: 3 })),
     /execution_receipt_replay_rejected:terminal_state_rewritten/,
   );
-  // A regression to a lower revision is rejected before any state question.
+  // Rewriting a settled transition at the SAME revision is still a rewrite.
   assert.throws(
     () => coordinator.receiveReceipt(receipt({ state: "failed", revision: 2 })),
+    /execution_receipt_replay_rejected:non_monotonic_revision/,
+  );
+});
+
+test("coordinator drops a late lower-revision delivery of a transition it already passed", async () => {
+  // The Mod publishes progress transitions as facts while it routes and answers
+  // the execution_request with the transition its router produced. When that
+  // response arrives after later facts, the execution legitimately reports an
+  // earlier revision. Forwarding it reported "not created" for an action the
+  // world had already performed (the caller then re-dispatched it) and could
+  // downgrade correlation state, so it is dropped instead.
+  const { coordinator } = coordinatorFixture([]);
+  const admission = coordinator.createAdmission();
+  await admission.observer.beforeWrite({ ...admission.owner, requestId: "request_01" });
+  // Facts already advanced the execution past `accepted`.
+  assert.doesNotThrow(() => coordinator.receiveReceipt(receipt({ state: "accepted", revision: 14 })));
+  assert.doesNotThrow(() =>
+    coordinator.receiveReceipt(receipt({ state: "meaningful_progress", revision: 18, evidence: { detail: "step" } })),
+  );
+  // The late response carries the router's earlier transition: dropped, not raised.
+  assert.doesNotThrow(() => coordinator.receiveReceipt(receipt({ state: "accepted", revision: 13 })));
+  // The newer transition still governs and a later genuine transition is admitted.
+  assert.doesNotThrow(() =>
+    coordinator.receiveReceipt(receipt({ state: "meaningful_progress", revision: 18, evidence: { detail: "step" } })),
+  );
+  assert.doesNotThrow(() =>
+    coordinator.receiveReceipt(receipt({ state: "succeeded", revision: 20, evidence: { detail: "ok" } })),
+  );
+  // And a real rewrite at the same revision still fails closed.
+  assert.throws(
+    () => coordinator.receiveReceipt(receipt({ state: "failed", revision: 20 })),
     /execution_receipt_replay_rejected:non_monotonic_revision/,
   );
 });

@@ -172,8 +172,18 @@ export function createActionExecutionCoordinator(
     // already retired). Any different receipt for a known execution must
     // satisfy the deterministic order audit or admission fails closed.
     const previous = replay.receipt(receipt.executionId);
-    if (previous !== null && identicalReceipt(previous, receipt))
+    if (previous !== null && identicalReceipt(previous, receipt)) {
       return ledger.bindReceipt(receipt);
+    }
+    // A late delivery of a transition the execution already passed: the Mod
+    // publishes progress as facts while it routes, then answers the request with
+    // the transition its router produced. The response can therefore arrive
+    // after later facts. Drop it - the newer transition already governs, and
+    // forwarding a stale one would report "not created" for an action the world
+    // performed (callers then re-dispatched it) or downgrade ledger state.
+    if (previous !== null && replay.isStaleDelivery(receipt)) {
+      return;
+    }
     const fault = replay.apply(receipt);
     if (fault !== null) throw new Error(`execution_receipt_replay_rejected:${fault}`);
     return ledger.bindReceipt(receipt);
@@ -210,6 +220,7 @@ export function createActionExecutionCoordinator(
         },
         bindReceipt: (receipt: ExecutionReceipt) => receiveReceipt(receipt),
         markUncertain: (dispatch: ExecutionDispatch) => ledger.markUncertain(dispatch),
+        markAuthoritativelyRejected: (dispatch: ExecutionDispatch) => ledger.markAuthoritativelyRejected(dispatch),
       }),
       cancelExact: (requestId, executionId, reasonCode) =>
         ledger.requestCancelExact(owner, requestId, executionId, reasonCode),

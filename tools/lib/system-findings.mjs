@@ -34,10 +34,25 @@ const REASON_COMPONENT = Object.freeze({
   body_owned: "orchestration",
   duplicate_request: "orchestration",
   lifecycle_invalidated: "orchestration",
+  // Delivery/handoff: the Mod never ran the action, or its receipt could not be
+  // reconciled with what the Host already admitted. These are *not* native-state
+  // or contract failures and must stay visible as their own component.
+  stale_snapshot: "delivery",
+  execution_receipt_replay_rejected: "delivery",
+  integration_not_ready: "delivery",
+  expired_deadline: "delivery",
 });
 
+/**
+ * Rejection reasons can arrive both bare (`stale_snapshot`) and namespaced
+ * (`execution_receipt_replay_rejected:non_monotonic_revision`). Match on the
+ * leading token so a compound code still lands on its component instead of
+ * silently falling through to `unclassified`.
+ */
 function componentOf(reasonCode) {
-  return REASON_COMPONENT[reasonCode] ?? "unclassified";
+  if (typeof reasonCode !== "string" || reasonCode.length === 0) return "unclassified";
+  const head = reasonCode.split(":", 1)[0];
+  return REASON_COMPONENT[head] ?? "unclassified";
 }
 
 /**
@@ -136,6 +151,28 @@ export function summarizeSystemFindings(actionTrace, receipts = []) {
       count: totalRejected,
       detail: `${Math.round((totalRejected / total) * 100)}% of ${total} actions were rejected`,
       recommendation: "enough rejections to warrant a system-side audit before more live attempts",
+    });
+  }
+
+  // Finding 5: delivery-layer rejections are always reported, however few. A
+  // rejection attributed to delivery means the Mod never ran the action, or its
+  // admitted receipt could not be reconciled with what the Host already has —
+  // either way the caller is told "not created" while the world may have moved.
+  // Counting thresholds must never hide this: one such rejection in a run is a
+  // system defect, and the live trace that motivated this module showed exactly
+  // this being reported as a clean run.
+  const deliveryRejections = rejected.filter((entry) => componentOf(entry?.reasonCode ?? "") === "delivery");
+  if (deliveryRejections.length > 0) {
+    const codes = [...new Set(deliveryRejections.map((entry) => entry?.reasonCode ?? "unknown"))];
+    findings.push({
+      id: "delivery_rejection",
+      component: "delivery",
+      severity: "high",
+      action: null,
+      count: deliveryRejections.length,
+      detail: `${deliveryRejections.length} request(s) were rejected at the delivery boundary (${codes.join(", ")}) — the action may have run natively while the caller was told it was not created`,
+      recommendation: "distinguish a genuine pre-admission rejection from a lost/duplicated receipt before reporting failure",
+      sampleCodes: codes,
     });
   }
 
