@@ -224,7 +224,7 @@
           "file": "StardewValley/Object.cs",
           "signature": "public virtual bool placementAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
+          "observedEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
         }
       ],
       "admission": {
@@ -241,7 +241,7 @@
           "file": "StardewValley/Object.cs",
           "signature": "public virtual bool placementAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
+          "observedEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
         }
       ],
       "admission": {
@@ -258,7 +258,7 @@
           "file": "StardewValley/GameLocation.cs",
           "signature": "public virtual bool checkAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+          "observedEffect": "IsLocalPlayer only gates pickup sound/animation"
         }
       ],
       "admission": {
@@ -275,7 +275,7 @@
           "file": "StardewValley/GameLocation.cs",
           "signature": "public virtual bool checkAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+          "observedEffect": "IsLocalPlayer only gates pickup sound/animation"
         }
       ],
       "admission": {
@@ -293,7 +293,7 @@
           "file": "StardewValley/GameLocation.cs",
           "signature": "public virtual bool checkAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+          "observedEffect": "IsLocalPlayer only gates pickup sound/animation"
         }
       ],
       "admission": {
@@ -327,7 +327,7 @@
           "file": "StardewValley/GameLocation.cs",
           "signature": "public virtual bool checkAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+          "observedEffect": "IsLocalPlayer only gates pickup sound/animation"
         }
       ],
       "admission": {
@@ -344,7 +344,7 @@
           "file": "StardewValley/Farmer.cs",
           "signature": "public void eatObject(",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates a buff-awareness shortcut"
+          "observedEffect": "IsLocalPlayer only gates a buff-awareness shortcut"
         }
       ],
       "admission": {
@@ -394,7 +394,7 @@
           "file": "StardewValley/Object.cs",
           "signature": "public virtual bool placementAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
+          "observedEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
         }
       ],
       "admission": {
@@ -411,7 +411,7 @@
           "file": "StardewValley/GameLocation.cs",
           "signature": "public virtual bool checkAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+          "observedEffect": "IsLocalPlayer only gates pickup sound/animation"
         }
       ],
       "admission": {
@@ -718,7 +718,7 @@
           "file": "StardewValley/Object.cs",
           "signature": "public virtual bool placementAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
+          "observedEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
         }
       ],
       "admission": {
@@ -808,7 +808,7 @@
           "file": "StardewValley/GameLocation.cs",
           "signature": "public virtual bool checkAction",
           "sensitivity": "mp-observational",
-          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+          "observedEffect": "IsLocalPlayer only gates pickup sound/animation"
         }
       ],
       "admission": {

@@ -48,9 +48,9 @@ const TABLE = {
   machine_load: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
   machine_collect_output: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
   feed_animal: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
-  harvest_crop: ["StardewValley.TerrainFeatures/HoeDirt.cs", "public override bool performUseAction", "mp-insensitive", null, "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
-  scythe_crop: ["StardewValley.TerrainFeatures/HoeDirt.cs", "public override bool performToolAction", "mp-insensitive", null, "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
-  cut_weeds: ["StardewValley/Object.cs", "public virtual bool performToolAction", "mp-insensitive", null, "netWorldState.TreasureTotems only seeds a day-save Random and is populated in single-player too"],
+  harvest_crop: ["StardewValley.TerrainFeatures/HoeDirt.cs", "public override bool performUseAction", "mp-insensitive", "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
+  scythe_crop: ["StardewValley.TerrainFeatures/HoeDirt.cs", "public override bool performToolAction", "mp-insensitive", "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
+  cut_weeds: ["StardewValley/Object.cs", "public virtual bool performToolAction", "mp-insensitive", "netWorldState.TreasureTotems only seeds a day-save Random and is populated in single-player too"],
   use_item: ["StardewValley/Farmer.cs", "public void eatObject(", "mp-observational", "IsLocalPlayer only gates a buff-awareness shortcut"],
   // Shipping has two seams: the write itself, and the container resolution that
   // decides WHERE the write lands.
@@ -77,8 +77,8 @@ const TABLE = {
   inspect_world_map: ["mod_owned", "WorldMap"],
   find_destination: ["mod_owned", "DerivedDestinationSet"],
   observe_scene: ["mod_owned", "SceneObservation"],
-  craft_item: ["StardewValley/CraftingRecipe.cs", "public virtual Item createItem()", "mp-insensitive", null, "team.SpecialOrderRuleActive(\"QI_COOKING\") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
-  cook_recipe: ["StardewValley/CraftingRecipe.cs", "public virtual Item createItem()", "mp-insensitive", null, "team.SpecialOrderRuleActive(\"QI_COOKING\") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
+  craft_item: ["StardewValley/CraftingRecipe.cs", "public virtual Item createItem()", "mp-insensitive", "team.SpecialOrderRuleActive(\"QI_COOKING\") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
+  cook_recipe: ["StardewValley/CraftingRecipe.cs", "public virtual Item createItem()", "mp-insensitive", "team.SpecialOrderRuleActive(\"QI_COOKING\") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
   collect_crab_pot_output: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
 };
 
@@ -165,8 +165,16 @@ for (const entry of surface.actions) {
           file: entry[0],
           signature: entry[1],
           sensitivity: entry[2],
-          ...(entry[3] ? { semanticEffect: entry[3] } : {}),
-          ...(entry[4] ? { modeNeutralReason: entry[4] } : {}),
+          // The fourth element carries the justification, whose field name depends
+          // on the classification: a semantic effect, an observed collateral effect,
+          // or a mode-neutral reason for reading a mode-neutral token.
+          ...(entry[3]
+            ? entry[2] === "mp-semantic"
+              ? { semanticEffect: entry[3] }
+              : entry[2] === "mp-observational"
+                ? { observedEffect: entry[3] }
+                : { modeNeutralReason: entry[3] }
+            : {}),
         },
   );
   const derivedSensitivity = seams.some((s) => s.sensitivity === "mp-semantic")
