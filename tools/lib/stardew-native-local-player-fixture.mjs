@@ -330,6 +330,12 @@ export function fixtureActions(action) {
   // Harvest likewise has no tool-selection prerequisite: ordinary Grab crops
   // are harvested by the typed production action after navigation.
   if (action === "harvest_crop") return ["move_to_tile", "travel", "harvest_crop"];
+  // Ladder 4: Jodi's Request close-out. The fixture supplies one mature ordinary
+  // cauliflower on the Farm plus a reachable Jodi; the Agent harvests the real
+  // crop, walks to her and offers the harvested item. No tool prerequisite: an
+  // ordinary Grab crop is harvested by the typed production action.
+  if (action === "jodi_harvest_deliver")
+    return ["move_to_tile", "travel", "harvest_crop", "interact_npc_with_item", "observe_scene"];
   // The pickup_forage smoke observes the scene to derive the exact forage
   // target (observe → sceneTarget → pickup), so the read-only observe_scene
   // capability must be published alongside the gathering action.
@@ -417,6 +423,11 @@ export function fixtureScenario(actions) {
   if (actions.includes("navigate_to_destination")) return "navigation_mutation_v1";
   if (actions.includes("till_soil") && actions.includes("plant_seed") && actions.includes("water_crop") && actions.includes("refill_watering_can"))
     return "native_crop_research_v1";
+  // Ladder 4 wins over the plain harvest/interact scenarios: the action set is
+  // exactly harvest→offer plus read-only retrieval, and the fixture must supply
+  // both the mature crop and the reachable villager.
+  if (actions.includes("harvest_crop") && actions.includes("interact_npc_with_item"))
+    return "native_jodi_harvest_deliver_v1";
   if (actions.includes("till_soil")) return "native_till_soil_v1";
   if (actions.includes("water_crop")) return "native_water_crop_v1";
   if (actions.includes("plant_seed")) return "native_plant_seed_v1";
