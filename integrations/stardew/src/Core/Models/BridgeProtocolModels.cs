@@ -214,6 +214,14 @@ public sealed record BridgeCrabPotOverlayTile(int X, int Y, int Count);
 
 public sealed record BridgeCrabPotResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, long OwnerId, float OffsetX, float OffsetY, IReadOnlyList<BridgeCrabPotOverlayTile> OverlayTiles);
 
+/// <summary>
+/// A live mature crab pot the companion may collect from: required by
+/// collect_crab_pot_output, which otherwise has no discovery channel and could
+/// never be reached by its own advertised capability. Carries only stable
+/// local values; production alone calls the native interaction.
+/// </summary>
+public sealed record BridgeCrabPotCollectTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, string OutputQualifiedItemId, int OutputStack);
+
 public sealed record BridgeBaitCrabPotTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string BaitQualifiedItemId, string OwnerId, int BaitStack);
 
 public sealed record BridgeBaitCrabPotResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string BaitQualifiedItemId, string OwnerId, int BaitStack);
@@ -287,6 +295,7 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeWoodFenceResultTarget>? WoodFenceResultTargets,
     IReadOnlyList<BridgeCrabPotTarget>? CrabPotTargets,
     IReadOnlyList<BridgeCrabPotResultTarget>? CrabPotResultTargets,
+    IReadOnlyList<BridgeCrabPotCollectTarget>? CrabPotCollectTargets,
     IReadOnlyList<BridgeBaitCrabPotTarget>? BaitCrabPotTargets,
     IReadOnlyList<BridgeBaitCrabPotResultTarget>? BaitCrabPotResultTargets,
     IReadOnlyList<BridgeDebrisTarget>? DebrisTargets,

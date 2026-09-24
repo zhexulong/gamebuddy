@@ -1309,6 +1309,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("place_wood_fence", StringComparer.Ordinal) ? this.DiscoverWoodFenceResultTargets(player) : null,
             advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? DiscoverCrabPotTargets(player) : null,
             advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? this.DiscoverCrabPotResultTargets(player) : null,
+            advertisedCapabilities.Contains("collect_crab_pot_output", StringComparer.Ordinal) ? DiscoverCrabPotCollectTargets(player) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? DiscoverBaitCrabPotTargets(player) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? this.DiscoverBaitCrabPotResultTargets(player) : null,
             advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) ? DiscoverDebrisTargets(player) : null,
@@ -1347,7 +1348,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         Warps: Array.Empty<BridgeWarp>(), DoorTargets: null, SoilTiles: null, ToolSlots: Array.Empty<BridgeToolSlot>(),
         WateringCanFacts: null, RefillWateringCanTargets: null, ForageTargets: null, ItemTargets: null, CropTargets: null,
         HarvestTargets: null, SeedTargets: null, FertilizerTargets: null, WoodFenceTargets: null, WoodFenceResultTargets: null,
-        CrabPotTargets: null, CrabPotResultTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
+        CrabPotTargets: null, CrabPotResultTargets: null, CrabPotCollectTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
         TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, PetTargets: null,
@@ -2448,6 +2449,44 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:(O)710:(O)685:bait-crab-pot";
         return $"bait_crab_pot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    /// <summary>
+    /// Publishes the live mature crab pots the collect action may settle from.
+    /// collect_crab_pot_output is an advertised capability, but without this
+    /// channel it could never be reached: no other snapshot field carries the
+    /// mature target identity, so the Agent had no way to name a pot. It only
+    /// reads the already-mature 714 state; production alone performs the single
+    /// native collection and owns the receipt/postcondition.
+    /// </summary>
+    private static IReadOnlyList<BridgeCrabPotCollectTarget> DiscoverCrabPotCollectTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeCrabPotCollectTarget>();
+        List<BridgeCrabPotCollectTarget> result = new();
+        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
+        {
+            if (result.Count >= 16) break;
+            Vector2 tile = pair.Key;
+            if (pair.Value is not StardewValley.Objects.CrabPot crabPot
+                || crabPot.QualifiedItemId != "(O)710"
+                || crabPot.owner.Value != player.UniqueMultiplayerID
+                || !crabPot.readyForHarvest.Value
+                || crabPot.tileIndexToShow != 714
+                || crabPot.heldObject.Value is null
+                || crabPot.bait.Value is null
+                || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
+                continue;
+            result.Add(new BridgeCrabPotCollectTarget(
+                BuildCollectCrabPotTargetId(location, (int)tile.X, (int)tile.Y),
+                location.NameOrUniqueName,
+                (int)tile.X,
+                (int)tile.Y,
+                "(O)710",
+                crabPot.heldObject.Value.QualifiedItemId,
+                Math.Max(1, crabPot.heldObject.Value.Stack)));
+        }
+        return result;
     }
 
     private static IReadOnlyList<BridgeCrabPotTarget> DiscoverCrabPotTargets(Farmer player)
