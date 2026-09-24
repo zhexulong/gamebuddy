@@ -827,7 +827,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1936,6 +1936,98 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 return;
             }
 
+            if (fixture.FixtureScenario == "native_craft_item_v1")
+            {
+                // Pre-attachment fixture only: learn one concrete vanilla
+                // crafting recipe and carry its exact ingredients. Production
+                // alone runs the native recipe transaction (learned gate,
+                // ingredient consumption, createItem, inventory/drop) and emits
+                // the receipt. No crafting menu, no heldItem, no fridge.
+                const string craftRecipeKey = "Wood Fence";
+                const string craftIngredientId = "(O)388";
+                const int craftIngredientStack = 2;
+                if (CraftingRecipe.craftingRecipes is null || !CraftingRecipe.craftingRecipes.ContainsKey(craftRecipeKey))
+                    throw new InvalidOperationException("fixture_native_local_craft_recipe_key_missing");
+                Game1.player.craftingRecipes[craftRecipeKey] = 0;
+                if (!Game1.player.craftingRecipes.ContainsKey(craftRecipeKey))
+                    throw new InvalidOperationException("fixture_native_local_craft_recipe_not_learned");
+                foreach (StardewValley.Object stale in player.Items.OfType<StardewValley.Object>().Where(item => item.QualifiedItemId == craftIngredientId).ToArray())
+                    player.removeItemFromInventory(stale);
+                if (player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(craftIngredientId, craftIngredientStack)) is not null
+                    || player.Items.OfType<StardewValley.Object>().Where(item => item.QualifiedItemId == craftIngredientId).Sum(item => item.Stack) != craftIngredientStack)
+                    throw new InvalidOperationException("fixture_native_local_craft_ingredient_missing");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized craft-item precondition before bridge attachment: recipe={craftRecipeKey}; ingredient={craftIngredientId}x{craftIngredientStack}; production alone runs the native recipe transaction and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_cook_recipe_v1")
+            {
+                // Pre-attachment fixture only: learn one concrete vanilla
+                // cooking recipe, carry its exact ingredient, and stand beside a
+                // native cookout kit (BC)278 placed on the Farm. Production alone
+                // runs the native cooking transaction and emits the receipt.
+                const string cookRecipeKey = "Fried Egg";
+                const string cookIngredientId = "(O)176";
+                const string cookoutKitId = "(BC)278";
+                if (CraftingRecipe.cookingRecipes is null || !CraftingRecipe.cookingRecipes.ContainsKey(cookRecipeKey))
+                    throw new InvalidOperationException("fixture_native_local_cook_recipe_key_missing");
+                Game1.player.cookingRecipes[cookRecipeKey] = 0;
+                if (!Game1.player.cookingRecipes.ContainsKey(cookRecipeKey))
+                    throw new InvalidOperationException("fixture_native_local_cook_recipe_not_learned");
+                foreach (StardewValley.Object stale in player.Items.OfType<StardewValley.Object>().Where(item => item.QualifiedItemId == cookIngredientId).ToArray())
+                    player.removeItemFromInventory(stale);
+                if (player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(cookIngredientId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_cook_ingredient_missing");
+                (Vector2 KitTile, Vector2 StandingTile)? station = FindNativeLocalCookingStationFixtureTarget(farm);
+                if (station is null)
+                    throw new InvalidOperationException("fixture_native_local_cook_station_target_missing");
+                farm.objects.Add(station.Value.KitTile, ItemRegistry.Create<StardewValley.Object>(cookoutKitId, 1));
+                if (!farm.objects.TryGetValue(station.Value.KitTile, out StardewValley.Object? placedKit) || placedKit.QualifiedItemId != cookoutKitId)
+                    throw new InvalidOperationException("fixture_native_local_cook_station_placement_failed");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)station.Value.StandingTile.X, (int)station.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized cook-recipe precondition before bridge attachment: recipe={cookRecipeKey}; ingredient={cookIngredientId}; station={cookoutKitId}@{station.Value.KitTile.X},{station.Value.KitTile.Y}; standing={station.Value.StandingTile.X},{station.Value.StandingTile.Y}; production alone cooks and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_crab_pot_collect_v1")
+            {
+                // Pre-attachment fixture only: one current-player-owned native
+                // Crab Pot in the already-mature 714 state (baited, held output,
+                // ready) on a valid Farm water tile, with one cardinal standing
+                // tile. Production alone invokes the single native collection and
+                // emits the receipt; the fixture never calls checkForAction,
+                // DayUpdate, or any settle helper.
+                const string maturePotId = "(O)710";
+                const string matureBaitId = "(O)685";
+                const string matureOutputId = "(O)717";
+                (Vector2 TargetTile, Vector2 StandingTile)? selected = FindNativeLocalCrabPotFixtureTarget(farm);
+                if (selected is null)
+                    throw new InvalidOperationException("fixture_native_local_crab_pot_collect_target_missing");
+                Vector2 potTile = selected.Value.TargetTile;
+                StardewValley.Objects.CrabPot pot = new();
+                pot.owner.Value = player.UniqueMultiplayerID;
+                pot.bait.Value = ItemRegistry.Create<StardewValley.Object>(matureBaitId, 1);
+                pot.heldObject.Value = ItemRegistry.Create<StardewValley.Object>(matureOutputId, 1);
+                pot.tileIndexToShow = 714;
+                pot.readyForHarvest.Value = true;
+                farm.objects.Add(potTile, pot);
+                if (!farm.objects.TryGetValue(potTile, out StardewValley.Object? placedPot)
+                    || placedPot is not StardewValley.Objects.CrabPot maturePot
+                    || maturePot.QualifiedItemId != maturePotId
+                    || maturePot.owner.Value != player.UniqueMultiplayerID
+                    || !maturePot.readyForHarvest.Value
+                    || maturePot.tileIndexToShow != 714
+                    || maturePot.heldObject.Value is null
+                    || maturePot.bait.Value is null)
+                    throw new InvalidOperationException("fixture_native_local_crab_pot_collect_precondition_failed");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)selected.Value.StandingTile.X, (int)selected.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized crab-pot-collect precondition before bridge attachment: pot={maturePotId}@{potTile.X},{potTile.Y}; output={matureOutputId}; tile_index=714; standing={selected.Value.StandingTile.X},{selected.Value.StandingTile.Y}; production alone collects and emits receipt.", LogLevel.Info);
+                return;
+            }
+
             if (fixture.FixtureScenario != "native_water_crop_v1")
                 throw new InvalidOperationException("fixture_native_local_scenario_dispatch_invalid");
 
@@ -2369,6 +2461,35 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     /// production's Chebyshev-adjacency admission will accept. Fixture state only:
     /// production alone decides the W-rule from the live world.
     /// </summary>
+    private static (Vector2 KitTile, Vector2 StandingTile)? FindNativeLocalCookingStationFixtureTarget(GameLocation farm)
+    {
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        foreach (Vector2 kitTile in Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y))))
+        {
+            if (!farm.isTileOnMap(kitTile)
+                || farm.objects.ContainsKey(kitTile)
+                || farm.terrainFeatures.ContainsKey(kitTile)
+                || !farm.CanItemBePlacedHere(kitTile, itemIsPassable: false, CollisionMask.All, CollisionMask.None, useFarmerTile: true))
+                continue;
+            Vector2[] cardinal =
+            {
+                kitTile + new Vector2(-1f, 0f), kitTile + new Vector2(1f, 0f),
+                kitTile + new Vector2(0f, -1f), kitTile + new Vector2(0f, 1f),
+            };
+            Vector2[] validStanding = cardinal
+                .Where(standing => farm.isTileOnMap(standing)
+                    && farm.isTilePassable(standing)
+                    && !farm.objects.ContainsKey(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                .ToArray();
+            if (validStanding.Length == 1)
+                return (kitTile, validStanding[0]);
+        }
+        return null;
+    }
+
     private static Vector2? FindNativeLocalShippingBinStandingTile(GameLocation farm, StardewValley.Buildings.ShippingBin bin)
     {
         List<Vector2> candidates = new();
