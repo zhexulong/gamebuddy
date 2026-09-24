@@ -827,7 +827,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1904,6 +1904,38 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 return;
             }
 
+            if (fixture.FixtureScenario == "native_ship_item_v1")
+            {
+                // Pre-attachment fixture only: the naturally-loaded Farm keeps
+                // its single native "Shipping Bin" building (Farm.cs:173
+                // AddDefaultBuilding), and the backpack gains one ordinary
+                // shippable Object. Production alone calls Farm.shipItem and
+                // owns all receipt/postcondition evidence; the night settlement
+                // stays entirely native (Game1.cs:7601-7627 money, :7753 bin
+                // clear).
+                const string shipItemId = "(O)24";
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == shipItemId && item.Stack > 0)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(shipItemId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_ship_item_inventory_full");
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == shipItemId && item.Stack > 0))
+                    throw new InvalidOperationException("fixture_native_local_ship_item_missing_after_add");
+                StardewValley.Buildings.ShippingBin? bin = farm.buildings.OfType<StardewValley.Buildings.ShippingBin>().FirstOrDefault();
+                if (bin is null || bin.daysOfConstructionLeft.Value > 0)
+                    throw new InvalidOperationException("fixture_native_local_ship_item_bin_missing");
+                Vector2? standing = FindNativeLocalShippingBinStandingTile(farm, bin);
+                if (standing is null)
+                    throw new InvalidOperationException("fixture_native_local_ship_item_standing_tile_missing");
+                // The native bin must start empty so the shipped-stack delta is
+                // unambiguous; this is pre-attachment fixture state only.
+                farm.getShippingBin(player).Clear();
+                if (farm.getShippingBin(player).CountItemStacks() != 0)
+                    throw new InvalidOperationException("fixture_native_local_ship_item_bin_not_empty");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)standing.Value.X, (int)standing.Value.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized ship-item precondition before bridge attachment: item={shipItemId}; bin={bin.tileX.Value},{bin.tileY.Value}; standing={standing.Value.X},{standing.Value.Y}; production alone invokes Farm.shipItem and emits receipt.", LogLevel.Info);
+                return;
+            }
+
             if (fixture.FixtureScenario != "native_water_crop_v1")
                 throw new InvalidOperationException("fixture_native_local_scenario_dispatch_invalid");
 
@@ -2331,6 +2363,33 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         chest.playerChest.Value
         && chest.GlobalInventoryId is null
         && chest.SpecialChestType == StardewValley.Objects.Chest.SpecialChestTypes.None;
+
+    /// <summary>
+    /// A standable tile next to the native Shipping Bin building's footprint that
+    /// production's Chebyshev-adjacency admission will accept. Fixture state only:
+    /// production alone decides the W-rule from the live world.
+    /// </summary>
+    private static Vector2? FindNativeLocalShippingBinStandingTile(GameLocation farm, StardewValley.Buildings.ShippingBin bin)
+    {
+        List<Vector2> candidates = new();
+        for (int x = bin.tileX.Value - 1; x <= bin.tileX.Value + bin.tilesWide.Value; x++)
+        {
+            for (int y = bin.tileY.Value - 1; y <= bin.tileY.Value + bin.tilesHigh.Value; y++)
+            {
+                Vector2 tile = new(x, y);
+                if (!farm.isTileOnMap(tile) || !farm.isTilePassable(tile))
+                    continue;
+                if (farm.IsTileOccupiedBy(tile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                    continue;
+                candidates.Add(tile);
+            }
+        }
+        return candidates
+            .OrderBy(tile => Math.Max(Math.Abs(tile.X - bin.tileX.Value), Math.Abs(tile.Y - bin.tileY.Value)))
+            .ThenBy(tile => Math.Abs(tile.X - bin.tileX.Value) + Math.Abs(tile.Y - bin.tileY.Value))
+            .Cast<Vector2?>()
+            .FirstOrDefault();
+    }
 
     private static string DescribeNativeLocalFixtureSetupFailure(Exception exception)
     {
@@ -4600,11 +4659,17 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             if (!SceneObservationScope.IsBoundedText(item.Name, 128)
                 || !SceneObservationScope.IsBoundedText(item.QualifiedItemId, 128))
                 continue;
-            SceneAffordanceKind kind = item.isForage() ? SceneAffordanceKind.Forage
-                : item.GetMachineData() is not null ? SceneAffordanceKind.Machine
-                : item is StardewValley.Objects.Chest ? SceneAffordanceKind.Chest
-                : SceneAffordanceKind.Chest;
-            candidates.Add(new SceneAffordanceSource(kind, item.Name, item.QualifiedItemId, location.NameOrUniqueName,
+            // Only real chests may be published as `chest`: an object with no
+            // supported affordance is skipped rather than defaulted to a kind
+            // (see SceneAffordanceKindWire.ClassifyWorldObject).
+            SceneAffordanceKind? kind = SceneAffordanceKindWire.ClassifyWorldObject(
+                isForage: item.isForage(),
+                hasMachineData: item.GetMachineData() is not null,
+                isChest: item is StardewValley.Objects.Chest);
+            if (kind is null)
+                continue;
+            SceneAffordanceKind resolvedKind = kind.Value;
+            candidates.Add(new SceneAffordanceSource(resolvedKind, item.Name, item.QualifiedItemId, location.NameOrUniqueName,
                 (int)tile.X, (int)tile.Y, item.isForage() ? "pickup_forage" : null));
         }
         foreach (StardewValley.NPC npc in location.characters)

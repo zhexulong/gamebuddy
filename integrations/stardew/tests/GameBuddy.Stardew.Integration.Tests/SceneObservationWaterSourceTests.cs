@@ -45,4 +45,34 @@ public sealed class SceneObservationWaterSourceTests
         source.TileY.Should().Be(20);
         source.OpaqueEntityIdentity.Should().StartWith("water_source:");
     }
+
+    /// <summary>
+    /// Regression: the world-object classifier must not collapse unsupported
+    /// objects into a default kind. The previous inline fallback labelled weeds,
+    /// stones, artifact spots and fences as `chest`, which the wire validator
+    /// could not catch because `chest` is a legal kind.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false, false, "Forage")]
+    [InlineData(false, true, false, "Machine")]
+    [InlineData(false, false, true, "Chest")]
+    [InlineData(true, true, false, "Forage")]
+    public void ClassifyWorldObject_MapsSupportedObjectsToTheirExactKind(
+        bool isForage,
+        bool hasMachineData,
+        bool isChest,
+        string expected)
+    {
+        SceneAffordanceKindWire.ClassifyWorldObject(isForage, hasMachineData, isChest)
+            .Should().Be(Enum.Parse<SceneAffordanceKind>(expected));
+    }
+
+    [Fact]
+    public void ClassifyWorldObject_UnsupportedObject_IsNullRatherThanDefaultingToChest()
+    {
+        // A weed / stone / artifact spot / fence: forage=false, no machine data,
+        // not a chest. It must NOT be published as `chest`.
+        SceneAffordanceKindWire.ClassifyWorldObject(isForage: false, hasMachineData: false, isChest: false)
+            .Should().BeNull();
+    }
 }
