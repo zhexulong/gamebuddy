@@ -131,6 +131,25 @@ internal sealed record SceneAffordanceProjection(
 /// </summary>
 internal static class SceneAffordanceKindWire
 {
+    /// <summary>
+    /// Classifies a world object into a publishable scene affordance kind, or
+    /// null when it has none.
+    ///
+    /// <para>
+    /// This is deliberately a total, testable mapping rather than an inline
+    /// nested ternary: the previous fallback collapsed every non-forage,
+    /// non-machine object (weeds, stones, artifact spots, fences, crab pots)
+    /// into `chest`, and the wire validator only checks that a kind is one of
+    /// the seven allowed values, so the mislabel was never rejected. Callers
+    /// must skip null results instead of publishing a default kind.
+    /// </para>
+    /// </summary>
+    internal static SceneAffordanceKind? ClassifyWorldObject(bool isForage, bool hasMachineData, bool isChest) =>
+        isForage ? SceneAffordanceKind.Forage
+        : hasMachineData ? SceneAffordanceKind.Machine
+        : isChest ? SceneAffordanceKind.Chest
+        : null;
+
     internal static bool IsDefined(SceneAffordanceKind kind) => kind is
         SceneAffordanceKind.Npc
         or SceneAffordanceKind.Chest
