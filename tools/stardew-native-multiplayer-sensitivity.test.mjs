@@ -131,6 +131,25 @@ test("requires a mode-neutral reason when only context tokens are present", () =
   assert.equal(ok.defects.length, 0);
 });
 
+test("requires an observed-effect justification for an mp-observational native seam", () => {
+  // An observational seam that does read a decisive token must explain why that
+  // read cannot change the transaction outcome; otherwise a reviewer cannot tell
+  // a genuine collateral effect from a swallowed real one.
+  assert.throws(
+    () =>
+      validateMultiplayerSensitivityRegister(
+        register([
+          action({
+            seams: [{ ...seam({ sensitivity: "mp-observational" }), semanticEffect: undefined }],
+            requiredLiveTopology: "single_player_native_companion",
+          }),
+        ]),
+        SOURCE,
+      ),
+    /observedEffect/,
+  );
+});
+
 test("forces mp-semantic actions onto shared-world live evidence", () => {
   assert.throws(
     () =>

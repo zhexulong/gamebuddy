@@ -191,6 +191,11 @@ function validateAction(action, sources, index, scopeAcksByAction) {
         { actionId, file: seam.file, sensitivity },
       );
     // Context-only sensitivity must be declared as such, with the reason on record.
+    // An mp-observational seam that DOES read a decisive token must also say why
+    // that read cannot change the transaction outcome; otherwise a reviewer cannot
+    // tell a genuine collateral effect from a swallowed real one.
+    if (sensitivity === "mp-observational" && isNative)
+      text(seam.observedEffect ?? "", `${actionId}.seams[${seamIndex}].observedEffect`);
     if (sensitivity !== "mp-insensitive" && isNative && decisive.length === 0 && sensitivity !== "mp-semantic")
       text(seam.contextEffect ?? "", `${actionId}.seams[${seamIndex}].contextEffect`);
     if (sensitivity === "mp-semantic" && !text(seam.semanticEffect ?? "", `${actionId}.seams[${seamIndex}].semanticEffect`))
