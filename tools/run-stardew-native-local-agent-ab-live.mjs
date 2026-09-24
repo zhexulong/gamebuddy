@@ -11,6 +11,7 @@ import {
   resolveVoiceConfiguration,
 } from "./lib/voice-gateway-launch.mjs";
 import { assessCompanionInteraction } from "./lib/companion-interaction-gate.mjs";
+import { summarizeSystemFindings } from "./lib/system-findings.mjs";
 import { STARDEW_GAME_INTEGRATION_ADAPTER, } from "../host/dist-test/stardew-game-integration-adapter.js";
 import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge, STARDEW_INTEGRATION_LAUNCHER } from "../host/dist-test/stardew-integration-launcher.js";
 import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
@@ -212,10 +213,13 @@ function randomToken(len = 32) {
 }
 // Trace every ordinary-action execution request the Agent sends so a
 // rejected coordinate is attributable to the actual submitted args.
+const actionTrace = [];
 const originalExecute = client.execute.bind(client);
 client.execute = async (request) => {
   const receipt = await originalExecute(request);
-  console.error("AGENT_EXECUTE", JSON.stringify({ action: request?.action, args: request?.args, state: receipt?.state, reasonCode: receipt?.reasonCode }));
+  const entry = { action: request?.action, args: request?.args, state: receipt?.state, reasonCode: receipt?.reasonCode };
+  actionTrace.push(entry);
+  console.error("AGENT_EXECUTE", JSON.stringify(entry));
   return receipt;
 };
 // Capture the Agent-authored program id from any submit the runtime tools send
@@ -367,6 +371,13 @@ try {
       ? assessCompanionInteraction(presentedSummary)
       : null;
   const interactionPassed = interactionAssessment === null || interactionAssessment.passed;
+  // System-level RL signal: aggregate every rejected action into a small set of
+  // system findings (component attribution + count + sample), so each live run
+  // yields a "system health report" instead of just pass/blocked. This is the
+  // observable loss curve of the system RL loop: blind-guess findings (e.g.
+  // one reasonCode dominating, repeated identical coordinates) point at the
+  // observation/contract layer, not at the model.
+  const systemFindings = summarizeSystemFindings(actionTrace, receipts);
   const result = {
     state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && contextPassed && interactionPassed ? "passed" : "blocked",
     ladder: LADDER,
@@ -381,6 +392,7 @@ try {
     contextAssembled,
     worldBookAssembled,
     interactionAssessment,
+    systemFindings,
     presentedSummary: presentedSummary ?? null,
     voiceResult,
     agentTurn: agentTurnResult,
