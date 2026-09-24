@@ -19,6 +19,11 @@ namespace GameBuddy.Stardew;
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
     private const int DefaultDeadlineTicks = 60 * 20;
+    // The ACTING radius for every interaction stays Chebyshev-adjacent (1); this
+    // discovery-only radius lets the snapshot expose planning targets before the
+    // Agent walks there, matching Item/NPC/Chest discovery (6). Execution
+    // preconditions never read this constant.
+    private const int TargetDiscoveryRadius = 6;
     private const int AnimalProductDiscoveryRadius = 1;
     private const int MaximumRememberedReceipts = 256;
     // A freshly warped player may report CanMove=false for a few transition
@@ -1453,7 +1458,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgePetTarget>();
         return location.characters.OfType<Pet>()
-            .Where(pet => Utility.tileWithinRadiusOfPlayer((int)pet.Tile.X, (int)pet.Tile.Y, 1, player))
+            .Where(pet => Utility.tileWithinRadiusOfPlayer((int)pet.Tile.X, (int)pet.Tile.Y, TargetDiscoveryRadius, player))
             .Take(16)
             .Select(pet => new BridgePetTarget(
                 BuildPetTargetId(location, (int)pet.Tile.X, (int)pet.Tile.Y, pet),
@@ -1472,7 +1477,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (location is null) return Array.Empty<BridgeMachineTarget>();
         return location.objects.Pairs
             .Where(pair => pair.Value.GetMachineData() is not null
-                && IsMachineTargetInRange(player, (int)pair.Key.X, (int)pair.Key.Y))
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
             .Take(64)
             .Select(pair =>
             {
@@ -1529,7 +1534,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && tree.health.Value == 1f
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player))
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
             .Take(64)
             .Select(pair =>
             {
@@ -1568,7 +1573,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && tree.stump.Value && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
                 && !tree.hasMoss.Value && !tree.tapped.Value && tree.health.Value == 5f
                 && pair.Key.X >= 0 && pair.Key.X <= 1000 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player))
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
             .Take(64)
             .Select(pair =>
             {
@@ -1593,7 +1598,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && tree.stump.Value
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player))
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
             .Take(16)
             .Select(pair =>
             {
@@ -1614,12 +1619,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (item is not StardewValley.Object sapling || !StardewValley.Object.isWildTreeSeed(sapling.ItemId) || sapling.Stack < 1)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1 && result.Count < 64; x++)
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 64; x++)
             {
-                for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1 && result.Count < 64; y++)
+                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 64; y++)
                 {
                     Vector2 tile = new(x, y);
-                    if (!IsTreeSaplingTargetInRange(player, x, y) || !CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, x, y))
+                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || !CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, x, y))
                         continue;
                     result.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, slot, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId));
                 }
@@ -1654,7 +1659,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && pair.Value.IsWeeds()
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, 1))
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
             .Take(16)
             .Select(pair => new BridgeWeedTarget(
                 BuildWeedTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value),
@@ -1673,7 +1678,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 || dirt.crop.forageCrop.Value || !dirt.readyForHarvest()
                 || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Scythe
                 || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, 1))
+                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
                 continue;
             string? harvestId = dirt.crop.indexOfHarvest.Value;
             if (string.IsNullOrWhiteSpace(harvestId)) continue;
@@ -1729,7 +1734,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeClearHoeDirtTarget>();
-        return location.terrainFeatures.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player)
+        return location.terrainFeatures.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)
             && pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt && dirt.crop is null
             && !(location.objects.TryGetValue(pair.Key, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
             .Take(8).Select(pair => new BridgeClearHoeDirtTarget(BuildClearHoeDirtTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, Crop: false, Ground: true)).ToArray();
@@ -1759,7 +1764,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (location is null) return Array.Empty<BridgeArtifactSpotTarget>();
         return location.objects.Pairs
             .Where(pair => (int)pair.Key.X is >= 0 and <= 1000 && (int)pair.Key.Y is >= 0 and <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player)
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)
                 && pair.Value.QualifiedItemId == "(O)590"
                 // Artifact spots themselves are object-occupied source tiles;
                 // the legal native interaction position is an adjacent
@@ -1933,7 +1938,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeRockSourceTarget>();
-        return location.objects.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player) && pair.Value.QualifiedItemId == "(O)2" && pair.Value.IsBreakableStone() && pair.Value.MinutesUntilReady == 1)
+        return location.objects.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && pair.Value.QualifiedItemId == "(O)2" && pair.Value.IsBreakableStone() && pair.Value.MinutesUntilReady == 1)
             .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, pair.Value.MinutesUntilReady)).ToArray();
     }
 
@@ -1945,7 +1950,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         int bottom = top + clump.height.Value - 1;
         return Enumerable.Range(left, clump.width.Value)
             .SelectMany(x => Enumerable.Range(top, clump.height.Value).Select(y => new Point(x, y)))
-            .Any(tile => Utility.tileWithinRadiusOfPlayer(tile.X, tile.Y, 1, player));
+            .Any(tile => Utility.tileWithinRadiusOfPlayer(tile.X, tile.Y, TargetDiscoveryRadius, player));
     }
 
     private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(Farmer player)
@@ -2005,8 +2010,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeRefillWateringCanTarget>();
         List<BridgeRefillWateringCanTarget> result = new();
-        for (int x = Math.Max(0, player.TilePoint.X - 1); x <= Math.Min(1000, player.TilePoint.X + 1) && result.Count < 8; x++)
-        for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= Math.Min(1000, player.TilePoint.Y + 1) && result.Count < 8; y++)
+        for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= Math.Min(1000, player.TilePoint.X + TargetDiscoveryRadius) && result.Count < 8; x++)
+        for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= Math.Min(1000, player.TilePoint.Y + TargetDiscoveryRadius) && result.Count < 8; y++)
             if (location.CanRefillWateringCanOnTile(x, y)) result.Add(new BridgeRefillWateringCanTarget(BuildRefillWateringCanTargetId(location, x, y), x, y));
         return result;
     }
@@ -2040,12 +2045,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (item is not StardewValley.Object hay || !string.Equals(hay.QualifiedItemId, "(O)178", StringComparison.Ordinal) || hay.Stack < 1)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1 && result.Count < 32; x++)
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 32; x++)
             {
-                for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1 && result.Count < 32; y++)
+                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 32; y++)
                 {
                     Vector2 tile = new(x, y);
-                    if (!IsFeedTroughTargetInRange(player, x, y) || location.doesTileHaveProperty(x, y, "Trough", "Back") is null || location.objects.ContainsKey(tile))
+                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || location.doesTileHaveProperty(x, y, "Trough", "Back") is null || location.objects.ContainsKey(tile))
                         continue;
                     result.Add(new BridgeFeedTroughTarget(BuildFeedTroughTargetId(location, slot, x, y, hay.Stack), slot, x, y, hay.Stack));
                 }
@@ -2139,7 +2144,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (result.Count >= 32) return result;
                 int x = (int)animal.Tile.X;
                 int y = (int)animal.Tile.Y;
-                if (!IsAnimalProductTargetInRange(player, x, y) || animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool)) continue;
+                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool)) continue;
                 StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
                 int produceStack = animal.hasEatenAnimalCracker.Value ? 2 : 1;
                 if (!player.couldInventoryAcceptThisItem(produce.QualifiedItemId, produceStack)) continue;
@@ -2185,6 +2190,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         return Math.Abs(targetX - (int)player.Tile.X) <= radius
             && Math.Abs(targetY - (int)player.Tile.Y) <= radius;
+    }
+
+    private static int ChebyshevDistance(Farmer player, int targetX, int targetY)
+    {
+        return Math.Max(Math.Abs(targetX - (int)player.Tile.X), Math.Abs(targetY - (int)player.Tile.Y));
+    }
+
+    /// <summary>
+    /// The one diggable-tile predicate shared by discovery and tilling preconditions,
+    /// so an offered tile is always an acceptable target once the player is adjacent.
+    /// </summary>
+    private static bool IsDiggableSoilTile(StardewValley.GameLocation? location, int x, int y)
+    {
+        return location is not null
+            && location.doesTileHaveProperty(x, y, "Diggable", "Back") is not null
+            && !location.isWaterTile(x, y);
     }
 
     private static bool IsFeedTroughTargetInRange(Farmer player, int targetX, int targetY)
@@ -2242,7 +2263,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeForageTarget>();
         return location.objects.Pairs
-            .Where(pair => pair.Value is not null && pair.Value.isForage() && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player))
+            .Where(pair => pair.Value is not null && pair.Value.isForage() && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
             .Take(64)
             .Select(pair => new BridgeForageTarget(BuildForageTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, pair.Value.Stack))
             .ToArray();
@@ -2320,12 +2341,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (item is not StardewValley.Object seed || seed.Category != StardewValley.Object.SeedsCategory)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1 && result.Count < 64; x++)
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 64; x++)
             {
-                for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1 && result.Count < 64; y++)
+                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 64; y++)
                 {
                     Vector2 tile = new(x, y);
-                    if (!IsCropTargetInRange(player, x, y)
+                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
                         || !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
                         || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
                         || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
@@ -2353,11 +2374,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)322" || source.Stack <= 0)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1 && result.Count < 16; x++)
-            for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1 && result.Count < 16; y++)
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 16; x++)
+            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 16; y++)
             {
                 Vector2 tile = new(x, y);
-                if (!IsTileWithinChebyshevRadius(player, x, y, 1) || !IsLegalEmptyFarmFenceTile(farm, tile, source))
+                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || !IsLegalEmptyFarmFenceTile(farm, tile, source))
                     continue;
                 result.Add(new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322"));
             }
@@ -2411,7 +2432,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 Vector2 tile = pair.Key;
                 StardewValley.Object placed = pair.Value;
                 if (result.Count >= 16) return result;
-                if (placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, 1)) continue;
+                if (placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
                 result.Add(new BridgeBaitCrabPotTarget(BuildBaitCrabPotTargetId(location, slot, (int)tile.X, (int)tile.Y), location.NameOrUniqueName, slot, (int)tile.X, (int)tile.Y, "(O)710", "(O)685", crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1));
             }
         }
@@ -2432,10 +2453,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)710" || source.Stack <= 0)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1 && result.Count < 16; x++)
-            for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1 && result.Count < 16; y++)
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 16; x++)
+            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 16; y++)
             {
-                if (!IsTileWithinChebyshevRadius(player, x, y, 1)
+                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
                     || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, x, y))
                     continue;
                 result.Add(new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710"));
@@ -2459,12 +2480,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (item is not StardewValley.Object fertilizer || fertilizer.Category != StardewValley.Object.fertilizerCategory)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1 && result.Count < 64; x++)
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 64; x++)
             {
-                for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1 && result.Count < 64; y++)
+                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 64; y++)
                 {
                     Vector2 tile = new(x, y);
-                    if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
+                        || !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
                         || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
                         || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
                         || !dirt.CanApplyFertilizer(fertilizer.QualifiedItemId))
@@ -2493,7 +2515,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && dirt.readyForHarvest()
                 && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab
                 && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value)
-                && IsCropTargetInRange(player, (int)pair.Key.X, (int)pair.Key.Y))
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
             .Take(64)
             .Select(pair =>
             {
@@ -2519,7 +2541,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
                 && dirt.needsWatering()
                 && !dirt.isWatered()
-                && IsCropTargetInRange(player, (int)pair.Key.X, (int)pair.Key.Y))
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
             .Take(64)
             .Select(pair =>
             {
@@ -2536,15 +2558,36 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"crop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
+    /// <summary>
+    /// Planning-visible diggable tiles around the player.
+    ///
+    /// <para>
+    /// The ACTING precondition stays Chebyshev-adjacent (till_soil still requires
+    /// radius 1); this discovery only exists so the Agent can plan which adjacent
+    /// tile to walk to instead of guessing coordinates and being rejected. The
+    /// radius matches the other discovery radii (NPC 6, item 8) and the result is
+    /// distance-ordered and bounded, so the snapshot stays small and the nearest
+    /// work is always visible.
+    /// </para>
+    /// </summary>
+    private const int SoilTileDiscoveryRadius = 6;
+
+    /// <summary>Bounded like the other snapshot target lists; Host accepts up to 64.</summary>
+    private const int MaximumDiscoveredSoilTiles = 32;
+
     private static IReadOnlyList<BridgeSoilTile> DiscoverSoilTiles(Farmer player)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeSoilTile>();
-        List<BridgeSoilTile> result = new();
-        for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1; x++)
+        List<(int Distance, BridgeSoilTile Tile)> candidates = new();
+        int originX = player.TilePoint.X;
+        int originY = player.TilePoint.Y;
+        for (int x = originX - SoilTileDiscoveryRadius; x <= originX + SoilTileDiscoveryRadius; x++)
         {
-            for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1; y++)
+            if (x < 0) continue;
+            for (int y = originY - SoilTileDiscoveryRadius; y <= originY + SoilTileDiscoveryRadius; y++)
             {
+                if (y < 0) continue;
                 Vector2 tile = new(x, y);
                 if (location.GetHoeDirtAtTile(tile) is not null
                     || location.doesTileHaveProperty(x, y, "Diggable", "Back") is null
@@ -2552,10 +2595,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     || location.objects.ContainsKey(tile)
                     || !location.isTileLocationOpen(tile))
                     continue;
-                result.Add(new BridgeSoilTile(x, y));
+                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y)));
             }
         }
-        return result;
+        // Nearest first, then a stable coordinate order so repeated observations
+        // of an unchanged world produce the same bounded list.
+        return candidates
+            .OrderBy(candidate => candidate.Distance)
+            .ThenBy(candidate => candidate.Tile.Y)
+            .ThenBy(candidate => candidate.Tile.X)
+            .Take(MaximumDiscoveredSoilTiles)
+            .Select(candidate => candidate.Tile)
+            .ToArray();
     }
 
     private void RecordControllerTransition(ExecutionState state, string reasonCode, string? evidence)

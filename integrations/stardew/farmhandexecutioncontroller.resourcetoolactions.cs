@@ -171,13 +171,28 @@ internal sealed partial class ExecutionManager
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            // Distinguish "wrong tile" from "right tile, too far to act on". The
+            // distinction is actionable for the Agent: an out-of-reach diggable
+            // tile means walk there first, whereas a non-diggable tile means pick
+            // a different target. Both stay rejected before any native ingress.
+            string distance = ChebyshevDistance(Game1.player, targetX, targetY).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            bool diggableFromHere = IsDiggableSoilTile(Game1.player.currentLocation, targetX, targetY);
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                diggableFromHere ? "target_out_of_reach" : "target_out_of_range",
+                diggableFromHere
+                    ? $"target={targetX},{targetY};distance={distance};reach=1"
+                    : $"target={targetX},{targetY};distance={distance}");
+        }
 
         Vector2 tile = new(targetX, targetY);
         StardewValley.GameLocation location = Game1.player.currentLocation;
         if (location.GetHoeDirtAtTile(tile) is not null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_already_tilled", $"target={targetX},{targetY}");
-        if (location.doesTileHaveProperty(targetX, targetY, "Diggable", "Back") is null || location.isWaterTile(targetX, targetY))
+        if (!IsDiggableSoilTile(location, targetX, targetY))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_not_diggable", $"target={targetX},{targetY}");
         if (Game1.player.CurrentTool is not Hoe hoe)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hoe_not_equipped", null);
