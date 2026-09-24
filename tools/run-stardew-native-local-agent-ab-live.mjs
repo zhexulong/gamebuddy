@@ -40,8 +40,12 @@ const configuredRuntimeRoot = process.env.GAMEBUDDY_RUNTIME_ROOT;
 // and load), "2" = ladder 1 + live voice: when the Mod returns the terminal
 // machine_coffee_loaded receipt, the Host streams a companion voice line
 // through the real Voice Gateway (MiMo TTS) and waits for its terminal
-// playback observation. The runner is a single evolving live carrier; later
-// ladders add their own acceptance on top instead of new runners.
+// playback observation. "3" = Jodi's Request farming (the Agent plans
+// till→plant→water itself) plus the spoken closing line. "4" = Jodi's Request
+// close-out: one real mature cauliflower is already in the ground (12 growth
+// days are the fixture's Given, not the Agent's wait), and the Agent harvests
+// it, walks to Jodi and offers it. The runner is a single evolving live carrier;
+// later ladders add their own acceptance on top instead of new runners.
 const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 const config = JSON.parse(await readFile(configPath, "utf8"));
@@ -77,7 +81,8 @@ const voiceObservationPromise = new Promise((resolvePromise) => {
 // companion text successfully landed in the game; forwards the exact text to
 // the voice lane. No game/presentation authority is touched here.
 const onCompanionTextPresented = (text, locale) => {
-  if (LADDER !== "3" || voiceStarted || typeof text !== "string" || text.trim().length === 0) return;
+  if (LADDER !== "3" && LADDER !== "4") return;
+  if (voiceStarted || typeof text !== "string" || text.trim().length === 0) return;
   // Dee-hydate model scaffolding before TTS: the chat box and the voice line
   // must both speak the same clean dialogue — never read out `**` / `---` / emoji.
   const speakable = dehydrateCompanionSpeech(text);
@@ -273,18 +278,22 @@ try {
     return createHostGameRuntimeMaterializer({
       gameOperationalGateNonceSha256: "a".repeat(64),
       companionLocale: COMPANION_LOCALE,
-      ...(LADDER === "3" ? { onCompanionTextPresented } : {}),
+      ...(LADDER === "3" || LADDER === "4" ? { onCompanionTextPresented } : {}),
     }).materializeEnter(reserveGameRuntimeMaterialization(execution), permit);
   }));
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
   const tools = runtime.connected.host;
   const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (COMPANION_LOCALE === "zh-CN"
-    ? (LADDER === "3"
+    ? (LADDER === "4"
+      ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她说需要一颗新鲜花椰菜做菜，请求你给她带一颗。好消息是：你在农场的地里已经种着一颗成熟的花椰菜（等了这些天它终于长好了），而乔迪今天就在农场附近等你。请自主完成这件农活：先观察（observe）你的环境和身边的资源，把地里那颗成熟的花椰菜用 harvest_crop 收获到背包里，然后走到乔迪身边，用 interact_npc_with_item 把她要的花椰菜交给她。**效率要求：observe 返回的 cropTargets / npcRelationshipTargets 里已经有你可以直接选择的真实坐标和目标，请不要猜测坐标，也不要把同一个位置反复观察；当你确定下一步时，尽量在一条消息里同时发出多个动作工具调用（例如先 move_to_tile 到目标旁，再接着 harvest_crop / interact_npc_with_item），不要每走一步都等一圈才走下一步**。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下（可以说说收获的心情、乔迪的反应，或问问玩家接下来想做什么）。**"
+      : LADDER === "3"
       ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她说需要一颗新鲜花椰菜做菜，请求你给她带一颗。你刚从农舍醒来：背包里有锄头、装满了水的浇水壶和 2 颗花椰菜种子，屋外的农田还是春天没有耕过的土地。请自主完成这件农场工作：仔细观察你拥有的资源和环境，决定需要哪些步骤让花椰菜真正种下去并浇上水，然后逐步执行（你可以在 observe 返回的真实 soilTiles/seedTargets/cropTargets 中选择合适的目标）。不要只回答文字，要用游戏工具真实完成。**效率要求：observe 返回的 soilTiles/cropTargets/seedTargets 已经包含你能直接选择的真实地块坐标，请不要猜测坐标，也不要重复观察同一个位置；当你确定下一步动作时，尽量在一条消息里同时发出多个连续的动作工具调用（例如先 move_to_tile 到地块旁，再接着 till_soil、plant_seed、water_crop），不要每走一步都等一圈才走下一步**。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（苦笑）（有点犹豫）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下（可以说说刚才忙活的感觉、问问玩家接下来想做什么，或感叹一下花椰菜会长成什么样）。**"
       : LADDER === "1" || LADDER === "2"
       ? "你现在是星露谷里的 AI 伴侣，站在农舍（FarmHouse）里。任务：屋外的公交站（Bus Stop）门口有一台空的木桶机器（Keg），你的背包里有 5 颗咖啡豆。请严格按以下顺序完成：(1) 先用 find_destination 查询目的地（例如 query=\"bus\"），拿到它的 canonical label 或 dr1_ ref，然后调用 navigate_to_destination 导航到公交站；(2) 导航完成（receipt 成功）后，**必须立即调用 observe**，从最新返回结果的 machineTargets 数组中精确复制该 Keg 的 x、y、expectedTargetId（以及 loadInputSlot）；**绝不允许猜测或从旧位置复制坐标**；(3) 用这些精确坐标调用 machine_inspect 检查机器，确认 receipt 为 machine_inspected；(4) 再用同一 machineTargets 条目的 loadInputSlot/expectedQualifiedItemId/(O)433 和精确 x/y/expectedTargetId 调用 machine_load 把咖啡豆装进木桶。每一步都等 receipt 成功再继续，不要只回答文字。完成后用一句话总结结果。"
       : "你现在是星露谷里的 AI 伴侣。任务：你所在农场屋（FarmHouse）里有一台空的木桶机器（Keg）和 5 颗咖啡豆（Coffee Beans）。请完成两步操作：(1) 先检查（inspect）这台机器，确认它的位置与目标 ID；(2) 然后把咖啡豆装进木桶（load）开始酿造。你必须使用游戏工具（先观察 observe，再调用机器检查与装载工具），根据工具返回的真实结果执行，不要只回答文字。完成后用一句话总结结果。")
-    : (LADDER === "3"
+    : (LADDER === "4"
+      ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. The good news: a cauliflower has already grown to maturity in your farm soil (all those days of waiting finally paid off), and Jodi is waiting for you on the farm today. Complete this farm errand yourself: first observe your surroundings and what you carry, harvest that mature cauliflower from the ground with harvest_crop, then walk over to Jodi and hand her the cauliflower she asked for with interact_npc_with_item. Do not just reply with text — actually use the game tools; **be efficient: cropTargets / npcRelationshipTargets in observe already give you real coordinates and targets — never guess coordinates and never re-observe the same spot; when you know the next actions, batch them in ONE message (e.g. move_to_tile toward the target, then harvest_crop / interact_npc_with_item) instead of one step per round trip**; besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions. **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion: how the harvest felt, how Jodi reacted, or what you two could do next.**"
+      : LADDER === "3"
       ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. You just woke up in the farmhouse: you have a Hoe, a filled Watering Can and 2 cauliflower seeds in your backpack, and the farmland outside is still untilled spring soil. Complete this farming task on your own: carefully inspect what you own and your surroundings, decide which steps are needed to actually plant the cauliflower and water it, then carry them out step by step (choose targets from the real soilTiles/seedTargets/cropTargets in observe results). Do not just reply with text — actually use the game tools; **be efficient: observe already gives you real tile coordinates — never guess coordinates, and when you know the next actions, batch consecutive tool calls in ONE message (e.g. move_to_tile to the tile, then till_soil, plant_seed, water_crop) instead of one step per round trip**; besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (bitter smile) / (hesitating) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions. **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step you take while working, and when the work is done do NOT recite a checklist of what you did; instead say a line or two as a companion: how the work felt, what you wonder about growing, or what you two could do next.**"
       : LADDER === "1" || LADDER === "2"
       ? "You are the AI companion in Stardew Valley, standing inside the FarmHouse. Task: right outside the farmhouse door at Bus Stop there is an empty Keg machine and your backpack has 5 Coffee Beans. Complete in this order: (1) first use find_destination (e.g. query=\"bus\") to get its canonical label or dr1_ ref, then call navigate_to_destination to reach Bus Stop; (2) after navigation succeeds (receipt ok), **immediately call observe** and copy exactly the Keg's x, y, expectedTargetId (and loadInputSlot) from the machineTargets array in the fresh result; **never guess or reuse old-location coordinates**; (3) call machine_inspect with those exact coordinates and confirm the receipt is machine_inspected; (4) then call machine_load with the same machineTargets entry's loadInputSlot/expectedQualifiedItemId/(O)433 and exact x/y/expectedTargetId to load the beans. Wait for each receipt before continuing; do not just reply with text. Summarize in one sentence when done."
@@ -309,7 +318,7 @@ try {
   // The gateway child needs up to ~20s to boot and MiMo probe-ready before the
   // job can stream, so ladder 2 budgets 90s overall; without a terminal
   // completed observation the ladder stays blocked.
-  if (LADDER === "2" || LADDER === "3") {
+  if (LADDER === "2" || LADDER === "3" || LADDER === "4") {
     if (voiceStarted && voiceObservation === null) {
       await Promise.race([voiceObservationPromise, new Promise((resolvePromise) => setTimeout(resolvePromise, 200_000))]);
     }
@@ -362,12 +371,19 @@ try {
   const ladderZeroPassed = LADDER === "0" ? inspectReceipt !== undefined && loadReceipt !== undefined && programSucceeded : true;
   const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && (voiceResult?.state === "completed" || voiceResult?.state === "disabled") : true;
   const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
+  // Ladder 4: the Agent must harvest the real mature crop and then offer it to
+  // the villager. Either an ordinary recorded gift or a native quest delivery is
+  // an accepted terminal for the offer — the point under test is the physical
+  // harvest→carry→offer chain, not which native branch consumed the item.
+  const harvestReceipt = receipts.find((receipt) => receipt.reasonCode === "crop_harvested");
+  const offerReceipt = receipts.find((receipt) => receipt.reasonCode === "gift_given" || receipt.reasonCode === "quest_item_delivered");
+  const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const contextPassed = contextAssembled && worldBookAssembled;
   // Companion-quality gate (ladder-3): the spoken closing line must be game-appropriate —
   // short and to the player, not a step-by-step recital of what the companion just did.
   // The persona already says "不背说明书、不复述工具结果"; this makes that observable.
   const interactionAssessment =
-    LADDER === "3" && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
+    (LADDER === "3" || LADDER === "4") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
       ? assessCompanionInteraction(presentedSummary)
       : null;
   const interactionPassed = interactionAssessment === null || interactionAssessment.passed;
@@ -379,7 +395,7 @@ try {
   // observation/contract layer, not at the model.
   const systemFindings = summarizeSystemFindings(actionTrace, receipts);
   const result = {
-    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && contextPassed && interactionPassed ? "passed" : "blocked",
+    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && contextPassed && interactionPassed ? "passed" : "blocked",
     ladder: LADDER,
     programStatus: status,
     walkReceipt: walkReceipt ?? null,
@@ -388,6 +404,8 @@ try {
     tillReceipt: tillReceipt ?? null,
     plantReceipt: plantReceipt ?? null,
     waterReceipt: waterReceipt ?? null,
+    harvestReceipt: harvestReceipt ?? null,
+    offerReceipt: offerReceipt ?? null,
     personaWorldBook,
     contextAssembled,
     worldBookAssembled,
@@ -417,6 +435,8 @@ try {
     tillReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "soil_tilled") ?? null,
     plantReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "seed_planted") ?? null,
     waterReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_watered") ?? null,
+    harvestReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_harvested") ?? null,
+    offerReceipt: factLog.find((fact) => fact.type === "execution_receipt" && (fact.reasonCode === "gift_given" || fact.reasonCode === "quest_item_delivered")) ?? null,
     presentedSummary: presentedSummary ?? null,
     interactionAssessment:
       LADDER === "3" && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
