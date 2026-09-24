@@ -262,6 +262,20 @@ test("the committed register derives cleanly against the exact decompiled source
   const report = validateMultiplayerSensitivityRegister(JSON.parse(registerText), sources);
   assert.equal(report.actionCount, 45);
   assert.deepEqual(report.defects, []);
-  // The pins must be doing real work, not masking an empty register.
-  assert.ok(report.acknowledged.length >= 17);
+  // Every pin must be a real, still-derived defect carrying a reason and an owner:
+  // a pin is an acknowledged gap, never a silent suppression. The list is asserted
+  // exactly rather than by count, so neither a stale pin nor a hand-typed one can
+  // hide here. Update this list deliberately when a shared-world action lands.
+  assert.deepEqual(
+    report.acknowledged.map((ack) => `${ack.defect}:${ack.actionId}`).sort(),
+    ["unverified_scope:chest_retrieve", "unverified_scope:ship_item"],
+  );
+  for (const ack of report.acknowledged) {
+    assert.ok(ack.reason && ack.reason.length > 0, `${ack.actionId} pin must carry a reason`);
+    assert.ok(ack.owner && ack.owner.length > 0, `${ack.actionId} pin must carry an owner`);
+  }
+  // The pins must be doing real work, not masking an empty register: the scope-bound
+  // actor resolver landed, so no action may still derive the retired over-restriction
+  // defect (the 16 single-player guards are gone).
+  assert.equal(report.actions.filter((a) => a.rawDefects.some((d) => d.defect === "over_restriction")).length, 0);
 });

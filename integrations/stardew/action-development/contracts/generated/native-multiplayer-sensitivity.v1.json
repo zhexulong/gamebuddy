@@ -4,41 +4,12 @@
   "note": "Multiplayer scope is DERIVED from the exact decompiled game source plus the Mod's own admission guards. The pinned statement (not the authored memory) is what the checker trusts.",
   "scopeAcknowledgements": [
     {
-      "defect": "over_restriction",
-      "actions": [
-        "machine_load",
-        "machine_collect_output",
-        "chop_tree_source",
-        "break_rock_source",
-        "clear_hoedirt",
-        "dig_artifact_spot",
-        "refill_watering_can",
-        "chest_store",
-        "chop_stump",
-        "plant_sapling",
-        "cut_weeds",
-        "scythe_crop",
-        "craft_item",
-        "cook_recipe",
-        "collect_crab_pot_output"
-      ],
-      "reason": "Admission uses the early `native_local_player_required` fixture guard (Context.IsMultiplayer || !Game1.IsMasterGame || getAllFarmers().Count() != 1) even though the native seam carries no outcome-affecting multiplayer state. The correct guard is the scope-bound actor resolver `ExecutionManager.TryGetBoundActor` (farmhandexecutioncontroller.cs:412-451), which already exists and is already used by express_emote / face_direction / move_to_tile: it validates `actor.UniqueMultiplayerID == executionScope.PlayerId` and fails closed with `execution_scope_mismatch`, which is what a Farmhand actor needs. On the AI Farmhand's own client Game1.player IS that Farmhand, so the resolver admits the real product topology instead of refusing it.",
-      "owner": "stardew-integration"
-    },
-    {
       "defect": "unverified_scope",
       "actions": [
+        "chest_retrieve",
         "ship_item"
       ],
-      "reason": "Admission admits a shared world, and the settlement container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. No shared-world live evidence exists yet.",
-      "owner": "stardew-integration"
-    },
-    {
-      "defect": "mp_sensitive_exclusion",
-      "actions": [
-        "chest_retrieve"
-      ],
-      "reason": "`Chest.GetItemsForPlayer(long id)` resolves the container per player: a chest with a GlobalInventoryId returns the team-shared inventory, and a MiniShippingBin returns that player's own separate-wallet inventory. The Mod calls the no-arg overload, which resolves `Game1.player.UniqueMultiplayerID`. So the target container genuinely depends on the world's wallet mode and who is asking, yet admission rejects a shared world outright. Same root cause as the over_restriction pin, and the same fix applies, but it is recorded separately because the native path is positively verified to be multiplayer-capable rather than merely unrestricted.",
+      "reason": "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. For `chest_retrieve` the container is resolved by `Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves `Game1.player.UniqueMultiplayerID`. No shared-world live evidence exists yet for either.",
       "owner": "stardew-integration"
     }
   ],
@@ -279,8 +250,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -297,8 +267,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -431,8 +400,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -448,8 +416,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -465,8 +432,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -482,8 +448,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -499,8 +464,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -669,8 +633,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -687,8 +650,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "shared_world_multiplayer"
     },
@@ -704,8 +666,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -722,8 +683,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -740,8 +700,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -758,8 +717,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -776,8 +734,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -794,8 +751,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },
@@ -812,8 +768,7 @@
         }
       ],
       "admission": {
-        "verdict": "rejects_multiplayer",
-        "reasonCode": "native_local_player_required"
+        "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
     },

@@ -199,52 +199,59 @@ const OVER_RESTRICTED = actions
   .filter((a) => a.admission.verdict === "rejects_multiplayer" && a.requiredLiveTopology !== "shared_world_multiplayer")
   .map((a) => a.actionId);
 
+// Derived, never hand-typed: admission now admits a shared world, but an mp-semantic
+// native seam means the outcome can still differ there, and no shared-world live
+// evidence exists yet. When one lands, the pin goes stale and the gate rejects it.
+const UNVERIFIED_SCOPE = actions
+  .filter((a) => a.admission.verdict === "admits_multiplayer" && a.requiredLiveTopology === "shared_world_multiplayer")
+  .map((a) => a.actionId);
+
 const register = {
   schemaVersion: 1,
   artifactKind: "stardew_native_multiplayer_sensitivity",
   note:
     "Multiplayer scope is DERIVED from the exact decompiled game source plus the Mod's own admission guards. " +
     "The pinned statement (not the authored memory) is what the checker trusts.",
-  // Scope-level acknowledgement of a gap that is systemic, not action-specific.
-  // GameBuddy is a companion that joins the player's world, so multiplayer IS the
-  // product topology: these actions reject multiplayer with no native
-  // justification. The gap is a single mechanism (the admission guard is the
-  // early single-player fixture gate rather than the scope-bound actor resolver
-  // that express_emote / face_direction / move_to_tile already use), so it is
-  // pinned once here instead of sixteen times. The pin is rejected as stale the
-  // moment any listed action stops deriving the defect, so it cannot outlive the
-  // fix.
+  // Scope-level acknowledgements, one per systemic gap rather than one per action.
+  // Both lists are DERIVED, so a pin appears only while its defect is real and is
+  // rejected as stale the moment the defect stops deriving -- a pin cannot outlive
+  // its fix, and cannot be hand-typed into existence.
+  //
+  // `over_restriction` (empty as of the scope-bound actor resolver landing): GameBuddy
+  // is a companion that joins the player's world, so multiplayer IS the product
+  // topology; an admission that rejects a shared world with no native justification
+  // is a gap, not a design choice.
+  // `unverified_scope`: admission is correct, but the native seam reads
+  // outcome-affecting multiplayer state (`Game1.player.team.useSeparateWallets`),
+  // so a single-player pass cannot stand in for a shared-world one.
   scopeAcknowledgements: [
-    {
-      defect: "over_restriction",
-      actions: OVER_RESTRICTED,
-      reason:
-        "Admission uses the early `native_local_player_required` fixture guard (Context.IsMultiplayer || !Game1.IsMasterGame || " +
-        "getAllFarmers().Count() != 1) even though the native seam carries no outcome-affecting multiplayer state. The correct guard is the " +
-        "scope-bound actor resolver `ExecutionManager.TryGetBoundActor` (farmhandexecutioncontroller.cs:412-451), which already exists and is " +
-        "already used by express_emote / face_direction / move_to_tile: it validates `actor.UniqueMultiplayerID == executionScope.PlayerId` and " +
-        "fails closed with `execution_scope_mismatch`, which is what a Farmhand actor needs. On the AI Farmhand's own client Game1.player IS that " +
-        "Farmhand, so the resolver admits the real product topology instead of refusing it.",
-      owner: "stardew-integration",
-    },
+    ...(OVER_RESTRICTED.length > 0
+      ? [
+          {
+            defect: "over_restriction",
+            actions: OVER_RESTRICTED,
+            reason:
+              "Admission rejects a shared world (native_local_player_required or an equivalent guard) even though the native seam " +
+              "carries no outcome-affecting multiplayer state. The correct guard is the scope-bound actor resolver " +
+              "`ExecutionManager.TryGetBoundActor` (farmhandexecutioncontroller.cs), which validates " +
+              "`actor.UniqueMultiplayerID == executionScope.PlayerId` and fails closed with `execution_scope_mismatch`. On the AI " +
+              "Farmhand's own client Game1.player IS that Farmhand, so the resolver admits the real product topology instead of " +
+              "refusing it.",
+            owner: "stardew-integration",
+          },
+        ]
+      : []),
     {
       defect: "unverified_scope",
-      actions: ["ship_item"],
+      actions: UNVERIFIED_SCOPE,
       reason:
-        "Admission admits a shared world, and the settlement container is chosen by `Farm.getShippingBin(who)` from " +
-        "`Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. No shared-world live " +
-        "evidence exists yet.",
-      owner: "stardew-integration",
-    },
-    {
-      defect: "mp_sensitive_exclusion",
-      actions: ["chest_retrieve"],
-      reason:
-        "`Chest.GetItemsForPlayer(long id)` resolves the container per player: a chest with a GlobalInventoryId returns the team-shared inventory, " +
-        "and a MiniShippingBin returns that player's own separate-wallet inventory. The Mod calls the no-arg overload, which resolves " +
-        "`Game1.player.UniqueMultiplayerID`. So the target container genuinely depends on the world's wallet mode and who is asking, yet admission " +
-        "rejects a shared world outright. Same root cause as the over_restriction pin, and the same fix applies, but it is recorded separately because " +
-        "the native path is positively verified to be multiplayer-capable rather than merely unrestricted.",
+        "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction " +
+        "outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement " +
+        "container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin " +
+        "differs between single-player and a shared world. For `chest_retrieve` the container is resolved by " +
+        "`Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a " +
+        "MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves " +
+        "`Game1.player.UniqueMultiplayerID`. No shared-world live evidence exists yet for either.",
       owner: "stardew-integration",
     },
   ],
