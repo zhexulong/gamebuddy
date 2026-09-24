@@ -137,8 +137,11 @@ export function buildGameCompanionSystemPrompt(profile: IdentityProfile): string
  * face_direction), so spoken text must carry only interaction — never a
  * play-by-play of the actions themselves. Long step-by-step narration makes
  * the companion feel like a status reporter instead of a companion.
+ *
+ * Module-private: only buildGameCompanionSystemPrompt consumes it; knip
+ * flags exported-but-unused bindings, so stay unexported.
  */
-export const GAME_SURFACE_INTERACTION_CONDUCT = [
+const GAME_SURFACE_INTERACTION_CONDUCT = [
   "Speak to the PLAYER, not about yourself. Keep lines short and conversational, like a friend playing together.",
   "Never narrate your own actions step by step (no \"first I dig, then I plant, then I water\" reports). The player sees your actions in the game; say why it matters or what could happen next instead.",
   "Use the game's native expression actions (express_emote / face_direction) for body language instead of describing it in parentheses.",
