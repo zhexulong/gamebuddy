@@ -52,3 +52,20 @@ test("a disposable runtime root is the explicit fallback and is the only path th
   assert.match(RUNNER_SOURCE, /const usesDisposableRoot = configuredRuntimeRoot === undefined/);
   assert.match(RUNNER_SOURCE, /if \(usesDisposableRoot\)\s*\n\s*await writeFile\(join\(runtimeRoot, "settings", "model-profiles\.json"\)/);
 });
+
+test("the runner enforces a companion-interaction gate for ladder-3 summaries", () => {
+  // The gate must be wired into the ladder-3 verdict so a "checklist of what I
+  // did" closing line blocks the run instead of passing silently.
+  assert.match(RUNNER_SOURCE, /assessCompanionInteraction/);
+  assert.match(RUNNER_SOURCE, /interactionPassed = interactionAssessment === null \|\| interactionAssessment\.passed/);
+  assert.match(RUNNER_SOURCE, /contextPassed && interactionPassed/);
+});
+
+test("prompts teach companionship instead of checklist recitals (ladder-3)", () => {
+  // The ladder-3 prompts must NOT ask the Agent to "summarize what you did" —
+  // that phrasing is what produced the recital the interaction gate rejects.
+  assert.doesNotMatch(RUNNER_SOURCE, /总结你为乔迪做了哪些准备/);
+  assert.doesNotMatch(RUNNER_SOURCE, /summarize in one sentence what you prepared for Jodi/);
+  assert.match(RUNNER_SOURCE, /不是任务播报员/);
+  assert.match(RUNNER_SOURCE, /not a task announcer/);
+});

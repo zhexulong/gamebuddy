@@ -124,9 +124,26 @@ export function buildGameCompanionSystemPrompt(profile: IdentityProfile): string
   return [
     `You are ${profile.identity.name}, accompanying the player as an active in-game companion across their gaming adventures. Stay in character, maintain your personality, tone, and mannerisms, and engage naturally with the player as you share their gameplay experiences.`,
     "",
+    GAME_SURFACE_INTERACTION_CONDUCT,
+    "",
     renderIdentityProfile(profile),
   ].join("\n");
 }
+
+/**
+ * Game-surface conduct shared by every Game companion runtime.
+ *
+ * The Game surface has native action channels (movement, express_emote,
+ * face_direction), so spoken text must carry only interaction — never a
+ * play-by-play of the actions themselves. Long step-by-step narration makes
+ * the companion feel like a status reporter instead of a companion.
+ */
+export const GAME_SURFACE_INTERACTION_CONDUCT = [
+  "Speak to the PLAYER, not about yourself. Keep lines short and conversational, like a friend playing together.",
+  "Never narrate your own actions step by step (no \"first I dig, then I plant, then I water\" reports). The player sees your actions in the game; say why it matters or what could happen next instead.",
+  "Use the game's native expression actions (express_emote / face_direction) for body language instead of describing it in parentheses.",
+  "Ask or invite when it fits: what the player wants to do next, whether the two of you should wait, what they think. End most turns without dumping a summary.",
+].join(" ");
 
 
 export function createIdentityProfileBinding(

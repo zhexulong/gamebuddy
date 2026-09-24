@@ -167,6 +167,9 @@ export async function launchVoiceGatewayChild(configuration, { port, token }) {
     GAMEBUDDY_VOICE_PORT: String(port),
     GAMEBUDDY_VOICE_TOKEN: token,
     GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION: CLOUD_TTS_ADMISSION,
+    // The ladder-2 verified MiMo persona; callers may override via env but the
+    // default keeps the same voice the live gate measured.
+    GAMEBUDDY_MIMO_VOICE: process.env.GAMEBUDDY_MIMO_VOICE ?? "冰糖",
   };
   // An absent preference endpoint means "Windows default"; an explicit endpoint
   // is passed through verbatim so the gateway never falls back to another device.
