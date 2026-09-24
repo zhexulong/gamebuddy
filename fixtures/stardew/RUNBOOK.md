@@ -103,15 +103,23 @@ Before launching the game or initiating a live run, operators must verify enviro
 Live verification supports two operational modes:
 
 - **Mode A: Automated driver (recommended for continuous regression):**
-  Spawns SMAPI, bounds wait time for the Named Pipe connection (up to 90s for save loading), runs the automated action sequence, keeps the window open for human inspection (15s), and cleans up processes cleanly:
-  ```bash
-  node tools/start-smapi-and-run-live.mjs
+  The production Farmhand Companion Preview launcher owns the whole two-process
+  multiplayer run: starts the Host first, authenticates readiness and a fresh
+  attachment manifest, then starts the silent AI client and the immutable
+  Preview, keeping the Host window visible for human inspection:
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools/start-farmhand-launcher.ps1 ``
+    -GamePath "D:\Steam\steamapps\common\Stardew Valley" ``
+    -HostRuntimeRoot "C:\Users\you\AppData\Local\GameBuddy" -ExpectedFarmhandId "<native-id>"
   ```
-- **Mode B: Attached driver (recommended for interactive hot debugging):**
-  When Stardew/SMAPI is already running with the target save loaded and player in-world, attach directly over the configured Named Pipe (`GB-PIPE-M2-E2E` or Mod `config.json`):
-  ```bash
-  node tools/run-stardew-companion-live-coop-01.mjs
-  ```
+  It requires no pre-existing game process, binds to a fresh run-owned pipe and
+  token, tears down Preview > AI > Host, and never accepts credentials.
+- **Mode B: Attached driver (obsolete):** The former standalone attached driver
+  (`tools/start-smapi-and-run-live.mjs`, `tools/run-stardew-companion-live-coop-01.mjs`)
+  was retired because it hardcoded a private install path, hand-rolled its own
+  bridge connection instead of the shared protocol harness, and its function is
+  covered by the production launcher above for live Farmhand preview. For an
+  already-running save, use the hosted companion conversation path directly.
 - **Concurrency discipline:** The Mod `ExecutionManager` enforces that the embodied actor executes at most one active native mutation at any time on the game thread. Multi-action sequences must be executed serially with unique `{requestId, idempotencyKey}` pairs, waiting for terminal `succeeded` before dispatching the next.
 
 ### 3. Generic visual observability principles
