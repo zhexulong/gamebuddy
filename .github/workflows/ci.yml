@@ -39,7 +39,7 @@ jobs:
       - run: pnpm check:host-production-import-boundary
       - run: pnpm typecheck
       - run: node tools/check-publint.mjs
-      - run: pnpm check:clones
+      - run: pnpm report:clones
       # This builds only the browser's contributor-quality bundle; ordinary CI
       # has no authority to assemble a Host production generation.
       - run: pnpm --filter @gamebuddy/dialogue-web build

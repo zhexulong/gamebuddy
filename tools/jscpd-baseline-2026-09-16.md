@@ -1,13 +1,19 @@
 # jscpd clone baseline (2026-09-16)
 
-This is the initial report-only baseline for 110 Task 3. It is informational: no duplication threshold is configured, and the `check:clones` script is not a quality gate.
+This is the initial report-only baseline for 110 Task 3. It is informational: no duplication threshold is configured, and the `report:clones` script is not a quality gate.
+
+> **2026-09-25 note**: this script was renamed from `check:clones` to `report:clones`. The old name
+> implied a gate that could fail, but `jscpd.json` sets `exitCode: 0` so it never could. The rename
+> makes the report-only nature explicit. The script also had a stale `voice-gateway/src` scan path
+> (Voice moved to the `vendor/pi-koe` submodule) which made `jscpd` exit non-zero with
+> `path does not exist`; that path was removed.
 
 ## Tool and invocation
 
 - jscpd version: `5.2.1` (root devDependency).
-- Command: `pnpm check:clones` (`jscpd --config jscpd.json`).
+- Command: `pnpm report:clones` (`jscpd --config jscpd.json`).
 - Configuration: `jscpd.json`; `minTokens: 50`, `minLines: 5`, `blame: false`, `exitCode: 0`.
-- Report scope: `host/src`, `dialogue-web/src`, `voice-gateway/src`, `packages`, and root `tools` modules filtered to JavaScript/TypeScript. `tools/lib/**` is ignored because the requested `tools/*.mjs` scope is root-level only.
+- Report scope: `host/src`, `dialogue-web/src`, `packages`, and root `tools` modules filtered to JavaScript/TypeScript. `tools/lib/**` is ignored because the requested `tools/*.mjs` scope is root-level only. (The former `voice-gateway/src` entry was removed on 2026-09-25 — Voice is now the `vendor/pi-koe` submodule and no longer has an in-repo `src`.)
 - Ignored paths include `vendor`, `ref`, `tmp`, `.worktrees`, `dist*`, test files, `node_modules`, `.commit-validation`, and `tools/lib`.
 
 ## Baseline totals

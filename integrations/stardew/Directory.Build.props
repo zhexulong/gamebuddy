@@ -1,0 +1,31 @@
+<Project>
+
+  <!--
+    Shared .NET analysis baseline for the Stardew integration.
+
+    Every csproj under integrations/stardew/ already sets
+    TreatWarningsAsErrors=true, so this file deliberately does NOT set it:
+    that priority belongs to each project. What this file fixes is the
+    drift in *which analyzer level* each project uses - three of the ten
+    csproj set AnalysisLevel themselves and seven did not, which means a
+    newly added project silently lands outside analysis coverage.
+
+    These two properties are the official .NET SDK mechanism for keeping
+    analyzer configuration consistent across a solution without repeating
+    it in every csproj.
+
+    Not set here on purpose:
+      - TreatWarningsAsErrors / CodeAnalysisTreatWarningsAsErrors:
+        each project owns its warning policy; enabling it centrally would
+        change seven projects at once.
+      - Any third-party analyzer package (SonarAnalyzer, StyleCop,
+        Meziantou, Roslynator): the SDK's built-in NetAnalyzers are not
+        yet used to their full extent, and analyzer NuGet packages add
+        restore time and version-conflict surface for no current benefit.
+  -->
+  <PropertyGroup>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+</Project>
