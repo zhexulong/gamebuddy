@@ -2174,22 +2174,6 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         if (relationship.Points != 0 || relationship.TalkedToToday || relationship.GiftsToday != 0 || relationship.GiftsThisWeek != 0)
             throw new InvalidOperationException("fixture_native_local_jodi_harvest_relationship_invalid");
 
-        // Place the villager FIRST, while the ground is still empty. The growth
-        // commands below spread dirt and seeds across the whole farm, after which
-        // a free-tile search would find nothing. Radius 2 and the placement check
-        // mirror the live-verified interact-npc-with-item fixture exactly.
-        Vector2? npcTile = FindNativeLocalFarmFixtureTile(farm, arrival, 2, requireEmptyObjectTile: true);
-        if (npcTile is null)
-            throw new InvalidOperationException("fixture_native_local_jodi_harvest_npc_placement_missing");
-        string npcLocationBefore = npc.currentLocation?.NameOrUniqueName ?? "none";
-        Vector2 npcTileBefore = npc.Tile;
-        // Unconditional warp, exactly as the live-verified interact fixture does: a
-        // villager already standing on the Farm must still be moved to the chosen
-        // tile, so guarding on `currentLocation != farm` would leave her elsewhere.
-        Game1.warpCharacter(npc, farm, npcTile.Value);
-        if (npc.currentLocation != farm || npc.Tile != npcTile.Value)
-            throw new InvalidOperationException($"fixture_native_local_jodi_harvest_npc_placement_validation_failed:expected={(int)npcTile.Value.X},{(int)npcTile.Value.Y};before_location={npcLocationBefore};before_tile={(int)npcTileBefore.X},{(int)npcTileBefore.Y};after_location={npc.currentLocation?.NameOrUniqueName ?? "none"};after_tile={(int)npc.Tile.X},{(int)npc.Tile.Y}");
-
         // Target-version commands grow the ready ordinary cauliflower, exactly as the
         // harvest fixture does (the growth duration is scenario setup, not an Agent
         // wait); production alone harvests it. Cauliflower Seeds are (O)474 and the
@@ -2205,6 +2189,29 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 throw new InvalidOperationException("fixture_native_local_jodi_harvest_setup_unavailable");
         }
         finally { Game1.currentLocation = previousLocation; }
+
+        // Place the villager LAST, after every debug mutation. GrowCrops can update
+        // NPC schedules and silently relocate her, so warping before it is not
+        // durable; the warp is unconditional (a villager already on the Farm must
+        // still move to the chosen tile) exactly as the live-verified interact
+        // fixture does, and it is immediately validated.
+        Vector2? npcTile = FindNativeLocalFarmFixtureTile(farm, arrival, 2, requireEmptyObjectTile: true);
+        if (npcTile is null)
+            throw new InvalidOperationException("fixture_native_local_jodi_harvest_npc_placement_missing");
+        string npcLocationBefore = npc.currentLocation?.NameOrUniqueName ?? "none";
+        Vector2 npcTileBefore = npc.Tile;
+        Game1.warpCharacter(npc, farm, npcTile.Value);
+        if (npc.currentLocation != farm || npc.Tile != npcTile.Value)
+            throw new InvalidOperationException($"fixture_native_local_jodi_harvest_npc_placement_validation_failed:expected={(int)npcTile.Value.X},{(int)npcTile.Value.Y};before_location={npcLocationBefore};before_tile={(int)npcTileBefore.X},{(int)npcTileBefore.Y};after_location={npc.currentLocation?.NameOrUniqueName ?? "none"};after_tile={(int)npc.Tile.X},{(int)npc.Tile.Y}");
+
+        // The declared Given is "one naturally-loaded villager standing on a
+        // reachable Farm tile". Her daily schedule would otherwise walk her home
+        // within the first game hours, long before an Agent-driven walk reaches
+        // her; pinning her to the fixture tile is part of that Given, not a
+        // production shortcut. The interact-npc smoke never hits this because it
+        // completes in seconds; the Agent ladder spans in-game hours.
+        npc.followSchedule = false;
+        npc.ignoreScheduleToday = true;
 
         // Crop.indexOfHarvest stores the UNQUALIFIED id ("190"); the qualified
         // "(O)190" only exists after ItemRegistry.Create, exactly as production
