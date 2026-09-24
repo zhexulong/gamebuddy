@@ -25,7 +25,13 @@ export async function runPlantSaplingSmoke(
   try {
     const before = await observeFresh(client, { actionable: true });
     assertExactCapabilities(before, EXPECTED_CAPABILITIES);
-    const target = chooseFirstSaplingTarget(before);
+    // The fixture guarantees exactly one legally plantable tile with a standable
+    // neighbour and warps the player onto that neighbour. Discovery scans a wider
+    // radius, so select the target the player can actually act on instead of the
+    // first one the snapshot happens to list: the native admission requires
+    // Chebyshev <= 1 and nothing here may walk (move_to_tile is not a capability
+    // of this fixture).
+    const target = chooseAdjacentSaplingTarget(before);
     const requestId = `native_local_plant-sapling_${Date.now()}`;
     const accepted = await executeFresh(client, {
       requestId,
@@ -80,10 +86,10 @@ export async function runPlantSaplingSmoke(
 }
 
 
-function chooseFirstSaplingTarget(snapshot) {
+function chooseAdjacentSaplingTarget(snapshot) {
   const targets = snapshot.treeSaplingTargets ?? [];
   if (!Array.isArray(targets) || targets.length === 0) throw new Error("plant_sapling_target_count_expected_at_least_1_got_0");
-  const target = targets.find(
+  const wellFormed = targets.filter(
     (entry) =>
       entry?.targetId &&
       Number.isInteger(entry.x) &&
@@ -92,8 +98,12 @@ function chooseFirstSaplingTarget(snapshot) {
       typeof entry.qualifiedItemId === "string" &&
       entry.qualifiedItemId.length > 0,
   );
-  if (!target) throw new Error("plant_sapling_target_malformed");
-  return target;
+  if (wellFormed.length === 0) throw new Error("plant_sapling_target_malformed");
+  const adjacent = wellFormed.filter(
+    (entry) => Math.max(Math.abs(entry.x - snapshot.tile.x), Math.abs(entry.y - snapshot.tile.y)) <= 1,
+  );
+  if (adjacent.length === 0) throw new Error("plant_sapling_no_adjacent_target");
+  return adjacent[0];
 }
 
 function parseStrictEvidence(evidence) {
