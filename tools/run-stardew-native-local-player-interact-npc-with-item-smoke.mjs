@@ -14,6 +14,8 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 const ACTION = "interact_npc_with_item";
 const SCENARIO = "native_interact_npc_with_item_v1";
 const GIFT_ITEM_ID = "(O)190";
+const DELIVERY_QUEST_NUMBER = 1;
+const DELIVERY_FRIENDSHIP_AMOUNT = 255;
 const EXPECTED_CAPABILITIES = [
   "cancel_active_execution",
   "inspect_self",
@@ -22,7 +24,15 @@ const EXPECTED_CAPABILITIES = [
   ACTION,
 ];
 
-/** Execute the interact_npc_with_item gift contract against an already-connected bridge session. */
+/**
+ * Execute the interact_npc_with_item contract against an already-connected
+ * bridge session.
+ *
+ * The fixture's declared Given includes one active native ItemDeliveryQuest
+ * binding Jodi to the carried item, and the native ingress offers the item to
+ * pending delivery quests before any gift handling. The successful terminal is
+ * therefore the delivery (quest_item_delivered), not the ordinary gift path.
+ */
 export async function runInteractNpcWithItemSmoke(
   client,
   receipts,
@@ -40,17 +50,17 @@ export async function runInteractNpcWithItemSmoke(
   try {
     let snapshot = await freshActionableSnapshot(client, undefined, stabilizeTimeoutMs);
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
-    if (snapshot.location !== "FarmHouse") throw new Error("npc_gift_route_must_start_at_farmhouse");
+    if (snapshot.location !== "FarmHouse") throw new Error("npc_offer_route_must_start_at_farmhouse");
     snapshot = await travelFreshHop(client, receipts, trace, snapshot, "FarmHouse", "Farm", "farmhouse_to_farm", stabilizeTimeoutMs, travelTimeoutMs);
     let target = chooseOnlyNpcTarget(snapshot);
     if (!adjacent(snapshot.tile, target)) {
       snapshot = await moveToLiveTarget(client, receipts, trace, target, "move_to_npc_gift_fixture", stabilizeTimeoutMs, moveTimeoutMs);
       target = chooseOnlyNpcTarget(snapshot);
     }
-    if (!adjacent(snapshot.tile, target)) throw new Error("npc_gift_fixture_target_unreachable");
+    if (!adjacent(snapshot.tile, target)) throw new Error("npc_offer_fixture_target_unreachable");
     const slot = chooseGiftSlot(snapshot);
 
-    const requestId = `native_local_npc_gift_${Date.now()}`;
+    const requestId = `native_local_npc_offer_${Date.now()}`;
     const accepted = await executeFresh(client, {
       requestId,
       idempotencyKey: `${requestId}_idem`,
@@ -69,9 +79,9 @@ export async function runInteractNpcWithItemSmoke(
 
     const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
     if (terminal.executionId !== accepted.executionId || terminal.requestId !== requestId)
-      throw new Error("npc_gift_terminal_identity_mismatch");
-    if (terminal.state !== "succeeded" || terminal.reasonCode !== "gift_given")
-      throw new Error(`npc_gift_failed:${terminal.state}:${terminal.reasonCode}`);
+      throw new Error("npc_offer_terminal_identity_mismatch");
+    if (terminal.state !== "succeeded" || terminal.reasonCode !== "quest_item_delivered")
+      throw new Error(`npc_offer_failed:${terminal.state}:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
     const after = await waitForFreshSnapshot(client, {
       minRevision: terminal.revision,
@@ -79,19 +89,33 @@ export async function runInteractNpcWithItemSmoke(
       requireActionable: true,
     });
     assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    // questComplete keeps a rewarded quest in the log and removes an unrewarded
+    // one (Quest.decompiled.cs:622-629), so the completed-entry delta follows the
+    // receipt's stays-in-log report while the quest's own completed flag is the
+    // completion proof. The fixture quest is unrewarded and is removed.
+    const staysInLog = evidence.quest_stays_in_log === "true";
+    const completedEntryDeltaOk =
+      Number(evidence.completed_quests_after) === Number(evidence.completed_quests_before) + (staysInLog ? 1 : 0);
     const passed =
       evidence.target === target.targetId &&
       evidence.item === GIFT_ITEM_ID &&
+      evidence.quest_target === "Jodi" &&
+      evidence.quest_item === GIFT_ITEM_ID &&
+      evidence.quest_number === String(DELIVERY_QUEST_NUMBER) &&
+      evidence.quest_daily === "false" &&
+      evidence.quest_completed_before === "false" &&
+      evidence.quest_completed_after === "true" &&
+      evidence.friendship_amount === String(DELIVERY_FRIENDSHIP_AMOUNT) &&
+      completedEntryDeltaOk &&
+      Number(evidence.stack_after) === Number(evidence.stack_before) - DELIVERY_QUEST_NUMBER &&
+      Number(evidence.points_after) === Number(evidence.points_before) + DELIVERY_FRIENDSHIP_AMOUNT &&
       evidence.showed_response === "false" &&
       evidence.menu_open_after === "false" &&
-      evidence.dialogue_open_after === "false" &&
-      evidence.gift_recorded === "true" &&
-      Number(evidence.stack_after) === Number(evidence.stack_before) - 1 &&
-      Number(evidence.gifts_today_after) === Number(evidence.gifts_today_before) + 1;
+      evidence.dialogue_open_after === "false";
     return {
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
-      reasonCode: passed ? "gift_given" : "npc_gift_postcondition_mismatch",
+      reasonCode: passed ? "quest_item_delivered" : "npc_offer_postcondition_mismatch",
       target: { targetId: target.targetId, x: target.x, y: target.y, npcName: target.npcName, slot },
       receipt: summarizeReceipt(terminal),
       evidence,
@@ -167,7 +191,7 @@ async function freshActionableSnapshot(client, seed, stabilizeTimeoutMs) {
   // native-local runners.
   const snapshot = await waitForActionable(client, seed ?? client.state?.snapshot, stabilizeTimeoutMs);
   if (!Array.isArray(snapshot.warps) || !Array.isArray(snapshot.npcRelationshipTargets))
-    throw new Error("native_local_npc_gift_snapshot_invalid");
+    throw new Error("native_local_npc_offer_snapshot_invalid");
   return snapshot;
 }
 
@@ -241,16 +265,16 @@ function validNpcTargets(snapshot) {
 function chooseOnlyNpcTarget(snapshot) {
   const targets = validNpcTargets(snapshot);
   if (targets.length !== 1)
-    throw new Error(targets.length === 0 ? "no_fresh_npc_gift_target" : "ambiguous_fresh_npc_gift_targets");
+    throw new Error(targets.length === 0 ? "no_fresh_npc_offer_target" : "ambiguous_fresh_npc_offer_targets");
   const target = targets[0];
   if (target.npcName !== "Jodi" || target.giftsToday !== 0 || target.giftsThisWeek !== 0)
-    throw new Error("npc_gift_fixture_starting_state_mismatch");
+    throw new Error("npc_offer_fixture_starting_state_mismatch");
   return target;
 }
 
 function chooseGiftSlot(snapshot) {
   const matches = (snapshot.inventoryItemFacts ?? []).filter((fact) => fact?.qualifiedItemId === GIFT_ITEM_ID && fact.stack >= 1);
-  if (matches.length !== 1) throw new Error(`npc_gift_item_slot_expected_1_got_${matches.length}`);
+  if (matches.length !== 1) throw new Error(`npc_offer_item_slot_expected_1_got_${matches.length}`);
   return matches[0].slot;
 }
 

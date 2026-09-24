@@ -437,8 +437,49 @@ test("native-local crop-research fixture preps the Jodi's-Request start state on
   await restoreNativeLocalPlayerFixture(options);
 });
 
-test("native-local machine-load fixture supplies only an idle Keg and exact Coffee Bean stack", async (t) => {
-  const options = { ...(await createFixture(t, "machine-load")), action: "machine_load" };
+test("native-local jodi-harvest-deliver fixture supplies a mature crop and a reachable villager only", async (t) => {
+  const options = { ...(await createFixture(t, "jodi-harvest-deliver")), action: "jodi_harvest_deliver" };
+  await prepareNativeLocalPlayerFixture(options);
+  const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
+  // The Agent must harvest a real crop and then offer it; both execution actions
+  // plus navigation and the read-only scene observation are enabled together.
+  assert.deepEqual(configured.EnabledActions, [
+    "move_to_tile",
+    "travel",
+    "harvest_crop",
+    "interact_npc_with_item",
+    "observe_scene",
+  ]);
+  assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_jodi_harvest_deliver_v1");
+  const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
+  const branchStart = entry.indexOf('if (fixture.FixtureScenario == "native_jodi_harvest_deliver_v1")');
+  assert.ok(branchStart >= 0, "ModEntry must own the jodi-harvest-deliver fixture branch");
+  const branch = entry.slice(branchStart, entry.indexOf('if (fixture.FixtureScenario == "native_pickup_forage_v1")', branchStart));
+  assert.match(branch, /ConfigureNativeLocalJodiHarvestDeliverFixture\(player, farm\)/);
+  // The branch must delegate to the helper and return before any other scenario runs.
+  assert.match(branch, /return;/);
+  assert.doesNotMatch(branch, /RequestLocalHarvestCrop|RequestLocalInteractNpcWithItem|checkAction|performUseAction|questComplete|receiveGift|PublishReceipt/);
+  const setupStart = entry.indexOf("private static void ConfigureNativeLocalJodiHarvestDeliverFixture");
+  assert.ok(setupStart >= 0, "ModEntry must own the jodi-harvest-deliver helper");
+  const setup = entry.slice(setupStart, entry.indexOf("private void InitializeNativeLocalNpcRelationshipFixture", setupStart));
+  // The helper establishes exactly two Given facts: a mature ordinary crop (grown
+  // by the target-version debug command, since 12 growth days are scenario setup
+  // rather than an Agent wait) and a reachable villager. It must never harvest,
+  // offer, complete a quest or reward anything itself.
+  assert.match(setup, /const string npcName = "Jodi"/);
+  assert.match(setup, /const string desiredHarvestId = "\(O\)190"/);
+  assert.match(setup, /parseDebugInput\("SpreadSeeds 472", null\)/);
+  assert.match(setup, /parseDebugInput\("GrowCrops 6", null\)/);
+  assert.match(setup, /Game1\.warpCharacter\(npc, farm, npcTile\.Value\)/);
+  assert.match(setup, /relationship\.Clear\(\)/);
+  assert.doesNotMatch(
+    setup,
+    /RequestLocalHarvestCrop|RequestLocalInteractNpcWithItem|checkAction|\.performUseAction|questComplete|receiveGift|PublishReceipt/,
+  );
+  await restoreNativeLocalPlayerFixture(options);
+});
+
+test("native-local machine-load fixture supplies only an idle Keg and exact Coffee Bean stack", async (t) => {  const options = { ...(await createFixture(t, "machine-load")), action: "machine_load" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
   assert.deepEqual(configured.EnabledActions, ["machine_load"]);
@@ -1159,13 +1200,30 @@ test("native-local interact-npc-with-item fixture establishes only an active del
   assert.doesNotMatch(setup, /RequestLocalInteractNpcWithItem|checkAction|questComplete|changeFriendship|PublishReceipt/);
 
   const executions = await readExecutionManagerSources();
-  // The executor must route the interaction through the native ingress and
-  // discriminate a quest delivery from an ordinary recorded gift.
-  assert.match(executions, /location\.checkAction\(new xTile\.Dimensions\.Location\(targetX, targetY\), Game1\.viewport, Game1\.player\)/);
+  // The executor must discriminate a quest delivery from an ordinary recorded
+  // gift and expose both terminals plus the delivery bookkeeping.
   assert.match(executions, /"quest_item_delivered"/);
   assert.match(executions, /"gift_given"/);
   assert.match(executions, /completedQuestsBefore/);
   assert.match(executions, /"interact_npc_with_item"/);
+
+  // The offer action itself must reproduce the native quest hook and keep the
+  // delivery body windowless. `location.checkAction` is deliberately NOT the
+  // route for this action: its non-probe branch mounts a DialogueBox
+  // (ItemDeliveryQuest.cs:505-506) and can open shop menus, which a headless
+  // companion can never close. The action instead settles the delivery from the
+  // quest's own side-effect-free `probe: true` decision and reproduces the
+  // non-probe mutations without either UI line.
+  const actionStart = executions.indexOf("public LocalExecutionReceipt RequestLocalInteractNpcWithItem");
+  assert.ok(actionStart >= 0, "the offer action must live in the execution-manager sources");
+  const action = executions.slice(actionStart, executions.indexOf("private static string GiftEvidencePrefix", actionStart));
+  assert.match(action, /\.OnItemOfferedToNpc\(npc, offered, probe: true\)/);
+  assert.match(action, /quest_item_delivered/);
+  assert.match(action, /quest_quantity_mismatch/);
+  assert.match(action, /quest_delivery_postcondition_unavailable/);
+  assert.match(action, /gift_given/);
+  assert.match(action, /Game1\.dialogueUp/);
+  assert.doesNotMatch(action, /Game1\.(?:draw|Draw)Dialogue\(|createQuestionDialogue\(|new DialogueBox\(/);
   await restoreNativeLocalPlayerFixture(options);
 });
 
