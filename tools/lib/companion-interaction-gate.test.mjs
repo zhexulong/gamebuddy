@@ -41,3 +41,22 @@ test("rejects empty text", () => {
   assert.equal(result.passed, false);
   assert.deepEqual(result.reasons, ["empty"]);
 });
+test("rejects narrating an NPC reaction the receipts never recorded", () => {
+  // The live trace's summary claimed "Jodi beamed and said dinner was saved"
+  // while the offer receipt recorded showed_response=false: no dialogue happened.
+  // Inventing a world reaction is a worse interaction failure than being long.
+  const fabricated = "（开心）搞定了！花椰菜交到乔迪手里了，她一看到就乐了，还念叨着晚饭有救了。接下来想干嘛？";
+  const withoutEvidence = assessCompanionInteraction(fabricated, []);
+  assert.equal(withoutEvidence.passed, false);
+  assert.ok(withoutEvidence.reasons.includes("unobserved_event"));
+  // The same line is acceptable once the game actually showed the reaction.
+  const withEvidence = assessCompanionInteraction(fabricated, ["npc_dialogue"]);
+  assert.equal(withEvidence.passed, true);
+});
+
+test("does not flag a player-directed line that mentions no NPC reaction", () => {
+  const line = "（满意）花椰菜收好了，你想现在送去给乔迪，还是先回屋歇会儿？";
+  const result = assessCompanionInteraction(line, []);
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.reasons, []);
+});

@@ -391,12 +391,18 @@ try {
   const offerReceipt = receipts.find((receipt) => receipt.reasonCode === "gift_given" || receipt.reasonCode === "quest_item_delivered");
   const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const contextPassed = contextAssembled && worldBookAssembled;
-  // Companion-quality gate (ladder-3): the spoken closing line must be game-appropriate —
-  // short and to the player, not a step-by-step recital of what the companion just did.
-  // The persona already says "不背说明书、不复述工具结果"; this makes that observable.
+  // Companion-quality gate (ladder-3/4): the spoken closing line must be
+  // game-appropriate — short and to the player, not a step-by-step recital of
+  // what the companion just did, and not a claim about a world reaction the
+  // receipts never recorded. The offer receipt carries showed_response, so an
+  // NPC reaction is only "observed" when the game actually showed it.
+  const observedEvents = [];
+  if (offerReceipt?.evidence !== null && typeof offerReceipt?.evidence === "object" && offerReceipt.evidence.showed_response === true) {
+    observedEvents.push("npc_dialogue");
+  }
   const interactionAssessment =
     (LADDER === "3" || LADDER === "4") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
-      ? assessCompanionInteraction(presentedSummary)
+      ? assessCompanionInteraction(presentedSummary, observedEvents)
       : null;
   const interactionPassed = interactionAssessment === null || interactionAssessment.passed;
   // System-level RL signal: aggregate every rejected action into a small set of
