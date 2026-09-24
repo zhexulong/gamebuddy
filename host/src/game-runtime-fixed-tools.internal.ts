@@ -9,6 +9,8 @@ import {
 } from "./runtime-core.internal.js";
 import type { IntegrationActionPolicy } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
+import type { IdentityProfile } from "./identity-profile.js";
+import type { WorldBookBinding } from "./worldbook.js";
 
 /** Construction-only fixed Pi tools. This module is not exported by any barrel. */
 export async function createMaterializedGameCompanionRuntime(
@@ -22,6 +24,10 @@ export async function createMaterializedGameCompanionRuntime(
   options: Readonly<{
     fixedTools: readonly ToolDefinition[];
     resolvedPolicy: IntegrationActionPolicy;
+    /** Cross-surface BaseIdentityProfile plus reviewed persona, assembled by the Host; absent keeps the default. */
+    initialProfile?: IdentityProfile;
+    /** Host-owned reviewed WorldBook binding; absent keeps the default empty world book. */
+    worldBook?: WorldBookBinding;
   }>,
 ): Promise<RuntimeSession> {
   const actionExecutionOptions = attachment?.recoveryJournal === undefined
@@ -33,8 +39,8 @@ export async function createMaterializedGameCompanionRuntime(
       });
   return createRuntimeWithFixedToolsCore(
     identity, root, integration, attachment?.modelConfig, undefined, undefined,
-    attachment?.gameplaySubagentEnabled ?? false, undefined, gameSessionId,
-    undefined, "game", attachment?.disableMagicContextMemory === true
+    attachment?.gameplaySubagentEnabled ?? false, options.initialProfile, gameSessionId,
+    options.worldBook, "game", attachment?.disableMagicContextMemory === true
       ? Object.freeze({ loadExtension: false, memoryEnabled: false, historianEnabled: false })
       : undefined,
     undefined, gameOperationalGate,

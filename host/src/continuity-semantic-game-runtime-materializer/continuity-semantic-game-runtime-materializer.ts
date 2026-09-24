@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -48,6 +49,9 @@ import {
   type FarmhandPolicyIdentity,
 } from "../protocol.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
+import { resolveRuntimePaths } from "../runtime-identity.js";
+import { readIdentityProfile } from "../identity-profile.js";
+import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import {
   consumeGameVoicePresentationAttachment,
   type GameVoicePresentationAttachment,
@@ -316,6 +320,18 @@ export type HostGameRuntimeMaterializerOptions = Readonly<{
    * same line to TTS). A throwing listener never fails the presentation.
    */
   onCompanionTextPresented?: (text: string, locale: string) => void;
+  /**
+   * Cross-surface BaseIdentityProfile plus reviewed persona, assembled by the
+   * Host from the same canonical identity-profile source the Chat surface
+   * consumes. Absent keeps the default companion profile; the system never
+   * fabricates a persona for a Game call.
+   */
+  identityProfile?: import("./identity-profile.js").IdentityProfile;
+  /**
+   * Host-owned reviewed WorldBook binding. Absent keeps Game without a world
+   * book; the system never invents world lore for the Game surface.
+   */
+  worldBook?: import("./worldbook.js").WorldBookBinding;
 }>;
 
 export function createHostGameRuntimeMaterializer(
@@ -415,6 +431,8 @@ export function createHostGameRuntimeMaterializer(
                 queryExecutionReceipt: recovery.queryExecutionReceipt,
               }),
             }),
+            assembledProfile,
+            assembledWorldBook,
           );
         } catch (error) {
           await closeFixedTools();
@@ -694,6 +712,8 @@ async function createMaterializedGameRuntime(
   onCompanionTextPresented: ((text: string, locale: string) => void) | undefined,
   fixedTools: readonly ToolDefinition[],
   recoveryAttachment?: Pick<import("../runtime.js").GameCompanionRuntimeAttachment, "recoveryJournal" | "recoveryBinding" | "recoveryPort"> & Readonly<{ resolvedPolicy: IntegrationActionPolicy }>,
+  identityProfile?: import("./../identity-profile.js").IdentityProfile,
+  worldBook?: import("./../worldbook.js").WorldBookBinding,
 ): Promise<Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>> {
   const identity = Object.freeze({
     continuityId: principal.continuityId,
@@ -702,6 +722,30 @@ async function createMaterializedGameRuntime(
     saveId: world.saveId,
     worldId: world.worldId,
   });
+  // Game-surface persona/world-book assembly is Host-owned and reads the same
+  // canonical identity-profile and world-book files the Chat surface consumes,
+  // so an imported character card is present in Game without any caller (or
+  // live-run script) supplying it. Missing files keep the default profile and
+  // an empty Book; system assembly never fabricates content and never writes
+  // (only the runtime core creates the default profile when absent).
+  const runtimePaths = resolveRuntimePaths(identity, runtimeRoot);
+  let assembledProfile: import("./../identity-profile.js").IdentityProfile | undefined = identityProfile;
+  if (assembledProfile === undefined) {
+    try {
+      assembledProfile = await readIdentityProfile(runtimePaths.identityProfilePath);
+    } catch {
+      assembledProfile = undefined;
+    }
+  }
+  let assembledWorldBook: import("./../worldbook.js").WorldBookBinding | undefined = worldBook;
+  if (assembledWorldBook === undefined) {
+    try {
+      const book = await readWorldBook(join(runtimePaths.runtimeCwd, "worldbook.json"));
+      assembledWorldBook = Object.freeze({ metadata: worldBookMetadata(book), book });
+    } catch {
+      assembledWorldBook = undefined;
+    }
+  }
   const turnTracker = new GameTurnLineageTracker();
   const presentationLocale = companionLocale;
   const hostBindingFactory = (handle: Readonly<{ interruption: CompanionInterruption }>) => {
@@ -770,6 +814,8 @@ async function createMaterializedGameRuntime(
     Object.freeze({
       fixedTools,
       resolvedPolicy: recoveryAttachment?.resolvedPolicy ?? connection.module.parsePolicy(connection.module.defaultPolicy),
+      ...(assembledProfile === undefined ? {} : { initialProfile: assembledProfile }),
+      ...(assembledWorldBook === undefined ? {} : { worldBook: assembledWorldBook }),
     }),
   );
   return Object.freeze({ runtime, turnTracker });
