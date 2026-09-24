@@ -1,11 +1,15 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { LocalStardewBridgeClient } from "../host/dist-test/local-stardew-bridge.js";
 import { dehydrateCompanionSpeech } from "../host/dist-test/companion-speech-dehydration.js";
 import { LocalVoiceGatewayClient } from "../host/dist-test/voice-gateway-client.js";
+import {
+  launchVoiceGatewayChild,
+  pickVoiceGatewayPort,
+  resolveVoiceConfiguration,
+} from "./lib/voice-gateway-launch.mjs";
 import { STARDEW_GAME_INTEGRATION_ADAPTER, } from "../host/dist-test/stardew-game-integration-adapter.js";
 import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge, STARDEW_INTEGRATION_LAUNCHER } from "../host/dist-test/stardew-integration-launcher.js";
 import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
@@ -22,6 +26,13 @@ const configPath = process.env.GAMEBUDDY_STARDew_CONFIG ?? "D:/Steam/steamapps/c
 // locale — Agent session language, materializer companionLocale, fixture
 // ModConfig.PresentationLocale, and the live prompt — derives from it.
 const COMPANION_LOCALE = process.env.GAMEBUDDY_COMPANION_LOCALE === "en-US" ? "en-US" : "zh-CN";
+// The runtime root is a product configuration value, not a script invention:
+// the Game materializer assembles the companion persona and world book from the
+// same identity-profile/worldbook files the Chat surface consumes under this
+// root. GAMEBUDDY_RUNTIME_ROOT therefore points at the product data root; only
+// when an operator explicitly opts into a disposable root does the runner
+// create a temporary one (which then legitimately has no assembled persona).
+const configuredRuntimeRoot = process.env.GAMEBUDDY_RUNTIME_ROOT;
 // Ladder selector: "0" = A→B (inspect→load, Keg inside FarmHouse), "1" =
 // walk→look→do (navigate out of FarmHouse to the door-side Keg, then inspect
 // and load), "2" = ladder 1 + live voice: when the Mod returns the terminal
@@ -33,7 +44,11 @@ const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 const config = JSON.parse(await (await import("node:fs/promises")).readFile(configPath, "utf8"));
 const scope = Object.freeze({ integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId });
-const runContinuityId = `native-agent-${Date.now()}`;
+// The continuity identity is product configuration too: GAMEBUDDY_COMPANION_CONTINUITY_ID
+// joins the companion's existing (Chat-provisioned) continuity so the same
+// identity-profile/worldbook are assembled; absent falls back to a run-scoped id
+// for disposable-root runs that intentionally own no persisted persona.
+const runContinuityId = process.env.GAMEBUDDY_COMPANION_CONTINUITY_ID ?? `native-agent-${Date.now()}`;
 const identity = Object.freeze({ playerId: config.PlayerId, companionId: config.CompanionId, continuityId: runContinuityId, saveId: config.SaveId, worldId: config.WorldId });
 const deadline = Date.now() + 600_000;
 const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken, STARDEW_GAME_INTEGRATION_ADAPTER, undefined, "1.6.15");
@@ -51,6 +66,8 @@ let voiceChild = null;
 let voiceObservation = null;
 let voiceStarted = false;
 let presentedSummary = null;
+/** Exact configuration answer for voice in this run; `enabled:false` carries the reason. */
+let voiceConfiguration = null;
 const voiceObservationPromise = new Promise((resolvePromise) => {
   voice = resolvePromise;
 });
@@ -63,14 +80,22 @@ const onCompanionTextPresented = (text, locale) => {
   // must both speak the same clean dialogue — never read out `**` / `---` / emoji.
   const speakable = dehydrateCompanionSpeech(text);
   if (speakable.length === 0) return;
-  voiceStarted = true;
   presentedSummary = speakable;
   console.error("AGENT_SUMMARY", JSON.stringify({ text: presentedSummary, locale }));
   void (async () => {
     try {
-      // TTS lane adds a speech-only stripping pass: the chat box keeps emoji
-      // and list markers as flavor, but the MiMo synthesis lane must receive
-      // pure speakable sentences (emoji/list chars stall synthesis).
+      // Voice enablement is configuration. When the stored preference (or the
+      // product-injected gateway) says voice is off, the run records that answer
+      // and leaves the presentation/action evidence untouched — a disabled TTS
+      // configuration is not a gameplay failure.
+      const configuration = voiceConfiguration ?? await resolveVoiceConfiguration({ runtimeRoot, locale: COMPANION_LOCALE });
+      voiceConfiguration = configuration;
+      if (!configuration.enabled) {
+        console.error("VOICE_DISABLED", JSON.stringify({ reason: configuration.disabledReason }));
+        voice?.();
+        return;
+      }
+      voiceStarted = true;
       // Voice lane receives the dehydrated dialogue verbatim: MiMo performs
       // bracketed audio tags natively, emoji do not stall synthesis (probe:
       // short emoji text completes), and the frozen Voice contract is zero
@@ -91,9 +116,16 @@ client.onFact((fact) => {
     console.error("BRIDGE_FACT", JSON.stringify(factLog.at(-1)));
   }
   if (LADDER === "2" && fact.type === "execution_receipt" && fact.payload?.reasonCode === "machine_coffee_loaded" && !voiceStarted) {
-    voiceStarted = true;
     void (async () => {
       try {
+        const configuration = voiceConfiguration ?? await resolveVoiceConfiguration({ runtimeRoot, locale: COMPANION_LOCALE });
+        voiceConfiguration = configuration;
+        if (!configuration.enabled) {
+          console.error("VOICE_DISABLED", JSON.stringify({ reason: configuration.disabledReason }));
+          voice?.();
+          return;
+        }
+        voiceStarted = true;
         const { promiseVoiceObservation } = await startLadder2Voice();
         voiceObservation = await promiseVoiceObservation;
         voice?.();
@@ -107,155 +139,69 @@ client.onFact((fact) => {
 });
 
 /**
- * ladder 2: start the real Voice Gateway child on a fresh loopback port/token,
- * connect the Host v2 client, stream one companion line for the completed
- * coffee load, and resolve with the terminal playback observation. Env: the
- * runner reads MIMO_API_KEY from .env.local like the existing voice gates;
- * GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION=desktop-consent-v1 is the operator
- * consent contract the gateway checks before cloud TTS.
+ * ladder 2/3: stream one companion line through the configured Voice Gateway
+ * and resolve with its terminal playback observation. Voice enablement is
+ * configuration, not script content: the shared launcher attaches to a
+ * product-injected gateway or reads the stored player voice preference and
+ * reports the exact disabled reason. When voice is intentionally off the ladder
+ * still records that fact; it never invents a gateway configuration.
  */
-function voiceGatewayCandidates() {
-  const explicit = Number(process.env.GAMEBUDDY_VOICE_PORT ?? 0);
-  return explicit > 0
-    ? [explicit]
-    : [49_731, 49_732, 49_733, 49_734, 49_735];
-}
-/** Probe one loopback port by opening and closing a listener; rejects if used. */
-function tryBindProbe(port) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    void import("node:net").then((net) => {
-      const server = net.createServer();
-      server.once("error", rejectPromise);
-      server.listen(port, "127.0.0.1", () => {
-        server.close(() => resolvePromise());
-      });
-    }, rejectPromise);
-  });
-}
-/**
- * Spawn the Voice Gateway child with the exact minimal env contract, collect
- * its stdout/stderr for the "listening on" readiness signal, and return the
- * child handle.
- */
-function startVoiceGatewayChild(node, gatewayPath, port, token, mimoKey) {
-  const child = spawn(node, ["--use-env-proxy", gatewayPath], {
-    cwd: new URL("..", import.meta.url),
-    env: {
-      ...process.env,
-      MIMO_API_KEY: mimoKey,
-      GAMEBUDDY_VOICE_PORT: String(port),
-      GAMEBUDDY_VOICE_TOKEN: token,
-      GAMEBUDDY_WINDOWS_OUTPUT_DEVICE: process.env.GAMEBUDDY_WINDOWS_OUTPUT_DEVICE ?? "default",
-      GAMEBUDDY_MIMO_VOICE: process.env.GAMEBUDDY_MIMO_VOICE ?? "冰糖",
-      GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION: "desktop-consent-v1",
-    },
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  const startedOk = new Promise((resolvePromise) => {
-    const deadline = Date.now() + 20_000;
-    const poll = () => {
-      // The readiness signal is stdout "listening on". stderr may carry
-      // benign node warnings (e.g. MODULE_TYPELESS_PACKAGE_JSON) — it is
-      // diagnostic, never a failure signal by itself.
-      if (stdout.includes("listening on")) return resolvePromise(true);
-      if (child.exitCode !== null || child.signalCode !== null) return resolvePromise(false);
-      if (Date.now() > deadline) return resolvePromise(false);
-      setTimeout(poll, 50);
-    };
-    poll();
-  });
-  return Object.freeze({ child, startedOk, readStderr: () => stderr });
-}
-
 async function startLadder2Voice(speakerText = "咖啡豆已经放进桶里啦，大概两小时后酿好！") {
-  const node = process.execPath;
-  const gatewayPath = new URL("../vendor/pi-koe/dist/main.js", import.meta.url).pathname.replace(/^\//, process.platform === "win32" ? "" : "/");
-  const token = process.env.GAMEBUDDY_VOICE_TOKEN ?? randomToken();
-  let mimoKey = process.env.MIMO_API_KEY;
-  const envPath = new URL("../.env.local", import.meta.url);
-  try {
-    const localEnv = await (await import("node:fs/promises")).readFile(envPath, "utf8");
-    for (const line of localEnv.split(/\r?\n/)) {
-      const match = /^MIMO_API_KEY=(.+)$/.exec(line.trim());
-      if (match) mimoKey = match[1];
-    }
-  } catch {}
-  if (typeof mimoKey !== "string" || mimoKey.length < 16)
-    throw new Error("MIMO_API_KEY_required_for_ladder2_voice");
-
-  // Voice Gateway listens on a documented fixed port by default; an explicit
-  // env overrides it. Candidates avoid Windows reserved exclusion ranges and
-  // are probed until one is free.
-  let started = null;
-  let lastError = null;
-  for (const port of voiceGatewayCandidates()) {
-    try {
-      await tryBindProbe(port);
-    } catch (error) {
-      lastError = error;
-      continue;
-    }
-    try {
-      started = startVoiceGatewayChild(node, gatewayPath, port, token, mimoKey);
-      voiceChild = started.child;
-      const ok = await started.startedOk;
-      if (!ok) throw new Error(`voice_gateway_start_failed: ${started.readStderr().slice(0, 300)}`);
-      const voiceClient = await LocalVoiceGatewayClient.connect({ port, token });
-      // connect() only authenticates; capabilities are populated by an explicit
-      // health revalidation (the same boundary Chat mounting uses). Without it
-      // streamSpeechChunk fails with voice_gateway_unavailable.
-      const health = await voiceClient.health("companion.default");
-      if (!health.ready) {
-        voiceClient.close();
-        throw new Error("voice_gateway_not_ready");
-      }
-      const waitReady = new Promise((resolvePromise) => {
-        const pollReady = () => {
-          if (voiceClient.capabilities?.ready === true) return resolvePromise(true);
-          if (!voiceClient.connected) return resolvePromise(false);
-          setTimeout(pollReady, 100);
-        };
-        pollReady();
-      });
-      if (!(await waitReady)) {
-        voiceClient.close();
-        throw new Error("voice_gateway_not_ready");
-      }
-      const termination = new Promise((resolvePromise) => {
-        voiceClient.onPlaybackObservation((observation) => {
-          if (observation?.type === "playback_observation" && observation?.terminalStatus !== undefined)
-            resolvePromise(observation);
-        });
-      });
-      const sessionId = `ladder2_${Date.now()}_session`;
-      const speechJobId = `ladder2_${Date.now()}_${randomToken(12)}`;
-      // Real streaming: split the full line at sentence boundaries and push each
-      // chunk with an increasing chunkIndex; the final chunk marks isFinal.
-      // The gateway synthesizes incrementally (DELTA_TEXT_LIMIT=4000/chunk) so
-      // long summaries no longer hit a single-chunk synthesis stall.
-      const chunks = splitSpeakableSentenceChunks(speakerText);
-      const deadlineMs = Date.now() + 180_000;
-      for (let index = 0; index < chunks.length; index += 1) {
-        await voiceClient.streamSpeechChunk(sessionId, speechJobId, index, chunks[index], index === chunks.length - 1, deadlineMs, "companion.default");
-      }
-      const observation = await Promise.race([termination, new Promise((resolvePromise) => setTimeout(() => resolvePromise(null), 170_000))]);
-      voiceClient.close();
-      if (observation === null) throw new Error("voice_playback_observation_timeout");
-      return { promiseVoiceObservation: Promise.resolve(observation) };
-    } catch (error) {
-      lastError = error;
-      if (voiceChild !== null) { voiceChild.kill("SIGTERM"); voiceChild = null; }
-      continue;
-    }
+  // Voice is configuration-enabled, never hand-written here: the shared
+  // launcher reads the product-injected gateway (GAMEBUDDY_VOICE_PORT/TOKEN) or
+  // the stored player preference, and reports the exact disabled reason when
+  // voice is genuinely off. The runner only streams the line it was asked to.
+  const configuration = voiceConfiguration ?? await resolveVoiceConfiguration({ runtimeRoot, locale: COMPANION_LOCALE });
+  voiceConfiguration = configuration;
+  if (!configuration.enabled) throw new Error(`voice_disabled:${configuration.disabledReason}`);
+  const token = configuration.mode === "attached" ? configuration.token : randomToken();
+  const port = configuration.mode === "attached" ? configuration.port : await pickVoiceGatewayPort();
+  const started = configuration.mode === "attached"
+    ? null
+    : await launchVoiceGatewayChild(configuration, { port, token });
+  if (started !== null) voiceChild = started.child;
+  const voiceClient = await LocalVoiceGatewayClient.connect({ port, token });
+  // connect() only authenticates; capabilities are populated by an explicit
+  // health revalidation (the same boundary Chat mounting uses). Without it
+  // streamSpeechChunk fails with voice_gateway_unavailable.
+  const health = await voiceClient.health("companion.default");
+  if (!health.ready) {
+    voiceClient.close();
+    throw new Error("voice_gateway_not_ready");
   }
-  throw lastError ?? new Error("voice_gateway_start_failed");
+  const waitReady = new Promise((resolvePromise) => {
+    const pollReady = () => {
+      if (voiceClient.capabilities?.ready === true) return resolvePromise(true);
+      if (!voiceClient.connected) return resolvePromise(false);
+      setTimeout(pollReady, 100);
+    };
+    pollReady();
+  });
+  if (!(await waitReady)) {
+    voiceClient.close();
+    throw new Error("voice_gateway_not_ready");
+  }
+  const termination = new Promise((resolvePromise) => {
+    voiceClient.onPlaybackObservation((observation) => {
+      if (observation?.type === "playback_observation" && observation?.terminalStatus !== undefined)
+        resolvePromise(observation);
+    });
+  });
+  const sessionId = `ladder2_${Date.now()}_session`;
+  const speechJobId = `ladder2_${Date.now()}_${randomToken(12)}`;
+  // Real streaming: split the full line at sentence boundaries and push each
+  // chunk with an increasing chunkIndex; the final chunk marks isFinal.
+  // The gateway synthesizes incrementally (DELTA_TEXT_LIMIT=4000/chunk) so
+  // long summaries no longer hit a single-chunk synthesis stall.
+  const chunks = splitSpeakableSentenceChunks(speakerText);
+  const deadlineMs = Date.now() + 180_000;
+  for (let index = 0; index < chunks.length; index += 1) {
+    await voiceClient.streamSpeechChunk(sessionId, speechJobId, index, chunks[index], index === chunks.length - 1, deadlineMs, "companion.default");
+  }
+  const observation = await Promise.race([termination, new Promise((resolvePromise) => setTimeout(() => resolvePromise(null), 170_000))]);
+  voiceClient.close();
+  if (observation === null) throw new Error("voice_playback_observation_timeout");
+  return { promiseVoiceObservation: Promise.resolve(observation) };
 }
 function randomToken(len = 32) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -284,11 +230,22 @@ client.programSubmit = async (program) => {
   return submit;
 };
 const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, { module: STARDEW_GAME_INTEGRATION_ADAPTER });
-const root = await mkdtemp(join(tmpdir(), "gamebuddy-agent-ab-"));
-const runtimeRoot = join(root, "runtime");
+// The runtime root comes from product configuration when supplied; a disposable
+// temporary root is the explicit operator opt-in (GAMEBUDDY_DISPOSABLE_RUNTIME_ROOT=1).
+const usesDisposableRoot = configuredRuntimeRoot === undefined || configuredRuntimeRoot.length === 0;
+const root = usesDisposableRoot ? await mkdtemp(join(tmpdir(), "gamebuddy-agent-ab-")) : configuredRuntimeRoot;
+const runtimeRoot = usesDisposableRoot ? join(root, "runtime") : root;
 await mkdir(join(runtimeRoot, "settings"), { recursive: true });
-await writeFile(join(runtimeRoot, "settings", "model-profiles.json"), JSON.stringify({ schemaVersion: 1, chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" }, game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" } }));
+// The model profile is configuration, not a script constant: an existing
+// product profile is reused as-is; only a disposable root gets the local
+// development profile so the Agent turn can run at all.
+if (usesDisposableRoot)
+  await writeFile(join(runtimeRoot, "settings", "model-profiles.json"), JSON.stringify({ schemaVersion: 1, chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" }, game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" } }));
 const manifestPath = join(root, "manifest.json");
+// The Game principal is product configuration: with a configured runtime root the
+// runner joins the companion's existing continuity (so the persona/world book
+// assembled under that identity are the ones under test). Only a disposable root
+// falls back to a run-scoped continuity id.
 await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot, principal: { continuityId: identity.continuityId, companionId: identity.companionId, playerId: identity.playerId }, bootstrapOperationId: `agent-ab-${Date.now()}`, authorityGeneration: 1 }), "utf8");
 const runtimePaths = resolveRuntimePaths(identity, runtimeRoot);
 await mkdir(runtimePaths.agentDir, { recursive: true });
@@ -344,8 +301,18 @@ try {
     }
     if (voiceObservation !== null && voiceObservation.terminalStatus === "completed")
       voiceResult = Object.freeze({ state: "completed", terminalStatus: voiceObservation.terminalStatus });
-    else
+    else if (voiceStarted)
       voiceResult = Object.freeze({ state: "blocked", detail: voiceObservation ?? "voice_not_streamed" });
+    else
+      // Voice never started: report the configuration answer verbatim instead
+      // of a vague streaming failure, so the gate says why TTS is off.
+      voiceResult = Object.freeze({
+        state: "disabled",
+        disabledReason:
+          voiceConfiguration !== null && voiceConfiguration.enabled === false
+            ? voiceConfiguration.disabledReason
+            : (voiceObservation?.error ?? "voice_not_requested"),
+      });
   }
   // Ladder acceptance: the carrier verifies the walk→look→do receipts actually
   // landed over the live bridge, not merely that a program reached a terminal.
@@ -366,7 +333,7 @@ try {
   const programSucceeded = status?.snapshot?.state === "succeeded";
   const ladderOnePassed = LADDER === "1" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined : true;
   const ladderZeroPassed = LADDER === "0" ? inspectReceipt !== undefined && loadReceipt !== undefined && programSucceeded : true;
-  const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && voiceResult?.state === "completed" : true;
+  const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && (voiceResult?.state === "completed" || voiceResult?.state === "disabled") : true;
   const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const result = {
     state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed ? "passed" : "blocked",
