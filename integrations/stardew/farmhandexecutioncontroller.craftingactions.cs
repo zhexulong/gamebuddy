@@ -89,13 +89,10 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         int producedStack = crafted.Stack;
         int craftCountBefore = Game1.player.craftingRecipes[expectedRecipeId];
-        int producedCountBefore = CountCraftingIngredient(Game1.player, crafted.QualifiedItemId);
         int debrisBefore = CountCraftOutputDebris(location, crafted.QualifiedItemId);
-        // The product id can itself match an ingredient key (category or wild-seed
-        // rules), in which case consuming the recipe also removes some of it.
-        int outputConsumedAsIngredient = recipe.recipeList
-            .Where(pair => CraftingRecipe.ItemMatchesForCrafting(crafted, pair.Key))
-            .Sum(pair => pair.Value);
+        // Every ingredient measurement is taken from the live backpack with the
+        // native CraftingRecipe.ItemMatchesForCrafting rule, so category numbers
+        // and the wild-seed special rule count exactly as the native code does.
         Dictionary<string, int> ingredientsBefore = recipe.recipeList.Keys
             .ToDictionary(key => key, key => CountCraftingIngredient(Game1.player, key), StringComparer.Ordinal);
         // Recorded, never a gate: rejecting on a full inventory would make the
@@ -106,33 +103,38 @@ internal sealed partial class ExecutionManager
         bool menuBefore = Game1.activeClickableMenu is not null;
 
         recipe.consumeIngredients(null);
+        // Measured after the native consumption and before the product is added.
+        // A recipe may list its own product as an ingredient (the wild-seed
+        // recipes do), and the product may also match an ingredient key through
+        // the category/special rules; both make a post-add count ambiguous.
+        Dictionary<string, int> ingredientsAfter = recipe.recipeList.Keys
+            .ToDictionary(key => key, key => CountCraftingIngredient(Game1.player, key), StringComparer.Ordinal);
+        int producedCountBeforeAdd = CountCraftingIngredient(Game1.player, crafted.QualifiedItemId);
+
         Item? remainder = Game1.player.addItemToInventory(crafted);
         int remainingStack = needsInventorySpace ? remainder?.Stack ?? 0 : 0;
-        int craftedIntoInventoryStack = needsInventorySpace ? producedStack - remainingStack : 0;
+        int craftedIntoInventoryStack = needsInventorySpace ? producedStack - remainingStack : producedStack;
         if (remainder is not null && needsInventorySpace)
             Game1.createItemDebris(remainder, Game1.player.getStandingPosition(), Game1.player.FacingDirection);
         if (Game1.player.craftingRecipes.ContainsKey(recipe.name))
             Game1.player.craftingRecipes[recipe.name] += recipe.numberProducedPerCraft;
 
         int craftCountAfter = Game1.player.craftingRecipes.TryGetValue(expectedRecipeId, out int craftedCountAfter) ? craftedCountAfter : 0;
-        int producedCountAfter = CountCraftingIngredient(Game1.player, crafted.QualifiedItemId);
+        int producedCountAfterAdd = CountCraftingIngredient(Game1.player, crafted.QualifiedItemId);
         int debrisAfter = CountCraftOutputDebris(location, crafted.QualifiedItemId);
         bool menuAfter = Game1.activeClickableMenu is not null;
 
-        bool materialsConsumedExactly = true;
-        foreach (KeyValuePair<string, int> pair in recipe.recipeList)
-        {
-            if (CountCraftingIngredient(Game1.player, pair.Key) != ingredientsBefore[pair.Key] - pair.Value)
-                materialsConsumedExactly = false;
-        }
-        bool inventoryPostcondition = producedCountAfter - producedCountBefore == craftedIntoInventoryStack - outputConsumedAsIngredient;
+        bool materialsConsumedExactly = ingredientsAfter.All(pair => pair.Value == ingredientsBefore[pair.Key] - recipe.recipeList[pair.Key]);
+        bool inventoryPostcondition = needsInventorySpace
+            ? producedCountAfterAdd - producedCountBeforeAdd == craftedIntoInventoryStack
+            : remainingStack == 0;
         bool countPostcondition = craftCountAfter == craftCountBefore + recipe.numberProducedPerCraft;
         bool droppedToGround = remainingStack == 0 || debrisAfter == debrisBefore + 1;
         string disposition = remainingStack == 0
             ? "added_to_inventory"
             : craftedIntoInventoryStack > 0 ? "partially_dropped_on_ground" : "dropped_on_ground";
         string evidence = string.Create(CultureInfo.InvariantCulture,
-            $"location={location.NameOrUniqueName};recipe={expectedRecipeId};output={crafted.QualifiedItemId};produced_stack={producedStack};produced_per_craft={recipe.numberProducedPerCraft};disposition={disposition};inventory_gained_stack={craftedIntoInventoryStack};dropped_stack={remainingStack};output_consumed_as_ingredient={outputConsumedAsIngredient};inventory_accepting_before={inventoryAcceptingBefore.ToString().ToLowerInvariant()};materials_consumed_exactly={materialsConsumedExactly.ToString().ToLowerInvariant()};inventory_postcondition={inventoryPostcondition.ToString().ToLowerInvariant()};count_before={craftCountBefore};count_after={craftCountAfter};count_postcondition={countPostcondition.ToString().ToLowerInvariant()};ingredients={FormatIngredientDeltas(recipe, ingredientsBefore)};dropped_debris={debrisAfter - debrisBefore};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}");
+            $"location={location.NameOrUniqueName};recipe={expectedRecipeId};output={crafted.QualifiedItemId};produced_stack={producedStack};produced_per_craft={recipe.numberProducedPerCraft};disposition={disposition};inventory_gained_stack={craftedIntoInventoryStack};dropped_stack={remainingStack};inventory_accepting_before={inventoryAcceptingBefore.ToString().ToLowerInvariant()};materials_consumed_exactly={materialsConsumedExactly.ToString().ToLowerInvariant()};inventory_postcondition={inventoryPostcondition.ToString().ToLowerInvariant()};count_before={craftCountBefore};count_after={craftCountAfter};count_postcondition={countPostcondition.ToString().ToLowerInvariant()};ingredients={FormatIngredientDeltas(recipe, ingredientsBefore, ingredientsAfter)};dropped_debris={debrisAfter - debrisBefore};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}");
 
         if (!materialsConsumedExactly || !inventoryPostcondition || !countPostcondition || !droppedToGround || menuAfter)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "crafted_item_postcondition_unavailable", evidence);
@@ -168,14 +170,14 @@ internal sealed partial class ExecutionManager
         return count;
     }
 
-    private static string FormatIngredientDeltas(CraftingRecipe recipe, IReadOnlyDictionary<string, int> before)
+    private static string FormatIngredientDeltas(CraftingRecipe recipe, IReadOnlyDictionary<string, int> before, IReadOnlyDictionary<string, int> after)
     {
         StringBuilder builder = new();
         foreach (string key in recipe.recipeList.Keys.OrderBy(key => key, StringComparer.Ordinal))
         {
             if (builder.Length > 0)
                 builder.Append('|');
-            builder.Append(key).Append(':').Append(before[key]).Append('>').Append(CountCraftingIngredient(Game1.player, key));
+            builder.Append(key).Append(':').Append(before[key]).Append('>').Append(after[key]);
         }
         return builder.Length == 0 ? "none" : builder.ToString();
     }
