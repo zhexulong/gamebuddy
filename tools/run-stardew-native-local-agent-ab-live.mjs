@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -42,7 +42,7 @@ const configuredRuntimeRoot = process.env.GAMEBUDDY_RUNTIME_ROOT;
 // ladders add their own acceptance on top instead of new runners.
 const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
-const config = JSON.parse(await (await import("node:fs/promises")).readFile(configPath, "utf8"));
+const config = JSON.parse(await readFile(configPath, "utf8"));
 const scope = Object.freeze({ integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId });
 // The continuity identity is product configuration too: GAMEBUDDY_COMPANION_CONTINUITY_ID
 // joins the companion's existing (Chat-provisioned) continuity so the same
@@ -331,12 +331,26 @@ try {
   const plantReceipt = receipts.find((receipt) => receipt.reasonCode === "seed_planted");
   const waterReceipt = receipts.find((receipt) => receipt.reasonCode === "crop_watered");
   const programSucceeded = status?.snapshot?.state === "succeeded";
+  // System-assembly evidence: the runtime's own run manifest records the
+  // identity profile and world book it actually mounted. Compare that against
+  // the canonical files the product placed under this runtime root, so the gate
+  // proves the persona/world book reached the Game surface rather than trusting
+  // a script-side claim. A disposable root legitimately has neither file.
+  const personaWorldBook = await readAssembledContextEvidence(runtimePaths);
+  const contextAssembled = personaWorldBook.expectedProfile === null
+    ? true
+    : personaWorldBook.mountedProfileId === personaWorldBook.expectedProfile.profileId
+      && personaWorldBook.mountedProfileRevision === personaWorldBook.expectedProfile.revision;
+  const worldBookAssembled = personaWorldBook.expectedWorldBook === null
+    ? true
+    : personaWorldBook.mountedWorldBookId === personaWorldBook.expectedWorldBook.worldBookId;
   const ladderOnePassed = LADDER === "1" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined : true;
   const ladderZeroPassed = LADDER === "0" ? inspectReceipt !== undefined && loadReceipt !== undefined && programSucceeded : true;
   const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && (voiceResult?.state === "completed" || voiceResult?.state === "disabled") : true;
   const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
+  const contextPassed = contextAssembled && worldBookAssembled;
   const result = {
-    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed ? "passed" : "blocked",
+    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && contextPassed ? "passed" : "blocked",
     ladder: LADDER,
     programStatus: status,
     walkReceipt: walkReceipt ?? null,
@@ -345,6 +359,9 @@ try {
     tillReceipt: tillReceipt ?? null,
     plantReceipt: plantReceipt ?? null,
     waterReceipt: waterReceipt ?? null,
+    personaWorldBook,
+    contextAssembled,
+    worldBookAssembled,
     presentedSummary,
     voiceResult,
     agentTurn: turn,
@@ -386,6 +403,53 @@ try {
   await binding.close().catch(() => {});
   client.close("agent_ab_complete");
 }
+/**
+ * Reads what the runtime actually mounted versus what the product placed for
+ * this identity, using only authoritative files: the runtime's own run manifest
+ * (what the session mounted) and the canonical identity-profile/worldbook under
+ * the runtime root (what was available). A disposable root has neither, and the
+ * caller treats that as "nothing to assert" rather than a failure.
+ */
+async function readAssembledContextEvidence(runtimePaths) {
+  const readJson = async (path) => {
+    try {
+      return JSON.parse(await readFile(path, "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  const manifest = await readJson(runtimePaths.runManifestPath);
+  const canonicalProfile = await readJson(runtimePaths.identityProfilePath);
+  const canonicalWorldBook = await readJson(join(runtimePaths.runtimeCwd, "worldbook.json"));
+  const mountedProfile = manifest?.identityProfile ?? null;
+  const mountedWorldBook = manifest?.worldBook ?? null;
+  return Object.freeze({
+    // What was available for this identity (absent on a disposable root).
+    expectedProfile:
+      canonicalProfile === null
+        ? null
+        : Object.freeze({
+            profileId: canonicalProfile.profileId ?? null,
+            revision: canonicalProfile.revision ?? null,
+            canonicalHash: canonicalProfile.canonicalHash ?? null,
+          }),
+    expectedWorldBook:
+      canonicalWorldBook === null
+        ? null
+        : Object.freeze({
+            worldBookId: canonicalWorldBook.worldBookId ?? null,
+            revision: canonicalWorldBook.revision ?? null,
+          }),
+    // What the runtime session actually mounted (from its own run manifest).
+    mountedProfileId: mountedProfile?.profileId ?? null,
+    mountedProfileRevision: mountedProfile?.revision ?? null,
+    mountedProfileHash: mountedProfile?.canonicalHash ?? null,
+    mountedWorldBookId: mountedWorldBook?.worldBookId ?? null,
+    mountedWorldBookRevision: mountedWorldBook?.revision ?? null,
+    manifestPresent: manifest !== null,
+  });
+}
+
 // Split a companion line at sentence boundaries so voice can stream chunks as
 // the gateway synthesizes incrementally. Favors 。！？.!? followed by any
 // whitespace/end; keeps each chunk under the 4000-char delta limit while
