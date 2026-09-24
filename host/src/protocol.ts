@@ -460,7 +460,7 @@ export type ObserveSceneRequest = Readonly<{ radius?: number }>;
 
 export type ObserveSceneAffordance = Readonly<{
   ref: string;
-  kind: "npc" | "chest" | "crop" | "forage" | "door" | "machine";
+  kind: "npc" | "chest" | "crop" | "forage" | "door" | "machine" | "water_source";
   name: string;
   distance: number;
   direction: "North" | "South" | "East" | "West" | "CurrentTile";

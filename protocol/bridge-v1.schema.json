@@ -546,7 +546,7 @@
           "pattern": "^sr1_[A-Za-z0-9_-]{16}$"
         },
         "kind": {
-          "enum": ["npc", "chest", "crop", "forage", "door", "machine"]
+            "enum": ["npc", "chest", "crop", "forage", "door", "machine", "water_source"]
         },
         "name": {
           "type": "string",
