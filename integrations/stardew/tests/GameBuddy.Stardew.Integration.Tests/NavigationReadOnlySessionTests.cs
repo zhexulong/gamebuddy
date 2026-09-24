@@ -286,7 +286,7 @@ public sealed class NavigationReadOnlySessionTests
     }
 
     [Fact]
-    public async Task ObserveScene_RejectsWrongGenerationAndOffThreadWithoutCallingProvider()
+    public void ObserveScene_RejectsWrongGenerationAndOffThreadWithoutCallingProvider()
     {
         FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "observe_scene" });
         var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
@@ -321,7 +321,7 @@ public sealed class NavigationReadOnlySessionTests
         session.TryObserveScene(1, request, out _, out reason).Should().BeFalse();
         reason.Should().Be("scene_observation_invalid");
         providerCalls.Should().Be(1);
-        (bool Accepted, string Reason) offThread = await Task.Run(() =>
+        (bool Accepted, string? Reason) offThread = OnAnotherThread(() =>
         {
             bool accepted = session.TryObserveScene(1, request, out _, out string offThreadReason);
             return (accepted, offThreadReason);
@@ -446,7 +446,7 @@ public sealed class NavigationReadOnlySessionTests
     }
 
     [Fact]
-    public async Task FindDestination_RechecksCurrentCapability_AndRequiresOwnerThread()
+    public void FindDestination_RechecksCurrentCapability_AndRequiresOwnerThread()
     {
         FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "find_destination" });
         var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
@@ -469,7 +469,7 @@ public sealed class NavigationReadOnlySessionTests
         providerCalls.Should().Be(0);
 
         publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "find_destination" });
-        (bool Accepted, string Reason) offThread = await Task.Run(() =>
+        (bool Accepted, string? Reason) offThread = OnAnotherThread(() =>
         {
             bool accepted = session.TryNavigationRead(1, FindRequest(scope, "mine", "off_thread_find_request_01"), out _, out string offThreadReason);
             return (accepted, offThreadReason);
@@ -509,6 +509,39 @@ public sealed class NavigationReadOnlySessionTests
         scope,
         "observe_scene_request",
         new ObserveSceneRequestPayload(radius));
+
+    /// <summary>
+    /// Runs <paramref name="action"/> on a dedicated thread and returns its
+    /// result.
+    ///
+    /// <para>
+    /// Deliberately NOT <c>Task.Run</c>: the owner-thread guard compares
+    /// <see cref="Environment.CurrentManagedThreadId"/>, and a thread-pool
+    /// thread can reuse the very id the test thread had, making the
+    /// "off-thread" call look on-thread and flaking the assertion. A fresh
+    /// thread guarantees a distinct id.
+    /// </para>
+    /// </summary>
+    private static (bool Accepted, string? Reason) OnAnotherThread(Func<(bool Accepted, string? Reason)> action)
+    {
+        (bool Accepted, string? Reason) result = default;
+        Exception? failure = null;
+        var thread = new System.Threading.Thread(() =>
+        {
+            try
+            {
+                result = action();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+        });
+        thread.Start();
+        thread.Join();
+        if (failure is not null) throw failure;
+        return result;
+    }
 
     private static void Authenticate(BridgeSession session, BridgeScope scope)
     {
