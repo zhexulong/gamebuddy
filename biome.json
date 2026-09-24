@@ -24,6 +24,25 @@
         "noAutofocus": "off",
         "useValidAnchor": "warn"
       },
+      "complexity": {
+        "noCommaOperator": "off",
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": {
+            "maxAllowedComplexity": 30
+          }
+        },
+        "noExcessiveLinesPerFunction": {
+          "level": "warn",
+          "options": {
+            "maxLines": 200,
+            "skipBlankLines": true,
+            "skipIifes": true
+          }
+        },
+        "noExcessiveNestedTestSuites": "warn",
+        "useSimplifiedLogicExpression": "warn"
+      },
       "correctness": {
         "noUnusedImports": "error",
         "noUnusedVariables": {
@@ -38,14 +57,21 @@
         "noVoidTypeReturn": "off",
         "noUnsafeFinally": "off"
       },
-      "complexity": {
-        "noCommaOperator": "off"
-      },
       "performance": {
         "noAccumulatingSpread": "off"
       },
       "security": {
         "noDangerouslySetInnerHtml": "error"
+      },
+      "style": {
+        "useImportType": "error",
+        "useNodejsImportProtocol": "error",
+        "noNonNullAssertion": "off",
+        "noNestedTernary": "warn",
+        "noNegationElse": "warn",
+        "noUselessElse": "warn",
+        "noParameterAssign": "warn",
+        "useReadonlyClassProperties": "warn"
       },
       "suspicious": {
         "noExplicitAny": "off",
@@ -56,12 +82,9 @@
         "noImplicitAnyLet": "off",
         "noThenProperty": "off",
         "useIterableCallbackReturn": "off",
-        "noTemplateCurlyInString": "off"
-      },
-      "style": {
-        "useImportType": "error",
-        "useNodejsImportProtocol": "error",
-        "noNonNullAssertion": "off"
+        "noTemplateCurlyInString": "off",
+        "useAdjacentOverloadSignatures": "warn",
+        "noDuplicateParameters": "warn"
       }
     }
   },
