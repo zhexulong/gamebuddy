@@ -430,8 +430,8 @@ export function createHostGameRuntimeMaterializer(
                 queryExecutionReceipt: recovery.queryExecutionReceipt,
               }),
             }),
-            assembledProfile,
-            assembledWorldBook,
+            options.identityProfile,
+            options.worldBook,
           );
         } catch (error) {
           await closeFixedTools();
