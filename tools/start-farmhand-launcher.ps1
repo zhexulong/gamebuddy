@@ -5,13 +5,19 @@ param(
     [Parameter(Mandatory = $true)] [string]$HostRuntimeRoot,
     [ValidateSet("zh-CN", "en-US")] [string]$PresentationLocale = "zh-CN",
     [ValidateRange(10, 300)] [int]$StartupTimeoutSeconds = 90,
-    # Safe default keeps multiplayer preview runs silent and non-activating:
-    # the Mod reads only GAMEBUDDY_WINDOW_MODE in the child environment, and the
+    # The Mod reads only GAMEBUDDY_WINDOW_MODE in the child environment, and the
     # exact mode (plus validation authority) comes from the single shared
     # window-mode contract in tools/lib/stardew-live-run.mjs. See
     # Resolve-LiveRunWindowMode below; no window-mode vocabulary is re-declared
     # here.
-    [string]$WindowMode = "background",
+    #
+    # Default stays `visible` because this Preview launcher exists for
+    # human-in-the-loop, camera-based observation (see fixtures/stardew/RUNBOOK.md)
+    # and its active-stop-proof phase hands an operator-owned manual interaction
+    # window. The Mod collapses the vocabulary to two effective states, where
+    # `hidden`/`background` map to SW_HIDE -- an unattended-run choice an operator
+    # must opt into explicitly, never a default that hides the window they must watch.
+    [string]$WindowMode = "visible",
     [switch]$RequireActiveStopProof
 )
 

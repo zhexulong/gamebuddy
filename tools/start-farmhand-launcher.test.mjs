@@ -39,7 +39,7 @@ test("launcher rejects caller bridge credentials and requires an existing Host-o
 });
 
 test("launcher validates window mode through the shared contract and injects it into both SMAPI children", () => {
-  assert.match(launcher, /\[string\]\$WindowMode = "background"/);
+  assert.match(launcher, /\[string\]\$WindowMode = "visible"/);
   assert.match(launcher, /function Resolve-LiveRunWindowMode/);
   assert.match(launcher, /stardew-live-run\.mjs --print-map/);
   assert.match(launcher, /invalid_live_run_window_mode:\$Value/);
