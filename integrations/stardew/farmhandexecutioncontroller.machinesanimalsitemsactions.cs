@@ -415,13 +415,18 @@ internal sealed partial class ExecutionManager
 
 
     /// <summary>
-    /// Experimental native NPC item interaction. The player selects an owned
-    /// inventory slot and the native GameLocation.checkAction path routes to
-    /// NPC.checkAction, which offers the active object: a matching Quest
-    /// delivery completes first (target-version Quest.OnItemOfferedToNpc), then
-    /// the ordinary gift path with its daily/weekly limits. The action owns the
-    /// native interaction only; the receipt distinguishes a completed quest
-    /// delivery from an accepted ordinary gift.
+    /// Experimental native NPC gift interaction (seam decision (a), recorded in
+    /// design/tasks/active/cards/loop-lane-a-gift.md). The Mod reproduces the
+    /// tryToReceiveActiveObject gift gates (NPC.cs:1943/2209/2282/2297-2298/
+    /// 2300-2310/2313/2315-2322/2323/2327-2329/2331-2336/2337-2341/2358-2364)
+    /// and then calls NPC.receiveGift(..., showResponse: false) directly
+    /// (NPC.cs:4766; response gated at :4844), so no DialogueBox or
+    /// activeClickableMenu is ever mounted. Native-faithful reproductions:
+    /// friendshipData dictionary protection (:2327-2329), farmer.completeQuest
+    /// ("25") (:2313), and the spouse-jealousy branch (:2346-2356) with its
+    /// content-driven SpouseGiftJealousyFriendshipChange and
+    /// GameStateQuery.CheckConditions gate. Task delivery (ItemDeliveryQuest)
+    /// stays out of this action by plan decision.
     /// </summary>
     public LocalExecutionReceipt RequestLocalInteractNpcWithItem(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
@@ -456,69 +461,143 @@ internal sealed partial class ExecutionManager
                 && string.Equals(BuildNpcRelationshipTargetId(location, targetX, targetY, candidate.Name), expectedTargetId, StringComparison.Ordinal));
         if (npc is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_changed", $"target={targetX},{targetY}");
-        if (!Game1.player.friendshipData.ContainsKey(npc.Name))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "friendship_fact_unavailable", $"npc={npc.Name}");
 
-        Friendship friendshipBefore = Game1.player.friendshipData[npc.Name];
-        int pointsBefore = friendshipBefore.Points;
-        int giftsTodayBefore = friendshipBefore.GiftsToday;
-        int giftsThisWeekBefore = friendshipBefore.GiftsThisWeek;
+        Farmer player = Game1.player;
+        // Mirrors NPC.tryToReceiveActiveObject `if (!probe) { who.Halt();
+        // who.faceGeneralDirection(this.getStandingPosition(), 0, opposite:
+        // false, useTileCalculations: false); }` (NPC.cs:1725-1728).
+        player.Halt();
+        player.faceGeneralDirection(npc.getStandingPosition(), 0, opposite: false, useTileCalculations: false);
+
+        Friendship? friendship = player.friendshipData.TryGetValue(npc.Name, out Friendship? existingFriendship) ? existingFriendship : null;
+        int pointsBefore = friendship?.Points ?? 0;
+        int giftsTodayBefore = friendship?.GiftsToday ?? 0;
+        int giftsThisWeekBefore = friendship?.GiftsThisWeek ?? 0;
+        bool quest25CompletedBefore = player.questLog.Any(quest => quest.id.Value == "25" && quest.completed.Value);
         int stackBefore = offered.Stack;
-        // Snapshot the quest completion state. A rewarded delivery quest stays
-        // in the questLog and only flips `completed` (Quest.questComplete keeps
-        // the entry when a money reward exists), so the postcondition must
-        // compare completion flags plus membership, not membership alone.
-        HashSet<string> questsBefore = new(Game1.player.questLog.Select(quest => quest.id.Value), StringComparer.Ordinal);
-        HashSet<string> completedQuestsBefore = new(
-            Game1.player.questLog.Where(quest => quest.completed.Value).Select(quest => quest.id.Value),
-            StringComparer.Ordinal);
 
-        // Native ingress exactly as a player interaction: select the slot and
-        // let GameLocation.checkAction route to NPC.checkAction. It owns the
-        // quest-offer branch, gift limits, dialogue, and friendship mutation.
-        int previousSlot = Game1.player.CurrentToolIndex;
-        bool handled;
+        // Gate 0: proposal items never enter the gift path. Mirrors the native
+        // mermaid-pendant case (NPC.cs:2209) and the propose_roommate context tag
+        // (NPC.cs:2282); both would mount dialogue/romance flows.
+        if (string.Equals(offered.QualifiedItemId, "(O)460", StringComparison.Ordinal)
+            || (npc.CanReceiveGifts() && offered.HasContextTag(ItemContextTagManager.SanitizeContextTag("propose_roommate_" + npc.Name))))
+        {
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_proposal_item", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
+        }
+
+        // Gates 1-3 (NPC.cs:1943/2297-2298): can-receive, can-be-given, not_giftable.
+        if (!npc.CanReceiveGifts())
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_cannot_receive", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
+        if (!offered.canBeGivenAsGift() || ItemContextTagManager.HasBaseTag(offered.QualifiedItemId, "not_giftable"))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_not_giftable", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
+
+        // Dumped refusal (NPC.cs:2300-2310): native refuses with an emote and
+        // never reaches the gift path; the Mod settles the same refusal as a
+        // receipt without the emote.
+        if (player.activeDialogueEvents.Keys.Any(activeKey => activeKey.Contains("dumped") && npc.Dialogue.ContainsKey(activeKey)))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_dumped", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
+
+        // Introduction quest (NPC.cs:2313): completed for any giftable offer,
+        // before the limit gates -- exactly the native position.
+        player.completeQuest("25");
+        bool quest25CompletedAfter = player.questLog.Any(quest => quest.id.Value == "25" && quest.completed.Value);
+
+        // Green-rain refusal (NPC.cs:2315-2322): native returns unhandled with a
+        // red message; the Mod settles the same refusal without the message.
+        if (Game1.IsGreenRainingHere() && Game1.year == 1 && !npc.isMarried())
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_not_handled", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
+
+        // Weekly allowance gate (NPC.cs:2323).
+        bool limitAllowsGift = (friendship != null && friendship.GiftsThisWeek < 2)
+            || player.spouse == npc.Name
+            || npc is Child
+            || npc.isBirthday()
+            || offered.QualifiedItemId == "(O)StardropTea";
+        if (!limitAllowsGift)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_weekly_limit", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
+
+        // Dictionary protection (NPC.cs:2327-2329) exactly before any friendship
+        // mutation: without it receiveGift's `giver.friendshipData[base.Name].
+        // GiftsToday++` (NPC.cs:4796) throws KeyNotFoundException when the
+        // companion never interacted with this NPC before.
+        if (friendship is null)
+            friendship = player.friendshipData[npc.Name] = new Friendship();
+        if (friendship.IsDivorced())
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_divorced", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
+        if (friendship.GiftsToday == 1 && offered.QualifiedItemId != "(O)StardropTea")
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_daily_limit", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
+
+        // Native accept sequence (NPC.cs:2342-2345), showResponse: false so no
+        // dialogue is mounted (NPC.cs:4766 signature, :4844 gate).
+        bool updateGiftLimitInfo = offered.QualifiedItemId != "(O)StardropTea";
+        bool giftGiven = false;
+        bool spouseJealousy = false;
+        int spousePointsBefore = -1;
+        int spousePointsAfter = -1;
+        int previousSlot = player.CurrentToolIndex;
         try
         {
-            Game1.player.CurrentToolIndex = slot;
-            handled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, Game1.player);
+            player.CurrentToolIndex = slot;
+            npc.receiveGift(offered, player, updateGiftLimitInfo, 1f, showResponse: false);
+            player.reduceActiveItemByOne();
+            player.completelyStopAnimatingOrDoingAction();
+            npc.faceTowardFarmerForPeriod(4000, 3, faceAway: false, player);
+            // Spouse jealousy (NPC.cs:2346-2356), reproduced verbatim: gated by
+            // GameStateQuery.CheckConditions and content-driven
+            // SpouseGiftJealousyFriendshipChange (no hardcoded value beyond the
+            // native `?? -30` fallback); the native branch queues dialogue on the
+            // spouse only, so no modal is mounted.
+            if (npc.datable.Value
+                && player.spouse != null && player.spouse != npc.Name
+                && !player.hasCurrentOrPendingRoommate()
+                && Utility.isMale(player.spouse) == Utility.isMale(npc.Name)
+                && Game1.random.NextDouble() < 0.3 - (double)((float)player.LuckLevel / 100f) - player.DailyLuck
+                && !npc.isBirthday()
+                && friendship.IsDating())
+            {
+                StardewValley.NPC? spouse = Game1.getCharacterFromName(player.spouse);
+                var spouseData = spouse?.GetData();
+                if (spouse is not null && GameStateQuery.CheckConditions(spouseData?.SpouseGiftJealousy, null, player, offered))
+                {
+                    spousePointsBefore = player.friendshipData.TryGetValue(spouse.Name, out Friendship? spouseFriendshipBefore) ? spouseFriendshipBefore.Points : -1;
+                    player.changeFriendship(spouseData?.SpouseGiftJealousyFriendshipChange ?? -30, spouse);
+                    spousePointsAfter = player.friendshipData.TryGetValue(spouse.Name, out Friendship? spouseFriendshipAfter) ? spouseFriendshipAfter.Points : -1;
+                    spouse.CurrentDialogue.Clear();
+                    spouse.CurrentDialogue.Push(spouse.TryGetDialogue("SpouseGiftJealous", npc.displayName, offered.DisplayName) ?? Dialogue.FromTranslation(spouse, "Strings\\StringsFromCSFiles:NPC.cs.3985", npc.displayName));
+                    spouseJealousy = true;
+                }
+            }
+            giftGiven = true;
+        }
+        catch (Exception)
+        {
+            // Never fabricate success: an exception after a partial native
+            // mutation settles as Uncertain so recovery stays receipt-driven
+            // (no blind re-execution of an unknown native side effect).
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "gift_postcondition_unavailable", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
         }
         finally
         {
-            Game1.player.CurrentToolIndex = previousSlot;
+            player.CurrentToolIndex = previousSlot;
         }
 
-        Item? remainingItem = slot < Game1.player.Items.Count ? Game1.player.Items[slot] : null;
-        int stackAfter = remainingItem is StardewValley.Object remainingObject && string.Equals(remainingObject.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
-            ? remainingObject.Stack
+        int stackAfter = slot < player.Items.Count && player.Items[slot] is StardewValley.Object remaining && string.Equals(remaining.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
+            ? remaining.Stack
             : 0;
         bool consumedExactlyOne = stackAfter == stackBefore - 1;
-        Friendship friendshipAfter = Game1.player.friendshipData[npc.Name];
-        // A quest delivery either removed the entry (no money reward) or flipped
-        // its completion flag (rewarded quest stays in the log).
-        bool questCompleted = Game1.player.questLog.Any(quest => quest.completed.Value && !completedQuestsBefore.Contains(quest.id.Value))
-            || questsBefore.Any(questId => !Game1.player.questLog.Any(quest => string.Equals(quest.id.Value, questId, StringComparison.Ordinal)));
+        Friendship friendshipAfter = player.friendshipData.TryGetValue(npc.Name, out Friendship? afterFriendship) ? afterFriendship : friendship;
         bool giftRecorded = friendshipAfter.GiftsToday > giftsTodayBefore || friendshipAfter.GiftsThisWeek > giftsThisWeekBefore;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};npc={npc.Name};item={expectedQualifiedItemId};slot={slot};stack_before={stackBefore};stack_after={stackAfter};points_before={pointsBefore};points_after={friendshipAfter.Points};gifts_today_before={giftsTodayBefore};gifts_today_after={friendshipAfter.GiftsToday};gifts_this_week_before={giftsThisWeekBefore};gifts_this_week_after={friendshipAfter.GiftsThisWeek};quest_completed={questCompleted.ToString().ToLowerInvariant()};gift_recorded={giftRecorded.ToString().ToLowerInvariant()}";
+        bool pointsChanged = friendshipAfter.Points != pointsBefore;
+        string evidence = GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
+            + $";stack_after={stackAfter};points_after={friendshipAfter.Points};gifts_today_after={friendshipAfter.GiftsToday};gifts_this_week_after={friendshipAfter.GiftsThisWeek};quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()};update_gift_limit={updateGiftLimitInfo.ToString().ToLowerInvariant()};showed_response=false;gift_recorded={giftRecorded.ToString().ToLowerInvariant()};points_changed={pointsChanged.ToString().ToLowerInvariant()};spouse_jealousy={spouseJealousy.ToString().ToLowerInvariant()};spouse_points_before={spousePointsBefore};spouse_points_after={spousePointsAfter};menu_open_after={(Game1.activeClickableMenu is not null).ToString().ToLowerInvariant()};dialogue_open_after={Game1.dialogueUp.ToString().ToLowerInvariant()}";
 
-        if (!handled)
-        {
-            // The native route did not accept the interaction. It never
-            // consumed the item or changed the relationship, so this is a
-            // clean rejection rather than an uncertain mutation.
-            ExecutionState unhandledState = consumedExactlyOne ? ExecutionState.Uncertain : ExecutionState.Rejected;
-            return this.RememberTerminal(requestId, executionId, unhandledState, "npc_interaction_not_handled", evidence);
-        }
-        if (questCompleted && consumedExactlyOne)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "quest_item_delivered", evidence);
-        if (giftRecorded && consumedExactlyOne)
+        if (giftGiven && consumedExactlyOne && (giftRecorded || pointsChanged))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "gift_given", evidence);
-        // The native call reported handled but neither a quest delivery nor a
-        // recorded gift matches the observed inventory delta: the native
-        // outcome is not attributable, so never fabricate success.
-        ExecutionState outcome = consumedExactlyOne || questCompleted || giftRecorded ? ExecutionState.Uncertain : ExecutionState.Rejected;
-        return this.RememberTerminal(requestId, executionId, outcome, "npc_interaction_postcondition_unavailable", evidence);
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "gift_postcondition_unavailable", evidence);
     }
+
+    private static string GiftEvidencePrefix(StardewValley.GameLocation location, string expectedTargetId, int targetX, int targetY, StardewValley.NPC npc, string expectedQualifiedItemId, int slot, int stackBefore, int pointsBefore, int giftsTodayBefore, int giftsThisWeekBefore, bool quest25CompletedBefore)
+        => $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};npc={npc.Name};item={expectedQualifiedItemId};slot={slot};stack_before={stackBefore};points_before={pointsBefore};gifts_today_before={giftsTodayBefore};gifts_this_week_before={giftsThisWeekBefore};quest_25_completed_before={quest25CompletedBefore.ToString().ToLowerInvariant()}";
 
     /// <summary>One native Axe strike which fells the exact mature health-one tree into its native stump state; drops remain separate pickup targets.</summary>
 }
