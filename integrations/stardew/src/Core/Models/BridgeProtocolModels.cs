@@ -198,7 +198,7 @@ public sealed record BridgeItemTarget(string TargetId, int X, int Y, string Qual
 
 public sealed record BridgeCropTarget(string TargetId, int X, int Y, string CropId);
 
-public sealed record BridgeHarvestTarget(string TargetId, int X, int Y, string CropId, string QualifiedHarvestItemId, bool RegrowsAfterHarvest);
+public sealed record BridgeHarvestTarget(string TargetId, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName, bool RegrowsAfterHarvest);
 
 public sealed record BridgeSeedTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId);
 
