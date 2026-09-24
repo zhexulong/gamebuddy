@@ -50,12 +50,11 @@ import {
 } from "../protocol.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
-import { readIdentityProfile } from "../identity-profile.js";
-import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import {
   consumeGameVoicePresentationAttachment,
   type GameVoicePresentationAttachment,
 } from "../voice-gateway-client.js";
+import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
 import {
   type GameRuntimeMaterializer,
   type MaterializedGameRuntime,
@@ -728,24 +727,14 @@ async function createMaterializedGameRuntime(
   // live-run script) supplying it. Missing files keep the default profile and
   // an empty Book; system assembly never fabricates content and never writes
   // (only the runtime core creates the default profile when absent).
-  const runtimePaths = resolveRuntimePaths(identity, runtimeRoot);
-  let assembledProfile: import("./../identity-profile.js").IdentityProfile | undefined = identityProfile;
-  if (assembledProfile === undefined) {
-    try {
-      assembledProfile = await readIdentityProfile(runtimePaths.identityProfilePath);
-    } catch {
-      assembledProfile = undefined;
-    }
-  }
-  let assembledWorldBook: import("./../worldbook.js").WorldBookBinding | undefined = worldBook;
-  if (assembledWorldBook === undefined) {
-    try {
-      const book = await readWorldBook(join(runtimePaths.runtimeCwd, "worldbook.json"));
-      assembledWorldBook = Object.freeze({ metadata: worldBookMetadata(book), book });
-    } catch {
-      assembledWorldBook = undefined;
-    }
-  }
+  const context = await assembleGameRuntimeContext({
+    identity,
+    runtimeRoot,
+    ...(identityProfile === undefined ? {} : { identityProfile }),
+    ...(worldBook === undefined ? {} : { worldBook }),
+  });
+  const assembledProfile = context.profile;
+  const assembledWorldBook = context.worldBook;
   const turnTracker = new GameTurnLineageTracker();
   const presentationLocale = companionLocale;
   const hostBindingFactory = (handle: Readonly<{ interruption: CompanionInterruption }>) => {
