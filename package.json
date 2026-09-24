@@ -127,7 +127,10 @@
     "check:clones": "jscpd --config jscpd.json",
     "check:architecture": "pnpm check:publint && pnpm check:clones && echo \"[110] knip/module-graph/import-boundary gated by live WIP; see design/110 Task 5\"",
     "vendor:link": "node tools/vendor-link.mjs",
-    "vendor:refresh": "pnpm install --force"
+    "vendor:refresh": "pnpm install --force",
+    "derive:stardew-native-multiplayer-sensitivity-register": "node tools/derive-stardew-native-multiplayer-sensitivity-register.mjs",
+    "check:stardew-native-multiplayer-sensitivity": "node tools/check-stardew-native-multiplayer-sensitivity.mjs --register integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json --source-root \"ref/external/StardewValleyDecompiled/Stardew Valley\"",
+    "test:stardew-native-multiplayer-sensitivity": "node --test tools/stardew-native-multiplayer-sensitivity.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
