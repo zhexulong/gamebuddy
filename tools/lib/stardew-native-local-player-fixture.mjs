@@ -395,6 +395,9 @@ export function fixtureActions(action) {
   if (action === "plant_sapling") return ["plant_sapling"];
   if (action === "cut_weeds") return ["equip_tool", "cut_weeds"];
   if (action === "scythe_crop") return ["equip_tool", "scythe_crop"];
+  // The fixture keeps the Farm's own native Shipping Bin building and adds one
+  // shippable Object to the backpack; production alone calls Farm.shipItem.
+  if (action === "ship_item") return ["ship_item"];
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions) {
@@ -436,6 +439,7 @@ export function fixtureScenario(actions) {
   if (actions.includes("plant_sapling")) return "native_plant_sapling_v1";
   if (actions.includes("cut_weeds")) return "native_cut_weeds_v1";
   if (actions.includes("scythe_crop")) return "native_scythe_crop_v1";
+  if (actions.includes("ship_item")) return "native_ship_item_v1";
   return "";
 }
 function assertNativeLocalBinding(binding, observedSaveSlot) {
@@ -495,7 +499,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
@@ -531,7 +535,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the

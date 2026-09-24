@@ -243,6 +243,12 @@ public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X,
 public sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, int Y, int HayStack);
 
 public sealed record BridgeChestStoreTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, int Stack);
+
+// Lane E: one native Shipping Bin building plus the exact shippable backpack
+// slot the actor would hand to Farm.shipItem. X/Y is the bin's top-left
+// footprint tile (the actor must stand adjacent to the building), never a tile
+// the client may use to retarget the native call.
+public sealed record BridgeShippingBinTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, int Stack);
 public sealed record BridgeTreeStumpTarget(string TargetId, string Location, int X, int Y, string TreeType, float Health);
 public sealed record BridgeTreeSaplingTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId);
 public sealed record BridgeWeedTarget(string TargetId, string Location, int X, int Y, int Health);
@@ -304,6 +310,7 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeChestRetrieveTarget>? ChestRetrieveTargets,
     IReadOnlyList<BridgeInventoryItemFact>? InventoryItemFacts,
     IReadOnlyList<BridgeFoodTarget>? FoodTargets,
+    IReadOnlyList<BridgeShippingBinTarget>? ShippingBinTargets,
     string PresentationLocale
 );
 

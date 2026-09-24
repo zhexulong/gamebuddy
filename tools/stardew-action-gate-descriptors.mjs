@@ -153,6 +153,7 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   plant_sapling: "run-stardew-native-local-player-plant-sapling-smoke.mjs",
   cut_weeds: "run-stardew-native-local-player-cut-weeds-smoke.mjs",
   scythe_crop: "run-stardew-native-local-player-scythe-crop-smoke.mjs",
+  ship_item: "run-stardew-native-local-player-ship-item-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {
