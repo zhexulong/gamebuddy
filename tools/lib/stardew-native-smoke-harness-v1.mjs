@@ -125,6 +125,41 @@ export function assertExactCapabilities(snapshot, expectedCapabilities) {
   return snapshot;
 }
 
+/**
+ * Assert that every capability a shared-world smoke contract requires is present
+ * in the live surface. This is the required-subset capability mode; it is
+ * deliberately not `assertExactCapabilities`.
+ *
+ * A shared world runs the Mod's version-1 default consent policy, where the
+ * Agent-visible surface is every published action plus the experimental actions
+ * that profile opted into (`ModConfig.EnabledActionSet`). That surface is
+ * legitimately larger than the one action under test and the runner cannot
+ * narrow it, so an equality assertion would fail for a reason the action itself
+ * cannot fix. Subset is the honest check there: it still proves the action
+ * under test and every precondition it depends on are actually advertised and
+ * executable by this exact live publication, and it fails closed on a missing
+ * entry, an empty requirement list, or a malformed surface. Ordering and
+ * duplicates in the required list carry no meaning.
+ *
+ * The single-player native-local runners keep the stricter
+ * `assertExactCapabilities` contract, which additionally proves their isolated
+ * fixture surface leaked no other action.
+ */
+export function assertRequiredCapabilities(snapshot, requiredCapabilities) {
+  validateSnapshot(snapshot);
+  if (
+    !Array.isArray(requiredCapabilities) ||
+    requiredCapabilities.length === 0 ||
+    requiredCapabilities.some((capability) => typeof capability !== "string" || capability.length === 0)
+  )
+    throw new NativeSmokeHarnessError("invalid_native_required_capabilities");
+  if (!Array.isArray(snapshot.capabilities)) throw new NativeSmokeHarnessError("invalid_native_capability_surface");
+  const advertised = new Set(snapshot.capabilities);
+  const missing = [...new Set(requiredCapabilities)].filter((capability) => !advertised.has(capability)).sort();
+  if (missing.length > 0) throw new NativeSmokeHarnessError(`native_required_capability_missing:${missing.join(",")}`);
+  return snapshot;
+}
+
 /** Bind the post-terminal observation to the receipt revision exposed by v1. */
 export function assertPostTerminalRevision(snapshot, terminal) {
   validateSnapshot(snapshot);

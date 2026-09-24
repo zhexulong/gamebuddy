@@ -9,6 +9,7 @@ import {
   assertImmediateReceipt,
   assertPostTerminalRevision,
   assertReceiptIdentity,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   createNativeScope,
   deadlineAfter,
@@ -126,6 +127,89 @@ test("exact capabilities and post-terminal revision binding fail closed", () => 
     () =>
       assertPostTerminalRevision({ revision: 10 }, { requestId: "request-1", executionId: "execution-1", revision: 9 }),
     hasErrorCode("native_post_terminal_revision_mismatch"),
+  );
+});
+
+test("required capabilities accept a larger shared-world surface and fail closed on anything less", () => {
+  // A shared world runs the version-1 default consent policy, so its advertised
+  // surface is every published action plus the experimental actions that profile
+  // opted into. The action under test is present; the extra entries are not the
+  // runner's to remove.
+  const sharedWorldSurface = {
+    revision: 12,
+    capabilities: [
+      "move_to_tile",
+      "inspect_world_map",
+      "find_destination",
+      "navigate_to_destination",
+      "equip_tool",
+      "travel",
+      "enter_exit",
+      "till_soil",
+      "pickup_forage",
+      "pickup_item",
+      "water_crop",
+      "plant_seed",
+      "fertilize_tile",
+      "machine_inspect",
+      "machine_load",
+      "machine_collect_output",
+      "collect_animal_product",
+      "feed_animal",
+      "use_item",
+      "harvest_crop",
+      "place_wood_fence",
+      "place_crab_pot",
+      "bait_crab_pot",
+      "chop_tree_source",
+      "break_rock_source",
+      "clear_hoedirt",
+      "dig_artifact_spot",
+      "refill_watering_can",
+      "observe_scene",
+      "inspect_self",
+      "cancel_active_execution",
+      "pet_animal",
+    ],
+  };
+  assertRequiredCapabilities(sharedWorldSurface, ["pet_animal"]);
+  assertRequiredCapabilities(sharedWorldSurface, ["pet_animal", "inspect_self", "pet_animal"]);
+  assertRequiredCapabilities(sharedWorldSurface, ["move_to_tile", "travel", "pet_animal"]);
+
+  // The equals-assertion is unchanged: it still rejects this same surface,
+  // which is what keeps the 43 single-player runners on their isolated contract.
+  assert.throws(
+    () => assertExactCapabilities(sharedWorldSurface, ["pet_animal"]),
+    hasErrorCode("native_capability_surface_mismatch"),
+  );
+
+  assert.throws(
+    () => assertRequiredCapabilities(sharedWorldSurface, ["pet_animal", "chest_retrieve"]),
+    hasErrorCode("native_required_capability_missing:chest_retrieve"),
+  );
+  assert.throws(
+    () => assertRequiredCapabilities(sharedWorldSurface, ["ship_item", "chest_retrieve"]),
+    hasErrorCode("native_required_capability_missing:chest_retrieve,ship_item"),
+  );
+  assert.throws(
+    () => assertRequiredCapabilities({ revision: 12, capabilities: "pet_animal" }, ["pet_animal"]),
+    hasErrorCode("invalid_native_capability_surface"),
+  );
+  assert.throws(
+    () => assertRequiredCapabilities(sharedWorldSurface, []),
+    hasErrorCode("invalid_native_required_capabilities"),
+  );
+  assert.throws(
+    () => assertRequiredCapabilities(sharedWorldSurface, ["pet_animal", ""]),
+    hasErrorCode("invalid_native_required_capabilities"),
+  );
+  assert.throws(
+    () => assertRequiredCapabilities(sharedWorldSurface, ["pet_animal", 7]),
+    hasErrorCode("invalid_native_required_capabilities"),
+  );
+  assert.throws(
+    () => assertRequiredCapabilities({ capabilities: ["pet_animal"] }, ["pet_animal"]),
+    hasErrorCode("invalid_native_snapshot"),
   );
 });
 
