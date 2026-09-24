@@ -27,22 +27,26 @@ internal sealed class StardewBodyController
 
     public string? ActiveExecutionId => this.active?.ExecutionId;
 
-    public bool TryStart(LocalMoveSpec specification, Farmer localPlayer, int tick, out string reasonCode)
+    public bool TryStart(LocalMoveSpec specification, Farmer localPlayer, int tick, out string reasonCode, out string? evidence)
     {
+        evidence = null;
         if (this.active is not null)
         {
             reasonCode = "body_owned";
+            evidence = $"execution={this.active.ExecutionId}";
             return false;
         }
 
         if (!localPlayer.CanMove || Game1.activeClickableMenu is not null || Game1.eventUp)
         {
             reasonCode = "player_not_actionable";
+            evidence = $"can_move={localPlayer.CanMove.ToString().ToLowerInvariant()};menu={(Game1.activeClickableMenu is not null).ToString().ToLowerInvariant()};event_up={Game1.eventUp.ToString().ToLowerInvariant()}";
             return false;
         }
         if (localPlayer.controller is not null)
         {
             reasonCode = "native_controller_owned";
+            evidence = $"tile={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y}";
             return false;
         }
         if (localPlayer.currentLocation is null)
@@ -60,7 +64,11 @@ internal sealed class StardewBodyController
             10000);
         if (plannedPath.pathToEndPoint is null || plannedPath.pathToEndPoint.Count == 0)
         {
+            // Dead-end rejection: the Agent submitted a target it cannot walk to.
+            // The evidence names both ends so the next attempt can pick a different
+            // tile instead of retrying the same coordinate.
             reasonCode = "no_native_path";
+            evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName}";
             return false;
         }
 

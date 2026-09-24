@@ -53,10 +53,10 @@ internal sealed partial class ExecutionManager
         // The controller emits its initial Running transition synchronously;
         // establish ownership first so its authoritative receipt is retained.
         this.active = specification;
-        if (!this.controller.TryStart(specification, Game1.player, this.tick, out string reasonCode))
+        if (!this.controller.TryStart(specification, Game1.player, this.tick, out string reasonCode, out string? startEvidence))
         {
             this.active = null;
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, startEvidence);
         }
 
         LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, $"route_revision={specification.RouteRevision};target={FormatTile(targetTile)}");
@@ -285,12 +285,12 @@ internal sealed partial class ExecutionManager
         this.activeNavigationCoordinator = coordinator;
         this.activeNavigate = navigation;
         this.active = approach;
-        if (!this.TryStartApproach(approach, out string reasonCode))
+        if (!this.TryStartApproach(approach, out string reasonCode, out string? approachEvidence))
         {
             this.active = null;
             this.activeNavigate = null;
             this.activeNavigationCoordinator = null;
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode ?? "approach_unavailable", "phase=approaching;arm=failed");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode ?? "approach_unavailable", approachEvidence ?? "phase=approaching;arm=failed");
         }
 
         LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, "navigation=accepted;phase=approaching");
