@@ -162,6 +162,7 @@ internal sealed partial class ExecutionManager
                 bin.tileY.Value,
                 slot,
                 shippable.QualifiedItemId,
+                RequireDisplayName(shippable.QualifiedItemId),
                 shippable.Stack),
         };
     }

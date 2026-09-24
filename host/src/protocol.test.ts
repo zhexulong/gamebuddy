@@ -826,9 +826,9 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
     ["toolSlots", { slot: 4, label: "Axe" }],
     ["wateringCanFacts", { slot: 4, qualifiedItemId: "(T)WateringCan", label: "Watering Can", water: 40, max: 40 }],
     ["refillWateringCanTargets", { targetId: "refill_deadbeef", x: 10, y: 12 }],
-    ["forageTargets", { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)16", stack: 1 }],
-    ["itemTargets", { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", stack: 1 }],
-    ["cropTargets", { targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24" }],
+    ["forageTargets", { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)16", displayName: "Wild Horseradish", stack: 1 }],
+    ["itemTargets", { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 }],
+    ["cropTargets", { targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24", displayName: "Parsnip" }],
     [
       "harvestTargets",
       {
@@ -837,6 +837,7 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
         y: 12,
         cropId: "24",
         qualifiedHarvestItemId: "(O)24",
+        displayName: "Parsnip",
         regrowsAfterHarvest: false,
       },
     ],
@@ -863,7 +864,7 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
     ["crabPotResultTargets", { ...crabPot, ownerId: 1, offsetX: 0, offsetY: 0, overlayTiles: [] }],
     ["baitCrabPotTargets", { ...crabPot, baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
     ["baitCrabPotResultTargets", { ...crabPot, baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
-    ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472" }],
+    ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" }],
     [
       "debrisTargets",
       {
@@ -1241,7 +1242,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     {
       ...snapshot,
       artifactSpotTargets: [
-        { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" },
+        { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590", displayName: "Artifact Spot" },
       ],
       artifactSpotFarmSourceCount: 1,
     },
@@ -1272,7 +1273,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
         payload: {
           ...artifactSnapshot.payload,
           artifactSpotTargets: [
-            { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)388" },
+            { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Artifact Spot" },
           ],
         },
       },
@@ -2213,8 +2214,8 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
     enabledActionIds: ["chest_store", "chest_retrieve"],
     presentationLocale: "en-US",
     activeExecution: null,
-    chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 2, qualifiedItemId: "(O)24", stack: 5 }],
-    chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "(O)24", stack: 3 }],
+    chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 2, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 5 }],
+    chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 3 }],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "chest_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
@@ -2290,7 +2291,7 @@ test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
     enabledActionIds: ["plant_sapling"],
     presentationLocale: "en-US",
     activeExecution: null,
-    treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 2, x: 4, y: 5, qualifiedItemId: "(O)309" }],
+    treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 2, x: 4, y: 5, qualifiedItemId: "(O)309", displayName: "Acorn" }],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "sapling_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
@@ -2325,7 +2326,7 @@ test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows",
     presentationLocale: "en-US",
     activeExecution: null,
     weedTargets: [{ targetId: "weed_0123456789abcdef", location: "Farm", x: 6, y: 7, health: 1 }],
-    scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "(O)262" }],
+    scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "(O)262", displayName: "Wheat" }],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "weed_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");

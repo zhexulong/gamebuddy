@@ -1495,6 +1495,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     (int)pair.Key.X,
                     (int)pair.Key.Y,
                     machine.QualifiedItemId,
+                    RequireDisplayName(machine.QualifiedItemId),
                     machine.readyForHarvest.Value,
                     machine.MinutesUntilReady,
                     held,
@@ -1632,7 +1633,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     Vector2 tile = new(x, y);
                     if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || !CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, x, y))
                         continue;
-                    result.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, slot, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId));
+                    result.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, slot, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId, RequireDisplayName(sapling.QualifiedItemId)));
                 }
             }
         }
@@ -1692,7 +1693,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 BuildScytheCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop),
                 location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y,
                 dirt.crop.netSeedIndex.Value ?? harvestId,
-                StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId));
+                StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId,
+                RequireDisplayName(harvestId)));
             if (result.Count >= 16) break;
         }
         return result;
@@ -1794,7 +1796,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .OrderBy(pair => pair.Key.X)
             .ThenBy(pair => pair.Key.Y)
             .Take(8)
-            .Select(pair => new BridgeArtifactSpotTarget(BuildArtifactSpotTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, "(O)590"))
+            .Select(pair => new BridgeArtifactSpotTarget(BuildArtifactSpotTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, "(O)590", RequireDisplayName("(O)590")))
             .ToArray();
     }
 
@@ -1945,7 +1947,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeRockSourceTarget>();
         return location.objects.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && pair.Value.QualifiedItemId == "(O)2" && pair.Value.IsBreakableStone() && pair.Value.MinutesUntilReady == 1)
-            .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, pair.Value.MinutesUntilReady)).ToArray();
+            .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.MinutesUntilReady)).ToArray();
     }
 
     private static bool IsDebrisTargetWithinPlayerRadius(StardewValley.TerrainFeatures.ResourceClump clump, Farmer player)
@@ -2081,7 +2083,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             StardewValley.Item item = player.Items[slot]!;
             result.Add(new BridgeChestStoreTarget(
                 BuildChestTargetId(location, (int)chest.TileLocation.X, (int)chest.TileLocation.Y, chest),
-                (int)chest.TileLocation.X, (int)chest.TileLocation.Y, slot, item.QualifiedItemId, item.Stack));
+                (int)chest.TileLocation.X, (int)chest.TileLocation.Y, slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), item.Stack));
             if (result.Count >= 16) break;
         }
         return result;
@@ -2101,7 +2103,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (!player.couldInventoryAcceptThisItem(first)) continue;
             result.Add(new BridgeChestRetrieveTarget(
                 BuildChestTargetId(location, (int)chest.TileLocation.X, (int)chest.TileLocation.Y, chest),
-                (int)chest.TileLocation.X, (int)chest.TileLocation.Y, first.QualifiedItemId, first.Stack));
+                (int)chest.TileLocation.X, (int)chest.TileLocation.Y, first.QualifiedItemId, RequireDisplayName(first.QualifiedItemId), first.Stack));
             if (result.Count >= 16) break;
         }
         return result;
@@ -2154,7 +2156,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
                 int produceStack = animal.hasEatenAnimalCracker.Value ? 2 : 1;
                 if (!player.couldInventoryAcceptThisItem(produce.QualifiedItemId, produceStack)) continue;
-                result.Add(new BridgeAnimalProductTarget(BuildAnimalProductTargetId(location, slot, animal, tool), slot, x, y, animal.type.Value, produce.QualifiedItemId, tool is MilkPail ? "milk_pail" : "shears", produceStack));
+                result.Add(new BridgeAnimalProductTarget(BuildAnimalProductTargetId(location, slot, animal, tool), slot, x, y, animal.type.Value, produce.QualifiedItemId, RequireDisplayName(produce.QualifiedItemId), tool is MilkPail ? "milk_pail" : "shears", produceStack));
             }
         }
         // Fixture-only diagnostic: a native AnimalHouse may synchronize its
@@ -2244,7 +2246,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (player.Items[slot] is not StardewValley.Object item || string.IsNullOrWhiteSpace(item.QualifiedItemId) || item.Stack < 1)
                 continue;
-            result.Add(new BridgeInventoryItemFact(slot, item.QualifiedItemId, item.Stack));
+            result.Add(new BridgeInventoryItemFact(slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), item.Stack));
         }
         return result;
     }
@@ -2259,7 +2261,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             bool isDrink = Game1.objectData.TryGetValue(food.ItemId, out var objectData) && objectData.IsDrink;
             if (food.QualifiedItemId == "(O)434" || (!isDrink && food.Edibility == -300))
                 continue;
-            result.Add(new BridgeFoodTarget(slot, food.QualifiedItemId, food.Stack, food.Edibility, isDrink));
+            result.Add(new BridgeFoodTarget(slot, food.QualifiedItemId, RequireDisplayName(food.QualifiedItemId), food.Stack, food.Edibility, isDrink));
         }
         return result;
     }
@@ -2271,7 +2273,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return location.objects.Pairs
             .Where(pair => pair.Value is not null && pair.Value.isForage() && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
             .Take(64)
-            .Select(pair => new BridgeForageTarget(BuildForageTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, pair.Value.Stack))
+            .Select(pair => new BridgeForageTarget(BuildForageTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.Stack))
             .ToArray();
     }
 
@@ -2300,7 +2302,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (IsTileWithinChebyshevRadius(player, tile.X, tile.Y, discoveryRadius))
                 {
                     string targetId = BuildItemTargetId(location, debrisIndex, chunkIndex, debris, qualifiedItemId);
-                    result.Add(new BridgeItemTarget(targetId, tile.X, tile.Y, qualifiedItemId, Math.Max(1, debris.item?.Stack ?? 1)));
+                    result.Add(new BridgeItemTarget(targetId, tile.X, tile.Y, qualifiedItemId, RequireDisplayName(qualifiedItemId), Math.Max(1, debris.item?.Stack ?? 1)));
                     if (result.Count >= 64) break;
                 }
                 chunkIndex++;
@@ -2359,7 +2361,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                         || dirt.crop is not null
                         || !dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false))
                         continue;
-                    result.Add(new BridgeSeedTarget(BuildSeedTargetId(location, slot, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId));
+                    result.Add(new BridgeSeedTarget(BuildSeedTargetId(location, slot, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, RequireDisplayName(seed.QualifiedItemId)));
                 }
             }
         }
@@ -2386,7 +2388,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 Vector2 tile = new(x, y);
                 if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || !IsLegalEmptyFarmFenceTile(farm, tile, source))
                     continue;
-                result.Add(new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322"));
+                result.Add(new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322", RequireDisplayName("(O)322")));
             }
         }
         return result;
@@ -2439,7 +2441,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 StardewValley.Object placed = pair.Value;
                 if (result.Count >= 16) return result;
                 if (placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
-                result.Add(new BridgeBaitCrabPotTarget(BuildBaitCrabPotTargetId(location, slot, (int)tile.X, (int)tile.Y), location.NameOrUniqueName, slot, (int)tile.X, (int)tile.Y, "(O)710", "(O)685", crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1));
+                result.Add(new BridgeBaitCrabPotTarget(BuildBaitCrabPotTargetId(location, slot, (int)tile.X, (int)tile.Y), location.NameOrUniqueName, slot, (int)tile.X, (int)tile.Y, "(O)710", RequireDisplayName("(O)710"), "(O)685", crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1));
             }
         }
         return result;
@@ -2483,6 +2485,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 (int)tile.X,
                 (int)tile.Y,
                 "(O)710",
+                RequireDisplayName("(O)710"),
                 crabPot.heldObject.Value.QualifiedItemId,
                 Math.Max(1, crabPot.heldObject.Value.Stack)));
         }
@@ -2503,7 +2506,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
                     || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, x, y))
                     continue;
-                result.Add(new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710"));
+                result.Add(new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710", RequireDisplayName("(O)710")));
             }
         }
         return result;
@@ -2535,7 +2538,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                         || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
                         || !dirt.CanApplyFertilizer(fertilizer.QualifiedItemId))
                         continue;
-                    result.Add(new BridgeFertilizerTarget(BuildFertilizerTargetId(location, slot, x, y, fertilizer.QualifiedItemId), slot, x, y, fertilizer.QualifiedItemId));
+                    result.Add(new BridgeFertilizerTarget(BuildFertilizerTargetId(location, slot, x, y, fertilizer.QualifiedItemId), slot, x, y, fertilizer.QualifiedItemId, RequireDisplayName(fertilizer.QualifiedItemId)));
                 }
             }
         }
@@ -2593,10 +2596,43 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
                 string cropId = dirt.crop!.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown";
-                return new BridgeCropTarget(BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), (int)pair.Key.X, (int)pair.Key.Y, cropId);
+                return new BridgeCropTarget(BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), (int)pair.Key.X, (int)pair.Key.Y, cropId, RequireDisplayName(dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown"));
             })
             .ToArray();
     }
+
+    /// <summary>
+    /// The localized display name for an item identity, taken from the target
+    /// version's own content data. The Mod publishes the game's name and never
+    /// interprets game semantics; this is what lets an errand that names a thing
+    /// ("bring the cauliflower") be matched by the Agent without it having to map
+    /// an opaque content id from model memory. Returns null when no item data
+    /// exists, so callers never publish an empty string into the wire contract.
+    /// </summary>
+    internal static string? ReadItemDisplayName(string? qualifiedOrRawItemId)
+    {
+        if (string.IsNullOrWhiteSpace(qualifiedOrRawItemId))
+            return null;
+        try
+        {
+            string name = StardewValley.ItemRegistry.Create(qualifiedOrRawItemId, 1).DisplayName;
+            return string.IsNullOrWhiteSpace(name) ? null : name;
+        }
+        catch (Exception)
+        {
+            // Unknown content must not fail discovery; the caller omits the name.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The wire contract requires a non-empty display name (minLength 1), so a
+    /// discovery that cannot resolve one falls back to the content id rather than
+    /// publishing an empty string. The id is still a truthful, if less friendly,
+    /// identity; failing discovery entirely would be worse for the Agent.
+    /// </summary>
+    internal static string RequireDisplayName(string qualifiedOrRawItemId) =>
+        ReadItemDisplayName(qualifiedOrRawItemId) ?? qualifiedOrRawItemId;
 
     internal static string BuildCropTargetId(StardewValley.GameLocation location, int x, int y, string? seedId, string? harvestId)
     {
