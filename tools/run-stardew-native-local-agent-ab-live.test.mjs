@@ -37,6 +37,17 @@ test("the runner gate reports the assembled persona and world book instead of as
   assert.match(RUNNER_SOURCE, /voiceResult\?\.state === "disabled"/);
 });
 
+test("the runner reads the run manifest under the same Game session path the runtime writes", () => {
+  // resolveRuntimePaths places the run manifest under surface-sessions/<id>
+  // when a surface session id is supplied, and the runtime always supplies the
+  // Game session id. Reading without it would silently find no manifest and the
+  // persona/world-book evidence would never be observed.
+  assert.match(RUNNER_SOURCE, /const gameSessionId = `game-\$\{Date\.now\(\)\}`/);
+  assert.match(RUNNER_SOURCE, /resolveRuntimePaths\(identity, runtimeRoot, gameSessionId\)/);
+  assert.match(RUNNER_SOURCE, /readAssembledContextEvidence\(gameSessionPaths\)/);
+  assert.match(RUNNER_SOURCE, /gameSessionId,/);
+});
+
 test("a disposable runtime root is the explicit fallback and is the only path that writes a model profile", () => {
   assert.match(RUNNER_SOURCE, /const usesDisposableRoot = configuredRuntimeRoot === undefined/);
   assert.match(RUNNER_SOURCE, /if \(usesDisposableRoot\)\s*\n\s*await writeFile\(join\(runtimeRoot, "settings", "model-profiles\.json"\)/);

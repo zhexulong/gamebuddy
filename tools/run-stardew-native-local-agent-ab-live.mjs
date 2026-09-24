@@ -251,11 +251,16 @@ const runtimePaths = resolveRuntimePaths(identity, runtimeRoot);
 await mkdir(runtimePaths.agentDir, { recursive: true });
 if (!process.env.CPA_OAI_API_KEY) throw new Error("CPA_OAI_API_KEY_missing");
 await writeFile(join(runtimePaths.agentDir, "auth.json"), JSON.stringify({ "cpa-oai": { type: "api_key", key: process.env.CPA_OAI_API_KEY } }), "utf8");
+// One Game activation id for this run: it is the surface session id the runtime
+// uses for its durable run manifest, so the context-evidence read below resolves
+// the same file the runtime wrote.
+const gameSessionId = `game-${Date.now()}`;
+const gameSessionPaths = resolveRuntimePaths(identity, runtimeRoot, gameSessionId);
 const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({ manifest: await loadHostDeploymentManifest(manifestPath), launcher: STARDEW_INTEGRATION_LAUNCHER, launch, expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }) });
 let runtime;
 try {
   runtime = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => {
-    const permit = Object.freeze({ principal: execution.principal, operationId: `op-${Date.now()}`, requestId: `req-${Date.now()}`, kind: "enter", gameSessionId: `game-${Date.now()}`, world: execution.world, bindingDigest: execution.bindingFacts.bindingDigest, owner: execution.bindingFacts.owner, deadlineAtMs: deadline, expected: Object.freeze({ partitionRevision: 1, gameRevision: 0, leaseRevision: 0, fenceEpoch: 1 }), payloadDigest: "a".repeat(64), fenceToken: `fence-${Date.now()}`, prepared: Object.freeze({ partitionRevision: 2, gameRevision: 0, leaseRevision: 1, fenceEpoch: 2 }) });
+    const permit = Object.freeze({ principal: execution.principal, operationId: `op-${Date.now()}`, requestId: `req-${Date.now()}`, kind: "enter", gameSessionId, world: execution.world, bindingDigest: execution.bindingFacts.bindingDigest, owner: execution.bindingFacts.owner, deadlineAtMs: deadline, expected: Object.freeze({ partitionRevision: 1, gameRevision: 0, leaseRevision: 0, fenceEpoch: 1 }), payloadDigest: "a".repeat(64), fenceToken: `fence-${Date.now()}`, prepared: Object.freeze({ partitionRevision: 2, gameRevision: 0, leaseRevision: 1, fenceEpoch: 2 }) });
     return createHostGameRuntimeMaterializer({
       gameOperationalGateNonceSha256: "a".repeat(64),
       companionLocale: COMPANION_LOCALE,
@@ -336,7 +341,7 @@ try {
   // the canonical files the product placed under this runtime root, so the gate
   // proves the persona/world book reached the Game surface rather than trusting
   // a script-side claim. A disposable root legitimately has neither file.
-  const personaWorldBook = await readAssembledContextEvidence(runtimePaths);
+  const personaWorldBook = await readAssembledContextEvidence(gameSessionPaths);
   const contextAssembled = personaWorldBook.expectedProfile === null
     ? true
     : personaWorldBook.mountedProfileId === personaWorldBook.expectedProfile.profileId
