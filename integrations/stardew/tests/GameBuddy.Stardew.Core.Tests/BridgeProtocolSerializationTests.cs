@@ -198,6 +198,36 @@ public sealed class BridgeProtocolSerializationTests
         missingReason.Should().Be("invalid_envelope");
     }
 
+    /// <summary>
+    /// Loop-closure W0a: every registered action must be reachable over the wire.
+    /// The wire argument list and the registered descriptor are two independent
+    /// declarations; when they drift, the request is rejected as invalid_envelope
+    /// before any handler sees it, so a "registered" capability can never be
+    /// invoked. This test pins each newly registered action's exact wire shape.
+    /// </summary>
+    [Theory]
+    [InlineData("craft_item", "expectedTargetId")]
+    [InlineData("cook_recipe", "expectedTargetId")]
+    [InlineData("collect_crab_pot_output", "x", "y", "expectedTargetId")]
+    [InlineData("ship_item", "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId")]
+    public void LoopClosureExecutionRequest_RoundTripsThroughTheWire(string action, params string[] argumentNames)
+    {
+        var request = new BridgeExecutionRequest("req_loop", "idemp_loop", action, new BridgeExecutionArgs
+        {
+            X = argumentNames.Contains("x") ? 12f : null,
+            Y = argumentNames.Contains("y") ? 34f : null,
+            Slot = argumentNames.Contains("slot") ? 3 : null,
+            ExpectedQualifiedItemId = argumentNames.Contains("expectedQualifiedItemId") ? "opaque_target_1" : null,
+            ExpectedTargetId = argumentNames.Contains("expectedTargetId") ? "opaque_target_1" : null,
+        }, 1, 5000);
+        var envelope = new BridgeEnvelope<BridgeExecutionRequest>(1, "msg_loop", "corr_loop", 1000L, SampleScope, "execution_request", request);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue(serializeReason);
+        BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? parsed, out string deserializeReason)
+            .Should().BeTrue($"{action} must be reachable over the wire: {deserializeReason}");
+        parsed!.Payload.Action.Should().Be(action);
+    }
+
     [Fact]
     public void TryDeserializeExecutionRequest_ValidPayload_DeserializesCorrectly()
     {

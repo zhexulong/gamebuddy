@@ -1767,6 +1767,13 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "navigate_to_destination" => new[] { "destination" },
         "express_emote" => new[] { "emote" },
         "face_direction" => new[] { "direction" },
+        // Loop-closure W0a registrations (FarmhandActionCatalog): the wire list
+        // must cover every registered action, otherwise the parser rejects the
+        // request with invalid_envelope before any handler sees it — a registered
+        // capability that can never be invoked.
+        "craft_item" or "cook_recipe" => new[] { "expectedTargetId" },
+        "collect_crab_pot_output" => new[] { "x", "y", "expectedTargetId" },
+        "ship_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         _ => null,
     };
 }
