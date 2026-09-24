@@ -24,7 +24,11 @@ export async function runCutweedsSmoke(
   try {
     let snapshot = await observeFresh(client, { actionable: true });
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
-    const target = chooseFirstWeedTarget(snapshot);
+    // The fixture guarantees exactly one weed on a tile with a standable neighbour
+    // and warps the player there. Discovery scans a wider radius, so select an
+    // adjacent target: the native admission requires Chebyshev <= 1 and this
+    // fixture has no move_to_tile capability to close a gap.
+    const target = chooseAdjacentWeedTarget(snapshot);
 
     // equip_tool is the action-owned prerequisite: the handler revalidates
     // CurrentToolIndex == slot on the game thread, so we must equip first and
@@ -118,17 +122,18 @@ function parseStrictEvidence(evidence) {
   return fields;
 }
 
-function chooseFirstWeedTarget(snapshot) {
+function chooseAdjacentWeedTarget(snapshot) {
   const targets = snapshot.weedTargets ?? [];
   if (!Array.isArray(targets) || targets.length === 0) throw new Error("cut_weeds_target_count_expected_at_least_1_got_0");
-  const target = targets.find(
-    (entry) =>
-      entry?.targetId &&
-      Number.isInteger(entry.x) &&
-      Number.isInteger(entry.y),
+  const wellFormed = targets.filter(
+    (entry) => entry?.targetId && Number.isInteger(entry.x) && Number.isInteger(entry.y),
   );
-  if (!target) throw new Error("cut_weeds_target_malformed");
-  return target;
+  if (wellFormed.length === 0) throw new Error("cut_weeds_target_malformed");
+  const adjacent = wellFormed.filter(
+    (entry) => Math.max(Math.abs(entry.x - snapshot.tile.x), Math.abs(entry.y - snapshot.tile.y)) <= 1,
+  );
+  if (adjacent.length === 0) throw new Error("cut_weeds_no_adjacent_target");
+  return adjacent[0];
 }
 
 if (import.meta.main) {
