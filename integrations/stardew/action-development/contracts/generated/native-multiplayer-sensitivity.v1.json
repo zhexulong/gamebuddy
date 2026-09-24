@@ -1,0 +1,844 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "stardew_native_multiplayer_sensitivity",
+  "note": "Multiplayer scope is DERIVED from the exact decompiled game source plus the Mod's own admission guards. The pinned statement (not the authored memory) is what the checker trusts.",
+  "scopeAcknowledgements": [
+    {
+      "defect": "over_restriction",
+      "actions": [
+        "machine_load",
+        "machine_collect_output",
+        "chop_tree_source",
+        "break_rock_source",
+        "clear_hoedirt",
+        "dig_artifact_spot",
+        "refill_watering_can",
+        "chest_store",
+        "chop_stump",
+        "plant_sapling",
+        "cut_weeds",
+        "scythe_crop",
+        "craft_item",
+        "cook_recipe",
+        "collect_crab_pot_output"
+      ],
+      "reason": "Admission uses the early `native_local_player_required` fixture guard (Context.IsMultiplayer || !Game1.IsMasterGame || getAllFarmers().Count() != 1) even though the native seam carries no outcome-affecting multiplayer state. The correct guard is the scope-bound actor resolver `ExecutionManager.TryGetBoundActor` (farmhandexecutioncontroller.cs:412-451), which already exists and is already used by express_emote / face_direction / move_to_tile: it validates `actor.UniqueMultiplayerID == executionScope.PlayerId` and fails closed with `execution_scope_mismatch`, which is what a Farmhand actor needs. On the AI Farmhand's own client Game1.player IS that Farmhand, so the resolver admits the real product topology instead of refusing it.",
+      "owner": "stardew-integration"
+    },
+    {
+      "defect": "unverified_scope",
+      "actions": [
+        "ship_item"
+      ],
+      "reason": "Admission admits a shared world, and the settlement container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. No shared-world live evidence exists yet.",
+      "owner": "stardew-integration"
+    },
+    {
+      "defect": "mp_sensitive_exclusion",
+      "actions": [
+        "chest_retrieve"
+      ],
+      "reason": "`Chest.GetItemsForPlayer(long id)` resolves the container per player: a chest with a GlobalInventoryId returns the team-shared inventory, and a MiniShippingBin returns that player's own separate-wallet inventory. The Mod calls the no-arg overload, which resolves `Game1.player.UniqueMultiplayerID`. So the target container genuinely depends on the world's wallet mode and who is asking, yet admission rejects a shared world outright. Same root cause as the over_restriction pin, and the same fix applies, but it is recorded separately because the native path is positively verified to be multiplayer-capable rather than merely unrestricted.",
+      "owner": "stardew-integration"
+    }
+  ],
+  "declaredActionIds": [
+    "move_to_tile",
+    "equip_tool",
+    "travel",
+    "enter_exit",
+    "till_soil",
+    "pickup_forage",
+    "pickup_item",
+    "water_crop",
+    "plant_seed",
+    "fertilize_tile",
+    "machine_inspect",
+    "machine_load",
+    "machine_collect_output",
+    "collect_animal_product",
+    "feed_animal",
+    "use_item",
+    "harvest_crop",
+    "place_wood_fence",
+    "place_crab_pot",
+    "bait_crab_pot",
+    "chop_tree_source",
+    "break_rock_source",
+    "clear_hoedirt",
+    "dig_artifact_spot",
+    "refill_watering_can",
+    "inspect_world_map",
+    "find_destination",
+    "observe_scene",
+    "navigate_to_destination",
+    "clear_debris",
+    "npc_relationship",
+    "pet_animal",
+    "interact_npc_with_item",
+    "express_emote",
+    "face_direction",
+    "chest_store",
+    "chest_retrieve",
+    "chop_stump",
+    "plant_sapling",
+    "cut_weeds",
+    "scythe_crop",
+    "craft_item",
+    "cook_recipe",
+    "collect_crab_pot_output",
+    "ship_item"
+  ],
+  "actions": [
+    {
+      "actionId": "move_to_tile",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "StardewBodyController",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "equip_tool",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "Farmer.CurrentToolIndex",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "travel",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "StardewBodyController",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "enter_exit",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Farmer.cs",
+          "signature": "public void warpFarmer(",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "till_soil",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Hoe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "pickup_forage",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Game1.cs",
+          "signature": "public static bool tryToCheckAt",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "pickup_item",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Debris.cs",
+          "signature": "public virtual bool collect(",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "water_crop",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/WateringCan.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "plant_seed",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Object.cs",
+          "signature": "public virtual bool placementAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "fertilize_tile",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Object.cs",
+          "signature": "public virtual bool placementAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "machine_inspect",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public virtual bool checkAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "machine_load",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public virtual bool checkAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "machine_collect_output",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public virtual bool checkAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "collect_animal_product",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/MilkPail.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "feed_animal",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public virtual bool checkAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "use_item",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Farmer.cs",
+          "signature": "public void eatObject(",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates a buff-awareness shortcut"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "harvest_crop",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.TerrainFeatures/HoeDirt.cs",
+          "signature": "public override bool performUseAction",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "place_wood_fence",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Object.cs",
+          "signature": "public override bool canBePlacedHere(GameLocation l, Vector2 tile, CollisionMask collisionM",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "place_crab_pot",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Object.cs",
+          "signature": "public virtual bool placementAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "bait_crab_pot",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public virtual bool checkAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "chop_tree_source",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Axe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "break_rock_source",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Pickaxe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "clear_hoedirt",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Pickaxe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "dig_artifact_spot",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Hoe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "refill_watering_can",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/WateringCan.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "inspect_world_map",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "WorldMap",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "read_only"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "find_destination",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "DerivedDestinationSet",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "read_only"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "observe_scene",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "SceneObservation",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "read_only"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "navigate_to_destination",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "StardewBodyController",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "clear_debris",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Tool.cs",
+          "signature": "public virtual void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "npc_relationship",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "Farmer.friendshipData",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "pet_animal",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Characters/Pet.cs",
+          "signature": "public override bool checkAction",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "interact_npc_with_item",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/NPC.cs",
+          "signature": "public virtual void receiveGift(",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "express_emote",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "Farmer.doEmote",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "face_direction",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "mod_owned",
+          "authority": "StardewBodyController",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "chest_store",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/Chest.cs",
+          "signature": "public virtual Item addItem",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "chest_retrieve",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/Chest.cs",
+          "signature": "public IInventory GetItemsForPlayer(long id)",
+          "sensitivity": "mp-semantic",
+          "semanticEffect": "the container is resolved per player: GlobalInventoryId returns a team-shared inventory, and a MiniShippingBin chest returns that player's own separate-wallet inventory; the Mod calls the no-arg overload, which resolves Game1.player.UniqueMultiplayerID, so the target container depends on who is asking"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "shared_world_multiplayer"
+    },
+    {
+      "actionId": "chop_stump",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Axe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "plant_sapling",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Object.cs",
+          "signature": "public virtual bool placementAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "cut_weeds",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Object.cs",
+          "signature": "public virtual bool performToolAction",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "netWorldState.TreasureTotems only seeds a day-save Random and is populated in single-player too"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "scythe_crop",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.TerrainFeatures/HoeDirt.cs",
+          "signature": "public override bool performToolAction",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "craft_item",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/CraftingRecipe.cs",
+          "signature": "public virtual Item createItem()",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "team.SpecialOrderRuleActive(\"QI_COOKING\") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "cook_recipe",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/CraftingRecipe.cs",
+          "signature": "public virtual Item createItem()",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "team.SpecialOrderRuleActive(\"QI_COOKING\") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "collect_crab_pot_output",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public virtual bool checkAction",
+          "sensitivity": "mp-observational",
+          "semanticEffect": "IsLocalPlayer only gates pickup sound/animation"
+        }
+      ],
+      "admission": {
+        "verdict": "rejects_multiplayer",
+        "reasonCode": "native_local_player_required"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "ship_item",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Farm.cs",
+          "signature": "public void shipItem(Item i, Farmer who)",
+          "sensitivity": "mp-insensitive"
+        },
+        {
+          "kind": "native",
+          "file": "StardewValley/Farm.cs",
+          "signature": "public IInventory getShippingBin(Farmer who)",
+          "sensitivity": "mp-semantic",
+          "semanticEffect": "getShippingBin(who) returns who.personalShippingBin instead of the shared bin when Game1.player.team.useSeparateWallets is set, so the settlement target depends on the world's wallet mode"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "shared_world_multiplayer"
+    }
+  ]
+}
