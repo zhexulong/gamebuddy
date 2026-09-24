@@ -1444,9 +1444,25 @@ async function executeBridge(
     await admission.observer.bindReceipt(receipt);
     return receipt;
   } catch (error) {
-    await admission.observer.markUncertain(dispatch);
+    // An explicit Mod rejection is authoritative proof that no native write
+    // happened (the Mod returns it before routing, e.g. stale_snapshot or an
+    // invalid envelope). Marking such a dispatch uncertain would turn a
+    // provably-unstarted action into a recovery obligation and invite a replay
+    // the authority never asked for. Only a failure that leaves the write
+    // outcome genuinely unknown becomes uncertain.
+    if (!isAuthoritativeRejection(error)) await admission.observer.markUncertain(dispatch);
+    else await admission.observer.markAuthoritativelyRejected(dispatch);
     throw error;
   }
+}
+
+/**
+ * The bridge answers a refusal with `bridge_rejected:<reasonCode>`; that is the
+ * authoritative "not accepted" signal produced before any native dispatch.
+ * Transport faults, timeouts, and unexpected shapes stay unknown on purpose.
+ */
+function isAuthoritativeRejection(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("bridge_rejected:");
 }
 
 function receiptResult(

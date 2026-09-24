@@ -100,6 +100,7 @@ function createTestAdmission() {
       beforeWrite: async () => {},
       bindReceipt: async () => {},
       markUncertain: async () => {},
+      markAuthoritativelyRejected: async () => {},
     },
     owner: {
       ownerId: "test_owner",

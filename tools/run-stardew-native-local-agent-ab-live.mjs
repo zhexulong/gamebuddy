@@ -217,15 +217,27 @@ function randomToken(len = 32) {
   return out;
 }
 // Trace every ordinary-action execution request the Agent sends so a
-// rejected coordinate is attributable to the actual submitted args.
+// rejected coordinate is attributable to the actual submitted args. A thrown
+// rejection (stale_snapshot, replay rejection, bridge_rejected:*) never returns
+// a receipt, so the catch records the rejection instead of skipping the entry —
+// otherwise the run's own health report sees zero rejections while the session
+// shows real ones.
 const actionTrace = [];
 const originalExecute = client.execute.bind(client);
 client.execute = async (request) => {
-  const receipt = await originalExecute(request);
-  const entry = { action: request?.action, args: request?.args, state: receipt?.state, reasonCode: receipt?.reasonCode };
-  actionTrace.push(entry);
-  console.error("AGENT_EXECUTE", JSON.stringify(entry));
-  return receipt;
+  try {
+    const receipt = await originalExecute(request);
+    const entry = { action: request?.action, args: request?.args, state: receipt?.state, reasonCode: receipt?.reasonCode };
+    actionTrace.push(entry);
+    console.error("AGENT_EXECUTE", JSON.stringify(entry));
+    return receipt;
+  } catch (error) {
+    const reasonCode = String(error?.message ?? error).replace(/^bridge_rejected:/, "");
+    const entry = { action: request?.action, args: request?.args, state: "rejected", reasonCode };
+    actionTrace.push(entry);
+    console.error("AGENT_EXECUTE", JSON.stringify(entry));
+    throw error;
+  }
 };
 // Capture the Agent-authored program id from any submit the runtime tools send
 // over this connection; the Agent chooses the id autonomously, so a fixed

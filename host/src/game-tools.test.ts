@@ -269,7 +269,7 @@ catalogRevision: 1,
   };
   const [move] = createStardewActionTools(integration, undefined, () => ({
     owner: { ownerId: "test_owner", epoch: 1 },
-    observer: { beforeWrite: () => undefined, bindReceipt: () => undefined, markUncertain: () => undefined },
+    observer: { beforeWrite: () => undefined, bindReceipt: () => undefined, markUncertain: () => undefined, markAuthoritativelyRejected: () => undefined },
     cancelExact: async () => {
       throw new Error("unused");
     },
@@ -1454,6 +1454,7 @@ catalogRevision: 1,
         },
         bindReceipt: () => undefined,
         markUncertain: () => undefined,
+        markAuthoritativelyRejected: () => undefined,
       },
       cancelExact: async () => {
         throw new Error("unused");
@@ -1486,6 +1487,7 @@ test("game action awaits admission beforeWrite before calling the bridge", async
       beforeWrite: () => beforeWrite.promise,
       bindReceipt: () => undefined,
       markUncertain: () => undefined,
+      markAuthoritativelyRejected: () => undefined,
     },
     cancelExact: async () => {
       throw new Error("unused");
@@ -1527,6 +1529,7 @@ test("game action awaits markUncertain after a bridge execute failure", async ()
         markUncertainStarted.resolve();
         return markUncertain.promise;
       },
+      markAuthoritativelyRejected: () => undefined,
     },
     cancelExact: async () => {
       throw new Error("unused");

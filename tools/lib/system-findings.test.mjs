@@ -90,3 +90,25 @@ test("reproduces the real 8/15 rejection live finding shape", () => {
   assert.equal(result.acceptedCount, 3);
   assert.equal(result.totalCount, 10);
 });
+test("namespaced replay rejections are attributed, not left unclassified", () => {
+  // The live run that motivated this module reported zero rejections because a
+  // thrown rejection never reached the trace; with the trace fixed, a compound
+  // code like the replay rejection must still land on a component. Matching only
+  // the whole string would silently fall through to `unclassified`.
+  const result = summarizeSystemFindings(
+    [
+      { action: "move_to_tile", args: { x: 3, y: 12 }, state: "rejected", reasonCode: "stale_snapshot" },
+      {
+        action: "move_to_tile",
+        args: { x: 3, y: 12 },
+        state: "rejected",
+        reasonCode: "execution_receipt_replay_rejected:non_monotonic_revision",
+      },
+    ],
+    [],
+  );
+  assert.equal(result.rejectedCount, 2);
+  const components = result.findings.map((finding) => finding.component);
+  assert.ok(components.includes("delivery"), `expected a delivery finding, got ${JSON.stringify(result.findings)}`);
+  assert.ok(!components.includes("unclassified"), `nothing should be unclassified: ${JSON.stringify(result.findings)}`);
+});

@@ -34,6 +34,8 @@ export interface ExecutionDispatchObserver {
   beforeWrite(dispatch: ExecutionDispatch): void | Promise<void>;
   bindReceipt(receipt: ExecutionReceipt): void | Promise<void>;
   markUncertain(dispatch: ExecutionDispatch): void | Promise<void>;
+  /** Mod refused before any native write; settle durably without a replay obligation. */
+  markAuthoritativelyRejected(dispatch: ExecutionDispatch): void | Promise<void>;
 }
 
 export type RecoverableExecutionDispatch = Readonly<{
@@ -235,6 +237,36 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
       () => undefined,
       (error) => {
         correlation.uncertain = false;
+        throw error;
+      },
+    );
+  }
+
+  /**
+   * An authoritative Mod rejection proves the native write never started (the
+   * refusal is produced before routing). Settle the durable record instead of
+   * leaving it `prepared`: a prepared record stays recoverable, so the recovery
+   * supervisor would eventually replay a write the authority explicitly refused.
+   * `prepared -> terminal_settled` is the journal's own allowed transition for
+   * exactly this case.
+   */
+  markAuthoritativelyRejected(dispatch: ExecutionDispatch): void | Promise<void> {
+    const correlation = this.#byRequestId.get(dispatch.requestId);
+    if (correlation === undefined || correlation.executionId !== null) return;
+    correlation.uncertain = false;
+    const material = correlation.recoveryMaterial;
+    if (this.#recoveryJournal === undefined || material === undefined) {
+      correlation.resolveCancelSettled?.();
+      this.#retire(correlation);
+      return;
+    }
+    return this.#recoveryJournal.markTerminalSettled(material.logicalActionId).then(
+      () => {
+        correlation.resolveCancelSettled?.();
+        this.#retire(correlation);
+      },
+      (error) => {
+        correlation.uncertain = true;
         throw error;
       },
     );
