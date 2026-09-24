@@ -431,7 +431,11 @@ export type ExecutionRequest = Readonly<{
     | "plant_sapling"
     | "cut_weeds"
     | "scythe_crop"
-    | "interact_npc_with_item";
+    | "interact_npc_with_item"
+    | "craft_item"
+    | "cook_recipe"
+    | "collect_crab_pot_output"
+    | "ship_item";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
@@ -1400,7 +1404,11 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "plant_sapling" &&
     value.action !== "cut_weeds" &&
     value.action !== "scythe_crop" &&
-    value.action !== "interact_npc_with_item"
+    value.action !== "interact_npc_with_item" &&
+    value.action !== "craft_item" &&
+    value.action !== "cook_recipe" &&
+    value.action !== "collect_crab_pot_output" &&
+    value.action !== "ship_item"
   )
     return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
@@ -1754,6 +1762,31 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_npc_item_interaction_target";
+  } else if (value.action === "craft_item" || value.action === "cook_recipe") {
+    if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_args";
+    if (typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId))
+      return "invalid_recipe_target";
+  } else if (value.action === "collect_crab_pot_output") {
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+    if (
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_crab_pot_target";
+  } else if (value.action === "ship_item") {
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (
+      !isToolSlot(value.args.slot) ||
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedQualifiedItemId !== "string" ||
+      value.args.expectedQualifiedItemId.length === 0 ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_ship_target";
   }
   return null;
 }
@@ -2228,7 +2261,12 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "chop_stump" ||
       value.action === "plant_sapling" ||
       value.action === "cut_weeds" ||
-      value.action === "scythe_crop") &&
+      value.action === "scythe_crop" ||
+      value.action === "interact_npc_with_item" ||
+      value.action === "craft_item" ||
+      value.action === "cook_recipe" ||
+      value.action === "collect_crab_pot_output" ||
+      value.action === "ship_item") &&
     isRecord(value.args) &&
     Object.keys(value.args).length <= 8 &&
     Number.isSafeInteger(value.expectedRevision) &&
