@@ -47,7 +47,7 @@ export async function runCraftItemSmoke(
     assertExactCapabilities(after, EXPECTED_CAPABILITIES);
     const passed =
       after.revision >= terminal.revision &&
-      evidence.disposition === "inventory" &&
+      evidence.disposition === "added_to_inventory" &&
       evidence.materials_consumed_exactly === "true" &&
       evidence.inventory_postcondition === "true" &&
       evidence.count_postcondition === "true" &&

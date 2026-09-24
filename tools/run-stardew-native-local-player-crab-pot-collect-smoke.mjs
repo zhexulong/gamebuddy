@@ -5,6 +5,7 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
+  waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
@@ -43,7 +44,15 @@ export async function runCrabPotCollectSmoke(
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "crab_pot_output_collected")
       throw new Error(`crab_pot_collect_failed:${terminal.state}:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
-    const after = await observeFresh(client, { actionable: true });
+    // The native collection starts an actor animation (animateOnce sets
+    // CanMove=false), so the player is deliberately not actionable right after
+    // the receipt. The pot state is still readable, and the point of this reread
+    // is that the collected pot is gone from the mature set, not that the actor
+    // has finished its animation.
+    const after = await waitForFreshSnapshot(client, {
+      minRevision: terminal.revision,
+      timeoutMs: postconditionTimeoutMs,
+    });
     assertExactCapabilities(after, EXPECTED_CAPABILITIES);
     const delivered = Number(evidence.stack_delivered);
     const passed =
