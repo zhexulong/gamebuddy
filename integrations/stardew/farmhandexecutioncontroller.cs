@@ -21,10 +21,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private const int DefaultDeadlineTicks = 60 * 20;
     // The ACTING radius for every interaction stays Chebyshev-adjacent (1); this
     // discovery-only radius lets the snapshot expose planning targets before the
-    // Agent walks there, matching Item/NPC/Chest discovery (6). Execution
+    // Agent walks there, matching Item/NPC/Chest discovery. Execution
     // preconditions never read this constant.
     private const int TargetDiscoveryRadius = 6;
-    private const int AnimalProductDiscoveryRadius = 1;
+    // Animal-product discovery is the one place where the ACTING range is wider
+    // than adjacency (milk/shear reach). Named for what it gates: the execution
+    // precondition, not the snapshot radius (which is TargetDiscoveryRadius).
+    private const int AnimalProductActionRadius = 1;
     private const int MaximumRememberedReceipts = 256;
     // A freshly warped player may report CanMove=false for a few transition
     // frames. The deferred warp replan waits this many ticks for the player to
@@ -1423,7 +1426,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // local discovery envelope used by this native-local fixture.
                 // Execution still independently enforces its one-tile native
                 // interaction radius after a separately receipted move.
-                && IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, 6)
+                && IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, TargetDiscoveryRadius)
                 && player.friendshipData.ContainsKey(npc.Name))
             .Take(64)
             .Select(npc =>
@@ -2108,7 +2111,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         && chest.GlobalInventoryId is null
         && chest.SpecialChestType is StardewValley.Objects.Chest.SpecialChestTypes.None;
 
-    private static bool IsChestTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 6);
+    private static bool IsChestTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius);
 
     private static int FindFirstStorableSlot(Farmer player)
     {
@@ -2175,7 +2178,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static bool IsAnimalProductTargetInRange(Farmer player, int targetX, int targetY)
     {
-        return IsTileWithinChebyshevRadius(player, targetX, targetY, AnimalProductDiscoveryRadius);
+        return IsTileWithinChebyshevRadius(player, targetX, targetY, AnimalProductActionRadius);
     }
 
     private static bool IsCropTargetInRange(Farmer player, int targetX, int targetY)
@@ -2279,7 +2282,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static IReadOnlyList<BridgeItemTarget> DiscoverItemTargets(Farmer player)
     {
-        const int discoveryRadius = 6;
+        const int discoveryRadius = TargetDiscoveryRadius;
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeItemTarget>();
         List<BridgeItemTarget> result = new();
@@ -2567,12 +2570,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// The ACTING precondition stays Chebyshev-adjacent (till_soil still requires
     /// radius 1); this discovery only exists so the Agent can plan which adjacent
     /// tile to walk to instead of guessing coordinates and being rejected. The
-    /// radius matches the other discovery radii (NPC 6, item 8) and the result is
-    /// distance-ordered and bounded, so the snapshot stays small and the nearest
-    /// work is always visible.
+    /// result is distance-ordered and bounded, so the snapshot stays small and
+    /// the nearest work is always visible.
     /// </para>
     /// </summary>
-    private const int SoilTileDiscoveryRadius = 6;
+    private const int SoilTileDiscoveryRadius = TargetDiscoveryRadius;
 
     /// <summary>Bounded like the other snapshot target lists; Host accepts up to 64.</summary>
     private const int MaximumDiscoveredSoilTiles = 32;
