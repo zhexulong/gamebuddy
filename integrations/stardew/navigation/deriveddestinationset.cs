@@ -33,7 +33,12 @@ internal sealed class DerivedDestinationSet
         this.SearchDestinations = (searchDestinations ?? root.DescendantsAndSelf()
                 .Where(node => node.Destination is not null)
                 .Select(node => node.Destination!))
-            .GroupBy(destination => destination.CanonicalIdentity, StringComparer.Ordinal)
+            // The water landmark deliberately shares the Farm location's canonical
+            // identity so the existing route-planner arrival semantics keep
+            // working. Deduplicating on identity alone would silently drop it
+            // (a location identity is always already present), so dedup keys on
+            // the full public selector surface: identity + label.
+            .GroupBy(destination => $"{destination.CanonicalIdentity}\u001f{destination.CanonicalLabel}", StringComparer.Ordinal)
             .Select(group => group.First())
             .OrderBy(destination => destination.CanonicalLabel, StringComparer.Ordinal)
             .ThenBy(destination => destination.CanonicalIdentity, StringComparer.Ordinal)
