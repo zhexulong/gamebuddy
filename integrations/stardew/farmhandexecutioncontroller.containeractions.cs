@@ -25,8 +25,17 @@ internal sealed partial class ExecutionManager
         this.revision++;
         string executionId = Guid.NewGuid().ToString("N");
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        // Multiplayer-capable actor resolution. The scope-bound actor proof
+        // replaces the early single-player fixture guard: a caller that is not
+        // the scope-bound actor is rejected with execution_scope_mismatch
+        // instead of a shared world being refused outright. On the AI
+        // Farmhand's own client Game1.player IS that Farmhand (FarmhandProvisioner
+        // binds Manifest.FarmhandId to it), so the real product topology is
+        // admitted. The Mod's native-local fixture keeps its own separate
+        // topology guard (ModEntry.IsConfiguredNativeLocalPlayer), so this is
+        // not a relaxation of fixture containment.
+        if (!this.TryGetBoundActor(out Farmer? boundActor, out string guardReason) || boundActor is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, guardReason, null);
         if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
@@ -81,8 +90,17 @@ internal sealed partial class ExecutionManager
         this.revision++;
         string executionId = Guid.NewGuid().ToString("N");
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        // Multiplayer-capable actor resolution. The scope-bound actor proof
+        // replaces the early single-player fixture guard: a caller that is not
+        // the scope-bound actor is rejected with execution_scope_mismatch
+        // instead of a shared world being refused outright. On the AI
+        // Farmhand's own client Game1.player IS that Farmhand (FarmhandProvisioner
+        // binds Manifest.FarmhandId to it), so the real product topology is
+        // admitted. The Mod's native-local fixture keeps its own separate
+        // topology guard (ModEntry.IsConfiguredNativeLocalPlayer), so this is
+        // not a relaxation of fixture containment.
+        if (!this.TryGetBoundActor(out Farmer? boundActor, out string guardReason) || boundActor is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, guardReason, null);
         if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
