@@ -398,6 +398,15 @@ export function fixtureActions(action) {
   // The fixture keeps the Farm's own native Shipping Bin building and adds one
   // shippable Object to the backpack; production alone calls Farm.shipItem.
   if (action === "ship_item") return ["ship_item"];
+  // craft_item cooks nothing: the fixture grants a learned recipe and its
+  // ingredients in the backpack; production alone runs the native transaction.
+  if (action === "craft_item") return ["craft_item"];
+  // cook_recipe stands the actor beside a native cooking station and grants a
+  // learned cooking recipe with its ingredients; production alone cooks.
+  if (action === "cook_recipe") return ["cook_recipe"];
+  // The fixture grows crab pots, baits them and advances to a mature output;
+  // production alone collects. The existing place/bait actions stay separate.
+  if (action === "collect_crab_pot_output") return ["collect_crab_pot_output"];
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions) {
@@ -440,6 +449,9 @@ export function fixtureScenario(actions) {
   if (actions.includes("cut_weeds")) return "native_cut_weeds_v1";
   if (actions.includes("scythe_crop")) return "native_scythe_crop_v1";
   if (actions.includes("ship_item")) return "native_ship_item_v1";
+  if (actions.includes("craft_item")) return "native_craft_item_v1";
+  if (actions.includes("cook_recipe")) return "native_cook_recipe_v1";
+  if (actions.includes("collect_crab_pot_output")) return "native_crab_pot_collect_v1";
   return "";
 }
 function assertNativeLocalBinding(binding, observedSaveSlot) {
@@ -499,7 +511,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
@@ -535,7 +547,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
