@@ -102,6 +102,37 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            // Loop-closure W0a routing. The four bodies live in the lane-owned
+            // partials (farmhandexecutioncontroller.{crafting,cooking,crabpot,
+            // shipping}actions.cs) and are replaced by lanes B/C/D/E; W0a only
+            // freezes this dispatch seam and the cross-lane signatures. Each
+            // placeholder fails closed as action_not_implemented.
+            "craft_item" => this.executions.RequestLocalCraftItem(
+                request.RequestId,
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "cook_recipe" => this.executions.RequestLocalCookRecipe(
+                request.RequestId,
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "collect_crab_pot_output" => this.executions.RequestLocalCollectCrabPotOutput(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "ship_item" => this.executions.RequestLocalShipItem(
+                request.RequestId,
+                request.Args.Slot ?? 0,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedQualifiedItemId ?? string.Empty,
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
 
             _ => new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Blocked, "unsupported_action", ledger.CurrentRevision, null),
         };

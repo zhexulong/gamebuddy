@@ -99,6 +99,24 @@ public static class FarmhandActionCatalog
         E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.Experimental),
         E("cut_weeds", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.Experimental),
         E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget(), FarmhandActionLifecycle.Experimental),
+        // Loop-closure W0a pre-registration. W0a owns registration and routing;
+        // the native bodies are lane-owned partials
+        // (farmhandexecutioncontroller.{crafting,cooking,crabpot,shipping}actions.cs)
+        // whose placeholder terminals are replaced by lanes B/C/D/E.
+        // craft_item and cook_recipe share one shape: both carry the opaque recipe
+        // content identity in expectedTargetId, which the Mod re-validates against
+        // the live craftingRecipes/cookingRecipes table on the game thread (an
+        // unknown or unlearned recipe fails closed). cook_recipe's W-rule cooking
+        // station adjacency is derived and re-checked Mod-side from the live world,
+        // exactly like the other action-level game-thread re-validations, rather
+        // than trusting a client-supplied station coordinate.
+        // collect_crab_pot_output reuses the machine-collect target shape;
+        // ship_item reuses the slot+target shape so its canBeShipped admission
+        // guard can still resolve the exact slot item.
+        E("craft_item", "crafting_cooking", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "native_action_postcondition", ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
+        E("cook_recipe", "crafting_cooking", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "native_action_postcondition", ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
+        E("collect_crab_pot_output", "buildings_farm_management", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental),
+        E("ship_item", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.Experimental),
     });
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, descriptor);
