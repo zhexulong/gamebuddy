@@ -9,7 +9,10 @@ import {
 } from "./check-gameplay-capability-catalog.mjs";
 
 const catalogPath = new URL("../design/gameplay-capability-catalog.json", import.meta.url);
-const registrySourcePath = new URL("../host/src/action-registry.ts", import.meta.url);
+const artifactSourcePath = new URL(
+  "../integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
+  import.meta.url,
+);
 const basisSourcePath = new URL("../design/legacy/12_STARDEW_PRIMITIVE_ACTION_BASIS.md", import.meta.url);
 
 async function loadCatalog() {
@@ -17,7 +20,7 @@ async function loadCatalog() {
 }
 
 async function publishedEntries() {
-  return publishedRegistryEntries(await readFile(registrySourcePath, "utf8"));
+  return publishedRegistryEntries(await readFile(artifactSourcePath, "utf8"));
 }
 
 test("catalog seed covers every published registry action without claiming completeness", async () => {

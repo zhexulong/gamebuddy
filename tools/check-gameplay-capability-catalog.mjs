@@ -14,7 +14,22 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogPath = path.join(root, "design", "gameplay-capability-catalog.json");
-const registrySourcePath = path.join(root, "host", "src", "action-registry.ts");
+/** The Mod-owned generated action surface is the cross-language authority for
+ * which actions exist and at what lifecycle. `host/src/action-registry.ts`
+ * is only a restrictive Host adapter projection: it states in its own header
+ * that it is "deliberately not an action registry" and carries "no Mod-owned
+ * membership, family, identity-version, or lifecycle facts". Reading adapters
+ * here would both force Mod-experimental actions to be recorded as published
+ * and hide published read-only actions that have no adapter tool. */
+const actionSurfaceArtifactPath = path.join(
+  root,
+  "integrations",
+  "stardew",
+  "action-development",
+  "contracts",
+  "generated",
+  "action-surface.v1.json",
+);
 const basisSourcePath = path.join(root, "design", "legacy", "12_STARDEW_PRIMITIVE_ACTION_BASIS.md");
 
 const requiredRecordFields = Object.freeze([
@@ -63,32 +78,38 @@ function enumHas(catalog, name, value) {
   return Array.isArray(catalog.enums?.[name]) && catalog.enums[name].includes(value);
 }
 
-/** Parse the actual registered implementation surface; test expectations are
- * intentionally not a source of truth for this audit.
- *
- * The registry moved from a literal `STARDEW_ACTION_REGISTRY: readonly
- * PublishedAction[]` array of `publishedAction("id", "family")` calls to
- * `STARDEW_ACTION_ADAPTERS` built from `actionAdapter("id", ...)` calls
- * (commit b8a027f). Only the action IDs are load-bearing here: the validator
- * uses `actionId` for coverage comparison and never reads `familyId`. */
-export function publishedRegistryEntries(registrySource) {
-  const arrayMatch = registrySource.match(
-    /export const STARDEW_ACTION_ADAPTERS\s*=\s*Object\.freeze\(\[([\s\S]*?)\n\]\)\s*satisfies readonly StardewActionAdapter\[\];/,
-  ) ?? registrySource.match(
-    /export const STARDEW_ACTION_REGISTRY\s*:\s*readonly PublishedAction\[\]\s*=\s*Object\.freeze\(\[([\s\S]*?)\n\]\);/,
-  );
-  if (!arrayMatch) {
-    throw new Error("Unable to locate STARDEW_ACTION_ADAPTERS in host/src/action-registry.ts.");
+/** Parse the Mod-owned published action surface. This artifact is the
+ * generator's tracked output and the only place that carries the Mod's
+ * lifecycle fact (adapter membership is a separate, restrictive Host
+ * projection). Test expectations are intentionally not a source of truth. */
+export function publishedRegistryEntries(artifactSource) {
+  let surface;
+  try {
+    surface = JSON.parse(artifactSource);
+  } catch (error) {
+    throw new Error(`Unable to parse the Mod action-surface artifact: ${error.message}`);
+  }
+  if (!Array.isArray(surface?.actions)) {
+    throw new Error("Mod action-surface artifact has no actions array.");
   }
   const entries = [];
-  for (const item of arrayMatch[1].matchAll(/actionAdapter\(\s*\n?\s*"([a-z0-9_]+)"/g)) {
-    entries.push(Object.freeze({ actionId: item[1], familyId: "", actionClass: "primitive" }));
-  }
-  for (const item of arrayMatch[1].matchAll(/publishedAction\(\s*"([a-z0-9_]+)",\s*"([a-z0-9_]+)"/g)) {
-    entries.push(Object.freeze({ actionId: item[1], familyId: item[2], actionClass: "primitive" }));
+  for (const action of surface.actions) {
+    if (action?.lifecycle !== "published") continue;
+    if (typeof action.actionId !== "string" || action.actionId.length === 0) {
+      throw new Error("Mod action-surface artifact published action has no actionId.");
+    }
+    entries.push(
+      Object.freeze({
+        actionId: action.actionId,
+        // Catalog coverage is recorded at primitive granularity; read_only and
+        // execution are both minimal semantic capabilities there.
+        actionClass: "primitive",
+        surfaceKind: typeof action.kind === "string" ? action.kind : "execution",
+      }),
+    );
   }
   if (entries.length === 0) {
-    throw new Error("Unable to parse published action entries from host/src/action-registry.ts.");
+    throw new Error("Mod action-surface artifact declares no published actions.");
   }
   return entries;
 }
@@ -306,11 +327,11 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
 
 export async function checkGameplayCapabilityCatalog({
   catalogFile = catalogPath,
-  registryFile = registrySourcePath,
+  artifactFile = actionSurfaceArtifactPath,
 } = {}) {
-  const [catalogSource, registrySource, basisSource] = await Promise.all([
+  const [catalogSource, artifactSource, basisSource] = await Promise.all([
     readFile(catalogFile, "utf8"),
-    readFile(registryFile, "utf8"),
+    readFile(artifactFile, "utf8"),
     readFile(basisSourcePath, "utf8"),
   ]);
   let catalog;
@@ -319,7 +340,7 @@ export async function checkGameplayCapabilityCatalog({
   } catch (error) {
     throw new Error(`Catalog is not valid JSON: ${error.message}`);
   }
-  const entries = publishedRegistryEntries(registrySource);
+  const entries = publishedRegistryEntries(artifactSource);
   const basisIds = basisPrimitiveIdsFromSource(basisSource);
   const errors = validateGameplayCapabilityCatalog(catalog, entries, basisIds);
   if (errors.length) fail(errors);
