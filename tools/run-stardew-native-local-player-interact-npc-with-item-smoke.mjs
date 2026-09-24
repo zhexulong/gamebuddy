@@ -38,7 +38,7 @@ export async function runInteractNpcWithItemSmoke(
   const trace = [];
   const startedAt = Date.now();
   try {
-    let snapshot = await freshActionableSnapshot(client);
+    let snapshot = await freshActionableSnapshot(client, undefined, stabilizeTimeoutMs);
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
     if (snapshot.location !== "FarmHouse") throw new Error("npc_gift_route_must_start_at_farmhouse");
     snapshot = await travelFreshHop(client, receipts, trace, snapshot, "FarmHouse", "Farm", "farmhouse_to_farm", stabilizeTimeoutMs, travelTimeoutMs);
@@ -146,7 +146,7 @@ async function travelToLocation(client, receipts, trace, snapshot, expectedLocat
 }
 
 async function moveToLiveTarget(client, receipts, trace, target, phase, stabilizeTimeoutMs, moveTimeoutMs) {
-  const snapshot = await freshActionableSnapshot(client);
+  const snapshot = await freshActionableSnapshot(client, undefined, stabilizeTimeoutMs);
   const current = validNpcTargets(snapshot).find((entry) => entry.targetId === target.targetId);
   if (!current) throw new Error(`${phase}_target_changed`);
   const approach = nearestCardinalApproach(snapshot.tile, current);
@@ -156,11 +156,16 @@ async function moveToLiveTarget(client, receipts, trace, target, phase, stabiliz
     terminalTimeoutMs: moveTimeoutMs,
     check: (fresh) => adjacent(fresh.tile, current),
   });
-  return freshActionableSnapshot(client);
+  return freshActionableSnapshot(client, undefined, stabilizeTimeoutMs);
 }
 
-async function freshActionableSnapshot(client) {
-  const snapshot = await observeFresh(client, { actionable: true });
+async function freshActionableSnapshot(client, seed, stabilizeTimeoutMs) {
+  // A solicited observe whose snapshot repeats the admitted revision is
+  // rejected by design (stale-duplicate guard), and travel/move receipts can
+  // leave the cached revision current. Use the harness's tolerant actionable
+  // wait instead of a strict one-shot observe, exactly like the sibling
+  // native-local runners.
+  const snapshot = await waitForActionable(client, seed ?? client.state?.snapshot, stabilizeTimeoutMs);
   if (!Array.isArray(snapshot.warps) || !Array.isArray(snapshot.npcRelationshipTargets))
     throw new Error("native_local_npc_gift_snapshot_invalid");
   return snapshot;
