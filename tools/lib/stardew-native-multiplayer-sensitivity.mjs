@@ -61,9 +61,15 @@ export const SEAM_KINDS = Object.freeze(["native", "mod_owned"]);
 /**
  * Mechanisms whose single-player and shared-world execution paths are not the
  * same code path, so single-player live evidence can never transfer across the
- * fork. The mechanism axis asserts exactly this set.
+ * fork. Derived from the forks themselves: a mechanism that has at least one
+ * outcome fork requires shared-world evidence. Never hand-typed, so a newly
+ * cited outcome fork cannot be understated by forgetting to list it here.
  */
-export const REQUIRED_SHARED_WORLD_MECHANISMS = Object.freeze(["sleep"]);
+export function deriveRequiredSharedWorldMechanisms(mechanisms) {
+  return Object.freeze(
+    mechanisms.filter((m) => m.forks.some((f) => f.forkClass === "outcome_fork")).map((m) => m.id),
+  );
+}
 
 /**
  * A mechanism's cited control-flow forks. `forkClass` is authored, never
@@ -72,6 +78,55 @@ export const REQUIRED_SHARED_WORLD_MECHANISMS = Object.freeze(["sleep"]);
  * that the reason names the branch code it rests on.
  */
 export const MECHANISM_FORK_CLASSES = Object.freeze(["outcome_fork", "collateral_fork"]);
+
+/**
+ * Validate the mechanism axis against the exact decompiled source. Every fork
+ * must cite a real method body that really contains the declared predicate, and
+ * must carry an authored class plus a reason. Returns frozen mechanism records.
+ */
+export function validateMultiplayerMechanisms(mechanisms, sources) {
+  if (!Array.isArray(mechanisms) || mechanisms.length === 0)
+    fail("mp_sensitivity_register_invalid", "Expected non-empty mechanisms array.");
+  const seen = new Set();
+  const validated = mechanisms.map((mechanism, index) => {
+    const where = `mechanisms[${index}]`;
+    const id = text(mechanism.id, `${where}.id`);
+    if (seen.has(id)) fail("mp_sensitivity_register_invalid", `Duplicate mechanism id ${id}.`, { id });
+    seen.add(id);
+    const summary = text(mechanism.summary, `${where}.summary`);
+    if (!Array.isArray(mechanism.forks) || mechanism.forks.length === 0)
+      fail("mp_sensitivity_register_invalid", `${where}.forks must be a non-empty array.`);
+    const forks = mechanism.forks.map((fork, forkIndex) => {
+      const forkWhere = `${where}.forks[${forkIndex}]`;
+      const file = text(fork.file, `${forkWhere}.file`);
+      const source = sources[file];
+      if (!source) fail("mp_sensitivity_seam_source_missing", `No decompiled source for ${file}.`, { file });
+      const signature = text(fork.signature, `${forkWhere}.signature`);
+      const body = extractMethodBody(source.text, signature);
+      if (body === null)
+        fail("mp_sensitivity_seam_signature_missing", `Signature not found in ${file}.`, { file, signature });
+      const predicate = text(fork.predicate, `${forkWhere}.predicate`);
+      if (!body.includes(predicate))
+        fail(
+          "mp_sensitivity_mechanism_fork_drift",
+          `${id} cites ${predicate} in ${file} ${signature} but the exact source does not contain it.`,
+          { id, file, signature, predicate },
+        );
+      const forkClass = fork.forkClass;
+      if (!MECHANISM_FORK_CLASSES.includes(forkClass))
+        fail("mp_sensitivity_register_invalid", `Invalid ${forkWhere}.forkClass.`, { id, forkClass });
+      return Object.freeze({
+        file,
+        signature,
+        predicate,
+        forkClass,
+        reason: text(fork.reason, `${forkWhere}.reason`),
+      });
+    });
+    return Object.freeze({ id, summary, forks: Object.freeze(forks) });
+  });
+  return Object.freeze(validated);
+}
 
 export const SEAM_SENSITIVITY = Object.freeze(["mp-insensitive", "mp-observational", "mp-semantic"]);
 export const REQUIRED_LIVE_TOPOLOGY = Object.freeze(["single_player_native_companion", "shared_world_multiplayer"]);
@@ -398,18 +453,17 @@ export function validateMultiplayerSensitivityRegister(register, sources) {
         { defect: scope.defect, actions: scope.actions },
       );
   }
+  const mechanisms = validateMultiplayerMechanisms(register.mechanisms, sources);
   return Object.freeze({
     actionCount: actions.length,
     actions: Object.freeze(actions),
     defects: Object.freeze(defects),
     scopeAcknowledgements: Object.freeze(scopeAcks),
     acknowledged: Object.freeze(actions.flatMap((action) => action.acknowledged)),
-    actionCount: actions.length,
-    actions: Object.freeze(actions),
-    defects: Object.freeze(defects),
-    acknowledged: Object.freeze(actions.flatMap((action) => action.acknowledged)),
     overRestricted: Object.freeze(defects.filter((defect) => defect.defect === "over_restriction")),
     mpSensitiveExclusions: Object.freeze(defects.filter((defect) => defect.defect === "mp_sensitive_exclusion")),
     unverifiedScope: Object.freeze(defects.filter((defect) => defect.defect === "unverified_scope")),
+    mechanisms: Object.freeze(mechanisms),
+    requiredSharedWorldMechanisms: deriveRequiredSharedWorldMechanisms(mechanisms),
   });
 }

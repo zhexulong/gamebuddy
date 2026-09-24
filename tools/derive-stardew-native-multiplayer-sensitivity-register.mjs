@@ -266,8 +266,62 @@ const register = {
         "differs between single-player and a shared world. For `chest_retrieve` the container is resolved by " +
         "`Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a " +
         "MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves " +
-        "`Game1.player.UniqueMultiplayerID`. No shared-world live evidence exists yet for either.",
+        "`Game1.player.UniqueMultiplayerID`. For `pet_animal` the +12 friendship is gated on the single per-pet " +
+        "`grantedFriendshipForPet` flag rather than the acting farmer's `lastPetDay` entry, so a second farmer's pet in the same " +
+        "day grants 0 friendship while the Mod receipt asserts before+12. No shared-world live evidence exists yet for any of them.",
       owner: "stardew-integration",
+    },
+  ],
+  // Axis 3 -- mechanisms. Sleeping, the cross-day handshake, passing out and the
+  // day rollover are not Mod actions, so an action-only register is structurally
+  // blind to their forks. Each fork cites a real method body and the predicate it
+  // rests on; the validator re-reads the exact source and rejects a stale citation.
+  // A mechanism with any outcome fork requires shared-world live evidence.
+  mechanisms: [
+    {
+      id: "sleep",
+      summary:
+        "Going to bed and advancing the day are different state machines per world mode; a single-player sleep cannot " +
+        "stand in for a shared-world one.",
+      forks: [
+        {
+          file: "StardewValley/GameLocation.cs",
+          signature: "private void startSleep()",
+          predicate: "if (Game1.IsMultiplayer)",
+          forkClass: "outcome_fork",
+          reason:
+            "Shared world branches to Game1.netReady.SetLocalReady(\"sleep\", true) plus a ReadyCheckDialog whose confirm " +
+            "callback is the only path to doSleep(); single-player calls doSleep() directly. The day therefore advances on a " +
+            "different trigger and after a different set of conditions.",
+        },
+        {
+          file: "StardewValley/Game1.cs",
+          signature: "public static void PassOutNewDay()",
+          predicate: "if (!IsMultiplayer)",
+          forkClass: "outcome_fork",
+          reason:
+            "Single-player passes out straight into NewDay(0f); a shared world instead sets player.passedOut, swaps in a " +
+            "non-cancelable ReadyCheckDialog(\"sleep\") and advances only via that dialog's confirm callback.",
+        },
+        {
+          file: "StardewValley/Game1.cs",
+          signature: "private static IEnumerator<int> _newDayAfterFade()",
+          predicate: "if (IsMasterGame)",
+          forkClass: "outcome_fork",
+          reason:
+            "dayOfMonth and stats.DaysPlayed advance only on the master game, so a Farmhand client cannot roll the date " +
+            "itself; it must wait on newDaySync barriers instead.",
+        },
+        {
+          file: "StardewValley/NewDaySynchronizer.cs",
+          signature: "public void start()",
+          predicate: "if (Game1.IsMasterGame)",
+          forkClass: "outcome_fork",
+          reason:
+            "The master broadcasts message 30 to every other farmer and returns; a client spins in while (!ServerReady) " +
+            "processing messages until the server signals, so the cross-day handshake is a barrier in a shared world only.",
+        },
+      ],
     },
   ],
   declaredActionIds: actions.map((a) => a.actionId),
