@@ -827,7 +827,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -2175,15 +2175,17 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             throw new InvalidOperationException("fixture_native_local_jodi_harvest_relationship_invalid");
 
         // Target-version commands grow one ready ordinary cauliflower, exactly as the
-        // harvest fixture does; production alone harvests it.
+        // harvest fixture does (the growth duration is scenario setup, not an Agent
+        // wait); production alone harvests it. Cauliflower Seeds are (O)474 and the
+        // crop needs 12 in-game days, so GrowCrops must advance the full window.
         GameLocation? previousLocation = Game1.currentLocation;
         try
         {
             Game1.currentLocation = farm;
             if (!Game1.game1.parseDebugInput("RemoveDirt", null)
                 || !Game1.game1.parseDebugInput("SpreadDirt", null)
-                || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
-                || !Game1.game1.parseDebugInput("GrowCrops 6", null))
+                || !Game1.game1.parseDebugInput("SpreadSeeds 474", null)
+                || !Game1.game1.parseDebugInput("GrowCrops 12", null))
                 throw new InvalidOperationException("fixture_native_local_jodi_harvest_setup_unavailable");
         }
         finally { Game1.currentLocation = previousLocation; }

@@ -468,8 +468,8 @@ test("native-local jodi-harvest-deliver fixture supplies a mature crop and a rea
   // offer, complete a quest or reward anything itself.
   assert.match(setup, /const string npcName = "Jodi"/);
   assert.match(setup, /const string desiredHarvestId = "\(O\)190"/);
-  assert.match(setup, /parseDebugInput\("SpreadSeeds 472", null\)/);
-  assert.match(setup, /parseDebugInput\("GrowCrops 6", null\)/);
+  assert.match(setup, /parseDebugInput\("SpreadSeeds 474", null\)/);
+  assert.match(setup, /parseDebugInput\("GrowCrops 12", null\)/);
   assert.match(setup, /Game1\.warpCharacter\(npc, farm, npcTile\.Value\)/);
   assert.match(setup, /relationship\.Clear\(\)/);
   assert.doesNotMatch(
