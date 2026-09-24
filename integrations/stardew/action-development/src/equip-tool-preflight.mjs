@@ -198,11 +198,9 @@ export async function inspectEquipToolReleaseBundle(profile) {
   });
 }
 async function loadCanonicalDependencies() {
-  const [fixture, nativeFixture, installation] = await Promise.all([
-    import("../../../../tools/lib/stardew-fixture-profile.mjs"),
-    import("../../../../tools/lib/stardew-native-local-player-fixture.mjs"),
-    import("../../../../tools/create-stardew-portfolio-installation-attestation.mjs"),
-  ]);
+  const fixture = await import("../../../../tools/lib/stardew-fixture-profile.mjs");
+  const nativeFixture = await import("../../../../tools/lib/stardew-native-local-player-fixture.mjs");
+  const targetVersion = await import("../../../../tools/lib/stardew-target-version-inspector.mjs");
   return {
     inspectFixture: (profile) => fixture.inspectFixtureTransaction({ root: profile.fixtureTransactionRoot }),
     inspectLifecyclePreparation: async (profile) => {
@@ -231,7 +229,7 @@ async function loadCanonicalDependencies() {
       });
     },
     inspectTarget: async (profile, bundle) => Object.freeze({
-      ...await installation.inspectPortfolioTargetInstallation(profile.gameInstallPath),
+      ...await targetVersion.inspectTargetInstallation(profile.gameInstallPath),
       adapterVersion: bundle.adapterVersion,
     }),
   };
