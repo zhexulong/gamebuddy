@@ -387,6 +387,8 @@ export type Snapshot = Readonly<{
     edibility: number;
     isDrink: boolean;
   }>[];
+  /** The current Farm's single native Shipping Bin paired with one shippable inventory slot (ship_item). */
+  shippingBinTargets?: readonly Readonly<{ targetId: string; x: number; y: number; slot: number; qualifiedItemId: string; stack: number }>[];
 }>;
 
 /** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
@@ -898,6 +900,7 @@ const SNAPSHOT_KEYS = [
   "chestRetrieveTargets",
   "inventoryItemFacts",
   "foodTargets",
+  "shippingBinTargets",
 ] as const;
 
 
@@ -2038,6 +2041,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     (!Array.isArray(value.foodTargets) || value.foodTargets.length > 36 || !value.foodTargets.every(isFoodTargetFact))
   )
     return "invalid_snapshot:foodTargets";
+  if (
+    value.shippingBinTargets !== undefined &&
+    (!Array.isArray(value.shippingBinTargets) ||
+      value.shippingBinTargets.length > 1 ||
+      !value.shippingBinTargets.every(isShippingBinTargetFact))
+  )
+    return "invalid_snapshot:shippingBinTargets";
   if (!isStringArray(value.capabilities)) return "invalid_snapshot:capabilities";
   if (!isNonNegativeSafeInteger(value.catalogRevision)) return "invalid_snapshot:catalogRevision";
   if (!isUniqueOpaqueIdArray(value.enabledActionIds)) return "invalid_snapshot:enabledActionIds";
@@ -2211,6 +2221,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.foodTargets) &&
         value.foodTargets.length <= 36 &&
         value.foodTargets.every(isFoodTargetFact))) &&
+    (value.shippingBinTargets === undefined ||
+      (Array.isArray(value.shippingBinTargets) &&
+        value.shippingBinTargets.length <= 1 &&
+        value.shippingBinTargets.every(isShippingBinTargetFact))) &&
     isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
     isUniqueOpaqueIdArray(value.enabledActionIds) &&
@@ -3274,6 +3288,23 @@ function isChestRetrieveTargetFact(value: unknown): boolean {
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.stack === "number" &&
+    Number.isSafeInteger(value.stack) &&
+    value.stack > 0
+  );
+}
+
+function isShippingBinTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack"]) &&
+    isOpaqueId(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    isToolSlot(value.slot) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
     value.qualifiedItemId.length <= 128 &&

@@ -481,6 +481,7 @@ public sealed class BridgeProtocolSerializationTests
             ChestRetrieveTargets: null,
             InventoryItemFacts: null,
             FoodTargets: null,
+            ShippingBinTargets: null,
             PresentationLocale: "en-US");
         var envelope = new BridgeEnvelope<BridgeSnapshot>(
             BridgeProtocol.Version,
