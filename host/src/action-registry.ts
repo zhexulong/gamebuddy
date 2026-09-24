@@ -527,8 +527,13 @@ export function searchActionsFromModCatalog(
     policy,
   );
   if (normalized.length === 0) return visible;
+  // Search matches the action's own declared target kinds too. A keyword search
+  // that ignored the vocabulary the adapter itself publishes returned nothing
+  // for a query like "npc" even though every npc-targeting action declares it,
+  // which read to the caller as "this capability does not exist".
   return visible.filter((entry) =>
-    `${entry.actionId} ${entry.familyId} ${entry.label} ${entry.description}`
+    [entry.actionId, entry.familyId, entry.label, entry.description, ...entry.targetKinds]
+      .join(" ")
       .toLocaleLowerCase()
       .includes(normalized),
   );

@@ -161,3 +161,28 @@ test("retired action identifiers require an explicit fail-closed migration", () 
     /retired_action_policy_identifier_requires_explicit_migration/,
   );
 });
+
+test("interaction search matches the target vocabulary the adapter itself declares", () => {
+  // A live trace showed the Agent searching "jodi" / "npc gift" and getting an
+  // empty list while the catalog plainly listed the npc interaction, so it
+  // concluded the capability did not exist and went looking across maps. The
+  // search string omitted the adapter's own declared target kinds. This uses a
+  // published adapter so the assertion is about the search string alone.
+  const capabilities = ["move_to_tile"];
+  const catalog = [
+    {
+      actionId: "move_to_tile",
+      familyId: "movement_navigation",
+      identityVersion: 1,
+      lifecycle: "published" as const,
+      kind: "execution" as const,
+    },
+  ];
+  assert.deepEqual(
+    searchActionsFromModCatalog(catalog, capabilities, "tile").map((entry) => entry.actionId),
+    ["move_to_tile"],
+  );
+  // A term matching nothing in actionId/family/label/description/targetKinds
+  // still returns nothing; this must not become a match-everything search.
+  assert.deepEqual(searchActionsFromModCatalog(catalog, capabilities, "zzz"), []);
+});
