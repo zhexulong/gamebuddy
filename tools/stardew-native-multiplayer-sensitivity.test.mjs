@@ -268,7 +268,7 @@ test("the committed register derives cleanly against the exact decompiled source
   // hide here. Update this list deliberately when a shared-world action lands.
   assert.deepEqual(
     report.acknowledged.map((ack) => `${ack.defect}:${ack.actionId}`).sort(),
-    ["unverified_scope:chest_retrieve", "unverified_scope:ship_item"],
+    ["unverified_scope:chest_retrieve", "unverified_scope:pet_animal", "unverified_scope:ship_item"],
   );
   for (const ack of report.acknowledged) {
     assert.ok(ack.reason && ack.reason.length > 0, `${ack.actionId} pin must carry a reason`);

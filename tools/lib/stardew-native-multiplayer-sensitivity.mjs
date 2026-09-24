@@ -24,6 +24,13 @@
  * limited seasonal drops) that cannot change the action's transaction outcome.
  * That distinction cannot be derived from text, so it is authored here once and
  * re-verified against the exact decompiled source.
+ *
+ * Axis 3 — mechanisms: single-player vs shared-world divergence also lives in
+ *            game *mechanisms* that are not Mod actions at all (sleeping, the
+ *            cross-day handshake, passing out, the day rollover, ready checks).
+ *            An action-only register is structurally blind to them, so a
+ *            mechanism is registered as a first-class entry that cites the exact
+ *            control-flow forks in the native source it rests on.
  */
 
 /**
@@ -32,7 +39,7 @@
  * Presence of any of these in a native seam means the seam's behaviour can differ.
  */
 export const MP_DECISIVE_PATTERN =
-  /IsMultiplayer|otherFarmers|IsLocalPlayer|IsMainPlayer|useSeparateWallets|multiplayerMode|Game1\.server\b|IsMasterGame/g;
+  /IsMultiplayer|otherFarmers|IsLocalPlayer|IsMainPlayer|useSeparateWallets|multiplayerMode|Game1\.server\b|IsMasterGame|Game1\.multiplayer\b|UniqueMultiplayerID/g;
 
 /**
  * CONTEXT tokens: appear in native action seams in BOTH modes.
@@ -50,6 +57,21 @@ export const MP_DECISIVE_PATTERN =
 export const MP_CONTEXT_PATTERN = /team\.|netWorldState/g;
 
 export const SEAM_KINDS = Object.freeze(["native", "mod_owned"]);
+
+/**
+ * Mechanisms whose single-player and shared-world execution paths are not the
+ * same code path, so single-player live evidence can never transfer across the
+ * fork. The mechanism axis asserts exactly this set.
+ */
+export const REQUIRED_SHARED_WORLD_MECHANISMS = Object.freeze(["sleep"]);
+
+/**
+ * A mechanism's cited control-flow forks. `forkClass` is authored, never
+ * inferred: no text rule can decide whether two branches produce a different
+ * observable game result, so the gate only checks that the citation is real and
+ * that the reason names the branch code it rests on.
+ */
+export const MECHANISM_FORK_CLASSES = Object.freeze(["outcome_fork", "collateral_fork"]);
 
 export const SEAM_SENSITIVITY = Object.freeze(["mp-insensitive", "mp-observational", "mp-semantic"]);
 export const REQUIRED_LIVE_TOPOLOGY = Object.freeze(["single_player_native_companion", "shared_world_multiplayer"]);
