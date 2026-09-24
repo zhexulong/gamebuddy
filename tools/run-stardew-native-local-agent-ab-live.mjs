@@ -258,6 +258,10 @@ const gameSessionId = `game-${Date.now()}`;
 const gameSessionPaths = resolveRuntimePaths(identity, runtimeRoot, gameSessionId);
 const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({ manifest: await loadHostDeploymentManifest(manifestPath), launcher: STARDEW_INTEGRATION_LAUNCHER, launch, expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }) });
 let runtime;
+// Declared before the try so the failure path can report the same facts instead
+// of losing them when a later stage throws.
+let agentTurnResult = null;
+let voiceResult = null;
 try {
   runtime = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => {
     const permit = Object.freeze({ principal: execution.principal, operationId: `op-${Date.now()}`, requestId: `req-${Date.now()}`, kind: "enter", gameSessionId, world: execution.world, bindingDigest: execution.bindingFacts.bindingDigest, owner: execution.bindingFacts.owner, deadlineAtMs: deadline, expected: Object.freeze({ partitionRevision: 1, gameRevision: 0, leaseRevision: 0, fenceEpoch: 1 }), payloadDigest: "a".repeat(64), fenceToken: `fence-${Date.now()}`, prepared: Object.freeze({ partitionRevision: 2, gameRevision: 0, leaseRevision: 1, fenceEpoch: 2 }) });
@@ -294,12 +298,12 @@ try {
     if (quick !== null) { turn = quick; break; }
   }
   if (turn === null) turn = await Promise.race([agentTurn, new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000))]);
+  agentTurnResult = turn;
   // Ladder 2 additionally waits for the voice gateway's terminal playback
   // observation for the companion line streamed on machine_coffee_loaded.
   // The gateway child needs up to ~20s to boot and MiMo probe-ready before the
   // job can stream, so ladder 2 budgets 90s overall; without a terminal
   // completed observation the ladder stays blocked.
-  let voiceResult = null;
   if (LADDER === "2" || LADDER === "3") {
     if (voiceStarted && voiceObservation === null) {
       await Promise.race([voiceObservationPromise, new Promise((resolvePromise) => setTimeout(resolvePromise, 200_000))]);
@@ -367,9 +371,9 @@ try {
     personaWorldBook,
     contextAssembled,
     worldBookAssembled,
-    presentedSummary,
+    presentedSummary: presentedSummary ?? null,
     voiceResult,
-    agentTurn: turn,
+    agentTurn: agentTurnResult,
     bridgeFacts: factLog,
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
@@ -380,10 +384,10 @@ try {
   await writeFile(resultFile, JSON.stringify(result, null, 2), "utf8").catch(() => {});
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
-  // A turn-completion race (e.g. the runtime refresher asserting the bridge
-  // is no longer live after the final presentation) must never lose the
-  // already-collected evidence. Emit a blocked result with the partial state
-  // and the error, then fall through to cleanup.
+  // A failure before the agent turn (connection, binding, materialization)
+  // must still produce a readable result. The turn/voice facts live in the try
+  // block's scope, so they are read through the same optional paths with
+  // explicit fallbacks instead of assuming they were initialized.
   const partialResult = {
     state: "blocked",
     ladder: LADDER,
@@ -391,9 +395,9 @@ try {
     tillReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "soil_tilled") ?? null,
     plantReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "seed_planted") ?? null,
     waterReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_watered") ?? null,
-    presentedSummary,
+    presentedSummary: presentedSummary ?? null,
     voiceResult,
-    agentTurn: turn,
+    agentTurn: agentTurnResult,
     bridgeFacts: factLog,
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
