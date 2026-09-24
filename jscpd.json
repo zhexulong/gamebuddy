@@ -2,7 +2,6 @@
   "path": [
     "host/src",
     "dialogue-web/src",
-    "voice-gateway/src",
     "packages",
     "tools"
   ],
