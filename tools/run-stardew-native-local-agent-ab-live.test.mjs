@@ -61,6 +61,17 @@ test("the runner enforces a companion-interaction gate for ladder-3 summaries", 
   assert.match(RUNNER_SOURCE, /contextPassed && interactionPassed/);
 });
 
+test("the runner emits system findings as a first-class health signal", () => {
+  // Every live run must yield a system health report (findings with component
+  // attribution + counts), not just pass/blocked — that report is the feedback
+  // signal of the system-level RL loop.
+  assert.match(RUNNER_SOURCE, /import \{ summarizeSystemFindings \} from "\.\/lib\/system-findings\.mjs"/);
+  assert.match(RUNNER_SOURCE, /const actionTrace = \[\]/);
+  assert.match(RUNNER_SOURCE, /actionTrace\.push\(entry\)/);
+  assert.match(RUNNER_SOURCE, /const systemFindings = summarizeSystemFindings\(actionTrace, receipts\)/);
+  assert.match(RUNNER_SOURCE, /systemFindings,\n    presentedSummary/);
+});
+
 test("prompts teach companionship instead of checklist recitals (ladder-3)", () => {
   // The ladder-3 prompts must NOT ask the Agent to "summarize what you did" —
   // that phrasing is what produced the recital the interaction gate rejects.
