@@ -157,9 +157,9 @@ test("language-neutral schema and Host share closed shapes for every published s
     ["toolSlots", { slot: 1, label: "Axe" }],
     ["wateringCanFacts", { slot: 2, qualifiedItemId: "(T)WateringCan", label: "Watering Can", water: 40, max: 40 }],
     ["refillWateringCanTargets", { targetId: "refill_deadbeef", x: 10, y: 12 }],
-    ["forageTargets", { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)16", stack: 1 }],
-    ["itemTargets", { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", stack: 1 }],
-    ["cropTargets", { targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24" }],
+    ["forageTargets", { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)16", displayName: "Wild Horseradish", stack: 1 }],
+    ["itemTargets", { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 }],
+    ["cropTargets", { targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24", displayName: "Parsnip" }],
     [
       "harvestTargets",
       {
@@ -168,10 +168,11 @@ test("language-neutral schema and Host share closed shapes for every published s
         y: 12,
         cropId: "24",
         qualifiedHarvestItemId: "(O)24",
+        displayName: "Parsnip",
         regrowsAfterHarvest: false,
       },
     ],
-    ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472" }],
+    ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" }],
     ["fertilizerTargets", { targetId: "fertilizer_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)368" }],
     [
       "woodFenceTargets",

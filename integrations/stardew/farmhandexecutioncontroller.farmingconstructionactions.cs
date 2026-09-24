@@ -391,7 +391,7 @@ internal sealed partial class ExecutionManager
         string reasonCode = succeeded ? "wood_fence_placed" : "wood_fence_postcondition_unavailable";
         if (succeeded)
         {
-            this.woodFenceResultTarget = new BridgeWoodFenceResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)322", IsFence: true, IsGate: false, health, maxHealth);
+            this.woodFenceResultTarget = new BridgeWoodFenceResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)322", RequireDisplayName("(O)322"), IsFence: true, IsGate: false, health, maxHealth);
             this.woodFenceResultExecutionId = executionId;
             this.woodFenceResultRequestId = requestId;
             this.woodFenceResultRevision = this.revision;
@@ -466,7 +466,7 @@ internal sealed partial class ExecutionManager
         string reasonCode = succeeded ? "crab_pot_placed" : "crab_pot_postcondition_unavailable";
         if (succeeded)
         {
-            this.crabPotResultTarget = new BridgeCrabPotResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)710", crabPot!.owner.Value, crabPot.directionOffset.Value.X, crabPot.directionOffset.Value.Y, overlayTiles);
+            this.crabPotResultTarget = new BridgeCrabPotResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), crabPot!.owner.Value, crabPot.directionOffset.Value.X, crabPot.directionOffset.Value.Y, overlayTiles);
             this.crabPotResultExecutionId = executionId;
             this.crabPotResultRequestId = requestId;
             this.crabPotResultRevision = this.revision;
@@ -505,7 +505,7 @@ internal sealed partial class ExecutionManager
         bool succeeded = handled && crabPot.bait.Value?.QualifiedItemId == "(O)685" && crabPot.owner.Value == player.UniqueMultiplayerID && afterCount == beforeCount - 1;
         ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = succeeded ? "crab_pot_baited" : "bait_crab_pot_postcondition_unavailable";
-        if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, slot, targetX, targetY, "(O)710", "(O)685", crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
+        if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), "(O)685", crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
         string evidence = $"source=(O)685;location={location.NameOrUniqueName};x={targetX};y={targetY};target={expectedTargetId};pot=(O)710;slot={slot};owner={crabPot.owner.Value};bait_before=none;bait_after={crabPot.bait.Value?.QualifiedItemId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount};actionable={(player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp).ToString().ToLowerInvariant()};active_execution=null";
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence); this.Remember(receipt); this.AddTrace(receipt); return receipt;
     }

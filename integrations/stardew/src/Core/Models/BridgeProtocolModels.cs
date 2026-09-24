@@ -192,27 +192,27 @@ public sealed record BridgeWateringCanFact(int Slot, string QualifiedItemId, str
 
 public sealed record BridgeRefillWateringCanTarget(string TargetId, int X, int Y);
 
-public sealed record BridgeForageTarget(string TargetId, int X, int Y, string QualifiedItemId, int Stack);
+public sealed record BridgeForageTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
 
-public sealed record BridgeItemTarget(string TargetId, int X, int Y, string QualifiedItemId, int Stack);
+public sealed record BridgeItemTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
 
-public sealed record BridgeCropTarget(string TargetId, int X, int Y, string CropId);
+public sealed record BridgeCropTarget(string TargetId, int X, int Y, string CropId, string DisplayName);
 
 public sealed record BridgeHarvestTarget(string TargetId, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName, bool RegrowsAfterHarvest);
 
-public sealed record BridgeSeedTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId);
+public sealed record BridgeSeedTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
 
-public sealed record BridgeFertilizerTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId);
+public sealed record BridgeFertilizerTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
 
-public sealed record BridgeWoodFenceTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId);
+public sealed record BridgeWoodFenceTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
 
-public sealed record BridgeWoodFenceResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, bool IsFence, bool IsGate, float Health, float MaxHealth);
+public sealed record BridgeWoodFenceResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, bool IsFence, bool IsGate, float Health, float MaxHealth);
 
-public sealed record BridgeCrabPotTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId);
+public sealed record BridgeCrabPotTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
 
 public sealed record BridgeCrabPotOverlayTile(int X, int Y, int Count);
 
-public sealed record BridgeCrabPotResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, long OwnerId, float OffsetX, float OffsetY, IReadOnlyList<BridgeCrabPotOverlayTile> OverlayTiles);
+public sealed record BridgeCrabPotResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, long OwnerId, float OffsetX, float OffsetY, IReadOnlyList<BridgeCrabPotOverlayTile> OverlayTiles);
 
 /// <summary>
 /// A live mature crab pot the companion may collect from: required by
@@ -220,23 +220,23 @@ public sealed record BridgeCrabPotResultTarget(string TargetId, string Location,
 /// never be reached by its own advertised capability. Carries only stable
 /// local values; production alone calls the native interaction.
 /// </summary>
-public sealed record BridgeCrabPotCollectTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, string OutputQualifiedItemId, int OutputStack);
+public sealed record BridgeCrabPotCollectTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, string DisplayName, string OutputQualifiedItemId, int OutputStack);
 
-public sealed record BridgeBaitCrabPotTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string BaitQualifiedItemId, string OwnerId, int BaitStack);
+public sealed record BridgeBaitCrabPotTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, string BaitQualifiedItemId, string OwnerId, int BaitStack);
 
-public sealed record BridgeBaitCrabPotResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string BaitQualifiedItemId, string OwnerId, int BaitStack);
+public sealed record BridgeBaitCrabPotResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, string BaitQualifiedItemId, string OwnerId, int BaitStack);
 
 public sealed record BridgeDebrisTarget(string TargetId, int Slot, int X, int Y, int ParentSheetIndex, string ToolKind, int RequiredUpgradeLevel, int Health);
 
-public sealed record BridgeRockSourceTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, int Health);
+public sealed record BridgeRockSourceTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, string DisplayName, int Health);
 
-public sealed record BridgeArtifactSpotTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId);
+public sealed record BridgeArtifactSpotTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, string DisplayName);
 
 public sealed record BridgeArtifactSpotResultTarget(string TargetId, string Location, int X, int Y, bool Crop, bool Ground);
 
 public sealed record BridgeClearHoeDirtTarget(string TargetId, string Location, int X, int Y, bool Crop, bool Ground);
 
-public sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady);
+public sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady);
 
 public sealed record BridgeTreeChopSourceTarget(string TargetId, string Location, int X, int Y, string TreeType, int GrowthStage, float Health, bool Stump, bool Moss, bool Tapped);
 
@@ -246,25 +246,25 @@ public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, 
 
 public sealed record BridgePetTarget(string TargetId, int X, int Y, string PetType, int Friendship, bool PettedToday);
 
-public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X, int Y, string AnimalType, string QualifiedProduceItemId, string ToolKind, int ProduceStack);
+public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X, int Y, string AnimalType, string QualifiedProduceItemId, string DisplayName, string ToolKind, int ProduceStack);
 
 public sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, int Y, int HayStack);
 
-public sealed record BridgeChestStoreTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, int Stack);
+public sealed record BridgeChestStoreTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, string DisplayName, int Stack);
 
 // Lane E: one native Shipping Bin building plus the exact shippable backpack
 // slot the actor would hand to Farm.shipItem. X/Y is the bin's top-left
 // footprint tile (the actor must stand adjacent to the building), never a tile
 // the client may use to retarget the native call.
-public sealed record BridgeShippingBinTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, int Stack);
+public sealed record BridgeShippingBinTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, string DisplayName, int Stack);
 public sealed record BridgeTreeStumpTarget(string TargetId, string Location, int X, int Y, string TreeType, float Health);
-public sealed record BridgeTreeSaplingTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId);
+public sealed record BridgeTreeSaplingTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
 public sealed record BridgeWeedTarget(string TargetId, string Location, int X, int Y, int Health);
-public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId);
-public sealed record BridgeChestRetrieveTarget(string TargetId, int X, int Y, string QualifiedItemId, int Stack);
-public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, int Stack);
+public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName);
+public sealed record BridgeChestRetrieveTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
+public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, string DisplayName, int Stack);
 
-public sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, int Stack, int Edibility, bool IsDrink);
+public sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, string DisplayName, int Stack, int Edibility, bool IsDrink);
 
 public sealed record BridgeSnapshot(
     long Revision,

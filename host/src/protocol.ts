@@ -124,14 +124,17 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: string;
+    displayName: string;
     stack: number;
   }>[];
   /** Nearby native item drops available through Debris.collect. */
-  itemTargets?: readonly Readonly<{ targetId: string; x: number; y: number; qualifiedItemId: string; stack: number }>[];
+  itemTargets?: readonly Readonly<{ targetId: string; x: number; y: number; qualifiedItemId: string;
+    displayName: string; stack: number }>[];
   /** Exact live Watering Can facts for a bounded refill request. */
   wateringCanFacts?: readonly Readonly<{
     slot: number;
     qualifiedItemId: string;
+    displayName: string;
     label: string;
     water: number;
     max: number;
@@ -139,7 +142,7 @@ export type Snapshot = Readonly<{
   /** Adjacent legal native Watering Can refill sources. */
   refillWateringCanTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
   /** Nearby unwatered crops available through the native WateringCan path. */
-  cropTargets?: readonly Readonly<{ targetId: string; x: number; y: number; cropId: string }>[];
+  cropTargets?: readonly Readonly<{ targetId: string; x: number; y: number; cropId: string; displayName: string }>[];
   /** Nearby ready, ordinary Grab crops available through native Crop.harvest. */
   harvestTargets?: readonly Readonly<{
     targetId: string;
@@ -151,7 +154,7 @@ export type Snapshot = Readonly<{
     regrowsAfterHarvest: boolean;
   }>[];
   /** Nearby empty HoeDirt targets paired with a live inventory seed slot. */
-  seedTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; qualifiedItemId: string }>[];
+  seedTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; qualifiedItemId: string; displayName: string }>[];
   /** Nearby ground HoeDirt targets paired with a live fertilizer slot. */
   fertilizerTargets?: readonly Readonly<{
     targetId: string;
@@ -159,6 +162,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: string;
+    displayName: string;
   }>[];
   /** Fresh empty Farm tiles paired with one qualified (O)322 inventory slot. */
   woodFenceTargets?: readonly Readonly<{
@@ -168,6 +172,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: "(O)322";
+    displayName: string;
   }>[];
   /** Same-location native non-gate Fence result published only after placement. */
   woodFenceResultTargets?: readonly Readonly<{
@@ -177,6 +182,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: "(O)322";
+    displayName: string;
     isFence: true;
     isGate: false;
     health: number;
@@ -190,6 +196,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: "(O)710";
+    displayName: string;
   }>[];
   /** Same-location native Crab Pot result published only after placement. */
   crabPotResultTargets?: readonly Readonly<{
@@ -199,6 +206,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: "(O)710";
+    displayName: string;
     ownerId: number;
     offsetX: number;
     offsetY: number;
@@ -211,6 +219,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: "(O)710";
+    displayName: string;
     outputQualifiedItemId: string;
     outputStack: number;
   }>[];
@@ -222,6 +231,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: "(O)710";
+    displayName: string;
     baitQualifiedItemId: "(O)685";
     /** Decimal-string because Stardew multiplayer IDs may exceed JSON safe-integer range. */
     ownerId: string;
@@ -235,6 +245,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: "(O)710";
+    displayName: string;
     baitQualifiedItemId: "(O)685";
     /** Decimal-string because Stardew multiplayer IDs may exceed JSON safe-integer range. */
     ownerId: string;
@@ -258,6 +269,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: string;
+    displayName: string;
     health: number;
   }>[];
   /** Adjacent live empty ground HoeDirt targets for one Basic Pickaxe clear. */
@@ -276,6 +288,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: "(O)590";
+    displayName: string;
   }>[];
   /** Same-location plain ground HoeDirt created by dig_artifact_spot, published only after that action. */
   artifactSpotResultTargets?: readonly Readonly<{
@@ -323,7 +336,7 @@ export type Snapshot = Readonly<{
     health: number;
   }>[];
   /** Nearby open plantable tiles paired with an owned wild-tree sapling slot (plant_sapling). */
-  treeSaplingTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; qualifiedItemId: string }>[];
+  treeSaplingTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; qualifiedItemId: string; displayName: string }>[];
   /** Nearby Weed objects cuttable by an equipped scythe (cut_weeds). */
   weedTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; health: number }>[];
   /** Nearby ready Scythe-method crops harvestable by an equipped scythe (scythe_crop). */
@@ -334,6 +347,7 @@ export type Snapshot = Readonly<{
     y: number;
     cropId: string;
     qualifiedHarvestItemId: string;
+    displayName: string;
   }>[];
   /** Nearby native machines; an idle Keg may expose the one exact Coffee Bean input slot accepted by machine_load, and a ready Coffee result may expose collection eligibility. */
   machineTargets?: readonly Readonly<{
@@ -341,6 +355,7 @@ export type Snapshot = Readonly<{
     x: number;
     y: number;
     qualifiedItemId: string;
+    displayName: string;
     readyForHarvest: boolean;
     minutesUntilReady: number;
     heldObjectQualifiedItemId?: string | null;
@@ -379,27 +394,33 @@ export type Snapshot = Readonly<{
     y: number;
     animalType: string;
     qualifiedProduceItemId: string;
+    displayName: string;
     toolKind: "milk_pail" | "shears";
     produceStack: number;
   }>[];
   /** Nearby empty native AnimalHouse Trough tiles paired with an owned Hay slot. Placement does not prove an animal has eaten. */
   feedTroughTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; hayStack: number }>[];
   /** Nearby player-owned ordinary Chests with a storable item in the Farmhand inventory (chest_store). */
-  chestStoreTargets?: readonly Readonly<{ targetId: string; x: number; y: number; slot: number; qualifiedItemId: string; stack: number }>[];
+  chestStoreTargets?: readonly Readonly<{ targetId: string; x: number; y: number; slot: number; qualifiedItemId: string;
+    displayName: string; stack: number }>[];
   /** Nearby player-owned ordinary Chests holding an item retrievable into the Farmhand inventory (chest_retrieve). */
-  chestRetrieveTargets?: readonly Readonly<{ targetId: string; x: number; y: number; qualifiedItemId: string; stack: number }>[];
+  chestRetrieveTargets?: readonly Readonly<{ targetId: string; x: number; y: number; qualifiedItemId: string;
+    displayName: string; stack: number }>[];
   /** Bounded live inventory facts, currently published only for animal-product output rereads. */
-  inventoryItemFacts?: readonly Readonly<{ slot: number; qualifiedItemId: string; stack: number }>[];
+  inventoryItemFacts?: readonly Readonly<{ slot: number; qualifiedItemId: string;
+    displayName: string; stack: number }>[];
   /** Owned, ordinary edible inventory items available through the native eat path. */
   foodTargets?: readonly Readonly<{
     slot: number;
     qualifiedItemId: string;
+    displayName: string;
     stack: number;
     edibility: number;
     isDrink: boolean;
   }>[];
   /** The current Farm's single native Shipping Bin paired with one shippable inventory slot (ship_item). */
-  shippingBinTargets?: readonly Readonly<{ targetId: string; x: number; y: number; slot: number; qualifiedItemId: string; stack: number }>[];
+  shippingBinTargets?: readonly Readonly<{ targetId: string; x: number; y: number; slot: number; qualifiedItemId: string;
+    displayName: string; stack: number }>[];
 }>;
 
 /** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
@@ -2679,7 +2700,7 @@ function isToolSlotFact(value: unknown): boolean {
 function isForageTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack","displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -2689,14 +2710,17 @@ function isForageTargetFact(value: unknown): boolean {
     typeof value.stack === "number" &&
     Number.isSafeInteger(value.stack) &&
     value.stack > 0 &&
-    value.stack <= 999
+    value.stack <= 999 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
 function isItemTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack","displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -2706,7 +2730,10 @@ function isItemTargetFact(value: unknown): boolean {
     typeof value.stack === "number" &&
     Number.isSafeInteger(value.stack) &&
     value.stack > 0 &&
-    value.stack <= 999
+    value.stack <= 999 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -2745,13 +2772,16 @@ function isRefillWateringCanTargetFact(value: unknown): boolean {
 function isCropTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "cropId"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "cropId","displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
     typeof value.cropId === "string" &&
     value.cropId.length > 0 &&
-    value.cropId.length <= 128
+    value.cropId.length <= 128 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -2778,7 +2808,7 @@ function isHarvestTargetFact(value: unknown): boolean {
 function isWoodFenceTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId"]) &&
+    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId","displayName"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -2786,7 +2816,10 @@ function isWoodFenceTargetFact(value: unknown): boolean {
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
-    value.qualifiedItemId === "(O)322"
+    value.qualifiedItemId === "(O)322" &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -2803,8 +2836,7 @@ function isWoodFenceResultTargetFact(value: unknown): boolean {
       "isFence",
       "isGate",
       "health",
-      "maxHealth",
-    ]) &&
+      "maxHealth","displayName"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -2818,15 +2850,21 @@ function isWoodFenceResultTargetFact(value: unknown): boolean {
     isFiniteNumber(value.health) &&
     isFiniteNumber(value.maxHealth) &&
     value.health > 0 &&
-    value.maxHealth >= value.health
+    value.maxHealth >= value.health &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
 function isCrabPotTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId"]) &&
-    isCrabPotCore(value)
+    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId","displayName"]) &&
+    isCrabPotCore(value) &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 function isCrabPotCollectTargetFact(value: unknown): boolean {
@@ -2839,8 +2877,7 @@ function isCrabPotCollectTargetFact(value: unknown): boolean {
       "y",
       "qualifiedItemId",
       "outputQualifiedItemId",
-      "outputStack",
-    ]) &&
+      "outputStack","displayName"]) &&
     typeof value.targetId === "string" &&
     /^collect_crab_pot_[a-f0-9]{16}$/u.test(value.targetId) &&
     typeof value.location === "string" &&
@@ -2852,7 +2889,10 @@ function isCrabPotCollectTargetFact(value: unknown): boolean {
     value.outputQualifiedItemId.length >= 1 &&
     typeof value.outputStack === "number" &&
     Number.isSafeInteger(value.outputStack) &&
-    value.outputStack >= 1
+    value.outputStack >= 1 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -2869,8 +2909,7 @@ function isCrabPotResultTargetFact(value: unknown): boolean {
       "ownerId",
       "offsetX",
       "offsetY",
-      "overlayTiles",
-    ]) &&
+      "overlayTiles","displayName"]) &&
     isCrabPotCore(value) &&
     typeof value.ownerId === "number" &&
     Number.isSafeInteger(value.ownerId) &&
@@ -2888,7 +2927,10 @@ function isCrabPotResultTargetFact(value: unknown): boolean {
         typeof tile.count === "number" &&
         Number.isSafeInteger(tile.count) &&
         tile.count > 0,
-    )
+    ) &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 function isBaitCrabPotTargetFact(value: unknown): boolean {
@@ -2903,13 +2945,15 @@ function isBaitCrabPotTargetFact(value: unknown): boolean {
       "qualifiedItemId",
       "baitQualifiedItemId",
       "ownerId",
-      "baitStack",
-    ]) &&
+      "baitStack","displayName"]) &&
     isCrabPotCore(value) &&
     value.baitQualifiedItemId === "(O)685" &&
     typeof value.ownerId === "string" &&
     /^[0-9]{1,20}$/.test(value.ownerId) &&
-    value.baitStack === 1
+    value.baitStack === 1 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 function isCrabPotCore(value: Record<string, unknown>): boolean {
@@ -2927,14 +2971,17 @@ function isCrabPotCore(value: Record<string, unknown>): boolean {
 function isSeedTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId"]) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId","displayName"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
-    value.qualifiedItemId.length <= 128
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -2975,14 +3022,17 @@ function isDebrisTargetFact(value: unknown): boolean {
 function isArtifactSpotTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId"]) &&
+    hasOnlyKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId","displayName"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
     value.location.length <= 128 &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
-    value.qualifiedItemId === "(O)590"
+    value.qualifiedItemId === "(O)590" &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -3019,7 +3069,7 @@ function isArtifactSpotResultTargetFact(value: unknown): boolean {
 function isRockSourceTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId", "health"]) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId", "health","displayName"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -3029,7 +3079,10 @@ function isRockSourceTargetFact(value: unknown): boolean {
     value.qualifiedItemId === "(O)2" &&
     typeof value.health === "number" &&
     Number.isSafeInteger(value.health) &&
-    value.health === 1
+    value.health === 1 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -3048,8 +3101,7 @@ function isMachineTargetFact(value: unknown): boolean {
       "loadInputSlot",
       "loadInputQualifiedItemId",
       "loadInputStack",
-      "collectOutputReady",
-    ]) &&
+      "collectOutputReady","displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -3078,7 +3130,10 @@ function isMachineTargetFact(value: unknown): boolean {
     ((value.loadInputSlot === undefined &&
       value.loadInputQualifiedItemId === undefined &&
       value.loadInputStack === undefined) ||
-      (isToolSlot(value.loadInputSlot) && value.loadInputQualifiedItemId === "(O)433" && value.loadInputStack === 5))
+      (isToolSlot(value.loadInputSlot) && value.loadInputQualifiedItemId === "(O)433" && value.loadInputStack === 5)) &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -3160,14 +3215,17 @@ function isTreeStumpTargetFact(value: unknown): boolean {
 function isTreeSaplingTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId"]) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId","displayName"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
-    value.qualifiedItemId.length <= 128
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -3191,7 +3249,7 @@ function isWeedTargetFact(value: unknown): boolean {
 function isScytheCropTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "x", "y", "cropId", "qualifiedHarvestItemId"]) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "cropId", "qualifiedHarvestItemId","displayName"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -3203,7 +3261,10 @@ function isScytheCropTargetFact(value: unknown): boolean {
     value.cropId.length <= 128 &&
     typeof value.qualifiedHarvestItemId === "string" &&
     value.qualifiedHarvestItemId.length > 0 &&
-    value.qualifiedHarvestItemId.length <= 128
+    value.qualifiedHarvestItemId.length <= 128 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -3276,8 +3337,7 @@ function isAnimalProductTargetFact(value: unknown): boolean {
       "animalType",
       "qualifiedProduceItemId",
       "toolKind",
-      "produceStack",
-    ]) &&
+      "produceStack","displayName"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -3291,7 +3351,10 @@ function isAnimalProductTargetFact(value: unknown): boolean {
     (value.toolKind === "milk_pail" || value.toolKind === "shears") &&
     typeof value.produceStack === "number" &&
     Number.isSafeInteger(value.produceStack) &&
-    (value.produceStack === 1 || value.produceStack === 2)
+    (value.produceStack === 1 || value.produceStack === 2) &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
@@ -3313,57 +3376,10 @@ function isFeedTroughTargetFact(value: unknown): boolean {
 function isChestStoreTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack","displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
-    isToolSlot(value.slot) &&
-    typeof value.qualifiedItemId === "string" &&
-    value.qualifiedItemId.length > 0 &&
-    value.qualifiedItemId.length <= 128 &&
-    typeof value.stack === "number" &&
-    Number.isSafeInteger(value.stack) &&
-    value.stack > 0
-  );
-}
-
-function isChestRetrieveTargetFact(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack"]) &&
-    isOpaqueId(value.targetId) &&
-    isTileCoordinate(value.x) &&
-    isTileCoordinate(value.y) &&
-    typeof value.qualifiedItemId === "string" &&
-    value.qualifiedItemId.length > 0 &&
-    value.qualifiedItemId.length <= 128 &&
-    typeof value.stack === "number" &&
-    Number.isSafeInteger(value.stack) &&
-    value.stack > 0
-  );
-}
-
-function isShippingBinTargetFact(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack"]) &&
-    isOpaqueId(value.targetId) &&
-    isTileCoordinate(value.x) &&
-    isTileCoordinate(value.y) &&
-    isToolSlot(value.slot) &&
-    typeof value.qualifiedItemId === "string" &&
-    value.qualifiedItemId.length > 0 &&
-    value.qualifiedItemId.length <= 128 &&
-    typeof value.stack === "number" &&
-    Number.isSafeInteger(value.stack) &&
-    value.stack > 0
-  );
-}
-
-function isInventoryItemFact(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, ["slot", "qualifiedItemId", "stack"]) &&
     isToolSlot(value.slot) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
@@ -3371,14 +3387,73 @@ function isInventoryItemFact(value: unknown): boolean {
     typeof value.stack === "number" &&
     Number.isSafeInteger(value.stack) &&
     value.stack > 0 &&
-    value.stack <= 999
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
+  );
+}
+
+function isChestRetrieveTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack","displayName"]) &&
+    isOpaqueId(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.stack === "number" &&
+    Number.isSafeInteger(value.stack) &&
+    value.stack > 0 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
+  );
+}
+
+function isShippingBinTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack","displayName"]) &&
+    isOpaqueId(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    isToolSlot(value.slot) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.stack === "number" &&
+    Number.isSafeInteger(value.stack) &&
+    value.stack > 0 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
+  );
+}
+
+function isInventoryItemFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["slot", "qualifiedItemId", "stack","displayName"]) &&
+    isToolSlot(value.slot) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.stack === "number" &&
+    Number.isSafeInteger(value.stack) &&
+    value.stack > 0 &&
+    value.stack <= 999 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
 function isFoodTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["slot", "qualifiedItemId", "stack", "edibility", "isDrink"]) &&
+    hasExactKeys(value, ["slot", "qualifiedItemId", "stack", "edibility", "isDrink","displayName"]) &&
     isToolSlot(value.slot) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
@@ -3391,7 +3466,10 @@ function isFoodTargetFact(value: unknown): boolean {
     Number.isSafeInteger(value.edibility) &&
     value.edibility >= -299 &&
     value.edibility <= 1000 &&
-    typeof value.isDrink === "boolean"
+    typeof value.isDrink === "boolean" &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128
   );
 }
 
