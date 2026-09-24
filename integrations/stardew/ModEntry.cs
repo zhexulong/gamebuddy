@@ -1233,7 +1233,7 @@ public sealed partial class ModEntry : Mod
                 // exactly how the harvest fixture makes a ready crop. Production
                 // alone harvests, walks to the villager and offers the item; the
                 // fixture never harvests, never interacts and never rewards.
-                ConfigureNativeLocalJodiHarvestDeliverFixture(player, farm);
+                InitializeNativeLocalJodiHarvestDeliverFixture(player, farm);
                 return;
             }
             if (fixture.FixtureScenario == "native_pickup_forage_v1")
@@ -2144,7 +2144,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         this.Monitor.Log($"GameBuddy native-local-player initialized interact-NPC-with-item precondition before bridge attachment: npc={npcName}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; quest={questId}; item={targetItemId}; stack=1; points=0; gifts_today=0; gifts_this_week=0; production alone offers the item and emits the receipt.", LogLevel.Info);
     }
 
-    private static void ConfigureNativeLocalJodiHarvestDeliverFixture(Farmer player, Farm farm)
+    private void InitializeNativeLocalJodiHarvestDeliverFixture(Farmer player, Farm farm)
     {
         // The declared Given has exactly two facts: one mature ordinary crop ready
         // on the Farm, and one naturally-loaded villager on a reachable Farm tile.
@@ -2174,7 +2174,23 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         if (relationship.Points != 0 || relationship.TalkedToToday || relationship.GiftsToday != 0 || relationship.GiftsThisWeek != 0)
             throw new InvalidOperationException("fixture_native_local_jodi_harvest_relationship_invalid");
 
-        // Target-version commands grow one ready ordinary cauliflower, exactly as the
+        // Place the villager FIRST, while the ground is still empty. The growth
+        // commands below spread dirt and seeds across the whole farm, after which
+        // a free-tile search would find nothing. Radius 2 and the placement check
+        // mirror the live-verified interact-npc-with-item fixture exactly.
+        Vector2? npcTile = FindNativeLocalFarmFixtureTile(farm, arrival, 2, requireEmptyObjectTile: true);
+        if (npcTile is null)
+            throw new InvalidOperationException("fixture_native_local_jodi_harvest_npc_placement_missing");
+        string npcLocationBefore = npc.currentLocation?.NameOrUniqueName ?? "none";
+        Vector2 npcTileBefore = npc.Tile;
+        // Unconditional warp, exactly as the live-verified interact fixture does: a
+        // villager already standing on the Farm must still be moved to the chosen
+        // tile, so guarding on `currentLocation != farm` would leave her elsewhere.
+        Game1.warpCharacter(npc, farm, npcTile.Value);
+        if (npc.currentLocation != farm || npc.Tile != npcTile.Value)
+            throw new InvalidOperationException($"fixture_native_local_jodi_harvest_npc_placement_validation_failed:expected={(int)npcTile.Value.X},{(int)npcTile.Value.Y};before_location={npcLocationBefore};before_tile={(int)npcTileBefore.X},{(int)npcTileBefore.Y};after_location={npc.currentLocation?.NameOrUniqueName ?? "none"};after_tile={(int)npc.Tile.X},{(int)npc.Tile.Y}");
+
+        // Target-version commands grow the ready ordinary cauliflower, exactly as the
         // harvest fixture does (the growth duration is scenario setup, not an Agent
         // wait); production alone harvests it. Cauliflower Seeds are (O)474 and the
         // crop needs 12 in-game days, so GrowCrops must advance the full window.
@@ -2190,31 +2206,25 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         }
         finally { Game1.currentLocation = previousLocation; }
 
+        // Crop.indexOfHarvest stores the UNQUALIFIED id ("190"); the qualified
+        // "(O)190" only exists after ItemRegistry.Create, exactly as production
+        // discovery derives it. Comparing the raw field against the qualified
+        // form never matched, which is why the ready crop was never found.
         KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? crop = farm.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
                 && dirt.crop is not null
                 && !dirt.crop.forageCrop.Value
                 && dirt.readyForHarvest()
                 && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab
-                && string.Equals(dirt.crop.indexOfHarvest.Value, desiredHarvestId, StringComparison.Ordinal))
+                && string.Equals(
+                    StardewValley.ItemRegistry.Create(dirt.crop.indexOfHarvest.Value, 1).QualifiedItemId,
+                    desiredHarvestId,
+                    StringComparison.Ordinal))
             .Select(pair => new KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>(pair.Key, (StardewValley.TerrainFeatures.HoeDirt)pair.Value))
             .Cast<KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?>()
             .FirstOrDefault();
         if (crop is null)
             throw new InvalidOperationException("fixture_native_local_jodi_harvest_ready_crop_missing");
-
-        // Place the villager on a reachable empty tile beside the farmhouse warp so a
-        // normal walk from the door can reach her; the crop tile stays free for the
-        // Agent's own harvest approach.
-        Vector2 cropTile = crop.Value.Key;
-        Vector2? npcTile = FindNativeLocalFarmFixtureTile(farm, arrival, 3, requireEmptyObjectTile: true,
-            extraPredicate: tile => tile != cropTile && Math.Max(Math.Abs(tile.X - cropTile.X), Math.Abs(tile.Y - cropTile.Y)) > 1);
-        if (npcTile is null)
-            throw new InvalidOperationException("fixture_native_local_jodi_harvest_npc_placement_missing");
-        if (npc.currentLocation != farm)
-            Game1.warpCharacter(npc, farm, npcTile.Value);
-        if (npc.currentLocation != farm || npc.Tile != npcTile.Value)
-            throw new InvalidOperationException("fixture_native_local_jodi_harvest_npc_placement_validation_failed");
 
         // The player must not already carry the target item: it can only come from the
         // real harvest. Seed the backpack with what a real run would need to get there.
@@ -2222,6 +2232,11 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             player.removeItemFromInventory(stale);
         if (player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == desiredHarvestId))
             throw new InvalidOperationException("fixture_native_local_jodi_harvest_item_precarried");
+
+        // Only the success path arms the bridge: the flag is what allows the
+        // native-local player fixture to publish its pipe after SaveLoaded.
+        this.nativeLocalPlayerFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy native-local-player initialized jodi-harvest-deliver fixture before bridge attachment: crop={(int)crop.Value.Key.X},{(int)crop.Value.Key.Y}; harvest={desiredHarvestId}; npc={npcName}; npc_tile={(int)npc.Tile.X},{(int)npc.Tile.Y}; relationship_cleared=true; production alone harvests, walks and offers.", LogLevel.Info);
     }
 
     private void InitializeNativeLocalNpcRelationshipFixture(Farmer player, Farm farm)    {
