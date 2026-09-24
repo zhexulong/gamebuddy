@@ -1331,7 +1331,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
             advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal) ? DiscoverChestStoreTargets(player) : null,
             advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal) ? DiscoverChestRetrieveTargets(player) : null,
-            advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverInventoryItemFacts(player) : null,
+            (advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal)) ? DiscoverInventoryItemFacts(player) : null,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
             PresentationLocale: string.Empty);
