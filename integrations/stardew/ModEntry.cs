@@ -2165,9 +2165,14 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         Vector2 arrival = new(farmWarp.TargetX, farmWarp.TargetY);
 
         // A clean relationship baseline: the fixture proves the interaction, not a
-        // pre-existing friendship or a spent gift limit.
-        if (player.friendshipData.TryGetValue(npcName, out Friendship? relationship))
-            relationship.Clear();
+        // pre-existing friendship or a spent gift limit. The record must exist
+        // (discovery publishes only NPCs with a friendshipData entry), so create
+        // one for a never-before-interacted villager and clear it for reuse.
+        if (!player.friendshipData.TryGetValue(npcName, out Friendship? relationship))
+            player.friendshipData[npcName] = relationship = new Friendship();
+        relationship.Clear();
+        if (relationship.Points != 0 || relationship.TalkedToToday || relationship.GiftsToday != 0 || relationship.GiftsThisWeek != 0)
+            throw new InvalidOperationException("fixture_native_local_jodi_harvest_relationship_invalid");
 
         // Target-version commands grow one ready ordinary cauliflower, exactly as the
         // harvest fixture does; production alone harvests it.
