@@ -38,6 +38,29 @@ test("launcher rejects caller bridge credentials and requires an existing Host-o
   assert.match(launcher, /Remove-Item Env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION/);
 });
 
+test("launcher validates window mode through the shared contract and injects it into both SMAPI children", () => {
+  assert.match(launcher, /\[string\]\$WindowMode = "background"/);
+  assert.match(launcher, /function Resolve-LiveRunWindowMode/);
+  assert.match(launcher, /stardew-live-run\.mjs --print-map/);
+  assert.match(launcher, /invalid_live_run_window_mode:\$Value/);
+  assert.match(launcher, /live_run_window_mode_unavailable/);
+  // Validation delegates to the single shared window-mode authority; the
+  // launcher must not re-declare the vocabulary or a second validator.
+  assert.doesNotMatch(launcher, /ValidateSet\(.*visible.*foreground.*minimized.*hidden.*background\)/);
+  assert.doesNotMatch(launcher, /-WindowStyle/);
+  assert.match(launcher, /\$Value -cnotin \$windowModeNames/);
+  // The validated mode is set once, before both SMAPI children start, and both
+  // roles run the Mod so both must inherit the same silent non-activating shape.
+  const envSet = launcher.indexOf("$env:GAMEBUDDY_WINDOW_MODE = $WindowMode");
+  const resolve = launcher.indexOf("Resolve-LiveRunWindowMode $WindowMode");
+  const hostStart = launcher.indexOf("$hostProcess = Start-Process");
+  const aiStart = launcher.indexOf("$aiProcess = Start-Process");
+  assert.ok(resolve >= 0 && resolve < envSet && envSet < hostStart && hostStart < aiStart);
+  // The finally block restores the exact pre-run environment afterwards, the
+  // same NULL-assignment clear the single-player launcher uses.
+  assert.match(launcher, /\$env:GAMEBUDDY_WINDOW_MODE = \$null/);
+});
+
 test("launcher preserves the configured formal fixture and clears only known generated session exchange", () => {
   assert.match(launcher, /\$scenario = \[string\]\$originalHost\.HostAutomation\.FixtureScenario/);
   assert.match(launcher, /\$targetSave = \[string\]\$originalHost\.HostAutomation\.SaveName/);

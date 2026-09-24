@@ -5,6 +5,13 @@ param(
     [Parameter(Mandatory = $true)] [string]$HostRuntimeRoot,
     [ValidateSet("zh-CN", "en-US")] [string]$PresentationLocale = "zh-CN",
     [ValidateRange(10, 300)] [int]$StartupTimeoutSeconds = 90,
+    # Safe default keeps multiplayer preview runs silent and non-activating:
+    # the Mod reads only GAMEBUDDY_WINDOW_MODE in the child environment, and the
+    # exact mode (plus validation authority) comes from the single shared
+    # window-mode contract in tools/lib/stardew-live-run.mjs. See
+    # Resolve-LiveRunWindowMode below; no window-mode vocabulary is re-declared
+    # here.
+    [string]$WindowMode = "background",
     [switch]$RequireActiveStopProof
 )
 
@@ -24,6 +31,17 @@ function Assert-AbsoluteDirectory([string]$Value, [string]$Name) {
     if (-not (Test-WindowsAbsolutePath $Value) -or -not (Test-Path -LiteralPath $Value -PathType Container)) {
         throw "invalid_$Name"
     }
+}
+function Resolve-LiveRunWindowMode([string]$Value) {
+    # Validation passes through the single shared window-mode authority in
+    # tools/lib/stardew-live-run.mjs (frozen 5-mode mirror of
+    # host/src/live-run/window-mode.ts); no vocabulary is re-declared here.
+    $windowModeJson = & node $PSScriptRoot\lib\stardew-live-run.mjs --print-map 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($windowModeJson)) { throw "live_run_window_mode_unavailable" }
+    $windowModeNames = @(($windowModeJson | ConvertFrom-Json).windowModes.PSObject.Properties.Name)
+    # Exact, case-sensitive member test: PowerShell's -in/-contains are
+    # case-insensitive, and an upcased mode must not quietly pass this gate.
+    if ($Value -cnotin $windowModeNames) { throw "invalid_live_run_window_mode:$Value" }
 }
 function Invoke-NodeQuiet([string[]]$Arguments, [string]$FailureCode) {
     # Native stderr must never become a terminating PowerShell error under
@@ -213,6 +231,10 @@ function Get-PreviewFailureCode([string]$Path) {
 }
 
 if ($env:OS -ne "Windows_NT") { throw "windows_only" }
+# Validate the caller-chosen window mode through the shared single-authority
+# contract before any process is launched, so this launcher can never inject an
+# unknown window shape into either game process.
+Resolve-LiveRunWindowMode $WindowMode
 Assert-AbsoluteDirectory $GamePath "game_path"
 # ModelProfileStore supplies the fixed Host-owned game default when its optional
 # preference file is absent. Require only an existing absolute Host-owned root:
@@ -280,6 +302,12 @@ $nativeServerReadyAtUnixMs = 0
 $ingressStages = @()
 
 try {
+    # This process environment carries the validated mode into both directly
+    # supervised SMAPI children below (host and AI client); both roles run the
+    # Mod, so both need the same participation in the run. It is set inside the
+    # try and cleared in the finally, exactly like the single-player launcher,
+    # so no preflight failure can leak it into the caller's later processes.
+    $env:GAMEBUDDY_WINDOW_MODE = $WindowMode
     Initialize-PrivateRunRoot $runRoot
     # This transaction-owned marker makes the Host's signed fixture readiness
     # prove the post-save-load game-thread locale. The startup preference above
@@ -479,6 +507,10 @@ try {
     } else {
         Remove-Item Env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION -ErrorAction SilentlyContinue
     }
+    # Restore the pre-run environment exactly: the NULL assignment removes the
+    # variable on Windows PowerShell 5.1 (same single-player clear), so the
+    # validated window mode cannot leak into any later process.
+    $env:GAMEBUDDY_WINDOW_MODE = $null
     # Preview evidence is non-secret, content-free and hash-only. Preserve it
     # through teardown so the launcher can report the observed phase set;
     # remove it only with the private run root after that summary is captured.
