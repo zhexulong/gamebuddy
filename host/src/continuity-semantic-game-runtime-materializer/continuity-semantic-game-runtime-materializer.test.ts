@@ -824,8 +824,9 @@ test("Game materializer assembles canonical Game context through the tested asse
     "utf8",
   );
   // System assembly, not caller/script injection: the materializer delegates to
-  // the shared seam and forwards both resolved values to the runtime core.
-  assert.match(materializerSource, /assembleGameRuntimeContext\(\{/);
+  // the shared seam inside the runtime constructor and forwards both resolved
+  // values to the runtime core.
+  assert.match(materializerSource, /const context = await assembleGameRuntimeContext\(\{/);
   assert.match(materializerSource, /const assembledProfile = context\.profile/);
   assert.match(materializerSource, /const assembledWorldBook = context\.worldBook/);
   assert.match(materializerSource, /initialProfile: assembledProfile/);
