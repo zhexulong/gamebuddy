@@ -39,9 +39,29 @@ function register(actions, extra = {}) {
   return {
     schemaVersion: 1,
     artifactKind: "stardew_native_multiplayer_sensitivity",
+    // Every register must carry the mechanism axis; a default fixture entry keeps
+    // the action-focused tests focused on the action axis.
+    mechanisms: extra.mechanisms ?? [mechanism()],
     declaredActionIds: actions.map((action) => action.actionId),
     actions,
     ...extra,
+  };
+}
+
+function mechanism(overrides = {}) {
+  return {
+    id: "m",
+    summary: "a mechanism that forks per world mode",
+    forks: [
+      {
+        file: "StardewValley/Fake.cs",
+        signature: "public virtual bool Act(Farmer who)",
+        predicate: "if (who.IsLocalPlayer)",
+        forkClass: "outcome_fork",
+        reason: "the branch decides the result",
+      },
+    ],
+    ...overrides,
   };
 }
 
@@ -278,4 +298,42 @@ test("the committed register derives cleanly against the exact decompiled source
   // actor resolver landed, so no action may still derive the retired over-restriction
   // defect (the 16 single-player guards are gone).
   assert.equal(report.actions.filter((a) => a.rawDefects.some((d) => d.defect === "over_restriction")).length, 0);
+});
+
+test("the mechanism axis requires a real fork citation and never understates the set", async () => {
+  const { validateMultiplayerMechanisms, deriveRequiredSharedWorldMechanisms } = await import(
+    "./lib/stardew-native-multiplayer-sensitivity.mjs"
+  );
+  // A fork whose predicate is absent from the cited body is drift, not a citation.
+  assert.throws(
+    () => validateMultiplayerMechanisms([mechanism({ forks: [{ ...mechanism().forks[0], predicate: "if (Game1.IsMultiplayer)" }] })], SOURCE),
+    (error) => error.code === "mp_sensitivity_mechanism_fork_drift",
+  );
+  // An uncited fork class is rejected rather than silently treated as collateral.
+  assert.throws(
+    () => validateMultiplayerMechanisms([mechanism({ forks: [{ ...mechanism().forks[0], forkClass: "maybe" }] })], SOURCE),
+    (error) => error.code === "mp_sensitivity_register_invalid",
+  );
+  // The shared-world set is derived from the forks: adding an outcome fork must grow
+  // it without anyone editing a hardcoded list, and a collateral-only fork must not.
+  const collateral = mechanism({ id: "c", forks: [{ ...mechanism().forks[0], forkClass: "collateral_fork" }] });
+  const validated = validateMultiplayerMechanisms([mechanism({ id: "a" }), collateral], SOURCE);
+  assert.deepEqual(deriveRequiredSharedWorldMechanisms(validated), ["a"]);
+});
+
+test("the committed register pins the sleep mechanism as shared-world evidence", async () => {
+  const registerText = await readFile(
+    "integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json",
+    "utf8",
+  );
+  const committed = JSON.parse(registerText);
+  // Sleeping is not a Mod action, so an action-only register could never see it.
+  // Its forks must be cited against the real source and must include the outcome
+  // fork that makes single-player sleep evidence non-transferable.
+  const sleep = committed.mechanisms.find((m) => m.id === "sleep");
+  assert.ok(sleep, "sleep must be registered as a first-class mechanism");
+  const files = new Set(sleep.forks.map((fork) => fork.file));
+  assert.ok(files.has("StardewValley/GameLocation.cs"), "must cite the startSleep fork");
+  assert.ok(files.has("StardewValley/Game1.cs"), "must cite the cross-day forks");
+  assert.ok(sleep.forks.every((fork) => fork.forkClass === "outcome_fork"));
 });
