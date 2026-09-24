@@ -704,6 +704,55 @@ public sealed class BridgeProtocolSerializationTests
         parsed!.Payload.Should().BeEquivalentTo(result);
     }
 
+    [Fact]
+    public void ObserveSceneResult_RoundTripsWaterSourceAffordanceKind()
+    {
+        // Lane A.2 publishes the water_source affordance so the companion can act
+        // on a reachable tile beside live water. Both the outbound serializer and
+        // the inbound deserializer must accept the kind, otherwise the producer's
+        // result is downgraded to response_serialization_failed and the whole
+        // observe_scene call fails whenever water is in range.
+        var result = new ObserveSceneResultPayload(
+            "so1_AAAAAAAAAAAAAAAAAAAAAA",
+            "Farm",
+            "outdoor",
+            new[]
+            {
+                new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "water_source", "Pond", 3, "West", "refill_watering_can"),
+            },
+            "A reachable tile beside water is nearby.",
+            false,
+            null);
+        var envelope = new BridgeEnvelope<ObserveSceneResultPayload>(1, "msg_1", "corr_1", 1000L, SampleScope, "observe_scene_result", result);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue();
+        serializeReason.Should().Be("accepted");
+
+        BridgeProtocol.TryDeserializeObserveSceneResult(json, out var parsed, out string deserializeReason).Should().BeTrue();
+        deserializeReason.Should().Be("accepted");
+        parsed!.Payload.Should().BeEquivalentTo(result);
+    }
+
+    [Fact]
+    public void ObserveSceneResult_RejectsUnknownAffordanceKind()
+    {
+        var result = new ObserveSceneResultPayload(
+            "so1_AAAAAAAAAAAAAAAAAAAAAA",
+            "Farm",
+            "outdoor",
+            new[]
+            {
+                new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "not_a_kind", "Mystery", 1, "East", null),
+            },
+            "Unknown affordance.",
+            false,
+            null);
+        var envelope = new BridgeEnvelope<ObserveSceneResultPayload>(1, "msg_1", "corr_1", 1000L, SampleScope, "observe_scene_result", result);
+
+        BridgeProtocol.TrySerialize(envelope, out _, out string serializeReason).Should().BeFalse();
+        serializeReason.Should().Be("invalid_observe_scene_result");
+    }
+
     [Theory]
     [InlineData("maximum_affordances")]
     [InlineData("payload_limit")]
