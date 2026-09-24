@@ -488,6 +488,7 @@ public sealed class BridgeProtocolSerializationTests
             WoodFenceResultTargets: null,
             CrabPotTargets: null,
             CrabPotResultTargets: null,
+            CrabPotCollectTargets: null,
             BaitCrabPotTargets: null,
             BaitCrabPotResultTargets: null,
             DebrisTargets: null,

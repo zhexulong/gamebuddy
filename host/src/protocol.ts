@@ -203,6 +203,16 @@ export type Snapshot = Readonly<{
     offsetY: number;
     overlayTiles: readonly { x: number; y: number; count: number }[];
   }>[];
+  /** Live mature (714) current-player-owned Crab Pots whose output may be collected (collect_crab_pot_output). */
+  crabPotCollectTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    qualifiedItemId: "(O)710";
+    outputQualifiedItemId: string;
+    outputStack: number;
+  }>[];
   /** Current-player-owned unbaited (O)710 Crab Pots paired with one owned (O)685 Bait source. */
   baitCrabPotTargets?: readonly Readonly<{
     targetId: string;
@@ -877,6 +887,7 @@ const SNAPSHOT_KEYS = [
   "woodFenceResultTargets",
   "crabPotTargets",
   "crabPotResultTargets",
+  "crabPotCollectTargets",
   "baitCrabPotTargets",
   "baitCrabPotResultTargets",
   "debrisTargets",
@@ -2130,6 +2141,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.crabPotResultTargets) &&
         value.crabPotResultTargets.length <= 1 &&
         value.crabPotResultTargets.every(isCrabPotResultTargetFact))) &&
+    (value.crabPotCollectTargets === undefined ||
+      (Array.isArray(value.crabPotCollectTargets) &&
+        value.crabPotCollectTargets.length <= 16 &&
+        value.crabPotCollectTargets.every(isCrabPotCollectTargetFact))) &&
     (value.baitCrabPotTargets === undefined ||
       (Array.isArray(value.baitCrabPotTargets) &&
         value.baitCrabPotTargets.length <= 16 &&
@@ -2810,6 +2825,33 @@ function isCrabPotTargetFact(value: unknown): boolean {
     isCrabPotCore(value)
   );
 }
+function isCrabPotCollectTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "targetId",
+      "location",
+      "x",
+      "y",
+      "qualifiedItemId",
+      "outputQualifiedItemId",
+      "outputStack",
+    ]) &&
+    typeof value.targetId === "string" &&
+    /^collect_crab_pot_[a-f0-9]{16}$/u.test(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length >= 1 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    value.qualifiedItemId === "(O)710" &&
+    typeof value.outputQualifiedItemId === "string" &&
+    value.outputQualifiedItemId.length >= 1 &&
+    typeof value.outputStack === "number" &&
+    Number.isSafeInteger(value.outputStack) &&
+    value.outputStack >= 1
+  );
+}
+
 function isCrabPotResultTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
