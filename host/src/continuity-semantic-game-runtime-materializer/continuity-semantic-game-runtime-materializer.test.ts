@@ -810,28 +810,38 @@ test("production Game presentation composition supplies session and opaque admis
   assert.doesNotMatch(source, /inputId.*admission/i);
 });
 
-test("Game materializer source assembles the same canonical identity-profile and world-book sources the Chat surface consumes", async () => {
-  const source = await readFile(
-    join(
-      resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-game-runtime-materializer"),
-      "continuity-semantic-game-runtime-materializer.ts",
-    ),
+test("Game materializer assembles canonical Game context through the tested assembly seam", async () => {
+  const materializerDirectory = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "../../src/continuity-semantic-game-runtime-materializer",
+  );
+  const materializerSource = await readFile(
+    join(materializerDirectory, "continuity-semantic-game-runtime-materializer.ts"),
     "utf8",
   );
-  // System assembly, not caller/script injection: the materializer reads the
-  // same identity-profile and world-book files the Chat surface consumes from
-  // the runtime root, so an imported character card is present in Game.
-  assert.match(source, /resolveRuntimePaths\(identity, runtimeRoot\)/);
-  assert.match(source, /readIdentityProfile\(runtimePaths\.identityProfilePath\)/);
-  assert.match(source, /readWorldBook\(join\(runtimePaths\.runtimeCwd, "worldbook\.json"\)\)/);
-  assert.match(source, /assembledProfile/);
-  assert.match(source, /assembledWorldBook/);
-  assert.match(source, /initialProfile: assembledProfile/);
-  assert.match(source, /worldBook: assembledWorldBook/);
-  // Assembly never fabricates content and never writes the default profile at
-  // materialization time (the runtime core owns default creation).
-  assert.doesNotMatch(source, /writeIdentityProfile\(/);
-  assert.doesNotMatch(source, /readOrCreateIdentityProfile\(/);
+  const assemblySource = await readFile(
+    join(materializerDirectory, "game-runtime-context-assembly.ts"),
+    "utf8",
+  );
+  // System assembly, not caller/script injection: the materializer delegates to
+  // the shared seam and forwards both resolved values to the runtime core.
+  assert.match(materializerSource, /assembleGameRuntimeContext\(\{/);
+  assert.match(materializerSource, /const assembledProfile = context\.profile/);
+  assert.match(materializerSource, /const assembledWorldBook = context\.worldBook/);
+  assert.match(materializerSource, /initialProfile: assembledProfile/);
+  assert.match(materializerSource, /worldBook: assembledWorldBook/);
+  // The seam reads the same identity-profile/world-book files the Chat surface
+  // consumes, and never writes (the runtime core owns default creation).
+  assert.match(assemblySource, /resolveRuntimePaths\(input\.identity, input\.runtimeRoot\)/);
+  assert.match(assemblySource, /readIdentityProfile\(path\)/);
+  assert.match(assemblySource, /readWorldBook\(join\(runtimeCwd, "worldbook\.json"\)\)/);
+  assert.match(assemblySource, /input\.identityProfile \?\?/);
+  assert.match(assemblySource, /input\.worldBook \?\?/);
+  assert.doesNotMatch(assemblySource, /writeIdentityProfile\(/);
+  assert.doesNotMatch(assemblySource, /readOrCreateIdentityProfile\(/);
+  // No scenario source is ever consulted: tavern fiction cannot reach Game.
+  // (The word may appear in prose; no scenario artifact is read.)
+  assert.doesNotMatch(assemblySource, /scenario\.json|readScenario|ScenarioBinding/);
 });
 
 test("Game materializer source mints origin-free receipts and exposes only close teardown", async () => {
