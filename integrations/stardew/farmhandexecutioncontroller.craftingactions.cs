@@ -113,7 +113,6 @@ internal sealed partial class ExecutionManager
 
         Item? remainder = Game1.player.addItemToInventory(crafted);
         int remainingStack = needsInventorySpace ? remainder?.Stack ?? 0 : 0;
-        int craftedIntoInventoryStack = needsInventorySpace ? producedStack - remainingStack : producedStack;
         if (remainder is not null && needsInventorySpace)
             Game1.createItemDebris(remainder, Game1.player.getStandingPosition(), Game1.player.FacingDirection);
         if (Game1.player.craftingRecipes.ContainsKey(recipe.name))
@@ -121,20 +120,27 @@ internal sealed partial class ExecutionManager
 
         int craftCountAfter = Game1.player.craftingRecipes.TryGetValue(expectedRecipeId, out int craftedCountAfter) ? craftedCountAfter : 0;
         int producedCountAfterAdd = CountCraftingIngredient(Game1.player, crafted.QualifiedItemId);
+        int inventoryGained = producedCountAfterAdd - producedCountBeforeAdd;
         int debrisAfter = CountCraftOutputDebris(location, crafted.QualifiedItemId);
         bool menuAfter = Game1.activeClickableMenu is not null;
 
         bool materialsConsumedExactly = ingredientsAfter.All(pair => pair.Value == ingredientsBefore[pair.Key] - recipe.recipeList[pair.Key]);
+        // Independent expectations: Farmer.addItemToInventory reports what it left
+        // out through its remainder, and the native receive behaviour says whether
+        // the product was expected to occupy a backpack slot at all. Only then is
+        // the measured backpack delta compared against them.
         bool inventoryPostcondition = needsInventorySpace
-            ? producedCountAfterAdd - producedCountBeforeAdd == craftedIntoInventoryStack
-            : remainingStack == 0;
+            ? inventoryGained == producedStack - remainingStack
+            : inventoryGained == 0;
         bool countPostcondition = craftCountAfter == craftCountBefore + recipe.numberProducedPerCraft;
         bool droppedToGround = remainingStack == 0 || debrisAfter == debrisBefore + 1;
-        string disposition = remainingStack == 0
-            ? "added_to_inventory"
-            : craftedIntoInventoryStack > 0 ? "partially_dropped_on_ground" : "dropped_on_ground";
+        string disposition = !needsInventorySpace
+            ? "granted_without_inventory_space"
+            : inventoryGained >= producedStack ? "added_to_inventory"
+            : inventoryGained > 0 ? "partially_dropped_on_ground"
+            : "dropped_on_ground";
         string evidence = string.Create(CultureInfo.InvariantCulture,
-            $"location={location.NameOrUniqueName};recipe={expectedRecipeId};output={crafted.QualifiedItemId};produced_stack={producedStack};produced_per_craft={recipe.numberProducedPerCraft};disposition={disposition};inventory_gained_stack={craftedIntoInventoryStack};dropped_stack={remainingStack};inventory_accepting_before={inventoryAcceptingBefore.ToString().ToLowerInvariant()};materials_consumed_exactly={materialsConsumedExactly.ToString().ToLowerInvariant()};inventory_postcondition={inventoryPostcondition.ToString().ToLowerInvariant()};count_before={craftCountBefore};count_after={craftCountAfter};count_postcondition={countPostcondition.ToString().ToLowerInvariant()};ingredients={FormatIngredientDeltas(recipe, ingredientsBefore, ingredientsAfter)};dropped_debris={debrisAfter - debrisBefore};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}");
+            $"location={location.NameOrUniqueName};recipe={expectedRecipeId};output={crafted.QualifiedItemId};produced_stack={producedStack};produced_per_craft={recipe.numberProducedPerCraft};disposition={disposition};inventory_gained_stack={inventoryGained};dropped_stack={remainingStack};inventory_accepting_before={inventoryAcceptingBefore.ToString().ToLowerInvariant()};materials_consumed_exactly={materialsConsumedExactly.ToString().ToLowerInvariant()};inventory_postcondition={inventoryPostcondition.ToString().ToLowerInvariant()};count_before={craftCountBefore};count_after={craftCountAfter};count_postcondition={countPostcondition.ToString().ToLowerInvariant()};ingredients={FormatIngredientDeltas(recipe, ingredientsBefore, ingredientsAfter)};dropped_debris={debrisAfter - debrisBefore};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}");
 
         if (!materialsConsumedExactly || !inventoryPostcondition || !countPostcondition || !droppedToGround || menuAfter)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "crafted_item_postcondition_unavailable", evidence);
