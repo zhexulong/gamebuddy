@@ -80,3 +80,20 @@ test("prompts teach companionship instead of checklist recitals (ladder-3)", () 
   assert.match(RUNNER_SOURCE, /不是任务播报员/);
   assert.match(RUNNER_SOURCE, /not a task announcer/);
 });
+
+test("prompts state the errand, not the route (no step-by-step coaching)", () => {
+  // A live trace showed the Agent succeeding only because the prompt had been
+  // coaching it: it named the tools in order, told the Agent the observation
+  // already carried coordinates, and asked it to batch calls. That hides real
+  // observation defects (the Agent guessed content ids because observe never
+  // published names), so the errand prompts must state goal + world facts only.
+  assert.doesNotMatch(RUNNER_SOURCE, /请严格按以下顺序/);
+  assert.doesNotMatch(RUNNER_SOURCE, /效率要求/);
+  assert.doesNotMatch(RUNNER_SOURCE, /Complete in this order/);
+  assert.doesNotMatch(RUNNER_SOURCE, /be efficient/);
+  assert.doesNotMatch(RUNNER_SOURCE, /先检查（inspect）/);
+  assert.doesNotMatch(RUNNER_SOURCE, /先观察 observe/);
+  // The goal statement itself must survive.
+  assert.match(RUNNER_SOURCE, /她需要一颗新鲜花椰菜/);
+  assert.match(RUNNER_SOURCE, /she needs a fresh cauliflower/);
+});
