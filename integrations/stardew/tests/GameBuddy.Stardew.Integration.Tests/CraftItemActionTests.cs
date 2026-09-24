@@ -82,7 +82,7 @@ public sealed class CraftItemActionTests
 
         receipt.Should().NotBeNull();
         receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("native_local_player_required");
+        receipt.ReasonCode.Should().Be("world_not_ready");
     }
 
     [Fact]
