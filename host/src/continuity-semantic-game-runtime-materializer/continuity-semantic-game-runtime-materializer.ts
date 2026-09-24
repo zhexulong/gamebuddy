@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { readFile } from "node:fs/promises";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -49,7 +48,6 @@ import {
   type FarmhandPolicyIdentity,
 } from "../protocol.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
-import { resolveRuntimePaths } from "../runtime-identity.js";
 import {
   consumeGameVoicePresentationAttachment,
   type GameVoicePresentationAttachment,
@@ -325,12 +323,12 @@ export type HostGameRuntimeMaterializerOptions = Readonly<{
    * consumes. Absent keeps the default companion profile; the system never
    * fabricates a persona for a Game call.
    */
-  identityProfile?: import("./identity-profile.js").IdentityProfile;
+  identityProfile?: import("../identity-profile.js").IdentityProfile;
   /**
    * Host-owned reviewed WorldBook binding. Absent keeps Game without a world
    * book; the system never invents world lore for the Game surface.
    */
-  worldBook?: import("./worldbook.js").WorldBookBinding;
+  worldBook?: import("../worldbook.js").WorldBookBinding;
 }>;
 
 export function createHostGameRuntimeMaterializer(
