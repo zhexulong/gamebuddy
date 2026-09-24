@@ -147,6 +147,7 @@ export type Snapshot = Readonly<{
     y: number;
     cropId: string;
     qualifiedHarvestItemId: string;
+    displayName: string;
     regrowsAfterHarvest: boolean;
   }>[];
   /** Nearby empty HoeDirt targets paired with a live inventory seed slot. */
@@ -2757,7 +2758,7 @@ function isCropTargetFact(value: unknown): boolean {
 function isHarvestTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "cropId", "qualifiedHarvestItemId", "regrowsAfterHarvest"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "cropId", "qualifiedHarvestItemId", "displayName", "regrowsAfterHarvest"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -2767,6 +2768,9 @@ function isHarvestTargetFact(value: unknown): boolean {
     typeof value.qualifiedHarvestItemId === "string" &&
     value.qualifiedHarvestItemId.length > 0 &&
     value.qualifiedHarvestItemId.length <= 128 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128 &&
     typeof value.regrowsAfterHarvest === "boolean"
   );
 }

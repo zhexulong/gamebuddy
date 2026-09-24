@@ -2566,12 +2566,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
                 StardewValley.Crop crop = dirt.crop!;
                 string harvestId = crop.indexOfHarvest.Value;
+                StardewValley.Item? harvestItem = StardewValley.ItemRegistry.Create(harvestId, 1);
                 return new BridgeHarvestTarget(
                     BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, crop.netSeedIndex.Value, harvestId),
                     (int)pair.Key.X,
                     (int)pair.Key.Y,
                     crop.netSeedIndex.Value ?? harvestId,
-                    StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId,
+                    harvestItem.QualifiedItemId,
+                    harvestItem.DisplayName,
                     crop.RegrowsAfterHarvest());
             })
             .ToArray();
