@@ -443,8 +443,28 @@ internal sealed partial class ExecutionManager
     /// friendshipData dictionary protection (:2327-2329), farmer.completeQuest
     /// ("25") (:2313), and the spouse-jealousy branch (:2346-2356) with its
     /// content-driven SpouseGiftJealousyFriendshipChange and
-    /// GameStateQuery.CheckConditions gate. Task delivery (ItemDeliveryQuest)
-    /// stays out of this action by plan decision.
+    /// GameStateQuery.CheckConditions gate. A matching unsatisfied native
+    /// ItemDeliveryQuest is delivered first, exactly where the native ingress
+    /// runs its quest hook (before any gift handling); only an offer that no
+    /// pending delivery quest claims reaches the gift path below.
+    ///
+    /// Task-delivery seam: NPC.tryToReceiveActiveObject (NPC.cs:1776) runs
+    /// `who.NotifyQuests(quest => quest.OnItemOfferedToNpc(this, activeObj,
+    /// probe), onlyOneQuest: true)` before its special-item switch (:1788) and
+    /// before every gift gate, and NotifyQuests walks the quest log last-to-
+    /// first (Farmer.decompiled.cs:8968). Only ItemDeliveryQuest overrides
+    /// OnItemOfferedToNpc in the target version, so quest selection here
+    /// reproduces the predicate at ItemDeliveryQuest.cs:497 in that order, then
+    /// lets the native hook itself make the accept/decline decision through
+    /// `probe: true` (:499/:517, side-effect free). The delivery mutations are
+    /// the non-probe body (:503/:504/:507-515) minus its two UI-mounting lines:
+    /// the NPC dialogue push at :505 and the dialogue-box draw at :506 are
+    /// omitted, so the headless body never mounts a modal and never runs
+    /// dialogue parsing/content loading.
+    /// A pending delivery quest for the offered item therefore preempts the
+    /// gift path exactly as it does natively, with `quest_item_delivered`
+    /// proving `quest.completed.Value` plus the exact `number.Value`
+    /// consumption.
     /// </summary>
     public LocalExecutionReceipt RequestLocalInteractNpcWithItem(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
@@ -493,6 +513,104 @@ internal sealed partial class ExecutionManager
         int giftsThisWeekBefore = friendship?.GiftsThisWeek ?? 0;
         bool quest25CompletedBefore = player.questLog.Any(quest => quest.id.Value == "25" && quest.completed.Value);
         int stackBefore = offered.Stack;
+        int completedQuestsBefore = player.questLog.Count(quest => quest.completed.Value);
+
+        // Task delivery owns the offer exactly where the native ingress runs its
+        // quest hook (NPC.cs:1776), i.e. before the special-item switch and
+        // before every gift gate. Selection reproduces
+        // `Farmer.NotifyQuests(quest => quest.OnItemOfferedToNpc(this,
+        // activeObj, probe), onlyOneQuest: true)` walking the log last-to-first
+        // (Farmer.decompiled.cs:8968-8984) and asks the target version's own
+        // hook - ItemDeliveryQuest.OnItemOfferedToNpc, the only override in
+        // 1.6.15 - whether it claims this offer through its side-effect-free
+        // `probe: true` path (ItemDeliveryQuest.cs:499/:517). The hook decides;
+        // this body never reimplements its predicate. A quest that matched the
+        // villager/item but failed the hook's own stack gate is remembered only
+        // so that offer settles as an explicit quantity refusal instead of
+        // silently sliding into the gift path.
+        StardewValley.Quests.ItemDeliveryQuest? deliveryQuest = null;
+        StardewValley.Quests.ItemDeliveryQuest? undersuppliedQuest = null;
+        for (int index = player.questLog.Count - 1; index >= 0; index--)
+        {
+            if (player.questLog[index] is not StardewValley.Quests.ItemDeliveryQuest candidate || candidate.completed.Value)
+                continue;
+            if (candidate.OnItemOfferedToNpc(npc, offered, probe: true))
+            {
+                deliveryQuest = candidate;
+                break;
+            }
+            if (npc.IsVillager
+                && string.Equals(npc.Name, candidate.target.Value, StringComparison.Ordinal)
+                && string.Equals(offered.QualifiedItemId, candidate.ItemId.Value, StringComparison.Ordinal))
+                undersuppliedQuest ??= candidate;
+        }
+
+        if (deliveryQuest is null && undersuppliedQuest is not null)
+        {
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "quest_quantity_mismatch",
+                GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
+                + $";quest_id={undersuppliedQuest.id.Value};quest_target={undersuppliedQuest.target.Value};quest_item={undersuppliedQuest.ItemId.Value};quest_number={undersuppliedQuest.number.Value};quest_required_stack={undersuppliedQuest.number.Value};stack_after={stackBefore};completed_quests_before={completedQuestsBefore};completed_quests_after={completedQuestsBefore};quest_completed_after=false");
+        }
+
+        if (deliveryQuest is not null)
+        {
+            int requiredNumber = deliveryQuest.number.Value;
+            int friendshipAmount = deliveryQuest.dailyQuest.Value ? 150 : 255;
+            bool questCompletedBefore = deliveryQuest.completed.Value;
+            bool deliveryCompleted = false;
+            int previousToolIndex = player.CurrentToolIndex;
+            try
+            {
+                // Native non-probe delivery body (ItemDeliveryQuest.cs:503-515)
+                // minus its two UI-mounting lines (:505 dialogue push and :506
+                // dialogue-box draw), which would mount a modal the headless
+                // companion has no one to dismiss; the RNG-gated NPC emote the
+                // caller adds for this branch (NPC.cs:1781-1784) is a cosmetic
+                // animation with no observable product effect.
+                player.CurrentToolIndex = slot;
+                player.Items.Reduce(offered, requiredNumber);
+                deliveryQuest.reloadDescription();
+                player.changeFriendship(friendshipAmount, npc);
+                deliveryQuest.questComplete();
+                player.completelyStopAnimatingOrDoingAction();
+                deliveryCompleted = deliveryQuest.completed.Value;
+            }
+            catch (Exception)
+            {
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "quest_delivery_postcondition_unavailable",
+                    GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
+                    + $";quest_id={deliveryQuest.id.Value};quest_target={deliveryQuest.target.Value};quest_item={deliveryQuest.ItemId.Value};quest_number={requiredNumber};completed_quests_before={completedQuestsBefore}");
+            }
+            finally
+            {
+                player.CurrentToolIndex = previousToolIndex;
+            }
+
+            int deliveryStackAfter = slot < player.Items.Count
+                && player.Items[slot] is StardewValley.Object remainingDelivery
+                && string.Equals(remainingDelivery.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
+                ? remainingDelivery.Stack
+                : 0;
+            bool consumedRequiredNumber = deliveryStackAfter == stackBefore - requiredNumber;
+            int pointsAfter = player.friendshipData.TryGetValue(npc.Name, out Friendship? deliveredFriendship) ? deliveredFriendship.Points : -1;
+            int completedQuestsAfter = player.questLog.Count(quest => quest.completed.Value);
+            // questComplete keeps a rewarded quest in the log and only flips its
+            // completed flag (Quest.decompiled.cs:622-629), so the receipt proves
+            // completion from the quest object itself, not from log membership.
+            bool questStaysInLog = deliveryQuest.moneyReward.Value > 0
+                || (deliveryQuest.rewardDescription.Value is not null && deliveryQuest.rewardDescription.Value.Length > 2);
+            // This branch reproduces the native non-probe delivery body without
+            // the two lines that mount UI, so a modal that is nonetheless up
+            // after the mutation means the delivery did not run through this body
+            // and the outcome is not attributable.
+            bool noModalMounted = Game1.activeClickableMenu is null && !Game1.dialogueUp;
+            string deliveryEvidence = GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
+                + $";quest_id={deliveryQuest.id.Value};quest_target={deliveryQuest.target.Value};quest_item={deliveryQuest.ItemId.Value};quest_number={requiredNumber};quest_daily={deliveryQuest.dailyQuest.Value.ToString().ToLowerInvariant()};quest_completed_before={questCompletedBefore.ToString().ToLowerInvariant()};quest_completed_after={deliveryCompleted.ToString().ToLowerInvariant()};quest_stays_in_log={questStaysInLog.ToString().ToLowerInvariant()};completed_quests_before={completedQuestsBefore};completed_quests_after={completedQuestsAfter};stack_after={deliveryStackAfter};points_after={pointsAfter};friendship_amount={friendshipAmount};quest_25_completed_after={player.questLog.Any(quest => quest.id.Value == "25" && quest.completed.Value).ToString().ToLowerInvariant()};showed_response=false;dialogue_open_after={Game1.dialogueUp.ToString().ToLowerInvariant()};menu_open_after={(Game1.activeClickableMenu is not null).ToString().ToLowerInvariant()}";
+
+            if (deliveryCompleted && consumedRequiredNumber && noModalMounted)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "quest_item_delivered", deliveryEvidence);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "quest_delivery_postcondition_unavailable", deliveryEvidence);
+        }
 
         // Gate 0: proposal items never enter the gift path. Mirrors the native
         // mermaid-pendant case (NPC.cs:2209) and the propose_roommate context tag
