@@ -120,7 +120,7 @@ public sealed class CookRecipeActionTests
 
         receipt.Should().NotBeNull();
         receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("native_local_player_required");
+        receipt.ReasonCode.Should().Be("world_not_ready");
     }
 
     [Fact]
@@ -153,7 +153,8 @@ public sealed class CookRecipeActionTests
     [InlineData("recipe_ingredients_unavailable")]
     [InlineData("cooking_station_not_adjacent")]
     [InlineData("cooking_recipes_unavailable")]
-    [InlineData("native_local_player_required")]
+    [InlineData("world_not_ready")]
+    [InlineData("execution_scope_mismatch")]
     [InlineData("player_not_actionable")]
     [InlineData("invalid_deadline")]
     [InlineData("body_owned")]
