@@ -42,7 +42,7 @@ will be profile-free: bounded control intent enters the same private lifecycle c
 as the browser flow, which consumes a previously ready registration and performs
 request-local admission.
 
-For active live in-game verification of embodied companion actions, presentation, and sensory facts, follow the repository's unified SOP in [`fixtures/stardew/RUNBOOK.md`](../../../fixtures/stardew/RUNBOOK.md) (`## Native humanlike companion live observation and verification SOP`) using `node tools/start-smapi-and-run-live.mjs` or `node tools/run-stardew-companion-live-coop-01.mjs`.
+For active live in-game verification of embodied companion actions, presentation, and sensory facts, follow the repository's unified SOP in [`fixtures/stardew/RUNBOOK.md`](../../../fixtures/stardew/RUNBOOK.md) (`## Native humanlike companion live observation and verification SOP`) using the production Preview launcher `tools/start-farmhand-launcher.ps1`.
 
 `action:check`, `action:inventory`, and `action:ci` remain
   deterministic/offline package commands. They do not prove a target is ready or

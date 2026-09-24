@@ -19,9 +19,15 @@
 
 For full task-generic operating procedures, environment preflights, and failure taxonomy, see [`fixtures/stardew/RUNBOOK.md`](../fixtures/stardew/RUNBOOK.md) (`## Native humanlike companion live observation and verification SOP`).
 
-1. **Operational Topologies & Commands:**
-   - **Mode A (Automated Driver):** `node tools/start-smapi-and-run-live.mjs` (spawns SMAPI, bounds pipe wait to 90s, runs scenario, leaves window open 15s for visual observation, cleans up).
-   - **Mode B (Attached Driver):** `node tools/run-stardew-companion-live-coop-01.mjs` (attaches directly to already running game with save loaded).
+1. **Operational Topology:** Live verification runs through the production
+   Farmhand Companion Preview launcher `tools/start-farmhand-launcher.ps1`,
+   which owns the full two-process multiplayer run (Host, AI client, immutable
+   Preview), keeps the Host window visible by default, keeps the AI client
+   silent/non-activating, and tears down Preview > AI > Host. The former
+   standalone `tools/start-smapi-and-run-live.mjs` and
+   `tools/run-stardew-companion-live-coop-01.mjs` drivers were retired: they
+   hand-rolled bridge connections and are superseded by the production
+   launcher.
 2. **Session Setup & Concurrency Mutex:**
    - Connect using the official coordinator and local bridge pipe. Verify the AI Farmhand is bound to the target cabin and registered with `BridgeScope.PlayerId`.
    - Mod `ExecutionManager` enforces that the embodied actor executes at most one active native mutation at any time. If multiple tools are invoked in one turn, the Host must serialize them sequentially (waiting for terminal `succeeded` receipt before dispatching the next).
