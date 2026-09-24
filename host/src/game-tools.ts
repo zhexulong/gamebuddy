@@ -145,13 +145,20 @@ export function createStardewObservationTools(
       }
       const snapshot = integration.state.snapshot;
       const available = state.connected && snapshot !== null;
+      // The model-facing text carries the actionable cause, not one opaque
+      // sentence. A trace shows the Agent polling this tool 32 times with the
+      // same uninformative reply after the bridge had gone away, because the
+      // reason code was present but only in `details`.
+      const unavailableReason = state.latestReasonCode ?? "integration_not_ready";
+      const disconnected = !state.connected;
+      const unavailableText = disconnected
+        ? `No live Stardew connection: ${unavailableReason}. The bridge is not attached, so the world cannot be observed and actions cannot be issued — do not keep retrying; report the state to the player instead.`
+        : `No authoritative Stardew snapshot is available: ${unavailableReason}. The connection is up but the world is not observable yet${refreshError === null ? "" : ` (last refresh failed: ${refreshError})`}; retry only after the world state changes, not in a tight loop.`;
       return {
         content: [
           {
             type: "text" as const,
-            text: available
-              ? JSON.stringify(snapshot)
-              : "No authoritative Stardew snapshot is available.",
+            text: available ? JSON.stringify(snapshot) : unavailableText,
           },
         ],
         details: {
@@ -162,7 +169,7 @@ export function createStardewObservationTools(
             ? refresh === "fresh"
               ? "available_fresh"
               : "available_cached"
-            : (state.latestReasonCode ?? "integration_not_ready"),
+            : unavailableReason,
           snapshotJson: available ? JSON.stringify(snapshot) : null,
         },
       };
