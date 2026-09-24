@@ -1,9 +1,12 @@
 {
   "workspaces": {
     ".": {
-      "entry": [],
-      "project": [
+      "entry": [
+        "tools/*.mjs",
         "tools/lib/stardew-csharp-syntax-structural-canary.mjs"
+      ],
+      "project": [
+        "tools/**/*.mjs"
       ]
     },
     "packages/game-action-program": {
