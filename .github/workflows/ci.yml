@@ -12,7 +12,12 @@ jobs:
   host:
     runs-on: windows-latest
     steps:
+      # vendor/magic-context and vendor/pi-koe are git submodules (d8bf059,
+      # 00e7640) and the steps below install and build inside both. A fresh
+      # checkout without `submodules: recursive` leaves them empty.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: pnpm/action-setup@v4
         with:
           version: 11.1.3
@@ -79,7 +84,12 @@ jobs:
   stardew-scaffold:
     runs-on: windows-latest
     steps:
+      # The root `pnpm install --frozen-lockfile` below resolves host's
+      # `file:../vendor/pi-koe/packages/voice-protocol` dependency, so this job
+      # needs the submodule checked out too.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: pnpm/action-setup@v4
         with:
           version: 11.1.3

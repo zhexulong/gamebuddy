@@ -25,7 +25,12 @@ jobs:
       GAMEBUDDY_RELEASE_ENVIRONMENT: gamebuddy-production-release
       GAMEBUDDY_RELEASE_REF: ${{ github.ref }}
     steps:
+      # vendor/magic-context and vendor/pi-koe are git submodules, and the job
+      # below builds and consumes both. Without `submodules: recursive` a fresh
+      # checkout leaves them empty and the bun/pnpm steps fail.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: pnpm/action-setup@v4
         with:
           version: 11.1.3
