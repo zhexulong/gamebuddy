@@ -450,6 +450,65 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return true;
     }
 
+    /// <summary>
+    /// The actionability profile an action declares to the shared mechanical
+    /// admission. It is the one part of the sequence that legitimately varies by
+    /// action family, so it is a parameter rather than a fork.
+    /// </summary>
+    internal enum AdmissionActionabilityProfile
+    {
+        /// <summary>
+        /// Menu / event / unmovable, plus an in-progress tool swing (`UsingTool`
+        /// or a nonzero `toolPower`). Used by actions that drive a tool or a
+        /// native object interaction.
+        /// </summary>
+        Physical,
+
+        /// <summary>
+        /// Menu / event / unmovable only — the pre-convergence general profile
+        /// kept for actions that are not tool-driven.
+        /// </summary>
+        General,
+    }
+
+    /// <summary>
+    /// The mechanical admission every executing action shares, in the single
+    /// order invariant 1 fixes: identity → actionability → deadline → body
+    /// exclusivity. Geometry, target identity and postconditions are
+    /// deliberately absent — they belong to the action body.
+    ///
+    /// Returns <see langword="null"/> when the request is admitted. Otherwise it
+    /// returns the terminal rejection, whose reasonCode is byte-identical to the
+    /// pre-convergence inline sequence (behavior equivalence is a hard
+    /// requirement: no reasonCode may change).
+    /// </summary>
+    private LocalExecutionReceipt? AdmitExecution(
+        string requestId,
+        string executionId,
+        long requestedDeadlineMs,
+        long nowMs,
+        AdmissionActionabilityProfile profile)
+    {
+        if (!this.TryGetBoundActor(out Farmer? boundActor, out string guardReason) || boundActor is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, guardReason, null);
+
+        // Kept as one short-circuit chain so the evaluated property set stays
+        // identical to the inline form this replaces.
+        bool notActionable = profile is AdmissionActionabilityProfile.Physical
+            ? Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove || Game1.player.UsingTool || Game1.player.toolPower.Value != 0
+            : Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove;
+        if (notActionable)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+
+        return null;
+    }
+
     internal BridgeLocalObservation CreateLocalObservation(Farmer actor)
     {
         string location = actor.currentLocation?.NameOrUniqueName ?? string.Empty;

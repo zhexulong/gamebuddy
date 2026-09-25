@@ -86,23 +86,12 @@ internal sealed partial class ExecutionManager
         this.revision++;
         string executionId = Guid.NewGuid().ToString("N");
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Multiplayer-capable actor resolution. The scope-bound actor proof
-        // replaces the early single-player fixture guard: a caller that is not
-        // the scope-bound actor is rejected with execution_scope_mismatch
-        // instead of a shared world being refused outright. On the AI
-        // Farmhand's own client Game1.player IS that Farmhand (FarmhandProvisioner
-        // binds Manifest.FarmhandId to it), so the real product topology is
-        // admitted. The Mod's native-local fixture keeps its own separate
-        // topology guard (ModEntry.IsConfiguredNativeLocalPlayer), so this is
-        // not a relaxation of fixture containment.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string guardReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, guardReason, null);
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove || Game1.player.UsingTool || Game1.player.toolPower.Value != 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        // Shared mechanical admission (identity → actionability → deadline →
+        // body exclusivity). Behavior-equivalent to the inline sequence it
+        // replaced: identical reasonCodes, identical order. Geometry, target
+        // identity and the mature-714 gate below stay action-specific.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
 
         Farmer player = Game1.player;
         if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
