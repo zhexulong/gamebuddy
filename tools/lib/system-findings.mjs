@@ -1,11 +1,15 @@
 /**
- * System-level RL signal aggregation for live agent runs.
+ * System-level diagnostics for live agent runs.
  *
- * A live run is feedback for the SYSTEM (its observation design, action
- * contracts, verifier, orchestration), not only for the model. This module
+ * A live run is evidence about the SYSTEM (its observation design, action
+ * contracts, verifier, orchestration), not only about the model. This module
  * turns the raw per-action trace into a small set of "system findings": each
  * finding names a component, a category, a count, and a recommendation — so a
  * run yields a system health report instead of just pass/blocked.
+ *
+ * There is no score here and none should be added: the findings are facts to
+ * read and act on. To judge whether a system change helped, compare two runs
+ * with tools/compare-live-run-findings.mjs.
  *
  * Game-agnostic: it knows nothing about Stardew or any specific action; the
  * reason-to-component table is the only game-tuned extension point.

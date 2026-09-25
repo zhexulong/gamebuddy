@@ -405,12 +405,12 @@ try {
       ? assessCompanionInteraction(presentedSummary, observedEvents)
       : null;
   const interactionPassed = interactionAssessment === null || interactionAssessment.passed;
-  // System-level RL signal: aggregate every rejected action into a small set of
-  // system findings (component attribution + count + sample), so each live run
-  // yields a "system health report" instead of just pass/blocked. This is the
-  // observable loss curve of the system RL loop: blind-guess findings (e.g.
-  // one reasonCode dominating, repeated identical coordinates) point at the
-  // observation/contract layer, not at the model.
+  // System-level diagnostics: aggregate every rejected action into a small set
+  // of system findings (component attribution + count + sample), so each live
+  // run yields a "system health report" instead of just pass/blocked. A finding
+  // such as one reasonCode dominating or the same coordinates retried points at
+  // the observation/contract layer, not at the model. Compare two runs with
+  // tools/compare-live-run-findings.mjs to judge whether a fix helped.
   const systemFindings = summarizeSystemFindings(actionTrace);
   const result = {
     state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && contextPassed && interactionPassed ? "passed" : "blocked",
