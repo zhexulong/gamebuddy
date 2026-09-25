@@ -32,6 +32,11 @@ const files = execFileSync("git", ["ls-tree", "-r", "--name-only", rev, "--", "i
 
 const DECLARATION = "LocalExecutionReceipt RequestLocal";
 const GUARD = "TryGetBoundActor";
+// A body is scope-guarded when it proves the actor inline, or when it delegates
+// the whole mechanical admission to the shared `AdmitExecution` helper (which
+// performs that same proof). Recognizing only the inline form would report
+// every converged family as unguarded — the opposite of the truth.
+const SHARED_ADMISSION = "AdmitExecution(";
 
 /** Extract each handler body by brace matching from its declaration. */
 function handlersIn(text) {
@@ -73,7 +78,7 @@ for (const file of files) {
     rows.push({
       file: file.replace("integrations/stardew/farmhandexecutioncontroller.", ""),
       handler: handler.name,
-      guarded: handler.body.includes(GUARD),
+      guarded: handler.body.includes(GUARD) || handler.body.includes(SHARED_ADMISSION),
     });
   }
 }
