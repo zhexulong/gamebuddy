@@ -1413,13 +1413,27 @@ async function executeGameAction(
       null,
     );
   } catch (error) {
-    return receiptResult(
-      null,
+    const reasonCode =
       error instanceof Error
         ? error.message.replace(/^bridge_rejected:/, "")
-        : "bridge_execute_failed",
+        : "bridge_execute_failed";
+    // Whether the native write happened is the one fact the caller needs and
+    // cannot infer from a flat "not created". executeBridge tags the failure
+    // with the phase it failed in, so the message can say which it was: a
+    // refusal before any write, or a write whose outcome is unknown. The audit
+    // that motivated this saw the Agent read "not created" for an action the
+    // world had already performed, invent a cause, and re-dispatch it.
+    return receiptResult(
+      null,
+      reasonCode,
+      error instanceof Error ? writePhaseOf(error) : "write_unknown",
     );
   }
+}
+
+/** How far a failed dispatch got, read from the tag executeBridge attached. */
+function writePhaseOf(error: Error): "not_written" | "write_unknown" {
+  return error.message.startsWith("write_unknown:") ? "write_unknown" : "not_written";
 }
 async function executeBridge(
   integration: MoveCapableIntegration,
@@ -1457,9 +1471,16 @@ async function executeBridge(
     // provably-unstarted action into a recovery obligation and invite a replay
     // the authority never asked for. Only a failure that leaves the write
     // outcome genuinely unknown becomes uncertain.
-    if (!isAuthoritativeRejection(error)) await admission.observer.markUncertain(dispatch);
-    else await admission.observer.markAuthoritativelyRejected(dispatch);
-    throw error;
+    if (!isAuthoritativeRejection(error)) {
+      await admission.observer.markUncertain(dispatch);
+    } else {
+      await admission.observer.markAuthoritativelyRejected(dispatch);
+    }
+    // Tag the failure with the phase so the caller can say which it was. A
+    // refusal carries bridge_rejected:* and proves no write; anything else
+    // happened after the request reached the bridge and its outcome is unknown.
+    const reason = error instanceof Error ? error.message : "bridge_execute_failed";
+    throw new Error(isAuthoritativeRejection(error) ? reason : `write_unknown:${reason}`);
   }
 }
 
@@ -1475,20 +1496,26 @@ function isAuthoritativeRejection(error: unknown): boolean {
 function receiptResult(
   receipt: ExecutionReceipt | null,
   reasonCode: string | null,
+  writePhase: "not_written" | "write_unknown" = "not_written",
 ) {
+  // The failure text states whether the world changed. "Not created" is only
+  // true when the refusal happened before any write; otherwise the caller is
+  // told the outcome is unknown and must not assume nothing happened.
+  const failureText =
+    writePhase === "write_unknown"
+      ? `Game action outcome is unknown: ${reasonCode}. The request reached the bridge, so the world may have changed - do not re-issue it; observe the world to determine what happened.`
+      : `Game action was not created: ${reasonCode}. Nothing was written; the world is unchanged.`;
   return {
     content: [
       {
         type: "text" as const,
-        text:
-          receipt === null
-            ? `Game action was not created: ${reasonCode}.`
-            : JSON.stringify(receipt),
+        text: receipt === null ? failureText : JSON.stringify(receipt),
       },
     ],
     details: {
       receiptJson: receipt === null ? null : JSON.stringify(receipt),
       reasonCode,
+      writePhase,
     },
   };
 }
