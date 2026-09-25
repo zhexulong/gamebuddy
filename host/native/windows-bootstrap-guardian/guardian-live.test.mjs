@@ -96,6 +96,39 @@ test("resident launch verifies membership before the final resume gate without a
   assert.doesNotMatch(launch, /TryRunOpen\(\(\) =>\s*\{\s*\}\)/);
 });
 
+test("resident crash while a launch is suspended leaves no running uncontained role", { ...winOnly, timeout: 90_000 }, async (t) => {
+  // The existing crash tests kill the Guardian after both roles have resumed. A
+  // crash inside the create->resume window is a different failure: at
+  // after-create the role process EXISTS but its initial thread is still
+  // suspended, and the Guardian is the only holder of its Job handle. This case
+  // is reachable by killing GameBuddy at the wrong moment, so it is asserted
+  // rather than assumed. Player Job is non-kill-on-close by design, so the
+  // expected outcome is a suspended process that never ran user code — the
+  // report file must not exist, which is the checkable part.
+  for (const phase of ["after-create", "after-membership", "before-resume"]) await t.test(`${phase} crash runs no user code`, async () => {
+    const root = await temporaryRoot(`crash-${phase}`);
+    const session = await startGuardianSession({ executable: testGuardian, testBarrierDirectory: root, testBarrierPhase: phase });
+    try {
+      const report = resolve(root, `${phase}.report`);
+      session.submitPlan(session.plan("player_host", ["--signal", report]));
+      session.sendPublic(session.publicCommand("launch_role", "player_host"));
+      try { await waitForBarrier(root, phase); }
+      catch (error) { throw new Error(`${String(error)}; ${JSON.stringify(session.diagnostics())}`); }
+      // Hard-kill the Guardian at the barrier: membership is established but the
+      // initial thread was never resumed.
+      await session.crash();
+      // The role must not have executed: its first user code writes the report.
+      await expectNoFile(report, 500);
+      // The crashed Guardian can no longer abort the suspended role, and the
+      // Player Job is deliberately non-kill-on-close, so the OS leaves a
+      // suspended fixture behind. Nothing in this product profile kills it
+      // (that is the point of the non-kill-on-close choice), so the test must
+      // clean up after itself rather than leaking a process per phase.
+      await killLeftoverFixtureProcesses();
+    } finally { await session.close(); await killLeftoverFixtureProcesses(); await removeRoot(root); }
+  });
+});
+
 test("resident EOF gates suspended launch boundaries", { ...winOnly, timeout: 90_000 }, async (t) => {
   for (const phase of ["before-create", "after-create", "after-membership", "before-resume"]) await t.test(`${phase} EOF wins without first user code`, async () => {
     const root = await temporaryRoot(`eof-${phase}`);
@@ -883,6 +916,15 @@ async function terminateAndWaitForFixtureExit(pid) {
 }
 async function waitForFile(path) { for (let i = 0; i < 400; i++) { try { await access(path); return; } catch { await delay(25); } } throw new Error("fixture report missing"); }
 async function expectNoFile(path, milliseconds) { await delay(milliseconds); await assert.rejects(access(path)); }
+/**
+ * Removes suspended fixture processes a crash-in-launch-window test leaves
+ * behind. The Guardian cannot abort a role it no longer runs, and the Player Job
+ * is intentionally non-kill-on-close, so the OS keeps the process alive until
+ * someone ends it. Scoped to the fixture image only.
+ */
+async function killLeftoverFixtureProcesses() {
+  await new Promise((resolveKill) => execFile("taskkill", ["/f", "/im", "RoleRootFixture.exe"], () => resolveKill()));
+}
 async function waitForFileChange(path, previous) { for (let attempt = 0; attempt < 40; attempt++) { await delay(50); if (await readFile(path, "utf8") !== previous) return; } throw new Error("fixture heartbeat did not advance"); }
 async function waitForStableFiles(paths) { let previous = await Promise.all(paths.map((path) => readFile(path, "utf8"))); let stableSamples = 0; for (let attempt = 0; attempt < 40; attempt++) { await delay(50); const current = await Promise.all(paths.map((path) => readFile(path, "utf8"))); if (current.every((value, index) => value === previous[index])) { if (++stableSamples >= 3) return; } else { stableSamples = 0; previous = current; } } throw new Error("fixture heartbeat did not stop"); }
 async function waitForBarrier(directory, phase) {
