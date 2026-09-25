@@ -68,7 +68,7 @@ test("the runner emits system findings as a first-class health signal", () => {
   assert.match(RUNNER_SOURCE, /import \{ summarizeSystemFindings \} from "\.\/lib\/system-findings\.mjs"/);
   assert.match(RUNNER_SOURCE, /const actionTrace = \[\]/);
   assert.match(RUNNER_SOURCE, /actionTrace\.push\(entry\)/);
-  assert.match(RUNNER_SOURCE, /const systemFindings = summarizeSystemFindings\(actionTrace, receipts\)/);
+  assert.match(RUNNER_SOURCE, /const systemFindings = summarizeSystemFindings\(actionTrace\)/);
   assert.match(RUNNER_SOURCE, /systemFindings,\n    presentedSummary/);
 });
 

@@ -411,7 +411,7 @@ try {
   // observable loss curve of the system RL loop: blind-guess findings (e.g.
   // one reasonCode dominating, repeated identical coordinates) point at the
   // observation/contract layer, not at the model.
-  const systemFindings = summarizeSystemFindings(actionTrace, receipts);
+  const systemFindings = summarizeSystemFindings(actionTrace);
   const result = {
     state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && contextPassed && interactionPassed ? "passed" : "blocked",
     ladder: LADDER,
