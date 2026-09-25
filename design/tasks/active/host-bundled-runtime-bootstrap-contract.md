@@ -70,6 +70,27 @@ Host receives session material only in the private one-shot bootstrap frame for 
 - [ ] Fresh runtime supply-chain/distribution review: exact runtime source/version, no system runtime/PATH/repo fallback, contract atomicity and no second verifier.
 - [ ] Fresh Host architecture review: fixed internal bootstrap entry, no public root/token/broker ingress and no Task 3 delegation.
 
+## Test-support prerequisite
+
+The exported status above is source-complete: `host/scripts/production-artifact.test.mjs`
+has 63 cases (62 pass, 1 platform skip) and the publisher emits and rechecks the
+inventory-excluded `host-runtime-admission/v1` sidecar together with the
+destructive four-field current pointer.
+
+Rebuilding the **desktop test fixture** that the generation carries has one
+previously undocumented host prerequisite. `ExactChildBootstrapFixture` declares
+`PublishAot` + `SelfContained` so that it publishes as a single self-contained
+executable renamed to `node.exe`; the generation contract holds exactly one
+runtime file, so a framework-dependent publish cannot be represented there.
+`PublishAot` requires the MSVC linker, and without the Visual Studio C++ build
+tools the link step fails (`MSB3073`, exit 9009) and the publish degrades to an
+apphost plus `node.dll`. Until 2026-09-25 that degradation produced a generation
+whose runtime could not start, surfacing as `host_runtime_unavailable` after a
+~74s broker timeout in `HostBootstrapSupervisorTests`; the generation script now
+refuses the apphost by name (`desktop_launcher_test_fixture_not_self_contained`).
+A machine with the MSVC toolchain is therefore required to publish that fixture
+and to run the Desktop bootstrap matrix locally.
+
 ## Stop conditions
 
 Stop and revise rather than invent a fallback if:
