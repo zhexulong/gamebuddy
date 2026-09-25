@@ -22,7 +22,9 @@ async function withFixture(files, run) {
 const roots = {
   "host/src/bootstrap/entry.ts": "export { value } from '../games/stardew/value.js';\n",
   "host/src/containment/reverse.ts": "import '../games/stardew/value.js';\n",
-  "host/src/composition/reverse.ts": "export * from '../games/stardew/value.js';\n",
+  // composition is the composition root: ADR-0007 allows it to import one
+  // selected game adapter, so this edge is legal and must not be reported.
+  "host/src/composition/selected-adapter.ts": "export * from '../games/stardew/value.js';\n",
     "host/src/games/stardew/value.ts": "export const value = 1;\n",
 };
 
@@ -136,7 +138,6 @@ test("reports exact generic-to-game and Stardew raw-module violations", async ()
     assert.deepEqual(report.violations.map(({ kind, importer, specifier, line, detail }) => ({ kind, importer: importer.replace(/^.*?host\//, "host/"), specifier, line, detail })), [
       { kind: "game_imports_desktop_raw_module", importer: "host/src/games/stardew/raw.ts", specifier: "node:child_process", line: 2, detail: "stardew_must_not_import_desktop_guardian_process_or_native_modules" },
       { kind: "generic_layer_imports_game", importer: "host/src/bootstrap/entry.ts", specifier: "../games/stardew/value.js", line: 1, detail: "bootstrap_containment_and_composition_must_not_import_games" },
-      { kind: "generic_layer_imports_game", importer: "host/src/composition/reverse.ts", specifier: "../games/stardew/value.js", line: 1, detail: "bootstrap_containment_and_composition_must_not_import_games" },
       { kind: "generic_layer_imports_game", importer: "host/src/containment/reverse.ts", specifier: "../games/stardew/value.js", line: 1, detail: "bootstrap_containment_and_composition_must_not_import_games" },
       { kind: "game_imports_desktop_raw_module", importer: "host/src/games/stardew/raw.ts", specifier: "../../windows-bootstrap-guardian/index.js", line: 1, detail: "stardew_must_not_import_desktop_guardian_process_or_native_modules" },
     ]);
