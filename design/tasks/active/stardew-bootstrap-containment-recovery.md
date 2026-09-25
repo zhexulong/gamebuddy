@@ -516,9 +516,11 @@ Both reviews also corrected over-claims in this task's own text (item 8 "catches
 
 Change `design/domains/stardew/integration.md` from containment incomplete to a factual closed statement naming the production implementation, deterministic Windows matrix, and independent reviews. Do not activate installation registration or topology consolidation unless their separate gates are satisfied.
 
-- [ ] **Step 5: Commit closure**
+- [x] **Step 5: Commit closure**
 
 Commit only closure tests and current-owner factual status. Do not run Stardew or claim player-release completion.
+
+**Closed 2026-09-26.** The closure commits are the Task-3 delegation closure, the Task-4 matrix tests plus the two review-driven corrections (`c2f024a`, `e3f9ed8`), and the current-owner factual status now states containment closed (`58a4970`). No Stardew was run and no player-release claim is made.
 
 ## Acceptance criteria
 
