@@ -84,7 +84,12 @@ test("Stardew Host tools expose only factual observation and receipt surfaces", 
     ["stardew_observe", "stardew_execution_status", "stardew_interaction_catalog", "stardew_search_interactions"],
   );
   const unavailable = await observe.execute("test", {}, new AbortController().signal, () => {}, {} as never);
-  assert.match(unavailable.content[0]?.type === "text" ? unavailable.content[0].text : "", /No authoritative/);
+  // The failure text must name the cause and what to do; a constant sentence
+  // left the Agent polling a dead bridge (S7).
+  assert.match(
+    unavailable.content[0]?.type === "text" ? unavailable.content[0].text : "",
+    /No live Stardew connection: integration_not_ready\..*do not keep retrying/s,
+  );
 
   mod.onMessage((message) => {
     if (message.type === "hello")
@@ -279,7 +284,13 @@ catalogRevision: 1,
   assert.equal(executeCalls, 1);
   assert.equal((result.details as { reasonCode?: string | null }).reasonCode, "native_denied");
   assert.equal((result.details as { receiptJson?: string | null }).receiptJson, null);
-  assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /Game action was not created/);
+  // A Mod refusal is authoritative proof that no write happened, and the text
+  // must say so - the caller has to know the world is unchanged.
+  assert.equal((result.details as { writePhase?: string }).writePhase, "not_written");
+  assert.match(
+    result.content[0]?.type === "text" ? result.content[0].text : "",
+    /Game action was not created: native_denied\. Nothing was written/,
+  );
 });
 
 test("equip_tool mounts only from a live capability and forwards the selected tool", async () => {
@@ -1510,6 +1521,11 @@ test("game action awaits admission beforeWrite before calling the bridge", async
 });
 
 test("game action awaits markUncertain after a bridge execute failure", async () => {
+  // A failure that is NOT an authoritative Mod refusal leaves the write outcome
+  // unknown, so the dispatch must be settled as uncertain before the caller is
+  // told anything. (A `bridge_rejected:*` refusal takes the other path: it proves
+  // no write happened, so it is settled authoritatively instead - see the
+  // native_denied case above.)
   let executeCalls = 0;
   let markUncertainCalls = 0;
   let invocationSettled = false;
@@ -1517,7 +1533,7 @@ test("game action awaits markUncertain after a bridge execute failure", async ()
   const markUncertainStarted = deferred();
   const integration = moveIntegration(async () => {
     executeCalls++;
-    throw new Error("bridge_rejected:native_denied");
+    throw new Error("bridge_disconnected:pipe_closed");
   });
   const [move] = createStardewActionTools(integration, undefined, () => ({
     owner: { ownerId: "test_owner", epoch: 1 },
@@ -1556,7 +1572,13 @@ test("game action awaits markUncertain after a bridge execute failure", async ()
   markUncertain.resolve();
   const result = await invocation;
   assert.equal(invocationSettled, true);
-  assert.equal((result.details as { reasonCode?: string }).reasonCode, "native_denied");
+  // The caller must be told the outcome is unknown, not that nothing happened.
+  assert.equal((result.details as { reasonCode?: string }).reasonCode, "write_unknown:bridge_disconnected:pipe_closed");
+  assert.equal((result.details as { writePhase?: string }).writePhase, "write_unknown");
+  assert.match(
+    result.content[0]?.type === "text" ? result.content[0].text : "",
+    /Game action outcome is unknown/,
+  );
 });
 
 test("model-facing tools never expose active-execution cancellation", () => {
