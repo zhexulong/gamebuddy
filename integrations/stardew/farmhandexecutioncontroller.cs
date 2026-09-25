@@ -1385,6 +1385,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("cut_weeds", StringComparer.Ordinal) ? DiscoverWeedTargets(player) : null,
             advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? DiscoverScytheCropTargets(player) : null,
             (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal)) ? DiscoverNpcRelationshipTargets(player) : null,
+            DiscoverVillagerWhereabouts(),
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
@@ -1410,7 +1411,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CrabPotTargets: null, CrabPotResultTargets: null, CrabPotCollectTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
-        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, PetTargets: null,
+        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
         ShippingBinTargets: null,
         PresentationLocale: string.Empty);
@@ -1510,6 +1511,50 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:npc:{npcName}";
         return $"npc_relationship_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    /// <summary>
+    /// Where every instantiated villager currently is, across the loaded world.
+    ///
+    /// <para>
+    /// The `Discover*` helpers above only describe the player's current map, so
+    /// an Agent told to find a villager cannot learn that she is elsewhere -
+    /// one live run searched three maps by trial and never found her. This is
+    /// the missing fact, and the master process holds it: `Game1.addMinute`
+    /// drives `checkSchedule` for every entry in `Game1.locations`, and
+    /// `warpCharacter` keeps each character's `currentLocation` current. The
+    /// production topology is the single-player master, so this loop is the
+    /// authoritative in-process answer.
+    /// </para>
+    /// <para>
+    /// Read-only and bounded. Only instantiated, non-event villagers appear;
+    /// generated levels (mine/volcano) are outside `ForEachLocation`'s default
+    /// range, so such a villager is absent rather than guessed.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<BridgeVillagerWhereabouts> DiscoverVillagerWhereabouts()
+    {
+        List<BridgeVillagerWhereabouts> result = new();
+        Utility.ForEachVillager(villager =>
+        {
+            if (result.Count >= 64)
+                return false;
+            StardewValley.GameLocation? location = villager.currentLocation;
+            if (location is null || string.IsNullOrWhiteSpace(villager.Name))
+                return true;
+            result.Add(new BridgeVillagerWhereabouts(
+                villager.Name,
+                string.IsNullOrWhiteSpace(villager.displayName) ? villager.Name : villager.displayName,
+                location.NameOrUniqueName,
+                (int)villager.Tile.X,
+                (int)villager.Tile.Y,
+                ReferenceEquals(location, Game1.currentLocation)));
+            return true;
+        });
+        return result
+            .OrderBy(entry => entry.Location, StringComparer.Ordinal)
+            .ThenBy(entry => entry.NpcName, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static string BuildPetTargetId(StardewValley.GameLocation location, int x, int y, Pet pet)

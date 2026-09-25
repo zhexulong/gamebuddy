@@ -377,6 +377,20 @@ export type Snapshot = Readonly<{
     giftsToday: number;
     giftsThisWeek: number;
   }>[];
+  /**
+   * Where every instantiated villager currently is, across the loaded world.
+   * The per-location target arrays only describe the current map, so this is the
+   * only fact that tells the Agent a villager is elsewhere instead of making it
+   * search map by map.
+   */
+  villagerWhereabouts?: readonly Readonly<{
+    npcName: string;
+    displayName: string;
+    location: string;
+    x: number;
+    y: number;
+    inCurrentLocation: boolean;
+  }>[];
   /** Nearby native pets that have not been petted today. */
   petTargets?: readonly Readonly<{
     targetId: string;
@@ -926,6 +940,7 @@ const SNAPSHOT_KEYS = [
   "weedTargets",
   "scytheCropTargets",
   "npcRelationshipTargets",
+  "villagerWhereabouts",
   "petTargets",
   "animalProductTargets",
   "feedTroughTargets",
@@ -2030,6 +2045,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:npcRelationshipTargets";
   if (
+    value.villagerWhereabouts !== undefined &&
+    (!Array.isArray(value.villagerWhereabouts) ||
+      value.villagerWhereabouts.length > 64 ||
+      !value.villagerWhereabouts.every(isVillagerWhereaboutsFact))
+  )
+    return "invalid_snapshot:villagerWhereabouts";
+  if (
     value.petTargets !== undefined &&
     (!Array.isArray(value.petTargets) || value.petTargets.length > 16 || !value.petTargets.every(isPetTargetFact))
   )
@@ -2232,6 +2254,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.npcRelationshipTargets) &&
         value.npcRelationshipTargets.length <= 64 &&
         value.npcRelationshipTargets.every(isNpcRelationshipTargetFact))) &&
+    (value.villagerWhereabouts === undefined ||
+      (Array.isArray(value.villagerWhereabouts) &&
+        value.villagerWhereabouts.length <= 64 &&
+        value.villagerWhereabouts.every(isVillagerWhereaboutsFact))) &&
     (value.petTargets === undefined ||
       (Array.isArray(value.petTargets) && value.petTargets.length <= 16 && value.petTargets.every(isPetTargetFact))) &&
     (value.animalProductTargets === undefined ||
@@ -3305,6 +3331,25 @@ function isNpcRelationshipTargetFact(value: unknown): boolean {
     Number.isSafeInteger(value.giftsThisWeek) &&
     value.giftsThisWeek >= 0 &&
     value.giftsThisWeek <= 20
+  );
+}
+
+function isVillagerWhereaboutsFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["npcName", "displayName", "location", "x", "y", "inCurrentLocation"]) &&
+    typeof value.npcName === "string" &&
+    value.npcName.length > 0 &&
+    value.npcName.length <= 128 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128 &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.inCurrentLocation === "boolean"
   );
 }
 

@@ -1191,6 +1191,44 @@
         "tapped": { "const": false }
       }
     },
+    "villagerWhereabouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "npcName",
+        "displayName",
+        "location",
+        "x",
+        "y",
+        "inCurrentLocation"
+      ],
+      "properties": {
+        "npcName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "inCurrentLocation": {
+          "type": "boolean"
+        }
+      }
+    },
     "npcRelationshipTarget": {
       "type": "object",
       "additionalProperties": false,
@@ -1628,7 +1666,14 @@
         },
         "wateringCanFacts": { "type": "array", "items": { "$ref": "#/$defs/wateringCanFact" }, "maxItems": 36 },
         "refillWateringCanTargets": { "type": "array", "items": { "$ref": "#/$defs/refillWateringCanTarget" }, "maxItems": 8 },
-        "npcRelationshipTargets": {
+        "villagerWhereabouts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/villagerWhereabouts"
+      },
+      "maxItems": 64
+    },
+    "npcRelationshipTargets": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/npcRelationshipTarget"
