@@ -7,6 +7,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_pet_animal_v1";
 const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "pet_animal"];
@@ -83,7 +84,7 @@ export async function runPetAnimalSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runPetAnimalSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));
