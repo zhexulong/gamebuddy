@@ -29,7 +29,6 @@ async function source(root, manifest = {}) {
   for (const [name, contents] of [
     ["GameBuddy.Stardew.dll", "mod"],
     ["GameBuddy.Stardew.Core.dll", "core"],
-    ["Raffinert.FuzzySharp.dll", "fuzzy"],
     ["manifest.json", JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0", ...manifest })],
     ["GameBuddy.Stardew.deps.json", "{}"],
     ["GameBuddy.Stardew.Core.pdb", "sidecar"],
@@ -40,25 +39,25 @@ function profile(root, releaseDir) {
   return { releaseDir, modsPath: path.join(root, "mods"), adapterVersion: "0.1.0" };
 }
 
-test("publishes and stages an exact five-file bundle from a build directory with sidecars", async () => withRoot(async (root) => {
+test("publishes and stages an exact four-file bundle from a build directory with sidecars", async () => withRoot(async (root) => {
   const build = await source(root);
   await mkdir(path.join(root, "mods"));
   await mkdir(path.join(root, "mods", "GameBuddy"));
   const destination = path.join(root, "published", "equip-tool-v1");
   const receipt = await publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: destination });
   assert.deepEqual((await readdir(destination)).sort(), [...RELEASE_BUNDLE_FILES].sort());
-  assert.deepEqual(receipt, { schema: "gamebuddy-stardew-release-bundle-publication/v1", status: "published", destinationDir: destination, adapterVersion: "0.1.0", algorithm: "sha256", digest: receipt.digest, files: 5 });
+  assert.deepEqual(receipt, { schema: "gamebuddy-stardew-release-bundle-publication/v1", status: "published", destinationDir: destination, adapterVersion: "0.1.0", algorithm: "sha256", digest: receipt.digest, files: 4 });
   assert.match(receipt.digest, /^[a-f0-9]{64}$/);
-  assert.deepEqual(await inspectEquipToolReleaseBundle(profile(root, destination)), { algorithm: "sha256", digest: receipt.digest, adapterVersion: "0.1.0", files: 5 });
+  assert.deepEqual(await inspectEquipToolReleaseBundle(profile(root, destination)), { algorithm: "sha256", digest: receipt.digest, adapterVersion: "0.1.0", files: 4 });
   await assert.rejects(inspectEquipToolReleaseBundle(profile(root, build)), /stardew_immutable_release_bundle_source_untrusted/);
   await assert.rejects(publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: destination }), /atomic_directory_output_exists/);
 }));
 
-test("rejects a four-file source missing Raffinert.FuzzySharp.dll", async () => withRoot(async (root) => {
+test("rejects a three-file source missing GameBuddy.Stardew.Core.dll", async () => withRoot(async (root) => {
   const build = await source(root);
-  await unlink(path.join(build, "Raffinert.FuzzySharp.dll"));
+  await unlink(path.join(build, "GameBuddy.Stardew.Core.dll"));
   await assert.rejects(
-    publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: path.join(root, "published", "missing-fuzzy") }),
+    publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: path.join(root, "published", "missing-core") }),
     /stardew_release_bundle_publish_source_untrusted/,
   );
 }));
