@@ -1,0 +1,274 @@
+[CmdletBinding()]
+<#
+.SYNOPSIS
+  Thin parameterized shared-world (multiplayer) action driver.
+
+.DESCRIPTION
+  Runs ONE Stardew Game Action against the real two-process shared-world
+  topology: a Player Host that loads a native LAN world, and an AI Farmhand
+  client that attaches through the signed provisioning manifest and then owns
+  the bridge.
+
+  It deliberately does NOT use `start-farmhand-launcher.ps1`:
+    * the launcher additionally requires an immutable production Host
+      generation plus a Preview runtime, neither of which this lane needs;
+    * the launcher mutates the shared A-host/A-ai-client profiles through the
+      global fixture-profile transaction, whose lock is currently held by an
+      unrelated interrupted transaction.
+
+  Instead it materializes private copies of those profiles under a caller-owned
+  root, deploys the given Release bundle into them, and drives the already
+  proven host/attachment/AI-client sequence. It therefore shares no lock and
+  no mutable state with any other lane.
+
+  It is a driver only: it grants no capability, changes no action contract, and
+  produces no publish/closure decision. Its output is diagnostic action evidence.
+#>
+param(
+    [Parameter(Mandatory = $true)][string]$GamePath,
+    [Parameter(Mandatory = $true)][string]$HostProfileRoot,
+    [Parameter(Mandatory = $true)][string]$AiProfileRoot,
+    [Parameter(Mandatory = $true)][string]$ProbeRoot,
+    [Parameter(Mandatory = $true)][string]$ReleaseDir,
+    [Parameter(Mandatory = $true)][string]$SessionDirectory,
+    [Parameter(Mandatory = $true)][string]$SaveName,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9]{6,20}$')][string]$ExpectedFarmhandId,
+    [string]$Action = "",
+    [string]$ResultFile = "",
+    [string]$ScenarioIdentity = "",
+    [ValidateRange(30, 300)][int]$TimeoutSeconds = 180,
+    [switch]$AttachOnly
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
+
+$script:phase = "input_validation"
+$script:hostProcess = $null
+$script:aiProcess = $null
+$previousLaunchGenerationPresent = Test-Path Env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION
+$previousLaunchGeneration = if ($previousLaunchGenerationPresent) { $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION } else { $null }
+
+$smapi = Join-Path $GamePath "StardewModdingAPI.exe"
+$hostLog = Join-Path $env:APPDATA "StardewValley\ErrorLogs\SMAPI-latest.txt"
+$aiLog = Join-Path $env:APPDATA "StardewValley\ErrorLogs\SMAPI-latest.player-2.txt"
+
+function Assert-PathExists([string]$Path, [string]$Label, [string]$Kind = "Leaf") {
+    if (-not (Test-Path -LiteralPath $Path -PathType $Kind)) { throw "Missing ${Label}: $Path" }
+}
+
+function Assert-AbsoluteDirectory([string]$Path, [string]$Label) {
+    Assert-PathExists $Path $Label "Container"
+    if (-not [System.IO.Path]::IsPathFullyQualified($Path)) { throw "$Label must be absolute: $Path" }
+}
+
+function Assert-NoStardewProcesses([string]$Phase) {
+    $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in @("StardewModdingAPI", "Stardew Valley", "StardewValley") })
+    if ($running.Count -gt 0) {
+        throw "Shared-world driver requires no pre-existing Stardew/SMAPI process before ${Phase} (PIDs: $($running.Id -join ','))."
+    }
+}
+
+function Wait-LogMarker([string]$Path, [string]$Marker, [int]$Seconds = $TimeoutSeconds) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    do {
+        Start-Sleep -Milliseconds 250
+        $content = if (Test-Path -LiteralPath $Path -PathType Leaf) { [string](Get-Content -Raw -LiteralPath $Path -ErrorAction SilentlyContinue) } else { "" }
+        if (-not [string]::IsNullOrEmpty($content) -and $content.Contains($Marker)) { return $true }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return $false
+}
+
+function Read-Json([string]$Path) {
+    # Windows PowerShell writes BOM when Set-Content is used; the Mod and the
+    # Host tools both strip it, so strip it here as well to stay identical.
+    return (Get-Content -Raw -LiteralPath $Path).Replace([string][char]0xFEFF, '') | ConvertFrom-Json
+}
+
+function Write-Json([string]$Path, $Value, [int]$Depth = 12) {
+    $json = $Value | ConvertTo-Json -Depth $Depth
+    [System.IO.File]::WriteAllText($Path, $json, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function New-RandomToken([int]$Bytes = 32) {
+    $buffer = [byte[]]::new($Bytes)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($buffer) } finally { $rng.Dispose() }
+    return [Convert]::ToBase64String($buffer).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+}
+
+function Deploy-ReleaseBundle([string]$ModRoot) {
+    # SMAPI loads the Mod-local copy; the sidecar copy must stay byte-identical
+    # because the fixture/loader contracts compare them.
+    foreach ($target in @((Join-Path $ModRoot "Mods\GameBuddy"), (Join-Path $ModRoot "GameBuddy"))) {
+        if (-not (Test-Path -LiteralPath $target -PathType Container)) { continue }
+        foreach ($name in @("GameBuddy.Stardew.dll", "GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json")) {
+            $source = Join-Path $ReleaseDir $name
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+                Copy-Item -LiteralPath $source -Destination (Join-Path $target $name) -Force
+            }
+        }
+    }
+}
+
+function Start-Smapi([string]$ModsPath, [string]$LaunchGeneration) {
+    $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $LaunchGeneration
+    return Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $ModsPath)) -WorkingDirectory $GamePath -PassThru
+}
+
+function Stop-Smapi($Process) {
+    if ($null -eq $Process) { return }
+    if ($Process.HasExited) { return }
+    $Process.CloseMainWindow() | Out-Null
+    Start-Sleep -Seconds 3
+    if (-not $Process.HasExited) { $Process.Kill() }
+}
+
+try {
+    $script:phase = "input_validation"
+    Assert-PathExists $smapi "SMAPI launcher"
+    Assert-AbsoluteDirectory $HostProfileRoot "HostProfileRoot"
+    Assert-AbsoluteDirectory $AiProfileRoot "AiProfileRoot"
+    Assert-AbsoluteDirectory $ReleaseDir "ReleaseDir"
+    if (-not [System.IO.Path]::IsPathFullyQualified($ProbeRoot)) { throw "ProbeRoot must be absolute: $ProbeRoot" }
+    if (-not [System.IO.Path]::IsPathFullyQualified($SessionDirectory)) { throw "SessionDirectory must be absolute: $SessionDirectory" }
+    if ($SaveName -notmatch '^GameBuddyFixture[A-Za-z0-9_-]{1,96}$') { throw "SaveName must be a disposable GameBuddyFixture slot: $SaveName" }
+    if (-not $AttachOnly -and [string]::IsNullOrWhiteSpace($Action)) { throw "Action is required unless -AttachOnly is set." }
+    Assert-NoStardewProcesses "materialization"
+
+    $script:phase = "materialize_profiles"
+    $hostModsRoot = Join-Path $ProbeRoot "host"
+    $aiModsRoot = Join-Path $ProbeRoot "ai"
+    foreach ($root in @($hostModsRoot, $aiModsRoot)) {
+        if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+    }
+    Copy-Item -Path (Join-Path $HostProfileRoot '*') -Destination $hostModsRoot -Recurse -Force
+    Copy-Item -Path (Join-Path $AiProfileRoot '*') -Destination $aiModsRoot -Recurse -Force
+    Deploy-ReleaseBundle $hostModsRoot
+    Deploy-ReleaseBundle $aiModsRoot
+
+    $hostConfigPath = Join-Path $hostModsRoot "Mods\GameBuddy\config.json"
+    $hostSidecarPath = Join-Path $hostModsRoot "GameBuddy\config.json"
+    $aiConfigPath = Join-Path $aiModsRoot "Mods\GameBuddy\config.json"
+    $aiSidecarPath = Join-Path $aiModsRoot "GameBuddy\config.json"
+    foreach ($path in @($hostConfigPath, $hostSidecarPath, $aiConfigPath, $aiSidecarPath)) { Assert-PathExists $path "profile config" }
+
+    if (Test-Path -LiteralPath $SessionDirectory) { Remove-Item -LiteralPath $SessionDirectory -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $SessionDirectory | Out-Null
+
+    # One run-owned identity: the Host signs with the session token, the AI
+    # client validates that signature, and the bridge pipe/token pair is what
+    # the action smoke runner later connects to on the AI side.
+    $sessionToken = New-RandomToken 32
+    $pipeName = "gamebuddy_shared_" + [guid]::NewGuid().ToString("N")
+    $bridgeToken = New-RandomToken 32
+
+    $hostConfig = Read-Json $hostConfigPath
+    $hostConfig.HostFarmhandProvisioning.SessionDirectory = $SessionDirectory
+    $hostConfig.HostFarmhandProvisioning.SessionToken = $sessionToken
+    $hostConfig.HostAutomation.SaveName = $SaveName
+    $hostConfig.HostAutomation.Enable = $true
+    $hostConfig.SaveId = $hostConfig.SaveId
+    Write-Json $hostConfigPath $hostConfig
+    Write-Json $hostSidecarPath $hostConfig
+
+    $aiConfig = Read-Json $aiConfigPath
+    $aiConfig.FarmhandProvisioner.ManifestPath = (Join-Path $SessionDirectory "stardew-farmhand-manifest.json")
+    $aiConfig.FarmhandProvisioner.SessionToken = $sessionToken
+    $aiConfig.HostFarmhandProvisioning.SessionToken = $sessionToken
+    $aiConfig.EnableLocalBridge = $true
+    $aiConfig.PipeName = $pipeName
+    $aiConfig.BridgeToken = $bridgeToken
+    $aiConfig.SaveId = $hostConfig.SaveId
+    $aiConfig.WorldId = $hostConfig.WorldId
+    $aiConfig.PlayerId = $hostConfig.PlayerId
+    $aiConfig.CompanionId = $hostConfig.CompanionId
+    Write-Json $aiConfigPath $aiConfig
+    Write-Json $aiSidecarPath $aiConfig
+
+    $script:phase = "host_launch"
+    Remove-Item -LiteralPath $hostLog -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $aiLog -Force -ErrorAction SilentlyContinue
+    # Host and AI must attest as distinct launch generations, exactly as the
+    # production launcher does; the Host role fails closed without one.
+    $hostGeneration = [guid]::NewGuid().ToString("N")
+    $script:hostProcess = Start-Smapi $hostModsRoot $hostGeneration
+
+    $script:phase = "host_fixture_readiness"
+    $marker = "HostAutomation native world ready for save '$SaveName'; native LAN server started."
+    if (-not (Wait-LogMarker $hostLog $marker $TimeoutSeconds)) {
+        $tail = if (Test-Path -LiteralPath $hostLog -PathType Leaf) { (Get-Content -Raw -LiteralPath $hostLog) } else { "host_log_missing" }
+        throw "Host did not become native-LAN ready for '$SaveName'. Log tail: $($tail.Substring([Math]::Max(0, $tail.Length - 1500)))"
+    }
+
+    $script:phase = "attachment_request"
+    $attachmentOutput = & node (Join-Path $PSScriptRoot "stardew-shared-world-attachment-request.mjs") `
+        --session-directory $SessionDirectory `
+        --host-config $hostConfigPath `
+        --expected-farmhand-id $ExpectedFarmhandId `
+        --timeout-ms ($TimeoutSeconds * 1000) 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Shared-world attachment request failed: $($attachmentOutput -join ' ')" }
+    $attachment = ($attachmentOutput -join "`n") | ConvertFrom-Json
+
+    $script:phase = "ai_client_launch"
+    $aiGeneration = [guid]::NewGuid().ToString("N")
+    $script:aiProcess = Start-Smapi $aiModsRoot $aiGeneration
+    $clientAttached = Wait-LogMarker $aiLog "FarmhandProvisioner reached readyToPlay with the expected native Farmhand identity and save/world scope." $TimeoutSeconds
+    if (-not $clientAttached) {
+        $tail = if (Test-Path -LiteralPath $aiLog -PathType Leaf) { (Get-Content -Raw -LiteralPath $aiLog) } else { "ai_log_missing" }
+        throw "AI Farmhand did not reach readyToPlay. Log tail: $($tail.Substring([Math]::Max(0, $tail.Length - 1500)))"
+    }
+
+    $result = [ordered]@{
+        state           = "attached"
+        topology        = "shared_world_farmhand"
+        action          = $Action
+        saveName        = $SaveName
+        farmhandId      = [string]$attachment.farmhandId
+        companionId     = [string]$attachment.companionId
+        cabinId         = [string]$attachment.cabinId
+        requestId       = [string]$attachment.requestId
+        sessionNoncePresent = [bool]$attachment.sessionNoncePresent
+        hostModsRoot    = $hostModsRoot
+        aiModsRoot      = $aiModsRoot
+        aiClientConfig  = $aiConfigPath
+        evidence        = "Host SMAPI log native-LAN readiness + signed attachment response/manifest + AI-client readyToPlay"
+    }
+
+    if (-not $AttachOnly) {
+        $script:phase = "action_smoke"
+        $smokeOutput = & node (Join-Path $PSScriptRoot "run-stardew-shared-world-action.mjs") `
+            --client-config $aiConfigPath `
+            --action $Action 2>&1
+        $smokeExit = $LASTEXITCODE
+        $result.actionExitCode = $smokeExit
+        $result.actionResult = ($smokeOutput -join "`n")
+        $result.state = if ($smokeExit -eq 0) { "action_passed" } else { "action_failed" }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ResultFile)) {
+        Write-Json ([System.IO.Path]::GetFullPath($ResultFile)) $result
+    }
+    $result | ConvertTo-Json -Depth 8
+    if ($result.state -eq "action_failed") { exit 2 }
+}
+catch {
+    $failure = $_
+    [pscustomobject]@{
+        state    = "blocked"
+        phase    = $script:phase
+        reason   = [string]$failure.Exception.Message
+    } | ConvertTo-Json -Depth 4
+    throw
+}
+finally {
+    Stop-Smapi $script:aiProcess
+    Stop-Smapi $script:hostProcess
+    if ($previousLaunchGenerationPresent) {
+        $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $previousLaunchGeneration
+    } else {
+        Remove-Item Env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION -ErrorAction SilentlyContinue
+    }
+}
