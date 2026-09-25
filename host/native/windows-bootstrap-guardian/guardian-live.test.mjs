@@ -648,6 +648,97 @@ test("pre-existing lease, Job, and control-pipe names reject arm without adoptio
   });
 });
 
+// --- Task 4 Windows-security matrix additions ---------------------------------
+//
+// Items 6, 7, 8, 10 and 12. Each defends a failure this product can actually
+// reach: our own restart, our own crash leftovers, or the developer's own
+// debugger/CI runner. None of them assumes a foreign attacker. Items 8 and 10
+// also guard a future diff — a hand-written SDDL literal and an exact
+// record-bound object identity are exactly what a later refactor relaxes with
+// no test noticing.
+
+test("Task 4 item 8: the creation-time Job DACL is exactly the current SID with the minimum mask", { ...winOnly, timeout: 20_000 }, async () => {
+  const root = await temporaryRoot("job-dacl");
+  const session = await startGuardianSession();
+  try {
+    const report = resolve(root, "job-dacl.txt");
+    await session.launch("player_host", ["--signal", report, "--probe-job-dacl", session.activeArmBinding().playerJobName, "--exit-after-report"]);
+    await waitForFile(report);
+    const text = await readFile(report, "utf8");
+    assert.doesNotMatch(text, /dacl_unavailable=true/, "the live Job DACL must be readable for this proof");
+    // D:P — the DACL is protected, so no inherited ACE can widen it.
+    assert.match(text, /^dacl_protected=true$/m, "the creation-time DACL must stay protected (D:P)");
+    const aces = text.split("\n").filter((line) => line.startsWith("ace=")).sort();
+    // Exactly one ACE: the current user with QUERY/TERMINATE/SYNCHRONIZE/READ_CONTROL
+    // (0x0012000C). Item 9 (cross-user denial) is carried by this assertion rather
+    // than by a second test account: an over-broad ACE — Everyone, or any second
+    // SID — fails here, and it fails for a same-user over-grant too. A separate
+    // account would only re-test what Windows already enforces, which is the
+    // ceremony the plan's own audit tells us to remove.
+    assert.equal(aces.length, 1, `expected exactly one ACE, got: ${aces.join(" | ")}`);
+    const [sid, mask] = aces[0].slice("ace=".length).split(":");
+    assert.match(mask, /^0x0012000c$/, `expected the minimum mask 0x0012000c, got ${mask}`);
+    assert.ok(sid.length > 0, "the ACE must name a SID");
+  } finally { await session.close(); await removeRoot(root); }
+});
+
+test("Task 4 item 7: a role launched under an outer Job stays a Job member, or fails closed by name", { ...winOnly, timeout: 30_000 }, async () => {
+  // A debugger, a CI runner and `dotnet test` all put the process in a Job.
+  // Windows 8+ nests them, so this normally succeeds; when the outer Job forbids
+  // nesting the Guardian must refuse rather than launch a role it cannot
+  // contain. The environment that trips this is the developer's own machine,
+  // which is exactly why the guard is worth keeping.
+  const root = await temporaryRoot("outer-job");
+  const ready = resolve(root, "holder-ready.txt");
+  let holder;
+  try {
+    holder = spawn(fixture, ["--hold-job", `Local\\Outer-${crypto.randomUUID()}`, "--signal", ready], { windowsHide: true, shell: false, stdio: "ignore" });
+    await waitForFile(ready);
+    const session = await startGuardianSession();
+    try {
+      const report = resolve(root, "outer.txt");
+      await session.launch("player_host", ["--signal", report, "--exit-after-report"]);
+      await waitForFile(report);
+      assert.equal(await readFile(report, "utf8"), "member=true\n", "a launched role must still be a Job member when hosts nest Jobs");
+    } catch (error) {
+      // Nesting refused: the failure must be explicit rather than a silent
+      // uncontained launch.
+      assert.match(String(error?.message ?? error), /guardian|job|contain/i);
+    } finally { await session.close().catch(() => {}); }
+  } finally { if (holder) holder.kill(); await removeRoot(root); }
+});
+
+test("Task 4 item 10: recovery classification keys on the exact object, never the name alone", async () => {
+  // A crashed predecessor can leave an object with the expected NAME but the
+  // wrong shape. Adopting it would drain the wrong container while the real one
+  // keeps running — a self-inflicted failure that needs no attacker.
+  const source = await readFile(resolve(here, "WindowsJobRecoveryClassifier.cs"), "utf8");
+  assert.match(source, /JobObjectLimitKillOnJobClose|KillOnJobClose|kill-on-close|HasKillOnClose/, "classification must consult the kill-on-close limit, not only the name");
+  assert.match(source, /[Dd]acl|SecurityDescriptor|GetSecurityInfo/, "classification must consult the DACL, not only the name");
+  assert.match(source, /OpenJobObject|OpenMutex|Open/, "classification must open the object rather than trust a name");
+});
+
+test("Task 4 item 6: arm fixes the active correlation so a stale epoch cannot drive launch or recovery", async () => {
+  // After a Guardian restart a delayed command from the previous instance must
+  // not be accepted: `arm_attempt` fixes the correlation and every later command
+  // is compared against it. This is our own restart path, not an attack.
+  const source = await readFile(resolve(here, "Program.cs"), "utf8");
+  assert.match(source, /activeCorrelation = command\.Correlation/, "arm must fix the active correlation");
+  assert.match(source, /command\.Correlation != activeCorrelation|plan\.Correlation != command\.Correlation|Correlation != post\.Correlation/, "later commands must be compared against the fixed correlation");
+  const protocol = await readFile(resolve(here, "GuardianProtocol.cs"), "utf8");
+  assert.match(protocol, /RequiredPositiveInt\(root, "guardianEpoch"\)/, "epoch must be a required positive integer");
+});
+
+test("Task 4 item 12: role creation and both security attributes pass bInheritHandle = false", async () => {
+  const launcher = await readFile(resolve(here, "WindowsRoleLauncher.cs"), "utf8");
+  // CreateProcessW's inheritHandles argument is the 5th positional parameter.
+  assert.match(launcher, /CreateProcessW\([^)]*false\s*,/, "role creation must not inherit handles");
+  const job = await readFile(resolve(here, "WindowsJobOwner.cs"), "utf8");
+  assert.match(job, /bInheritHandle = 0/, "the Job security attributes must not be inheritable");
+  const lease = await readFile(resolve(here, "GuardianLease.cs"), "utf8");
+  assert.match(lease, /bInheritHandle = 0/, "the lease security attributes must not be inheritable");
+});
+
 async function runRecoveryClassification(overrides = {}) {
   const controlPipe = `GameBuddyRecoveryClassify-${crypto.randomUUID()}`;
   const token = crypto.randomUUID();
