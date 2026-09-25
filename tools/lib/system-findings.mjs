@@ -56,11 +56,11 @@ function componentOf(reasonCode) {
 }
 
 /**
- * @param {readonly {action?: string, args?: unknown, state?: string, reasonCode?: string}[]} actionTrace
- * @param {readonly {reasonCode?: string}[]} receipts receipts with reasonCode
+ * @param {readonly {action?: string, args?: unknown, state?: string, reasonCode?: string}[]} actionTrace every
+dispatch the run issued, including refusals that threw instead of returning a receipt
  * @returns {Readonly<{findings: readonly any[], summaries: Readonly<Record<string, number>>, rejectedCount: number, acceptedCount: number}>}
  */
-export function summarizeSystemFindings(actionTrace, receipts = []) {
+export function summarizeSystemFindings(actionTrace) {
   const rejected = actionTrace.filter((entry) => entry?.state === "rejected");
   const accepted = actionTrace.filter((entry) => entry?.state === "accepted" || entry?.state === "succeeded");
 
