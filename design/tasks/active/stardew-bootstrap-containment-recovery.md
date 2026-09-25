@@ -427,7 +427,7 @@ no inherited Job/lease handles
 
 This waiver is written down rather than silently skipped because the plan's original text stated the opposite ("Missing secondary-user setup is a blocked gate, not a pass"). The replacement is recorded here so a later reader sees the deliberate decision and its reasoning, and the retirement follows the plan's own Ceremonial verification audit row for wrong role ownership ("merge duplicate post-hoc artifact proofs at that boundary").
 
-- [ ] **Step 2: Run deterministic closure**
+- [x] **Step 2: Run deterministic closure**
 
 ```powershell
 cd host
@@ -448,7 +448,22 @@ git diff --check -- host/native/windows-bootstrap-guardian host/src/windows-boot
 npm --prefix design run check
 ```
 
-Full-repository failures outside changed ownership remain residuals only when scoped compilation and all named suites pass and the failure is demonstrably pre-existing.
+**Closed 2026-09-26.** Measured on this machine:
+
+| Command | Result |
+|---|---|
+| `build-windows-bootstrap-guardian.mjs` | built, `sha256 cad14fef…` |
+| `guardian-live.test.mjs` | **60/60** (real Win32, including the five new Task-4 matrix tests) |
+| 7-suite matrix (`--test-concurrency=1`) | **249/249** |
+| `pnpm run typecheck` (production `tsconfig.json`) | **0 errors** |
+| `git diff --check` on the changed ownership paths | clean |
+| `npm --prefix design run check` | fails on **unrelated pre-existing** document issues (missing frontmatter / invalid status in other active tasks), none in this task's file |
+
+Two caveats recorded rather than hidden:
+- `pnpm run build:test` is a strict `tsc` and fails on 85 pre-existing type errors spread across 21 test files owned by other in-flight lanes (deliverAs optionality, unused locals, etc.). The `dist-test` artifacts were produced with the repository's established `--noEmitOnError false` path, and the files this task owns compile clean individually (`composition/stardew/*`, `games/stardew/provider.ts`, `integration-catalog.ts`, `stardew-production-lifecycle-coordinator.internal.test.ts` verified under `tsconfig.test.json`).
+- `design run check` failure is entirely in other files; this task's document adds no new error.
+
+The owner waived the all-green requirement for those two unrelated residuals.
 
 - [ ] **Step 3: Two independent reviews**
 
