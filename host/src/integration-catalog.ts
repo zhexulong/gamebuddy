@@ -2,7 +2,6 @@ import type { IntegrationLauncher } from "./integration-launcher.js";
 import type { GameCompanionIdentity } from "./runtime.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
-import type { DesktopGuardianSession } from "./containment/auth/desktop-guardian-session.internal.js";
 import type {
   ComposedReferenceGameBrowserLifecycleActivationBindingSink,
   ComposedReferenceGameBrowserReadContext,
@@ -71,10 +70,19 @@ export type GamePresentationProjection = Readonly<{
  */
 export type GameIntegrationProvider = Readonly<{
   gameId: string;
+  /**
+   * Composition injects the platform capabilities it owns: the admitted
+   * folder picker and the contained-runtime launch collaborator that binds the
+   * game's typed facts to the authenticated Guardian session. They are opaque
+   * here — the catalog neither constructs nor inspects them — so generic layers
+   * stay free of platform and game types while the composition root remains the
+   * one place that wires them together.
+   */
   createLifecycleCoordinator(input: Readonly<{
     manifest: HostDeploymentManifest;
     game: SemanticGameProductionAuthority;
-    session: DesktopGuardianSession;
+    folderPicker: object;
+    runtimeCollaborator: object;
   }>): Promise<GameLifecycleProviderCapability>;
 }>;
 

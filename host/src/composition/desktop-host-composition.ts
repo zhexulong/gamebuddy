@@ -2,6 +2,11 @@ import { randomBytes } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  createDesktopGuardianGameRuntimePlatform,
+  createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
+} from "./stardew/stardew-guardian-platform.js";
+import { createPublishedWindowsStardewFolderPicker } from "../windows-stardew-folder-picker/index.js";
 import type { DesktopGuardianSession } from "../containment/auth/desktop-guardian-session.internal.js";
 import {
   createChatSemanticFacadeFromSharedAuthority,
@@ -209,10 +214,21 @@ export async function createDesktopProductComposition(
     }
     const provider = PRODUCT_INTEGRATION_CATALOG.getProvider("stardew");
     if (provider === undefined) throw new Error("stardew_game_integration_provider_unavailable");
+    // ADR-0007 Shape B: composition is the one place that binds the selected
+    // game's typed facts to the platform encoder and the authenticated session,
+    // and that admits the folder picker. The game adapter receives both as
+    // opaque injected capabilities and never imports runtime/core, the auth
+    // transport, or a raw Windows module itself.
+    const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const folderPicker = await createPublishedWindowsStardewFolderPicker(artifactRoot);
+    const runtimeCollaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+      createDesktopGuardianGameRuntimePlatform(session),
+    );
     lifecycleCoordinator = await provider.createLifecycleCoordinator({
       manifest: input.manifest,
       game: shared.game,
-      session,
+      folderPicker,
+      runtimeCollaborator,
     });
     const presentation = lifecycleCoordinator.presentation;
     if (presentation === undefined) throw new Error("game_integration_presentation_projection_unavailable");

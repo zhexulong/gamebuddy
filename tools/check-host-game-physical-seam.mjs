@@ -9,6 +9,20 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 const IGNORED_DIRECTORIES = new Set([".worktrees", "dist", "dist-test", "node_modules", "fixtures", "test-support", "test-fixtures", "__fixtures__", "fixture", "generated"]);
 const GENERIC_LAYERS = new Set(["bootstrap", "containment", "composition"]);
+// ADR-0007's frozen dependency direction separates the two generic layers that
+// must never reach a game from the composition root that must:
+//
+//   bootstrap/{entry,wire,roots} -> composition/private platform assembly only
+//   composition -> containment/runtime/core + one selected game adapter
+//   bootstrap/**, containment/runtime/** -/-> any game
+//
+// The direction matters, so the checker keeps two predicates rather than one:
+//   - `genericPath` (all three layers) answers "is this a generic target a game
+//     may not reach?" — a game still must not import composition either.
+//   - `gameFreeGenericPath` (bootstrap, containment) answers "is this an
+//     importer that may not reach a game?" — composition is the composition
+//     root and must reach exactly one selected game adapter.
+const GAME_FREE_GENERIC_LAYERS = new Set(["bootstrap", "containment"]);
 // The one generic path a game may import: the stable game-facing containment
 // contract. ADR-0007 states `games/stardew` may import the contract and must
 // never import `runtime/core`, auth transport, bootstrap roots, Desktop,
@@ -85,6 +99,7 @@ function resolveSource(importer, specifier, sourceRoot) {
 function layer(path, root) { return relative(resolve(root, "host/src"), path).replaceAll("\\", "/").split("/")[0]; }
 function gamePath(path, root) { const p = relative(resolve(root, "host/src"), path).replaceAll("\\", "/"); return p === "games" || p.startsWith("games/"); }
 function genericPath(path, root) { return GENERIC_LAYERS.has(layer(path, root)); }
+function gameFreeGenericPath(path, root) { return GAME_FREE_GENERIC_LAYERS.has(layer(path, root)); }
 function sourcePath(path, root) { return relative(resolve(root, "host/src"), path).replaceAll("\\", "/").replace(/\.[^.]+$/, ""); }
 function isStardewProcessImplementation(path, root) { return sourcePath(path, root) === STARDew_PROCESS_IMPLEMENTATIONS; }
 function isStardewRegistration(path, root) { return sourcePath(path, root) === STARDew_REGISTRATION; }
@@ -156,7 +171,7 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
       const resolution = resolveSource(importer, reference.specifier, canonicalRoot);
       if (resolution.kind !== "resolved") {
         const lexicalTarget = resolve(dirname(importer), reference.specifier);
-        if (resolution.kind === "missing" && genericPath(importer, root) && gamePath(lexicalTarget, root)) violations.push(violation("generic_layer_imports_game", importer, reference.specifier, lexicalTarget, reference.line, "bootstrap_containment_and_composition_must_not_import_games", root));
+        if (resolution.kind === "missing" && gameFreeGenericPath(importer, root) && gamePath(lexicalTarget, root)) violations.push(violation("generic_layer_imports_game", importer, reference.specifier, lexicalTarget, reference.line, "bootstrap_containment_and_composition_must_not_import_games", root));
         else if (resolution.kind === "missing" && importerIsGame && rawTarget(lexicalTarget, root)) violations.push(violation("game_imports_desktop_raw_module", importer, reference.specifier, lexicalTarget, reference.line, "stardew_must_not_import_desktop_guardian_process_or_native_modules", root));
         else violations.push(violation(resolution.kind === "escaped" ? "relative_import_escapes_source_root" : resolution.kind === "ambiguous" ? "ambiguous_relative_import" : "unresolved_relative_import", importer, reference.specifier, resolution.target ?? null, reference.line, `relative_source_${resolution.kind}`, root));
         continue;
@@ -168,7 +183,7 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
       }
       const targetIsGame = gamePath(target, root);
       if (importerIsGame && genericPath(target, root) && !isAllowedStardewGenericImport(importer, target, root)) violations.push(violation("game_imports_generic_layer", importer, reference.specifier, target, reference.line, "games_must_not_import_bootstrap_containment_or_composition", root));
-      else if (genericPath(importer, root) && targetIsGame) violations.push(violation("generic_layer_imports_game", importer, reference.specifier, target, reference.line, "bootstrap_containment_and_composition_must_not_import_games", root));
+      else if (gameFreeGenericPath(importer, root) && targetIsGame) violations.push(violation("generic_layer_imports_game", importer, reference.specifier, target, reference.line, "bootstrap_containment_and_composition_must_not_import_games", root));
       else if (importerIsGame && !isAllowedStardewGenericImport(importer, target, root) && rawTarget(target, root)) violations.push(violation("game_imports_desktop_raw_module", importer, reference.specifier, target, reference.line, "stardew_must_not_import_desktop_guardian_process_or_native_modules", root));
     }
   }
