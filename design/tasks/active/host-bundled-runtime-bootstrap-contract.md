@@ -77,19 +77,21 @@ has 63 cases (62 pass, 1 platform skip) and the publisher emits and rechecks the
 inventory-excluded `host-runtime-admission/v1` sidecar together with the
 destructive four-field current pointer.
 
-Rebuilding the **desktop test fixture** that the generation carries has one
-previously undocumented host prerequisite. `ExactChildBootstrapFixture` declares
-`PublishAot` + `SelfContained` so that it publishes as a single self-contained
-executable renamed to `node.exe`; the generation contract holds exactly one
-runtime file, so a framework-dependent publish cannot be represented there.
-`PublishAot` requires the MSVC linker, and without the Visual Studio C++ build
-tools the link step fails (`MSB3073`, exit 9009) and the publish degrades to an
-apphost plus `node.dll`. Until 2026-09-25 that degradation produced a generation
-whose runtime could not start, surfacing as `host_runtime_unavailable` after a
-~74s broker timeout in `HostBootstrapSupervisorTests`; the generation script now
-refuses the apphost by name (`desktop_launcher_test_fixture_not_self_contained`).
-A machine with the MSVC toolchain is therefore required to publish that fixture
-and to run the Desktop bootstrap matrix locally.
+The desktop test fixture that the generation carries must publish as one
+self-contained executable renamed to `node.exe`, because the generation holds
+exactly one runtime file and hashes it. It originally declared `PublishAot`,
+which reaches that shape by way of the MSVC linker; on a machine without the
+Visual Studio C++ build tools the link step failed (`MSB3073`, exit 9009), the
+publish degraded to an apphost plus `node.dll`, and the generation's runtime
+could not start — appearing as `host_runtime_unavailable` after a ~74s broker
+timeout in `HostBootstrapSupervisorTests`.
+
+No C++ toolchain is required. The fixture uses no `Marshal`, `Unsafe`,
+reflection or JIT-specific behaviour, so managed single-file meets the same
+one-file contract (`PublishSingleFile` + `PublishTrimmed` +
+`EnableCompressionInSingleFile`, about 10 MiB). Trimming and compression are
+load-bearing rather than cosmetic: the supervisor test asserts a runtime image
+under 32 MiB, and an untrimmed bundle is about 67 MiB.
 
 ## Stop conditions
 
