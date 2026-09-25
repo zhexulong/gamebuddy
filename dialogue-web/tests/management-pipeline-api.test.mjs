@@ -8,6 +8,7 @@ import {
   validateSetWorldInfoBindingCommand,
   validateSnapshot,
   validateWorldInfoState,
+  validateVoiceDevices,
   validateVoicePreference,
 } from "../src/management-pipeline-api.ts";
 import { createManagementPipelineSession } from "../src/management-pipeline-session.ts";
@@ -195,4 +196,45 @@ test("management World Info client uses the exact read and CSRF-bound bind route
   assert.equal(calls[1].init.method, "PUT");
   assert.deepEqual(calls[1].init.headers, { "Content-Type": "application/json", "x-csrf-token": HANDLE });
   assert.equal(calls[1].init.body, JSON.stringify({ apiVersion: 1, selectionGeneration: 1, expectedRevision: HANDLE, sourceHandle: null }));
+});
+
+test("management Voice device enumeration and output-device selection use exact routes", async () => {
+  // The panel can only offer real endpoints if this read is wired, and the
+  // selection must travel as the existing setOutputDevice action with the
+  // current preference revision (a stale revision is a durable conflict).
+  const devices = {
+    devices: [
+      { id: "waveout:0", name: "Headphones" },
+      { id: "waveout:1", name: "Speakers" },
+    ],
+    defaultSelectable: true,
+  };
+  assert.deepEqual(validateVoiceDevices(devices), devices);
+  // A malformed endpoint id must fail closed rather than reach the gateway.
+  assert.throws(() => validateVoiceDevices({ ...devices, devices: [{ id: "speakers", name: "X" }] }), TavernProtocolError);
+  assert.throws(() => validateVoiceDevices({ ...devices, defaultSelectable: false }), TavernProtocolError);
+  assert.throws(() => validateVoiceDevices({ ...devices, devices: Array.from({ length: 33 }, () => ({ id: "waveout:0", name: "x" })) }), TavernProtocolError);
+
+  const selected = { revision: 4, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 10, outputDevice: "waveout:1" };
+  const calls = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    calls.push({ path, init });
+    if (path.endsWith("voice-devices")) return response(devices);
+    return response(path.endsWith("voice-preference") && init.method === "PUT" ? selected : { ...selected, outputDevice: null });
+  });
+  assert.deepEqual(await api.readVoiceDevices(), devices);
+  const command = { expectedRevision: 0, action: "setOutputDevice", outputDevice: "waveout:1" };
+  assert.deepEqual(await api.updateVoicePreference(command, HANDLE), selected);
+  assert.deepEqual(calls[0], { path: "/api/tavern/v1/settings/voice-devices", init: { method: "GET", credentials: "same-origin" } });
+  assert.equal(calls[1].init.method, "PUT");
+  assert.deepEqual(calls[1].init.headers, { "Content-Type": "application/json", "x-csrf-token": HANDLE });
+  assert.equal(calls[1].init.body, JSON.stringify(command));
+
+  // Releasing a pin is the null form of the same action, not a separate route.
+  const release = { expectedRevision: 4, action: "setOutputDevice", outputDevice: null };
+  assert.deepEqual(await api.updateVoicePreference(release, HANDLE), selected);
+  assert.equal(calls[2].init.body, JSON.stringify(release));
+  // A non-endpoint device id and an unknown action both fail closed.
+  await assert.rejects(api.updateVoicePreference({ ...command, outputDevice: "speakers" }, HANDLE), TavernProtocolError);
+  await assert.rejects(api.updateVoicePreference({ ...command, action: "setOutputDeviceX" }, HANDLE), TavernProtocolError);
 });
