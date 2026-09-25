@@ -109,3 +109,24 @@ Trace 回归应优先使用真实生产路径已产生的样本，并可与 acti
 ## GameBuddy close 的玩家世界存续
 
 Action/运行时收束不等于 endgame。默认 close、AI crash 或 controller loss 必须停止 AI authority，同时保留 GameBuddy-owned Player Host 与其游戏世界；Player role 的 Job policy 必须证明不会因最后 Guardian handle close 而杀死成员。explicit endgame 在可用时采用 graceful game exit，force-kill 不是默认等价路径，且不得伪造 save 成功承诺。它是独立产品操作和证据项。disconnect 后不接受新 action，accepted short step 只到安全边界；未知结果不得作为完成、取消或重试依据。详见 [Game session survival simplification](../tasks/active/game-session-survival-and-reconnect-simplification.md)。
+
+## Live run 与系统优化边界
+
+Live run 首先是对**系统**的反馈：它检验观测设计、action contract、verifier 和编排是否给出了完成任务所需的事实，而模型输出质量只是其中一个回报维度。可验证性、可靠性和跨游戏复用同等重要。
+
+这条边界的目的不是建立训练基础设施，而是让每次真实运行都能归因到具体组件，从而使系统改进有据可依。因此：
+
+- **一次 live run 的产物必须是可归因的系统体检，而不只是 pass/blocked。** 拒绝、重复和退化行为必须按组件归类（观测 / contract / native state / 编排 / 投递），并给出可执行的改进建议。`tools/lib/system-findings.mjs` 是这一层的实现，它不包含任何具体游戏的语义。
+- **可验证奖励优先于主观裁判。** receipt、非空 evidence 和 action-specific postcondition 是完成判定的唯一权威；不得引入 LLM 裁判或神经打分作为通过的替代。若未来引入 LLM 复核，必须配一个只检查"裁判本身是否幻觉出不存在的缺陷"的 meta-verifier。
+- **任何绕过原生安全检查的"成功"必须归零。** 若一次结果到达了正确世界状态，却绕过了已声明的 action contract、admission 或 successor lineage（例如在 program 进入 recovery 后改用普通 action 完成同一 mutation），它不能作为该路径的成功样本或回归基线。
+- **失败必须可归因到组件，而不是归因到模型不够聪明。** 当 Agent 因缺少事实而反复失败时，首要修复是观测或 contract；不得把"模型没有主动获取信息"当作根因，也不得把补救责任下推给模型。
+
+### 为未来训练准备的范围红线
+
+轨迹、receipt、postcondition 和 findings 天然是未来可用于训练的数据。当前**不建立**训练环，也不为假设中的训练环付费。允许的准备工作限于零边际成本且已有独立理由的部分：
+
+- **reset determinism：** 一次运行必须能从已知初始状态确定性地重新开始。这是可重复性要求，不是训练要求；它同时决定 live gate 是否可靠。
+- **轨迹结构化与脱敏：** 保留足够的阶段关联、contract 版本和终态事实，并遵守数据边界。
+- **reward 不可绕过：** 见上一节。
+
+以下**明确不做**，除非出现独立的产品需求或事故：reward 标量化或归一化、大规模并行 rollout 编排、课程/难度调度、把训练关切带入产品运行时，或为训练预留的通用 DSL/框架。用"这是训练沙盒"论证 OS containment、harness 或其他运行时的 scope 扩张是不成立的：containment 的论证依据始终是产品安全（AI 失败不得终止玩家世界），不是训练假设。
