@@ -1,7 +1,3 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-import type { DesktopGuardianSession } from "../../containment/auth/desktop-guardian-session.internal.js";
 import type { SemanticGameProductionAuthority } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
 import {
@@ -17,11 +13,21 @@ import {
   createStardewProductionLifecycleCoordinator,
   type StardewProductionLifecycleCoordinator,
 } from "../../stardew-production-lifecycle-coordinator.internal.js";
-import { createPublishedWindowsStardewFolderPicker } from "../../windows-stardew-folder-picker/index.js";
-import {
-  createDesktopGuardianGameRuntimePlatform,
-  createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
-} from "./lifecycle/contained-game-runtime-platform.private.js";
+import type { StardewPlayerHostRuntimeLaunchCollaborator } from "./lifecycle/stardew-private-bootstrap-composer.core.js";
+
+/**
+ * Opaque composition-injected picker capability.
+ *
+ * The lifecycle passes it straight through to the coordinator, which is the
+ * only consumer that resolves it through the picker module's private WeakMap.
+ * Declaring the brand here keeps the game adapter free of the Windows picker
+ * module (a raw platform path it must never import) while still typing the
+ * value it relays.
+ */
+declare const stardewFolderPickerCapabilityBrand: unique symbol;
+export type InjectedStardewFolderPickerCapability = Readonly<{
+  readonly [stardewFolderPickerCapabilityBrand]: never;
+}>;
 
 /**
  * Game-owned browser presentation projection of one Stardew lifecycle owner:
@@ -139,18 +145,14 @@ export function createStardewGameIntegrationProvider(): GameIntegrationProvider 
     async createLifecycleCoordinator(input: Readonly<{
       manifest: HostDeploymentManifest;
       game: SemanticGameProductionAuthority;
-      session: DesktopGuardianSession;
+      folderPicker: InjectedStardewFolderPickerCapability;
+      runtimeCollaborator: StardewPlayerHostRuntimeLaunchCollaborator;
     }>) {
-      const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-      const folderPicker = await createPublishedWindowsStardewFolderPicker(artifactRoot);
-      const runtimeCollaboratorFactory = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
-        createDesktopGuardianGameRuntimePlatform(input.session),
-      );
       const coordinator = createStardewProductionLifecycleCoordinator(
         input.manifest,
-        folderPicker,
+        input.folderPicker,
         input.game,
-        runtimeCollaboratorFactory,
+        input.runtimeCollaborator,
       );
       return Object.freeze({
         close: () => coordinator.close(),
