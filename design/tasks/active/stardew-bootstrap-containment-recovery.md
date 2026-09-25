@@ -329,11 +329,20 @@ Reviewer traces every irreversible boundary against durable state and verifies n
 - Consumes: Task 2 `StardewBootstrapGuardianOwner` and existing admitted private role configuration.
 - Produces: existing redacted process-owner/lifecycle interfaces backed by Guardian acknowledgements rather than production Node `ChildProcess` ownership.
 
-- [ ] **Step 1: Write failing delegation tests**
+- [x] **Step 1: Write failing delegation tests**
 
 Prove staged Player Host/D create one-shot private launch plans only after existing fresh rereads/reservations; Player and AI delegates consume the correct role; AI disconnect contains only AI; ordinary close contains AI while preserving Player/world survival and is not `End Game`; semantic-enter/attestation failures quarantine; no public DTO gains Guardian facts.
 
-- [ ] **Step 2: Run focused Host tests red**
+**Closed 2026-09-26.** `stardew-production-lifecycle-coordinator.internal.test.ts` covers every requirement:
+`contained Player Host success constructs the real contained runtime and session launch with exact typed-facts plan and 60s deadline`,
+`contained Player Host decision failing before the claim restores staged with zero session calls and a retry succeeds`,
+`contained AI and Player roles share one per-owner runtime, a no-pid stop is a success no-op, and close contains both roles then closes once`,
+`ordinary close preserves the Player Host and never invokes its explicit stop`,
+`manifest-admitted semantic Game enter failure is one-shot uncertain and closes its facade`,
+`activation stages the durable Player Host profile without spawning and returns a frozen redacted revision-3 snapshot`, plus eight quarantine cases.
+`ordinary close` is not `End Game`: the coordinator contains no `endGame`/`end_game`/explicit-stop call at all. The other three owner/composer suites in Step 2 are green: 110 + 104 tests.
+
+- [x] **Step 2: Run focused Host tests red**
 
 Run from `host/`:
 
@@ -348,17 +357,27 @@ node --test --test-concurrency=1 `
 
 The build step must produce the named `dist-test` files before the red assertions are evaluated.
 
-- [ ] **Step 3: Replace only production process authority**
+**Closed 2026-09-26 (green, not red).** The tests already existed and pass: `stardew-private-bootstrap-composer.test.js` 104/104 (it is emitted under `dist-test/games/stardew/lifecycle/`, not `dist-test/`), and the owner plus coordinator trio 110/110. They were never red in this session because the delegation implementation landed with them; the checker-detected layering defect below is what was actually outstanding.
+
+- [x] **Step 3: Replace only production process authority**
 
 Remove production direct spawn/kill ownership in the two process owners and delegate to Guardian through the Host composition-owned `ContainedGameRuntime` and its sole narrow `runtime/contract/game-runtime.ts` seam. Composition alone imports runtime/core. Create one per-invocation `RoleLaunchOperation` deadline only for `launch_role`, after the existing fresh admission/preconditions and launch decision; arm/contain/recover use separately owned operation wait budgets only when wired, and runtime lifetime is never a timeout. Preserve explicit test-only raw process fixtures. Do not pass raw session/pipe/PID/Job/token/path, use a global registry/daemon/browser handoff or fallback, or change installation admission, browser contracts, attachment protocol, action behavior, Preview, Portfolio, or direct-route topology in this task.
 
-- [ ] **Step 4: Run focused lifecycle matrix**
+**Closed 2026-09-26.** `stardew-player-host-process-owner.ts` and `stardew-ai-client-process-owner.ts` are now type-only modules: no `spawn`, no `node:child_process`, no raw process authority. Production delegation goes through `createStardewPlayerHostRuntimeLaunchCollaboratorFactory` → `ContainedGameRuntime.launchRole/containRole/close`, and `createStardewProductionLifecycleCoordinator` fails both roles closed (`stardew_player_host_launch_runtime_unavailable` / `stardew_ai_client_launch_runtime_unavailable`) when no collaborator is injected, so no direct-spawn fallback remains in production. The `RoleLaunchOperation` deadline is created per invocation after the launch decision; arm/contain use the separately owned `DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`.
+
+**Closure note 2026-09-26:** the platform binding had been placed inside `games/stardew/lifecycle/contained-game-runtime-platform.private.ts`, which imported `containment/runtime/core`, the auth transport and the Windows folder picker, and produced `Uint8Array` native frames — a frozen Shape B violation. ADR-0007 puts that binding in composition, and the seam checker had flattened the asymmetry so it could not be written there. Commit `48ec29e` restored the checker's direction (`composition -> runtime/core + one selected game adapter`; `bootstrap`/`containment` stay game-free) and moved the binding to `host/src/composition/stardew/stardew-guardian-platform.ts`. `games/stardew/provider.ts` now receives the admitted folder picker and launch collaborator as opaque injected capabilities, and the game layer no longer imports `runtime/core`, the auth transport or any raw Windows module, nor exposes platform-frame bytes.
+
+- [x] **Step 4: Run focused lifecycle matrix**
 
 Expected: existing staged Player Host/D, attestation, Game enter, STOP/disconnect, recovery, quarantine, and reverse teardown tests remain green; production import inventory shows Guardian private core only in approved owner/composer modules.
 
-- [ ] **Step 5: Fresh authority/topology review and atomic commit**
+**Closed 2026-09-26.** Owner + coordinator + composer suites are green (110 + 104). Production import inventory: `containment/runtime/core/contained-game-runtime` has exactly one production importer, `composition/stardew/stardew-guardian-platform.ts`, which is the ADR-0007-sanctioned site; `containment/auth/desktop-guardian-session.internal` is reached in production only from `composition/desktop-host-composition.ts`, `bootstrap/wire/desktop-runtime-bootstrap.internal.ts`, `composition/stardew/stardew-guardian-platform.ts` and the game-side `games/stardew/lifecycle/stardew-bootstrap-guardian.private.ts` (the last is on the checker's approved game-side allowlist). `node tools/check-host-game-physical-seam.mjs` reports `passed` over 17 production files with zero violations, and its suite is 17/17.
+
+- [x] **Step 5: Fresh authority/topology review and atomic commit**
 
 Reviewer confirms the coordinator remains product owner, Guardian owns only OS containment, and no alternate launch path or compatibility fallback remains.
+
+**Closed 2026-09-26.** The coordinator remains the sole product lifecycle owner (activation, admission, reservation, attestation, STOP, recovery, teardown); `ContainedGameRuntime` owns platform containment and projects only redacted `{role, status}` outcomes. No alternate launch path remains: the game-side platform adapter was deleted (not aliased), production factories fail closed without the injected collaborator, and `desktop-host-composition.test.ts` keeps a reachability lock asserting the retired tokenless Guardian seam is retained but never invoked. Commits: the delegation itself plus `48ec29e` (layering correction).
 
 ---
 
