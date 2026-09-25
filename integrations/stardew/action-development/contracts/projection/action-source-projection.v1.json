@@ -1604,6 +1604,148 @@
           }
         },
         "handlerGroup": null
+      },
+      {
+        "actionId": "craft_item",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "craft_item",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "cook_recipe",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "cook_recipe",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "collect_crab_pot_output",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "collect_crab_pot_output",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "ship_item",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "ship_item",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
       }
     ],
     "publishedExecutionActionIds": [
@@ -1679,7 +1821,11 @@
       "chop_stump",
       "plant_sapling",
       "cut_weeds",
-      "scythe_crop"
+      "scythe_crop",
+      "craft_item",
+      "cook_recipe",
+      "collect_crab_pot_output",
+      "ship_item"
     ],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
@@ -1702,6 +1848,7 @@
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
+      "interact_npc_with_item",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
@@ -1732,6 +1879,7 @@
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
+      "interact_npc_with_item",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
@@ -1762,6 +1910,7 @@
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
+      "interact_npc_with_item",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
@@ -1788,6 +1937,9 @@
       "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
       "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
@@ -1797,6 +1949,7 @@
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
+      "interact_npc_with_item",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
@@ -1812,6 +1965,7 @@
       "plant_seed",
       "refill_watering_can",
       "scythe_crop",
+      "ship_item",
       "till_soil",
       "travel",
       "use_item",
@@ -1827,6 +1981,9 @@
       "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
       "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
@@ -1836,6 +1993,7 @@
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
+      "interact_npc_with_item",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
@@ -1851,6 +2009,7 @@
       "plant_seed",
       "refill_watering_can",
       "scythe_crop",
+      "ship_item",
       "till_soil",
       "travel",
       "use_item",
@@ -1866,6 +2025,9 @@
       "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
       "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
@@ -1875,6 +2037,7 @@
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
+      "interact_npc_with_item",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
@@ -1890,6 +2053,7 @@
       "plant_seed",
       "refill_watering_can",
       "scythe_crop",
+      "ship_item",
       "till_soil",
       "travel",
       "use_item",
@@ -1999,6 +2163,9 @@
       "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
       "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
@@ -2008,6 +2175,7 @@
       "feed_animal",
       "fertilize_tile",
       "harvest_crop",
+      "interact_npc_with_item",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
@@ -2023,6 +2191,7 @@
       "plant_seed",
       "refill_watering_can",
       "scythe_crop",
+      "ship_item",
       "till_soil",
       "travel",
       "use_item",
@@ -2073,6 +2242,9 @@
       "chest_retrieve",
       "chest_store",
       "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
       "feed_animal",
       "interact_npc_with_item",
       "machine_collect_output",
@@ -2080,6 +2252,7 @@
       "machine_load",
       "npc_relationship",
       "pet_animal",
+      "ship_item",
       "use_item"
     ],
     "ResourceTools": [

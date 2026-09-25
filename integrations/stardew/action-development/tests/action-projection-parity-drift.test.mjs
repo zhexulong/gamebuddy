@@ -12,6 +12,7 @@ import {
 import {
   PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS,
   PROJECTION_PARITY_GUARD_ORDER,
+  PROJECTION_PARITY_MAX_JSON_BYTES,
   validateActionProjectionParity,
 } from "../src/static-projection/action-projection-parity.mjs";
 import {
@@ -157,5 +158,7 @@ test("checked-in snapshot survives a strict parse round-trip", async () => {
   const validated = validateActionProjectionParity(snapshot);
   assert.equal(validated.surface.actions.length, snapshot.surface.actions.length);
   assert.equal(validated.schema, snapshot.schema);
-  assert.equal(Buffer.byteLength(text, "utf8") <= 32 * 1024, true);
+  // Bound against the checker's own declared limit instead of a magic number, so
+  // the snapshot cannot silently exceed what the strict consumer will accept.
+  assert.equal(Buffer.byteLength(text, "utf8") <= PROJECTION_PARITY_MAX_JSON_BYTES, true);
 });

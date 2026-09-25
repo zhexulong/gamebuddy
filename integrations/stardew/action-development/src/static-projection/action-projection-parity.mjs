@@ -68,7 +68,21 @@ export const PROJECTION_PARITY_ABSENT_ROUTE_TOKENS = Object.freeze([
   "read_repair",
   "withdrawn",
 ]);
-const PROJECTION_PARITY_MAX_JSON_BYTES = 32 * 1024;
+// Derived from the two facts it depends on, so the three cannot drift apart
+// again: the surface bound it embeds (ACTION_SURFACE_MAX_JSON_BYTES = 64 KiB in
+// ../action-surface.mjs) doubled to cover the pretty-printed encoding. This
+// module is a self-contained strict consumer and deliberately imports nothing,
+// so the value is restated here rather than imported.
+//
+// A small independent constant does not work. At the previous 32 KiB the bound
+// was already structurally incompatible with the declared capacity: measured
+// 45 actions give a 35070-byte snapshot (652 bytes/action plus 5741 bytes of
+// other sections), which projects to ~89 KiB at
+// PROJECTION_PARITY_MAX_REGISTRATIONS = 128 -- i.e. the register's own declared
+// capacity could never be represented. The four newest actions were simply the
+// first to reach it.
+const PROJECTION_PARITY_MAX_JSON_BYTES = 128 * 1024;
+export { PROJECTION_PARITY_MAX_JSON_BYTES };
 const PROJECTION_PARITY_MAX_REGISTRATIONS = 128;
 const PROJECTION_PARITY_MAX_IDENTIFIER_LENGTH = 128;
 const PROJECTION_PARITY_MAX_IDENTITY_VERSION = 2_147_483_647;
