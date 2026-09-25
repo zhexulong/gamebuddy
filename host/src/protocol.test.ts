@@ -114,7 +114,7 @@ test("body admission preserves envelope scope, type and serialized frame limits"
   assert.notEqual(validateBridgeMessage({ ...envelope, type: "body_node_admission_grant" }, scope, now), null);
   assert.notEqual(validateBridgeMessage({ ...envelope, scope: { ...scope, saveId: "other" } }, scope, now), null);
   assert.notEqual(validateBridgeMessage({ ...envelope, scope: { ...scope, extra: "field" } }, scope, now), null);
-  const oversized = { ...envelope, payload: { ...admissionChallenge, canonicalBoundArgs: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "x".repeat(512) }])) } };
+  const oversized = { ...envelope, payload: { ...admissionChallenge, canonicalBoundArgs: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "x".repeat(1024) }])) } };
   assert.throws(() => serializeBounded(oversized), /message_too_large/);
   assert.notEqual(validateBridgeMessage(oversized, scope, now), null);
 });
@@ -622,9 +622,9 @@ test("bridge message payloads fail closed", () => {
         { x: 10, y: 12 },
         { x: 11, y: 12 },
       ],
-      forageTargets: [{ targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)399", stack: 1 }],
-      itemTargets: [{ targetId: "item_0_0_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", stack: 1 }],
-      cropTargets: [{ targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24" }],
+      forageTargets: [{ targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)399", displayName: "Spring Onion", stack: 1 }],
+      itemTargets: [{ targetId: "item_0_0_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 }],
+      cropTargets: [{ targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24", displayName: "Parsnip" }],
       harvestTargets: [
         {
           targetId: "harvest_deadbeef",
@@ -632,11 +632,12 @@ test("bridge message payloads fail closed", () => {
           y: 12,
           cropId: "24",
           qualifiedHarvestItemId: "(O)24",
+          displayName: "Parsnip",
           regrowsAfterHarvest: false,
         },
       ],
-      seedTargets: [{ targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472" }],
-      fertilizerTargets: [{ targetId: "fertilizer_deadbeef", slot: 3, x: 10, y: 12, qualifiedItemId: "(O)368" }],
+      seedTargets: [{ targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" }],
+      fertilizerTargets: [{ targetId: "fertilizer_deadbeef", slot: 3, x: 10, y: 12, qualifiedItemId: "(O)368", displayName: "Basic Fertilizer" }],
       debrisTargets: [
         {
           targetId: "debris_deadbeef",
@@ -671,13 +672,14 @@ test("bridge message payloads fail closed", () => {
           y: 12,
           animalType: "Cow",
           qualifiedProduceItemId: "(O)184",
+          displayName: "Milk",
           toolKind: "milk_pail",
           produceStack: 1,
         },
       ],
       feedTroughTargets: [{ targetId: "feed_trough_deadbeef", slot: 7, x: 10, y: 11, hayStack: 2 }],
-      inventoryItemFacts: [{ slot: 8, qualifiedItemId: "(O)184", stack: 1 }],
-      foodTargets: [{ slot: 5, qualifiedItemId: "(O)216", stack: 3, edibility: 20, isDrink: false }],
+      inventoryItemFacts: [{ slot: 8, qualifiedItemId: "(O)184", displayName: "Milk", stack: 1 }],
+      foodTargets: [{ slot: 5, qualifiedItemId: "(O)216", displayName: "Bread", stack: 3, edibility: 20, isDrink: false }],
     },
     "snapshot_soil_01",
     now,
@@ -719,7 +721,7 @@ test("bridge message payloads fail closed", () => {
       newEnvelope(
         "snapshot",
         scope,
-        { ...snapshot, forageTargets: [{ targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "", stack: 1 }] },
+        { ...snapshot, forageTargets: [{ targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "", displayName: "Spring Onion", stack: 1 }] },
         "snapshot_forage_01",
         now,
       ),
@@ -733,7 +735,7 @@ test("bridge message payloads fail closed", () => {
       newEnvelope(
         "snapshot",
         scope,
-        { ...snapshot, seedTargets: [{ targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "" }] },
+        { ...snapshot, seedTargets: [{ targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "", displayName: "Seeds" }] },
         "snapshot_seed_01",
         now,
       ),
@@ -802,7 +804,7 @@ test("bridge message payloads fail closed", () => {
       newEnvelope(
         "snapshot",
         scope,
-        { ...snapshot, inventoryItemFacts: [{ slot: 3, qualifiedItemId: "(O)184", stack: 0 }] },
+        { ...snapshot, inventoryItemFacts: [{ slot: 3, qualifiedItemId: "(O)184", displayName: "Milk", stack: 0 }] },
         "snapshot_inventory_01",
         now,
       ),
@@ -2225,7 +2227,7 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
         ...base,
         payload: {
           ...basePayload,
-          chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 99, qualifiedItemId: "(O)24", stack: 5 }],
+          chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 99, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 5 }],
         },
       },
       scope,
@@ -2239,7 +2241,7 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
         ...base,
         payload: {
           ...basePayload,
-          chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "", stack: 3 }],
+          chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "", displayName: "Item", stack: 3 }],
         },
       },
       scope,
@@ -2301,7 +2303,7 @@ test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
         ...base,
         payload: {
           ...basePayload,
-          treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 99, x: 4, y: 5, qualifiedItemId: "(O)309" }],
+          treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 99, x: 4, y: 5, qualifiedItemId: "(O)309", displayName: "Acorn" }],
         },
       },
       scope,
@@ -2344,7 +2346,7 @@ test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows",
         ...base,
         payload: {
           ...basePayload,
-          scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "" }],
+          scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "", displayName: "Wheat" }],
         },
       },
       scope,
