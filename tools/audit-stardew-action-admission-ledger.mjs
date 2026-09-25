@@ -68,9 +68,16 @@ function classifyActionableGuards(sources) {
   for (const [file, text] of sources) {
     const lines = text.split("\n");
     for (let index = 0; index < lines.length; index += 1) {
-      if (!lines[index].includes("player_not_actionable")) continue;
-      const condition = lines[index].includes("if (") ? lines[index] : (lines[index - 1] ?? "");
+      const line = lines[index];
       const where = `${file}:${index + 1}`;
+      if (!line.includes("player_not_actionable")) continue;
+      const condition = line.includes("if (") ? line : (lines[index - 1] ?? "");
+      // The shared admission's single emission sits behind a precomputed
+      // `notActionable` flag whose ternary is two lines up; it serves both
+      // profiles and is already accounted for by the per-profile counters, so it
+      // must not be misread as an action-body check.
+      const inSharedHelper = /if \(notActionable\)/.test(condition) || /AdmissionActionabilityProfile/.test(lines[index - 2] ?? "");
+      if (inSharedHelper) continue;
       if (/UsingTool|toolPower/.test(condition)) physical.push(where);
       else if (/activeClickableMenu|eventUp|CanMove/.test(condition)) general.push(where);
       // Not an admission baseline: an action-body check that rejects because the
@@ -116,6 +123,13 @@ const derived = {
   playerNotActionable: countLines(sources, String.raw`"player_not_actionable"`),
   targetOutOfRange: countLines(sources, String.raw`"target_out_of_range"`),
   boundActorReferences: countLines(sources, String.raw`TryGetBoundActor`),
+  // Converged handlers delegate to the shared admission instead of restating the
+  // mechanical sequence, so this is the migration-progress counter. The helper's
+  // own definition line is excluded so the value is the number of migrated
+  // handlers, not migrated handlers + 1.
+  sharedAdmissionCalls: countLines(sources, String.raw`this\.AdmitExecution\(`),
+  sharedAdmissionPhysical: countLines(sources, String.raw`this\.AdmitExecution\(.*AdmissionActionabilityProfile\.Physical`),
+  sharedAdmissionGeneral: countLines(sources, String.raw`this\.AdmitExecution\(.*AdmissionActionabilityProfile\.General`),
 };
 const guards = classifyActionableGuards(sources);
 const shape = deriveHandlerShape(sources);
@@ -136,10 +150,12 @@ const report = {
   fileCount: sources.size,
   ledgerRows: derived,
   actionableGuardProfiles: {
-    physical: guards.physical.length,
-    general: guards.general.length,
+    physical: guards.physical.length + derived.sharedAdmissionPhysical,
+    general: guards.general.length + derived.sharedAdmissionGeneral,
     bodyLevelNotAdmission: guards.bodyLevel.length,
     expressive: expressiveSites.length,
+    sharedAdmissionPhysical: derived.sharedAdmissionPhysical,
+    sharedAdmissionGeneral: derived.sharedAdmissionGeneral,
     physicalSites: guards.physical,
     generalSites: guards.general,
     bodyLevelSites: guards.bodyLevel,
@@ -155,11 +171,14 @@ const DOCUMENTED = {
   idempotentLookup: 39,
   revisionIncrements: 74,
   executionIds: 44,
-  bodyOwned: 39,
-  invalidDeadline: 38,
-  playerNotActionable: 37,
+  bodyOwned: 24,
+  invalidDeadline: 23,
+  playerNotActionable: 22,
   targetOutOfRange: 30,
-  boundActorReferences: 19,
+  boundActorReferences: 4,
+  sharedAdmissionCalls: 16,
+  sharedAdmissionPhysical: 8,
+  sharedAdmissionGeneral: 8,
   physical: 8,
   general: 27,
   expressive: 2,
