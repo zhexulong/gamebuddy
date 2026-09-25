@@ -181,6 +181,12 @@ export function createActionExecutionCoordinator(
     // after later facts. Drop it - the newer transition already governs, and
     // forwarding a stale one would report "not created" for an action the world
     // performed (callers then re-dispatched it) or downgrade ledger state.
+    //
+    // Dropping is safe because `replay.receipt(id) !== null` implies the
+    // correlation was already bound: the only replay.apply call site below is
+    // immediately followed by ledger.bindReceipt on the same path, so a receipt
+    // can only become `previous` after binding. The newer transition - which is
+    // what a terminal would be - has already bound and retired the correlation.
     if (previous !== null && replay.isStaleDelivery(receipt)) {
       return;
     }
