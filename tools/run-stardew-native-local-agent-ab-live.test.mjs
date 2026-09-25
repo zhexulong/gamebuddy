@@ -97,3 +97,14 @@ test("prompts state the errand, not the route (no step-by-step coaching)", () =>
   assert.match(RUNNER_SOURCE, /她需要一颗新鲜花椰菜/);
   assert.match(RUNNER_SOURCE, /she needs a fresh cauliflower/);
 });
+
+test("the fact log keeps receipt evidence so observed events can be derived", () => {
+  // The interaction gate decides whether the companion may narrate an NPC
+  // reaction from what the receipts actually prove (showed_response). The fact
+  // log used to keep only type/reason/request/execution, so that evidence was
+  // unreachable and every NPC-reaction line was failed as unobserved. The first
+  // live run after adding the gate proved it: gift_given had showed_response=false
+  // recorded, yet the gate could not see it either way.
+  assert.match(RUNNER_SOURCE, /evidence: fact\.payload\?\.evidence \?\? null/);
+  assert.match(RUNNER_SOURCE, /offerReceipt\.evidence\.showed_response === true/);
+});
