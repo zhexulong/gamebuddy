@@ -439,7 +439,7 @@ export function isCandidateDescriptorComplete(
     // The offer routes through the native GameLocation.checkAction ingress
     // (not a single method binding), so the complete-descriptor gate covers
     // the exact five-argument shape and the write postcondition instead.
-    const argumentNames = descriptor.arguments.map((argument) => argument.name);
+    const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
     const expected = ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"];
     if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
     if (descriptor.effect !== "write") return false;
