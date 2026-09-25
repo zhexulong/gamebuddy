@@ -337,3 +337,37 @@ test("the committed register pins the sleep mechanism as shared-world evidence",
   assert.ok(files.has("StardewValley/Game1.cs"), "must cite the cross-day forks");
   assert.ok(sleep.forks.every((fork) => fork.forkClass === "outcome_fork"));
 });
+
+test("a mechanism pin suppresses its blocking finding and is rejected once stale", async () => {
+  const { validateMultiplayerSensitivityRegister } = await import(
+    "./lib/stardew-native-multiplayer-sensitivity.mjs"
+  );
+  const pin = {
+    defect: "unverified_mechanism_scope",
+    mechanisms: ["m"],
+    reason: "the claimed capability is single-player only and makes no shared-world claim",
+    owner: "stardew-integration",
+  };
+  const act = action();
+  // A mechanism that derives an outcome fork must require shared-world evidence.
+  const unpinned = validateMultiplayerSensitivityRegister(register([act], { scopeAcknowledgements: [] }), SOURCE);
+  assert.deepEqual(unpinned.requiredSharedWorldMechanisms, ["m"]);
+  // Pinned, the acknowledgement is preserved and the mechanism stays visible.
+  const pinned = validateMultiplayerSensitivityRegister(register([act], { scopeAcknowledgements: [pin] }), SOURCE);
+  assert.equal(pinned.scopeAcknowledgements.filter((s) => s.defect === "unverified_mechanism_scope").length, 1);
+  assert.deepEqual(pinned.requiredSharedWorldMechanisms, ["m"]);
+  // A pin naming a mechanism that derives no outcome fork cannot outlive its gap.
+  assert.throws(
+    () =>
+      validateMultiplayerSensitivityRegister(
+        register([act], { scopeAcknowledgements: [{ ...pin, mechanisms: ["not_a_mechanism"] }] }),
+        SOURCE,
+      ),
+    (error) => error.code === "mp_sensitivity_stale_acknowledgement",
+  );
+  // A mechanism pin must name mechanisms, not actions.
+  assert.throws(
+    () => validateMultiplayerSensitivityRegister(register([act], { scopeAcknowledgements: [{ ...pin, mechanisms: [] }] }), SOURCE),
+    (error) => error.code === "mp_sensitivity_register_invalid",
+  );
+});

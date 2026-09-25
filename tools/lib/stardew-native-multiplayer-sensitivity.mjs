@@ -410,15 +410,27 @@ export function validateMultiplayerSensitivityRegister(register, sources) {
   if (!Array.isArray(register.actions) || register.actions.length === 0)
     fail("mp_sensitivity_register_invalid", "Expected non-empty actions array.");
 
+  const mechanisms = validateMultiplayerMechanisms(register.mechanisms, sources);
+  const requiredSharedWorldMechanisms = deriveRequiredSharedWorldMechanisms(mechanisms);
+
   const scopeAcks = (register.scopeAcknowledgements ?? []).map((scope, index) => {
     const where = `scopeAcknowledgements[${index}]`;
-    if (!Array.isArray(scope.actions) || scope.actions.length === 0)
-      fail("mp_sensitivity_register_invalid", `${where}.actions must be a non-empty array.`);
-    if (scope.defect !== "over_restriction" && scope.defect !== "unverified_scope" && scope.defect !== "mp_sensitive_exclusion")
+    const isMechanism = scope.defect === "unverified_mechanism_scope";
+    if (scope.defect !== "over_restriction" && scope.defect !== "unverified_scope" && scope.defect !== "mp_sensitive_exclusion" && !isMechanism)
       fail("mp_sensitivity_register_invalid", `Invalid ${where}.defect.`, { defect: scope.defect });
+    // Mechanism pins name mechanisms; action pins name actions. Never both, never neither.
+    const key = isMechanism ? "mechanisms" : "actions";
+    if (!isMechanism && !Array.isArray(scope.actions))
+      fail("mp_sensitivity_register_invalid", `${where}.actions must be an array.`);
+    if (isMechanism && !Array.isArray(scope.mechanisms))
+      fail("mp_sensitivity_register_invalid", `${where}.mechanisms must be an array.`);
+    const ids = scope[key];
+    if (!Array.isArray(ids) || ids.length === 0)
+      fail("mp_sensitivity_register_invalid", `${where}.${key} must be a non-empty array.`);
     return Object.freeze({
       defect: scope.defect,
-      actions: Object.freeze(scope.actions.map((id) => text(id, `${where}.actions[]`))),
+      actions: Object.freeze((scope.actions ?? []).map((id) => text(id, `${where}.actions[]`))),
+      mechanisms: Object.freeze((scope.mechanisms ?? []).map((id) => text(id, `${where}.mechanisms[]`))),
       reason: text(scope.reason, `${where}.reason`),
       owner: text(scope.owner, `${where}.owner`),
     });
@@ -440,20 +452,25 @@ export function validateMultiplayerSensitivityRegister(register, sources) {
   for (const actionId of declared) if (!seen.has(actionId)) fail("mp_sensitivity_register_invalid", `declaredActionIds names unknown ${actionId}.`);
 
   const defects = actions.flatMap((action) => action.defects);
-  // Every scope acknowledgement must still be justified by at least one derived
-  // defect, so a policy pin cannot silently outlive the gap it describes.
+  // Every scope acknowledgement must still be justified by a derived finding, so
+  // a policy pin cannot silently outlive the gap it describes. Action pins are
+  // justified by a derived action defect; mechanism pins by a derived mechanism.
   for (const scope of scopeAcks) {
-    const stillDerived = actions.some(
-      (action) => scope.actions.includes(action.actionId) && action.rawDefects.some((defect) => defect.defect === scope.defect),
-    );
+    const stillDerived =
+      scope.defect === "unverified_mechanism_scope"
+        ? scope.mechanisms.some((id) => requiredSharedWorldMechanisms.includes(id))
+        : actions.some(
+            (action) =>
+              scope.actions.includes(action.actionId) &&
+              action.rawDefects.some((defect) => defect.defect === scope.defect),
+          );
     if (!stillDerived)
       fail(
         "mp_sensitivity_stale_acknowledgement",
-        `Policy pin for ${scope.defect} over ${scope.actions.join(", ")} is stale: no listed action still derives it.`,
-        { defect: scope.defect, actions: scope.actions },
+        `Policy pin for ${scope.defect} over ${[...scope.actions, ...scope.mechanisms].join(", ")} is stale: nothing still derives it.`,
+        { defect: scope.defect, actions: scope.actions, mechanisms: scope.mechanisms },
       );
   }
-  const mechanisms = validateMultiplayerMechanisms(register.mechanisms, sources);
   return Object.freeze({
     actionCount: actions.length,
     actions: Object.freeze(actions),
@@ -464,6 +481,6 @@ export function validateMultiplayerSensitivityRegister(register, sources) {
     mpSensitiveExclusions: Object.freeze(defects.filter((defect) => defect.defect === "mp_sensitive_exclusion")),
     unverifiedScope: Object.freeze(defects.filter((defect) => defect.defect === "unverified_scope")),
     mechanisms: Object.freeze(mechanisms),
-    requiredSharedWorldMechanisms: deriveRequiredSharedWorldMechanisms(mechanisms),
+    requiredSharedWorldMechanisms: Object.freeze(requiredSharedWorldMechanisms),
   });
 }

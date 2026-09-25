@@ -4,6 +4,14 @@
   "note": "Multiplayer scope is DERIVED from the exact decompiled game source plus the Mod's own admission guards. The pinned statement (not the authored memory) is what the checker trusts.",
   "scopeAcknowledgements": [
     {
+      "defect": "unverified_mechanism_scope",
+      "mechanisms": [
+        "sleep"
+      ],
+      "reason": "The sleep mechanism forks on world mode and therefore needs shared-world evidence. The Mod deliberately does not own that path: gameplay-capability-expansion.md §3.2 forbids Mod-initiated doSleep/doPassOut/auto-return, and Lane I product semantics leave shared-world ready coordination to players. The only claimed capability is `single_player_sleep_and_advance_day`, which by name covers the single-player lifecycle only, so no shared-world claim is being made. Pin is scoped to that capability; if a shared-world sleep capability is ever claimed, this pin must be removed and real shared-world evidence produced.",
+      "owner": "stardew-integration"
+    },
+    {
       "defect": "unverified_scope",
       "actions": [
         "pet_animal",

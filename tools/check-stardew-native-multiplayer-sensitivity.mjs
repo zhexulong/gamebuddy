@@ -173,13 +173,28 @@ try {
     .map((action) => ({ actionId: action.actionId, requiredLiveTopology: action.requiredLiveTopology }))
     .filter((entry) => entry.requiredLiveTopology !== "shared_world_multiplayer");
 
+  const mechanisms = report.requiredSharedWorldMechanisms ?? [];
+  const mechanismAcks = new Map(
+    (report.scopeAcknowledgements ?? [])
+      .filter((scope) => scope.defect === "unverified_mechanism_scope")
+      .flatMap((scope) => scope.mechanisms.map((id) => [id, scope])),
+  );
+  const blockingMechanisms = mechanisms.filter((id) => !mechanismAcks.has(id));
+  const acknowledgedMechanisms = mechanisms.filter((id) => mechanismAcks.has(id));
+
   const lines = [];
   lines.push(
     `native multiplayer sensitivity: ${report.actionCount} actions, ` +
       `${report.actions.filter((action) => action.derivedSensitivity === "mp-semantic").length} mp-semantic, ` +
       `${report.actions.filter((action) => action.derivedSensitivity === "mp-observational").length} mp-observational, ` +
-      `${report.actions.filter((action) => action.derivedSensitivity === "mp-insensitive").length} mp-insensitive`,
+      `${report.actions.filter((action) => action.derivedSensitivity === "mp-insensitive").length} mp-insensitive; ` +
+      `${report.mechanisms.length} mechanisms (` +
+      `${mechanisms.length} requiring shared-world evidence)`,
   );
+  for (const id of mechanisms)
+    lines.push(`  [mechanism-shared-world] ${id}: single-player evidence cannot stand in for a shared world`);
+  for (const [id, scope] of mechanismAcks)
+    lines.push(`  [acknowledged:unverified_mechanism_scope] ${id} — ${scope.reason} (owner: ${scope.owner})`);
   for (const defect of report.overRestricted)
     lines.push(`  [over-restriction] ${defect.actionId}: ${defect.detail}`);
   for (const entry of report.acknowledged)
@@ -192,7 +207,10 @@ try {
     lines.push(`  [topology-understated] ${entry.actionId}: requires ${entry.requiredLiveTopology}`);
 
   const blocking =
-    report.defects.length + admissionMismatches.length + mpSemanticWithoutTopology.length;
+    report.defects.length +
+    admissionMismatches.length +
+    mpSemanticWithoutTopology.length +
+    blockingMechanisms.length;
 
   if (args.report || blocking > 0) console.log(lines.join("\n"));
 
@@ -200,7 +218,8 @@ try {
     console.error(
       `native multiplayer sensitivity: ${blocking} blocking finding(s) ` +
         `(${report.defects.length} unpinned defect, ${admissionMismatches.length} admission mismatch, ` +
-        `${mpSemanticWithoutTopology.length} topology understated).`,
+        `${mpSemanticWithoutTopology.length} topology understated, ` +
+        `${blockingMechanisms.length} unacknowledged shared-world mechanism).`,
     );
     process.exitCode = 1;
   } else if (!args.report) {
