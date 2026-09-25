@@ -119,7 +119,7 @@ const onCompanionTextPresented = (text, locale) => {
 };
 client.onFact((fact) => {
   if (fact.type === "execution_receipt" || fact.type === "semantic_event" || fact.type === "error" || fact.type === "lifecycle") {
-    factLog.push({ type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId });
+    factLog.push({ type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId, evidence: fact.payload?.evidence ?? null });
     console.error("BRIDGE_FACT", JSON.stringify(factLog.at(-1)));
   }
   if (LADDER === "2" && fact.type === "execution_receipt" && fact.payload?.reasonCode === "machine_coffee_loaded" && !voiceStarted) {
