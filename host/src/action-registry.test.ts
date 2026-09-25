@@ -186,3 +186,31 @@ test("interaction search matches the target vocabulary the adapter itself declar
   // still returns nothing; this must not become a match-everything search.
   assert.deepEqual(searchActionsFromModCatalog(catalog, capabilities, "zzz"), []);
 });
+
+test("interaction search matches per word, not the whole phrase", () => {
+  // The audit's live trace shows the caller searching multi-word phrases
+  // ("Jodi npc gift", "npc gift"). A single substring test matched none of them
+  // as a whole string, so the search answered "no such capability" while the
+  // surface plainly had one. Every word must hit; a word that hits nothing still
+  // narrows the result to nothing.
+  const capabilities = ["move_to_tile"];
+  const catalog = [
+    {
+      actionId: "move_to_tile",
+      familyId: "movement_navigation",
+      identityVersion: 1,
+      lifecycle: "published" as const,
+      kind: "execution" as const,
+    },
+  ];
+  for (const query of ["move tile", "tile move", "ME TO TILE", "  tile  "]) {
+    assert.deepEqual(
+      searchActionsFromModCatalog(catalog, capabilities, query).map((entry) => entry.actionId),
+      ["move_to_tile"],
+      `query ${JSON.stringify(query)} should match`,
+    );
+  }
+  // One word that matches nothing removes the action from the result.
+  assert.deepEqual(searchActionsFromModCatalog(catalog, capabilities, "tile zzz"), []);
+  assert.deepEqual(searchActionsFromModCatalog(catalog, capabilities, "tile warp"), []);
+});
