@@ -1893,16 +1893,17 @@ function createCoordinator(
         if (!aiStopped) incomplete = true;
       }
     }
-    // Contained runtime teardown: prove containment of each role that actually
-    // launched through the runtime, then close the platform session exactly
-    // once. Successfully contained/closed roles are skipped on a retry; a
-    // containment failure stays terminal through `stardew_lifecycle_close_incomplete`.
+    // Ordinary close stops AI authority only. The Player Host keeps running:
+    // its Job is non-kill-on-close and this path must not call `contain_role` for
+    // it. ADR-0007's superseding clarification is explicit — "default GameBuddy
+    // close, AI crash and controller EOF stop AI and do not end Player/world ...
+    // Guardian may hold OS containment authority but must not turn last-handle
+    // close into an implicit endgame" — and the survival task removes "default
+    // close/crash player kill" outright. So this drains the AI role, then closes
+    // the platform session (which releases the Guardian's ownership without
+    // terminating the Player), and never contains the Player.
     if (containedRuntimeTeardown !== undefined && exactOwner !== undefined) {
       try {
-        if (playerHostLaunchThroughRuntime && !runtimeContained.playerHost) {
-          await containedRuntimeTeardown.containPlayerHost(exactOwner);
-          runtimeContained.playerHost = true;
-        }
         if (aiClientLaunchThroughRuntime && !runtimeContained.aiClient) {
           await containedRuntimeTeardown.containAiClient(exactOwner);
           runtimeContained.aiClient = true;
