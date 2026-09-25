@@ -4,14 +4,6 @@
   "note": "Multiplayer scope is DERIVED from the exact decompiled game source plus the Mod's own admission guards. The pinned statement (not the authored memory) is what the checker trusts.",
   "scopeAcknowledgements": [
     {
-      "defect": "unverified_mechanism_scope",
-      "mechanisms": [
-        "sleep"
-      ],
-      "reason": "The sleep mechanism forks on world mode and therefore needs shared-world evidence. The Mod deliberately does not own that path: gameplay-capability-expansion.md §3.2 forbids Mod-initiated doSleep/doPassOut/auto-return, and Lane I product semantics leave shared-world ready coordination to players. The only claimed capability is `single_player_sleep_and_advance_day`, which by name covers the single-player lifecycle only, so no shared-world claim is being made. Pin is scoped to that capability; if a shared-world sleep capability is ever claimed, this pin must be removed and real shared-world evidence produced.",
-      "owner": "stardew-integration"
-    },
-    {
       "defect": "unverified_scope",
       "actions": [
         "pet_animal",
@@ -19,6 +11,14 @@
         "ship_item"
       ],
       "reason": "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. For `chest_retrieve` the container is resolved by `Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves `Game1.player.UniqueMultiplayerID`. For `pet_animal` the +12 friendship is gated on the single per-pet `grantedFriendshipForPet` flag rather than the acting farmer's `lastPetDay` entry, so a second farmer's pet in the same day grants 0 friendship while the Mod receipt asserts before+12. No shared-world live evidence exists yet for any of them.",
+      "owner": "stardew-integration"
+    },
+    {
+      "defect": "unverified_mechanism_scope",
+      "mechanisms": [
+        "sleep"
+      ],
+      "reason": "The sleep mechanism forks on world mode and therefore needs shared-world evidence, but the Mod does not own that path: gameplay-capability-expansion.md 3.2 forbids Mod-initiated doSleep/doPassOut/auto-return, and shared-world ready coordination belongs to the players. The only claimed capability is `single_player_sleep_and_advance_day`, which by name covers the single-player lifecycle only, so no shared-world claim is being made. Pin is scoped to that capability; if a shared-world sleep capability is ever claimed, this pin must be removed and real shared-world evidence produced.",
       "owner": "stardew-integration"
     }
   ],

@@ -271,6 +271,24 @@ const register = {
         "day grants 0 friendship while the Mod receipt asserts before+12. No shared-world live evidence exists yet for any of them.",
       owner: "stardew-integration",
     },
+    // Mechanism pins name mechanisms, not actions. The Mod deliberately does not own
+    // the shared-world sleep path (gameplay-capability-expansion.md 3.2 forbids
+    // Mod-initiated doSleep/doPassOut/auto-return; the shared-world ready
+    // coordination is the players'), and the only claimed capability is
+    // `single_player_sleep_and_advance_day`, which by name covers the single-player
+    // lifecycle only. So no shared-world claim is being made here. If such a claim is
+    // ever made, this pin must be removed and real shared-world evidence produced.
+    {
+      defect: "unverified_mechanism_scope",
+      mechanisms: ["sleep"],
+      reason:
+        "The sleep mechanism forks on world mode and therefore needs shared-world evidence, but the Mod does not own that path: " +
+        "gameplay-capability-expansion.md 3.2 forbids Mod-initiated doSleep/doPassOut/auto-return, and shared-world ready " +
+        "coordination belongs to the players. The only claimed capability is `single_player_sleep_and_advance_day`, which by name " +
+        "covers the single-player lifecycle only, so no shared-world claim is being made. Pin is scoped to that capability; if a " +
+        "shared-world sleep capability is ever claimed, this pin must be removed and real shared-world evidence produced.",
+      owner: "stardew-integration",
+    },
   ],
   // Axis 3 -- mechanisms. Sleeping, the cross-day handshake, passing out and the
   // day rollover are not Mod actions, so an action-only register is structurally
