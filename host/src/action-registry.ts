@@ -527,16 +527,19 @@ export function searchActionsFromModCatalog(
     policy,
   );
   if (normalized.length === 0) return visible;
-  // Search matches the action's own declared target kinds too. A keyword search
-  // that ignored the vocabulary the adapter itself publishes returned nothing
-  // for a query like "npc" even though every npc-targeting action declares it,
-  // which read to the caller as "this capability does not exist".
-  return visible.filter((entry) =>
-    [entry.actionId, entry.familyId, entry.label, entry.description, ...entry.targetKinds]
+  // Match the words, not the whole phrase. A caller searching the surface asks
+  // in words - a live trace shows "Jodi npc gift" and "npc gift" - and a single
+  // substring test matched none of those whole strings, so the search reported
+  // an empty surface and the caller stopped believing the capability existed.
+  // Every word must appear (AND); matching is against the action's own identity,
+  // label, description and the target kinds the adapter itself declares.
+  const words = normalized.split(/\s+/u).filter((word) => word.length > 0);
+  return visible.filter((entry) => {
+    const haystack = [entry.actionId, entry.familyId, entry.label, entry.description, ...entry.targetKinds]
       .join(" ")
-      .toLocaleLowerCase()
-      .includes(normalized),
-  );
+      .toLocaleLowerCase();
+    return words.every((word) => haystack.includes(word));
+  });
 }
 
 function actionAdapter<const TActionId extends string>(
