@@ -112,3 +112,42 @@ test("namespaced replay rejections are attributed, not left unclassified", () =>
   assert.ok(components.includes("delivery"), `expected a delivery finding, got ${JSON.stringify(result.findings)}`);
   assert.ok(!components.includes("unclassified"), `nothing should be unclassified: ${JSON.stringify(result.findings)}`);
 });
+
+test("never reports a clean run while actions were rejected", () => {
+  // The verify live run reported findings: [] while a third of its actions were
+  // rejected (no_native_path x2, warp_out_of_range, target_out_of_range). All
+  // four mapped to the same component and none reached the counting thresholds,
+  // so the run's own health report said "no problems" about a run with four
+  // real rejections. A rejection must always surface at least once.
+  const result = summarizeSystemFindings(
+    [
+      { action: "move_to_tile", args: { x: 3, y: 12 }, state: "rejected", reasonCode: "no_native_path" },
+      { action: "move_to_tile", args: { x: 3, y: 11 }, state: "rejected", reasonCode: "no_native_path" },
+      { action: "travel", args: { x: 3, y: 12 }, state: "rejected", reasonCode: "warp_out_of_range" },
+      { action: "harvest_crop", args: { x: 64, y: 18 }, state: "rejected", reasonCode: "target_out_of_range" },
+      { action: "move_to_tile", args: { x: 64, y: 15 }, state: "succeeded", reasonCode: "target_reached" },
+      { action: "travel", args: { x: 80, y: 17 }, state: "succeeded", reasonCode: "travel_completed" },
+      { action: "harvest_crop", args: { x: 64, y: 18 }, state: "succeeded", reasonCode: "crop_harvested" },
+    ],
+    [],
+  );
+  assert.equal(result.rejectedCount, 4);
+  assert.ok(result.findings.length > 0, "a run with rejections must never report no findings");
+  const summary = result.findings.find((finding) => finding.id === "rejection_observed");
+  assert.ok(summary, `expected a rejection summary, got ${JSON.stringify(result.findings)}`);
+  assert.equal(summary.count, 4);
+  assert.notEqual(summary.component, "unclassified");
+  assert.deepEqual(summary.sampleCodes.sort(), ["no_native_path", "target_out_of_range", "warp_out_of_range"]);
+});
+
+test("a genuinely clean run still reports nothing", () => {
+  const result = summarizeSystemFindings(
+    [
+      { action: "move_to_tile", args: { x: 1, y: 1 }, state: "succeeded", reasonCode: "target_reached" },
+      { action: "harvest_crop", args: { x: 2, y: 2 }, state: "succeeded", reasonCode: "crop_harvested" },
+    ],
+    [],
+  );
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.rejectedCount, 0);
+});
