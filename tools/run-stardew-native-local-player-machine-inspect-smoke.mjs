@@ -3,7 +3,7 @@ import {
   classifyTopology,
   connectNativeLocalClient,
   executeFresh,
-  observeFresh,
+  observeTopologySnapshot,
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
@@ -26,7 +26,7 @@ export async function runMachineInspectSmoke(
   const startedAt = Date.now();
   const topology = validateNativeLocalFixtureConfig(config);
   try {
-    const snapshot = await requireActionableMachineSnapshot(client);
+    const snapshot = await requireActionableMachineSnapshot(client, topology);
     assertTopologyCapabilities(snapshot, topology, EXPECTED_CAPABILITIES);
     const targets = validMachineTargets(snapshot);
     if (targets.length !== 1)
@@ -126,8 +126,8 @@ function validateNativeLocalFixtureConfig(value) {
     throw new Error("native_local_machine_action_policy_invalid");
   return topology;
 }
-async function requireActionableMachineSnapshot(client) {
-  const snapshot = await observeFresh(client, { actionable: true });
+async function requireActionableMachineSnapshot(client, topology) {
+  const snapshot = await observeTopologySnapshot(client, topology, { actionable: true });
   if (
     !Number.isInteger(snapshot?.tile?.x) ||
     !Number.isInteger(snapshot?.tile?.y) ||

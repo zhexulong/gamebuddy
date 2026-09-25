@@ -195,6 +195,41 @@ export function assertTopologyCapabilities(snapshot, topology, requiredCapabilit
   throw new NativeSmokeHarnessError("unknown_topology");
 }
 
+/**
+ * Observe the opening snapshot of a contract under a known topology.
+ *
+ * - `native_local_player_fixture` uses the strict form: its isolated fixture
+ *   publishes exactly the surface the runner expects, so an un-admitted read is
+ *   always an error.
+ * - `shared_world_farmhand` tolerates the bridge's deliberate refusal to
+ *   re-admit a revision it already admitted. A committed action mints one
+ *   revision and admits the projection that follows it; a later solicited read
+ *   at that same revision is refused on purpose and must never surface an
+ *   un-admitted projection. The already-admitted projection is the current
+ *   truth, and every request is re-admitted on the game thread anyway, so
+ *   falling back to it is honest rather than a weaker check.
+ */
+export async function observeTopologySnapshot(client, topology, { actionable = false, timeoutMs = 5_000 } = {}) {
+  if (topology === "native_local_player_fixture") return await observeFresh(client, { actionable });
+  if (topology !== "shared_world_farmhand") throw new NativeSmokeHarnessError("unknown_topology");
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      return await observeFresh(client, { actionable });
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof Error) || error.message !== "observe_snapshot_not_admitted") throw error;
+    }
+    const cached = client.state?.snapshot ?? null;
+    if (cached !== null && typeof cached.location === "string" && cached.location.length > 0 && cached.location !== "unknown" && Number.isSafeInteger(cached.tile?.x) && cached.tile.x >= 0 && (!actionable || cached.actionable === true)) {
+      return cached;
+    }
+    await delay(100);
+  }
+  throw lastError ?? new NativeSmokeHarnessError("observe_snapshot_not_admitted");
+}
+
 /** Bind the post-terminal observation to the receipt revision exposed by v1. */
 export function assertPostTerminalRevision(snapshot, terminal) {
   validateSnapshot(snapshot);

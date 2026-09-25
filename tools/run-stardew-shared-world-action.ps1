@@ -36,6 +36,8 @@ param(
     [string]$Action = "",
     [string]$ResultFile = "",
     [string]$ScenarioIdentity = "",
+    [switch]$DumpSpatial,
+    [string]$ReachLocation = "",
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 180,
     [switch]$AttachOnly
 )
@@ -134,7 +136,7 @@ try {
     if (-not [System.IO.Path]::IsPathFullyQualified($ProbeRoot)) { throw "ProbeRoot must be absolute: $ProbeRoot" }
     if (-not [System.IO.Path]::IsPathFullyQualified($SessionDirectory)) { throw "SessionDirectory must be absolute: $SessionDirectory" }
     if ($SaveName -notmatch '^GameBuddyFixture[A-Za-z0-9_-]{1,96}$') { throw "SaveName must be a disposable GameBuddyFixture slot: $SaveName" }
-    if (-not $AttachOnly -and [string]::IsNullOrWhiteSpace($Action)) { throw "Action is required unless -AttachOnly is set." }
+    if (-not $AttachOnly -and -not $DumpSpatial -and [string]::IsNullOrWhiteSpace($Action)) { throw "Action is required unless -AttachOnly or -DumpSpatial is set." }
     Assert-NoStardewProcesses "materialization"
 
     $script:phase = "materialize_profiles"
@@ -239,9 +241,12 @@ try {
 
     if (-not $AttachOnly) {
         $script:phase = "action_smoke"
-        $smokeOutput = & node (Join-Path $PSScriptRoot "run-stardew-shared-world-action.mjs") `
-            --client-config $aiConfigPath `
-            --action $Action 2>&1
+        $actionArgs = @("--client-config", $aiConfigPath, "--action", $Action)
+        if ($DumpSpatial) {
+            $actionArgs = @("--client-config", $aiConfigPath, "--dump-spatial", "--poll-trace")
+            if (-not [string]::IsNullOrWhiteSpace($ReachLocation)) { $actionArgs += @("--reach-location", $ReachLocation) }
+        }
+        $smokeOutput = & node (Join-Path $PSScriptRoot "run-stardew-shared-world-action.mjs") @actionArgs 2>&1
         $smokeExit = $LASTEXITCODE
         $result.actionExitCode = $smokeExit
         $result.actionResult = ($smokeOutput -join "`n")
