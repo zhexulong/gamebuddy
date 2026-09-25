@@ -512,9 +512,11 @@ Lifecycle-recovery reviewer answers:
 
 Both reviews also corrected over-claims in this task's own text (item 8 "catches Everyone", `ordinary close preserves the Player Host` citing the direct-spawn fixture); both corrections are recorded at their sites.
 
-- [ ] **Step 4: Update current owner only after acceptance**
+- [x] **Step 4: Update current owner only after acceptance**
 
 Change `design/domains/stardew/integration.md` from containment incomplete to a factual closed statement naming the production implementation, deterministic Windows matrix, and independent reviews. Do not activate installation registration or topology consolidation unless their separate gates are satisfied.
+
+**Closed 2026-09-26 (`58a4970`).** `integration.md` now states bootstrap containment closed and names the production implementation (`ContainedGameRuntime` delegation, type-only process owners), the 12-item Windows security matrix with its measured results, and both independent reviews with the two defects they found and the fixes. Installation registration, onboarding and the target-version live open-gameplay gate remain explicitly open — this step did not activate them, as the step requires.
 
 - [x] **Step 5: Commit closure**
 
