@@ -53,69 +53,156 @@ public sealed class ScopeBoundActorAdmissionTests
         "farmhandexecutioncontroller.farmingconstructionactions.cs",
         "farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
         "farmhandexecutioncontroller.resourcetoolactions.cs",
+        "farmhandexecutioncontroller.gatheringactions.cs",
+        "farmhandexecutioncontroller.movementactions.cs",
+        "farmhandexecutioncontroller.shippingactions.cs",
     };
 
     [Theory]
-    [InlineData("chest_store")]
-    [InlineData("chest_retrieve")]
-    [InlineData("cook_recipe")]
-    [InlineData("collect_crab_pot_output")]
-    [InlineData("craft_item")]
-    [InlineData("refill_watering_can")]
-    [InlineData("plant_sapling")]
-    [InlineData("scythe_crop")]
-    [InlineData("machine_load")]
-    [InlineData("machine_collect_output")]
-    [InlineData("chop_tree_source")]
     [InlineData("break_rock_source")]
-    [InlineData("dig_artifact_spot")]
-    [InlineData("clear_hoedirt")]
+    [InlineData("chest_retrieve")]
+    [InlineData("chest_store")]
     [InlineData("chop_stump")]
+    [InlineData("chop_tree_source")]
+    [InlineData("clear_hoedirt")]
+    [InlineData("collect_crab_pot_output")]
+    [InlineData("cook_recipe")]
+    [InlineData("craft_item")]
     [InlineData("cut_weeds")]
+    [InlineData("dig_artifact_spot")]
+    [InlineData("machine_collect_output")]
+    [InlineData("machine_load")]
+    [InlineData("plant_sapling")]
+    [InlineData("refill_watering_can")]
+    [InlineData("scythe_crop")]
     public void MatchingActorIdentity_IsAdmitted_AndRejectedOnlyByGameState(string action)
         => Run(action, actorId: long.Parse(ScopePlayerId))
             .Should().Be("player_not_actionable",
                 "a scope-matching actor must clear admission and advance to game-state validation");
 
+    /// <summary>
+    /// The same discriminating case for the admissions that carry a world/location
+    /// readiness check after the identity proof. A scope-matching actor clears the
+    /// guard and is then refused by that readiness check, so the observable code is
+    /// the readiness code rather than <c>player_not_actionable</c>. Most admissions
+    /// report <c>world_not_ready</c>; a few report a more specific location code
+    /// (<c>farm_required</c>, <c>animal_house_not_available</c>), which is why the
+    /// expected code is a parameter rather than hard-coded.
+    /// </summary>
     [Theory]
-    [InlineData("chest_store")]
-    [InlineData("chest_retrieve")]
-    [InlineData("cook_recipe")]
-    [InlineData("collect_crab_pot_output")]
-    [InlineData("craft_item")]
-    [InlineData("refill_watering_can")]
-    [InlineData("plant_sapling")]
-    [InlineData("scythe_crop")]
-    [InlineData("machine_load")]
-    [InlineData("machine_collect_output")]
-    [InlineData("chop_tree_source")]
+    [InlineData("bait_crab_pot", "world_not_ready")]
+    [InlineData("clear_debris", "world_not_ready")]
+    [InlineData("collect_animal_product", "world_not_ready")]
+    [InlineData("equip_tool", "world_not_ready")]
+    [InlineData("feed_animal", "animal_house_not_available")]
+    [InlineData("fertilize_tile", "world_not_ready")]
+    [InlineData("harvest_crop", "world_not_ready")]
+    [InlineData("interact_npc_with_item", "world_not_ready")]
+    [InlineData("machine_inspect", "world_not_ready")]
+    [InlineData("npc_relationship", "world_not_ready")]
+    [InlineData("pet_animal", "world_not_ready")]
+    [InlineData("place_crab_pot", "farm_required")]
+    [InlineData("place_wood_fence", "farm_required")]
+    [InlineData("plant_seed", "world_not_ready")]
+    [InlineData("till_soil", "world_not_ready")]
+    [InlineData("use_item", "world_not_ready")]
+    [InlineData("water_crop", "world_not_ready")]
+    [InlineData("enter_exit", "world_not_ready")]
+    [InlineData("move_to_tile", "world_not_ready")]
+    [InlineData("pickup_forage", "world_not_ready")]
+    [InlineData("pickup_item", "world_not_ready")]
+    [InlineData("ship_item", "farm_required")]
+    [InlineData("travel", "world_not_ready")]
+    public void MatchingActorIdentity_ClearsTheGuard_AndIsRefusedByReadiness(string action, string expectedReasonCode)
+        => Run(action, actorId: long.Parse(ScopePlayerId))
+            .Should().Be(expectedReasonCode,
+                "a scope-matching actor must clear the identity guard and reach the readiness check");
+
+    [Theory]
+    [InlineData("bait_crab_pot")]
     [InlineData("break_rock_source")]
-    [InlineData("dig_artifact_spot")]
-    [InlineData("clear_hoedirt")]
+    [InlineData("chest_retrieve")]
+    [InlineData("chest_store")]
     [InlineData("chop_stump")]
+    [InlineData("chop_tree_source")]
+    [InlineData("clear_debris")]
+    [InlineData("clear_hoedirt")]
+    [InlineData("collect_animal_product")]
+    [InlineData("collect_crab_pot_output")]
+    [InlineData("cook_recipe")]
+    [InlineData("craft_item")]
     [InlineData("cut_weeds")]
+    [InlineData("dig_artifact_spot")]
+    [InlineData("equip_tool")]
+    [InlineData("feed_animal")]
+    [InlineData("fertilize_tile")]
+    [InlineData("harvest_crop")]
+    [InlineData("interact_npc_with_item")]
+    [InlineData("machine_collect_output")]
+    [InlineData("machine_inspect")]
+    [InlineData("machine_load")]
+    [InlineData("npc_relationship")]
+    [InlineData("pet_animal")]
+    [InlineData("place_crab_pot")]
+    [InlineData("place_wood_fence")]
+    [InlineData("plant_sapling")]
+    [InlineData("plant_seed")]
+    [InlineData("refill_watering_can")]
+    [InlineData("scythe_crop")]
+    [InlineData("till_soil")]
+    [InlineData("use_item")]
+    [InlineData("water_crop")]
+    [InlineData("enter_exit")]
+    [InlineData("move_to_tile")]
+    [InlineData("pickup_forage")]
+    [InlineData("pickup_item")]
+    [InlineData("ship_item")]
+    [InlineData("travel")]
     public void MismatchedActorIdentity_FailsClosed(string action)
         => Run(action, actorId: 2002L)
             .Should().Be("execution_scope_mismatch",
                 "an actor outside the execution scope must never act");
 
     [Theory]
-    [InlineData("chest_store")]
-    [InlineData("chest_retrieve")]
-    [InlineData("cook_recipe")]
-    [InlineData("collect_crab_pot_output")]
-    [InlineData("craft_item")]
-    [InlineData("refill_watering_can")]
-    [InlineData("plant_sapling")]
-    [InlineData("scythe_crop")]
-    [InlineData("machine_load")]
-    [InlineData("machine_collect_output")]
-    [InlineData("chop_tree_source")]
+    [InlineData("bait_crab_pot")]
     [InlineData("break_rock_source")]
-    [InlineData("dig_artifact_spot")]
-    [InlineData("clear_hoedirt")]
+    [InlineData("chest_retrieve")]
+    [InlineData("chest_store")]
     [InlineData("chop_stump")]
+    [InlineData("chop_tree_source")]
+    [InlineData("clear_debris")]
+    [InlineData("clear_hoedirt")]
+    [InlineData("collect_animal_product")]
+    [InlineData("collect_crab_pot_output")]
+    [InlineData("cook_recipe")]
+    [InlineData("craft_item")]
     [InlineData("cut_weeds")]
+    [InlineData("dig_artifact_spot")]
+    [InlineData("equip_tool")]
+    [InlineData("feed_animal")]
+    [InlineData("fertilize_tile")]
+    [InlineData("harvest_crop")]
+    [InlineData("interact_npc_with_item")]
+    [InlineData("machine_collect_output")]
+    [InlineData("machine_inspect")]
+    [InlineData("machine_load")]
+    [InlineData("npc_relationship")]
+    [InlineData("pet_animal")]
+    [InlineData("place_crab_pot")]
+    [InlineData("place_wood_fence")]
+    [InlineData("plant_sapling")]
+    [InlineData("plant_seed")]
+    [InlineData("refill_watering_can")]
+    [InlineData("scythe_crop")]
+    [InlineData("till_soil")]
+    [InlineData("use_item")]
+    [InlineData("water_crop")]
+    [InlineData("enter_exit")]
+    [InlineData("move_to_tile")]
+    [InlineData("pickup_forage")]
+    [InlineData("pickup_item")]
+    [InlineData("ship_item")]
+    [InlineData("travel")]
     public void AbsentActor_FailsClosed(string action)
         => Run(action, actorId: null)
             .Should().Be("world_not_ready",
@@ -124,8 +211,8 @@ public sealed class ScopeBoundActorAdmissionTests
     [Fact]
     public void Admission_DoesNotConsultTheRetiredSinglePlayerTopologyGuard()
     {
-        MigratedControllerPartials.Should().HaveCount(7,
-            "the retired-token scan must keep covering all seven controller partials whose guards 98fe750 migrated");
+        MigratedControllerPartials.Should().HaveCount(10,
+            "the retired-token scan must keep covering every controller partial that carries a scope-bound admission site");
 
         foreach (string partial in MigratedControllerPartials)
         {
@@ -140,9 +227,13 @@ public sealed class ScopeBoundActorAdmissionTests
 
     /// <summary>
     /// The parameterised actions are exactly the actions whose handler dispatch
-    /// reaches a <c>RequestLocal*</c> body that calls <c>TryGetBoundActor</c>. Both
+    /// reaches a <c>RequestLocal*</c> body that proves the scope-bound actor. Both
     /// sides are derived from source (and from the theory attributes themselves), so a
     /// new guard, a removed guard, or a re-dispatched action cannot pass unnoticed.
+    ///
+    /// The matching-actor case splits in two because the observable reason code
+    /// depends on whether the admission carries a readiness gate after the identity
+    /// proof; together the two halves must still equal the full derived set.
     /// </summary>
     [Fact]
     public void CoveredActionSet_EqualsTheSourceDerivedGuardedActionSet()
@@ -152,9 +243,18 @@ public sealed class ScopeBoundActorAdmissionTests
 
         expected.Should().NotBeEmpty("the Mod source must still hold scope-bound admission sites");
 
+        IReadOnlySet<string> reachesGameState =
+            TheoryInlineDataActions(nameof(MatchingActorIdentity_IsAdmitted_AndRejectedOnlyByGameState));
+        IReadOnlySet<string> refusedByReadiness =
+            TheoryInlineDataActions(nameof(MatchingActorIdentity_ClearsTheGuard_AndIsRefusedByReadiness));
+
+        reachesGameState.Should().NotIntersectWith(refusedByReadiness,
+            "a matching actor can only observe one reason code per action");
+        reachesGameState.Union(refusedByReadiness).Should().BeEquivalentTo(expected,
+            $"the two matching-actor theories together must parameterise every action whose handler dispatch reaches a guarded RequestLocal* body (derived set: {rendered})");
+
         foreach (string theory in new[]
                  {
-                     nameof(MatchingActorIdentity_IsAdmitted_AndRejectedOnlyByGameState),
                      nameof(MismatchedActorIdentity_FailsClosed),
                      nameof(AbsentActor_FailsClosed),
                  })
@@ -201,6 +301,8 @@ public sealed class ScopeBoundActorAdmissionTests
             FarmhandActionHandlerGroup.Farming => new FarmingActionHandler(executions),
             FarmhandActionHandlerGroup.MachinesAndAnimals => new MachineAndAnimalActionHandler(executions),
             FarmhandActionHandlerGroup.ResourceTools => new ResourceToolActionHandler(executions),
+            FarmhandActionHandlerGroup.Gathering => new GatheringActionHandler(executions),
+            FarmhandActionHandlerGroup.Movement => new MovementActionHandler(executions),
             _ => throw new InvalidOperationException(
                 $"{action} is not dispatched through a handler group covered by this admission probe (group: {group?.ToString() ?? "none"})."),
         };
@@ -258,6 +360,31 @@ public sealed class ScopeBoundActorAdmissionTests
         // slot, x, y, expectedQualifiedItemId, expectedTargetId.
         "plant_sapling" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)309", ExpectedTargetId = "sapling_target_1" },
         "machine_load" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedQualifiedItemId = "(O)433", ExpectedTargetId = "machine_target_1" },
+        // B-class admissions, in their own dispatch argument shapes.
+        "till_soil" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedTargetId = "soil_target_1" },
+        "water_crop" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedTargetId = "crop_target_1" },
+        "plant_seed" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)472", ExpectedTargetId = "seed_target_1" },
+        "fertilize_tile" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)368", ExpectedTargetId = "fertilizer_target_1" },
+        "harvest_crop" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "harvest_target_1" },
+        "clear_debris" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "debris_target_1" },
+        "place_wood_fence" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedQualifiedItemId = "(O)322", ExpectedTargetId = "fence_target_1" },
+        "place_crab_pot" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedQualifiedItemId = "(O)710", ExpectedTargetId = "crab_pot_target_1" },
+        "bait_crab_pot" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedQualifiedItemId = "(O)685", ExpectedTargetId = "bait_target_1" },
+        "machine_inspect" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedTargetId = "machine_target_1" },
+        "npc_relationship" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedTargetId = "npc_relationship_1" },
+        "pet_animal" => new BridgeExecutionArgs { X = 9, Y = 10, ExpectedTargetId = "pet_target_1" },
+        "collect_animal_product" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "animal_product_target_1" },
+        "feed_animal" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "feed_trough_target_1" },
+        "use_item" => new BridgeExecutionArgs { Slot = 2, ExpectedQualifiedItemId = "(O)24" },
+        "equip_tool" => new BridgeExecutionArgs { Tool = "axe" },
+        "interact_npc_with_item" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)128", ExpectedTargetId = "npc_relationship_1" },
+        "pickup_forage" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedQualifiedItemId = "(O)18", ExpectedTargetId = "forage_target_1" },
+        "pickup_item" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "item_target_1" },
+        "ship_item" => new BridgeExecutionArgs { X = 71, Y = 14, Slot = 2, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "shipping_bin_0123456789abcdef" },
+        // Movement: source tile + destination tile.
+        "move_to_tile" => new BridgeExecutionArgs { X = 5, Y = 5 },
+        "enter_exit" => new BridgeExecutionArgs { X = 5, Y = 5 },
+        "travel" => new BridgeExecutionArgs { X = 5, Y = 5 },
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "no dispatch argument shape is recorded for this action"),
     };
 
@@ -270,7 +397,8 @@ public sealed class ScopeBoundActorAdmissionTests
         HashSet<string> guardedMethods = new(StringComparer.Ordinal);
         foreach (string partial in MigratedControllerPartials)
         {
-            foreach ((string method, string body) in DeclaredRequestMethods(File.ReadAllText(ControllerRelative(partial))))
+            List<(string Method, string Body)> declared = DeclaredRequestMethods(File.ReadAllText(ControllerRelative(partial))).ToList();
+            foreach ((string method, string body) in declared)
             {
                 // Two admissible forms during convergence. A body is guarded when it
                 // still carries the inline scope-bound actor proof, or when it delegates
@@ -282,6 +410,26 @@ public sealed class ScopeBoundActorAdmissionTests
                     || body.Contains("AdmitExecution(", StringComparison.Ordinal))
                     guardedMethods.Add(method);
             }
+
+            // A one-line wrapper delegates to a shared admission site instead of
+            // repeating the proof: enter_exit and travel both front
+            // RequestLocalDoorTransition. Resolving that delegation is what keeps this
+            // derivation honest — reading only the wrapper's own body would report an
+            // inherited proof as absent and silently shrink the guarded set.
+            foreach ((string method, string body) in declared)
+            {
+                if (guardedMethods.Contains(method))
+                    continue;
+
+                foreach (Match call in DelegatedRequestCall.Matches(body))
+                {
+                    if (guardedMethods.Contains(call.Groups[1].Value))
+                    {
+                        guardedMethods.Add(method);
+                        break;
+                    }
+                }
+            }
         }
 
         HashSet<string> actions = new(StringComparer.Ordinal);
@@ -289,6 +437,14 @@ public sealed class ScopeBoundActorAdmissionTests
         {
             foreach (Match dispatch in DispatchEntry.Matches(File.ReadAllText(handlerFile)))
             {
+                // Argument-validated-first actions prove the actor only after validating
+                // their own arguments, so a matching actor observes a validation code
+                // rather than a state code, and even a mismatched actor never reaches the
+                // proof. They are a different admission shape with their own coverage and
+                // are deliberately outside this identity-then-state probe.
+                if (ArgumentValidatedFirstActions.Contains(dispatch.Groups[1].Value))
+                    continue;
+
                 if (guardedMethods.Contains(dispatch.Groups[2].Value))
                     actions.Add(dispatch.Groups[1].Value);
             }
@@ -324,12 +480,16 @@ public sealed class ScopeBoundActorAdmissionTests
             .ToHashSet(StringComparer.Ordinal);
     }
 
-    /// <summary><c>InlineData</c> is <c>params object[]</c>, so the action id arrives inside the single array argument.</summary>
+    /// <summary>
+    /// <c>InlineData</c> is <c>params object[]</c>, so the action id arrives inside the
+    /// argument array. Some theories carry a second parameter (e.g. the expected
+    /// reason code), so only the first element is the action id.
+    /// </summary>
     private static string InlineDataAction(CustomAttributeData attribute)
     {
         object? value = attribute.ConstructorArguments[0].Value;
         return value is IReadOnlyCollection<CustomAttributeTypedArgument> array
-            ? (string)array.Single().Value!
+            ? (string)array.First().Value!
             : (string)value!;
     }
 
@@ -366,6 +526,22 @@ public sealed class ScopeBoundActorAdmissionTests
 
     private static readonly Regex RequestMethodName = new(
         @"\b(RequestLocal\w+)\s*\(",
+        RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Actions that validate their own arguments before authorizing the actor. Their
+    /// reason codes carry no admission stage, so they are outside the
+    /// identity-then-state shape this probe pins.
+    /// </summary>
+    private static readonly HashSet<string> ArgumentValidatedFirstActions = new(StringComparer.Ordinal)
+    {
+        "face_direction",
+        "express_emote",
+    };
+
+    /// <summary>A delegation to another <c>Request*</c> admission site.</summary>
+    private static readonly Regex DelegatedRequestCall = new(
+        @"this[.](Request\w+)\s*\(",
         RegexOptions.CultureInvariant);
 
     /// <summary>Handler dispatch entry: <c>"action_id" =&gt; this.executions.RequestLocalBody(</c>.</summary>
