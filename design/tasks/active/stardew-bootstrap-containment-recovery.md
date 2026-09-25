@@ -336,11 +336,22 @@ Prove staged Player Host/D create one-shot private launch plans only after exist
 **Closed 2026-09-26.** `stardew-production-lifecycle-coordinator.internal.test.ts` covers every requirement:
 `contained Player Host success constructs the real contained runtime and session launch with exact typed-facts plan and 60s deadline`,
 `contained Player Host decision failing before the claim restores staged with zero session calls and a retry succeeds`,
-`contained AI and Player roles share one per-owner runtime, a no-pid stop is a success no-op, and close contains both roles then closes once`,
+`contained AI and Player roles share one per-owner runtime, close drains AI and preserves the Player`,
 `ordinary close preserves the Player Host and never invokes its explicit stop`,
 `manifest-admitted semantic Game enter failure is one-shot uncertain and closes its facade`,
 `activation stages the durable Player Host profile without spawning and returns a frozen redacted revision-3 snapshot`, plus eight quarantine cases.
-`ordinary close` is not `End Game`: the coordinator contains no `endGame`/`end_game`/explicit-stop call at all. The other three owner/composer suites in Step 2 are green: 110 + 104 tests.
+`ordinary close` is not `End Game`: the coordinator contains no `endGame`/`end_game`/explicit-stop call at all, and it never issues a `contain_role` for `player_host` on the close path. The other three owner/composer suites in Step 2 are green: 110 + 104 tests.
+
+**Correction 2026-09-26 (found by independent lifecycle-recovery review).** This closure originally cited
+`ordinary close preserves the Player Host and never invokes its explicit stop` as proof that close preserves the Player, but that test exercises the
+**direct-spawn fixture** (`containedRuntimeTeardown === undefined`), not the production contained-runtime path. On the contained path `closeAttempt()`
+did call `containedRuntimeTeardown.containPlayerHost(exactOwner)`, which resolves to platform `contain_role` → native `TerminateAndDrain()` →
+termination of the Player process. The Player Job is created non-kill-on-close, so the close path was actively killing a process that would otherwise have
+survived. That is the defect the current authority names: ADR-0007's superseding clarification forbids turning last-handle close into an implicit endgame,
+and the survival task removes “default close/crash player kill” outright. Fixed in `e3f9ed8`: `closeAttempt()` now drains the AI role and closes the platform
+session without ever containing the Player role, and the test that asserted the old behaviour
+(`close contains both roles then closes`) now asserts the opposite, including an explicit negative that no `contain_role` for `player_host` is issued. There is
+no separate endgame entry today, so this removed an implicit one rather than adding an explicit one.
 
 - [x] **Step 2: Run focused Host tests red**
 
