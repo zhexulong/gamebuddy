@@ -76,9 +76,12 @@ public sealed class ShipItemActionTests
 
         receipt.Should().NotBeNull();
         receipt.State.Should().Be(ExecutionState.Rejected);
-        // The Farm-scoped admission (same shape as place_wood_fence and
-        // place_crab_pot) fails closed before any native seam is reachable.
-        receipt.ReasonCode.Should().Be("farm_required");
+        // Scope-bound actor proof precedes the Farm-scoped readiness check, so in a
+        // world-less probe the identity guard is what refuses: TryGetBoundActor
+        // reports world_not_ready when there is no world to read an actor from.
+        // farm_required is still the code a real Farm-less world returns, and it is
+        // pinned by the live-gated behaviour, not by this probe.
+        receipt.ReasonCode.Should().Be("world_not_ready");
     }
 
     [Fact]
