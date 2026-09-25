@@ -478,7 +478,7 @@ Two caveats recorded rather than hidden:
 
 The owner waived the all-green requirement for those two unrelated residuals.
 
-- [ ] **Step 3: Two independent reviews**
+- [x] **Step 3: Two independent reviews**
 
 Native-security reviewer answers:
 
@@ -494,6 +494,23 @@ Lifecycle-recovery reviewer answers:
 3. Does AI-only containment preserve Player ownership?
 4. Are Guardian facts absent from public/product surfaces?
 5. Does the coordinator remain the sole product lifecycle owner?
+
+**Closed 2026-09-26.** Two independent reviewers were dispatched in parallel:
+
+**Native-security review** (PASS on Q1, Q2 with two evidence-gap CONCERNs, Q4; CONCERN on Q3).
+- Q1 PASS: `PROC_THREAD_ATTRIBUTE_JOB_LIST` + `CreateSuspended` + `IsProcessInJob(exact job handle)` + `ResumeThread` is the only creation path, double-locked by implementation and source-guard tests; the only "created-but-not-aborted" branch is unreachable because `ResidentGuardianStateGate.TryRunOpen` and `Close` share the same lock.
+- Q2 PASS with two CONCERNs now fixed in `c2f024a`: (1) item 8 asserted only one ACE with the right mask, so replacing `{sid}` with a broader SID stayed green — mutated to `dacl_sid_is_current_user` and mutation-verified; (2) the lease (a named mutex) had no live descriptor read — added `--probe-lease-dacl` (item 8b).
+- Q3 CONCERN, now fixed in `c2f024a`: `Task 4 item 7` neither constructed its outer-Job scenario (the holder only owned an unrelated Job; membership is parent-inherited so the Guardian never ran inside one) nor failed on an uncontained launch (its catch matched the assertion's own message). It now asserts the reachable property — no breakaway, no post-create assignment, no shell, exactly one creation call site, named throw on refusal — and records that Windows 8+ nested-Job support makes the OS-level refusal unprovokable from this product.
+- Q4 PASS: drain uses `JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO` plus a fresh `QueryInformationJobObject` count of zero, never a root-PID exit.
+
+**Lifecycle-recovery review** (CONCERN on Q3, otherwise clean; reviewer timed out before writing a single closing record, so its verdicts were extracted from its session).
+- Q1 PASS: recovery acquires the record-bound lease, replies `acquired`, persists `recovering` + `recoveryInstanceId` via CAS, then opens/classifies Jobs.
+- Q2 PASS: partial/ambiguous classification cannot clear the fence; the durable attempt fence is owned by the sole bootstrap owner record and release requires both exact classifications.
+- Q3 CONCERN, **now fixed in `e3f9ed8`**: the reviewer found (and this session reproduced to the native layer) that `closeAttempt()` called `containPlayerHost`, which resolves to `contain_role` → `TerminateAndDrain()` and terminates the Player process on ordinary close — while the Player Job is intentionally non-kill-on-close, so close was killing a process that would otherwise survive. This is exactly what ADR-0007's superseding clarification and the survival task forbid. Fixed: ordinary close drains AI and closes the platform session, never contains the Player; the test that asserted the old behaviour now asserts the opposite, including an explicit negative.
+- Q4 PASS: public DTOs / browser contract expose no PID/Job/token/pipe/path; the Shape-B platform binding moved to `composition/stardew/stardew-guardian-platform.ts` keeps `Uint8Array` out of the game layer.
+- Q5 PASS: the coordinator remains the sole product lifecycle owner (activation, admission, reservation, attestation, STOP, recovery, teardown); no second construction site exists.
+
+Both reviews also corrected over-claims in this task's own text (item 8 "catches Everyone", `ordinary close preserves the Player Host` citing the direct-spawn fixture); both corrections are recorded at their sites.
 
 - [ ] **Step 4: Update current owner only after acceptance**
 
