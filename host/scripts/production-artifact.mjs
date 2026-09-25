@@ -1377,6 +1377,11 @@ export async function publishProductionArtifact({ hostRoot, emittedRoot, outputR
 export async function publishFixedReleaseArtifactFromVerifiedRuntime() {
   const fixedHostRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const fixedOutputRoot = resolve(fixedHostRoot, "dist");
+  // pi-koe is the split-out Voice repository, mounted as a git submodule. The
+  // release config declares the voice gateway descriptor, so this path must
+  // pass the same fixed dist root the test counterpart does or the publisher
+  // fails closed with `voice_gateway_dist_root_required`.
+  const fixedVoiceDistRoot = resolve(fixedHostRoot, "..", "vendor", "pi-koe", ".dist");
   const [{ takeComposedFixedReleaseRuntimeForPublisher }, { takeComposedFixedReleaseEmittedRootForPublisher }] = await Promise.all([
     import("./node-runtime-release-acquisition.mjs"),
     import("./build-production-artifact.mjs"),
@@ -1384,7 +1389,7 @@ export async function publishFixedReleaseArtifactFromVerifiedRuntime() {
   const source = takeComposedFixedReleaseRuntimeForPublisher();
   const emittedRoot = takeComposedFixedReleaseEmittedRootForPublisher();
   return await publishProductionArtifactWithRuntimeCopier(
-    { hostRoot: fixedHostRoot, emittedRoot, outputRoot: fixedOutputRoot },
+    { hostRoot: fixedHostRoot, emittedRoot, outputRoot: fixedOutputRoot, voiceDistRoot: fixedVoiceDistRoot },
     async (stagingRoot, descriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor, source }),
     source.descriptor,
     source.dispose,
