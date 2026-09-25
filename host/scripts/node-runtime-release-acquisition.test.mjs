@@ -89,6 +89,23 @@ test("direct imports cannot supply release runtime state to the fixed publisher"
   await assert.rejects(import("./release-runtime-" + "handoff.internal.mjs"), /ERR_MODULE_NOT_FOUND/);
   assert.doesNotMatch(source, /runtime_acquisition_windows_reparse_inspector_unavailable/);
 });
+
+test("the fixed release lane passes the voice dist root and resolves hostRoot from a file URL", async () => {
+  // Two defects from the release-lane commit 0f846b6 made the protected lane
+  // unable to mint a voice-enabled generation, so every generation lacked the
+  // voice-gateway sidecar and each live runner failed with
+  // voice_gateway_admission_missing. Pin both so they cannot silently return.
+  const publisherSource = await readFile(fileURLToPath(new URL("./production-artifact.mjs", import.meta.url)), "utf8");
+  const releaseLane = publisherSource.slice(publisherSource.indexOf("export async function publishFixedReleaseArtifactFromVerifiedRuntime()"));
+  const releaseCall = releaseLane.slice(releaseLane.indexOf("publishProductionArtifactWithRuntimeCopier("), releaseLane.indexOf("async (stagingRoot"));
+  assert.match(releaseCall, /voiceDistRoot:\s*fixedVoiceDistRoot/, "the release lane must pass the voice dist root the test counterpart passes");
+
+  const acquisitionSource = await readFile(fileURLToPath(new URL("./node-runtime-release-acquisition.mjs", import.meta.url)), "utf8");
+  // URL.pathname yields /E:/... on Windows, and resolve() then treats the drive
+  // letter as a path segment, producing E:\E:\...
+  assert.doesNotMatch(acquisitionSource, /resolve\(new URL\("\.\.", import\.meta\.url\)\.pathname\)/);
+  assert.match(acquisitionSource, /const hostRoot = resolve\(fileURLToPath\(new URL\("\.\.", import\.meta\.url\)\)\)/);
+});
 const crc32 = (value) => { let crc = ~0; for (const byte of value) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (~crc) >>> 0; };
 const u16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b; };
 const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n >>> 0); return b; };
