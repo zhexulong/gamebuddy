@@ -53,6 +53,9 @@ public sealed class ScopeBoundActorAdmissionTests
         "farmhandexecutioncontroller.farmingconstructionactions.cs",
         "farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
         "farmhandexecutioncontroller.resourcetoolactions.cs",
+        "farmhandexecutioncontroller.gatheringactions.cs",
+        "farmhandexecutioncontroller.movementactions.cs",
+        "farmhandexecutioncontroller.shippingactions.cs",
     };
 
     [Theory]
@@ -104,6 +107,12 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("till_soil", "world_not_ready")]
     [InlineData("use_item", "world_not_ready")]
     [InlineData("water_crop", "world_not_ready")]
+    [InlineData("enter_exit", "world_not_ready")]
+    [InlineData("move_to_tile", "world_not_ready")]
+    [InlineData("pickup_forage", "world_not_ready")]
+    [InlineData("pickup_item", "world_not_ready")]
+    [InlineData("ship_item", "farm_required")]
+    [InlineData("travel", "world_not_ready")]
     public void MatchingActorIdentity_ClearsTheGuard_AndIsRefusedByReadiness(string action, string expectedReasonCode)
         => Run(action, actorId: long.Parse(ScopePlayerId))
             .Should().Be(expectedReasonCode,
@@ -143,6 +152,12 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("till_soil")]
     [InlineData("use_item")]
     [InlineData("water_crop")]
+    [InlineData("enter_exit")]
+    [InlineData("move_to_tile")]
+    [InlineData("pickup_forage")]
+    [InlineData("pickup_item")]
+    [InlineData("ship_item")]
+    [InlineData("travel")]
     public void MismatchedActorIdentity_FailsClosed(string action)
         => Run(action, actorId: 2002L)
             .Should().Be("execution_scope_mismatch",
@@ -182,6 +197,12 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("till_soil")]
     [InlineData("use_item")]
     [InlineData("water_crop")]
+    [InlineData("enter_exit")]
+    [InlineData("move_to_tile")]
+    [InlineData("pickup_forage")]
+    [InlineData("pickup_item")]
+    [InlineData("ship_item")]
+    [InlineData("travel")]
     public void AbsentActor_FailsClosed(string action)
         => Run(action, actorId: null)
             .Should().Be("world_not_ready",
@@ -190,8 +211,8 @@ public sealed class ScopeBoundActorAdmissionTests
     [Fact]
     public void Admission_DoesNotConsultTheRetiredSinglePlayerTopologyGuard()
     {
-        MigratedControllerPartials.Should().HaveCount(7,
-            "the retired-token scan must keep covering all seven controller partials whose guards 98fe750 migrated");
+        MigratedControllerPartials.Should().HaveCount(10,
+            "the retired-token scan must keep covering every controller partial that carries a scope-bound admission site");
 
         foreach (string partial in MigratedControllerPartials)
         {
@@ -359,6 +380,7 @@ public sealed class ScopeBoundActorAdmissionTests
         "interact_npc_with_item" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)128", ExpectedTargetId = "npc_relationship_1" },
         "pickup_forage" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedQualifiedItemId = "(O)18", ExpectedTargetId = "forage_target_1" },
         "pickup_item" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "item_target_1" },
+        "ship_item" => new BridgeExecutionArgs { X = 71, Y = 14, Slot = 2, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "shipping_bin_0123456789abcdef" },
         // Movement: source tile + destination tile.
         "move_to_tile" => new BridgeExecutionArgs { X = 5, Y = 5 },
         "enter_exit" => new BridgeExecutionArgs { X = 5, Y = 5 },
@@ -375,7 +397,8 @@ public sealed class ScopeBoundActorAdmissionTests
         HashSet<string> guardedMethods = new(StringComparer.Ordinal);
         foreach (string partial in MigratedControllerPartials)
         {
-            foreach ((string method, string body) in DeclaredRequestMethods(File.ReadAllText(ControllerRelative(partial))))
+            List<(string Method, string Body)> declared = DeclaredRequestMethods(File.ReadAllText(ControllerRelative(partial))).ToList();
+            foreach ((string method, string body) in declared)
             {
                 // Two admissible forms during convergence. A body is guarded when it
                 // still carries the inline scope-bound actor proof, or when it delegates
@@ -387,6 +410,26 @@ public sealed class ScopeBoundActorAdmissionTests
                     || body.Contains("AdmitExecution(", StringComparison.Ordinal))
                     guardedMethods.Add(method);
             }
+
+            // A one-line wrapper delegates to a shared admission site instead of
+            // repeating the proof: enter_exit and travel both front
+            // RequestLocalDoorTransition. Resolving that delegation is what keeps this
+            // derivation honest — reading only the wrapper's own body would report an
+            // inherited proof as absent and silently shrink the guarded set.
+            foreach ((string method, string body) in declared)
+            {
+                if (guardedMethods.Contains(method))
+                    continue;
+
+                foreach (Match call in DelegatedRequestCall.Matches(body))
+                {
+                    if (guardedMethods.Contains(call.Groups[1].Value))
+                    {
+                        guardedMethods.Add(method);
+                        break;
+                    }
+                }
+            }
         }
 
         HashSet<string> actions = new(StringComparer.Ordinal);
@@ -394,6 +437,14 @@ public sealed class ScopeBoundActorAdmissionTests
         {
             foreach (Match dispatch in DispatchEntry.Matches(File.ReadAllText(handlerFile)))
             {
+                // Argument-validated-first actions prove the actor only after validating
+                // their own arguments, so a matching actor observes a validation code
+                // rather than a state code, and even a mismatched actor never reaches the
+                // proof. They are a different admission shape with their own coverage and
+                // are deliberately outside this identity-then-state probe.
+                if (ArgumentValidatedFirstActions.Contains(dispatch.Groups[1].Value))
+                    continue;
+
                 if (guardedMethods.Contains(dispatch.Groups[2].Value))
                     actions.Add(dispatch.Groups[1].Value);
             }
@@ -475,6 +526,22 @@ public sealed class ScopeBoundActorAdmissionTests
 
     private static readonly Regex RequestMethodName = new(
         @"\b(RequestLocal\w+)\s*\(",
+        RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Actions that validate their own arguments before authorizing the actor. Their
+    /// reason codes carry no admission stage, so they are outside the
+    /// identity-then-state shape this probe pins.
+    /// </summary>
+    private static readonly HashSet<string> ArgumentValidatedFirstActions = new(StringComparer.Ordinal)
+    {
+        "face_direction",
+        "express_emote",
+    };
+
+    /// <summary>A delegation to another <c>Request*</c> admission site.</summary>
+    private static readonly Regex DelegatedRequestCall = new(
+        @"this[.](Request\w+)\s*\(",
         RegexOptions.CultureInvariant);
 
     /// <summary>Handler dispatch entry: <c>"action_id" =&gt; this.executions.RequestLocalBody(</c>.</summary>
