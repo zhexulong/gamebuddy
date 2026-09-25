@@ -131,7 +131,13 @@
     "derive:stardew-native-multiplayer-sensitivity-register": "node tools/derive-stardew-native-multiplayer-sensitivity-register.mjs",
     "check:stardew-native-multiplayer-sensitivity": "node tools/check-stardew-native-multiplayer-sensitivity.mjs --register integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json --source-root \"ref/external/StardewValleyDecompiled/Stardew Valley\"",
     "test:stardew-native-multiplayer-sensitivity": "node --test tools/stardew-native-multiplayer-sensitivity.test.mjs",
-    "check:tools-boundaries": "depcruise --config .dependency-cruiser.tools.cjs tools"
+    "check:tools-boundaries": "depcruise --config .dependency-cruiser.tools.cjs tools",
+    "derive:stardew-action-candidates": "node tools/derive-stardew-action-candidates.mjs",
+    "test:stardew-action-candidates": "node --test tools/derive-stardew-action-candidates.test.mjs",
+    "audit:stardew-action-seam-terminals": "node tools/audit-stardew-action-seam-terminals.mjs",
+    "test:stardew-action-seam-terminals": "node --test tools/audit-stardew-action-seam-terminals.test.mjs",
+    "derive:stardew-branch-writeset": "node tools/derive-stardew-branch-writeset.mjs",
+    "test:stardew-branch-writeset": "node --test tools/derive-stardew-branch-writeset.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",

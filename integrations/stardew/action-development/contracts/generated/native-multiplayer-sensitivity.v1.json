@@ -392,8 +392,9 @@
         {
           "kind": "native",
           "file": "StardewValley/Object.cs",
-          "signature": "public override bool canBePlacedHere(GameLocation l, Vector2 tile, CollisionMask collisionM",
-          "sensitivity": "mp-insensitive"
+          "signature": "public virtual bool placementAction",
+          "sensitivity": "mp-observational",
+          "observedEffect": "owner.Value records the ACTING player's own id (Object.cs:6014 who?.UniqueMultiplayerID ?? Game1.player.UniqueMultiplayerID), so it is the same value in both world modes; location.removeLightSource((int)Game1.player.UniqueMultiplayerID) at :6066 only drops a key from location.sharedLights (GameLocation.cs:7073-7076); Game1.multiplayer.broadcastSprites mirrors an already-applied local sprite (Multiplayer.cs:447 adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer). The IsLocalPlayer read at :6695 belongs to the seed-planting branch and is unreachable for this source: IsFenceItem() at :6070 returns from the closed Fence branch at :6082, and the decisive write location.objects.Add(placementTile, new Fence(...)) at :6077 is mode-independent"
         }
       ],
       "admission": {
