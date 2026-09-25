@@ -9,6 +9,11 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 const IGNORED_DIRECTORIES = new Set([".worktrees", "dist", "dist-test", "node_modules", "fixtures", "test-support", "test-fixtures", "__fixtures__", "fixture", "generated"]);
 const GENERIC_LAYERS = new Set(["bootstrap", "containment", "composition"]);
+// The one generic path a game may import: the stable game-facing containment
+// contract. ADR-0007 states `games/stardew` may import the contract and must
+// never import `runtime/core`, auth transport, bootstrap roots, Desktop,
+// Guardian, Windows or native. Only the exact contract module is exempt.
+const GAME_IMPORTABLE_GENERIC_PATH = "containment/runtime/contract/game-runtime";
 const STARDew_PROCESS_IMPLEMENTATIONS = "games/stardew/lifecycle/stardew-process-implementations";
 const STARDew_REGISTRATION = "stardew-installation-registration.internal";
 const STARDew_REGISTRATION_OWNER = "games/stardew/lifecycle/stardew-private-bootstrap-composer.core";
@@ -35,7 +40,17 @@ const RAW_BUILTIN_MODULES = new Set([
 const APPROVED_STARDew_RAW_BUILTIN_MODULES = new Set(["node:child_process"]);
 
 function shown(path, root = repositoryRoot) { return relative(root, path).replaceAll("\\", "/"); }
-function isTest(path) { return /(?:^|[/.])[^/]*\.test(?:-support(?:-internal)?)?\.[cm]?[jt]sx?$/.test(path.replaceAll("\\", "/")); }
+// Test-only sources are excluded from the production seam: `.test.*`,
+// `.test-support.*`, `.test-support-internal.*`, `.test-fixtures.*` and any
+// `*-fixture-*.ts` / `fixture-*.ts` helper. The last two are included because a
+// module that exists only to hold fixtures for a test is not a production
+// module: treating them as production reported their own test-only imports
+// (and a deliberate `import()` of a mocked module URL) as seam violations.
+function isTest(path) {
+  const normalized = path.replaceAll("\\", "/");
+  if (/(?:^|[/.])(?:[^/]*\.test(?:-support(?:-internal)?)?|(?:[^/]*\.)?test-fixtures)\.[cm]?[jt]sx?$/.test(normalized)) return true;
+  return /(?:^|[/-])(?:fixture|fixtures)[-/][^/]*\.[cm]?[jt]sx?$/.test(normalized);
+}
 function isInside(path, root) { const r = relative(root, path); return r === "" || (r !== ".." && !r.startsWith(`..${path.includes("\\") ? "\\" : "/"}`) && !(/^[A-Za-z]:/.test(r))); }
 function filesUnder(directory, integrity, root) {
   const result = [];
@@ -76,6 +91,7 @@ function isStardewRegistration(path, root) { return sourcePath(path, root) === S
 function isStardewRegistrationOwner(path, root) { return sourcePath(path, root) === STARDew_REGISTRATION_OWNER; }
 function isAllowedStardewGenericImport(importer, target, root) {
   const targetPath = sourcePath(target, root);
+  if (targetPath === GAME_IMPORTABLE_GENERIC_PATH) return true;
   return ALLOWED_STARDew_GENERIC_IMPORTERS.get(targetPath)?.has(sourcePath(importer, root)) === true;
 }
 function violation(kind, importer, specifier, target, line, detail, root) { return { kind, importer: shown(importer, root), specifier, target: target ? shown(target, root) : null, line, detail }; }
