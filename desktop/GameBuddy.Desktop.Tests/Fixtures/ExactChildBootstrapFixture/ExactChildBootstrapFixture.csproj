@@ -8,7 +8,18 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AssemblyName>node</AssemblyName>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <PublishAot>true</PublishAot>
+    <!-- Publish as one self-contained executable renamed to node.exe: the test
+         generation carries exactly one runtime file and hashes it. NativeAOT
+         would also satisfy that, but it needs the MSVC linker, so a machine
+         without the Visual Studio C++ build tools silently degraded the publish
+         to an apphost plus node.dll and the generation's runtime could not
+         start. Managed single-file needs no C++ toolchain. Trimming and
+         compression keep the image under the supervisor test's 32 MiB bound
+         (about 10 MiB); without them the bundle is about 67 MiB. -->
+    <PublishAot>false</PublishAot>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <SelfContained>true</SelfContained>
     <StripSymbols>true</StripSymbols>
     <RootNamespace>GameBuddy.Desktop.Tests.Fixtures.ExactChildBootstrapFixture</RootNamespace>
