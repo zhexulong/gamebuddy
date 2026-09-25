@@ -678,34 +678,64 @@ test("Task 4 item 8: the creation-time Job DACL is exactly the current SID with 
     assert.equal(aces.length, 1, `expected exactly one ACE, got: ${aces.join(" | ")}`);
     const [sid, mask] = aces[0].slice("ace=".length).split(":");
     assert.match(mask, /^0x0012000c$/, `expected the minimum mask 0x0012000c, got ${mask}`);
-    assert.ok(sid.length > 0, "the ACE must name a SID");
+    // The identity is load-bearing, not decoration: a single ACE naming Everyone
+    // (WD) keeps this user able to open the object while granting every other
+    // local user JOB_OBJECT_TERMINATE over the player's world. Asserting only
+    // "one ACE with the right mask" would pass that. The fixture resolves the SID
+    // it read against the current user's token, so this compares identities
+    // rather than trusting the literal that produced them.
+    assert.match(text, /^dacl_sid_is_current_user=true$/m, "the single ACE must name this user's own SID, not a broader one");
   } finally { await session.close(); await removeRoot(root); }
 });
 
-test("Task 4 item 7: a role launched under an outer Job stays a Job member, or fails closed by name", { ...winOnly, timeout: 30_000 }, async () => {
-  // A debugger, a CI runner and `dotnet test` all put the process in a Job.
-  // Windows 8+ nests them, so this normally succeeds; when the outer Job forbids
-  // nesting the Guardian must refuse rather than launch a role it cannot
-  // contain. The environment that trips this is the developer's own machine,
-  // which is exactly why the guard is worth keeping.
-  const root = await temporaryRoot("outer-job");
-  const ready = resolve(root, "holder-ready.txt");
-  let holder;
+test("Task 4 item 8b: the creation-time lease DACL matches the Job's guarantees", { ...winOnly, timeout: 20_000 }, async () => {
+  // The matrix requires creation-time descriptors for the Job *and* the lease.
+  // The lease is a named mutex; without this probe the lease half had source
+  // facts only, never a live read.
+  const root = await temporaryRoot("lease-dacl");
+  const session = await startGuardianSession();
   try {
-    holder = spawn(fixture, ["--hold-job", `Local\\Outer-${crypto.randomUUID()}`, "--signal", ready], { windowsHide: true, shell: false, stdio: "ignore" });
-    await waitForFile(ready);
-    const session = await startGuardianSession();
-    try {
-      const report = resolve(root, "outer.txt");
-      await session.launch("player_host", ["--signal", report, "--exit-after-report"]);
-      await waitForFile(report);
-      assert.equal(await readFile(report, "utf8"), "member=true\n", "a launched role must still be a Job member when hosts nest Jobs");
-    } catch (error) {
-      // Nesting refused: the failure must be explicit rather than a silent
-      // uncontained launch.
-      assert.match(String(error?.message ?? error), /guardian|job|contain/i);
-    } finally { await session.close().catch(() => {}); }
-  } finally { if (holder) holder.kill(); await removeRoot(root); }
+    const report = resolve(root, "lease-dacl.txt");
+    await session.launch("player_host", ["--signal", report, "--probe-lease-dacl", session.activeArmBinding().leaseName, "--exit-after-report"]);
+    await waitForFile(report);
+    const text = await readFile(report, "utf8");
+    assert.doesNotMatch(text, /dacl_unavailable=true/, "the live lease DACL must be readable for this proof");
+    assert.match(text, /^dacl_protected=true$/m, "the lease DACL must stay protected (D:P)");
+    const aces = text.split("\n").filter((line) => line.startsWith("ace=")).sort();
+    assert.equal(aces.length, 1, `expected exactly one lease ACE, got: ${aces.join(" | ")}`);
+    const [, mask] = aces[0].slice("ace=".length).split(":");
+    // MUTEX_MODIFY_STATE | SYNCHRONIZE — no DELETE, no WRITE_DAC.
+    assert.match(mask, /^0x00100001$/, `expected the lease mask 0x00100001, got ${mask}`);
+    assert.match(text, /^dacl_sid_is_current_user=true$/m, "the lease ACE must name this user's own SID");
+  } finally { await session.close(); await removeRoot(root); }
+});
+
+test("Task 4 item 7: no breakaway or fallback path exists when containment is refused", async () => {
+  // The matrix asks for "outer-Job unsupported outcome fails closed". On
+  // Windows 8+ that outcome is unreachable from this product: nested Jobs are
+  // supported by the OS, so an outer Job (a debugger, a CI runner, `dotnet test`)
+  // does not make the creation-time job-list assignment fail. An earlier version
+  // of this test spawned a holder that only *owned* a Job — Job membership is
+  // inherited by children and the Guardian is a child of this runner, not of the
+  // holder, so the scenario was never constructed and `member=true` held
+  // trivially. Pretending to exercise an unreachable path is worse than saying
+  // so, so this asserts the property that actually matters and is checkable:
+  // there is exactly one role-creation site, and every failure on it terminates
+  // rather than continuing uncontained.
+  const files = ["Program.cs", "WindowsRoleLauncher.cs", "WindowsJobOwner.cs", "GuardianPrivateLaunchIngress.cs", "GuardianRecoveryIngress.cs"];
+  const sources = await Promise.all(files.map((name) => readFile(resolve(here, name), "utf8")));
+  const source = sources.join("\n");
+  // No escape hatch: no breakaway request, no post-create assignment, no shell.
+  assert.doesNotMatch(source, /CREATE_BREAKAWAY_FROM_JOB|AssignProcessToJobObject|cmd\.exe|powershell/i);
+  // Exactly one creation site (the other match is the P/Invoke declaration), and
+  // it always passes the Job list attribute.
+  assert.equal((source.match(/CreateProcessW\(/g) ?? []).length, 2, "role creation must have exactly one call site plus its declaration");
+  assert.equal((source.match(/= CreateProcessW\(/g) ?? []).length, 1, "role creation must have exactly one call site");
+  assert.match(source, /ProcThreadAttributeJobList/);
+  // The creation failure path throws with a named reason instead of continuing.
+  assert.match(source, /windows_bootstrap_guardian_role_create_failed/);
+  const program = await readFile(resolve(here, "WindowsRoleLauncher.cs"), "utf8");
+  assert.match(program, /if \(!created\) throw new Win32Exception/, "a refused creation must throw, never fall through");
 });
 
 test("Task 4 item 10: recovery classification keys on the exact object, never the name alone", async () => {

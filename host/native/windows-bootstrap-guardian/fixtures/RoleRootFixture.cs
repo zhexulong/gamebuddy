@@ -16,6 +16,7 @@ internal static class RoleRootFixture
         string? heldJob = null;
         string? probeJobDelete = null;
         string? probeJobDacl = null;
+        string? probeLeaseDacl = null;
         string? recoveryJobName = null;
         string? recoveryJobMode = null;
         string? pidFile = null;
@@ -31,6 +32,7 @@ internal static class RoleRootFixture
             if (args[index] == "--hold-job" && index + 1 < args.Length) { heldJob = args[++index]; continue; }
             if (args[index] == "--probe-job-delete" && index + 1 < args.Length) { probeJobDelete = args[++index]; continue; }
             if (args[index] == "--probe-job-dacl" && index + 1 < args.Length) { probeJobDacl = args[++index]; continue; }
+            if (args[index] == "--probe-lease-dacl" && index + 1 < args.Length) { probeLeaseDacl = args[++index]; continue; }
             if (args[index] == "--recovery-job" && index + 2 < args.Length) { recoveryJobName = args[++index]; recoveryJobMode = args[++index]; continue; }
             if (args[index] == "--pid-file" && index + 1 < args.Length) { pidFile = args[++index]; continue; }
             if (args[index] == "--spawn-descendant") { spawnDescendant = true; continue; }
@@ -67,6 +69,14 @@ internal static class RoleRootFixture
                 // silently widening access.
                 content += DescribeDacl(probeJobDacl);
             }
+            if (probeLeaseDacl is not null)
+            {
+                // The matrix requires creation-time Job *and lease* descriptors.
+                // The lease is a named mutex; probing it here proves the same
+                // three properties (protected DACL, single ACE, current-user SID)
+                // on the other half of the containment pair.
+                content += DescribeDacl(probeLeaseDacl, isMutex: true);
+            }
             File.WriteAllText(report, content);
         }
         if (exitAfterReport) return 0;
@@ -94,15 +104,29 @@ internal static class RoleRootFixture
     /// (or dropping the `D:P` protection flag) fails loudly instead of silently
     /// widening access.
     /// </summary>
-    private static string DescribeDacl(string name)
+    private static string DescribeDacl(string name) => DescribeDacl(name, isMutex: false);
+
+    /// <summary>
+    /// Reads the live DACL of an existing named Job or mutex and renders the ACEs
+    /// as `ace=<sid>:<mask>` lines plus `dacl_protected=<bool>` and
+    /// `dacl_sid_is_current_user=<bool>`. The test compares this against the exact
+    /// expected set, so relaxing the creation-time SDDL (or dropping the `D:P`
+    /// protection flag, or naming a broader SID) fails loudly instead of silently
+    /// widening access.
+    /// </summary>
+    private static string DescribeDacl(string name, bool isMutex)
     {
-        using var handle = OpenJobObjectW(ReadControlAccess, false, name);
+        var opened = isMutex
+            ? OpenMutexW(ReadControlAccess, false, name)
+            : OpenJobObjectW(ReadControlAccess, false, name);
+        using var handle = opened;
         if (handle.IsInvalid) return "dacl_unavailable=true\n";
-        if (GetSecurityInfo(handle, SeKernelObject, DaclSecurityInformation, out _, out _, out var dacl, out _, out var descriptor) != 0)
+        if (GetSecurityInfo(handle, isMutex ? SeKernelObject : SeKernelObject, DaclSecurityInformation, out _, out _, out var dacl, out _, out var descriptor) != 0)
             return "dacl_unavailable=true\n";
         try
         {
             var isProtected = GetSecurityDescriptorControl(descriptor, out var control, out _) && (control & SeDaclProtected) != 0;
+            var currentUser = WindowsIdentity.GetCurrent().User;
             var text = $"dacl_protected={isProtected.ToString().ToLowerInvariant()}\n";
             if (dacl != IntPtr.Zero)
             {
@@ -110,16 +134,23 @@ internal static class RoleRootFixture
                 var cursor = IntPtr.Add(dacl, 8);
                 var end = IntPtr.Add(dacl, (int)aclSize);
                 var aces = new List<string>();
+                var onlyCurrentUser = true;
                 while (cursor.ToInt64() < end.ToInt64())
                 {
                     var aceSize = (ushort)Marshal.ReadInt16(cursor, 2);
                     if (aceSize == 0) break;
                     var mask = (uint)Marshal.ReadInt32(cursor, 4);
                     var sid = new SecurityIdentifier(IntPtr.Add(cursor, 8));
+                    // The identity matters as much as the mask: a single ACE that
+                    // names Everyone (WD) or a group SID would keep the object
+                    // openable by this user while granting foreign users
+                    // JOB_OBJECT_TERMINATE over the player's world.
+                    if (currentUser is null || !sid.Equals(currentUser)) onlyCurrentUser = false;
                     aces.Add($"{sid.Value}:0x{mask:x8}");
                     cursor = IntPtr.Add(cursor, aceSize);
                 }
                 foreach (var ace in aces.OrderBy(value => value, StringComparer.Ordinal)) text += $"ace={ace}\n";
+                text += $"dacl_sid_is_current_user={onlyCurrentUser.ToString().ToLowerInvariant()}\n";
             }
             return text;
         }
@@ -142,6 +173,11 @@ internal static class RoleRootFixture
     {
         var job = CreateJobObjectW(IntPtr.Zero, name);
         if (job.IsInvalid || Marshal.GetLastWin32Error() == 183) throw new Win32Exception(Marshal.GetLastWin32Error());
+        // Join the holder to its own Job. Without this the holder merely owns an
+        // unrelated empty Job: a child of a different parent never inherits it,
+        // so "an outer Job exists" would be true while "the Guardian runs inside
+        // one" was never actually constructed.
+        if (!AssignProcessToJobObject(job, GetCurrentProcess())) throw new Win32Exception(Marshal.GetLastWin32Error());
         return job;
     }
 
@@ -188,6 +224,7 @@ internal static class RoleRootFixture
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetInformationJobObject(SafeFileHandle job, uint infoClass, ref ExtendedLimitInformation info, uint length);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool AssignProcessToJobObject(SafeFileHandle job, IntPtr process);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern SafeFileHandle OpenJobObjectW(uint desiredAccess, bool inheritHandle, string name);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern SafeFileHandle OpenMutexW(uint desiredAccess, bool inheritHandle, string name);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern uint GetSecurityInfo(SafeFileHandle handle, int objectType, uint securityInformation, out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr securityDescriptor);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool GetSecurityDescriptorControl(IntPtr securityDescriptor, out ushort control, out uint revision);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl, uint revision, out IntPtr securityDescriptor, out uint size);
