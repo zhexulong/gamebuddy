@@ -45,7 +45,7 @@ import type { DesktopGuardianSession, GuardianAck } from "./containment/auth/des
 import {
   createDesktopGuardianGameRuntimePlatform,
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
-} from "./games/stardew/lifecycle/contained-game-runtime-platform.private.js";
+} from "./composition/stardew/stardew-guardian-platform.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./games/stardew/lifecycle/stardew-native-role-launch-plan.private.js";
 import {
   STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS,
@@ -1254,7 +1254,7 @@ test("contained Player Host decision failing before the claim restores staged wi
   });
 });
 
-test("contained AI and Player roles share one per-owner runtime, a no-pid stop is a success no-op, and close contains both roles then closes", async () => {
+test("contained AI and Player roles share one per-owner runtime, close drains AI and preserves the Player", async () => {
   await withWindowsPlatform(async () => {
     const sessionCalls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
     const session: DesktopGuardianSession = Object.freeze({
@@ -1301,15 +1301,23 @@ test("contained AI and Player roles share one per-owner runtime, a no-pid stop i
       assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).aiClient, {
         state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn", lastStopOutcome: "none",
       });
-      // Close: the no-pid stop is a success no-op (the Guardian kill-on-close
-      // Job terminates the native process at platform close), then containment
-      // for both launched roles, then the runtime/session close.
+      // Close: the no-pid stop is a success no-op, then the AI role is drained
+      // and the platform session closes. The Player Host is NOT contained here:
+      // its Job is non-kill-on-close and an ordinary close must not end the
+      // player's world. ADR-0007's superseding clarification forbids turning
+      // last-handle close into an implicit endgame, and the survival task removes
+      // "default close/crash player kill" outright, so a `contain_role` for
+      // player_host on this path would be the defect.
       await fixture.coordinator.close();
       assert.deepEqual(fixture.aiKillCalls, []);
       assert.deepEqual(fixture.playerKillCalls, []);
-      assert.deepEqual(sessionCalls.map((call) => call.operation), ["arm", "launch", "launch", "contain", "contain", "close"]);
-      assert.equal(sessionCalls[3]!.input.role, "player_host");
-      assert.equal(sessionCalls[4]!.input.role, "ai_client");
+      assert.deepEqual(sessionCalls.map((call) => call.operation), ["arm", "launch", "launch", "contain", "close"]);
+      assert.equal(sessionCalls[3]!.input.role, "ai_client");
+      assert.equal(
+        sessionCalls.some((call) => call.operation === "contain" && call.input.role === "player_host"),
+        false,
+        "ordinary close must not contain the Player Host role",
+      );
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();
