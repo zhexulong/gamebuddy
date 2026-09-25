@@ -1,5 +1,6 @@
 import {
-  assertExactCapabilities,
+  assertTopologyCapabilities,
+  classifyTopology,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -23,10 +24,10 @@ export async function runMachineInspectSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
+  const topology = validateNativeLocalFixtureConfig(config);
   try {
     const snapshot = await requireActionableMachineSnapshot(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertTopologyCapabilities(snapshot, topology, EXPECTED_CAPABILITIES);
     const targets = validMachineTargets(snapshot);
     if (targets.length !== 1)
       throw new Error(targets.length === 0 ? "no_reachable_native_machine_target" : "ambiguous_live_machine_targets");
@@ -55,7 +56,7 @@ export async function runMachineInspectSmoke(
       after.revision >= terminal.revision && evidenceMatchesTarget(evidence, target, snapshot.location) && unchanged;
     return {
       state: passed ? "passed" : "blocked",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: passed ? "machine_inspected" : "machine_inspect_postcondition_mismatch",
       target: summarizeTarget(target),
       receipt: summarizeReceipt(terminal),
@@ -70,7 +71,7 @@ export async function runMachineInspectSmoke(
   } catch (error) {
     return {
       state: "blocked",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
       latestReceipt: summarizeReceipt(client.state?.latestReceipt),
       trace,
@@ -92,6 +93,17 @@ if (import.meta.main) {
 }
 
 function validateNativeLocalFixtureConfig(value) {
+  const topology = classifyTopology(value);
+  if (topology === "shared_world_farmhand") {
+    // The shared world is the real AI-Farmhand topology: an authenticated
+    // Farmhand provisioner owns the bridge and policy version 1 publishes the
+    // consented surface. The scenario precondition belongs to the Host-side
+    // fixture, so it is not asserted from the client config here.
+    if (value.HostAutomation?.Enable === true || value.NativeLocalPlayerFixture?.Enable === true)
+      throw new Error("native_local_fixture_topology_not_isolated");
+    if (value.ActionPolicyVersion !== 1) throw new Error("shared_world_action_policy_invalid");
+    return topology;
+  }
   const fixture = value?.NativeLocalPlayerFixture;
   if (
     fixture?.Enable !== true ||
@@ -112,6 +124,7 @@ function validateNativeLocalFixtureConfig(value) {
     throw new Error("native_local_fixture_topology_not_isolated");
   if (value.ActionPolicyVersion !== 0 || !same(value.EnabledActions, EXPECTED_ACTIONS))
     throw new Error("native_local_machine_action_policy_invalid");
+  return topology;
 }
 async function requireActionableMachineSnapshot(client) {
   const snapshot = await observeFresh(client, { actionable: true });

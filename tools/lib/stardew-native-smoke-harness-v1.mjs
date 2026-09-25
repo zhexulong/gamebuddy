@@ -160,6 +160,41 @@ export function assertRequiredCapabilities(snapshot, requiredCapabilities) {
   return snapshot;
 }
 
+/**
+ * Classify the live topology from the client config a runner was handed.
+ *
+ * The two supported topologies are mutually exclusive by construction. A config
+ * that claims both markers, or neither, fails closed rather than being silently
+ * treated as one of them: guessing here would let a runner validate a topology
+ * it is not actually connected to.
+ */
+export function classifyTopology(config) {
+  const sharedWorld = config?.FarmhandProvisioner?.Enable === true;
+  const nativeLocal = config?.NativeLocalPlayerFixture?.Enable === true;
+  if (sharedWorld && nativeLocal) throw new NativeSmokeHarnessError("contradictory_topology_markers");
+  if (sharedWorld) return "shared_world_farmhand";
+  if (nativeLocal) return "native_local_player_fixture";
+  throw new NativeSmokeHarnessError("unknown_topology");
+}
+
+/**
+ * Assert the capabilities a contract requires for one specific topology.
+ *
+ * - `native_local_player_fixture` keeps exact equality, which additionally
+ *   proves the isolated fixture publication leaked no other action.
+ * - `shared_world_farmhand` needs required-subset, because that topology
+ *   legitimately publishes the whole consented surface and the runner cannot
+ *   narrow it. Equality would fail for a reason the action cannot fix.
+ *
+ * Both modes still prove the action under test and every precondition it
+ * depends on are advertised and executable by this exact live publication.
+ */
+export function assertTopologyCapabilities(snapshot, topology, requiredCapabilities) {
+  if (topology === "shared_world_farmhand") return assertRequiredCapabilities(snapshot, requiredCapabilities);
+  if (topology === "native_local_player_fixture") return assertExactCapabilities(snapshot, requiredCapabilities);
+  throw new NativeSmokeHarnessError("unknown_topology");
+}
+
 /** Bind the post-terminal observation to the receipt revision exposed by v1. */
 export function assertPostTerminalRevision(snapshot, terminal) {
   validateSnapshot(snapshot);
