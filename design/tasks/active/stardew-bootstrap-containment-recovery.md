@@ -124,7 +124,7 @@ Task 1 may split `Program.cs` only into the named responsibility files. Do not c
 - Persists before native arm: strict owner/v3 with an immutable binding revision plus opaque random lease/Player-Job/AI-Job names. Task 1 does not claim mutable lifecycle CAS, exact guardian instance/epoch persistence or recovery state; Task 2 adds those only through the destructive owner/v4 replacement.
 - Produces: a creation-time secured exact lease held by the resident Guardian, two record-bound armed role Jobs, `role_active` only after exact membership-before-resume, and `role_contained` only after full Job drain.
 
-- [ ] **Step 1: Write the failing fixture matrix**
+- [x] **Step 1: Write the failing fixture matrix**
 
 Add Windows-only tests for:
 
@@ -148,7 +148,7 @@ arm persistence failure, lease collision or either Job collision leaves the pare
 
 The fixture's first user-code event must query its own Job membership and report only a boolean/category through fixture-owned output. Tests may inspect raw PID/Job facts locally but may not place them in product responses or checked-in evidence.
 
-- [ ] **Step 2: Run the matrix red**
+- [x] **Step 2: Run the matrix red**
 
 ```bash
 cd host
@@ -157,7 +157,7 @@ node --test native/windows-bootstrap-guardian/guardian-live.test.mjs
 
 Expected: Task 0 skeleton cannot arm or launch roles.
 
-- [ ] **Step 3: Implement Job ownership and atomic launch**
+- [x] **Step 3: Implement Job ownership and atomic launch**
 
 Use explicit P/Invoke for:
 
@@ -177,11 +177,11 @@ WaitForSingleObject
 
 Before native arm, use the existing bootstrap transaction `owner.json`, containment-aware path lock and atomic write primitives to persist and strict-reread the exact current owner with a bounded v3 Guardian fence containing a fresh immutable binding revision, opaque random lease and two Job names. Replace the old owner schema destructively; do not read or write a parallel Guardian file and do not accept the retired schema after cutover. The authenticated private arm binding transfers this frozen revision and the three exact names to the Guardian once; it cannot create or alter them. Reject pre-existing, malformed, unreadable, unsafe, stale-revision or mismatched state; never derive object names from public correlation. The Guardian creates and holds the exact record-bound lease with a protected minimum current-user security descriptor before creating either Job. Retain the process handle through membership verification and resume. Revalidate the durable record binding, held exact lease, authenticated launch-plan correlation, deadline, one-shot state and non-closing control state immediately before `CreateProcessW`, after membership verification, and immediately before `ResumeThread`. Every failure path leaves the root suspended or terminated, contains any armed role, and disposes thread/process/attribute-list/security-descriptor handles. No rejected or replayed plan may reach process creation.
 
-- [ ] **Step 4: Add forbidden-fallback and handle-lifetime regressions**
+- [x] **Step 4: Add forbidden-fallback and handle-lifetime regressions**
 
 Assert production Guardian sources contain no `AssignProcessToJobObject`, breakaway flags, shell/wrapper, `cmd.exe`, or Node role process creation. Prove role children inherit neither Job/lease handles nor Guardian control credentials, and guardian last-handle loss drains descendants.
 
-- [ ] **Step 5: Run focused acceptance**
+- [x] **Step 5: Run focused acceptance**
 
 ```powershell
 cd host
@@ -197,11 +197,13 @@ The builder must prove that the executable used by `guardian-live.test.mjs` was 
 
 Expected: required Windows cases pass non-skip. Non-Windows reports an explicit unsupported gate and cannot close the task.
 
-- [ ] **Step 6: Fresh native-security review and atomic commit**
+- [x] **Step 6: Fresh native-security review and atomic commit**
 
 Reviewer must inspect struct layout, attribute-list sizing, creation-time Job/lease/pipe DACLs, first-instance/remote-client/SID/token pipe authentication, strict durable fence and opaque-name allocation, argv/environment construction, direct `lpApplicationName`, exact lease rechecks, handle ownership, membership-before-resume, no-breakaway proof, and fixture cleanup. Commit only Task 1 files.
 
 ---
+**Closed 2026-09-01; acceptance re-verified 2026-09-26.** The checkpoint commits `87eca78` (atomic Job containment) and `6aaeb75` (native Guardian admission/EOF supervision) are ancestors of HEAD, and the Step 5 acceptance commands were re-run on 2026-09-26: `build-windows-bootstrap-guardian.mjs` builds (`sha256 3178d15b…`), both published artifacts exist, and `guardian-live.test.mjs` is **65/65** (it was 40/40 at the 2026-09-01 checkpoint; this task's later additions account for the growth). `host/native/windows-bootstrap-guardian/guardian-live.test.mjs` carries the fixture matrix, membership-before-first-user-code, no-breakaway and handle-lifetime regressions. Step 6's review ran at the checkpoint (independent native-security review, no blocker/high).
+
 
 ## Task 2: Exact guardian lease, EOF closing, and crash recovery
 
@@ -229,7 +231,7 @@ Reviewer must inspect struct layout, attribute-list sizing, creation-time Job/le
 - The sole redacted native recovery command is `recover_attempt` with exact attempt correlation plus fresh `recoveryInstanceId`; `begin_recovery` is deleted with no compatibility grammar. The fixed launcher injects required private `GAMEBUDDY_GUARDIAN_MODE=resident|recovery` plus fresh control pipe/token; missing or unknown mode fails closed with no absence fallback, and role environments strip all three variables. Recovery mode branches before the resident loop and uses one authenticated private session with two distinct one-shot phases. The pre-CAS gate binding carries only correlation, immutable binding revision, and exact lease name, permitting only successor-mutex acquisition and zero Job access. After gate acquisition and durable Host CAS to `recovering`, the post-CAS classification binding carries the same correlation/recovery actor, immutable binding revision, latest owner-record revision, exact lease/Job names, and current durable role states. These facts never enter public protocol, logs or responses.
 - Produces only `contained | unavailable | quarantined` to private recovery callers.
 
-- [ ] **Step 1: Write failing lease/EOF/recovery tests**
+- [x] **Step 1: Write failing lease/EOF/recovery tests**
 
 Cover:
 
@@ -251,7 +253,7 @@ successor arm remains unavailable because Player recovery is unavailable
 stale revision, recovery takeover or persistence failure never produces contained
 ```
 
-- [ ] **Step 2: Run native and TypeScript tests red**
+- [x] **Step 2: Run native and TypeScript tests red**
 
 ```powershell
 cd host
@@ -262,7 +264,7 @@ node --test --test-concurrency=1 dist-test/stardew-private-bootstrap-composer.te
 
 Task 2 must begin only from a passing Task 1 build and fixture matrix. The named `dist-test` files are rebuilt after the Task 2 owner-schema changes; previously emitted Task 1 JavaScript is not Task 2 evidence.
 
-- [ ] **Step 3: Extend the strict private record for recovery ownership**
+- [x] **Step 3: Extend the strict private record for recovery ownership**
 
 Task 1's sole bootstrap `owner.json` v3 contains the immutable binding revision and opaque lease/Job names but does not contain Task 2 lifecycle CAS. Destructively replace it with strict owner/v4; reject v3 with no migration, import, fallback or read-repair. V4 adds immutable `guardianInstanceId` and positive `guardianEpoch`, separates immutable `bindingRevision` from monotonic positive `ownerRecordRevision`, and adds parent/guardian/role lifecycle state plus nullable `recoveryInstanceId`. Every transition fresh-reads under the existing path lock, compares record revision and the complete immutable fence tuple, atomically writes revision + 1, strict-rereads the successor, and never overwrites from a stale cached record. A generic stale-lock result can select a dead Node owner but cannot clear or infer containment.
 
@@ -282,7 +284,7 @@ terminal quarantined: parent quarantined; guardian quarantined; every non-contai
 
 Exact-key validation rejects every other combination. The AI recovery classification CAS must compare the same persisted `recoveryInstanceId`, the complete immutable fence and the latest `ownerRecordRevision`; it may change only the AI role to `contained` while parent and guardian remain `recovering` or unavailable. The Player role cannot regress, change identity, be opened, or be marked contained by this task. Any AI classification or persistence failure transitions the attempt to terminal quarantine rather than preserving a partial success claim. Normal controlled close and recovery never use Player containment as a completion condition: an AI-contained result leaves Player/world alive and the parent unavailable/quarantined. Final persistence failure leaves the record in closing/recovering or transitions it to quarantined; it never writes parent contained.
 
-- [ ] **Step 4: Extend the lease-ordered native state machine**
+- [x] **Step 4: Extend the lease-ordered native state machine**
 
 ```text
 resident guardian holds the exact recorded lease generation
@@ -297,15 +299,19 @@ AI role durable contained → keep Player and parent unavailable/quarantined →
 
 Any mismatch or ambiguity returns a fixed redacted unavailable/quarantined category. The native recovery coordinator is selected only by exact private launcher mode `recovery`, branches before the resident Guardian public-command/EOF loop, and never treats a public frame as a mode selector during Batch C. In recovery mode the private pre-CAS frame precedes gate acquisition, the post-CAS frame follows durable recovering CAS, and only then may stdin authorize the exact `recover_attempt` with the same recovery actor. Recovery never waits for or adopts an abandoned/existing old mutex, never recreates a same-name Job as evidence, and never treats root exit or a missing unarmed AI Job as containment. The old guardian cannot accept or execute commands after `closing` or lease release. The shared native state gate covers the final closing/deadline check and `ResumeThread` as one critical section: if EOF wins, the AI root is never resumed; if resume wins, EOF must contain/drain that active AI role, while the Player root remains governed by its non-kill-on-close survival policy. Same-SID hostile manipulation is outside this contract and must trigger a future protected service/separate-SID redesign rather than an in-process fallback.
 
-- [ ] **Step 5: Run crash/lease matrix**
+- [x] **Step 5: Run crash/lease matrix**
 
 Run native matrix serially and private record tests. Include guardian crash before arm, after two Jobs arm, during each role launch, during close, and after AI drain. Prove: held old lease gives zero Job access; newly created recovery gate ownership precedes the durable recovering CAS; that CAS precedes every AI Job operation; the AI Job is verified and fully drained; Player survives ordinary close, controller EOF, AI failure and Guardian last-handle close; FILE_NOT_FOUND passes only for a durable-armed AI role; missing unarmed, access denied, unexpected object type, stale revision, recovery takeover and persistence failure quarantine; Player recovery is unavailable and AI containment never clears the parent or permits a successor.
 
-- [ ] **Step 6: Fresh lifecycle-recovery review and atomic commit**
+- [x] **Step 6: Fresh lifecycle-recovery review and atomic commit**
 
 Reviewer traces every irreversible boundary against durable state and verifies no successor can launch on partial evidence.
 
 ---
+**Closed 2026-09-01; acceptance re-verified 2026-09-26.** The checkpoint commit `9f52f8a` (v4 sole-record CAS, private recovery orchestration, successor-gate/Job classification, resident EOF/resume state gate) is an ancestor of HEAD, and the Step 2/5 suites were re-run on 2026-09-26 as part of the Task 4 closure: the seven-suite matrix is **249/249** and `guardian-live.test.mjs` **65/65**. The 2026-09-01 evidence was source-bound builder 3/3, serial Windows matrix 40/40 with zero skips, Host owner/boundary 15/15, protocol suites 26/26, and an independent lifecycle-recovery review with no blocker/high.
+
+The 2026-09-26 Task 4 reviews closed two evidence gaps this task left open: the create→resume crash window had EOF coverage only (now covered for `after-create`, `after-membership` and `before-resume` in `267b846`), and the recovery "held" reply path had no live test. The latter is recorded as a residual rather than silently passed: `GuardianLease.Create` opens an existing same-name mutex with `CreateMutexW`, whose requested access is `MUTEX_ALL_ACCESS`, while the creation-time DACL grants only `MUTEX_MODIFY_STATE | SYNCHRONIZE`. An existing object therefore more likely yields `ERROR_ACCESS_DENIED` (→ `Win32Exception` → `Fail()`) than `ERROR_ALREADY_EXISTS` (→ `"held"`). Both branches are fail-closed, so this is a protocol-semantics gap, not a safety gap; the "held" reply is unproven and the Host's two-state `held | acquired` projection may only ever observe one state.
+
 
 ## Task 3: Delegate production role ownership without changing product topology
 
