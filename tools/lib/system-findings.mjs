@@ -176,6 +176,31 @@ export function summarizeSystemFindings(actionTrace, receipts = []) {
     });
   }
 
+  // Finding 6: any rejected request is reported, however few. Thresholds are for
+  // ranking severity, never for hiding a rejection: a live run that reported
+  // "findings: []" while a third of its actions were rejected is exactly the
+  // false-clean signal this module exists to prevent. Each distinct reason code
+  // stays individually visible so the reader sees what actually happened.
+  if (totalRejected > 0 && findings.every((finding) => finding.id !== "rejection_observed")) {
+    const componentCounts = {};
+    for (const [code, count] of Object.entries(reasonSummaries)) {
+      const component = componentOf(code);
+      componentCounts[component] = (componentCounts[component] ?? 0) + count;
+    }
+    findings.push({
+      id: "rejection_observed",
+      // The summary inherits the dominant component so it is never a useless
+      // "unclassified"; the per-code detail below still names every reason.
+      component: Object.entries(componentCounts).sort((a, b) => b[1] - a[1])[0][0],
+      severity: "medium",
+      action: null,
+      count: totalRejected,
+      detail: `${totalRejected} of ${total} actions were rejected (${Object.entries(reasonSummaries).map(([c, n]) => `${c} x${n}`).join(", ")}) across ${Object.keys(componentCounts).join(", ")}`,
+      recommendation: "read each reason code above; a rejection is information, not noise",
+      sampleCodes: Object.keys(reasonSummaries),
+    });
+  }
+
   return Object.freeze({
     findings: findings.sort((a, b) => (b.severity === "high" ? 1 : 0) - (a.severity === "high" ? 1 : 0)),
     reasonSummaries,
