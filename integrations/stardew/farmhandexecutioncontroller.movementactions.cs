@@ -20,6 +20,14 @@ internal sealed partial class ExecutionManager
             return existing;
 
         this.revision++;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
+        // This handler has no shared executionId; like its other rejections it
+        // mints one here.
+        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, scopeReason, null);
+
         if (!Context.IsWorldReady || Game1.player is null)
             return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "world_not_ready", null);
 
@@ -88,6 +96,12 @@ internal sealed partial class ExecutionManager
         this.revision++;
         string executionId = Guid.NewGuid().ToString("N");
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
+        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
+
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
         if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
