@@ -244,6 +244,22 @@ public sealed record BridgeTreeChopResultTarget(string TargetId, string Location
 
 public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, string NpcName, int FriendshipPoints, string FriendshipStatus, bool TalkedToToday, int GiftsToday, int GiftsThisWeek);
 
+/// <summary>
+/// Where one villager currently is, across the whole loaded world.
+///
+/// <para>
+/// The per-location discovery lists only describe the player's current map, so
+/// an Agent told to find a villager has no way to learn that she is elsewhere -
+/// a live run searched three maps by trial and never found her. This is the
+/// missing fact: the villager's authoritative location in the loaded world.
+/// </para>
+/// <para>
+/// Read-only and bounded. It publishes nothing the game does not already hold;
+/// only instantiated, non-event villagers on a loaded location appear.
+/// </para>
+/// </summary>
+public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
+
 public sealed record BridgePetTarget(string TargetId, int X, int Y, string PetType, int Friendship, bool PettedToday);
 
 public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X, int Y, string AnimalType, string QualifiedProduceItemId, string DisplayName, string ToolKind, int ProduceStack);
@@ -312,6 +328,7 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeWeedTarget>? WeedTargets,
     IReadOnlyList<BridgeScytheCropTarget>? ScytheCropTargets,
     IReadOnlyList<BridgeNpcRelationshipTarget>? NpcRelationshipTargets,
+    IReadOnlyList<BridgeVillagerWhereabouts>? VillagerWhereabouts,
     IReadOnlyList<BridgePetTarget>? PetTargets,
     IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,
     IReadOnlyList<BridgeFeedTroughTarget>? FeedTroughTargets,

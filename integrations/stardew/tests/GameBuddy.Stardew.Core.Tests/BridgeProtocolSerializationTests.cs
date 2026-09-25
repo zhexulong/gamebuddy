@@ -505,6 +505,7 @@ public sealed class BridgeProtocolSerializationTests
             WeedTargets: null,
             ScytheCropTargets: null,
             NpcRelationshipTargets: null,
+            VillagerWhereabouts: null,
             PetTargets: null,
             AnimalProductTargets: null,
             FeedTroughTargets: null,
@@ -543,6 +544,30 @@ public sealed class BridgeProtocolSerializationTests
         using var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         using var writer = new StreamWriter(stream, new UTF8Encoding(false));
         writer.Write(json);
+    }
+
+    [Fact]
+    public void VillagerWhereabouts_RoundTripsAndStaysBounded()
+    {
+        // The per-location target arrays only describe the current map, so this
+        // list is the only fact telling the Agent a villager is elsewhere. It
+        // must survive the wire unchanged and keep a hard entry bound.
+        var entries = new List<BridgeVillagerWhereabouts>
+        {
+            new("Jodi", "Jodi", "SeedShop", 3, 8, false),
+            new("Abigail", "Abigail", "Farm", 10, 12, true),
+        };
+        var json = JsonSerializer.Serialize(entries, BridgeProtocol.JsonOptions);
+        var round = JsonSerializer.Deserialize<List<BridgeVillagerWhereabouts>>(json, BridgeProtocol.JsonOptions)!;
+        round.Should().BeEquivalentTo(entries);
+        round[0].InCurrentLocation.Should().BeFalse();
+        round[1].InCurrentLocation.Should().BeTrue();
+        round[0].DisplayName.Should().Be("Jodi");
+        // Exactly the six published keys, no more: the Host validator rejects any
+        // unknown key, so the wire shape is a contract, not a convention.
+        using var document = JsonDocument.Parse(json);
+        document.RootElement[0].EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo(
+            new[] { "npcName", "displayName", "location", "x", "y", "inCurrentLocation" });
     }
 
     [Fact]

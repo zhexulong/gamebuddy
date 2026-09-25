@@ -663,6 +663,24 @@ test("bridge message payloads fail closed", () => {
           giftsThisWeek: 0,
         },
       ],
+      villagerWhereabouts: [
+        {
+          npcName: "Abigail",
+          displayName: "Abigail",
+          location: "Farm",
+          x: 10,
+          y: 12,
+          inCurrentLocation: true,
+        },
+        {
+          npcName: "Jodi",
+          displayName: "Jodi",
+          location: "SeedShop",
+          x: 3,
+          y: 8,
+          inCurrentLocation: false,
+        },
+      ],
       petTargets: [{ targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 500, pettedToday: false }],
       animalProductTargets: [
         {
@@ -2412,4 +2430,45 @@ test("observe_scene result admits water_source affordance kind and rejects unkno
     now,
   );
   assert.equal(diagnoseBridgeMessage(unknownKind, scope, now), "invalid_observe_scene_result");
+});
+
+test("snapshot admits villagerWhereabouts and rejects malformed rows", () => {
+  // The per-location target arrays only describe the current map, so this field
+  // is the only fact that tells the Agent a villager is on another map instead
+  // of making it search map by map.
+  const base = {
+    revision: 5,
+    location: "Farm",
+    tile: { x: 10, y: 11 },
+    stamina: 270,
+    health: 100,
+    actionable: true,
+    capabilities: [],
+    catalogRevision: 1,
+    enabledActionIds: [],
+    presentationLocale: "en-US",
+    activeExecution: null,
+  };
+  const row = { npcName: "Jodi", displayName: "Jodi", location: "SeedShop", x: 3, y: 8, inCurrentLocation: false };
+  assert.equal(diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [row] }, "vw_ok", now), scope, now), "accepted");
+  assert.equal(diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [] }, "vw_empty", now), scope, now), "accepted");
+  // An unknown extra key must fail closed rather than be silently forwarded.
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [{ ...row, extra: 1 }] }, "vw_extra", now), scope, now),
+    "invalid_snapshot:villagerWhereabouts",
+  );
+  // The readable name is required; an empty one is not a valid fact.
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [{ ...row, displayName: "" }] }, "vw_noname", now), scope, now),
+    "invalid_snapshot:villagerWhereabouts",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [{ ...row, inCurrentLocation: "yes" }] }, "vw_bool", now), scope, now),
+    "invalid_snapshot:villagerWhereabouts",
+  );
+  // Bound is 64 entries.
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: Array.from({ length: 65 }, () => row) }, "vw_many", now), scope, now),
+    "invalid_snapshot:villagerWhereabouts",
+  );
 });
