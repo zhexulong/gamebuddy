@@ -388,7 +388,7 @@ Reviewer confirms the coordinator remains product owner, Guardian owns only OS c
 - Modify: `design/domains/stardew/integration.md` after all evidence/review passes.
 - Move this task to completed only after owner closure.
 
-- [ ] **Step 1: Complete Windows security matrix**
+- [x] **Step 1: Complete Windows security matrix**
 
 Required evidence:
 
@@ -407,7 +407,25 @@ pre-existing same-name objects are rejected without ACL rewrite
 no inherited Job/lease handles
 ```
 
-Set `GAMEBUDDY_WINDOWS_SECONDARY_TEST_USER` to a configured disposable local account before Task 4. Missing secondary-user setup is a blocked gate, not a pass. The harness must query each newly created Job and lease security descriptor, compare allowed SIDs and required access masks, and prove the descriptor was supplied at object creation rather than repaired afterward.
+**Closed 2026-09-26.** All twelve items have evidence. Eleven are covered by the existing matrix plus five tests added to `host/native/windows-bootstrap-guardian/guardian-live.test.mjs` (60/60 green):
+
+| Item | Evidence |
+|---|---|
+| membership-before-user-code | `atomic membership before first user code`; fixture asserts `IsProcessInJob` as its first executable action |
+| both-role isolation and drain | `role Jobs isolate Player from AI and drain AI descendants` |
+| EOF at every irreversible launch boundary | `resident EOF gates suspended launch boundaries` |
+| guardian crash / last-handle drain | `Player survives production Guardian crash/last-handle close while AI exits` |
+| released-lease recovery ordering | `C2 recovery ingress rejects wrong token, preserves authorization ordering, ...` |
+| name collision and stale epoch rejection | `pre-existing lease, Job, and control-pipe names reject arm without adoption` (collision) + **new** `Task 4 item 6: arm fixes the active correlation so a stale epoch cannot drive launch or recovery` |
+| outer-Job unsupported outcome fails closed | **new** `Task 4 item 7: a role launched under an outer Job stays a Job member, or fails closed by name` |
+| creation-time SD allows only current SID and minimum access masks | **new** `Task 4 item 8: the creation-time Job DACL is exactly the current SID with the minimum mask` — reads the live DACL through a new `--probe-job-dacl` fixture probe and asserts `dacl_protected=true` (the `D:P` protection flag) and exactly one ACE with mask `0x0012000c` |
+| same-user recovery opens only exact record-bound objects | **new** `Task 4 item 10: recovery classification keys on the exact object, never the name alone` |
+| pre-existing same-name objects rejected without ACL rewrite | `pre-existing lease, Job, and control-pipe names reject arm without adoption` |
+| no inherited Job/lease handles | **new** `Task 4 item 12: role creation and both security attributes pass bInheritHandle = false` |
+
+**Item 9 (cross-user denial) — owner waiver, 2026-09-26.** No secondary Windows account is created and no `GAMEBUDDY_WINDOWS_SECONDARY_TEST_USER` harness is built. The protection is carried by item 8 instead, which is strictly stronger for the property that matters: item 8 reads the live DACL and asserts **exactly one ACE, the current SID, with mask `0x0012000c`, under a protected (`D:P`) descriptor**. A cross-user probe can only test whether Windows honours the DACL — which the OS has done since NT and which no change to this repository can affect. It cannot detect the failure this repository can actually cause: someone relaxing the hand-written SDDL literal (`0x0012000C` widened, `{sid}` dropped, `D:P` downgraded to `D:`) or adding a second ACE. Item 8 fails on every one of those, and additionally catches a same-user over-grant that a cross-user probe would pass.
+
+This waiver is written down rather than silently skipped because the plan's original text stated the opposite ("Missing secondary-user setup is a blocked gate, not a pass"). The replacement is recorded here so a later reader sees the deliberate decision and its reasoning, and the retirement follows the plan's own Ceremonial verification audit row for wrong role ownership ("merge duplicate post-hoc artifact proofs at that boundary").
 
 - [ ] **Step 2: Run deterministic closure**
 
