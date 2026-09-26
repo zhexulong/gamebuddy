@@ -157,6 +157,44 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, ExecutionState.PartiallySucceeded, "crafted_item_created", evidence);
     }
 
+    /// <summary>
+    /// Every learned crafting recipe, published under a sendable identity, so the
+    /// Agent can name a recipe instead of guessing keys from model memory. Only
+    /// learned recipes appear: an unlearned key is not an admissible target and
+    /// publishing it would only lead the Agent into craft_recipe_not_learned.
+    ///
+    /// <para>
+    /// IngredientsAvailable is a pure fact measured with the same backpack gate
+    /// the handler applies (CraftingRecipe.doesFarmerHaveIngredientsInInventory),
+    /// and does not pre-empt the handler's own learned/ingredient admission.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<BridgeRecipeTarget> DiscoverCraftingRecipeTargets(Farmer player)
+    {
+        Dictionary<string, string>? table = CraftingRecipe.craftingRecipes;
+        if (table is null) return Array.Empty<BridgeRecipeTarget>();
+        List<BridgeRecipeTarget> result = new();
+        foreach (string recipeKey in player.craftingRecipes.Keys.OrderBy(key => key, StringComparer.Ordinal))
+        {
+            // A learned key with no live recipe (content removed by a mod) is not
+            // a target: the handler would reject it as craft_recipe_unknown.
+            if (!table.ContainsKey(recipeKey)) continue;
+            if (TryBuildWireRecipeIdentity(table.Keys, recipeKey) is not { } wireIdentity) continue;
+            CraftingRecipe recipe = new(recipeKey, isCookingRecipe: false);
+            // The native constructor silently falls back to "Torch" for an unknown
+            // key; that fallback must never supply a recipe's facts here either.
+            if (!string.Equals(recipe.name, recipeKey, StringComparison.Ordinal)) continue;
+            result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory()));
+        }
+        // Bounded like every other snapshot target list. Craftable-now recipes are
+        // ranked first (the sort is stable, so ordinal order survives inside a
+        // rank) because those are the ones the Agent can act on immediately.
+        return result
+            .OrderByDescending(target => target.IngredientsAvailable)
+            .Take(64)
+            .ToArray();
+    }
+
     /// <summary>Native ingredient matching parity for one recipe key (item id, category number, or wild-seed rule).</summary>
     private static int CountCraftingIngredient(Farmer player, string ingredientKey)
     {

@@ -282,6 +282,26 @@ public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, s
 
 public sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, string DisplayName, int Stack, int Edibility, bool IsDrink);
 
+/// <summary>
+/// One learned recipe, published under the exact identity craft_item/cook_recipe
+/// accept. The opaque argument alphabet cannot carry the space in a vanilla key
+/// ("Wood Fence"), so TargetId is the key itself when it is already wire-legal and
+/// otherwise its unique underscore alias - the form TryResolveRecipeIdentity maps
+/// back to that same single key. Discovery only: the handler still resolves the
+/// identity and evaluates the learned and ingredient gates, so IngredientsAvailable
+/// is a fact, not admission.
+/// </summary>
+public sealed record BridgeRecipeTarget(string TargetId, string DisplayName, bool IngredientsAvailable);
+
+/// <summary>
+/// A live cooking station the companion must stand adjacent to: the vanilla
+/// kitchen action tile or a placed cookout kit (BC)278. cook_recipe carries only
+/// the recipe identity, so this list exists purely to tell the Agent where a
+/// station is; dispatch still derives and revalidates the station from the live
+/// world and never trusts a client coordinate.
+/// </summary>
+public sealed record BridgeCookingStationTarget(string TargetId, string Location, int X, int Y, string StationKind);
+
 public sealed record BridgeSnapshot(
     long Revision,
     string Location,
@@ -337,6 +357,9 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeInventoryItemFact>? InventoryItemFacts,
     IReadOnlyList<BridgeFoodTarget>? FoodTargets,
     IReadOnlyList<BridgeShippingBinTarget>? ShippingBinTargets,
+    IReadOnlyList<BridgeRecipeTarget>? CraftingRecipeTargets,
+    IReadOnlyList<BridgeRecipeTarget>? CookingRecipeTargets,
+    IReadOnlyList<BridgeCookingStationTarget>? CookingStationTargets,
     string PresentationLocale
 );
 

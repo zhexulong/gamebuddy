@@ -435,6 +435,13 @@ export type Snapshot = Readonly<{
   /** The current Farm's single native Shipping Bin paired with one shippable inventory slot (ship_item). */
   shippingBinTargets?: readonly Readonly<{ targetId: string; x: number; y: number; slot: number; qualifiedItemId: string;
     displayName: string; stack: number }>[];
+  /** Learned crafting recipes, each under the exact expectedTargetId craft_item accepts. */
+  craftingRecipeTargets?: readonly Readonly<{ targetId: string; displayName: string; ingredientsAvailable: boolean }>[];
+  /** Learned cooking recipes, each under the exact expectedTargetId cook_recipe accepts. */
+  cookingRecipeTargets?: readonly Readonly<{ targetId: string; displayName: string; ingredientsAvailable: boolean }>[];
+  /** Live cooking stations (vanilla kitchen action tile or a placed (BC)278 cookout kit) on the current map. */
+  cookingStationTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
+    stationKind: "kitchen" | "cookout_kit" }>[];
 }>;
 
 /** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
@@ -949,6 +956,9 @@ const SNAPSHOT_KEYS = [
   "inventoryItemFacts",
   "foodTargets",
   "shippingBinTargets",
+  "craftingRecipeTargets",
+  "cookingRecipeTargets",
+  "cookingStationTargets",
 ] as const;
 
 
@@ -2103,6 +2113,27 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.shippingBinTargets.every(isShippingBinTargetFact))
   )
     return "invalid_snapshot:shippingBinTargets";
+  if (
+    value.craftingRecipeTargets !== undefined &&
+    (!Array.isArray(value.craftingRecipeTargets) ||
+      value.craftingRecipeTargets.length > 64 ||
+      !value.craftingRecipeTargets.every(isRecipeTargetFact))
+  )
+    return "invalid_snapshot:craftingRecipeTargets";
+  if (
+    value.cookingRecipeTargets !== undefined &&
+    (!Array.isArray(value.cookingRecipeTargets) ||
+      value.cookingRecipeTargets.length > 64 ||
+      !value.cookingRecipeTargets.every(isRecipeTargetFact))
+  )
+    return "invalid_snapshot:cookingRecipeTargets";
+  if (
+    value.cookingStationTargets !== undefined &&
+    (!Array.isArray(value.cookingStationTargets) ||
+      value.cookingStationTargets.length > 16 ||
+      !value.cookingStationTargets.every(isCookingStationTargetFact))
+  )
+    return "invalid_snapshot:cookingStationTargets";
   if (!isStringArray(value.capabilities)) return "invalid_snapshot:capabilities";
   if (!isNonNegativeSafeInteger(value.catalogRevision)) return "invalid_snapshot:catalogRevision";
   if (!isUniqueOpaqueIdArray(value.enabledActionIds)) return "invalid_snapshot:enabledActionIds";
@@ -2288,6 +2319,18 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.shippingBinTargets) &&
         value.shippingBinTargets.length <= 1 &&
         value.shippingBinTargets.every(isShippingBinTargetFact))) &&
+    (value.craftingRecipeTargets === undefined ||
+      (Array.isArray(value.craftingRecipeTargets) &&
+        value.craftingRecipeTargets.length <= 64 &&
+        value.craftingRecipeTargets.every(isRecipeTargetFact))) &&
+    (value.cookingRecipeTargets === undefined ||
+      (Array.isArray(value.cookingRecipeTargets) &&
+        value.cookingRecipeTargets.length <= 64 &&
+        value.cookingRecipeTargets.every(isRecipeTargetFact))) &&
+    (value.cookingStationTargets === undefined ||
+      (Array.isArray(value.cookingStationTargets) &&
+        value.cookingStationTargets.length <= 16 &&
+        value.cookingStationTargets.every(isCookingStationTargetFact))) &&
     isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
     isUniqueOpaqueIdArray(value.enabledActionIds) &&
@@ -3477,8 +3520,34 @@ function isShippingBinTargetFact(value: unknown): boolean {
   );
 }
 
-function isInventoryItemFact(value: unknown): boolean {
+function isRecipeTargetFact(value: unknown): boolean {
   return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "displayName", "ingredientsAvailable"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128 &&
+    typeof value.ingredientsAvailable === "boolean"
+  );
+}
+
+function isCookingStationTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "stationKind"]) &&
+    typeof value.targetId === "string" &&
+    /^cooking_station_[a-f0-9]{16}$/u.test(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length >= 1 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    (value.stationKind === "kitchen" || value.stationKind === "cookout_kit")
+  );
+}
+
+function isInventoryItemFact(value: unknown): boolean {  return (
     isRecord(value) &&
     hasExactKeys(value, ["slot", "qualifiedItemId", "stack","displayName"]) &&
     isToolSlot(value.slot) &&
