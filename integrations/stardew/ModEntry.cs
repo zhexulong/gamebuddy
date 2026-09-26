@@ -4042,8 +4042,15 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         // matching terminal receipt.
         Farmer farmhand = this.ResolveHostAutomationFarmhand(farm);
         Vector2 farmArrival = ResolveHostAutomationFarmArrival(farmhand, farm, "pet");
-        if (!farm.isTilePassable(farmArrival) || farm.IsTileOccupiedBy(farmArrival, CollisionMask.All, CollisionMask.None, useFarmerTile: true))
-            throw new InvalidOperationException("fixture_native_pet_arrival_unavailable");
+        // Do not require the arrival tile itself to be free. The game warps the
+        // actor onto it, and pet_animal admits its target through
+        // Utility.tileWithinRadiusOfPlayer(..., 1, player) -- a distance check
+        // with no pathfinding -- so what the fixture must guarantee is a legal
+        // Pet tile inside that radius, not a pristine landing tile. The existing
+        // NPC fixture likewise never asserts the arrival is walkable. Record the
+        // arrival state instead, so a later failure is diagnosable.
+        bool arrivalPassable = farm.isTilePassable(farmArrival);
+        bool arrivalOccupied = farm.IsTileOccupiedBy(farmArrival, CollisionMask.All, CollisionMask.None, useFarmerTile: true);
         // pet_animal admits the target through
         // Utility.tileWithinRadiusOfPlayer(..., 1, player) and resolves the
         // location from the actor's own currentLocation, so the Pet must sit
@@ -4093,7 +4100,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             || pet.lastPetDay.TryGetValue(farmhand.UniqueMultiplayerID, out int lastDay) && lastDay == Game1.Date.TotalDays)
             throw new InvalidOperationException("fixture_native_pet_placement_validation_failed");
         this.hostAutomationFixtureInitialized = true;
-        this.Monitor.Log($"GameBuddy HostAutomation initialized native pet-animal v1 fixture before attachment: Cabin retained; farmhand={farmhand.UniqueMultiplayerID}; pet_type={pet.petType.Value}; pet_id={pet.petId.Value:N}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; farm_arrival={(int)farmArrival.X},{(int)farmArrival.Y}; friendship=0; petted_today=false; friendship_callback=false; hands_empty=true; production alone invokes Pet.checkAction and emits receipt.", LogLevel.Info);
+        this.Monitor.Log($"GameBuddy HostAutomation initialized native pet-animal v1 fixture before attachment: Cabin retained; farmhand={farmhand.UniqueMultiplayerID}; pet_type={pet.petType.Value}; pet_id={pet.petId.Value:N}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; farm_arrival={(int)farmArrival.X},{(int)farmArrival.Y}; arrival_passable={arrivalPassable}; arrival_occupied={arrivalOccupied}; friendship=0; petted_today=false; friendship_callback=false; hands_empty=true; production alone invokes Pet.checkAction and emits receipt.", LogLevel.Info);
     }
 
     private static bool IsFixtureAdjacentToFarmer(StardewValley.NPC npc, Farmer farmer)
