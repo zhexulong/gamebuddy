@@ -57,7 +57,6 @@ type StardewInstallationRegistrationRecordV1 = Readonly<{
   schema: "gamebuddy-stardew-installation-registration/v1";
   binding: Readonly<{
     rootLayoutVersion: 1;
-    productInstallationId: string;
   }>;
   revision: number;
   state: "ready" | "invalid";
@@ -74,7 +73,7 @@ Rules:
 - `activeAttempt` is `null` while no lifecycle attempt is active. While non-null, it contains only the bounded opaque exact bootstrap/guardian correlation produced by the prepared bootstrap attempt. It contains no locator, process, path, token, Job, lease, guardian object identity, configuration, bridge, capability or cleanup state.
 - The record's active pointer is not a second attempt fence. Its only lifecycle meaning is that the exact `owner.json` attempt remains the exclusive durable authority until Design 102's matching exact containment settlement proof permits the lifecycle core to clear it. Registration cannot clear, replace, recover, terminalize or infer the pointer's outcome.
 - `revision` is a positive safe integer, advances on every successfully published ready/invalid replacement, and is not a lifecycle, attachment, action-catalog, or process generation. An active pointer prevents replacement, revoke and reselection.
-- Binding is exactly `{ rootLayoutVersion: 1, productInstallationId: string }`. `productInstallationId` is the launcher-owned product installation identity, not a path, runtime root, continuity/player/companion identity or authority generation. `bootstrapOperationId` is intentionally excluded because it changes per process; a consumer must still revalidate its current Host private root layout and deployment manifest before reading or using a record.
+- Binding is exactly `{ rootLayoutVersion: 1 }`. It carries no product, player, companion or authority identity: the record is Host-private and single-per-user, so no installation identity is needed to locate it, and any such identifier would be a second authority this plan does not own. `bootstrapOperationId` is intentionally excluded because it changes per process; a consumer must still revalidate its current Host private root layout and deployment manifest before reading or using a record. `productInstallationId` was removed by owner decision (2026-09-26); production code, tests and the handoff already bound exactly `{ rootLayoutVersion: 1 }`, and a record carrying it is rejected rather than migrated or compatibility-read.
 - Parser rejects duplicate keys, unknown/missing keys, prototypes, arrays where objects are required, unsafe numbers, oversize bytes, invalid enum pairings, invalid binding, invalid locator grammar and malformed active pointer.
 - The record contains no admitted capability, identity chain, runtime-root text, executable path, bridge/token, launch/attachment generation, PID, job/lease name, profile, session, receipt, action/policy/catalog fact, prompt, credential, error detail or browser-facing field.
 - Parse, root validation, lock, atomic write or reread failure is fail closed. A failed write never reports ready. Where an invalid replacement cannot be durably published, return `unavailable`; do not infer or repair readiness.
@@ -103,7 +102,7 @@ registration composition 只向 coordinator-owned picker callback 提供 Host-pr
 
 `game.launch` 只能由 private lifecycle core 按以下顺序协调：
 
-1. Revalidate the Host private root layout and load the current deployment manifest; derive the current exact minimal desktop binding `{ rootLayoutVersion: 1, productInstallationId }`.
+1. Revalidate the Host private root layout and load the current deployment manifest; derive the current exact minimal desktop binding `{ rootLayoutVersion: 1 }`.
 2. lifecycle core 调用 bootstrap owner 的私有 nominal transaction seam。seam 在其受控 transaction 内 strict-read matching registration record，要求 `state: "ready"` 和 `activeAttempt: null`，创建 exact prepared bootstrap/guardian reservation，并将同一 opaque correlation 绑定为 record 的 `activeAttempt`。transaction 只会提交“owner 已 prepared 且 record pointer 完全匹配”的对，或完全不提交；返回值是仅 lifecycle core 可消费的一次性 prepared reservation capability，不能由 registration selector、browser 或其他 facade 构造或重放。
 3. transaction commit 后释放 registration path lock 和 owner transaction scope，再由 lifecycle core 在 Phase A 消费该 exact prepared reservation。reservation 消费失败、未知结果或 caller crash 仍只由 bootstrap/guardian owner 的 recovery/quarantine 处理；registration 不重试、不清 pointer、也不以 lock、PID 或时间判断 outcome。
 4. Run Stage B through the lifecycle core.
@@ -168,7 +167,7 @@ After cutover, no product/control live profile remains and no historical action-
 
 - Add the strict registration parser/storage selector using existing `atomicWriteFile`, `withPathLock`, safe boundary checks and strict JSON conventions.
 - Add the canonical single record schema, active pointer grammar, minimal desktop binding, fixed internal error mapping, atomic write+reread and no-leak logging discipline. Do not add a fence leaf, recovery state machine, view reader or public DTO.
-- Wire the native picker callback to admission-first registration. Do not add a browser path DTO, discovery implementation, browser status or browser state integration.
+- Wire the native picker path to admission-first registration. Consume the already implemented, already wired `windows-stardew-installation-discovery` provider (`host/src/windows-stardew-installation-discovery/`, coordinated through the authenticated `discovery_read` / `discovery_confirm` / `discovery_retry` / `discovery_cancel` operations) as the setup-time candidate suggestion source; discovery proposes a candidate, the user confirms it, and only the confirmed locator reaches admission-first registration. Setup-time candidates are not launch-time fallback: the prohibition in the reselection rules above still forbids any silent launch-time Steam/GOG/VDF/registry/conventional-path/process-scan rescan. Do not add a browser path DTO, browser status or browser state integration.
 
 ### Lane 2: Lifecycle-core launch choreography
 
