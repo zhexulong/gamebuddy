@@ -46,7 +46,7 @@ import {
   createDesktopGuardianGameRuntimePlatform,
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
 } from "./composition/stardew/stardew-guardian-platform.js";
-import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./games/stardew/lifecycle/stardew-native-role-launch-plan.private.js";
+import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./composition/stardew/stardew-native-role-launch-plan.private.js";
 import {
   STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS,
 } from "./stardew-production-lifecycle-coordinator.internal.js";

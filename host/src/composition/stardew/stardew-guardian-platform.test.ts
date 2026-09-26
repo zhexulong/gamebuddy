@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createDesktopGuardianGameRuntimePlatform } from "./stardew-guardian-platform.js";
 import type { DesktopGuardianSession, GuardianAck } from "../../containment/auth/desktop-guardian-session.internal.js";
-import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "../../games/stardew/lifecycle/stardew-native-role-launch-plan.private.js";
+import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
 import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
 
 const ack = (operation: string, role?: string): GuardianAck => ({

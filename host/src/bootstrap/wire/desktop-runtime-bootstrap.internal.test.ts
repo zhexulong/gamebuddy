@@ -224,8 +224,8 @@ async function runWireFixture(scenario: "success" | "missing-arm-executable" | "
     // launch-plan encoder and the synchronized contained runtime core; the
     // composer-core import inside it is a Guardian-owner seam the fixture never
     // invokes, so a hermetic throwing stub keeps the fixture self-contained.
-    await cp(resolve(compiledRoot, "games", "stardew", "lifecycle", "contained-game-runtime-platform.private.js"), join(moduleDirectory, "games", "stardew", "lifecycle", "contained-game-runtime-platform.private.js"));
-    await cp(resolve(compiledRoot, "games", "stardew", "lifecycle", "stardew-native-role-launch-plan.private.js"), join(moduleDirectory, "games", "stardew", "lifecycle", "stardew-native-role-launch-plan.private.js"));
+    await cp(resolve(compiledRoot, "composition", "stardew", "stardew-guardian-platform.js"), join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js"));
+    await cp(resolve(compiledRoot, "composition", "stardew", "stardew-native-role-launch-plan.private.js"), join(moduleDirectory, "composition", "stardew", "stardew-native-role-launch-plan.private.js"));
     const containmentCore = join(moduleDirectory, "containment", "runtime", "core", "contained-game-runtime.js");
     await mkdir(dirname(containmentCore), { recursive: true });
     await cp(resolve(compiledRoot, "containment", "runtime", "core", "contained-game-runtime.js"), containmentCore);
@@ -277,7 +277,7 @@ async function runWireFixture(scenario: "success" | "missing-arm-executable" | "
 function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce"): string {
   const bootstrapUrl = pathToFileURL(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")).href;
   const compositionUrl = pathToFileURL(join(moduleDirectory, "composition", "desktop-host-composition.js")).href;
-  const platformUrl = pathToFileURL(join(moduleDirectory, "games", "stardew", "lifecycle", "contained-game-runtime-platform.private.js")).href;
+  const platformUrl = pathToFileURL(join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js")).href;
   // The fixture drives the real contained runtime platform so the recorded wire
   // arm frame is the usual approvedExecutable-carrying frame and the launch plan
   // is the native ParseLaunch encoder output (executable === approvedExecutable).
