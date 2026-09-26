@@ -296,14 +296,22 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool tool || tool is not MilkPail and not Shears)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_tool_not_owned", $"slot={slot}");
-        if (!IsAnimalProductTargetInRange(Game1.player, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
-
+        // Identity-bound admission, same reasoning as RequestLocalPetAnimal: a
+        // FarmAnimal wanders inside its building, so matching its live tile to the
+        // coordinate captured at snapshot time makes the request a race.
+        // BuildAnimalProductTargetId hashes location + myID + slot + tool + produce
+        // and takes no coordinate at all, so the coordinate comparison was an
+        // extra binding that could only ever reject a legitimate request.
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        FarmAnimal? animal = location.animals.Values.FirstOrDefault(candidate => (int)candidate.Tile.X == targetX && (int)candidate.Tile.Y == targetY
-            && string.Equals(BuildAnimalProductTargetId(location, slot, candidate, tool), expectedTargetId, StringComparison.Ordinal));
-        if (animal is null || animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_changed", $"target={targetX},{targetY}");
+        FarmAnimal? animal = location.animals.Values.FirstOrDefault(candidate =>
+            string.Equals(BuildAnimalProductTargetId(location, slot, candidate, tool), expectedTargetId, StringComparison.Ordinal));
+        if (animal is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_gone", $"target={expectedTargetId}");
+        // Range against the animal's current tile -- what the interaction needs.
+        if (!IsAnimalProductTargetInRange(Game1.player, (int)animal.Tile.X, (int)animal.Tile.Y))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={expectedTargetId};animal={(int)animal.Tile.X},{(int)animal.Tile.Y}");
+        if (animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_changed", $"target={expectedTargetId}");
         int produceStack = animal.hasEatenAnimalCracker.Value ? 2 : 1;
         StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
         if (!Game1.player.couldInventoryAcceptThisItem(produce.QualifiedItemId, produceStack))
@@ -369,21 +377,33 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
-        if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
-        if (Game1.player.CurrentItem is not null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hands_not_empty", null);
-
+        // Admission is identity-bound, not coordinate-bound. A Pet walks on its
+        // own -- Data/Pets gives 'Walk' WalkInDirection=true with
+        // RandomizeDirection=true, and Pet.RunState re-rolls the facing each tick
+        // -- so binding the request to the tile it occupied when the snapshot was
+        // taken makes every attempt a race. The caller means "that pet", not
+        // "whatever is standing on 26,33". BuildPetTargetId already hashes only
+        // location + petId, so the coordinate comparison was a second, redundant
+        // binding: redundant, and weaker, because it proved where the pet had been
+        // rather than where it is.
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Pet? pet = location.characters.OfType<Pet>().FirstOrDefault(candidate =>
-            (int)candidate.Tile.X == targetX && (int)candidate.Tile.Y == targetY
-            && string.Equals(BuildPetTargetId(location, targetX, targetY, candidate), expectedTargetId, StringComparison.Ordinal)
+            string.Equals(BuildPetTargetId(location, (int)candidate.Tile.X, (int)candidate.Tile.Y, candidate), expectedTargetId, StringComparison.Ordinal)
             && (!candidate.lastPetDay.TryGetValue(Game1.player.UniqueMultiplayerID, out int lastDay) || lastDay != Game1.Date.TotalDays));
         if (pet is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_target_changed", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_target_gone", $"target={expectedTargetId}");
+        if (Game1.player.CurrentItem is not null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hands_not_empty", null);
+        // Range is measured against the pet's current tile, which is what
+        // interaction actually requires. Checking the requested coordinate would
+        // accept a stale position and reject a pet that had walked into reach.
+        int petTileX = (int)pet.Tile.X;
+        int petTileY = (int)pet.Tile.Y;
+        if (!Utility.tileWithinRadiusOfPlayer(petTileX, petTileY, 1, Game1.player))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={expectedTargetId};pet={petTileX},{petTileY}");
 
         int friendshipBefore = pet.friendshipTowardFarmer.Value;
-        LocalPettingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, pet.petId.Value.ToString("N"), friendshipBefore, Math.Min(1000, friendshipBefore + 12), Game1.Date.TotalDays, this.revision, requestedDeadlineMs);
+        LocalPettingSpec specification = new(executionId, requestId, location.NameOrUniqueName, petTileX, petTileY, expectedTargetId, pet.petId.Value.ToString("N"), friendshipBefore, Math.Min(1000, friendshipBefore + 12), Game1.Date.TotalDays, this.revision, requestedDeadlineMs);
         this.activePet = specification;
         bool handled = pet.checkAction(Game1.player, location);
         if (!handled)
@@ -421,24 +441,27 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
-
+        // Identity-bound admission (see BuildNpcRelationshipTargetId). A villager
+        // follows a daily schedule, so binding the request to the tile it occupied
+        // at snapshot time made every attempt a race.
         StardewValley.GameLocation location = Game1.player.currentLocation;
         StardewValley.NPC? npc = location.characters
             .OfType<StardewValley.NPC>()
             .FirstOrDefault(candidate => candidate.IsVillager
-                && (int)candidate.Tile.X == targetX
-                && (int)candidate.Tile.Y == targetY
                 && !string.IsNullOrWhiteSpace(candidate.Name)
-                && string.Equals(BuildNpcRelationshipTargetId(location, targetX, targetY, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+                && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
         if (npc is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_target_changed", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_target_gone", $"target={expectedTargetId}");
+        // Range against the villager's current tile -- what the inspection needs.
+        if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={expectedTargetId};npc={(int)npc.Tile.X},{(int)npc.Tile.Y}");
         if (!Game1.player.friendshipData.TryGetValue(npc.Name, out Friendship? friendship))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "friendship_fact_unavailable", $"npc={npc.Name}");
 
-        LocalNpcRelationshipInspectionSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, npc.Name, this.revision, requestedDeadlineMs);
-        string evidence = $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};npc={specification.NpcName};points={friendship.Points};status={friendship.Status};talked_to_today={friendship.TalkedToToday.ToString().ToLowerInvariant()};gifts_today={friendship.GiftsToday};gifts_this_week={friendship.GiftsThisWeek}";
+        int npcTileX = (int)npc.Tile.X;
+        int npcTileY = (int)npc.Tile.Y;
+        LocalNpcRelationshipInspectionSpec specification = new(executionId, requestId, location.NameOrUniqueName, npcTileX, npcTileY, expectedTargetId, npc.Name, this.revision, requestedDeadlineMs);
+        string evidence = $"location={specification.Location};target={expectedTargetId};tile={npcTileX},{npcTileY};npc={specification.NpcName};points={friendship.Points};status={friendship.Status};talked_to_today={friendship.TalkedToToday.ToString().ToLowerInvariant()};gifts_today={friendship.GiftsToday};gifts_this_week={friendship.GiftsThisWeek}";
         LocalExecutionReceipt receipt = new(executionId, requestId, ExecutionState.Succeeded, "npc_relationship_inspected", this.revision, evidence);
         this.Remember(receipt);
         this.AddTrace(receipt);
@@ -502,23 +525,26 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object offered || offered.Stack < 1)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
         if (!string.Equals(offered.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_slot_changed", $"slot={slot}");
 
+        // Identity-bound admission (see BuildNpcRelationshipTargetId). A villager
+        // follows a daily schedule, so a request bound to the tile it occupied at
+        // snapshot time would be refused as soon as it walked, even though the
+        // caller meant that villager.
         StardewValley.GameLocation location = Game1.player.currentLocation;
         StardewValley.NPC? npc = location.characters
             .OfType<StardewValley.NPC>()
             .FirstOrDefault(candidate => candidate.IsVillager
-                && (int)candidate.Tile.X == targetX
-                && (int)candidate.Tile.Y == targetY
                 && !string.IsNullOrWhiteSpace(candidate.Name)
-                && string.Equals(BuildNpcRelationshipTargetId(location, targetX, targetY, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+                && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
         if (npc is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_changed", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_gone", $"target={expectedTargetId}");
+        // Range against the villager's current tile -- what the interaction needs.
+        if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={expectedTargetId};npc={(int)npc.Tile.X},{(int)npc.Tile.Y}");
 
         Farmer player = Game1.player;
         // Mirrors NPC.tryToReceiveActiveObject `if (!probe) { who.Halt();

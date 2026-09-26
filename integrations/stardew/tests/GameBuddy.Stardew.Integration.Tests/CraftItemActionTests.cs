@@ -108,30 +108,33 @@ public sealed class CraftItemActionTests
         farmerPath.Should().NotBeNull($"decompiled Farmer.cs must exist at {DecompiledFarmerRelativePath}");
         string[] farmer = File.ReadAllLines(farmerPath!);
         // The conservation seam this action uses, and the partial-add hazard it
-        // refuses to rely on.
-        farmer[4196 - 1].Should().Contain("public Item addItemToInventory(Item item)");
-        farmer[4335 - 1].Should().Contain("remainder.Stack != item.Stack");
+        // refuses to rely on. Rebaselined 2026-09-27 onto the installed 1.6.15
+        // assembly; the hazard is unchanged in form -- addItemToInventoryBool
+        // still decides success with `item2?.Stack != item.Stack` (Farmer.cs:4407),
+        // so reporting the leftover through the remainder is still required.
+        farmer[4268 - 1].Should().Contain("public Item addItemToInventory(Item item)");
+        farmer[4407 - 1].Should().Contain("item2?.Stack != item.Stack");
 
         string? game1Path = TryFindRepoFile(DecompiledGame1RelativePath);
         game1Path.Should().NotBeNull($"decompiled Game1.cs must exist at {DecompiledGame1RelativePath}");
         string[] game1 = File.ReadAllLines(game1Path!);
-        game1[10245 - 1].Should().Contain("public static Debris createItemDebris(Item item, Vector2 pixelOrigin, int direction");
+        game1[10705 - 1].Should().Contain("public static Debris createItemDebris(Item item, Vector2 pixelOrigin, int direction");
 
         string? recipePath = TryFindRepoFile(DecompiledCraftingRecipeRelativePath);
         recipePath.Should().NotBeNull($"decompiled CraftingRecipe.cs must exist at {DecompiledCraftingRecipeRelativePath}");
         string[] recipe = File.ReadAllLines(recipePath!);
         recipe[159 - 1].Should().Contain("public virtual bool doesFarmerHaveIngredientsInInventory");
-        recipe[196 - 1].Should().Contain("public virtual Item createItem()");
-        recipe[216 - 1].Should().Contain("public virtual void consumeIngredients(");
+        recipe[202 - 1].Should().Contain("public virtual Item createItem()");
+        recipe[273 - 1].Should().Contain("public virtual void consumeIngredients(");
 
         string? pagePath = TryFindRepoFile(DecompiledCraftingPageRelativePath);
         pagePath.Should().NotBeNull($"decompiled CraftingPage.cs must exist at {DecompiledCraftingPageRelativePath}");
         string[] page = File.ReadAllLines(pagePath!);
         // The count increment this action reproduces, and the heldItem route it
         // explicitly excludes.
-        page[481 - 1].Should().Contain("Game1.player.craftingRecipes.ContainsKey(recipe.name)");
-        page[483 - 1].Should().Contain("Game1.player.craftingRecipes[recipe.name] += recipe.numberProducedPerCraft;");
-        page[449 - 1].Should().Contain("heldItem = crafted;");
+        page[486 - 1].Should().Contain("Game1.player.craftingRecipes.ContainsKey(recipe.name)");
+        page[488 - 1].Should().Contain("Game1.player.craftingRecipes[recipe.name] += recipe.numberProducedPerCraft;");
+        page[454 - 1].Should().Contain("heldItem = crafted;");
     }
 
     [Theory]
