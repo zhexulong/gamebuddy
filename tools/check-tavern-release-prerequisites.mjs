@@ -1,6 +1,8 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const REQUIRED_MUST_FLOWS = Object.freeze([
@@ -172,6 +174,67 @@ function runTavernContainmentTests(exec, root) {
 }
 
 /**
+ * Resolve the nearest ancestor that holds git metadata, exactly like the
+ * version-locked Magic Context proof does (`<dir>/.git` or any ancestor).
+ */
+export function gitMetadataAncestor(start) {
+  let current = resolve(start);
+  for (;;) {
+    if (existsSync(join(current, ".git"))) return current;
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+/** Candidate scratch bases, most preferred first: the inherited temp root, then
+ *  the system drive root. A drive root is the only location guaranteed to sit
+ *  above any user-level git repository. */
+export function hermeticScratchCandidates(environment = process.env) {
+  const candidates = [tmpdir()];
+  const systemDrive = environment.SystemDrive ?? environment.SYSTEMDRIVE;
+  if (typeof systemDrive === "string" && /^[A-Za-z]:$/.test(systemDrive)) candidates.push(`${systemDrive}\\`);
+  return candidates;
+}
+
+/**
+ * The version-locked proof resolves a *project identity* by walking ancestors for
+ * `.git`. When the inherited temp directory sits under a directory that is
+ * itself a git repository (a home directory that happens to be a repo), every
+ * temporary directory collapses onto that repository's root-commit identity, so
+ * tests asserting that two temp directories are *different* continuity scopes
+ * fail deterministically. That is an environment artifact, not a source
+ * regression, so the proof runs in a scratch root above any git repository.
+ */
+export function createHermeticScratchRoot({ environment = process.env, candidates = hermeticScratchCandidates(environment) } = {}) {
+  for (const base of candidates) {
+    // A base inside a git repository cannot host the proof: the collapse is
+    // exactly what the scratch root exists to avoid.
+    if (gitMetadataAncestor(base) !== null) continue;
+    let scratch;
+    try {
+      scratch = mkdtempSync(join(base, "gamebuddy-tavern-prereq-"));
+    } catch {
+      continue;
+    }
+    // Re-check after creation: a symlinked or redirected base must not silently
+    // reintroduce a git ancestor.
+    if (gitMetadataAncestor(scratch) === null) return scratch;
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return undefined;
+}
+
+function removeHermeticScratchRoot(scratch) {
+  if (scratch === undefined) return;
+  try {
+    rmSync(scratch, { recursive: true, force: true });
+  } catch {
+    // A leftover scratch directory must never turn a real verdict into a crash.
+  }
+}
+
+/**
  * Checks only release-profile prerequisites that can be established locally.
  * It intentionally does not turn a contract-only Magic Context source into a
  * runtime proof and does not read target taxonomy as mounted or released authority.
@@ -276,7 +339,14 @@ export async function checkTavernReleasePrerequisites({
       ),
     );
   } else {
+    // Run the version-locked proof in a scratch root above any git repository,
+    // so its project-identity resolution cannot collapse every temporary
+    // directory onto an unrelated ancestor repository (see
+    // createHermeticScratchRoot). No scratch root means the proof cannot run
+    // hermetically, which is a blocked prerequisite rather than a false pass.
+    const scratchRoot = createHermeticScratchRoot();
     try {
+      if (scratchRoot === undefined) throw new Error("hermetic_scratch_root_unavailable");
       exec(
         process.platform === "win32" ? "pnpm.cmd" : "pnpm",
         [
@@ -295,6 +365,7 @@ export async function checkTavernReleasePrerequisites({
         {
           cwd: root,
           stdio: "pipe",
+          env: { ...process.env, TEMP: scratchRoot, TMP: scratchRoot },
           ...(process.platform === "win32" ? { shell: true } : {}),
         },
       );
@@ -309,6 +380,8 @@ export async function checkTavernReleasePrerequisites({
           "magic_context_source_runtime_proof_failed: version-locked source/marker/render tests failed or could not run",
         ),
       );
+    } finally {
+      removeHermeticScratchRoot(scratchRoot);
     }
   }
 
