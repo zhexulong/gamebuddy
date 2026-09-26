@@ -1,5 +1,4 @@
 import {
-  createStardewBootstrapGuardianOwnerBinding,
   createStardewPrivateBootstrapTestCore,
   type StardewContainedAiClientLaunchSeam,
   type StardewContainedPlayerHostLaunchSeam,
@@ -10,10 +9,10 @@ import {
   type StardewPrivateBootstrapCoreDependencies,
 } from "./stardew-private-bootstrap-composer.core.js";
 import {
-  createStardewBootstrapGuardianOwner,
-  type StardewBootstrapGuardianNativePorts,
-  type StardewBootstrapGuardianOwner,
-} from "./stardew-bootstrap-guardian.private.js";
+  consumeStardewBootstrapGuardianOwnerBinding,
+  createStardewBootstrapGuardianOwnerBinding,
+  settleOwnedPlayerHostContainedRuntimeAttempt,
+} from "./stardew-private-bootstrap-composer.core.js";
 import type { AdmittedStardewInstallation } from "../../../stardew-installation-admission.js";
 import type { StardewManifestHandoffCoordinator } from "./stardew-private-bootstrap-composer.core.js";
 import type {
@@ -94,10 +93,15 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   quarantineOwnedPlayerHostOwner(
     owner: StardewOwnedPlayerHostBootstrap,
   ): Promise<void>;
-  createStardewBootstrapGuardianOwner(
+  /**
+   * Test-only access to the production settlement seam, so a test can drive the
+   * durable attempt to `contained` and release the registration pointer through
+   * the same path the coordinator's explicit endgame uses.
+   */
+  settleOwnedPlayerHostRegistrationForTesting(
     owner: StardewOwnedPlayerHostBootstrap,
-    native: StardewBootstrapGuardianNativePorts,
-  ): StardewBootstrapGuardianOwner;
+    launchedRoles: readonly ("playerHost" | "aiClient")[],
+  ): Promise<void>;
   createOwnerTransitionsForTesting: ReturnType<typeof createStardewPrivateBootstrapTestCore>["createOwnerTransitionsForTesting"];
 }>;
 
@@ -201,8 +205,12 @@ export function createStardewPrivateBootstrapCompositionForTesting(
   const core = createStardewPrivateBootstrapTestCore(dependencies);
   return registerTestingComposition(Object.freeze({
     ...core,
-    createStardewBootstrapGuardianOwner: (owner, native) =>
-      createStardewBootstrapGuardianOwner(createStardewBootstrapGuardianOwnerBinding(owner), native),
+    settleOwnedPlayerHostRegistrationForTesting: async (owner, launchedRoles) => {
+      // A test that wants the production settlement must first take the exact
+      // owner binding the composition owns, mirroring the collaborator.
+      consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
+      await settleOwnedPlayerHostContainedRuntimeAttempt(owner, launchedRoles);
+    },
     materializeAiClientProfileAfterManifestAdmission: core.materializeAiClientProfileAfterManifestAdmission,
   }));
 }
