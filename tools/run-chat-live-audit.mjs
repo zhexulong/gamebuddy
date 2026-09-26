@@ -608,6 +608,42 @@ export function evaluateProviderPreSendMarker(value, expectedDigest, expectedSes
  */
 const PRESENTATION_MARKER = /\[DEBUG-chat-live-p4c\] (admission_ok|commit_rejected|commit_error|native_rejected_[a-z_]+)/g;
 
+/**
+ * Class B probe materialization markers emitted by Magic Context on vendor
+ * stderr after a durable fold COMMIT (D-1 approved: vendor stderr). They are
+ * consumed internally by the probe driver for P-fold positioning and m[0]
+ * bit-stability; they NEVER become frozen audit event codes.
+ *   `[probe:m0_digest] <sha256-of-persisted-m0-bytes>`
+ *   `[probe:fold_committed] <opaque-materialization-revision>`
+ */
+// The value alternative is ordered: a `rev_`-prefixed revision can never be a
+// 64-char lowercase hex digest (the `r` is not a hex digit), so a bound value is
+// unambiguous and there is no backtracking ambiguity between the two kinds. The
+// digest marker carries its materialization revision as a third token because
+// §5.4's bit-stability check is "same revision, same digest" — without the pair a
+// legitimate re-render is indistinguishable from drift.
+const PROBE_MATERIALIZATION_MARKER =
+  /\[probe:(m0_digest|fold_committed)\] (rev_[A-Za-z0-9_-]{1,120}|[a-f0-9]{64})(?: (rev_[A-Za-z0-9_-]{1,120}))?/g;
+
+export function classifyProbeMaterializationMarkers(stderr) {
+  if (typeof stderr !== "string" || stderr.length === 0) return Object.freeze([]);
+  const markers = [];
+  for (const match of stderr.matchAll(PROBE_MATERIALIZATION_MARKER)) {
+    const kind = match[1];
+    const value = match[2];
+    if (kind === "fold_committed") {
+      markers.push(Object.freeze({ code: "fold_committed", revision: value }));
+      continue;
+    }
+    // A digest without its revision cannot be compared, so a digest marker that
+    // is missing the paired token is not evidence and is not reported as one.
+    const revision = match[3];
+    if (revision === undefined) continue;
+    markers.push(Object.freeze({ code: "m0_digest", digest: value, revision }));
+  }
+  return Object.freeze(markers);
+}
+
 export function classifyPresentationMarkers(stderr) {
   if (typeof stderr !== "string" || stderr.length === 0) return Object.freeze([]);
   const markers = [];
@@ -1017,6 +1053,24 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
 
   const seenPresentation = { count: 0 };
   environment.presentationMarkers = 0;
+  // Magic Context's Class B fold/digest observations (D-1 approved: vendor
+  // stderr). These are the ONLY producer of the fold distance's positioning
+  // fact, so §3.3's rule is enforced here: a `fold` probe enters only after the
+  // marker says the baseline actually folded; otherwise the probe is not scored
+  // and reports `fold_not_observed` instead of guessing that the memory folded.
+  const seenProbe = { foldCount: 0, digest: null, revision: null };
+  const noteProbeMarkers = () => {
+    for (const marker of classifyProbeMaterializationMarkers(stderr)) {
+      if (marker.code === "fold_committed") seenProbe.foldCount += 1;
+      // Last observation wins: the digest is compared against its own revision,
+      // so the newest pair is the current baseline.
+      else {
+        seenProbe.digest = marker.digest;
+        seenProbe.revision = marker.revision;
+      }
+    }
+    environment.foldMarkers = seenProbe.foldCount;
+  };
   let memoryReadEmitted = false;
   const noteMemoryProjection = (projection) => {
     if (memoryReadEmitted || !projection.memoryReadAvailable) return;
@@ -1118,6 +1172,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
       await delay(MARKER_DRAIN_MS);
       flushPreSend();
       notePresentation();
+      noteProbeMarkers();
     }
   };
 
@@ -1125,6 +1180,18 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
     for (let stepIndex = 0; stepIndex < probe.steps.length; stepIndex += 1) {
       const step = probe.steps[stepIndex];
       if (step.kind === "probe") {
+        // §3.3: a fold-distance probe is only scored once production itself has
+        // folded the baseline. Otherwise the question is asked before the memory
+        // folded, and a truthful "I don't know" would be recorded as a retention
+        // miss — a fabricated regression. No marker is a gap, never a failure.
+        if (probe.distance === "fold") {
+          await delay(MARKER_DRAIN_MS);
+          noteProbeMarkers();
+          if (seenProbe.foldCount === 0) {
+            emitProbe(probe, "observability_gap", { reason: "fold_not_observed" });
+            continue;
+          }
+        }
         const before = environment.presentationMarkers;
         const outcome = await runTurn({ message: step.text });
         if (outcome === undefined || outcome.terminal !== true) {
