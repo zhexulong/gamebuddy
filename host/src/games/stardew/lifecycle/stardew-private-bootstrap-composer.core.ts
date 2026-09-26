@@ -3772,6 +3772,19 @@ export async function settleOwnedPlayerHostContainedRuntimeAttempt(
   owner: StardewOwnedPlayerHostBootstrap,
   launchedRoles: readonly ("playerHost" | "aiClient")[],
 ): Promise<void> {
+  const proof = await advanceOwnedPlayerHostToContainedAndMintProof(owner, launchedRoles);
+  await settleOwnedPlayerHostRegistrationAttempt(owner, proof);
+}
+
+/**
+ * The first half of the production settlement, split so the release rules can be
+ * observed directly: drive the durable record to its terminal `contained` state
+ * and mint the matching proof, without touching the registration pointer.
+ */
+export async function advanceOwnedPlayerHostToContainedAndMintProof(
+  owner: StardewOwnedPlayerHostBootstrap,
+  launchedRoles: readonly ("playerHost" | "aiClient")[],
+): Promise<StardewBootstrapGuardianSettlementProof> {
   requireOwnedPlayerHostBootstrapFacts(owner);
   const guardianFacts = guardianOwnerBindings.get(owner);
   if (guardianFacts === undefined || !guardianFacts.consumed) {
@@ -3795,8 +3808,7 @@ export async function settleOwnedPlayerHostContainedRuntimeAttempt(
   await transitions.controlledRoleContained("playerHost");
   await transitions.controlledRoleContained("aiClient");
   await transitions.finalizeControlledContained();
-  const proof = mintStardewBootstrapGuardianSettlementProof(binding, guardianFacts.settlementBinding);
-  await settleOwnedPlayerHostRegistrationAttempt(owner, proof);
+  return mintStardewBootstrapGuardianSettlementProof(binding, guardianFacts.settlementBinding);
 }
 
 export function mintStardewBootstrapGuardianSettlementProof(

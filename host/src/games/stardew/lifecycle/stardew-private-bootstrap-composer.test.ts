@@ -261,6 +261,106 @@ test("the production settlement path advances the owner to contained and release
   assert.equal(record.aiClientState, "contained");
 });
 
+test("settlement rejects a terminal owner replacement unless its exact fence and revision are restored", async () => {
+  // The four mutations the release rule must reject: any change to the immutable
+  // fence (player, companion, guardian) or to the exact terminal revision means
+  // the proof no longer describes this attempt, so the pointer must stay bound.
+  for (const mutate of [
+    (record: Record<string, unknown>) => { record.playerId = "replacement-player"; },
+    (record: Record<string, unknown>) => { record.companionId = "replacement-companion"; },
+    (record: Record<string, unknown>) => { (record.guardian as Record<string, unknown>).bindingRevision = "replacement-revision"; },
+    (record: Record<string, unknown>) => { record.ownerRecordRevision = (record.ownerRecordRevision as number) + 1; },
+  ]) {
+    const harness = createHarness();
+    const root = await createRoot();
+    await publishStardewInstallationRegistration(root, null, {
+      schema: "gamebuddy-stardew-installation-registration/v1",
+      binding: { rootLayoutVersion: 1 },
+      revision: 1,
+      state: "ready",
+      locator: "C:\\Games\\Stardew Valley",
+      activeAttempt: null,
+    });
+    const claim = harness.composition.broker.confirm({
+      playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000,
+    }).consume("browser-1");
+    const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim);
+    const proof = await harness.testCore.settleOwnedPlayerHostToContainedForTesting(owner, ["playerHost", "aiClient"]);
+    const path = ownerPath(root);
+    const terminal = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    const replacement = JSON.parse(JSON.stringify(terminal)) as Record<string, unknown>;
+    mutate(replacement);
+    await writeFile(path, `${JSON.stringify(replacement)}\n`, "utf8");
+    await assert.rejects(
+      harness.testCore.releaseOwnedPlayerHostRegistrationForTesting(owner, proof),
+      /stardew_bootstrap_registration_unavailable/,
+    );
+    // The pointer is still bound: a tampered terminal record cannot free it.
+    assert.deepEqual(
+      (await readStardewInstallationRegistration(root))?.activeAttempt,
+      { bootstrapCorrelation: "bootstrap-1" },
+    );
+    // Restoring the exact bytes lets the same proof release it.
+    await writeFile(path, `${JSON.stringify(terminal)}\n`, "utf8");
+    await harness.testCore.releaseOwnedPlayerHostRegistrationForTesting(owner, proof);
+    assert.equal((await readStardewInstallationRegistration(root))?.activeAttempt, null);
+  }
+});
+
+test("a settlement proof is one-shot and cannot be replayed", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await publishStardewInstallationRegistration(root, null, {
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1 },
+    revision: 1,
+    state: "ready",
+    locator: "C:\\Games\\Stardew Valley",
+    activeAttempt: null,
+  });
+  const claim = harness.composition.broker.confirm({
+    playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000,
+  }).consume("browser-1");
+  const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim);
+  const proof = await harness.testCore.settleOwnedPlayerHostToContainedForTesting(owner, ["playerHost", "aiClient"]);
+  await harness.testCore.releaseOwnedPlayerHostRegistrationForTesting(owner, proof);
+  assert.equal((await readStardewInstallationRegistration(root))?.activeAttempt, null);
+  await assert.rejects(
+    harness.testCore.releaseOwnedPlayerHostRegistrationForTesting(owner, proof),
+    /settlement_proof_unavailable/,
+  );
+});
+
+test("settlement releases an active registration after its owner-authorized locator replacement", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await publishStardewInstallationRegistration(root, null, {
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1 },
+    revision: 1,
+    state: "ready",
+    locator: "C:\\Games\\Stardew Valley",
+    activeAttempt: null,
+  });
+  const claim = harness.composition.broker.confirm({
+    playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000,
+  }).consume("browser-1");
+  const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim);
+  const proof = await harness.testCore.settleOwnedPlayerHostToContainedForTesting(owner, ["playerHost", "aiClient"]);
+  // A locator replacement advances the registration revision; the release must
+  // still bind to the current record, not the one observed at mint time.
+  await harness.testCore.replaceStagedInstallationLocator(owner, 2, "D:\\Games\\Replacement Stardew Valley");
+  await harness.testCore.releaseOwnedPlayerHostRegistrationForTesting(owner, proof);
+  assert.deepEqual(await readStardewInstallationRegistration(root), {
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1 },
+    revision: 4,
+    state: "ready",
+    locator: "D:\\Games\\Replacement Stardew Valley",
+    activeAttempt: null,
+  });
+});
+
 test("v4 recovery CAS binds the exact recovery actor and only finalizes both contained roles", async () => {
   const harness = createHarness();
   const root = await createRoot();

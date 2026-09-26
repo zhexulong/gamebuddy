@@ -9,9 +9,11 @@ import {
   type StardewPrivateBootstrapCoreDependencies,
 } from "./stardew-private-bootstrap-composer.core.js";
 import {
+  advanceOwnedPlayerHostToContainedAndMintProof,
   consumeStardewBootstrapGuardianOwnerBinding,
   createStardewBootstrapGuardianOwnerBinding,
   settleOwnedPlayerHostContainedRuntimeAttempt,
+  settleOwnedPlayerHostRegistrationAttempt,
 } from "./stardew-private-bootstrap-composer.core.js";
 import type { AdmittedStardewInstallation } from "../../../stardew-installation-admission.js";
 import type { StardewManifestHandoffCoordinator } from "./stardew-private-bootstrap-composer.core.js";
@@ -101,6 +103,21 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   settleOwnedPlayerHostRegistrationForTesting(
     owner: StardewOwnedPlayerHostBootstrap,
     launchedRoles: readonly ("playerHost" | "aiClient")[],
+  ): Promise<void>;
+  /**
+   * Test-only split of the same production settlement: drive the durable record
+   * to `contained` and return the minted proof WITHOUT releasing the pointer, so
+   * a test can observe the release rules directly (replay, fence tamper, locator
+   * replacement, concurrent minting) instead of only the happy path.
+   */
+  settleOwnedPlayerHostToContainedForTesting(
+    owner: StardewOwnedPlayerHostBootstrap,
+    launchedRoles: readonly ("playerHost" | "aiClient")[],
+  ): Promise<import("./stardew-private-bootstrap-composer.core.js").StardewBootstrapGuardianSettlementProof>;
+  /** Releases a bound pointer through an already-minted proof (production rule). */
+  releaseOwnedPlayerHostRegistrationForTesting(
+    owner: StardewOwnedPlayerHostBootstrap,
+    proof: import("./stardew-private-bootstrap-composer.core.js").StardewBootstrapGuardianSettlementProof,
   ): Promise<void>;
   createOwnerTransitionsForTesting: ReturnType<typeof createStardewPrivateBootstrapTestCore>["createOwnerTransitionsForTesting"];
 }>;
@@ -210,6 +227,13 @@ export function createStardewPrivateBootstrapCompositionForTesting(
       // owner binding the composition owns, mirroring the collaborator.
       consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
       await settleOwnedPlayerHostContainedRuntimeAttempt(owner, launchedRoles);
+    },
+    settleOwnedPlayerHostToContainedForTesting: async (owner, launchedRoles) => {
+      consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
+      return await advanceOwnedPlayerHostToContainedAndMintProof(owner, launchedRoles);
+    },
+    releaseOwnedPlayerHostRegistrationForTesting: async (owner, proof) => {
+      await settleOwnedPlayerHostRegistrationAttempt(owner, proof);
     },
     materializeAiClientProfileAfterManifestAdmission: core.materializeAiClientProfileAfterManifestAdmission,
   }));
