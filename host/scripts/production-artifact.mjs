@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { publishVoiceGatewayFixture, verifyPublishedVoiceGateway, VOICE_GATEWAY_ADMISSION } from "./voice-artifact-fixture-publisher.mjs";
+import { closureOriginsFromInventory, stageDeclaredRuntimeClosure } from "./production-artifact-closure-staging.mjs";
 
 const TEST_ARTIFACT = /(?:^|\/)(?:[^/]*\.(?:test|test-support)(?:\.[^/]+)?|test-fixtures|[^/]*(?:physical-)?fixture-worker[^/]*)(?:\/|$)|legacy-writer-fixture/i;
 // Production is a fresh semantic-continuity authority. Reject legacy module
@@ -975,7 +976,7 @@ function rejectUnverifiedBrowserArtifactFiles(artifactFiles, origins) {
       throw new Error(`production_browser_artifact_outside_fixed_subtree:${path}`);
   }
 }
-export async function createInventory({ artifactRoot, origins = new Map(), externalRuntimeClosure, hostRoot, entryRoots, browserArtifactSnapshot, browserArtifactDescriptor, runtimeBootstrapPath }) {
+export async function createInventory({ artifactRoot, origins = new Map(), externalRuntimeClosure, hostRoot, entryRoots, browserArtifactSnapshot, browserArtifactDescriptor, runtimeBootstrapPath, closureHostRoot = hostRoot }) {
   const artifactFiles = await files(artifactRoot);
   if (browserArtifactDescriptor !== undefined) {
     rejectBrowserArtifactOutsideFixedSubtree(artifactFiles, browserArtifactDescriptor);
@@ -1001,11 +1002,15 @@ export async function createInventory({ artifactRoot, origins = new Map(), exter
     const absolute = resolve(artifactRoot, item); const state = await regular(absolute, "artifact");
     entries.push({ path: slash(item), type: "file", mode: (state.mode & 0o777).toString(8).padStart(3, "0"), sha256: digest(await readFile(absolute)), origin: origins.get(slash(item)) ?? { kind: "typescript_emit" } });
   }
-  const closure = await verifyExternalRuntimeClosure({ artifactRoot, hostRoot, externalRuntimeClosure, origins });
+  // A published generation is its own resolution authority: release paths pass
+  // the artifact root here. Resolving from the developer repository instead is
+  // what let a generation publish with no closure at all and then fail with
+  // ERR_MODULE_NOT_FOUND once it was moved outside the repository.
+  const closure = await verifyExternalRuntimeClosure({ artifactRoot, hostRoot: closureHostRoot, externalRuntimeClosure, origins });
   const canonical = JSON.stringify({ entries, externalRuntimeClosure: closure });
   return { schema: "gamebuddy-host-production-inventory/v4", entries, externalRuntimeClosure: closure, digest: digest(canonical) };
 }
-export async function verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory, origins = new Map(), browserArtifactSnapshot, runtimeDescriptor = config.bundledRuntime }) {
+export async function verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory, origins = new Map(), browserArtifactSnapshot, runtimeDescriptor = config.bundledRuntime, closureHostRoot = hostRoot }) {
   const verifiedOrigins = new Map(origins);
   if (config.browserArtifact !== undefined)
     rejectBrowserArtifactOutsideFixedSubtree(await files(artifactRoot), config.browserArtifact);
@@ -1025,7 +1030,7 @@ export async function verifyArtifact({ artifactRoot, hostRoot, config, expectedI
   const rootsToUse = (expectedInventory && !expectedInventory?.entries?.some((e) => e.path === "runtime-core.internal.js"))
     ? allVerificationRoots(config).filter(r => expectedInventory.entries.some(e => e.path === r))
     : allVerificationRoots(config);
-  const inventory = await createInventory({ artifactRoot, hostRoot, origins: verifiedOrigins, entryRoots: rootsToUse, externalRuntimeClosure: closureToUse, browserArtifactSnapshot: verifiedBrowserArtifactSnapshot, browserArtifactDescriptor: config.browserArtifact, runtimeBootstrapPath: runtimeDescriptor?.bootstrapPath });
+  const inventory = await createInventory({ artifactRoot, hostRoot, origins: verifiedOrigins, entryRoots: rootsToUse, externalRuntimeClosure: closureToUse, browserArtifactSnapshot: verifiedBrowserArtifactSnapshot, browserArtifactDescriptor: config.browserArtifact, runtimeBootstrapPath: runtimeDescriptor?.bootstrapPath, closureHostRoot });
   const entriesToCheck = (expectedInventory && !expectedInventory?.entries?.some((e) => e.path === "runtime-core.internal.js"))
     ? config.entryRoots.filter(r => expectedInventory.entries.some(e => e.path === r))
     : config.entryRoots;
@@ -1110,6 +1115,14 @@ export async function verifyExternalRuntimeClosure({ artifactRoot, hostRoot, ext
   }
   for (const item of artifactFiles) {
     if (origins.get(slash(item))?.kind === BROWSER_ARTIFACT.kind) continue;
+    // The staged external runtime closure is third-party code admitted as one
+    // publisher claim and bound file-by-file by the artifact inventory. Like
+    // runtime/**, it is not part of the Host module graph, so its own bare
+    // imports (zod, ws, …) are not Host ingress. The exemption is derived from
+    // the claim record, never from a `node_modules/` path prefix: an unclaimed
+    // file under that directory is still audited here and still rejected by the
+    // reachability check.
+    if (origins.get(slash(item))?.kind === "declared_external_runtime_closure") continue;
     // The bundled runtime subtree (runtime/**) is a pinned official Node
     // distribution, admitted by runtimeAdmissionSha256 + closure file list; its
     // own modules (npm/corepack …) legitimately use dynamic import and are not
@@ -1282,8 +1295,9 @@ async function assertOutputRootLayout(outputRoot) {
   const entries = await readdir(outputRoot);
   if (entries.some((entry) => entry !== GENERATIONS && entry !== POINTER && entry !== PUBLISHER_LOCK)) throw new Error("production_output_root_contains_direct_artifact");
 }
-async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoot, outputRoot, voiceDistRoot }, copyRuntime, runtimeDescriptorOverride, cleanupRuntimeSource = undefined) {
+async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoot, outputRoot, voiceDistRoot }, copyRuntime, runtimeDescriptorOverride, cleanupRuntimeSource = undefined, stageRuntimeClosure = stageDeclaredRuntimeClosure) {
   if (typeof copyRuntime !== "function") throw new Error("verified_bundled_runtime_input_required");
+  if (typeof stageRuntimeClosure !== "function") throw new Error("declared_external_runtime_closure_stager_required");
   if (typeof voiceDistRoot !== "string" || voiceDistRoot.length === 0) throw new Error("voice_gateway_dist_root_required");
   const config = await readArtifactConfig(hostRoot);
   const runtimeDescriptor = runtimeDescriptorOverride ?? config.bundledRuntime;
@@ -1301,6 +1315,10 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
     }
     const origins = await copyApprovedResources({ hostRoot, stagingRoot, config });
     for (const [path, origin] of await copyRuntime(stagingRoot, runtimeDescriptor)) origins.set(path, origin);
+    // Ruling 1: the published generation carries its declared external runtime
+    // closure and resolves it from its own tree, so it starts outside the
+    // repository with no repo/system-PATH fallback.
+    for (const [path, origin] of await stageRuntimeClosure({ hostRoot, stagingRoot, externalRuntimeClosure: config.externalRuntimeClosure, testArtifact: TEST_ARTIFACT })) origins.set(path, origin);
     if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
       for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
     }
@@ -1335,9 +1353,9 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
     // pre-publish mutation window as far as this pathname-based architecture permits.
     const browserArtifactSnapshot = config.browserArtifact === undefined ? undefined
       : (await createBrowserArtifactSnapshot({ artifactRoot: stagingRoot, descriptor: config.browserArtifact })).snapshot;
-    const inventory = await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, origins, browserArtifactSnapshot, runtimeDescriptor });
+    const inventory = await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, origins, browserArtifactSnapshot, runtimeDescriptor, closureHostRoot: stagingRoot });
     await writeFile(resolve(stagingRoot, "production-inventory.json"), `${JSON.stringify(inventory, null, 2)}\n`);
-    await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, expectedInventory: inventory, origins, browserArtifactSnapshot, runtimeDescriptor });
+    await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, expectedInventory: inventory, origins, browserArtifactSnapshot, runtimeDescriptor, closureHostRoot: stagingRoot });
     if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined)
       await emitGuardianAdmission({ stagingRoot, inventory, descriptor: config.windowsBootstrapGuardian });
     if (config.voiceGateway !== undefined)
@@ -1430,6 +1448,10 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   const origins = new Map(config.resources.map((resource) => [slash(resource.destination), { kind: "allowlisted_resource", source: slash(resource.source), destination: slash(resource.destination), config: "production-artifact.config.json" }]));
   await verifyBundledRuntimeInArtifact({ artifactRoot, descriptor: runtimeDescriptor });
   for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
+  // Re-derive the publisher's closure claim from the generation's own recorded
+  // inventory, so a recheck verifies the claim rather than re-resolving it from
+  // the developer repository.
+  for (const [path, origin] of closureOriginsFromInventory(manifest.entries)) origins.set(path, origin);
   if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
     for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
   }
@@ -1448,7 +1470,7 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   if (config.voiceGateway !== undefined) {
     for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: artifactRoot, descriptor: config.voiceGateway, expectedInventoryDigest: manifest.digest })) origins.set(path, origin);
   }
-  const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
+  const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor, closureHostRoot: artifactRoot });
   await verifyRuntimeAdmission({ artifactRoot, inventory, generation: pointer.generation, descriptor: runtimeDescriptor });
   if (pointer.inventoryDigest !== inventory.digest) throw new Error("production_current_pointer_inventory_mismatch");
   return { ...inventory, generation: pointer.generation, artifactRoot, runtimeAdmissionSha256: pointer.runtimeAdmissionSha256 };
@@ -1490,6 +1512,10 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   const origins = new Map(config.resources.map((resource) => [slash(resource.destination), { kind: "allowlisted_resource", source: slash(resource.source), destination: slash(resource.destination), config: "production-artifact.config.json" }]));
   await verifyBundledRuntimeInArtifact({ artifactRoot: selected.artifactRoot, descriptor: runtimeDescriptor });
   for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);
+  // Re-derive the publisher's closure claim from the generation's own recorded
+  // inventory, so a recheck verifies the claim rather than re-resolving it from
+  // the developer repository.
+  for (const [path, origin] of closureOriginsFromInventory(manifest.entries)) origins.set(path, origin);
   if (process.platform === "win32" && config.windowsReparseInspector !== undefined) {
     for (const [path, origin] of await verifiedWindowsReparseInspectorOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsReparseInspector })) origins.set(path, origin);
   }
@@ -1508,7 +1534,7 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   if (config.voiceGateway !== undefined) {
     for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.voiceGateway, expectedInventoryDigest: manifest.digest })) origins.set(path, origin);
   }
-  const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor });
+  const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins, runtimeDescriptor, closureHostRoot: selected.artifactRoot });
   await verifyRuntimeAdmission({ artifactRoot: selected.artifactRoot, inventory, generation: selected.generation, descriptor: runtimeDescriptor });
   if (inventory.digest !== selected.digest) throw new Error("production_selected_generation_integrity_mismatch");
   await safeAncestors(selected.artifactRoot, selected.entryPath, "production_entry"); await regular(selected.entryPath, "production_entry");
