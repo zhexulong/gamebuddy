@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  GATE_EXEMPT_PUBLISHED_ACTIONS,
+} from "./lib/stardew-published-action-registry.mjs";
 import { resolveStardewActionGateRunner } from "./resolve-stardew-action-gate-runner.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
@@ -20,6 +23,15 @@ test("fixture launcher resolver returns the experimental runner without widening
     assert.equal(publishedIds.has(actionId), false, `${actionId} must not enter the published gate list`);
     assert.match(runner, /^run-stardew-native-local-player-[a-z0-9-]+\.mjs$/);
     assert.equal(resolveStardewActionGateRunner(actionId), runner);
+  }
+});
+
+test("fixture launcher resolver returns the declared runner for gate-exempt published actions", () => {
+  // The exemption is a carve-out of the gate list, not a hole in it: the
+  // declared runner (navigation's own smoke runner) must resolve.
+  for (const exemption of GATE_EXEMPT_PUBLISHED_ACTIONS) {
+    assert.equal(resolveStardewActionGateRunner(exemption.actionId), exemption.runner);
+    assert.match(exemption.runner, /^run-stardew-[a-z0-9-]+\.mjs$/);
   }
 });
 
