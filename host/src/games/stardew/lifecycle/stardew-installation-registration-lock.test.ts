@@ -13,8 +13,9 @@ import {
   readStardewInstallationRegistration,
   withStardewLifecycleInstallationRegistrationOwner,
 } from "../../../stardew-installation-registration.internal.js";
-import { bindWindowsStaleLockReclaimer, pathLockPath, reclaimStaleLock } from "../../../path-lock.js";
+import { bindWindowsStaleLockReclaimer, reclaimStaleLock } from "../../../path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "../../../windows-stale-lock-reclaimer/index.test-support.js";
+import { createHarness } from "./stardew-private-bootstrap-composer.test-fixtures.js";
 
 /**
  * Registration / Gate 6 — lock and session lifetime, across two real processes.
@@ -284,6 +285,40 @@ test("a live second process holding the registration lock blocks every registrat
   assert.notEqual(current, null);
   await publishStardewInstallationRegistration(root, current!.revision, readyRecord(current!.revision + 1));
   assert.equal((await readStardewInstallationRegistration(root))?.revision, current!.revision + 1);
+});
+
+/**
+ * The registration lock is a short preparation scope, not a session lock. This
+ * test pins the distinction: once the owner attempt is bound, a competing
+ * operation is refused because of the ACTIVE POINTER (`busy`), not because the
+ * lock is still held (`durable_path_lock_timeout`). If the lock leaked into the
+ * session, every assertion here would time out instead.
+ */
+test("the registration lock is released once the attempt is bound, so the refusal is the pointer", async () => {
+  const root = await createRoot();
+  await publishStardewInstallationRegistration(root, null, readyRecord());
+  const lockPath = join(root, `${REGISTRATION_RELATIVE}.lock`);
+
+  // Binding the attempt takes the lock for the preparation scope only.
+  const harness = createHarness();
+  const browserSessionId = "browser-lock-scope";
+  const confirmed = harness.composition.broker.confirm({
+    playerId: "player-1", companionId: "companion-1", browserSessionId, expiresAtMs: 5_000,
+  }).consume(browserSessionId);
+  await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, confirmed);
+
+  assert.deepEqual(
+    (await readStardewInstallationRegistration(root))?.activeAttempt,
+    { bootstrapCorrelation: "bootstrap-1" },
+  );
+  // The preparation scope is closed: no lock residue is left behind.
+  await assert.rejects(readFile(lockPath, "utf8"), /ENOENT/);
+  // And a competing rewrite is refused by the pointer rule, which is only
+  // reachable when the lock is free. A held lock would time out instead.
+  await assert.rejects(
+    publishStardewInstallationRegistration(root, 1, readyRecord(2)),
+    /stardew_installation_registration_busy/,
+  );
 });
 
 test("a holder that died without releasing still blocks a successor while its lock is fresh", async () => {
