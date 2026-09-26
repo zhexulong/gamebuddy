@@ -111,6 +111,7 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
     await mkdir(backup, { recursive: true });
     backupCreated = true;
     await backupManagedFiles(context, backup);
+    await backupBodyProgramJournal(options, backup);
     const configured = configureNativeLocalPlayer(
       original,
       options.saveName,
@@ -164,6 +165,7 @@ async function bootstrapNativeLocalPlayerFixtureInternal(options) {
     await mkdir(backup, { recursive: true });
     backupCreated = true;
     await backupManagedFiles(context, backup);
+    await backupBodyProgramJournal(options, backup);
     await writeJson(
       context.configPath,
       configureNativeLocalPlayerBootstrap(original, options.logicalSaveName, options.timeoutSeconds ?? 90, actions),
@@ -237,6 +239,11 @@ async function restoreNativeLocalPlayerFixtureInternal(options) {
   assertBackupName(options.backupName);
   await assertTransaction(context, options.backupName);
   const backup = join(context.root, options.backupName);
+  // The Mod-owned Body Program journal is a second durable authority the run
+  // mutates, so it is restored in the same step. Without this the next run of
+  // the same fixture can start from a stale RecoveryRequired journal and fail
+  // closed for reasons the prompt and the world cannot explain.
+  await restoreBodyProgramJournal(backup);
   const result = await restoreManagedFiles(context, backup, true);
   await endTransaction(context, options.backupName);
   return result;
@@ -603,6 +610,87 @@ async function backupManagedFiles(context, backup) {
     entries.push({ name, existed, backupFile, sha256: bytes ? digest(bytes) : null });
   }
   await writeJson(join(backup, "manifest.json"), { version: 1, entries });
+}
+
+/**
+ * The Mod-owned Body Program journal lives outside everything the Mod-file
+ * backup covers: `<StardewSaveRoot>/BodyProgramJournal-v1/<integration>/<saveId>/
+ * <worldId>/<playerId>/<companionId>/journal.json` (see
+ * integrations/stardew/WindowsBodyProgramJournalStore.cs). It is a durable
+ * authority keyed by the fixture binding's four opaque ids, so its scope is
+ * byte-identical across runs of the same fixture.
+ *
+ * That makes it a reset gap rather than a durability feature: a run that leaves
+ * a non-terminal or RecoveryRequired program behind makes the next run's
+ * OpenStatus RecoveryRequired, the Mod then declines to compose the controller,
+ * and the same submit_action_program call that succeeded before now fails closed
+ * with body_program_journal_unavailable. Observed live: a 3033-byte journal from
+ * 2026-09-22 still held state 5 (RecoveryRequired) while the working save had
+ * already been restored to the template three days later.
+ *
+ * So the fixture transaction owns this subtree the same way it owns the Mod
+ * files: backed up before preparation and restored on restore. When the caller
+ * declares no save root or no binding - the offline source-assertion tests do
+ * both - the journal is out of scope, and that is recorded explicitly rather
+ * than silently skipped, so the distinction stays visible in the backup marker.
+ */
+function bodyProgramJournalScopeDirectory(options) {
+  // A caller that declares no Stardew save root has no journal in scope: the
+  // offline source-assertion tests prepare a fixture without one, and the live
+  // runner always supplies it. Returning null means "not managed by this
+  // transaction" rather than guessing a path.
+  if (!options.stardewSaveRoot) return null;
+  if (!isAbsolute(options.stardewSaveRoot)) throw new Error("native_local_fixture_save_root_required");
+  const binding = options.binding;
+  if (!binding || typeof binding !== "object") return null;
+  const segments = [binding.saveId, binding.worldId, binding.playerId, binding.companionId];
+  for (const segment of segments)
+    if (typeof segment !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(segment))
+      throw new Error("invalid_native_local_binding");
+  return join(options.stardewSaveRoot, "BodyProgramJournal-v1", "stardew", ...segments);
+}
+
+async function backupBodyProgramJournal(options, backup) {
+  // The bootstrap-phase prepare has no binding yet (the game has not created the
+  // save whose ids scope the journal), and offline callers declare no save root.
+  // Record that explicitly rather than guessing: `existed: null` with a null path
+  // means "not scoped, not managed by this transaction", and restore leaves it
+  // alone for that path.
+  const scopeDirectory = bodyProgramJournalScopeDirectory(options);
+  if (scopeDirectory === null) {
+    await writeJson(join(backup, "body-program-journal.json"), { version: 1, path: null, existed: null });
+    return { path: null, existed: null };
+  }
+  const scopeBackup = join(backup, "body-program-journal");
+  const existed = await exists(scopeDirectory);
+  if (existed) {
+    await mkdir(dirname(scopeBackup), { recursive: true });
+    await cp(scopeDirectory, scopeBackup, { recursive: true });
+  }
+  await writeJson(join(backup, "body-program-journal.json"), { version: 1, path: scopeDirectory, existed });
+  return { path: scopeDirectory, existed };
+}
+
+async function restoreBodyProgramJournal(backup) {
+  const scopeBackup = join(backup, "body-program-journal");
+  const marker = await readJson(join(backup, "body-program-journal.json"));
+  if (marker?.version !== 1) throw new Error("invalid_fixture_backup_manifest");
+  const { path, existed } = marker;
+  if (existed === null) {
+    if (path !== null) throw new Error("invalid_fixture_backup_manifest");
+    return marker;
+  }
+  if (typeof path !== "string" || typeof existed !== "boolean")
+    throw new Error("invalid_fixture_backup_manifest");
+  // Always clear the live scope first: a run that wrote a journal must not keep
+  // it merely because the pre-run state had none.
+  await rm(path, { recursive: true, force: true });
+  if (existed) {
+    if (!(await exists(scopeBackup))) throw new Error("invalid_fixture_backup_manifest");
+    await mkdir(dirname(path), { recursive: true });
+    await cp(scopeBackup, path, { recursive: true, force: true });
+  }
+  return marker;
 }
 async function restoreManagedFiles(context, backup, removeBackup) {
   const manifest = await readJson(join(backup, "manifest.json"));

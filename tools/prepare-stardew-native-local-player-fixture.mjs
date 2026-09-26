@@ -13,6 +13,7 @@ console.log(
       timeoutSeconds: values.has("--timeout-seconds") ? Number(required(values, "--timeout-seconds")) : undefined,
       action: values.get("--action"),
       binding: JSON.parse(await readFile(required(values, "--binding-path"), "utf8")),
+      stardewSaveRoot: values.get("--stardew-save-root"),
     }),
   ),
 );
