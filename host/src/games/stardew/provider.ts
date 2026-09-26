@@ -102,6 +102,7 @@ export function createStardewGamePresentationProjection(
       "game.resume.cancel",
       "game.reopen",
       "game.disconnect",
+      "game.endgame",
       "game.create",
       "game.installation.discovery.read",
       "game.installation.discovery.confirm",
