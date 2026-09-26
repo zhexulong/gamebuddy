@@ -706,6 +706,8 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
     operation = "game_reopen";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_DISCONNECT_PATH) {
     operation = "game_disconnect";
+  } else if (request.method === "POST" && requestUrl.pathname === GAME_ENDGAME_PATH) {
+    operation = "game_endgame";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_CREATE_PATH) {
     operation = "game_create";
   } else {
