@@ -1319,7 +1319,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             || distance is < 0 or > 30
             || !TryReadSceneOptionalText(value.GetProperty("actionHint"), 160, out string? actionHint)
             || value.GetProperty("kind").ValueKind != JsonValueKind.String
-            || value.GetProperty("kind").GetString() is not ("npc" or "chest" or "crop" or "forage" or "door" or "machine" or "water_source")
+            || value.GetProperty("kind").GetString() is not ("npc" or "chest" or "crop" or "tree" or "animal" or "forage" or "door" or "machine" or "water_source")
             || value.GetProperty("direction").ValueKind != JsonValueKind.String
             || value.GetProperty("direction").GetString() is not ("North" or "South" or "East" or "West" or "CurrentTile"))
             return false;
@@ -1413,7 +1413,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
     private static bool IsValidObserveSceneAffordance(ObserveSceneAffordancePayload? affordance) => affordance is not null
         && IsValidSceneReference(affordance.Ref)
-        && affordance.Kind is "npc" or "chest" or "crop" or "forage" or "door" or "machine" or "water_source"
+        && affordance.Kind is "npc" or "chest" or "crop" or "tree" or "animal" or "forage" or "door" or "machine" or "water_source"
         && IsValidSceneText(affordance.Name, 128)
         && affordance.Distance is >= 0 and <= 30
         && affordance.Direction is "North" or "South" or "East" or "West" or "CurrentTile"

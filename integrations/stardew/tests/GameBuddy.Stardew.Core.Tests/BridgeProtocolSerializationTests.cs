@@ -761,6 +761,39 @@ public sealed class BridgeProtocolSerializationTests
         parsed!.Payload.Should().BeEquivalentTo(result);
     }
 
+    [Theory]
+    [InlineData("tree")]
+    [InlineData("animal")]
+    public void ObserveSceneResult_RoundTripsDenseDiscoveryAffordanceKinds(string kind)
+    {
+        // Lane F publishes tree/animal so the companion can find choppable trees
+        // and the targets of pet_animal/feed_animal/collect_animal_product. All
+        // three wire layers (Mod enum, Mod outbound/inbound validators, Host
+        // protocol set + JSON schema) must accept the kind; a missing layer
+        // downgrades the producer's result to response_serialization_failed and
+        // fails the whole observe_scene call only once these entities are in
+        // range, which no unit test outside this round trip can see.
+        var result = new ObserveSceneResultPayload(
+            "so1_AAAAAAAAAAAAAAAAAAAAAA",
+            "Farm",
+            "outdoor",
+            new[]
+            {
+                new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", kind, kind == "tree" ? "Tree" : "Cluck", 2, "East", kind == "tree" ? "chop_tree_source" : "collect_animal_product"),
+            },
+            "A dense discovery affordance is nearby.",
+            false,
+            null);
+        var envelope = new BridgeEnvelope<ObserveSceneResultPayload>(1, "msg_1", "corr_1", 1000L, SampleScope, "observe_scene_result", result);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue();
+        serializeReason.Should().Be("accepted");
+
+        BridgeProtocol.TryDeserializeObserveSceneResult(json, out var parsed, out string deserializeReason).Should().BeTrue();
+        deserializeReason.Should().Be("accepted");
+        parsed!.Payload.Should().BeEquivalentTo(result);
+    }
+
     [Fact]
     public void ObserveSceneResult_RoundTripsWaterSourceAffordanceKind()
     {
