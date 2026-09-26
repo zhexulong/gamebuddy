@@ -213,7 +213,7 @@ try {
             try { (Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json).observedSaveSlot -eq $SaveName } catch { $false }
         } | Select-Object -First 1 -ExpandProperty FullName
         if ([string]::IsNullOrWhiteSpace($bindingPath)) { throw "Disposable native-local action run requires a bootstrap-captured binding whose observed slot is $SaveName." }
-        node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") --root $FixtureRoot --mods-path $ModsPath --release-dir $releaseDir --save-name $SaveName --backup-name $backupName --timeout-seconds $TimeoutSeconds --action $Action --binding-path $bindingPath
+        node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") --root $FixtureRoot --mods-path $ModsPath --release-dir $releaseDir --save-name $SaveName --backup-name $backupName --timeout-seconds $TimeoutSeconds --action $Action --binding-path $bindingPath --stardew-save-root $stardewSaveRoot
         if ($LASTEXITCODE -ne 0) { throw "Native-local fixture prepare failed." }
     }
     $prepared = $true

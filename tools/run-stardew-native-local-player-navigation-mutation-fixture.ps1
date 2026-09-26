@@ -70,7 +70,7 @@ try {
         $logicalSaveName = $SaveName -replace '_[0-9]{1,32}$', ''
         throw "Navigation mutation gate requires bootstrap-captured binding '$logicalSaveName.native-local-binding.json' for observed slot $SaveName."
     }
-    node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") --root $FixtureRoot --mods-path $ModsPath --release-dir $releaseDir --save-name $SaveName --backup-name $backupName --timeout-seconds $TimeoutSeconds --action navigation_mutation --binding-path $bindingPath
+    node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") --root $FixtureRoot --mods-path $ModsPath --release-dir $releaseDir --save-name $SaveName --backup-name $backupName --timeout-seconds $TimeoutSeconds --action navigation_mutation --binding-path $bindingPath --stardew-save-root $stardewSaveRoot
     if ($LASTEXITCODE -ne 0) { throw "Native-local Navigation mutation fixture prepare failed." }
     $prepared = $true
     & $fixtureSaveHarness -FixtureRoot $FixtureRoot -TemplateName $SaveName -SaveName $SaveName -StardewSaveRoot $stardewSaveRoot
