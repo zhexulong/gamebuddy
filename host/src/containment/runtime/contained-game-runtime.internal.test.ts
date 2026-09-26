@@ -351,3 +351,15 @@ test("closing forbids a later settlement", async () => {
   await assert.rejects(() => runtime.settle(), /runtime is closed/);
   assert.deepEqual(log, ["arm:player", "launch:player", "contain:player", "close"]);
 });
+
+// A settled attempt is terminal, so it must not accept another role. The latch is
+// one-way, so a role launched after it would never be settled at all.
+test("a settled attempt rejects a further role launch", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log), binding);
+  await runtime.launchRole("player", launchOperation(), produce);
+  await runtime.containRole("player");
+  await runtime.settle();
+  await assert.rejects(() => runtime.launchRole("ai", launchOperation(), produce), /runtime was already settled/);
+  assert.deepEqual(log, ["arm:player", "launch:player", "contain:player", "settle"]);
+});

@@ -2072,6 +2072,11 @@ function createCoordinator(
     gameStops.clear();
     gameDisconnects.clear();
     gameCreates.clear();
+    // Endgame results are cleared here too: a rejected endgame promise would
+    // otherwise be retained for the coordinator's lifetime and a later same-key
+    // retry would replay that stale rejection. The endgame already ended the
+    // attempt, so nothing here can still need the idempotency record.
+    gameEndgames.clear();
     transition("closed");
   };
 
