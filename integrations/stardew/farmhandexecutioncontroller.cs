@@ -1394,6 +1394,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             (advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal)) ? DiscoverInventoryItemFacts(player) : null,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
+            advertisedCapabilities.Contains("craft_item", StringComparer.Ordinal) ? DiscoverCraftingRecipeTargets(player) : null,
+            advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingRecipeTargets(player) : null,
+            advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingStationTargets(player) : null,
             PresentationLocale: string.Empty);
     }
 
@@ -1413,7 +1416,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
         TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
-        ShippingBinTargets: null,
+        ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null,
         PresentationLocale: string.Empty);
     }
 
@@ -1494,7 +1497,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 Friendship friendship = player.friendshipData[npc.Name];
                 return new BridgeNpcRelationshipTarget(
-                    BuildNpcRelationshipTargetId(location, (int)npc.Tile.X, (int)npc.Tile.Y, npc.Name),
+                    BuildNpcRelationshipTargetId(location, npc.Name),
                     (int)npc.Tile.X,
                     (int)npc.Tile.Y,
                     npc.Name,
@@ -1507,9 +1510,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .ToArray();
     }
 
-    private static string BuildNpcRelationshipTargetId(StardewValley.GameLocation location, int x, int y, string npcName)
+    // Identity must not contain a coordinate. Discovery builds this from the
+    // NPC's live tile while admission checks it against the coordinate captured
+    // at snapshot time, so a villager that walked between the two produced two
+    // different hashes for the same person and the request was refused as if the
+    // target had changed. A villager's identity is (location, name): the name is
+    // unique per location and is what friendshipData is keyed by anyway.
+    private static string BuildNpcRelationshipTargetId(StardewValley.GameLocation location, string npcName)
     {
-        string raw = $"{location.NameOrUniqueName}:{x},{y}:npc:{npcName}";
+        string raw = $"{location.NameOrUniqueName}:npc:{npcName}";
         return $"npc_relationship_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
