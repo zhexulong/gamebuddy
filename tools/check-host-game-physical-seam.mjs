@@ -35,7 +35,6 @@ const STARDew_REGISTRATION_OWNER_FACADE = "withStardewLifecycleInstallationRegis
 const ALLOWED_STARDew_GENERIC_IMPORTERS = new Map([
   ["containment/auth/desktop-guardian-session.internal", new Set([
     "games/stardew/lifecycle/stardew-private-bootstrap-composer.internal",
-    "games/stardew/lifecycle/stardew-bootstrap-guardian.private",
   ])],
   ["bootstrap/roots/stardew-private-mod-profile-staging", new Set([
     "games/stardew/lifecycle/stardew-private-bootstrap-composer.internal",
