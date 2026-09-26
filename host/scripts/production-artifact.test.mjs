@@ -10,7 +10,7 @@ import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "./child-process-tool.
 import { buildProductionArtifact, resolveTypeScriptInvocation, verifyDeclaredMagicContextArtifact } from "./build-production-artifact.mjs";
 import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { createIncompleteRuntimeFixture } from "./production-artifact-runtime-test-support.mjs";
-import { assertCompleteTestArtifact, publishTestArtifact, recheckTestArtifactEntry, resolveTestArtifactEntry, resolveTestArtifactModule } from "./production-artifact-test-support.mjs";
+import { assertCompleteTestArtifact, publishTestArtifact, recheckTestArtifactEntry, resolveTestArtifactEntry, resolveTestArtifactModule, stageFixtureRuntimeClosure } from "./production-artifact-test-support.mjs";
 import { withSyntheticVerifiedReleaseBundledRuntimeForTest } from "./node-runtime-release-acquisition.mjs";
 import { createProductionChildEnvironment } from "./production-control-launch.mjs";
 
@@ -104,6 +104,8 @@ async function withProductionRuntimeContractProbe(run) {
     const source = await readFile(join(scriptRoot, "production-artifact.mjs"), "utf8");
     await writeFile(probePath, `${source}\nexport { copyVerifiedBundledRuntimeSource, publishProductionArtifactWithRuntimeCopier, currentGeneration, verifyCurrentRuntimeAdmissionAssociation, verifyRuntimeAdmission };\n`);
     await cp(join(scriptRoot, "production-artifact-esm-resolution-probe.mjs"), join(probeRoot, "production-artifact-esm-resolution-probe.mjs"));
+    // The probe copy also resolves the closure-staging module relatively.
+    await cp(join(scriptRoot, "production-artifact-closure-staging.mjs"), join(probeRoot, "production-artifact-closure-staging.mjs"));
     // The probe copy resolves the shared voice fixture publisher relatively.
     await cp(join(scriptRoot, "voice-artifact-fixture-publisher.mjs"), join(probeRoot, "voice-artifact-fixture-publisher.mjs"));
     return await run(await import(`${pathToFileURL(probePath).href}?test=${Date.now()}`));
@@ -282,6 +284,8 @@ test("production-private runtime publisher emits a lexicographically ordered mul
         { hostRoot: root, emittedRoot: await emit(root, "production-runtime-closure"), outputRoot, voiceDistRoot: join(root, "voice-gateway", ".dist") },
         async (stagingRoot, runtimeDescriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor: runtimeDescriptor, source: runtimeSource }),
         descriptor,
+        undefined,
+        stageFixtureRuntimeClosure,
       );
       const artifactRoot = join(outputRoot, "generations", published.generation);
       const sidecarPath = join(artifactRoot, "host-runtime-admission.json");
@@ -326,6 +330,8 @@ test("production-private runtime publisher emits canonical admission/current bin
         { hostRoot: root, emittedRoot: await emit(root, "production-private-first"), outputRoot, voiceDistRoot: join(root, "voice-gateway", ".dist") },
         copyRuntime,
         descriptor,
+        undefined,
+        stageFixtureRuntimeClosure,
       );
       const artifactRoot = join(outputRoot, "generations", published.generation);
       const sidecarPath = join(artifactRoot, "host-runtime-admission.json");
@@ -374,6 +380,7 @@ test("production-private runtime publisher emits canonical admission/current bin
           copyRuntime,
           descriptor,
           async () => { throw new Error("injected_runtime_cleanup_failure"); },
+          stageFixtureRuntimeClosure,
         ),
         /injected_runtime_cleanup_failure/,
       );
@@ -983,6 +990,56 @@ test("resolver rejects a scoped namespace symlink before package manifest reads"
       /production_external_package_unresolvable:@scope\/pkg/,
     );
   } finally { await rm(outside, { recursive: true, force: true }); }
+}));
+
+test("a generation resolves its declared closure from its own tree, so a repository-only package cannot stand in for it", async () => withFixture(async (root) => {
+  // The defect Ruling 1 closes: resolution used to run from the developer
+  // repository, so a generation could publish with NO closure of its own and
+  // then fail with ERR_MODULE_NOT_FOUND once moved outside the repository.
+  // Remove the fixture's package and assert publication now fails: the closure
+  // must come from the artifact, not from wherever the publisher happens to run.
+  const dist = join(root, "dist");
+  const published = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
+  const artifactRoot = join(dist, "test-generations", published.generation);
+  assert.ok(
+    published.entries.some((entry) => entry.path === "node_modules/typebox/package.json"
+      && entry.origin?.kind === "declared_external_runtime_closure"),
+    "the published generation must carry the declared closure as a claimed artifact tree",
+  );
+  assert.ok(published.entries.some((entry) => entry.path === "package.json"),
+    "the generation must carry its own resolution manifest, or the closure is unresolvable in place");
+  // A staged closure file is bound by the inventory, so tampering must fail.
+  await writeFile(join(artifactRoot, "node_modules", "typebox", "package.json"), JSON.stringify({ name: "typebox", main: "index.js", tampered: true }));
+  await assert.rejects(
+    assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }),
+    /production_inventory_mismatch_or_orphan/,
+  );
+}));
+
+test("the closure claim exempts only what it claims: an unclaimed file under node_modules is still rejected", async () => withFixture(async (root) => {
+  // The exemption added for the staged closure is derived from the origin claim,
+  // never from a `node_modules/` path prefix. A previous attempt widened it to a
+  // prefix and silently admitted arbitrary files, so pin the boundary here.
+  const dist = join(root, "dist");
+  const published = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
+  const artifactRoot = join(dist, "test-generations", published.generation);
+  // Claimed: the closure tree the publisher adopted.
+  assert.ok(published.entries.some((entry) => entry.path.startsWith("node_modules/")
+    && entry.origin?.kind === "declared_external_runtime_closure"));
+  // Unclaimed: a module that no claim covers must not be admitted just because
+  // it lives under the closure directory.
+  await writeFile(join(artifactRoot, "node_modules", "foreign.js"), "export {};\n");
+  await assert.rejects(
+    assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }),
+    /production_inventory_mismatch_or_orphan|production_module_unreachable_from_entry_roots/,
+  );
+  // An unclaimed non-JavaScript file is likewise not an allowlisted resource.
+  await rm(join(artifactRoot, "node_modules", "foreign.js"));
+  await writeFile(join(artifactRoot, "node_modules", "foreign.dat"), "not a resource");
+  await assert.rejects(
+    assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }),
+    /production_inventory_mismatch_or_orphan|production_file_not_allowlisted_resource/,
+  );
 }));
 
 test("resolver probe accepts only the exact JSON object and string tuple grammar", () => {
