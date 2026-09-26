@@ -3116,7 +3116,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     private void TryInitializeNativeFixtureScenario()
     {
         HostAutomationConfig? automation = this.config.HostAutomation;
-        if (this.hostAutomationFixtureInitialized || this.hostAutomationTerminal || automation is not { Enable: true } || automation.FixtureScenario is not ("native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1"))
+        if (this.hostAutomationFixtureInitialized || this.hostAutomationTerminal || automation is not { Enable: true } || automation.FixtureScenario is not ("native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1" or "native_ship_item_v1" or "native_chest_retrieve_v1" or "native_pet_animal_v1"))
             return;
         if (!automation.SaveName.StartsWith("GameBuddyFixture_", StringComparison.Ordinal) || !Context.IsWorldReady || !Game1.IsMasterGame || Game1.server is not null || this.hostFarmhandProvisioner?.IsAwaitingSave == true)
             return;
@@ -3135,6 +3135,14 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             if (automation.FixtureScenario == "native_use_item_v1")
             {
                 this.InitializeNativeUseItemFixture(farm);
+                return;
+            }
+            if (automation.FixtureScenario == "native_ship_item_v1")
+            {
+                // Only the naturally-retained native Shipping Bin building and
+                // the bound Farmhand's backpack are needed; this runs before
+                // SetupBigFarm so the bin is never rebuilt or relocated.
+                this.InitializeNativeShipItemFixture(farm);
                 return;
             }
 
@@ -3195,6 +3203,16 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             if (automation.FixtureScenario == "native_pickup_item_v1")
             {
                 this.InitializeNativePickupItemFixture(farm);
+                return;
+            }
+            if (automation.FixtureScenario == "native_chest_retrieve_v1")
+            {
+                this.InitializeNativeChestRetrieveFixture(farm);
+                return;
+            }
+            if (automation.FixtureScenario == "native_pet_animal_v1")
+            {
+                this.InitializeNativePetFixture(farm);
                 return;
             }
             if (automation.FixtureScenario == "native_harvest_crop_v1")
@@ -3881,6 +3899,201 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
         this.hostAutomationFixtureInitialized = true;
         this.Monitor.Log($"GameBuddy HostAutomation initialized native pickup-item v1 fixture before attachment: Cabin retained; farm_arrival={(int)farmArrival.X},{(int)farmArrival.Y}; item={qualifiedItemId}; stack={placedDebris.item.Stack}; tile={(int)placedTile.X},{(int)placedTile.Y}; debris_type={placedDebris.debrisType.Value}; chunks={placedDebris.Chunks.Count}; dropped_by={farmhandId}; production must guide the Farmhand into range and prove target-version automatic Debris.collect, chunk removal, and inventory delivery.", LogLevel.Info);
+    }
+
+    /// <summary>
+    /// Resolve the already-bound AI Farmhand actor of the retained Cabin. Every
+    /// HostAutomation scenario uses this exact target-version resolution: the
+    /// configured PlayerId must name a Farmer retained in this save who owns the
+    /// Cabin the LAN attachment binds to. This method never touches Game1.player,
+    /// never starts a server, and never invokes the tested action.
+    /// </summary>
+    private Farmer ResolveHostAutomationFarmhand(StardewValley.Farm farm)
+    {
+        if (!long.TryParse(this.config.PlayerId, out long farmhandId))
+            throw new InvalidOperationException("fixture_farmhand_id_invalid");
+        Farmer? farmhand = Game1.GetPlayer(farmhandId, onlyOnline: false);
+        bool ownsRetainedCabin = farmhand is not null && farm.buildings
+            .Select(building => building.GetIndoors())
+            .OfType<StardewValley.Locations.Cabin>()
+            .Any(cabin => cabin.OwnerId == farmhandId);
+        if (!ownsRetainedCabin || farmhand is null)
+            throw new InvalidOperationException("fixture_bound_farmhand_missing_after_native_setup");
+        if (farmhand.MaxItems < 36)
+            farmhand.increaseBackpackSize(36 - farmhand.MaxItems);
+        return farmhand;
+    }
+
+    /// <summary>
+    /// Resolve the Farm arrival the attached Farmhand will land on from the
+    /// retained Cabin's own native warp. This is the same target-version anchor
+    /// the other HostAutomation placement helpers use; no map coordinate is
+    /// guessed and no actor is warped here.
+    /// </summary>
+    private static Vector2 ResolveHostAutomationFarmArrival(Farmer farmhand, StardewValley.Farm farm, string reasonCodePrefix)
+    {
+        StardewValley.Warp? farmWarp = farmhand.currentLocation?.warps
+            .FirstOrDefault(warp => !warp.npcOnly.Value && string.Equals(warp.TargetName, farm.Name, StringComparison.Ordinal));
+        farmWarp ??= Game1.locations
+            .OfType<StardewValley.Locations.Cabin>()
+            .SelectMany(cabin => cabin.warps)
+            .FirstOrDefault(warp => !warp.npcOnly.Value && string.Equals(warp.TargetName, farm.Name, StringComparison.Ordinal));
+        if (farmWarp is null || farmWarp.TargetX < 0 || farmWarp.TargetY < 0)
+            throw new InvalidOperationException($"fixture_native_{reasonCodePrefix}_farm_warp_missing");
+        return new Vector2(farmWarp.TargetX, farmWarp.TargetY);
+    }
+
+    private void InitializeNativeShipItemFixture(StardewValley.Farm farm)
+    {
+        // Pre-attachment fixture only, on the Host side of the LAN topology: the
+        // naturally-loaded Farm keeps its single native "Shipping Bin" building
+        // (Farm.cs:173 AddDefaultBuilding) and the already-bound Farmhand's own
+        // backpack gains one ordinary shippable Object. Production alone calls
+        // Farm.shipItem and owns all receipt/postcondition evidence; the night
+        // settlement stays entirely native.
+        Farmer farmhand = this.ResolveHostAutomationFarmhand(farm);
+        const string shipItemId = "(O)24";
+        if (!farmhand.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == shipItemId && item.Stack > 0)
+            && farmhand.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(shipItemId, 1)) is not null)
+            throw new InvalidOperationException("fixture_farmhand_ship_item_inventory_full");
+        if (!farmhand.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == shipItemId && item.Stack > 0))
+            throw new InvalidOperationException("fixture_farmhand_ship_item_missing_after_add");
+        StardewValley.Buildings.ShippingBin? bin = farm.buildings.OfType<StardewValley.Buildings.ShippingBin>().FirstOrDefault();
+        if (bin is null || bin.daysOfConstructionLeft.Value > 0)
+            throw new InvalidOperationException("fixture_native_ship_item_bin_missing");
+        // The production seam resolves its settlement container through
+        // Farm.getShippingBin(who), which selects the personal bin only when the
+        // live team flag useSeparateWallets is set (Farm.cs:1025-1032). Resolve
+        // it for the bound Farmhand — the actor the tested call will actually run
+        // as — so the fixture empties the exact container that will be written to
+        // under either flag setting, and the shipped-stack delta stays
+        // unambiguous. This is pre-attachment fixture state only.
+        StardewValley.Inventories.IInventory destinationBin = farm.getShippingBin(farmhand);
+        destinationBin.Clear();
+        if (destinationBin.CountItemStacks() != 0)
+            throw new InvalidOperationException("fixture_native_ship_item_bin_not_empty");
+        Vector2? standing = FindNativeLocalShippingBinStandingTile(farm, bin);
+        if (standing is null)
+            throw new InvalidOperationException("fixture_native_ship_item_standing_tile_missing");
+        this.hostAutomationFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy HostAutomation initialized native ship-item v1 fixture before attachment: Cabin retained; farmhand={farmhand.UniqueMultiplayerID}; item={shipItemId}; bin={bin.tileX.Value},{bin.tileY.Value}; separate_wallets={Game1.player.team.useSeparateWallets.Value}; bin_empty_start=true; approach={standing.Value.X},{standing.Value.Y}; production alone invokes Farm.shipItem and emits receipt.", LogLevel.Info);
+    }
+
+    private void InitializeNativeChestRetrieveFixture(StardewValley.Farm farm)
+    {
+        // Pre-attachment fixture only, on the Host side of the LAN topology: one
+        // owned ordinary Chest on an empty Farm tile with a standable neighbor,
+        // containing one item, and the bound Farmhand's backpack able to accept
+        // it. Production alone removes the exact target through the native chest
+        // take data path and owns all receipt/postcondition evidence.
+        Farmer farmhand = this.ResolveHostAutomationFarmhand(farm);
+        const string retrieveItemId = "(O)24";
+        Vector2 farmArrival = ResolveHostAutomationFarmArrival(farmhand, farm, "chest_retrieve");
+        // Keep the target inside the production discovery radius of the arrival
+        // the attached Farmhand lands on, and require a separate passable
+        // approach tile. A missing legal placement stays a bounded fixture
+        // blocker instead of an excuse to widen the action's own range.
+        const int placementRadius = 6;
+        Vector2? target = Enumerable.Range(-placementRadius, placementRadius * 2 + 1)
+            .SelectMany(offsetX => Enumerable.Range(-placementRadius, placementRadius * 2 + 1)
+                .Select(offsetY => new Vector2(farmArrival.X + offsetX, farmArrival.Y + offsetY)))
+            .Where(tile => tile != farmArrival
+                && farm.isTileOnMap(tile)
+                && farm.isTilePassable(tile)
+                && !farm.objects.ContainsKey(tile)
+                && !farm.terrainFeatures.ContainsKey(tile))
+            .Where(tile => new[]
+            {
+                tile + new Vector2(1f, 0f),
+                tile + new Vector2(-1f, 0f),
+                tile + new Vector2(0f, 1f),
+                tile + new Vector2(0f, -1f),
+            }.Any(standing => farm.isTileOnMap(standing)
+                && farm.isTilePassable(standing)
+                && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)))
+            .OrderBy(tile => Math.Max(Math.Abs(tile.X - farmArrival.X), Math.Abs(tile.Y - farmArrival.Y)))
+            .ThenBy(tile => Math.Abs(tile.X - farmArrival.X) + Math.Abs(tile.Y - farmArrival.Y))
+            .Cast<Vector2?>()
+            .FirstOrDefault();
+        if (target is null)
+            throw new InvalidOperationException($"fixture_native_chest_retrieve_placement_missing:arrival={(int)farmArrival.X},{(int)farmArrival.Y}");
+        StardewValley.Objects.Chest chest = new(playerChest: true, target.Value);
+        StardewValley.Object contained = ItemRegistry.Create<StardewValley.Object>(retrieveItemId, 1);
+        if (chest.addItem(contained) is not null)
+            throw new InvalidOperationException("fixture_native_chest_retrieve_fill_failed");
+        if (!farmhand.couldInventoryAcceptThisItem(contained))
+            throw new InvalidOperationException("fixture_farmhand_chest_retrieve_inventory_unavailable");
+        farm.objects.Add(target.Value, chest);
+        // Chest.GetItemsForPlayer() with no GlobalInventoryId and no special
+        // chest type returns the plain Items list (Chest.cs:972-994), so the same
+        // single stack production will remove is the one validated here.
+        if (!IsFixtureOwnedOrdinaryChest(chest) || chest.GetItemsForPlayer().Count(item => item is not null) != 1)
+            throw new InvalidOperationException("fixture_native_chest_retrieve_placement_failed");
+        this.hostAutomationFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy HostAutomation initialized native chest-retrieve v1 fixture before attachment: Cabin retained; farmhand={farmhand.UniqueMultiplayerID}; item={retrieveItemId}; chest={chest.QualifiedItemId}; target={(int)target.Value.X},{(int)target.Value.Y}; farm_arrival={(int)farmArrival.X},{(int)farmArrival.Y}; inventory_slots={farmhand.MaxItems}; production alone invokes the native chest take path and emits receipt.", LogLevel.Info);
+    }
+
+    private void InitializeNativePetFixture(StardewValley.Farm farm)
+    {
+        // Pre-attachment fixture only, on the Host side of the LAN topology:
+        // exactly one unpetted native Pet on the Farm next to the arrival the
+        // attached Farmhand lands on. Production alone calls Pet.checkAction,
+        // records the daily interaction, applies friendship, and emits a
+        // matching terminal receipt.
+        Farmer farmhand = this.ResolveHostAutomationFarmhand(farm);
+        Vector2 farmArrival = ResolveHostAutomationFarmArrival(farmhand, farm, "pet");
+        if (!farm.isTilePassable(farmArrival) || farm.IsTileOccupiedBy(farmArrival, CollisionMask.All, CollisionMask.None, useFarmerTile: true))
+            throw new InvalidOperationException("fixture_native_pet_arrival_unavailable");
+        // pet_animal admits the target through
+        // Utility.tileWithinRadiusOfPlayer(..., 1, player) and resolves the
+        // location from the actor's own currentLocation, so the Pet must sit
+        // inside the Chebyshev-1 window of the arrival tile and on the Farm.
+        Vector2[] candidates =
+        {
+            farmArrival + new Vector2(1f, 0f),
+            farmArrival + new Vector2(-1f, 0f),
+            farmArrival + new Vector2(0f, 1f),
+            farmArrival + new Vector2(0f, -1f),
+            farmArrival + new Vector2(1f, 1f),
+            farmArrival + new Vector2(-1f, 1f),
+            farmArrival + new Vector2(1f, -1f),
+            farmArrival + new Vector2(-1f, -1f),
+        };
+        Vector2? targetTile = candidates
+            .Where(tile => farm.isTileOnMap(tile)
+                && farm.isTilePassable(tile)
+                && !farm.objects.ContainsKey(tile)
+                && !farm.terrainFeatures.ContainsKey(tile)
+                && !farm.characters.Any(character => character.Tile == tile))
+            .Cast<Vector2?>()
+            .FirstOrDefault();
+        if (targetTile is null)
+            throw new InvalidOperationException($"fixture_native_pet_placement_missing:arrival={(int)farmArrival.X},{(int)farmArrival.Y}");
+        // Pet.checkAction requires empty hands; the bound Farmhand is the actor
+        // that will become Game1.player on the AI client, so clear that actor's
+        // selected slot. This is a legal pre-attachment starting condition, not
+        // an invocation of the interaction or any of its result mutations.
+        if (farmhand.CurrentToolIndex >= 0 && farmhand.CurrentToolIndex < farmhand.Items.Count)
+            farmhand.Items[farmhand.CurrentToolIndex] = null;
+        StardewValley.Characters.Pet pet = new((int)targetTile.Value.X, (int)targetTile.Value.Y, "0", "Dog");
+        pet.Name = "Dog";
+        pet.homeLocationName.Value = farm.NameOrUniqueName;
+        pet.grantedFriendshipForPet.Value = false;
+        pet.friendshipTowardFarmer.Value = 0;
+        farm.addCharacter(pet);
+        pet.currentLocation = farm;
+        // addCharacter owns the location registration. Validate only the
+        // action-relevant native starting facts here; production rediscovery
+        // binds the exact later coordinate and opaque target ID.
+        if (!farm.characters.Contains(pet)
+            || pet.currentLocation != farm
+            || pet.petId.Value == Guid.Empty
+            || pet.grantedFriendshipForPet.Value
+            || pet.friendshipTowardFarmer.Value != 0
+            || pet.lastPetDay.TryGetValue(farmhand.UniqueMultiplayerID, out int lastDay) && lastDay == Game1.Date.TotalDays)
+            throw new InvalidOperationException("fixture_native_pet_placement_validation_failed");
+        this.hostAutomationFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy HostAutomation initialized native pet-animal v1 fixture before attachment: Cabin retained; farmhand={farmhand.UniqueMultiplayerID}; pet_type={pet.petType.Value}; pet_id={pet.petId.Value:N}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; farm_arrival={(int)farmArrival.X},{(int)farmArrival.Y}; friendship=0; petted_today=false; friendship_callback=false; hands_empty=true; production alone invokes Pet.checkAction and emits receipt.", LogLevel.Info);
     }
 
     private static bool IsFixtureAdjacentToFarmer(StardewValley.NPC npc, Farmer farmer)
