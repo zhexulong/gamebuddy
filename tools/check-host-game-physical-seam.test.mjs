@@ -37,17 +37,36 @@ test("passes the relocated production graph and allows the narrow Stardew contai
 test("allows the Stardew lifecycle process owner and approved provenance contract", async () => {
   await withFixture({
     "host/src/games/stardew/lifecycle/stardew-process-implementations.ts": "import { spawn } from 'node:child_process';\nexport const owner = spawn;\n",
+    // The game layer legitimately reaches only the staging provenance contract.
+    // It must NOT reach the containment auth transport: that allowance was removed
+    // with the retired desktop-session guardian seam, so this fixture asserts the
+    // live graph rather than an inert permission.
     "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts": [
-      "import type { DesktopGuardianSession } from '../../../containment/auth/desktop-guardian-session.internal.js';",
       "import { createProductionStagingDependencies } from '../../../bootstrap/roots/stardew-private-mod-profile-staging.js';",
-      "export const owner = { createProductionStagingDependencies } as unknown as DesktopGuardianSession;",
+      "export const owner = { createProductionStagingDependencies };\n",
     ].join("\n"),
-    "host/src/containment/auth/desktop-guardian-session.internal.ts": "export type DesktopGuardianSession = unknown;\n",
     "host/src/bootstrap/roots/stardew-private-mod-profile-staging.ts": "export function createProductionStagingDependencies() {}\n",
   }, (root) => {
     const report = checkHostGamePhysicalSeam({ root });
     assert.equal(report.verdict, "passed");
     assert.equal(report.violations.length, 0);
+  });
+});
+
+// The removed allowance must not silently come back. A game-layer import of the
+// containment auth transport is blocked, including a type-only import.
+test("blocks a game-layer import of the containment auth transport", async () => {
+  await withFixture({
+    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts": [
+      "import type { DesktopGuardianSession } from '../../../containment/auth/desktop-guardian-session.internal.js';",
+      "export const owner = {} as unknown as DesktopGuardianSession;\n",
+    ].join("\n"),
+    "host/src/containment/auth/desktop-guardian-session.internal.ts": "export type DesktopGuardianSession = unknown;\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.violations.length, 1);
+    assert.equal(report.violations[0]?.kind, "game_imports_generic_layer");
   });
 });
 
