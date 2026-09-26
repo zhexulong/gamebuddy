@@ -9,8 +9,6 @@ import {
   type StardewBootstrapGuardianRecoveryGateBinding,
 } from "./stardew-private-bootstrap-composer.core.js";
 import type { StardewGuardianBinding } from "./stardew-private-bootstrap-owner-records.private.js";
-import type { DesktopGuardianSession, GuardianAck } from "../../../containment/auth/desktop-guardian-session.internal.js";
-import { readStardewBootstrapGuardianNativeArmFrame } from "./stardew-private-bootstrap-composer.core.js";
 
 const OWNER_FILE = "owner.json";
 const OPAQUE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -53,12 +51,18 @@ export type StardewBootstrapGuardianNativePorts = Readonly<{
 }>;
 
 /**
- * A later Guardian-private plan authority may supply exact opaque native launch
- * bytes. This Host adapter neither constructs nor interprets those bytes.
+ * Retired seam removed 2026-09-26. It declared a deferred launch-plan port whose
+ * `create()` returned `Promise<Uint8Array>` and built an arm frame with
+ * `Buffer.from(JSON.stringify(...))` in the game layer. Both violate ADR-0007
+ * Shape B, which keeps every platform-frame representation on the composition
+ * side, and neither had a production caller: desktop launches go exclusively
+ * through `createDesktopGuardianGameRuntimePlatform` →
+ * `createStardewPlayerHostRuntimeLaunchCollaboratorFactory` in
+ * `composition/stardew/stardew-guardian-platform.ts`, which owns the encoder.
+ * The only references were its own declaration and three test call sites, so it
+ * was removed rather than kept as a test-only path the import-based checker
+ * cannot see.
  */
-type StardewBootstrapGuardianDeferredLaunchPlanPort = Readonly<{
-  create(binding: StardewBootstrapGuardianOwnerBinding, role: GuardianRole): Promise<Uint8Array>;
-}>;
 
 export type StardewBootstrapGuardianOwner = Readonly<{
   /** Durable acknowledgement only; it does not claim or launch a native process. */
@@ -77,72 +81,6 @@ export type StardewBootstrapGuardianOwner = Readonly<{
   settle(): Promise<StardewBootstrapGuardianSettlementProof>;
 }>;
 
-/**
- * Private orchestration owner over one composition-minted, one-shot binding.
- * It never receives a path, fence, revision, record, or persistence callback.
- */
-/**
- * Retired test-only seam. Production Desktop starts launches exclusively
- * through the contained runtime path (`createDesktopGuardianGameRuntimePlatform`
- * → `createStardewPlayerHostRuntimeLaunchCollaboratorFactory`), whose arm frames
- * are produced by the composition armor and carry the `approvedExecutable` the
- * native Guardian requires. This adapter's tokenless arm frame omits that field,
- * so the native `ParseArm` rejects it by contract if it were ever wired again;
- * the desktop-host-composition.test.ts reachability lock asserts the factory is
- * retained but never invoked. Do not re-wire this seam without adding
- * `approvedExecutable` to its arm body and its tests.
- *
- * Adapts the authenticated Desktop session without exposing its transport. The
- * owner binding is the sole source for every correlation/native arm fact.
- * Launch remains unavailable unless a Guardian-private authority supplies its
- * exact opaque plan; this adapter only relays that plan through the session.
- */
-export function createStardewBootstrapGuardianNativePortsFromDesktopSession(
-  binding: StardewBootstrapGuardianOwnerBinding,
-  session: DesktopGuardianSession,
-  deadlineUnixMs: number,
-  operationWaitBudgetMs: number,
-  deferredLaunchPlan?: StardewBootstrapGuardianDeferredLaunchPlanPort,
-): StardewBootstrapGuardianNativePorts {
-  if (!Number.isSafeInteger(deadlineUnixMs) || deadlineUnixMs <= Date.now() || !Number.isSafeInteger(operationWaitBudgetMs) || operationWaitBudgetMs < 1 || operationWaitBudgetMs > 300_000) throw new Error("stardew_bootstrap_guardian_session_unavailable");
-  const arm = readStardewBootstrapGuardianNativeArmFrame(binding);
-  const correlation = Object.freeze({ guardianInstanceId: arm.guardianInstanceId, guardianEpoch: arm.guardianEpoch, attemptId: arm.attemptId });
-  const role = (value: GuardianRole): "player_host" | "ai_client" => value === "playerHost" ? "player_host" : "ai_client";
-  const expect = (ack: GuardianAck, operation: string, expectedRole?: "player_host" | "ai_client") => {
-    if (ack.operation !== operation || ack.bootstrapId !== arm.bootstrapId || ack.guardianInstanceId !== arm.guardianInstanceId ||
-        ack.guardianEpoch !== arm.guardianEpoch || ack.attemptId !== arm.attemptId || (expectedRole !== undefined && ack.role !== expectedRole))
-      throw new Error("stardew_bootstrap_guardian_session_ack_mismatch");
-  };
-  return Object.freeze({
-      controlledClose: Object.freeze({
-      async arm() {
-        const body = Buffer.from(JSON.stringify({ guardianInstanceId: arm.guardianInstanceId, guardianEpoch: arm.guardianEpoch, attemptId: arm.attemptId, revision: arm.revision, leaseName: arm.leaseName, playerJobName: arm.playerJobName, aiJobName: arm.aiJobName }), "utf8");
-        const ack = await session.arm({ ...correlation, operationWaitBudgetMs, privateFrame: body });
-        expect(ack, "arm_attempt");
-      },
-      async launchRole(ownerBinding: StardewBootstrapGuardianOwnerBinding, target: GuardianRole) {
-        if (deferredLaunchPlan === undefined) throw new Error("stardew_bootstrap_guardian_native_launch_plan_unavailable");
-        const privateFrame = await deferredLaunchPlan.create(ownerBinding, target);
-        if (!(privateFrame instanceof Uint8Array)) throw new Error("stardew_bootstrap_guardian_native_launch_plan_unavailable");
-        const expectedRole = role(target);
-        const ack = await session.launch({ ...correlation, deadlineUnixMs, role: expectedRole, privateFrame });
-        expect(ack, "launch_role", expectedRole);
-      },
-      async drainRole(_ownerBinding: StardewBootstrapGuardianOwnerBinding, target: GuardianRole) {
-        const ack = await session.contain({ ...correlation, operationWaitBudgetMs, attemptId: arm.attemptId, role: role(target) });
-        expect(ack, "contain_role", role(target));
-      },
-      async releaseAndExit() { await session.close(); },
-    }),
-    recoveryGate: Object.freeze({
-      async acquire() { return { kind: "held" as const }; },
-      async release() { await session.close(); },
-    }),
-    recoveryClassification: Object.freeze({
-      async classify() { return "unavailable" as const; },
-    }),
-  });
-}
 
 export function createStardewBootstrapGuardianOwner(
   binding: StardewBootstrapGuardianOwnerBinding,
