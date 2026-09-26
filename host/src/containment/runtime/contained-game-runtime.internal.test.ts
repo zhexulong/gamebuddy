@@ -11,12 +11,13 @@ const launchOperation = (deadlineUnixMs = Date.now() + 60_000): RoleLaunchOperat
 const facts: TypedPrivateGameFacts = Object.freeze({ role: "player", revision: 1 });
 const produce: TypedPrivateGameAuthorizationProducer = (authorization) => authorization(facts);
 
-type PlatformOptions = { readonly failArm?: boolean; readonly failLaunch?: boolean; readonly failContain?: boolean; readonly failSettle?: boolean };
+type PlatformOptions = { readonly failArm?: boolean; readonly failLaunch?: boolean; readonly failContain?: boolean; readonly failSettle?: boolean; readonly onArm?: () => void };
 
 function fakePlatform(log: string[], options: PlatformOptions = {}): ContainedGameRuntimePlatform {
   return Object.freeze({
     arm: async (input) => {
       log.push(`arm:${input.authorization.role}`);
+      options.onArm?.();
       if (options.failArm) throw new Error("arm failed");
     },
     launch: async (input) => {
@@ -250,4 +251,33 @@ test("settlement is refused once the runtime is closed", async () => {
   await runtime.containRole("player");
   await runtime.close();
   await assert.rejects(() => runtime.settle(), /runtime is closed/);
+});
+
+// Regression: an attempt that armed but never recorded a launched role must not
+// settle. `launchRole` can fail AFTER `platform.arm` succeeded but BEFORE it
+// records the role, because the post-arm expiry/close check runs in between. The
+// role guard is a loop over `roleStates`, so with an empty map it would pass
+// vacuously and the platform would mint a containment proof and release the
+// registration pointer for a launch that never happened. Recovery owns this case.
+//
+// The expiry is made deterministic by advancing a fake clock inside `arm` rather
+// than by racing a real deadline, which would depend on how long arm happens to take.
+test("an armed attempt whose launch failed before recording a role is not settled", async () => {
+  const log: string[] = [];
+  const deadlineUnixMs = Date.now() + 60_000;
+  const realNow = Date.now;
+  const platform = fakePlatform(log, {
+    // Arm succeeds, then time jumps past the launch deadline before the runtime's
+    // post-arm expiry check runs.
+    onArm: () => { Date.now = () => deadlineUnixMs; },
+  });
+  try {
+    const runtime = createContainedGameRuntime(platform, binding);
+    await assert.rejects(() => runtime.launchRole("player", { deadlineUnixMs }, produce), /operation expired/);
+    assert.deepEqual(log, ["arm:player"]);
+    await assert.rejects(() => runtime.settle(), /no role ever reached launch/);
+    assert.deepEqual(log, ["arm:player"], "a refused settlement never reaches the platform");
+  } finally {
+    Date.now = realNow;
+  }
 });

@@ -172,9 +172,6 @@ async function ageLockPastStaleWindow(
   await utimes(lockPath, staleAt, staleAt);
 }
 
-/** A pid that is not alive on this host, so the dead-owner rule is exercised. */
-const DEAD_PID = 999_999_999;
-
 type LockHolder = Readonly<{
   pid: number;
   release(): Promise<void>;
