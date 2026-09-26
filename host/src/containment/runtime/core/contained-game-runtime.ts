@@ -160,6 +160,14 @@ export function createContainedGameRuntime(
         // once every role that actually reached `launched` was already
         // contained, so an ordinary close or a failed launch can never produce
         // it and the platform never sees a settlement it did not earn.
+        //
+        // An arm that never reached a launch is NOT settled: the launch path can
+        // fail after `platform.arm` succeeded but before it records the role (the
+        // post-arm expiry/close check), which leaves an armed attempt with zero
+        // recorded roles. Such an attempt has no dispatch to account for, so
+        // treating it as settled would let the platform mint a containment proof
+        // for a launch that never happened. It must be settled by recovery, not here.
+        if (roleStates.size === 0) rejected("no role ever reached launch");
         for (const state of roleStates.values()) {
           if (state !== "contained") rejected("not every launched role is contained");
         }
