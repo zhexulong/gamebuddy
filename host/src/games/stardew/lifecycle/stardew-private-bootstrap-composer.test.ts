@@ -154,9 +154,20 @@ test("activation reservation atomically compensates Player Host when AI generati
 });
 
 test("normal activation fails closed without adopting or cleaning prepared registration state", async () => {
+  // The prepare-and-bind transaction has four internal persistence points, so a
+  // crash between them can leave four distinguishable residues. Each must be a
+  // barrier: the pair is either absent or complete, and a one-sided half must
+  // never be adopted, repaired or consumed into a successor. A clean root is not
+  // a crash case (it succeeds), so it is not listed.
   const cases = [
+    // after writeMarker, before the owner is persisted.
     { name: "prepare marker", marker: true, activeAttempt: false, owner: false },
+    // after the owner is persisted, before the pointer is bound: the owner half
+    // exists but the registration half does not.
+    { name: "prepared owner with no bound pointer", marker: true, activeAttempt: false, owner: true },
+    // after bindPreparedPointer, before clearMarker: the matching pair.
     { name: "matching prepared owner and active attempt", marker: true, activeAttempt: true, owner: true },
+    // a pointer with no prepared owner: the other one-sided half.
     { name: "active attempt with missing prepared owner", marker: false, activeAttempt: true, owner: false },
   ] as const;
 
