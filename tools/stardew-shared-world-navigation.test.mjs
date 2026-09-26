@@ -208,6 +208,11 @@ test("ensureAdjacentToFreshTarget re-reads a moved target instead of retrying it
     attempts: 3,
   });
   assert.deepEqual(target, { x: 50, y: 50 });
+  // The contract is standing ON a reported tile, not merely next to one: being
+  // one tile away from a tile that is itself one tile from the target leaves the
+  // actor two tiles from the target, outside the action's own range. Assert the
+  // stronger property so the weaker reading cannot come back.
+  assert.deepEqual(snapshot.tile, { x: 50, y: 50 });
   assert.equal(isAdjacent(snapshot.tile, { x: 50, y: 50 }), true);
 });
 
@@ -215,7 +220,7 @@ test("ensureAdjacentToFreshTarget fails closed after the attempt budget is exhau
   const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } }, onMove: () => ({ ok: false }) }));
   await assert.rejects(
     ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", () => [{ x: 30, y: 40 }], { attempts: 2 }),
-    /no_reachable_adjacent_tile/,
+    /target_tile_unreachable/,
   );
 });
 
