@@ -1219,6 +1219,20 @@ test("explicit endgame settles the contained attempt, releases the registration 
         { apiVersion: 1, status: "gameended" },
       );
       assert.equal(sessionCalls.filter((call) => call.operation === "contain").length, containCountAfterFirst);
+      // Idempotency is per ATTEMPT, not merely per idempotency key: the same
+      // terminal outcome must come back under a fresh key too, instead of
+      // re-driving the runtime into its settled latch and surfacing an opaque
+      // `stardew_contained_runtime_settlement_unavailable` for an ended game.
+      const settleCountAfterFirst = sessionCalls.filter((call) => call.operation === "close").length;
+      assert.deepEqual(
+        await fixture.coordinator.activationOwner.endgameGame(fixture.broker.issue("game_endgame"), {
+          ...command,
+          idempotencyKey: "endgame-key-2",
+        }),
+        { apiVersion: 1, status: "gameended" },
+      );
+      assert.equal(sessionCalls.filter((call) => call.operation === "contain").length, containCountAfterFirst);
+      assert.equal(sessionCalls.filter((call) => call.operation === "close").length, settleCountAfterFirst);
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();

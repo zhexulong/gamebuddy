@@ -205,3 +205,61 @@ test("launch and arm fail closed before the native session when facts violate th
   );
   assert.equal(attempted.length, 0);
 });
+
+// A close that FAILED must stay retryable, and a successful close must be latched
+// so a later caller cannot race a second close onto the same authenticated session.
+// The previous latch set `sessionClosed = true` BEFORE awaiting `session.close()`,
+// so a rejected close was permanently latched and the coordinator's close retry
+// (which clears `closePromise` when the attempt rejected) reported full success
+// while the Guardian session was still open. The survival task forbids that.
+test("a failed platform close stays retryable and only a successful close latches", async () => {
+  let closeCalls = 0;
+  let failNext = true;
+  const session: DesktopGuardianSession = Object.freeze({
+    arm: async () => ack("arm"),
+    launch: async (input) => ack("launch", input.role),
+    contain: async (input) => ack("contain", input.role),
+    close: async () => {
+      closeCalls += 1;
+      if (failNext) throw new Error("controlled_session_close_failure");
+    },
+  });
+  const platform = createDesktopGuardianGameRuntimePlatform(session);
+
+  await assert.rejects(() => platform.close(), /controlled_session_close_failure/);
+  assert.equal(closeCalls, 1);
+
+  // The retry must actually reach the session again rather than being swallowed.
+  failNext = false;
+  await platform.close();
+  assert.equal(closeCalls, 2, "the retry re-drove the session close");
+
+  // Only now is it latched, so a further close is a no-op.
+  await platform.close();
+  assert.equal(closeCalls, 2, "a successful close latches and is not repeated");
+});
+
+// Concurrent closes must be joined, not raced onto one session: two in-flight
+// closes would otherwise both see the unset latch and both call the session.
+test("concurrent platform closes are joined onto a single session close", async () => {
+  let closeCalls = 0;
+  let release: (() => void) | undefined;
+  const session: DesktopGuardianSession = Object.freeze({
+    arm: async () => ack("arm"),
+    launch: async (input) => ack("launch", input.role),
+    contain: async (input) => ack("contain", input.role),
+    close: async () => {
+      closeCalls += 1;
+      await new Promise<void>((resolveClose) => { release = resolveClose; });
+    },
+  });
+  const platform = createDesktopGuardianGameRuntimePlatform(session);
+
+  const first = platform.close();
+  const second = platform.close();
+  await new Promise((resolveTick) => setImmediate(resolveTick));
+  assert.equal(closeCalls, 1, "a concurrent close joined the in-flight one");
+  release?.();
+  await Promise.all([first, second]);
+  assert.equal(closeCalls, 1);
+});
