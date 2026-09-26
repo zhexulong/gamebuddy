@@ -1,7 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { connectNativeLocalClient, waitForFreshSnapshot } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
-import { candidateStandingTiles, ensureActorAtLocation, ensureStandingTile } from "./lib/stardew-shared-world-navigation.mjs";
+import {
+  candidateStandingTiles,
+  ensureActorAtLocation,
+  ensureAdjacentToFreshTarget,
+  ensureStandingTile,
+} from "./lib/stardew-shared-world-navigation.mjs";
+import { chooseOnlyShippingBinTarget } from "./run-stardew-native-local-player-ship-item-smoke.mjs";
+import { chooseOnlyChestRetrieveTarget } from "./run-stardew-native-local-player-chest-retrieve-smoke.mjs";
+import { chooseUnpettedPetTarget } from "./run-stardew-native-local-player-pet-animal-smoke.mjs";
 
 /**
  * Shared-world action executor.
@@ -35,6 +43,9 @@ const runnerFile = dumpSpatial
   ? null
   : {
       machine_inspect: "run-stardew-native-local-player-machine-inspect-smoke.mjs",
+      ship_item: "run-stardew-native-local-player-ship-item-smoke.mjs",
+      chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+      pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
     }[action];
 if (!dumpSpatial && runnerFile === undefined) throw new Error(`shared_world_runner_not_wired:${action}`);
 
@@ -54,6 +65,20 @@ if (!dumpSpatial && runnerFile === undefined) throw new Error(`shared_world_runn
  */
 function adjacentMachineCount(machines, tile) {
   return machines.filter((target) => Math.abs(target.x - tile.x) <= 1 && Math.abs(target.y - tile.y) <= 1).length;
+}
+
+/**
+ * The eight tiles a contract's interaction radius accepts, nearest-first, with
+ * the target's own occupied tile removed.
+ *
+ * Every contract here requires only Chebyshev-1 adjacency, so the target's own
+ * tile is a legal standing position in principle; in practice a machine, chest
+ * or building footprint occupies it, so routing there can only fail. Dropping
+ * it keeps the walk bounded to tiles the actor can actually occupy, without
+ * narrowing any contract's admission.
+ */
+function neighbourTiles(target) {
+  return candidateStandingTiles(target).filter((tile) => tile.x !== target.x || tile.y !== target.y);
 }
 
 const ACTION_TARGETS = {
@@ -81,6 +106,25 @@ const ACTION_TARGETS = {
         (left, right) => distance(left) - distance(right) || left.y - right.y || left.x - right.x,
       );
     },
+  },
+  ship_item: {
+    location: "Farm",
+    // `shippingBinTargets` is the native Farm Shipping Bin building with the
+    // first shippable backpack slot the contract would hand to Farm.shipItem.
+    standingTiles: (snapshot) => neighbourTiles(chooseOnlyShippingBinTarget(snapshot)),
+  },
+  chest_retrieve: {
+    location: "Farm",
+    // `chestRetrieveTargets` is the player-owned ordinary Chest holding the
+    // item the contract would take.
+    standingTiles: (snapshot) => neighbourTiles(chooseOnlyChestRetrieveTarget(snapshot)),
+  },
+  pet_animal: {
+    location: "Farm",
+    // `petTargets` is a live native Pet. A Pet walks, so unlike the frozen
+    // machine/chest/bin targets the tile must be re-read from a fresh
+    // observation on every attempt instead of planned once.
+    freshTargetTiles: (snapshot) => neighbourTiles(chooseUnpettedPetTarget(snapshot)),
   },
 };
 
@@ -157,7 +201,8 @@ try {
           warps: Array.isArray(snapshot?.warps) ? snapshot.warps : null,
           machineTargets: snapshot?.machineTargets ?? null,
           shippingBinTargets: snapshot?.shippingBinTargets ?? null,
-          chestTargets: snapshot?.chestTargets ?? null,
+          chestRetrieveTargets: snapshot?.chestRetrieveTargets ?? null,
+          petTargets: snapshot?.petTargets ?? null,
         },
         null,
         2,
@@ -176,14 +221,14 @@ try {
     const plan = ACTION_TARGETS[action];
     if (plan !== undefined) {
       // The contract under test decides where the actor must stand; the driver
-      // only walks it there, using published actions across locations.
-      const positioned = await ensureStandingTile(
-        session.client,
-        session.receipts,
-        plan.location,
-        plan.standingTiles,
-        {},
-      );
+      // only walks it there, using published actions across locations. A target
+      // that can move re-reads its tile per attempt.
+      const positioned =
+        plan.freshTargetTiles !== undefined
+          ? await ensureAdjacentToFreshTarget(session.client, session.receipts, plan.location, plan.freshTargetTiles, {
+              attempts: 3,
+            })
+          : await ensureStandingTile(session.client, session.receipts, plan.location, plan.standingTiles, {});
       approachTrace.push(...positioned.trace.map((entry) => ({ ...entry, phase: "reach_standing_tile" })));
     }
     const result = await runSmoke(session.client, session.receipts, config);

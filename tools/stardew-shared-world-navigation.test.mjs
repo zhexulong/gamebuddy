@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { candidateStandingTiles, ensureActorAtLocation, ensureAdjacentTo, isAdjacent } from "./lib/stardew-shared-world-navigation.mjs";
+import {
+  candidateStandingTiles,
+  ensureActorAtLocation,
+  ensureAdjacentTo,
+  ensureAdjacentToFreshTarget,
+  isAdjacent,
+} from "./lib/stardew-shared-world-navigation.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "enter_exit", "machine_inspect"];
 
@@ -177,5 +183,46 @@ test("locomotion still fails closed when no placement projection was ever admitt
   await assert.rejects(
     ensureAdjacentTo(session.client, session.receipts, { location: "Farm", tile: { x: 5, y: 4 } }, { timeoutMs: 400 }),
     /native_fresh_snapshot_timeout/,
+  );
+});
+
+/**
+ * A live target such as a Pet moves between observations. Planning the walk once
+ * from a stale tile would leave the actor standing where the target no longer
+ * is, so the helper must re-read the target each attempt and walk to the new
+ * tile instead of retrying the old one.
+ */
+test("ensureAdjacentToFreshTarget re-reads a moved target instead of retrying its stale tile", async () => {
+  // The first advertised Pet tile is not reachable; the Pet has moved by the
+  // next attempt and the helper must plan against the new tile.
+  const session = sessionOf(
+    createFake({
+      start: { location: "Farm", tile: { x: 4, y: 4 } },
+      onMove: ({ args }) => ({ ok: Math.max(Math.abs(args.x - 50), Math.abs(args.y - 50)) <= 1 }),
+    }),
+  );
+  const reads = [{ x: 30, y: 40 }, { x: 50, y: 50 }];
+  let read = 0;
+  const targets = () => [reads[Math.min(read++, reads.length - 1)]];
+  const { snapshot, target } = await ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", targets, {
+    attempts: 3,
+  });
+  assert.deepEqual(target, { x: 50, y: 50 });
+  assert.equal(isAdjacent(snapshot.tile, { x: 50, y: 50 }), true);
+});
+
+test("ensureAdjacentToFreshTarget fails closed after the attempt budget is exhausted", async () => {
+  const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } }, onMove: () => ({ ok: false }) }));
+  await assert.rejects(
+    ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", () => [{ x: 30, y: 40 }], { attempts: 2 }),
+    /no_reachable_adjacent_tile/,
+  );
+});
+
+test("ensureAdjacentToFreshTarget rejects an empty target set instead of guessing a tile", async () => {
+  const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } } }));
+  await assert.rejects(
+    ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", () => [], { attempts: 1 }),
+    /no_usable_target_tile/,
   );
 });
