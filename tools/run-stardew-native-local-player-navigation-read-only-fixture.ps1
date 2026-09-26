@@ -71,7 +71,7 @@ try {
         $logicalSaveName = $SaveName -replace '_[0-9]{1,32}$', ''
         throw "Navigation read-only gate requires bootstrap-captured binding '$logicalSaveName.native-local-binding.json' for observed slot $SaveName. Bootstrap with an existing action fixture first, then rerun this gate."
     }
-    node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") --root $FixtureRoot --mods-path $ModsPath --release-dir $releaseDir --save-name $SaveName --backup-name $backupName --timeout-seconds $TimeoutSeconds --action navigation_read_only --binding-path $bindingPath
+    node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") --root $FixtureRoot --mods-path $ModsPath --release-dir $releaseDir --save-name $SaveName --backup-name $backupName --timeout-seconds $TimeoutSeconds --action navigation_read_only --binding-path $bindingPath --stardew-save-root $stardewSaveRoot
     if ($LASTEXITCODE -ne 0) { throw "Native-local Navigation fixture prepare failed." }
     $prepared = $true
     & $fixtureSaveHarness -FixtureRoot $FixtureRoot -TemplateName $SaveName -SaveName $SaveName -StardewSaveRoot $stardewSaveRoot

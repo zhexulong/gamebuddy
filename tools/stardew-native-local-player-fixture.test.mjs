@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, opendir, readdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, opendir, readdir, readFile, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -167,6 +167,57 @@ test("native-local preparation validation is read-only", async (t) => {
   await assert.rejects(lstat(join(options.root, options.backupName)), /ENOENT/);
   await assert.rejects(lstat(join(options.root, ".stardew-native-local-player-fixture.lock")), /ENOENT/);
   await assert.rejects(lstat(join(stardewSaveRoot, options.saveName)), /ENOENT/);
+});
+
+test("the fixture transaction resets the scope-bound Body Program journal", async (t) => {
+  // The Mod-owned journal is a durable authority keyed by the binding's four
+  // opaque ids, so its scope is byte-identical across runs of the same fixture.
+  // A run that leaves a non-terminal program behind makes the next run's
+  // OpenStatus RecoveryRequired, and the same submit_action_program call then
+  // fails closed with body_program_journal_unavailable for reasons the prompt and
+  // the world cannot explain. Observed live before this fix: a 3033-byte journal
+  // still held state 5 while the working save had been restored to the template.
+  const options = { ...(await createFixture(t, "journal-reset")), action: "equip_tool" };
+  const stardewSaveRoot = join(options.root, "working-saves");
+  const journalScope = join(
+    stardewSaveRoot,
+    "BodyProgramJournal-v1",
+    "stardew",
+    options.binding.saveId,
+    options.binding.worldId,
+    options.binding.playerId,
+    options.binding.companionId,
+  );
+  const template = join(options.root, "templates", options.saveName);
+  await mkdir(template, { recursive: true });
+  await mkdir(stardewSaveRoot);
+  await writeFile(join(template, options.saveName), "template-save");
+  await writeFile(join(template, "SaveGameInfo"), "template-info");
+  const scoped = { ...options, stardewSaveRoot };
+
+  // First run: the world starts with no journal, and the run writes a
+  // RecoveryRequired one exactly as the live failure did.
+  const prepared = await prepareNativeLocalPlayerFixture(scoped);
+  await mkdir(journalScope, { recursive: true });
+  await writeFile(join(journalScope, "journal.json"), '{"state":5,"recoveryDiagnostic":"recovery_required"}\n');
+
+  // Restore must remove it: a later run has to start from the state the harness
+  // chose, not from whatever the previous run left behind.
+  await restoreNativeLocalPlayerFixture(scoped);
+  await assert.rejects(lstat(journalScope), /ENOENT/, "the run's journal must not survive restore");
+
+  // And a journal that existed before the run must come back byte-for-byte.
+  await mkdir(journalScope, { recursive: true });
+  const preexisting = '{"state":0,"eventHighWater":7}\n';
+  await writeFile(join(journalScope, "journal.json"), preexisting);
+  await prepareNativeLocalPlayerFixture(scoped);
+  await rm(join(journalScope, "journal.json"), { force: true });
+  await restoreNativeLocalPlayerFixture(scoped);
+  assert.equal(await readFile(join(journalScope, "journal.json"), "utf8"), preexisting);
+  // Restore consumes the backup (removeBackup), so a completed cycle leaves no
+  // recovery artifact behind; the lock is released too.
+  await assert.rejects(lstat(prepared.backup), /ENOENT/);
+  await assert.rejects(lstat(join(options.root, ".stardew-native-local-player-fixture.lock")), /ENOENT/);
 });
 
 test("public entry points redact an existing backup path with a fixed code", async (t) => {
