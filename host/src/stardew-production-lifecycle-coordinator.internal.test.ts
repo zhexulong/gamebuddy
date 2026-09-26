@@ -2710,6 +2710,58 @@ test("manifest-admitted private Bridge config replacement is permanently uncerta
   }
 });
 
+test("every admission point acquires its own fresh request-scoped installation capability", async () => {
+  // Gate 5: the phases must admit independently rather than share one admission.
+  // The coordinator's exchange point is the inspector FACTORY, re-invoked once
+  // per admission; the fresh identity reread behind each call is what the phase
+  // actually trusts. Counting factory invocations therefore shows the phases did
+  // not share an admission.
+  //
+  // A full setup -> Stage C -> Stage D flow has THREE admission points, not two:
+  //   1. picker-time registration (registerInstallationLocator) -- admits the
+  //      selected locator before it is ever durable;
+  //   2. Stage C (runPlayerHostLaunch) -- immediately before spawning the
+  //      Player Host;
+  //   3. Stage D (confirmCabinChoice) -- immediately before the AI-client launch.
+  // Asserting the exact count is the point: a shared or skipped admission would
+  // move this number, and the picker-time one is the easiest to lose because it
+  // is the only admission that runs before any durable registration exists.
+  let inspectorAcquisitions = 0;
+  const inspector = sequencedInstallationInspector([
+    [installationChain, installationChain],
+    [installationChain, installationChain],
+    [installationChain, installationChain, installationChain],
+  ]);
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      createInstallationInspector: async () => {
+        inspectorAcquisitions += 1;
+        return inspector;
+      },
+    },
+  });
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const command = {
+      apiVersion: 1 as const,
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      idempotencyKey: "fresh-capability-key",
+      confirmed: true as const,
+    };
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command);
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    assert.deepEqual(await confirmation, { apiVersion: 1, status: "manifest_admitted" });
+
+    assert.equal(inspectorAcquisitions, 3, "picker-time, Stage C and Stage D each admit anew");
+    assert.equal(fixture.playerSpawnCalls.length, 1);
+    assert.equal(fixture.spawnCalls.length, 1);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
 test("manifest-admitted AI installation replacement is permanently uncertain and quarantines without AI spawn", async () => {
   const changed = installationChain.map((entry, index) => index === 2
     ? Object.freeze({ ...entry, fileId: "ffffffffffffffffffffffffffffffff" })
