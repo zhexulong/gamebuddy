@@ -1,0 +1,66 @@
+{
+  "schema": "chat_memory_probe_manifest/v1",
+  "manifestId": "man-lantern-cove-turn-short-01",
+  "manifestDigest": "4d1b292693040fa2d86efb0a023433b73d20a31a17aa46b489735f2e4e370349",
+  "continuityTopology": "single",
+  "probes": [
+    {
+      "probeId": "p-turn-short",
+      "distance": "turn",
+      "dimension": "retention",
+      "seedClass": "conversational",
+      "steps": [
+        {
+          "kind": "seed",
+          "role": "player",
+          "text": "I used to be the postman in the little town below the hill, for eight years before I retired.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "Do you prefer chowder or grilled fish on anchor nights?",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The village market is lively on festival mornings, is it not?",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "Keeping the lantern in trim through fog takes patience.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "seed",
+          "role": "player",
+          "text": "They say the old-timers around here tell tales about a driver who spent many years hauling on the mine road — not you, surely?",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "Autumn storms make the cove a quiet place to think.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "probe",
+          "role": "player",
+          "text": "By the way — do you remember what I did before I retired?",
+          "requiredKeywords": [
+            "postman",
+            "mail"
+          ],
+          "forbiddenKeywords": [
+            "mine",
+            "haul"
+          ],
+          "minHitRate": 0.5
+        }
+      ]
+    }
+  ]
+}
