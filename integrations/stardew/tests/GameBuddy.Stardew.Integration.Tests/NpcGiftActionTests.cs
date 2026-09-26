@@ -110,30 +110,36 @@ public sealed class NpcGiftActionTests
         // gates, so the Mod and the decompiled reference must not silently
         // diverge. If the target version is rebaselined, re-derive these pins
         // from the new NPC.cs lines and re-audit RequestLocalInteractNpcWithItem.
+        //
+        // Rebaselined 2026-09-27: ref/ was replaced from an early-1.6 upstream
+        // clone with the decompilation of the installed 1.6.15.24356 assembly.
+        // Line numbers and a few fragments changed with it; the gate sequence and
+        // its order are unchanged, and RequestLocalInteractNpcWithItem was
+        // re-audited against the new lines as this comment requires.
         var expected = new (int Line, string Fragment)[]
         {
-            (1393, "public bool CanReceiveGifts()"),
-            (1943, "bool canReceiveGifts = CanReceiveGifts();"),
-            (2282, "SanitizeContextTag(\"propose_roommate_"),
-            (2297, "HasBaseTag(activeObj.QualifiedItemId, \"not_giftable\")"),
-            (2298, "activeObj.canBeGivenAsGift() && !obsoleteNotGiftable"),
-            (2313, "who.completeQuest(\"25\");"),
-            (2315, "Game1.IsGreenRainingHere() && Game1.year == 1"),
-            (2323, "friendship.GiftsThisWeek < 2"),
-            (2329, "who.friendshipData[base.Name] = new Friendship()"),
-            (2333, "RejectGift_Divorced"),
-            (2337, "friendship.GiftsToday == 1"),
-            (2342, "receiveGift(who.ActiveObject, who, who.ActiveObject.QualifiedItemId != \"(O)StardropTea\")"),
-            (2343, "who.reduceActiveItemByOne();"),
-            (2344, "who.completelyStopAnimatingOrDoingAction();"),
-            (2345, "faceTowardFarmerForPeriod(4000, 3, faceAway: false, who);"),
-            (2346, "who.spouse != null && who.spouse != base.Name && !who.hasCurrentOrPendingRoommate()"),
-            (2350, "GameStateQuery.CheckConditions(spouseData?.SpouseGiftJealousy"),
-            (2352, "SpouseGiftJealousyFriendshipChange ?? (-30)"),
-            (2362, "StringsFromCSFiles:NPC.cs.3987"),
-            (4766, "public virtual void receiveGift(Object o, Farmer giver, bool updateGiftLimitInfo = true"),
-            (4796, "giver.friendshipData[base.Name].GiftsToday++;"),
-            (4844, "if (showResponse)"),
+            (1391, "public bool CanReceiveGifts()"),
+            (1916, "bool flag = CanReceiveGifts();"),
+            (2307, "SanitizeContextTag(\"propose_roommate_"),
+            (2357, "HasBaseTag(activeObj.QualifiedItemId, \"not_giftable\")"),
+            (2358, "if (flag && activeObj.canBeGivenAsGift() && !flag3)"),
+            (2373, "who.completeQuest(\"25\");"),
+            (2375, "Game1.IsGreenRainingHere() && Game1.year == 1"),
+            (2383, "value.GiftsThisWeek < 2"),
+            (2389, "who.friendshipData[base.Name] = new Friendship()"),
+            (2393, "RejectGift_Divorced"),
+            (2397, "value.GiftsToday == 1"),
+            (2402, "receiveGift(who.ActiveObject, who, who.ActiveObject.QualifiedItemId != \"(O)StardropTea\")"),
+            (2403, "who.reduceActiveItemByOne();"),
+            (2404, "who.completelyStopAnimatingOrDoingAction();"),
+            (2405, "faceTowardFarmerForPeriod(4000, 3, faceAway: false, who);"),
+            (2406, "who.spouse != null && who.spouse != base.Name && !who.hasCurrentOrPendingRoommate()"),
+            (2410, "GameStateQuery.CheckConditions(characterData?.SpouseGiftJealousy"),
+            (2412, "SpouseGiftJealousyFriendshipChange"),
+            (2422, "StringsFromCSFiles:NPC.cs.3987"),
+            (4898, "public virtual void receiveGift(Object o, Farmer giver, bool updateGiftLimitInfo = true"),
+            (4928, "giver.friendshipData[base.Name].GiftsToday++;"),
+            (4976, "if (showResponse)"),
         };
 
         string? path = TryFindRepoFile(DecompiledNpcRelativePath);
@@ -158,10 +164,15 @@ public sealed class NpcGiftActionTests
         // The two most safety-critical seams: the KeyNotFoundException crash
         // site receiveGift would hit without the Mod's dictionary protection,
         // and the showResponse gate that makes the modal-free guarantee true.
-        lines[2327 - 1].Should().Contain("if (friendship == null)");
-        lines[2329 - 1].Should().Contain("who.friendshipData[base.Name] = new Friendship()");
-        lines[4796 - 1].Should().Contain("GiftsToday++;");
-        lines[4844 - 1].Should().Contain("if (showResponse)");
+        //
+        // The 1.6.15 guard is `if (value == null)` -- the local holding the
+        // friendship entry is named `value` here, not `friendship` -- and it sits
+        // immediately before the assignment that creates the entry. Both are
+        // asserted so the pair cannot be satisfied from two unrelated lines.
+        lines[2387 - 1].Should().Contain("if (value == null)");
+        lines[2389 - 1].Should().Contain("who.friendshipData[base.Name] = new Friendship()");
+        lines[4928 - 1].Should().Contain("GiftsToday++;");
+        lines[4976 - 1].Should().Contain("if (showResponse)");
     }
 
     [Theory]
