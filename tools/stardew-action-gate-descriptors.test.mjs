@@ -4,7 +4,11 @@ import { access, readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { readPublishedStardewActionIds } from "./lib/stardew-published-action-registry.mjs";
+import {
+  GATE_EXEMPT_PUBLISHED_ACTIONS,
+  readAllPublishedExecutionStardewActionIds,
+  readPublishedStardewActionIds,
+} from "./lib/stardew-published-action-registry.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -25,6 +29,43 @@ test("published action descriptors are complete, unique, and point to declared r
 
     const runnerPath = resolve(ROOT, "tools", gate.runner);
     await access(runnerPath, constants.R_OK);
+  }
+});
+
+test("every published execution action is either gated or an explicitly declared exemption", async () => {
+  // The assertion above compares the descriptor set against a projection that
+  // has already had the exemptions removed, so it agrees with itself no matter
+  // how many actions the exemptions hide. This test states the partition
+  // instead: published execution actions split into "has a descriptor" and
+  // "is named in GATE_EXEMPT_PUBLISHED_ACTIONS", with nothing in neither and
+  // nothing in both.
+  const gateActionIds = new Set(STARDEW_PUBLISHED_ACTION_GATES.map((gate) => gate.actionId));
+  const exempt = new Set(GATE_EXEMPT_PUBLISHED_ACTIONS.map((entry) => entry.actionId));
+  const allPublished = new Set(await readAllPublishedExecutionStardewActionIds());
+
+  const neither = [...allPublished].filter((id) => !gateActionIds.has(id) && !exempt.has(id));
+  const both = [...allPublished].filter((id) => gateActionIds.has(id) && exempt.has(id));
+  const unknownExemption = [...exempt].filter((id) => !allPublished.has(id));
+
+  assert.deepEqual(neither, [], `published actions with no descriptor and no exemption: ${neither.join(", ")}`);
+  assert.deepEqual(both, [], `published actions that are both gated and exempt: ${both.join(", ")}`);
+  assert.deepEqual(unknownExemption, [], `exemptions naming actions that are not published: ${unknownExemption.join(", ")}`);
+
+  // Every exemption must name a runner that actually exists, so the carve-out
+  // carries evidence rather than prose alone.
+  for (const entry of GATE_EXEMPT_PUBLISHED_ACTIONS) {
+    assert.match(entry.runner, /^run-stardew-[a-z0-9-]+\.mjs$/, `${entry.actionId} exemption runner shape`);
+    assert.match(entry.terminalReasonCode, /^[a-z][a-z0-9_]{1,127}$/, `${entry.actionId} exemption reason code`);
+    await access(resolve(ROOT, "tools", entry.runner), constants.R_OK);
+    const source = await readFile(resolve(ROOT, "tools", entry.runner), "utf8");
+    assert.ok(
+      source.includes(`"${entry.actionId}"`),
+      `${entry.runner} must drive ${entry.actionId}`,
+    );
+    assert.ok(
+      source.includes(`"${entry.terminalReasonCode}"`),
+      `${entry.runner} must assert terminal reason code ${entry.terminalReasonCode}`,
+    );
   }
 });
 
