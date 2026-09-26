@@ -21,6 +21,7 @@ import {
   AUDIT_VOCABULARY,
   buildAuditTrace,
   classifyPresentationMarkers,
+  classifyProbeMaterializationMarkers,
   classifyStartupFailure,
   classifyStartupStderr,
   compareReloadSnapshot,
@@ -524,6 +525,30 @@ test("presentation diagnostics read only the frozen production stderr markers", 
   assert.deepEqual(classifyPresentationMarkers("[DEBUG-chat-live-p4c] native_final\n"), []);
   assert.deepEqual(classifyPresentationMarkers("ordinary stderr line\n"), []);
   assert.deepEqual(classifyPresentationMarkers(undefined), []);
+});
+
+test("probe materialization markers are parsed strictly and never become frozen codes", () => {
+  const digest = "a".repeat(64);
+  assert.deepEqual(
+    classifyProbeMaterializationMarkers(
+      `[probe:m0_digest] ${digest} rev_7\n[probe:fold_committed] rev_123\n`,
+    ),
+    [
+      { code: "m0_digest", digest, revision: "rev_7" },
+      { code: "fold_committed", revision: "rev_123" },
+    ],
+  );
+  // Malformed values are ignored (marker absence is a gap, never an error).
+  assert.deepEqual(classifyProbeMaterializationMarkers("[probe:m0_digest] not-hex\n"), []);
+  assert.deepEqual(classifyProbeMaterializationMarkers("[probe:fold_committed] rev with spaces\n"), []);
+  assert.deepEqual(classifyProbeMaterializationMarkers("[probe:unknown] x\n"), []);
+  assert.deepEqual(classifyProbeMaterializationMarkers("ordinary stderr\n"), []);
+  assert.deepEqual(classifyProbeMaterializationMarkers(undefined), []);
+  // A digest without its revision cannot support §5.4's "same revision, same
+  // digest" comparison, so it is not reported as evidence at all.
+  assert.deepEqual(classifyProbeMaterializationMarkers(`[probe:m0_digest] ${digest}\n`), []);
+  // The revision token must itself be well-formed.
+  assert.deepEqual(classifyProbeMaterializationMarkers(`[probe:m0_digest] ${digest} rev with spaces\n`), []);
 });
 
 test("SSE frames are parsed strictly and rejected frames are reported rather than dropped", () => {
