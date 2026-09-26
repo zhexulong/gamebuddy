@@ -100,6 +100,11 @@ export function createContainedGameRuntime(
       return serialize(async () => {
         const deadlineUnixMs = launchOperation.deadlineUnixMs;
         ensureOpen(deadlineUnixMs);
+        // A settled attempt is terminal, so it must not accept a new role. The
+        // `settled` latch is one-way, so a role launched after it would never be
+        // settled at all; enforcing the terminal property here keeps it a contract
+        // guarantee rather than something only the coordinator's structure prevents.
+        if (settled) rejected("runtime was already settled");
         if (roleStates.has(role)) rejected("role was already launched");
         if (armAttempted && !armed) rejected("arm already failed");
         let privateAuthorization: TypedPrivateGameFacts | undefined;
