@@ -162,13 +162,12 @@ export function createContainedGameRuntime(
         // contained, so an ordinary close or a failed launch can never produce
         // it and the platform never sees a settlement it did not earn.
         //
-        // An arm that never reached a launch is NOT settled: the launch path can
-        // fail after `platform.arm` succeeded but before it records the role (the
-        // post-arm expiry/close check), which leaves an armed attempt with zero
-        // recorded roles. Such an attempt has no dispatch to account for, so
-        // treating it as settled would let the platform mint a containment proof
-        // for a launch that never happened. It must be settled by recovery, not here.
-        if (roleStates.size === 0) rejected("no role ever reached launch");
+        // An attempt that armed but launched no role is deliberately settlable:
+        // `arm_attempt` creates BOTH role Jobs natively
+        // (host/native/windows-bootstrap-guardian/Program.cs), so a role the
+        // runtime never launched still owns an empty Job with nothing left
+        // outside containment. Refusing this case would block a legitimate
+        // endgame of an armed-but-unlaunched attempt.
         for (const state of roleStates.values()) {
           if (state !== "contained") rejected("not every launched role is contained");
         }
