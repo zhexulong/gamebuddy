@@ -281,3 +281,28 @@ test("an armed attempt whose launch failed before recording a role is not settle
     Date.now = realNow;
   }
 });
+
+// Settlement is terminal, so a second call must not reach the platform again and
+// must not report `settled`. The platform's proof reservation would fail closed
+// anyway, but the generic contract should not depend on that for its guarantee.
+test("settlement is terminal and a second call never reaches the platform", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log), binding);
+  await runtime.launchRole("player", launchOperation(), produce);
+  await runtime.containRole("player");
+  assert.deepEqual(await runtime.settle(), { status: "settled" });
+  await assert.rejects(() => runtime.settle(), /runtime was already settled/);
+  assert.deepEqual(log, ["arm:player", "launch:player", "contain:player", "settle"]);
+});
+
+// A settlement that failed is equally terminal: recovery owns the attempt, so the
+// runtime must not let a caller retry its way to a second platform settlement.
+test("a failed settlement also latches, so it cannot be retried into a second call", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log, { failSettle: true }), binding);
+  await runtime.launchRole("player", launchOperation(), produce);
+  await runtime.containRole("player");
+  assert.deepEqual(await runtime.settle(), { status: "unavailable" });
+  await assert.rejects(() => runtime.settle(), /runtime was already settled/);
+  assert.deepEqual(log, ["arm:player", "launch:player", "contain:player", "settle"]);
+});

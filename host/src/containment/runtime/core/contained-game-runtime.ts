@@ -76,6 +76,7 @@ export function createContainedGameRuntime(
   let armed = false;
   let armAttempted = false;
   let closed = false;
+  let settled = false;
   let operation: Promise<unknown> = Promise.resolve();
   type RoleState = "launching" | "launched" | "containing" | "contained" | "launch-failed" | "contain-failed";
   const roleStates = new Map<ContainmentRole, RoleState>();
@@ -171,6 +172,11 @@ export function createContainedGameRuntime(
         for (const state of roleStates.values()) {
           if (state !== "contained") rejected("not every launched role is contained");
         }
+        // Settlement is terminal: a second call must not reach the platform
+        // again. The platform's own proof reservation would fail closed, but the
+        // generic contract must not depend on that to keep its guarantee honest.
+        if (settled) rejected("runtime was already settled");
+        settled = true;
         try {
           await platform.settle({
             ...bindingSnapshot,
@@ -184,6 +190,8 @@ export function createContainedGameRuntime(
           });
           return Object.freeze({ status: "settled" as const });
         } catch {
+          // A failed settlement is not retryable: recovery owns this attempt, so
+          // the terminal flag stays latched rather than reopening the operation.
           return Object.freeze({ status: "unavailable" as const });
         }
       });
