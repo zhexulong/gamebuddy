@@ -291,7 +291,7 @@ public sealed class HostAutomationConfig
         && SaveName.All(character => char.IsLetterOrDigit(character) || character is '_' or '-')
         && (RequireFixtureLiveLocale.Length == 0 || NativeChatPresentationPolicy.IsRequiredLiveLocale(RequireFixtureLiveLocale))
         && (FixtureScenario.Length == 0 || (SaveName.StartsWith("GameBuddyFixture_", StringComparison.Ordinal)
-            && FixtureScenario is "native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_interact_npc_with_item_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1" or "native_jodi_harvest_deliver_v1"));
+            && FixtureScenario is "native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_interact_npc_with_item_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1" or "native_jodi_harvest_deliver_v1" or "native_ship_item_v1" or "native_chest_retrieve_v1" or "native_pet_animal_v1"));
 }
 
 public sealed class FarmhandProvisioningProbeConfig
