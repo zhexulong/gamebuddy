@@ -236,6 +236,39 @@ function extractUniqueHostWrapperFactoryBody(gameTools) {
   );
 }
 
+/**
+ * Extract exactly one method body, anchored on a signature fragment that must
+ * appear once. Returns null when the anchor is missing or ambiguous, and when
+ * the braces do not balance.
+ *
+ * Why this exists rather than a file-wide `indexOf`: a predicate that only
+ * asserts "this string occurs somewhere in the file" proves nothing about the
+ * execution path. `FarmhandActionRouter` has two `TryRoute` overloads (a
+ * delegating expression body and the dispatching body) and two
+ * `!this.IsOnOwnerThread` guards (one in `CanExecute`, one in the dispatcher),
+ * so a file-wide search for that guard stays satisfied even when the
+ * dispatcher's own guard is removed. Removing the guard that matters left the
+ * checker silent. Scoping to the body makes the predicate track the path.
+ */
+function extractUniqueMethodBody(source, anchor) {
+  if (typeof source !== "string") return null;
+  const at = source.indexOf(anchor);
+  if (at < 0) return null;
+  if (source.indexOf(anchor, at + 1) >= 0) return null;
+  const open = source.indexOf("{", at);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "{") depth += 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, index + 1);
+    }
+  }
+  return null;
+}
+
 function validateHostWrapperFactory(gameTools, routes) {
   const failures = [];
   const factory = extractUniqueHostWrapperFactoryBody(gameTools);
@@ -260,14 +293,30 @@ function validateHostWrapperFactory(gameTools, routes) {
 
 function validateRouterBoundary(bridgeSession, router) {
   const failures = [];
-  const threadGuard = router?.indexOf("if (!this.IsOnOwnerThread)") ?? -1;
-  const replayLookup = router?.indexOf("if (ledger.TryGetExistingReceipt(request.RequestId") ?? -1;
-  const handlerLookup = router?.indexOf("if (!this.handlers.TryGetValue(request.Action") ?? -1;
-  const handlerExecution = router?.indexOf("receipt = handler.Execute(request, ledger);") ?? -1;
+
+  // Anchor on the dispatching TryRoute overload, not the delegating one. The
+  // delegating overload (`=> this.TryRoute(request, ledger, executionId: null, ...)`)
+  // also matches a bare `public bool TryRoute(` search, so the anchor includes
+  // the parameter list that only the dispatcher has.
+  const routerDispatchBody = extractUniqueMethodBody(
+    router,
+    "public bool TryRoute(\n        BridgeExecutionRequest request,\n        IExecutionLedger ledger,\n        string? executionId,",
+  );
+  if (routerDispatchBody === null) {
+    // An unlocatable body is not a pass: without it every predicate below would
+    // be evaluated against the wrong text (or against nothing).
+    failures.push("router_dispatch_body_not_located");
+  }
+
+  const threadGuard = routerDispatchBody?.indexOf("if (!this.IsOnOwnerThread)") ?? -1;
+  const replayLookup = routerDispatchBody?.indexOf("if (ledger.TryGetExistingReceipt(request.RequestId") ?? -1;
+  const handlerLookup = routerDispatchBody?.indexOf("if (!this.handlers.TryGetValue(request.Action") ?? -1;
+  const handlerExecution = routerDispatchBody?.indexOf("receipt = handler.Execute(request, ledger);") ?? -1;
   if (threadGuard < 0) failures.push("router_missing_game_thread_guard");
   if (replayLookup < 0) failures.push("router_missing_replay_guard");
   if (handlerLookup < 0) failures.push("router_missing_handler_lookup");
   if (handlerExecution < 0) failures.push("router_missing_handler_execution");
+
 
   const tryExecute =
     bridgeSession.slice(bridgeSession.indexOf("internal bool TryExecute("), bridgeSession.indexOf("internal bool TryQueryExecutionReceipt("));

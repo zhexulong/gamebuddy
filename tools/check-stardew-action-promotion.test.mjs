@@ -76,10 +76,44 @@ test("promotion checker preserves transport, schema, and game-thread guard check
       "schema_execution_action_not_in_definition:orphan_execution_action",
     ),
   );
+
+  // The router has TWO `!this.IsOnOwnerThread` guards: one in `CanExecute`
+  // (:43, off the dispatch path) and one in the dispatching `TryRoute`
+  // overload (:78, the one that matters). A plain `String.replace(string, ...)`
+  // swaps only the FIRST occurrence, which is CanExecute's -- so this test used
+  // to leave the guard that matters intact and then assert the checker reported
+  // its removal. That could never pass, and, worse, the checker's own predicate
+  // was a file-wide `indexOf`, so neither side was actually testing the guard
+  // on the dispatch path.
+  //
+  // Remove the dispatcher's guard by index, and assert the other guard is left
+  // alone (otherwise the mutation would prove nothing about which guard the
+  // predicate tracks).
+  const guard = "if (!this.IsOnOwnerThread)";
+  const firstAt = sources.farmhandActionRouter.indexOf(guard);
+  const dispatcherAt = sources.farmhandActionRouter.indexOf(guard, firstAt + 1);
+  assert.ok(dispatcherAt > firstAt, "router must keep both the CanExecute and TryRoute guards");
+  const dispatcherGuardRemoved =
+    sources.farmhandActionRouter.slice(0, dispatcherAt) +
+    "if (false)" +
+    sources.farmhandActionRouter.slice(dispatcherAt + guard.length);
   assert.ok(
-    failuresFor({
-      farmhandActionRouter: sources.farmhandActionRouter.replace("if (!this.IsOnOwnerThread)", "if (false)"),
-    }).includes("router_missing_game_thread_guard"),
+    dispatcherGuardRemoved.includes(guard),
+    "removing the dispatcher guard must leave the CanExecute guard in place",
+  );
+  assert.ok(
+    failuresFor({ farmhandActionRouter: dispatcherGuardRemoved }).includes("router_missing_game_thread_guard"),
+  );
+
+  // And the converse: removing only the off-path guard must NOT be reported,
+  // otherwise the predicate is still just counting occurrences in the file.
+  const canExecuteGuardRemoved =
+    sources.farmhandActionRouter.slice(0, firstAt) +
+    "if (false)" +
+    sources.farmhandActionRouter.slice(firstAt + guard.length);
+  assert.ok(
+    !failuresFor({ farmhandActionRouter: canExecuteGuardRemoved }).includes("router_missing_game_thread_guard"),
+    "the predicate must track the dispatch path, not any occurrence in the file",
   );
 });
 
