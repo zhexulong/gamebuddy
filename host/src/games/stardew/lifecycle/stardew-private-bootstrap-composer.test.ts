@@ -44,6 +44,10 @@ import {
   materializeAiClientProfileAfterManifestAdmissionForTesting,
 } from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import { createTestWindowsStaleLockReclaimer } from "../../../windows-stale-lock-reclaimer/index.test-support.js";
+import {
+  publishStardewInstallationRegistration,
+  readStardewInstallationRegistration,
+} from "../../../stardew-installation-registration.internal.js";
 import { admitStardewInstallation, type AdmittedStardewInstallation } from "../../../stardew-installation-admission.js";
 import {
   OWNER_FILE,
@@ -104,7 +108,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "launchMaterializedAiClientContained" | "consumeOwnedFarmhandBridgeConnection" | "prepareFreshFarmhandAiClientActivation" | "abandonFarmhandAiClientActivation" | "launchStagedPlayerHost" | "launchStagedPlayerHostContained" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "launchMaterializedAiClientContained" | "consumeOwnedFarmhandBridgeConnection" | "prepareFreshFarmhandAiClientActivation" | "abandonFarmhandAiClientActivation" | "launchStagedPlayerHost" | "launchStagedPlayerHostContained" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "settleOwnedPlayerHostContainedRuntimeAttempt"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -219,6 +223,42 @@ test("v4 owner transition CAS enforces legal lifecycle transitions, immutable fe
   assert.equal(final.state, "contained");
   await assert.rejects(transitions.arm(1), /transition_mismatch/);
   await assert.rejects(transitions.beginRecovery(7, "recovery-1"), /transition_invalid/);
+});
+
+test("the production settlement path advances the owner to contained and releases the bound registration pointer", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await publishStardewInstallationRegistration(root, null, {
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1 },
+    revision: 1,
+    state: "ready",
+    locator: "C:\\Games\\Stardew Valley",
+    activeAttempt: null,
+  });
+  const claim = harness.composition.broker.confirm({
+    playerId: "player-1",
+    companionId: "companion-1",
+    browserSessionId: "browser-1",
+    expiresAtMs: 5_000,
+  }).consume("browser-1");
+  // The activation reservation is the production prepare-and-bind seam: it
+  // binds the registration active attempt to this exact owner.
+  const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim);
+  assert.deepEqual(
+    (await readStardewInstallationRegistration(root))?.activeAttempt,
+    { bootstrapCorrelation: "bootstrap-1" },
+  );
+  // The production settlement path drives the durable record to contained and
+  // releases the pointer through the matching Guardian settlement proof.
+  await harness.testCore.settleOwnedPlayerHostRegistrationForTesting(owner, ["playerHost", "aiClient"]);
+  const released = await readStardewInstallationRegistration(root);
+  assert.equal(released?.activeAttempt, null);
+  const record = JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
+  assert.equal(record.state, "contained");
+  assert.equal(record.guardianState, "contained");
+  assert.equal(record.playerHostState, "contained");
+  assert.equal(record.aiClientState, "contained");
 });
 
 test("v4 recovery CAS binds the exact recovery actor and only finalizes both contained roles", async () => {
@@ -424,19 +464,16 @@ test("only the production internal and dedicated test-only adapter import the co
   assert.equal(publicComposerSource.includes("as StardewPrivateBootstrapComposition"), false);
   assert.equal(publicComposerSource.includes("launchStagedPlayerHost"), false);
 
-   assert.deepEqual(coreImporters.sort(), [
-     "stardew-bootstrap-guardian.private.test.ts",
-     "stardew-bootstrap-guardian.private.ts",
-     "stardew-private-bootstrap-composer.internal.ts",
-     "stardew-private-bootstrap-composer.test-support-internal.ts",
-     "stardew-private-bootstrap-composer.test.ts",
-   ]);
-   assert.deepEqual(testInternalImporters.sort(), [
-     "stardew-bootstrap-guardian.private.test.ts",
-     "stardew-private-bootstrap-composer.test-fixtures.ts",
-     "stardew-private-bootstrap-composer.test-support.ts",
-     "stardew-private-bootstrap-composer.test.ts",
-   ]);
+    assert.deepEqual(coreImporters.sort(), [
+      "stardew-private-bootstrap-composer.internal.ts",
+      "stardew-private-bootstrap-composer.test-support-internal.ts",
+      "stardew-private-bootstrap-composer.test.ts",
+    ]);
+    assert.deepEqual(testInternalImporters.sort(), [
+      "stardew-private-bootstrap-composer.test-fixtures.ts",
+      "stardew-private-bootstrap-composer.test-support.ts",
+      "stardew-private-bootstrap-composer.test.ts",
+    ]);
    const productionCoreSource = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.core.ts"), "utf8");
    const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");
     assert.doesNotMatch(productionCoreSource, /from\s+["'][^"']*stardew-bootstrap-guardian\.private\.js["']/);
@@ -453,7 +490,6 @@ test("production internal composition exposes only the private C1 materializer w
     "consumeOwnedFarmhandBridgeConnection",
     "createOwnedPlayerHostAttachmentFlow",
     "createOwnedPlayerHostManifestHandoffCoordinator",
-    "createStardewBootstrapGuardianOwner",
     "launchMaterializedAiClient",
     "launchMaterializedAiClientContained",
     "launchStagedPlayerHost",
@@ -464,6 +500,7 @@ test("production internal composition exposes only the private C1 materializer w
     "readAndCorrelateOwnedPlayerHostSession",
     "replaceStagedInstallationLocator",
     "reserveOwnedPlayerHostBootstrapForActivation",
+    "settleOwnedPlayerHostContainedRuntimeAttempt",
     "stageOwnedPlayerHostProfile",
     "terminalizeOwnedPlayerHostOwner",
   ].sort());
