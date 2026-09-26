@@ -168,6 +168,50 @@ export async function ensureStandingTile(client, receipts, targetLocationName, s
 }
 
 /**
+ * Ensure the actor stands within Chebyshev 1 of a target read from a live
+ * snapshot in `targetLocationName`.
+ *
+ * `targets(snapshot)` returns the ordered target tiles to stand next to. A
+ * shared world is a live world, not a frozen fixture: a Pet walks, so the
+ * target a previous observation advertised can already have moved. Each
+ * attempt therefore re-reads the target from a fresh observation and retries
+ * the walk, up to `attempts` times. The helper never widens an action's own
+ * interaction range - it only chooses where to stand, and the contract under
+ * test re-reads and re-admits the target itself.
+ */
+export async function ensureAdjacentToFreshTarget(
+  client,
+  receipts,
+  targetLocationName,
+  targets,
+  { attempts = 1, timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {},
+) {
+  const trace = [];
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const { snapshot } = await ensureActorAtLocation(client, receipts, targetLocationName, { timeoutMs });
+      const candidates = targets(snapshot);
+      if (candidates.length === 0) throw new Error("no_usable_target_tile");
+      let lastCandidateError = null;
+      for (const candidate of candidates) {
+        try {
+          const arrived = await ensureAdjacentTo(client, receipts, { location: targetLocationName, tile: candidate }, { timeoutMs });
+          trace.push(...arrived.trace);
+          return { snapshot: arrived.snapshot, target: candidate, trace };
+        } catch (error) {
+          lastCandidateError = error;
+        }
+      }
+      throw lastCandidateError ?? new Error("no_reachable_adjacent_tile");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error("no_reachable_adjacent_tile");
+}
+
+/**
  * Ensure the actor stands within Chebyshev 1 of `target.tile` in
  * `target.location`, walking across locations first when necessary.
  */

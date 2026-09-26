@@ -1,8 +1,9 @@
 import {
-  assertExactCapabilities,
+  assertTopologyCapabilities,
+  classifyTopology,
   connectNativeLocalClient,
   executeFresh,
-  observeFresh,
+  observeTopologySnapshot,
   readNativeClientConfig,
   summarizeReceipt,
   waitForTerminal,
@@ -22,9 +23,10 @@ export async function runShipItemSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
+  const topology = validateTopologyConfig(config);
   try {
-    const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    const before = await observeTopologySnapshot(client, topology, { actionable: true });
+    assertTopologyCapabilities(before, topology, EXPECTED_CAPABILITIES);
     const target = chooseOnlyShippingBinTarget(before);
     const requestId = `native_local_ship_item_${Date.now()}`;
     const accepted = await executeFresh(client, {
@@ -52,8 +54,8 @@ export async function runShipItemSmoke(
     // The shipped stack must have left the backpack and entered the native bin
     // in one native call, and lastItemShipped must reference that same item.
     const shipped = Number.parseInt(evidence.stack, 10);
-    const after = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    const after = await observeTopologySnapshot(client, topology, { actionable: true });
+    assertTopologyCapabilities(after, topology, EXPECTED_CAPABILITIES);
     const reread = (after.shippingBinTargets ?? []).find((entry) => entry?.targetId === target.targetId);
     const passed =
       after.revision >= terminal.revision &&
@@ -68,7 +70,7 @@ export async function runShipItemSmoke(
       (reread === undefined || reread.slot !== target.slot || reread.qualifiedItemId !== target.qualifiedItemId);
     return {
       state: passed ? "passed" : "blocked",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: passed ? "item_shipped" : "ship_item_postcondition_mismatch",
       target,
       receipt: summarizeReceipt(terminal),
@@ -79,7 +81,7 @@ export async function runShipItemSmoke(
   } catch (error) {
     return {
       state: "blocked",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
       latestReceipt: summarizeReceipt(client.state?.latestReceipt),
       trace,
@@ -88,7 +90,25 @@ export async function runShipItemSmoke(
   }
 }
 
-function chooseOnlyShippingBinTarget(snapshot) {
+/**
+ * Select the topology this contract is being executed under.
+ *
+ * The shared world is the real AI-Farmhand topology: an authenticated Farmhand
+ * provisioner owns the bridge and the version-1 default-consent policy
+ * publishes the consented surface, including the experimental action under
+ * test once the profile opts into it. The scenario precondition belongs to the
+ * Host-side fixture, so it is not asserted from the client config here. The
+ * isolated native-local fixture keeps its strict capability equality.
+ */
+function validateTopologyConfig(value) {
+  const topology = classifyTopology(value);
+  if (topology === "shared_world_farmhand" && value.ActionPolicyVersion !== 1)
+    throw new Error("shared_world_action_policy_invalid");
+  return topology;
+}
+
+/** The sole native Shipping Bin target the contract will admit. */
+export function chooseOnlyShippingBinTarget(snapshot) {
   const targets = snapshot.shippingBinTargets ?? [];
   if (targets.length !== 1) throw new Error(`ship_item_target_count_expected_1_got_${targets.length}`);
   const target = targets[0];

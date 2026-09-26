@@ -1,7 +1,10 @@
 import {
+  assertTopologyCapabilities,
+  classifyTopology,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
+  observeTopologySnapshot,
   readNativeClientConfig,
   summarizeReceipt,
   waitForFreshSnapshot,
@@ -20,10 +23,10 @@ export async function runPetAnimalSmoke(
   { terminalTimeoutMs = 10_000, postconditionTimeoutMs = 5_000 } = {},
 ) {
   const startedAt = Date.now();
-  validateNativeLocalConfig(config);
+  const topology = validateTopologyConfig(config);
   try {
-    const before = await observeActionable(client);
-    requireExactCapabilities(before);
+    const before = await observeActionable(client, topology);
+    assertTopologyCapabilities(before, topology, EXPECTED_CAPABILITIES);
     const target = chooseOnlyPetTarget(before);
     if (target.friendship !== 0 || target.pettedToday !== false) throw new Error("pet_fixture_starting_state_mismatch");
     const requestId = `native_local_pet_animal_${Date.now()}`;
@@ -43,7 +46,7 @@ export async function runPetAnimalSmoke(
       requireActionable: true,
       check: (snapshot) => Array.isArray(snapshot.petTargets),
     });
-    requireExactCapabilities(after);
+    assertTopologyCapabilities(after, topology, EXPECTED_CAPABILITIES);
     const evidence = parseEvidence(terminal.evidence);
     const targetGone = !validTargets(after).some((entry) => entry.targetId === target.targetId);
     const passed =
@@ -62,7 +65,7 @@ export async function runPetAnimalSmoke(
       evidence.friendship_callback === "true";
     return {
       state: passed ? "passed" : "blocked",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: passed ? "pet_completed" : "pet_animal_postcondition_mismatch",
       target: targetSummary(target),
       receipt: summarizeReceipt(terminal),
@@ -74,7 +77,7 @@ export async function runPetAnimalSmoke(
   } catch (error) {
     return {
       state: "blocked",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
       latestReceipt: summarizeReceipt(client.state?.latestReceipt),
       durationMs: Date.now() - startedAt,
@@ -102,8 +105,8 @@ if (import.meta.main) {
   }
 }
 
-async function observeActionable(client) {
-  const snapshot = await observeFresh(client, { actionable: true });
+async function observeActionable(client, topology) {
+  const snapshot = await observeTopologySnapshot(client, topology, { actionable: true });
   if (
     !Number.isInteger(snapshot.revision) ||
     typeof snapshot.location !== "string" ||
@@ -117,12 +120,8 @@ async function observeActionable(client) {
   return snapshot;
 }
 
-function requireExactCapabilities(snapshot) {
-  if (JSON.stringify([...snapshot.capabilities].sort()) !== JSON.stringify([...EXPECTED_CAPABILITIES].sort()))
-    throw new Error(`native_local_pet_animal_capability_not_isolated:${snapshot.capabilities.join(",")}`);
-}
-
-function validTargets(snapshot) {
+/** Live unpetted Pets the contract accepts, before the standing-tile requirement. */
+function liveUnpettedPetTargets(snapshot) {
   return snapshot.petTargets.filter(
     (target) =>
       typeof target?.targetId === "string" &&
@@ -134,16 +133,58 @@ function validTargets(snapshot) {
       Number.isInteger(target.friendship) &&
       target.friendship >= 0 &&
       target.friendship <= 1000 &&
-      target.pettedToday === false &&
-      adjacent(snapshot.tile, target),
+      target.pettedToday === false,
   );
 }
 
+function validTargets(snapshot) {
+  return liveUnpettedPetTargets(snapshot).filter((target) => adjacent(snapshot.tile, target));
+}
+
+/** The sole pet target the contract will admit from the actor's current tile. */
 function chooseOnlyPetTarget(snapshot) {
   const targets = validTargets(snapshot);
   if (targets.length !== 1)
     throw new Error(targets.length === 0 ? "no_fresh_unpetted_pet_target" : "ambiguous_fresh_unpetted_pet_target");
   return targets[0];
+}
+
+/**
+ * The sole live unpetted Pet target the contract will accept, without the
+ * actor-adjacency requirement.
+ *
+ * Walking the actor into range is a locomotion concern, not a contract
+ * concern: a driver must know where the Pet is in order to stand next to it,
+ * and the Pet's own tile is the only source for that. The identity and
+ * fixture-state checks above are shared with `chooseOnlyPetTarget`, so the
+ * driver can never walk towards a Pet the contract would then refuse.
+ */
+export function chooseUnpettedPetTarget(snapshot) {
+  const targets = liveUnpettedPetTargets(snapshot);
+  if (targets.length !== 1)
+    throw new Error(targets.length === 0 ? "no_fresh_unpetted_pet_target" : "ambiguous_fresh_unpetted_pet_target");
+  return targets[0];
+}
+
+/**
+ * Select the topology this contract is being executed under.
+ *
+ * The shared world is the real AI-Farmhand topology: an authenticated Farmhand
+ * provisioner owns the bridge and the version-1 default-consent policy
+ * publishes the consented surface. The scenario precondition belongs to the
+ * Host-side fixture, so it is not asserted from the client config here. The
+ * isolated native-local fixture keeps its strict config assertions.
+ */
+function validateTopologyConfig(value) {
+  const topology = classifyTopology(value);
+  if (topology === "shared_world_farmhand") {
+    if (value.HostAutomation?.Enable === true || value.NativeLocalPlayerFixture?.Enable === true)
+      throw new Error("native_local_fixture_topology_not_isolated");
+    if (value.ActionPolicyVersion !== 1) throw new Error("shared_world_action_policy_invalid");
+    return topology;
+  }
+  validateNativeLocalConfig(value);
+  return topology;
 }
 
 function parseEvidence(evidence) {
