@@ -115,6 +115,22 @@ async function main(): Promise<void> {
       PRODUCT_INTEGRATION_CATALOG: catalog,
     },
   });
+  // ADR-0007 Shape B moved the platform binding and the folder picker into this
+  // composition root, so the hermetic fixture has to mock them too. Without
+  // these the real folder picker runs (and fails on a machine with no published
+  // picker binary), which reported different_failure instead of the injected
+  // construction failure these drain assertions expect.
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "windows-stardew-folder-picker", "index.js")).href, {
+    namedExports: {
+      createPublishedWindowsStardewFolderPicker: async () => Object.freeze({ kind: "fixture_folder_picker" }),
+    },
+  });
+  await mock.module(pathToFileURL(join(moduleDirectory, "stardew", "stardew-guardian-platform.js")).href, {
+    namedExports: {
+      createDesktopGuardianGameRuntimePlatform: () => Object.freeze({ kind: "fixture_guardian_platform" }),
+      createStardewPlayerHostRuntimeLaunchCollaboratorFactory: () => Object.freeze({ kind: "fixture_runtime_collaborator" }),
+    },
+  });
   await mock.module(pathToFileURL(join(moduleDirectory, "desktop-presentation-admission-owner.js")).href, {
     namedExports: {
       startDesktopPresentationAdmission: async () => {
