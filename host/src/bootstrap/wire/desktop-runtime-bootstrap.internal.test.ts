@@ -232,6 +232,15 @@ async function runWireFixture(scenario: "success" | "missing-arm-executable" | "
     const composerCorePath = join(moduleDirectory, "games", "stardew", "lifecycle", "stardew-private-bootstrap-composer.core.js");
     await mkdir(dirname(composerCorePath), { recursive: true });
     await writeFile(composerCorePath, "// Hermetic wire-fixture stub: the contained runtime platform imports this seam but\n// never invokes it; the fixture keeps the module graph self-contained instead of\n// dragging in the whole composer core closure.\nexport function createStardewBootstrapGuardianOwnerBinding() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function readStardewBootstrapGuardianNativeArmFrame() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\n");
+    // Same reasoning for the optional Voice surface the bootstrap entry imports.
+    // The fixture never configures GAMEBUDDY_VOICE_PORT/TOKEN, so
+    // connectOptionalVoiceSurface() returns before calling into the gateway; a
+    // hermetic stub keeps the Voice client closure (and its workspace protocol
+    // package) out of this fixture instead of copying a module graph it never
+    // drives. Added 2026-09-26: the import arrived in b5ac04c without this
+    // fixture being updated, which left all 14 executable cases failing on a
+    // clean tree with ERR_MODULE_NOT_FOUND for voice-bootstrap.js.
+    await writeFile(join(moduleDirectory, "voice-bootstrap.js"), "// Hermetic wire-fixture stub: the bootstrap entry imports this seam but the\n// fixture configures no Voice surface, so it is never invoked.\nexport async function connectHealthyVoiceGateway() { throw new Error(\"wire_fixture_voice_stub_unused\"); }\nexport async function connectHealthyVoiceGatewayWith() { throw new Error(\"wire_fixture_voice_stub_unused\"); }\n");
     await cp(resolve(compiledRoot, "deployment-manifest.js"), join(moduleDirectory, "deployment-manifest.js"));
     const manifestPath = join(fixtureRoot, "deployment-manifest.json");
     await writeFile(manifestPath, `${JSON.stringify({
