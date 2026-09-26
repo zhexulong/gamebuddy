@@ -4889,6 +4889,10 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             return null;
 
         List<SceneAffordanceSource> candidates = new();
+        // Tool instances exist only to ask the target-version native harvest-tool
+        // question; no action state is touched.
+        MilkPail milkPail = new();
+        Shears shears = new();
         foreach ((Vector2 tile, StardewValley.Object item) in location.objects.Pairs)
         {
             if (!SceneObservationScope.IsBoundedText(item.Name, 128)
@@ -4905,14 +4909,32 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 continue;
             SceneAffordanceKind resolvedKind = kind.Value;
             candidates.Add(new SceneAffordanceSource(resolvedKind, item.Name, item.QualifiedItemId, location.NameOrUniqueName,
-                (int)tile.X, (int)tile.Y, item.isForage() ? "pickup_forage" : null));
+                (int)tile.X, (int)tile.Y, item.isForage() ? "pickup_forage" : null, SceneAffordanceKindWire.DefaultPriority(resolvedKind)));
         }
         foreach (StardewValley.NPC npc in location.characters)
         {
             if (!SceneObservationScope.IsBoundedText(npc.Name, 128))
                 continue;
             candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Npc, npc.Name, npc.Name, location.NameOrUniqueName,
-                (int)npc.Tile.X, (int)npc.Tile.Y, "npc_relationship"));
+                (int)npc.Tile.X, (int)npc.Tile.Y, "npc_relationship", SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Npc)));
+        }
+        foreach (FarmAnimal animal in location.animals.Values)
+        {
+            if (!SceneObservationScope.IsBoundedText(animal.Name, 128))
+                continue;
+            // Only publish the action hint whose own native precondition this
+            // animal already satisfies: an adult animal carrying produce its
+            // harvest tool can take. `pet_animal`'s native consumer resolves
+            // `Pet` characters (cat/dog/horse), not this dictionary, and
+            // `feed_animal` targets an AnimalHouse trough, so neither is
+            // claimed here. Every other live state leaves the hint null.
+            bool partiallyCollectable = animal.isAdult()
+                && animal.currentProduce.Value is not null
+                && (animal.CanGetProduceWithTool(milkPail) || animal.CanGetProduceWithTool(shears));
+            candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Animal, animal.Name,
+                $"animal:{animal.myID.Value}:{animal.type.Value}", location.NameOrUniqueName,
+                (int)animal.Tile.X, (int)animal.Tile.Y, partiallyCollectable ? "collect_animal_product" : null,
+                SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Animal)));
         }
         foreach ((Vector2 tile, var feature) in location.terrainFeatures.Pairs)
         {
@@ -4920,19 +4942,35 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value))
             {
                 candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Crop, "Crop", dirt.crop.indexOfHarvest.Value,
-                    location.NameOrUniqueName, (int)tile.X, (int)tile.Y, "harvest_crop"));
+                    location.NameOrUniqueName, (int)tile.X, (int)tile.Y, "harvest_crop", SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Crop)));
+            }
+            // A cleared tree carries health <= 0 (the felled tree is marked
+            // -100), so health > 0 selects the live ones. A stump keeps the
+            // same kind and is distinguished only by its own existing action
+            // hint. FruitTree is a separate TerrainFeature class with no
+            // registered action, so it is deliberately not published here.
+            else if (feature is StardewValley.TerrainFeatures.Tree tree && tree.health.Value > 0f)
+            {
+                bool stump = tree.stump.Value;
+                candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Tree, stump ? "Stump" : "Tree",
+                    $"tree:{location.NameOrUniqueName}:{(int)tile.X},{(int)tile.Y}:{tree.treeType.Value}",
+                    location.NameOrUniqueName, (int)tile.X, (int)tile.Y, stump ? "chop_stump" : "chop_tree_source",
+                    SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Tree)));
             }
         }
         // WaterSource affordance (A.2): project each refillable water tile's
         // standable neighbors within the player radius. The ref always binds
         // the standable neighbor tile (never the water tile, which is
-        // impassable); empty sets contribute nothing.
+        // impassable); empty sets contribute nothing. This scan collects every
+        // live candidate instead of stopping at MaximumAffordances: the 20-item
+        // budget belongs to the projection's ranking, and a scan-time cutoff
+        // would let a dense kind suppress a sparse one before ranking ran.
         for (int x = Math.Max(0, (int)player.Tile.X - SceneObservationProjection.DefaultRadius);
-             x <= (int)player.Tile.X + SceneObservationProjection.DefaultRadius && candidates.Count < SceneObservationProjection.MaximumAffordances;
+             x <= (int)player.Tile.X + SceneObservationProjection.DefaultRadius;
              x++)
         {
             for (int y = Math.Max(0, (int)player.Tile.Y - SceneObservationProjection.DefaultRadius);
-                 y <= (int)player.Tile.Y + SceneObservationProjection.DefaultRadius && candidates.Count < SceneObservationProjection.MaximumAffordances;
+                 y <= (int)player.Tile.Y + SceneObservationProjection.DefaultRadius;
                  y++)
             {
                 if (!location.CanRefillWateringCanOnTile(x, y))
@@ -4946,7 +4984,8 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                         "Water",
                         $"water_source:{x},{y}",
                         location.NameOrUniqueName,
-                        nx, ny, "refill_watering_can"));
+                        nx, ny, "refill_watering_can",
+                        SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.WaterSource)));
                     break;
                 }
             }
@@ -4955,7 +4994,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         {
             if (!warp.npcOnly.Value && !string.IsNullOrWhiteSpace(warp.TargetName))
                 candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Door, warp.TargetName, $"{warp.TargetName}:{warp.X}:{warp.Y}",
-                    location.NameOrUniqueName, warp.X, warp.Y, "enter_exit"));
+                    location.NameOrUniqueName, warp.X, warp.Y, "enter_exit", SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Door)));
         }
         return new SceneObservationInput(location.NameOrUniqueName, (int)player.Tile.X, (int)player.Tile.Y, candidates);
     }

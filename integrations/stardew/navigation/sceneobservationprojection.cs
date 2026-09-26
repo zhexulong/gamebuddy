@@ -54,7 +54,12 @@ internal sealed class SceneObservationProjection
             .ThenBy(candidate => candidate.OpaqueEntityIdentity, StringComparer.Ordinal)
             .ToArray();
 
+        // The 20-item budget is shared by every kind, so a dense kind is capped
+        // per observation: a farm radius can hold dozens of wild trees at
+        // range 1, which would otherwise occupy all 20 slots and push every
+        // sparse anchor (NPC, exit, machine, water) out of the Agent's view.
         var affordances = new List<SceneAffordanceProjection>(Math.Min(ranked.Length, MaximumAffordances));
+        var denseKindCounts = new Dictionary<SceneAffordanceKind, int>();
         bool partial = false;
         foreach (RankedCandidate candidate in ranked)
         {
@@ -62,6 +67,18 @@ internal sealed class SceneObservationProjection
             {
                 partial = true;
                 break;
+            }
+
+            if (SceneAffordanceKindWire.IsDensityCapped(candidate.Kind))
+            {
+                denseKindCounts.TryGetValue(candidate.Kind, out int issued);
+                if (issued >= SceneAffordanceKindWire.MaximumDenseKindAffordances)
+                {
+                    partial = true;
+                    continue;
+                }
+
+                denseKindCounts[candidate.Kind] = issued + 1;
             }
 
             if (!this.references.TryIssue(context, candidate.Source, out string? reference, out _))

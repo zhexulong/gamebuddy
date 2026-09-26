@@ -7,6 +7,8 @@ internal enum SceneAffordanceKind
     Npc,
     Chest,
     Crop,
+    Tree,
+    Animal,
     Forage,
     Door,
     Machine,
@@ -154,6 +156,8 @@ internal static class SceneAffordanceKindWire
         SceneAffordanceKind.Npc
         or SceneAffordanceKind.Chest
         or SceneAffordanceKind.Crop
+        or SceneAffordanceKind.Tree
+        or SceneAffordanceKind.Animal
         or SceneAffordanceKind.Forage
         or SceneAffordanceKind.Door
         or SceneAffordanceKind.Machine
@@ -164,6 +168,8 @@ internal static class SceneAffordanceKindWire
         SceneAffordanceKind.Npc => "npc",
         SceneAffordanceKind.Chest => "chest",
         SceneAffordanceKind.Crop => "crop",
+        SceneAffordanceKind.Tree => "tree",
+        SceneAffordanceKind.Animal => "animal",
         SceneAffordanceKind.Forage => "forage",
         SceneAffordanceKind.Door => "door",
         SceneAffordanceKind.Machine => "machine",
@@ -176,12 +182,42 @@ internal static class SceneAffordanceKindWire
         SceneAffordanceKind.Npc => "n",
         SceneAffordanceKind.Chest => "c",
         SceneAffordanceKind.Crop => "cr",
+        SceneAffordanceKind.Tree => "t",
+        SceneAffordanceKind.Animal => "a",
         SceneAffordanceKind.Forage => "f",
         SceneAffordanceKind.Door => "d",
         SceneAffordanceKind.Machine => "m",
         SceneAffordanceKind.WaterSource => "w",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown scene affordance kind."),
     };
+
+    /// <summary>
+    /// Ranking priority for one affordance kind. The scene projection has a
+    /// closed 20-item budget while one farm radius routinely holds dozens of
+    /// trees and animals, so those dense facts would otherwise fill the budget
+    /// with whichever instances happen to be nearest. Sparse anchors keep the
+    /// neutral default 0 (distance order, unchanged); dense kinds are demoted by
+    /// one so an equally near anchor always ranks first. The second sort key is
+    /// ascending, so a higher value ranks later.
+    /// </summary>
+    internal static int DefaultPriority(SceneAffordanceKind kind) => kind switch
+    {
+        SceneAffordanceKind.Tree => 1,
+        SceneAffordanceKind.Animal => 1,
+        _ => 0,
+    };
+
+    /// <summary>
+    /// Kinds that routinely occur many times inside one radius. The projection
+    /// issues at most <see cref="MaximumDenseKindAffordances"/> of each per
+    /// observation so one dense kind cannot starve the shared budget.
+    /// </summary>
+    internal static bool IsDensityCapped(SceneAffordanceKind kind) => kind is
+        SceneAffordanceKind.Tree
+        or SceneAffordanceKind.Animal;
+
+    /// <summary>Per-kind ceiling for <see cref="IsDensityCapped"/> kinds.</summary>
+    internal const int MaximumDenseKindAffordances = 3;
 }
 
 internal static class SceneDirectionWire
