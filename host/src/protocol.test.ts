@@ -2378,6 +2378,49 @@ test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows",
   );
 });
 
+test("observe_scene result admits tree and animal affordance kinds and still rejects unknown kinds", () => {
+  const sceneFor = (kind: "tree" | "animal", actionHint: string | null) =>
+    newEnvelope(
+      "observe_scene_result",
+      scope,
+      {
+        observationId: "so1_DENSEABCDEFG01",
+        currentLocation: "Farm",
+        currentRegion: "Farm",
+        affordances: [
+          { ref: "sr1_dense0abcdefghij", kind, name: kind === "tree" ? "Tree" : "Cluck", distance: 2, direction: "East", actionHint },
+        ],
+        summary: "1 actionable objects visible in Farm.",
+        partial: false,
+        truncatedReason: null,
+      },
+      `observe_scene_${kind}_01`,
+      now,
+    );
+  assert.equal(diagnoseBridgeMessage(sceneFor("tree", "chop_tree_source"), scope, now), "accepted");
+  assert.equal(diagnoseBridgeMessage(sceneFor("animal", "collect_animal_product"), scope, now), "accepted");
+  assert.equal(diagnoseBridgeMessage(sceneFor("animal", null), scope, now), "accepted");
+  // A seed packet is dense too, but it has no registered action and stays unknown.
+  const unregisteredDenseKind = newEnvelope(
+    "observe_scene_result",
+    scope,
+    {
+      observationId: "so1_DENSEABCDEFG02",
+      currentLocation: "Farm",
+      currentRegion: "Farm",
+      affordances: [
+        { ref: "sr1_dense0abcdefghij", kind: "weed", name: "Weeds", distance: 2, direction: "East", actionHint: null },
+      ],
+      summary: "1 actionable objects visible in Farm.",
+      partial: false,
+      truncatedReason: null,
+    },
+    "observe_scene_weed_01",
+    now,
+  );
+  assert.equal(diagnoseBridgeMessage(unregisteredDenseKind, scope, now), "invalid_observe_scene_result");
+});
+
 test("observe_scene result admits water_source affordance kind and rejects unknown kinds", () => {
   const scene = newEnvelope(
     "observe_scene_result",
