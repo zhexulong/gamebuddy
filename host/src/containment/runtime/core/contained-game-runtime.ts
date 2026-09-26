@@ -162,12 +162,16 @@ export function createContainedGameRuntime(
         // contained, so an ordinary close or a failed launch can never produce
         // it and the platform never sees a settlement it did not earn.
         //
-        // An attempt that armed but launched no role is deliberately settlable:
-        // `arm_attempt` creates BOTH role Jobs natively
-        // (host/native/windows-bootstrap-guardian/Program.cs), so a role the
-        // runtime never launched still owns an empty Job with nothing left
-        // outside containment. Refusing this case would block a legitimate
-        // endgame of an armed-but-unlaunched attempt.
+        // An armed attempt that recorded NO launched role is refused. `arm` and
+        // `launch` are separate steps and the post-arm expiry/close check can fail
+        // before any role is recorded, leaving an attempt that armed but never
+        // dispatched. That attempt is still classified pre-claim and retryable by
+        // the coordinator, so letting it settle here would durably mark it
+        // `contained` and release the registration pointer for a launch that never
+        // happened. The generic layer cannot judge whether an empty role set is
+        // benign: "an unlaunched role still owns an empty Job" is a
+        // Stardew-native fact that belongs to the composer, not here.
+        if (roleStates.size === 0) rejected("no role ever reached launch");
         for (const state of roleStates.values()) {
           if (state !== "contained") rejected("not every launched role is contained");
         }
