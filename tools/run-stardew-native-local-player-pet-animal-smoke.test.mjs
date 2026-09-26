@@ -80,7 +80,7 @@ test("pet-animal runner uses shared dispatch, exact terminal correlation, and fr
   assert.equal(result.freshPostcondition.targetGone, true);
 });
 
-test("pet-animal runner rejects stale capability surface", async () => {
+test("pet-animal runner rejects an incomplete native-local capability surface", async () => {
   const client = {
     state: { snapshot: null },
     observe: async () => ({
@@ -95,5 +95,68 @@ test("pet-animal runner rejects stale capability surface", async () => {
   };
   const result = await runPetAnimalSmoke(client, [], config);
   assert.equal(result.state, "blocked");
-  assert.match(result.reasonCode, /capability_not_isolated/);
+  assert.equal(result.topology, "native_local_player_fixture");
+  assert.match(result.reasonCode, /native_capability_surface_mismatch/);
+});
+
+/**
+ * The shared world publishes the whole consented surface and the runner cannot
+ * narrow it, so this topology proves the action and its preconditions are
+ * advertised as a required subset instead of demanding exact equality.
+ */
+test("pet-animal runner accepts the shared-world surface as a required subset", async () => {
+  const sharedConfig = {
+    ...config,
+    ActionPolicyVersion: 1,
+    EnabledActions: null,
+    ExperimentalActions: ["pet_animal"],
+    NativeLocalPlayerFixture: { Enable: false },
+    FarmhandProvisioner: { Enable: true },
+  };
+  let snapshot = {
+    revision: 1,
+    location: "Farm",
+    tile: { x: 1, y: 1 },
+    actionable: true,
+    activeExecution: null,
+    capabilities: [
+      "cancel_active_execution",
+      "inspect_self",
+      "pet_animal",
+      "move_to_tile",
+      "machine_inspect",
+    ],
+    petTargets: [target],
+  };
+  const receipts = [];
+  const client = {
+    state: { snapshot },
+    observe: async () => snapshot,
+    execute: async (request) => {
+      assert.equal(request.action, "pet_animal");
+      snapshot = { ...snapshot, revision: 2, petTargets: [] };
+      client.state.snapshot = snapshot;
+      const accepted = {
+        requestId: request.requestId,
+        executionId: "pet-execution",
+        state: "accepted",
+        reasonCode: "accepted",
+        revision: 2,
+      };
+      receipts.push({
+        ...accepted,
+        state: "succeeded",
+        reasonCode: "pet_completed",
+        evidence: {
+          detail:
+            "day_recorded=true;friendship_after=12;friendship_before=0;friendship_callback=true;location=Farm;pet_day=1;target=pet_0123456789abcdef;tile=2,1",
+        },
+      });
+      return accepted;
+    },
+  };
+  const result = await runPetAnimalSmoke(client, receipts, sharedConfig);
+  assert.equal(result.state, "passed");
+  assert.equal(result.topology, "shared_world_farmhand");
+  assert.equal(result.reasonCode, "pet_completed");
 });

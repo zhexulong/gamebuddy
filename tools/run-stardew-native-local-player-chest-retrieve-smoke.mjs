@@ -1,8 +1,9 @@
 import {
-  assertExactCapabilities,
+  assertTopologyCapabilities,
+  classifyTopology,
   connectNativeLocalClient,
   executeFresh,
-  observeFresh,
+  observeTopologySnapshot,
   readNativeClientConfig,
   summarizeReceipt,
   waitForTerminal,
@@ -22,9 +23,10 @@ export async function runChestRetrieveSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
+  const topology = validateTopologyConfig(config);
   try {
-    const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    const before = await observeTopologySnapshot(client, topology, { actionable: true });
+    assertTopologyCapabilities(before, topology, EXPECTED_CAPABILITIES);
     const target = chooseOnlyChestRetrieveTarget(before);
     const requestId = `native_local_chest-retrieve_${Date.now()}`;
     const accepted = await executeFresh(client, {
@@ -49,8 +51,8 @@ export async function runChestRetrieveSmoke(
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "chest_retrieved")
       throw new Error(`chest_retrieve_failed:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
-    const after = await observeFresh(client, { actionable: true, minRevision: terminal.revision });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    const after = await observeTopologySnapshot(client, topology, { actionable: true, minRevision: terminal.revision });
+    assertTopologyCapabilities(after, topology, EXPECTED_CAPABILITIES);
     const passed =
       after.revision >= terminal.revision &&
       evidence.target === target.targetId &&
@@ -60,7 +62,7 @@ export async function runChestRetrieveSmoke(
       evidence.inventory_before === "0";
     return {
       state: passed ? "passed" : "blocked",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: passed ? "chest_retrieved" : "chest_retrieve_postcondition_mismatch",
       target,
       receipt: summarizeReceipt(terminal),
@@ -71,7 +73,7 @@ export async function runChestRetrieveSmoke(
   } catch (error) {
     return {
       state: "blocked",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
       latestReceipt: summarizeReceipt(client.state?.latestReceipt),
       trace,
@@ -80,8 +82,25 @@ export async function runChestRetrieveSmoke(
   }
 }
 
+/**
+ * Select the topology this contract is being executed under.
+ *
+ * The shared world is the real AI-Farmhand topology: an authenticated Farmhand
+ * provisioner owns the bridge and the version-1 default-consent policy
+ * publishes the consented surface, including the experimental action under
+ * test once the profile opts into it. The chest precondition belongs to the
+ * Host-side fixture, so it is not asserted from the client config here. The
+ * isolated native-local fixture keeps its strict capability equality.
+ */
+function validateTopologyConfig(value) {
+  const topology = classifyTopology(value);
+  if (topology === "shared_world_farmhand" && value.ActionPolicyVersion !== 1)
+    throw new Error("shared_world_action_policy_invalid");
+  return topology;
+}
 
-function chooseOnlyChestRetrieveTarget(snapshot) {
+/** The sole player-owned ordinary Chest target the contract will admit. */
+export function chooseOnlyChestRetrieveTarget(snapshot) {
   const targets = snapshot.chestRetrieveTargets ?? [];
   if (targets.length !== 1) throw new Error(`chest_retrieve_target_count_expected_1_got_${targets.length}`);
   const target = targets[0];

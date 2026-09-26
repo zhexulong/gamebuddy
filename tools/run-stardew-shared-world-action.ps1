@@ -41,7 +41,6 @@ param(
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 180,
     [switch]$AttachOnly
 )
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $false
@@ -55,6 +54,22 @@ $previousLaunchGeneration = if ($previousLaunchGenerationPresent) { $env:GAMEBUD
 $smapi = Join-Path $GamePath "StardewModdingAPI.exe"
 $hostLog = Join-Path $env:APPDATA "StardewValley\ErrorLogs\SMAPI-latest.txt"
 $aiLog = Join-Path $env:APPDATA "StardewValley\ErrorLogs\SMAPI-latest.player-2.txt"
+
+# The Host-side fixture scenario each wired action's precondition lives in, and
+# the policy opt-in the AI client needs to have that action published.
+#
+# A shared-world action cannot establish its own precondition: the fixture must
+# already exist on the Farm when the Farmhand lands there. The scenario is
+# therefore driver-supplied per action, exactly as the native-local lane supplies
+# it through its own fixture profile. Experimental actions additionally need the
+# profile to opt into them under the version-1 default-consent policy; published
+# actions (machine_inspect) must not be listed there.
+$ACTION_SETUP = @{
+    machine_inspect = @{ scenario = "native_machine_inspect_v1"; experimental = $false }
+    ship_item       = @{ scenario = "native_ship_item_v1"; experimental = $true }
+    chest_retrieve  = @{ scenario = "native_chest_retrieve_v1"; experimental = $true }
+    pet_animal      = @{ scenario = "native_pet_animal_v1"; experimental = $true }
+}
 
 function Assert-PathExists([string]$Path, [string]$Label, [string]$Kind = "Leaf") {
     if (-not (Test-Path -LiteralPath $Path -PathType $Kind)) { throw "Missing ${Label}: $Path" }
@@ -172,11 +187,20 @@ try {
     $hostConfig.HostFarmhandProvisioning.SessionToken = $sessionToken
     $hostConfig.HostAutomation.SaveName = $SaveName
     $hostConfig.HostAutomation.Enable = $true
+    $setup = $null
+    if (-not [string]::IsNullOrWhiteSpace($Action)) {
+        if (-not $ACTION_SETUP.ContainsKey($Action)) { throw "shared_world_action_not_wired:$Action" }
+        $setup = $ACTION_SETUP[$Action]
+        $hostConfig.HostAutomation.FixtureScenario = $setup.scenario
+    }
     $hostConfig.SaveId = $hostConfig.SaveId
     Write-Json $hostConfigPath $hostConfig
     Write-Json $hostSidecarPath $hostConfig
 
     $aiConfig = Read-Json $aiConfigPath
+    if ($null -ne $setup -and $setup.experimental) {
+        $aiConfig.ExperimentalActions = @($Action)
+    }
     $aiConfig.FarmhandProvisioner.ManifestPath = (Join-Path $SessionDirectory "stardew-farmhand-manifest.json")
     $aiConfig.FarmhandProvisioner.SessionToken = $sessionToken
     $aiConfig.HostFarmhandProvisioning.SessionToken = $sessionToken
@@ -227,6 +251,7 @@ try {
         state           = "attached"
         topology        = "shared_world_farmhand"
         action          = $Action
+        fixtureScenario = if ($null -eq $setup) { $null } else { $setup.scenario }
         saveName        = $SaveName
         farmhandId      = [string]$attachment.farmhandId
         companionId     = [string]$attachment.companionId
