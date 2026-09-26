@@ -253,30 +253,33 @@ test("settlement is refused once the runtime is closed", async () => {
   await assert.rejects(() => runtime.settle(), /runtime is closed/);
 });
 
-// Regression: an attempt that armed but never recorded a launched role must not
-// settle. `launchRole` can fail AFTER `platform.arm` succeeded but BEFORE it
-// records the role, because the post-arm expiry/close check runs in between. The
-// role guard is a loop over `roleStates`, so with an empty map it would pass
-// vacuously and the platform would mint a containment proof and release the
-// registration pointer for a launch that never happened. Recovery owns this case.
+// Regression: an attempt that armed but recorded no launched role is still
+// settlable, because `arm_attempt` creates BOTH role Jobs natively
+// (host/native/windows-bootstrap-guardian/Program.cs lines 66-67). A role the
+// runtime never launched therefore still owns an empty Job with nothing left
+// outside containment, so refusing this case would block a legitimate endgame of
+// an armed-but-unlaunched attempt. The guard loop over `roleStates` is correct to
+// pass vacuously here; this test pins that reading so a later change does not
+// "harden" it into a refusal.
 //
 // The expiry is made deterministic by advancing a fake clock inside `arm` rather
 // than by racing a real deadline, which would depend on how long arm happens to take.
-test("an armed attempt whose launch failed before recording a role is not settled", async () => {
+test("an armed attempt that launched no role is still settlable, with no roles reported", async () => {
   const log: string[] = [];
   const deadlineUnixMs = Date.now() + 60_000;
   const realNow = Date.now;
   const platform = fakePlatform(log, {
     // Arm succeeds, then time jumps past the launch deadline before the runtime's
-    // post-arm expiry check runs.
+    // post-arm expiry check runs, so the role is never recorded.
     onArm: () => { Date.now = () => deadlineUnixMs; },
   });
   try {
     const runtime = createContainedGameRuntime(platform, binding);
     await assert.rejects(() => runtime.launchRole("player", { deadlineUnixMs }, produce), /operation expired/);
     assert.deepEqual(log, ["arm:player"]);
-    await assert.rejects(() => runtime.settle(), /no role ever reached launch/);
-    assert.deepEqual(log, ["arm:player"], "a refused settlement never reaches the platform");
+    assert.deepEqual(await runtime.settle(), { status: "settled" });
+    // No role reached `launched`, so none is reported as contained.
+    assert.deepEqual(log, ["arm:player", "settle"]);
   } finally {
     Date.now = realNow;
   }
