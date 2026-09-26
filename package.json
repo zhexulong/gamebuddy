@@ -137,7 +137,9 @@
     "audit:stardew-action-seam-terminals": "node tools/audit-stardew-action-seam-terminals.mjs",
     "test:stardew-action-seam-terminals": "node --test tools/audit-stardew-action-seam-terminals.test.mjs",
     "derive:stardew-branch-writeset": "node tools/derive-stardew-branch-writeset.mjs",
-    "test:stardew-branch-writeset": "node --test tools/derive-stardew-branch-writeset.test.mjs"
+    "test:stardew-branch-writeset": "node --test tools/derive-stardew-branch-writeset.test.mjs",
+    "check:stardew-action-promotion": "node tools/check-stardew-action-promotion.mjs",
+    "test:stardew-action-promotion": "node --test tools/check-stardew-action-promotion.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
