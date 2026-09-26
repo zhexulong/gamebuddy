@@ -288,3 +288,25 @@ test("blocks a game-layer type-only import() of a generic layer", async () => {
     assert.ok(kinds.includes("game_imports_generic_layer"), `expected a generic-layer violation, got ${JSON.stringify(kinds)}`);
   });
 });
+
+// The registration plan's gate 10 requires production import tests to reject
+// registration-core/storage imports from flat host/src producers (run manifest,
+// operational gate evidence, the launcher, ...). Those modules are directly under
+// host/src, so while the inspected set was limited to the three generic layers plus
+// games they were traversed for placement only and never evaluated as importers --
+// the registration rule could not fire for them at all.
+test("inspects flat host/src producers and rejects a non-owner registration import", async () => {
+  await withFixture({
+    "host/src/run-manifest.ts": "import { withStardewLifecycleInstallationRegistrationOwner } from './stardew-installation-registration.internal.js';\nexport const owner = withStardewLifecycleInstallationRegistrationOwner;\n",
+    "host/src/stardew-installation-registration.internal.ts": "export function withStardewLifecycleInstallationRegistrationOwner() {}\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.ok(
+      report.inspectedFiles.includes("host/src/run-manifest.ts"),
+      `a flat host/src producer must be inspected, got ${JSON.stringify(report.inspectedFiles)}`,
+    );
+    const kinds = report.violations.map((violation) => violation.kind);
+    assert.ok(kinds.includes("stardew_registration_import_not_owner"), `expected a registration-owner violation, got ${JSON.stringify(kinds)}`);
+  });
+});

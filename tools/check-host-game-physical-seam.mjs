@@ -130,7 +130,14 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
   const canonicalRoot = (() => { try { return realpathSync(actualSourceRoot); } catch { return actualSourceRoot; } })();
   const integrity = [];
   const allFiles = filesUnder(actualSourceRoot, integrity, canonicalRoot);
-  const productionFiles = allFiles.filter((path) => genericPath(path, root) || gamePath(path, root));
+  // Every non-test production module under host/src is inspected as an importer,
+  // not only the three generic layers plus games. The flat `host/src/*.ts` layer
+  // holds most product producers (the launcher, run manifest, operational gate
+  // evidence, integration adapter, ...), and leaving it out meant the rules below
+  // could never fire for those files at all -- the registration plan's gate 10
+  // names several of them as producers that must not reach registration core or
+  // `containment/runtime/core`. Placement is still checked separately below.
+  const productionFiles = allFiles.filter((path) => !isTest(path));
   const violations = integrity.map(({ path, detail }) => violation("unsafe_source_path", path, null, null, 0, detail, root));
   // Placement is checked independently of import traversal so a stale copy cannot
   // hide merely because no inspected production module imports it.
