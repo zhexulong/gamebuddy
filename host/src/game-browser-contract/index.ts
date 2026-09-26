@@ -406,6 +406,34 @@ export const GameDisconnectCommandV1Schema = strictObject({
   expectedAttachmentGeneration: PositiveGeneration,
 });
 
+/**
+ * Explicit endgame command. This is the only operation that may terminate the
+ * Player; ordinary close, AI crash, controller EOF and reconnect failure must
+ * never produce it (see the Game session survival task). It is deliberately a
+ * separate authenticated operation instead of a flag on `game.stop`, because
+ * `game.stop` only stops AI authority and leaves the Player world running.
+ */
+export const GameEndgameCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  idempotencyKey: IdempotencyKey,
+  expectedAttachmentGeneration: PositiveGeneration,
+  confirm: Type.Literal(true),
+});
+
+/**
+ * Redacted endgame outcome. `gameended` is projected only from authoritative
+ * game state, i.e. after the exact attempt was actually terminated. It never
+ * carries session, launch, path, process, token, generation-proof, lease,
+ * digest, receipt, or attestation facts.
+ */
+export const GameEndgameResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  status: Type.Union([
+    Type.Literal("gameended"),
+    Type.Literal("unavailable"),
+  ]),
+});
+
 export const StardewCabinConfirmCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
   idempotencyKey: IdempotencyKey,
@@ -444,6 +472,7 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.reopen",
   "game.disconnect",
   "game.create",
+  "game.endgame",
   "game.diagnostics.read",
   "game.installation.discovery.read",
   "game.installation.discovery.confirm",
@@ -568,6 +597,8 @@ export const GameBrowserContractV1 = Object.freeze({
     GameResumeCancelCommandV1Schema,
     GameResumeCancelResultV1Schema,
     GameDisconnectCommandV1Schema,
+    GameEndgameCommandV1Schema,
+    GameEndgameResultV1Schema,
     GameReopenActionAuthorityCommandV1Schema,
     GameReopenActionAuthorityResultV1Schema,
     GameDiagnosticsReadCommandV1Schema,
@@ -617,6 +648,8 @@ export type GameResumeResultV1 = Static<typeof GameResumeResultV1Schema>;
 export type GameReopenActionAuthorityCommandV1 = Static<typeof GameReopenActionAuthorityCommandV1Schema>;
 export type GameReopenActionAuthorityResultV1 = Static<typeof GameReopenActionAuthorityResultV1Schema>;
 export type GameDisconnectCommandV1 = Static<typeof GameDisconnectCommandV1Schema>;
+export type GameEndgameCommandV1 = Static<typeof GameEndgameCommandV1Schema>;
+export type GameEndgameResultV1 = Static<typeof GameEndgameResultV1Schema>;
 export type StardewCabinChoicesV1 = Static<typeof StardewCabinChoicesV1Schema>;
 export type StardewCabinConfirmCommandV1 = Static<typeof StardewCabinConfirmCommandV1Schema>;
 export type StardewCabinConfirmResultV1 = Static<typeof StardewCabinConfirmResultV1Schema>;

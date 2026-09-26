@@ -201,6 +201,14 @@ export type StardewPlayerHostRuntimeLaunchCollaborator = Readonly<{
   containAiClient(
     owner: StardewOwnedPlayerHostBootstrap,
   ): Promise<import("../../../containment/runtime/contract/game-runtime.js").RedactedContainmentOutcome>;
+  /**
+   * Protected terminal settlement for the exact owner. It is only reachable
+   * from the coordinator's explicit endgame operation, never from ordinary
+   * close, AI crash or controller EOF. It settles the platform session and then
+   * advances the durable Stardew owner attempt and releases the bound
+   * registration pointer through the matching Guardian settlement proof.
+   */
+  settle(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   close(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
@@ -3725,18 +3733,70 @@ export function consumeStardewBootstrapGuardianOwnerBinding(
   transitions: StardewBootstrapGuardianOwnerTransitionPort;
   recoveryGateBinding: StardewBootstrapGuardianRecoveryGateBinding;
   settlementBinding: object;
+  armFrame: StardewBootstrapGuardianNativeArmFrame;
 }> {
   if (typeof binding !== "object" || binding === null) {
     throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
   }
   const facts = guardianOwnerBindings.get(binding);
   if (facts === undefined || facts.consumed) throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
+  // Read the arm frame before the binding is marked consumed: the production
+  // contained runtime needs it to build the native correlation, and computing it
+  // here keeps arm-frame reading and durable-transition ownership on one seam.
+  const armFrame = readStardewBootstrapGuardianNativeArmFrame(binding);
   facts.consumed = true;
   return Object.freeze({
     transitions: facts.port,
     recoveryGateBinding: facts.recoveryGateBinding,
     settlementBinding: facts.settlementBinding,
+    armFrame,
   });
+}
+
+/**
+ * Advances the durable owner attempt to `contained` and releases the bound
+ * registration pointer through the matching Guardian settlement proof.
+ *
+ * This is the production replacement for the retired game-layer Guardian owner
+ * seam: the durable `owner.json` transitions now live on the same path that
+ * actually drives the native arm/launch/contain, so the record can no longer
+ * stay `reserved` while the native attempt runs.
+ *
+ * A settled attempt has terminated and drained both role Jobs, so both roles
+ * are durably `contained`: a role the runtime never launched has an empty Job
+ * and nothing outside containment. The durable record therefore records both,
+ * which is exactly the state its validator requires before it accepts
+ * `contained`.
+ */
+export async function settleOwnedPlayerHostContainedRuntimeAttempt(
+  owner: StardewOwnedPlayerHostBootstrap,
+  launchedRoles: readonly ("playerHost" | "aiClient")[],
+): Promise<void> {
+  requireOwnedPlayerHostBootstrapFacts(owner);
+  const guardianFacts = guardianOwnerBindings.get(owner);
+  if (guardianFacts === undefined || !guardianFacts.consumed) {
+    throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
+  }
+  const transitions = guardianFacts.port;
+  const binding = owner as unknown as StardewBootstrapGuardianOwnerBinding;
+  // Catch the durable record up to what actually happened, in the exact order
+  // its validator requires. Production drives native arm/launch/contain through
+  // the generic contained runtime, which deliberately has no Stardew durable
+  // types, so the attempt's durable record is advanced here — at the only point
+  // where the exact owner, the launched roles and the proof authority meet.
+  //
+  // Arm always preceded a launch by this same attempt, so recording it is true.
+  await transitions.armAcknowledged();
+  for (const role of launchedRoles) await transitions.roleActive(role);
+  await transitions.beginControlledClose();
+  // An endgame terminates and drains both role Jobs, so both roles are durably
+  // contained: a role the runtime never launched still has a Job (empty) with
+  // nothing left outside containment. The validator requires both.
+  await transitions.controlledRoleContained("playerHost");
+  await transitions.controlledRoleContained("aiClient");
+  await transitions.finalizeControlledContained();
+  const proof = mintStardewBootstrapGuardianSettlementProof(binding, guardianFacts.settlementBinding);
+  await settleOwnedPlayerHostRegistrationAttempt(owner, proof);
 }
 
 export function mintStardewBootstrapGuardianSettlementProof(

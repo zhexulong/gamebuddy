@@ -42,6 +42,21 @@ export type ContainedGameRuntimePlatform = Readonly<{
     readonly operationWaitBudgetMs: number;
     readonly role: ContainmentRole;
   }>): Promise<void>;
+  /**
+   * Protected terminal settlement for one attempt. The platform owns what a
+   * settlement durably records and proves; the generic runtime only guarantees
+   * that every role which actually launched is already contained before this is
+   * ever called, so no ordinary close, AI crash or controller EOF can reach it.
+   * `launchedRoles` names exactly those roles the runtime actually launched, so
+   * a platform never has to invent or guess what to record as contained.
+   */
+  settle(input: Readonly<{
+    readonly guardianInstanceId: string;
+    readonly guardianEpoch: number;
+    readonly attemptId: string;
+    readonly operationWaitBudgetMs: number;
+    readonly launchedRoles: readonly ContainmentRole[];
+  }>): Promise<void>;
   close(): Promise<void>;
 }>;
 
@@ -134,6 +149,34 @@ export function createContainedGameRuntime(
         } catch {
           roleStates.set(role, "contain-failed");
           return containmentOutcome(role, "failed");
+        }
+      });
+    },
+    settle() {
+      return serialize(async () => {
+        if (closed) rejected("runtime is closed");
+        if (!armAttempted || !armed) rejected("runtime was never armed");
+        // Settlement is the deliberate terminal operation. It is legal only
+        // once every role that actually reached `launched` was already
+        // contained, so an ordinary close or a failed launch can never produce
+        // it and the platform never sees a settlement it did not earn.
+        for (const state of roleStates.values()) {
+          if (state !== "contained") rejected("not every launched role is contained");
+        }
+        try {
+          await platform.settle({
+            ...bindingSnapshot,
+            operationWaitBudgetMs: binding.operationWaitBudgetMs,
+            // Name exactly the roles that reached `launched`; the guard above
+            // already proved each of them is contained, and a role that never
+            // launched is never reported as contained.
+            launchedRoles: [...roleStates.entries()]
+              .filter(([, state]) => state === "contained")
+              .map(([role]) => role),
+          });
+          return Object.freeze({ status: "settled" as const });
+        } catch {
+          return Object.freeze({ status: "unavailable" as const });
         }
       });
     },
