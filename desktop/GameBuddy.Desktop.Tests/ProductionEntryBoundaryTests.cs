@@ -43,7 +43,7 @@ public sealed class ProductionEntryBoundaryTests
         var productionPath = source[source.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)..];
 
         var admit = productionPath.IndexOf("AdmitGuardianAsync(selection, cancellationToken)", StringComparison.Ordinal);
-        var host = productionPath.IndexOf("runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken)", StringComparison.Ordinal);
+        var host = productionPath.IndexOf("runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
         var resident = productionPath.IndexOf("guardianSupervisor.StartResidentAsync(image, cancellationToken)", StringComparison.Ordinal);
         var attach = productionPath.IndexOf("host.AttachResidentGuardianAsync(resident, cancellationToken)", StringComparison.Ordinal);
         Assert.True(admit >= 0 && host > admit && resident > host && attach > resident);
