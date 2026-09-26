@@ -218,21 +218,36 @@ try {
     // there itself using only published actions. Do that here, before the
     // action under test, so the action keeps its own contract unchanged.
     const approachTrace = [];
+    let approachDiagnostic = null;
     const plan = ACTION_TARGETS[action];
     if (plan !== undefined) {
       // The contract under test decides where the actor must stand; the driver
       // only walks it there, using published actions across locations. A target
       // that can move re-reads its tile per attempt.
-      const positioned =
-        plan.freshTargetTiles !== undefined
-          ? await ensureAdjacentToFreshTarget(session.client, session.receipts, plan.location, plan.freshTargetTiles, {
-              attempts: 3,
-            })
-          : await ensureStandingTile(session.client, session.receipts, plan.location, plan.standingTiles, {});
-      approachTrace.push(...positioned.trace.map((entry) => ({ ...entry, phase: "reach_standing_tile" })));
+      //
+      // Failing to position is a result, not a crash. The action under test has
+      // its own contract and its own rejection vocabulary; if the driver cannot
+      // get the actor in place it must say so, so the caller can distinguish
+      // "the action refused" from "we never got there". Throwing here would
+      // surface as an unhandled error and hide which of the two happened.
+      try {
+        const positioned =
+          plan.freshTargetTiles !== undefined
+            ? await ensureAdjacentToFreshTarget(session.client, session.receipts, plan.location, plan.freshTargetTiles, {
+                attempts: 3,
+              })
+            : await ensureStandingTile(session.client, session.receipts, plan.location, plan.standingTiles, {});
+        approachTrace.push(...positioned.trace.map((entry) => ({ ...entry, phase: "reach_standing_tile" })));
+      } catch (error) {
+        approachDiagnostic = { phase: "reach_standing_tile", error: String(error?.message ?? error) };
+      }
     }
+    // A target the game moves on its own is located by re-observing, not by
+    // chasing: the driver reports position for the runner to act on, and the
+    // runner re-reads the target itself. So a positioning failure is reported
+    // alongside the action's own outcome rather than replacing it.
     const result = await runSmoke(session.client, session.receipts, config);
-    console.log(JSON.stringify({ ...result, approachTrace }));
+    console.log(JSON.stringify({ ...result, approachTrace, approachDiagnostic }));
     if (result?.state !== "passed") process.exitCode = 2;
   }
 } finally {
