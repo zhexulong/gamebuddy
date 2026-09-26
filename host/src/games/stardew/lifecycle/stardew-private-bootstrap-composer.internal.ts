@@ -10,35 +10,30 @@ import {
 import { createProductionStagingDependencies } from "../../../bootstrap/roots/stardew-private-mod-profile-staging.js";
 import {
   consumeOwnedPlayerHostBootstrap as consumeOwnedPlayerHostBootstrapCore,
-  createStardewBootstrapGuardianOwnerBinding,
   createStardewPrivateBootstrapProductionCore,
+  settleOwnedPlayerHostContainedRuntimeAttempt as settleOwnedPlayerHostContainedRuntimeAttemptCore,
   settleOwnedPlayerHostRegistrationAttempt as settleOwnedPlayerHostRegistrationAttemptCore,
   stageOwnedPlayerHostProfile as stageOwnedPlayerHostProfileCore,
   terminalizeOwnedPlayerHostBootstrap as terminalizeOwnedPlayerHostBootstrapCore,
   type StardewBootstrapGuardianSettlementProof,
   type StardewPrivateBootstrapInternalComposition,
 } from "./stardew-private-bootstrap-composer.core.js";
-import {
-  createStardewBootstrapGuardianOwner,
-  type StardewBootstrapGuardianNativePorts,
-  type StardewBootstrapGuardianOwner,
-} from "./stardew-bootstrap-guardian.private.js";
 
 /** Constructs the complete trusted production bootstrap composition. */
 export type StardewBootstrapGuardianOwnerFactory = Readonly<{
-  /** Creates one owner for the exact lifecycle invocation; no platform transport crosses this seam. */
-  create(
-    owner: StardewOwnedPlayerHostBootstrap,
-    deadlineUnixMs: number,
-    operationWaitBudgetMs: number,
-  ): StardewBootstrapGuardianOwner;
+  /**
+   * Advances the durable attempt to `contained`, mints the matching settlement
+   * proof and releases the bound registration pointer. Only the explicit endgame
+   * operation reaches this.
+   */
+  settle(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
 export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapInternalComposition & Readonly<{
-  createStardewBootstrapGuardianOwner(
+  settleOwnedPlayerHostContainedRuntimeAttempt(
     owner: StardewOwnedPlayerHostBootstrap,
-    native: StardewBootstrapGuardianNativePorts,
-  ): StardewBootstrapGuardianOwner;
+    launchedRoles: readonly ("playerHost" | "aiClient")[],
+  ): Promise<void>;
 }>;
 
 export function createStardewPrivateBootstrapComposition(): StardewPrivateBootstrapTrustedComposition {
@@ -51,8 +46,8 @@ export function createStardewPrivateBootstrapComposition(): StardewPrivateBootst
   });
   return Object.freeze({
     ...core,
-    createStardewBootstrapGuardianOwner: (owner, native) =>
-      createStardewBootstrapGuardianOwner(createStardewBootstrapGuardianOwnerBinding(owner), native),
+    settleOwnedPlayerHostContainedRuntimeAttempt: (owner, launchedRoles) =>
+      settleOwnedPlayerHostContainedRuntimeAttemptCore(owner, launchedRoles),
   });
 }
 
