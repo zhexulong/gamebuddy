@@ -242,11 +242,29 @@ export function createDesktopGuardianGameRuntimePlatform(
   // terminal operation and the coordinator's ordinary close may still run
   // afterwards on the same attempt, so both go through this single latch rather
   // than racing two `close()` calls onto one authenticated session.
+  //
+  // The latch is set only AFTER the close succeeds: `session.close()` can reject,
+  // and the coordinator retries close (`close()` clears `closePromise` when the
+  // attempt rejected and the lifecycle is not yet `closed`). Latching before the
+  // await would make that retry report success while the authenticated Guardian
+  // session was still open, which the survival task forbids.
   let sessionClosed = false;
+  let closeInFlight: Promise<void> | undefined;
   const closeSessionOnce = async (): Promise<void> => {
     if (sessionClosed) return;
-    sessionClosed = true;
-    await session.close();
+    // A close already in flight is joined rather than duplicated, so concurrent
+    // callers cannot race two closes onto one session.
+    if (closeInFlight !== undefined) return await closeInFlight;
+    closeInFlight = (async () => {
+      await session.close();
+      sessionClosed = true;
+    })();
+    try {
+      await closeInFlight;
+    } finally {
+      // A rejected close stays retryable; a resolved one is latched above.
+      if (!sessionClosed) closeInFlight = undefined;
+    }
   };
   const encodeArmAuthorization = (facts: TypedPrivateGameFacts): Uint8Array => {
     // The attested installation executable is fixed at arm time and is later

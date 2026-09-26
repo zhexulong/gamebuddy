@@ -311,3 +311,43 @@ test("a failed settlement also latches, so it cannot be retried into a second ca
   await assert.rejects(() => runtime.settle(), /runtime was already settled/);
   assert.deepEqual(log, ["arm:player", "launch:player", "contain:player", "settle"]);
 });
+
+// A failed close must stay retryable. The earlier `if (closed) return
+// operation.then(() => undefined)` returned a RESOLVED promise after a rejected
+// close, so the coordinator's retry reported success while the platform session
+// may still have been open. `closed` still latches immediately so no further
+// arm/launch/contain/settle is legal, but the close itself is re-driven.
+test("a failed runtime close is re-driven on the next call instead of faking success", async () => {
+  const log: string[] = [];
+  let failNext = true;
+  const platform: ContainedGameRuntimePlatform = Object.freeze({
+    arm: async () => {},
+    launch: async () => {},
+    contain: async () => {},
+    settle: async () => {},
+    close: async () => {
+      log.push("close");
+      if (failNext) throw new Error("controlled_close_failure");
+    },
+  });
+  const runtime = createContainedGameRuntime(platform, binding);
+  await assert.rejects(() => runtime.close(), /controlled_close_failure/);
+  // Closing still forbids a later settlement, even though the close failed.
+  await assert.rejects(() => runtime.settle(), /runtime is closed/);
+
+  failNext = false;
+  await runtime.close();
+  assert.deepEqual(log, ["close", "close"], "the retry re-drove the platform close");
+});
+
+// Closing forbids settlement. This is the property the endgame relies on to be the
+// only route to a terminal attempt.
+test("closing forbids a later settlement", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log), binding);
+  await runtime.launchRole("player", launchOperation(), produce);
+  await runtime.containRole("player");
+  await runtime.close();
+  await assert.rejects(() => runtime.settle(), /runtime is closed/);
+  assert.deepEqual(log, ["arm:player", "launch:player", "contain:player", "close"]);
+});
