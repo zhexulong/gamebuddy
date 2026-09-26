@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { readArtifactConfig } from "./production-artifact.mjs";
-import { assertCompleteTestArtifact, publishTestArtifact, recheckTestArtifactEntry, resolveTestArtifactEntry } from "./production-artifact-test-support.mjs";
+import { assertCompleteTestArtifact, publishTestArtifact, recheckTestArtifactEntry, resolveTestArtifactEntry, stageFixtureRuntimeClosure } from "./production-artifact-test-support.mjs";
 import { publishVoiceGatewayFixture, verifyPublishedVoiceGateway, VOICE_GATEWAY_ADMISSION } from "./voice-artifact-fixture-publisher.mjs";
 import { withSyntheticVerifiedReleaseBundledRuntimeForTest } from "./node-runtime-release-acquisition.mjs";
 
@@ -122,6 +122,10 @@ async function withProductionPublisherProbe(run) {
     await writeFile(probePath, `${source}\nexport { copyVerifiedBundledRuntimeSource, publishProductionArtifactWithRuntimeCopier };\n`);
     await cp(join(scriptRoot, "production-artifact-esm-resolution-probe.mjs"), join(probeRoot, "production-artifact-esm-resolution-probe.mjs"));
     await cp(join(scriptRoot, "voice-artifact-fixture-publisher.mjs"), join(probeRoot, "voice-artifact-fixture-publisher.mjs"));
+  // The probe copy also resolves the closure-staging module relatively.
+  await cp(join(scriptRoot, "production-artifact-closure-staging.mjs"), join(probeRoot, "production-artifact-closure-staging.mjs"));
+  // The probe copy also resolves the closure-staging module relatively.
+  await cp(join(scriptRoot, "production-artifact-closure-staging.mjs"), join(probeRoot, "production-artifact-closure-staging.mjs"));
     return await run(await import(`${pathToFileURL(probePath).href}?test=${Date.now()}`));
   } finally { await rm(probeRoot, { recursive: true, force: true }); }
 }
@@ -138,6 +142,8 @@ async function publishWithPrivateCopier({ root, outputRoot }) {
         { hostRoot: root, emittedRoot: await emit(root), outputRoot, voiceDistRoot: join(root, "voice-gateway", ".dist") },
         async (stagingRoot, runtimeDescriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor: runtimeDescriptor, source: runtimeSource }),
         descriptor,
+        undefined,
+        stageFixtureRuntimeClosure,
       );
     }));
 }

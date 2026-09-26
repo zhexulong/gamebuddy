@@ -1,3 +1,4 @@
+import { closureOriginsFromInventory } from "./production-artifact-closure-staging.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -24,6 +25,74 @@ const windowsHelpers = [
   ["windowsStardewFolderPicker", "native/windows-stardew-folder-picker/.dist/win-x64", verifyWindowsStardewFolderPickerPair, false],
   ["windowsBootstrapGuardian", "native/windows-bootstrap-guardian/.dist/win-x64", verifyWindowsBootstrapGuardianPair, false],
 ];
+
+/**
+ * Test-only stager with the production shape: the generation carries a closure
+ * tree plus its own resolution manifest, so the closure is verified from the
+ * artifact rather than from the repository. It copies the fixture's existing
+ * dependencies instead of resolving a real 0.5 GB pnpm closure.
+ */
+export async function stageFixtureRuntimeClosure({ hostRoot, stagingRoot, externalRuntimeClosure }) {
+  const packages = externalRuntimeClosure?.packages;
+  if (!Array.isArray(packages) || packages.length === 0) throw new Error("fixture_closure_declaration_required");
+  const origins = new Map();
+  const origin = Object.freeze({ kind: "declared_external_runtime_closure", source: "host_production_dependency_closure" });
+  const manifest = { name: "gamebuddy-host-generation", private: true, type: "module",
+    dependencies: Object.fromEntries(packages.map((name) => [name, "*"])) };
+  await writeFile(resolve(stagingRoot, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  origins.set("package.json", origin);
+  // The closure root exists even when nothing resolves into it. The verifier
+  // must reach its own per-package diagnosis (`external_package_unresolvable`)
+  // rather than failing on a missing directory.
+  await mkdir(resolve(stagingRoot, "node_modules"), { recursive: true });
+  for (const name of packages) {
+    const source = resolve(hostRoot, "node_modules", ...name.split("/"));
+    // Placement only, and only for a link-free package root: a package that is
+    // absent, unusable, or reachable only through a link is left absent so the
+    // verifier reports its own authoritative `external_package_unused` /
+    // `external_package_unresolvable` outcome instead of a staging-time error or
+    // a followed junction.
+    if (!await linkFreePackageRoot(resolve(hostRoot, "node_modules"), name)) continue;
+    const listed = await listRegularFiles(source);
+    for (const item of listed) {
+      if (/(?:^|\/)(?:[^/]*\.(?:test|test-support)(?:\.[^/]+)?|test-fixtures)(?:\/|$)/i.test(item)) continue;
+      const destination = resolve(stagingRoot, "node_modules", ...name.split("/"), ...item.split("/"));
+      await mkdir(dirname(destination), { recursive: true });
+      await copyFile(resolve(source, item), destination);
+      origins.set(`node_modules/${name}/${item}`, origin);
+    }
+  }
+  return origins;
+}
+
+/**
+ * A declared package is stageable only when every path segment from the modules
+ * root down to the package root is a real directory. An intermediate scoped
+ * namespace can itself be a link, so checking only the final component would
+ * follow a junction out of the host root and silently publish its contents.
+ */
+async function linkFreePackageRoot(modulesRoot, name) {
+  let current = modulesRoot;
+  for (const segment of name.split("/")) {
+    current = resolve(current, segment);
+    const state = await lstat(current).catch(() => null);
+    if (state === null || state.isSymbolicLink() || !state.isDirectory()) return false;
+  }
+  return true;
+}
+
+/** List regular files without following links, so a linked subtree cannot be adopted. */
+async function listRegularFiles(root, prefix = "") {
+  const result = [];
+  for (const entry of await readdir(resolve(root, prefix), { withFileTypes: true })) {
+    const item = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const state = await lstat(resolve(root, item));
+    if (state.isSymbolicLink()) continue;
+    if (state.isDirectory()) result.push(...await listRegularFiles(root, item));
+    else if (state.isFile()) result.push(item);
+  }
+  return result.sort();
+}
 
 async function copyConfiguredWindowsHelpers({ hostRoot, stagingRoot, config, origins }) {
   if (process.platform !== "win32") return;
@@ -81,6 +150,10 @@ export async function publishTestArtifact({ hostRoot, emittedRoot, outputRoot, r
     }
     const origins = await copyApprovedResources({ hostRoot, stagingRoot: staging, config });
     await copyRuntime(staging, runtimeSource, origins);
+    // The fixture stager reproduces the production shape: the generation owns its
+    // closure tree and resolves it in place, so tests cannot pass via the
+    // repository's node_modules.
+    for (const [path, origin] of await stageFixtureRuntimeClosure({ hostRoot, stagingRoot: staging, externalRuntimeClosure: config.externalRuntimeClosure })) origins.set(path, origin);
     await copyConfiguredWindowsHelpers({ hostRoot, stagingRoot: staging, config, origins });
     if (config.voiceGateway !== undefined) {
       await publishVoiceGatewayFixture({
@@ -96,9 +169,9 @@ export async function publishTestArtifact({ hostRoot, emittedRoot, outputRoot, r
       origins.set(verified.entryPath, origin);
       origins.set(verified.protocolPath, origin);
     }
-    const inventory = await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins });
+    const inventory = await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins, closureHostRoot: staging });
     await writeFile(resolve(staging, "production-inventory.json"), `${JSON.stringify(inventory, null, 2)}\n`);
-    await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins, expectedInventory: inventory });
+    await verifyArtifact({ artifactRoot: staging, hostRoot, config, origins, expectedInventory: inventory, closureHostRoot: staging });
     if (config.voiceGateway !== undefined) {
       // Rewrite the voiced sidecar to the full-inventory digest exactly like
       // the production publisher's emitVoiceGatewayAdmission: the staged sidecar
@@ -159,7 +232,10 @@ async function selectedTestArtifact({ hostRoot, outputRoot }) {
   const sidecar = resolve(artifactRoot, ADMISSION); const sidecarHold = resolve(outputRoot, `.verified-${pointer.generation}-${ADMISSION}`);
   await rename(sidecar, sidecarHold);
   for (const entry of manifest.entries) if (entry.origin?.kind === "test_runtime") origins.set(entry.path, entry.origin);
-  let inventory; try { inventory = await verifyArtifact({ artifactRoot, hostRoot, config, origins, expectedInventory: manifest }); } finally { await rename(sidecarHold, sidecar); }
+  // The recheck must verify the same closure claim the publisher recorded, and
+  // resolve it from the generation itself rather than from the repository.
+  for (const [path, origin] of closureOriginsFromInventory(manifest.entries)) origins.set(path, origin);
+  let inventory; try { inventory = await verifyArtifact({ artifactRoot, hostRoot, config, origins, expectedInventory: manifest, closureHostRoot: artifactRoot }); } finally { await rename(sidecarHold, sidecar); }
   const admission = await readFile(sidecar); if (digest(admission) !== pointer.testRuntimeAdmissionSha256 || admission.toString("utf8") !== testAdmission(inventory, pointer.generation, config.bundledRuntime)) throw new Error("test_runtime_admission_invalid");
   if (inventory.digest !== pointer.inventoryDigest) throw new Error("test_current_pointer_inventory_mismatch");
   return { ...inventory, generation: pointer.generation, artifactRoot };
