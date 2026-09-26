@@ -144,7 +144,7 @@ test("launch and arm fail closed before the native session when facts violate th
   const attempted: number[] = [];
   const arms: number[] = [];
   const platform = createDesktopGuardianGameRuntimePlatform(Object.freeze({
-    arm: async (input) => { arms.push(1); return ack("arm"); },
+    arm: async () => { arms.push(1); return ack("arm"); },
     launch: async (input) => {
       attempted.push(1);
       return ack("launch", input.role);
