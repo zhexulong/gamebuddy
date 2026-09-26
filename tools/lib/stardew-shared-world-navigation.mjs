@@ -96,7 +96,17 @@ export async function moveToTile(client, receipts, tile, trace, { timeoutMs = DE
     timeoutMs,
   });
   const terminal = await waitForTerminal(receipts, accepted, timeoutMs);
-  trace.push({ step: "move_to_tile", tile, state: terminal.state, reasonCode: terminal.reasonCode });
+  trace.push({
+    step: "move_to_tile",
+    tile,
+    state: terminal.state,
+    reasonCode: terminal.reasonCode,
+    // Carry the receipt's own evidence. A native path that ends short of its
+    // target reports where it stopped and where it was told to go; without that
+    // the only visible fact is "it failed", which cannot distinguish an
+    // unreachable tile from an occupied one or from a path that ran out of time.
+    evidence: terminal.evidence ?? null,
+  });
   return terminal.state === "succeeded" && terminal.reasonCode === "target_reached" ? terminal : null;
 }
 
