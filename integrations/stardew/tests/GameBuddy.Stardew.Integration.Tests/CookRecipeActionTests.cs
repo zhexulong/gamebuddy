@@ -105,6 +105,25 @@ public sealed class CookRecipeActionTests
         blankReason.Should().Be("recipe_unknown");
     }
 
+    /// <summary>
+    /// The published recipe identity must be exactly what the dispatch resolver
+    /// maps back to this one key, so every case is proved through that resolver
+    /// rather than a second copy of the rule. Kept beside the resolver's own test.
+    /// </summary>
+    [Fact]
+    public void PublishedRecipeIdentity_IsExactlyWhatDispatchResolvesBackToTheSameKey()
+    {
+        string[] live = { "Wood Fence", "Fried Egg", "Torch", "Wild Seeds (Sp)" };
+        ExecutionManager.TryBuildWireRecipeIdentity(live, "Wood Fence").Should().Be("Wood_Fence");
+        // A key with no space is already wire-legal and stays verbatim.
+        ExecutionManager.TryBuildWireRecipeIdentity(live, "Torch").Should().Be("Torch");
+        // A colliding alias is not published ambiguously, and an identity the
+        // opaque-arg alphabet cannot carry is not published illegally: both vanish
+        // from discovery rather than misleading the Agent.
+        ExecutionManager.TryBuildWireRecipeIdentity(new[] { "A B C", "A B_C" }, "A B C").Should().BeNull();
+        ExecutionManager.TryBuildWireRecipeIdentity(live, "Wild Seeds (Sp)").Should().BeNull();
+    }
+
     [Fact]
     public void Router_CookRecipe_WhenWorldNotReady_Rejects()
     {

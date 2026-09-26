@@ -1,4 +1,5 @@
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Protocol;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -314,6 +315,112 @@ internal sealed partial class ExecutionManager
         recipeId = string.Empty;
         reasonCode = matches == 0 ? "recipe_unknown" : "recipe_identity_ambiguous";
         return false;
+    }
+
+    /// <summary>
+    /// Every learned cooking recipe, published under a sendable identity, so the
+    /// Agent can name a recipe instead of guessing keys from model memory. Only
+    /// learned recipes appear: an unlearned key is not an admissible target and
+    /// publishing it would only lead the Agent into recipe_not_learned.
+    ///
+    /// <para>
+    /// IngredientsAvailable is a pure fact, measured with the same backpack-only
+    /// gate the handler applies (null container list, so the fridge stays out of
+    /// both). It is not admission: the handler still re-resolves the identity and
+    /// re-evaluates learned and ingredient state at dispatch.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<BridgeRecipeTarget> DiscoverCookingRecipeTargets(Farmer player)
+    {
+        Dictionary<string, string>? table = CraftingRecipe.cookingRecipes;
+        if (table is null) return Array.Empty<BridgeRecipeTarget>();
+        List<BridgeRecipeTarget> result = new();
+        foreach (string recipeKey in player.cookingRecipes.Keys.OrderBy(key => key, StringComparer.Ordinal))
+        {
+            // A learned key with no live recipe (content removed by a mod) is not
+            // a target: the handler would reject it as recipe_unknown.
+            if (!table.ContainsKey(recipeKey)) continue;
+            if (TryBuildWireRecipeIdentity(table.Keys, recipeKey) is not { } wireIdentity) continue;
+            CraftingRecipe recipe = new(recipeKey, isCookingRecipe: true);
+            result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory(null)));
+        }
+        // Bounded like every other snapshot target list. Craftable-now recipes are
+        // ranked first (the sort is stable, so ordinal order survives inside a
+        // rank) because those are the ones the Agent can act on immediately.
+        return result
+            .OrderByDescending(target => target.IngredientsAvailable)
+            .Take(64)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Where a live cooking station is: the vanilla kitchen action tile
+    /// (Buildings "Action" = kitchen/Kitchen, the selector GameLocation.checkAction
+    /// dispatches to ActivateKitchen) or a placed cookout kit (BC)278 (the vanilla
+    /// campfire cooking trigger). This is the same two-predicate derivation the
+    /// dispatch W-rule uses, so the Agent is never told about a station the action
+    /// would refuse.
+    ///
+    /// <para>
+    /// Discovery only. cook_recipe keeps carrying the recipe identity alone and
+    /// re-derives the station from the live world at dispatch, so no coordinate
+    /// published here ever becomes mutation authority.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<BridgeCookingStationTarget> DiscoverCookingStationTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeCookingStationTarget>();
+        List<BridgeCookingStationTarget> result = new();
+        // Kitchens only exist on indoor maps, so the map-wide tile-property scan
+        // is confined to the small interior maps instead of running outdoors.
+        if (!location.IsOutdoors)
+        {
+            int width = location.map.Layers[0].LayerWidth;
+            int height = location.map.Layers[0].LayerHeight;
+            for (int x = 0; x < width && result.Count < 16; x++)
+            for (int y = 0; y < height && result.Count < 16; y++)
+            {
+                string actionToken = location.doesTileHaveProperty(x, y, "Action", "Buildings")?.Split(' ')[0] ?? string.Empty;
+                if (!string.Equals(actionToken, "kitchen", StringComparison.Ordinal)
+                    && !string.Equals(actionToken, "Kitchen", StringComparison.Ordinal))
+                    continue;
+                result.Add(new BridgeCookingStationTarget(BuildCookingStationTargetId(location, x, y, "kitchen"), location.NameOrUniqueName, x, y, "kitchen"));
+            }
+        }
+        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
+        {
+            if (result.Count >= 16) break;
+            if (pair.Value.QualifiedItemId != "(BC)278") continue;
+            result.Add(new BridgeCookingStationTarget(BuildCookingStationTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, "cookout_kit"), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, "cookout_kit"));
+        }
+        return result;
+    }
+
+    private static string BuildCookingStationTargetId(GameLocation location, int x, int y, string stationKind)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:{stationKind}";
+        return $"cooking_station_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    /// <summary>
+    /// The sendable identity for one live recipe key, or null when the key has
+    /// none. The opaque-arg alphabet carries no spaces while many vanilla keys
+    /// have them ("Fried Egg"), so the key's underscore form is offered only when
+    /// TryResolveRecipeIdentity maps it back to this exact key - the rule the
+    /// handler applies at dispatch, proved by the handler's own parser rather than
+    /// a second copy of it. A key whose underscore form is still not wire-legal
+    /// ("Wild Seeds (Sp)") has no sendable identity at all and is not published.
+    /// </summary>
+    internal static string? TryBuildWireRecipeIdentity(IEnumerable<string> liveRecipeKeys, string recipeKey)
+    {
+        string candidate = recipeKey.Replace(' ', '_');
+        if (!BridgeProtocol.IsOpaqueId(candidate))
+            return null;
+        return TryResolveRecipeIdentity(liveRecipeKeys, candidate, out string resolved, out _)
+            && string.Equals(resolved, recipeKey, StringComparison.Ordinal)
+            ? candidate
+            : null;
     }
 
     /// <summary>

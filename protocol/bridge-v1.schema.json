@@ -1714,7 +1714,26 @@
             "$ref": "#/$defs/foodTarget"
           },
           "maxItems": 36
-        }
+        },
+        "craftingRecipeTargets": { "type": "array", "items": { "$ref": "#/$defs/recipeTarget" }, "maxItems": 64 },
+        "cookingRecipeTargets": { "type": "array", "items": { "$ref": "#/$defs/recipeTarget" }, "maxItems": 64 },
+        "cookingStationTargets": { "type": "array", "items": { "$ref": "#/$defs/cookingStationTarget" }, "maxItems": 16 }
+      }
+    },
+    "recipeTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "displayName", "ingredientsAvailable"], "properties": {
+        "targetId": { "$ref": "#/$defs/opaqueId" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "ingredientsAvailable": { "type": "boolean" } } },
+    "cookingStationTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "location", "x", "y", "stationKind"],
+      "properties": {
+        "targetId": { "type": "string", "pattern": "^cooking_station_[a-f0-9]{16}$" },
+        "location": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "x": { "$ref": "#/$defs/tile" },
+        "y": { "$ref": "#/$defs/tile" },
+        "stationKind": { "enum": ["kitchen", "cookout_kit"] }
       }
     },
     "rockSourceTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "qualifiedItemId", "health","displayName"], "properties": {
