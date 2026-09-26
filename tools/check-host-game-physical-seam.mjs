@@ -153,6 +153,13 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
       } else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
         const argument = node.arguments[0];
         references.push({ specifier: argument && ts.isStringLiteral(argument) ? argument.text : null, line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1, registrationFacadeUsage: registrationFacadeUsage(node) });
+      } else if (ts.isImportTypeNode(node) && node.argument && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) {
+        // A type-only `import("path").Type` is an architecture edge exactly like
+        // `import type { X } from "path"`, but it is neither an import/export
+        // declaration nor a call expression, so the checker was blind to it. That is
+        // how a forbidden layer could be re-imported with the gate still reporting
+        // `passed`; the decision loop below only ever sees recorded references.
+        references.push({ specifier: node.argument.literal.text, line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1, registrationFacadeUsage: registrationFacadeUsage(node) });
       }
       ts.forEachChild(node, visit);
     });
