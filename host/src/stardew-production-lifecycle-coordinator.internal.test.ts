@@ -87,6 +87,7 @@ const gameProfileWithDiscovery = composeGameProfile({
     "game.installation.discovery.retry",
     "game.installation.discovery.cancel",
     "game.installation.discovery.manual_picker",
+    "game.endgame",
   ],
   navigationItemIds: ["game"],
 });
@@ -302,6 +303,10 @@ async function createAdmissionBroker(gameDiscovery?: DiscoveryBrowserHandler) {
       cancel: async () => ({ apiVersion: 1, status: "cancelled" }),
       manualPicker: async () => ({ apiVersion: 1, status: "cancelled" }),
     },
+    // The profile declares game.endgame, so the handler options must mount it or
+    // the mismount guard rejects the composition. The coordinator-level endgame
+    // behaviour is exercised through the activation owner, not through here.
+    gameEndgame: async () => ({ apiVersion: 1, status: "unavailable" }),
   });
   const server = createServer((request, response) =>
     handler.handle(request, response, `http://127.0.0.1:${(server.address() as { port: number }).port}`),
@@ -319,7 +324,7 @@ async function createAdmissionBroker(gameDiscovery?: DiscoveryBrowserHandler) {
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
   const root = await bootstrap.json() as { chat: { csrfToken: string } };
-  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "discovery_read" | "discovery_confirm" | "discovery_retry" | "discovery_cancel" | "discovery_picker" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create"): IncomingMessage => {
+  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "discovery_read" | "discovery_confirm" | "discovery_retry" | "discovery_cancel" | "discovery_picker" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_endgame" | "game_create"): IncomingMessage => {
     const originUrl = new URL(origin);
     const method = operation === "cabin_read" || operation === "discovery_read" ? "GET" : "POST";
     const url = operation === "lifecycle_activation"
@@ -352,7 +357,9 @@ async function createAdmissionBroker(gameDiscovery?: DiscoveryBrowserHandler) {
                                 ? "/api/composed-reference-game/v1/game/reopen"
                                 : operation === "game_disconnect"
                                   ? "/api/composed-reference-game/v1/game/disconnect"
-                                  : "/api/composed-reference-game/v1/game/create";
+                                  : operation === "game_endgame"
+                                    ? "/api/composed-reference-game/v1/game/endgame"
+                                    : "/api/composed-reference-game/v1/game/create";
     return {
       method,
       url,
@@ -366,7 +373,7 @@ async function createAdmissionBroker(gameDiscovery?: DiscoveryBrowserHandler) {
     } as unknown as IncomingMessage;
   };
   const issue = (
-    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "discovery_read" | "discovery_confirm" | "discovery_retry" | "discovery_cancel" | "discovery_picker" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create" = "lifecycle_activation",
+    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "discovery_read" | "discovery_confirm" | "discovery_retry" | "discovery_cancel" | "discovery_picker" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_endgame" | "game_create" = "lifecycle_activation",
   ): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       handler.lifecycleActivationIssuer,
@@ -1150,6 +1157,68 @@ test("contained Player Host success constructs the real contained runtime and se
         ),
         /stardew_game_launch_in_progress/,
       );
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("explicit endgame settles the contained attempt, releases the registration pointer, and projects gameended", async () => {
+  await withWindowsPlatform(async () => {
+    const sessionCalls: Array<Readonly<{ operation: string; input: Record<string, unknown> }>> = [];
+    const session: DesktopGuardianSession = Object.freeze({
+      async arm(input) {
+        sessionCalls.push({ operation: "arm", input: { ...input, privateFrame: "<bytes>" } });
+        return containedSessionAck("arm_attempt");
+      },
+      async launch(input) {
+        sessionCalls.push({ operation: "launch", input: { ...input, privateFrame: [...input.privateFrame] } });
+        return containedSessionAck("launch_role", input.role);
+      },
+      async contain(input) {
+        sessionCalls.push({ operation: "contain", input: { ...input } });
+        return containedSessionAck("contain_role", input.role);
+      },
+      async close() { sessionCalls.push({ operation: "close", input: {} }); },
+    });
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
+    const fixture = await createFixture({ overrides: { runtimeLaunchContained: collaborator } });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await publishSignedPlayerHostSession(fixture.runtimeRoot, "player-generation-1", availableCabins, Date.now() + 5 * 60_000);
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
+      // Bind the attachment: launch alone leaves the registration pointer held
+      // but no attachment generation, exactly like the product cabin flow.
+      await confirmFirstCabin(fixture);
+      // The launch bound the registration's active attempt: the pointer is held.
+      assert.deepEqual(
+        (await readStardewInstallationRegistration(fixture.runtimeRoot))?.activeAttempt,
+        { bootstrapCorrelation: "bootstrap-coordinator-1" },
+      );
+      const command = { apiVersion: 1 as const, idempotencyKey: "endgame-key-1", expectedAttachmentGeneration: 1, confirm: true as const };
+      const result = await fixture.coordinator.activationOwner.endgameGame(fixture.broker.issue("game_endgame"), command);
+      assert.deepEqual(result, { apiVersion: 1, status: "gameended" });
+      // The explicit endgame is what releases the pointer: an ordinary close
+      // deliberately never contains the Player, so nothing else could.
+      assert.equal((await readStardewInstallationRegistration(fixture.runtimeRoot))?.activeAttempt, null);
+      // Both roles were contained through the Guardian, and the durable owner
+      // attempt reached its terminal contained state.
+      const containCalls = sessionCalls.filter((call) => call.operation === "contain");
+      assert.deepEqual(containCalls.map((call) => call.input.role), ["player_host", "ai_client"]);
+      const ownerPath = join(fixture.runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "owner.json");
+      const owner = JSON.parse(await readFile(ownerPath, "utf8")) as Record<string, unknown>;
+      assert.equal(owner.state, "contained");
+      assert.equal(owner.guardianState, "contained");
+      assert.equal(owner.playerHostState, "contained");
+      assert.equal(owner.aiClientState, "contained");
+      // Replay is idempotent and never re-settles the attempt.
+      const containCountAfterFirst = containCalls.length;
+      assert.deepEqual(
+        await fixture.coordinator.activationOwner.endgameGame(fixture.broker.issue("game_endgame"), command),
+        { apiVersion: 1, status: "gameended" },
+      );
+      assert.equal(sessionCalls.filter((call) => call.operation === "contain").length, containCountAfterFirst);
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();

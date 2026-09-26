@@ -43,6 +43,8 @@ import type {
   GameCreateCommandV1,
   GameCreateResultV1,
   GameDisconnectCommandV1,
+  GameEndgameCommandV1,
+  GameEndgameResultV1,
   GamePrerequisitesSetupCommandV1,
   GameLaunchCommandV1,
   GameResumeCancelCommandV1,
@@ -256,6 +258,17 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameDisconnectCommandV1,
   ): Promise<void>;
+  /**
+   * Explicit endgame seam. This is the only operation that terminates the
+   * Player and projects `gameended`; ordinary close, AI crash, controller EOF
+   * and reconnect failure are forbidden from reaching it. It is also the only
+   * operation that settles the contained Guardian attempt, which is what
+   * releases the registration's active-attempt pointer.
+   */
+  endgameGame(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameEndgameCommandV1,
+  ): Promise<GameEndgameResultV1>;
   readInstallationDiscovery(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewInstallationDiscoveryView>;
   confirmInstallation(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission, candidateId: string): Promise<StardewInstallationSelectionResult>;
   retryInstallationDiscovery(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewInstallationDiscoveryView>;
@@ -336,6 +349,13 @@ export type StardewLifecycleAiClientLaunch = (
 export type StardewContainedRuntimeTeardown = Readonly<{
   containPlayerHost(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   containAiClient(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  /**
+   * Protected terminal settlement. Only the explicit endgame operation may call
+   * it: it terminates and drains both role Jobs, advances the durable owner
+   * attempt to `contained`, and releases the bound registration pointer through
+   * the matching Guardian settlement proof.
+   */
+  settle(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   close(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
@@ -409,6 +429,7 @@ export function containedRuntimeTeardownFromCollaborator(
       if (outcome.status !== "succeeded") throw new Error("stardew_contained_ai_client_contain_failed");
     }),
     close: (owner) => runtimeLaunch.close(owner),
+    settle: (owner) => runtimeLaunch.settle(owner),
   });
 }
 
@@ -560,6 +581,11 @@ function createCoordinator(
     expectedAttachmentGeneration: number;
     promise: Promise<void>;
   }>>();
+  const gameEndgames = new Map<string, Readonly<{
+    browserSessionId: string;
+    expectedAttachmentGeneration: number;
+    promise: Promise<GameEndgameResultV1>;
+  }>>();
   let attachmentTeardownPromise: Promise<void> | undefined;
   const gameSetups = new Map<string, Readonly<{ browserSessionId: string; promise: Promise<void> }>>();
   let setupPromise: Promise<void> | undefined;
@@ -569,6 +595,12 @@ function createCoordinator(
     promise: Promise<StardewPrivateActivationSnapshot>;
   }>>();
   let aiStopped = false;
+  /**
+   * Set once an explicit endgame settled this attempt. The durable owner record
+   * is already terminal (`contained`) and both role Jobs are already drained, so
+   * the later ordinary close must not re-quarantine it or re-drive the runtime.
+   */
+  let endgameSettled = false;
   let closePromise: Promise<void> | undefined;
   const handoffCoordinator = internal.createOwnedPlayerHostManifestHandoffCoordinator();
   const cabinHandles = new Map<string, Readonly<{
@@ -785,7 +817,7 @@ function createCoordinator(
 
   const consumeBrowserAdmission = <T>(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    expectedOperation: "cabin_read" | "cabin_confirm" | "discovery_read" | "discovery_confirm" | "discovery_retry" | "discovery_cancel" | "discovery_picker" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_create",
+    expectedOperation: "cabin_read" | "cabin_confirm" | "discovery_read" | "discovery_confirm" | "discovery_retry" | "discovery_cancel" | "discovery_picker" | "game_setup" | "game_launch" | "game_stop" | "game_resume" | "game_resume_cancel" | "game_reopen" | "game_disconnect" | "game_endgame" | "game_create",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -1147,6 +1179,74 @@ function createCoordinator(
       farmhandGameRuntimeFacadeClosed = true;
     }
   };
+
+  /**
+   * Explicit endgame. This is the only operation that terminates the Player and
+   * projects `gameended`, and the only one that settles the contained Guardian
+   * attempt (which is what releases the registration's active-attempt pointer).
+   *
+   * Order matters and mirrors the survival task: terminate/contain both role
+   * Jobs through the contained runtime's protected settlement, then settle the
+   * durable attempt and release the pointer, then tear the attachment down. A
+   * normal close never reaches any of this, so it cannot end the Player world.
+   */
+  const endgameGame = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameEndgameCommandV1,
+  ): Promise<GameEndgameResultV1> => consumeBrowserAdmission(admission, "game_endgame", (browserSessionId) => {
+    const existing = gameEndgames.get(command.idempotencyKey);
+    if (existing !== undefined) {
+      if (
+        existing.browserSessionId !== browserSessionId ||
+        existing.expectedAttachmentGeneration !== command.expectedAttachmentGeneration
+      ) throw new Error("stardew_game_endgame_idempotency_conflict");
+      return existing.promise;
+    }
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    if (command.expectedAttachmentGeneration !== attachmentGeneration)
+      throw new Error("stardew_game_attachment_generation_conflict");
+    const owner = exactOwner;
+    if (owner === undefined) throw new Error("stardew_game_endgame_unavailable");
+    const promise = (async (): Promise<GameEndgameResultV1> => {
+      // Nothing else may still be mutating this attempt while it is ended.
+      const stopsToJoin = [...gameStops.values()].map((stop) => stop.promise.catch(() => undefined));
+      await Promise.all(stopsToJoin);
+      if (containedRuntimeTeardown === undefined)
+        throw new Error("stardew_game_endgame_unavailable");
+      // Tear the semantic attachment down first, exactly like the proven
+      // disconnect path: this cancels the prompt-defined task and closes the
+      // facade before anything else touches the attempt. Doing this after the
+      // roles are contained would leave a lease whose task was never cancelled.
+      await teardownAttachment();
+      // Terminate and drain both role Jobs through the Guardian. The contained
+      // runtime's settlement is deliberately guarded: it refuses unless every
+      // role that actually launched is already contained, so the endgame must
+      // contain them itself and can never settle an attempt whose processes are
+      // still live.
+      if (playerHostLaunchThroughRuntime && !runtimeContained.playerHost) {
+        await containedRuntimeTeardown.containPlayerHost(owner);
+        runtimeContained.playerHost = true;
+      }
+      if (aiClientLaunchThroughRuntime && !runtimeContained.aiClient) {
+        await containedRuntimeTeardown.containAiClient(owner);
+        runtimeContained.aiClient = true;
+      }
+      // Settle the contained attempt exactly once. This is where the durable
+      // owner attempt advances to `contained` and the registration pointer is
+      // released. Without it the pointer would stay bound forever, because an
+      // ordinary close deliberately never contains the Player.
+      await containedRuntimeTeardown.settle(owner);
+      endgameSettled = true;
+      actionAuthorityStatus = "unavailable";
+      return Object.freeze({ apiVersion: 1 as const, status: "gameended" as const });
+    })();
+    gameEndgames.set(command.idempotencyKey, Object.freeze({
+      browserSessionId,
+      expectedAttachmentGeneration: command.expectedAttachmentGeneration,
+      promise,
+    }));
+    return promise;
+  });
 
   /**
    * Closes any stale previous-activation attachment (facade/lease) through the
@@ -1664,6 +1764,7 @@ function createCoordinator(
     reopenActionAuthority,
     stopGame,
     disconnectGame,
+    endgameGame,
     readInstallationDiscovery,
     confirmInstallation,
     retryInstallationDiscovery,
@@ -1845,6 +1946,27 @@ function createCoordinator(
 
   const closeAttempt = async (): Promise<void> => {
     if (activationState !== "closed") transition("closing");
+    // An explicit endgame is terminal: it already drained both role Jobs,
+    // released the platform session and drove the durable owner record to
+    // `contained`. The ordinary close that follows is pure bookkeeping and must
+    // not re-drive the runtime, re-quarantine the terminal owner, or re-stop an
+    // owner the endgame already stopped.
+    if (endgameSettled) {
+      attachmentGeneration = 0;
+      attachmentConnectionStatus = "none";
+      actionAuthorityStatus = "unavailable";
+      resumedGameSessionId = undefined;
+      gameResumes.clear();
+      gameResumeCancels.clear();
+      gameReopens.clear();
+      gameSetups.clear();
+      gameStops.clear();
+      gameDisconnects.clear();
+      gameEndgames.clear();
+      gameCreates.clear();
+      transition("closed");
+      return;
+    }
     if (attachmentGeneration !== 0) attachmentConnectionStatus = "stopping";
     const activation = activationPromise;
     if (activation !== undefined) await activation.catch(() => undefined);

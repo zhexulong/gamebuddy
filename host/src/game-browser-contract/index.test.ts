@@ -969,6 +969,8 @@ test("GameBrowserContractV1 preserves the exact versioned aggregate schema bound
     "GameDiscoveryConfirmCommandV1Schema",
     "GameDiscoveryMutationResultV1Schema",
     "GameDiscoveryReadResultV1Schema",
+    "GameEndgameCommandV1Schema",
+    "GameEndgameResultV1Schema",
     "GameInstanceV1Schema",
     "GameInstancesReadCommandV1Schema",
     "GameLaunchCommandV1Schema",
