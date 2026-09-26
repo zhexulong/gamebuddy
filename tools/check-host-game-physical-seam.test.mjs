@@ -268,3 +268,23 @@ test("fails closed on dynamic imports and require calls in the inspected product
     assert.ok(report.violations.every(({ kind, detail }) => kind === "unresolved_dynamic_import" && detail === "dynamic_imports_are_not_statically_resolvable"));
   });
 });
+
+// A type-only `import("path").Type` is an architecture edge like any other. The
+// checker recorded import/export declarations, import-equals and `require`/`import`
+// calls but not `ImportTypeNode`, so this spelling was a full blind spot: the same
+// forbidden layer was blocked one way and reported `passed` the other.
+test("blocks a game-layer type-only import() of a generic layer", async () => {
+  await withFixture({
+    "host/src/games/stardew/lifecycle/probe.ts": [
+      "export type X = import('../../../containment/runtime/core/contained-game-runtime.js').ContainedGameRuntime;",
+      "export type Y = import('../../../containment/auth/desktop-guardian-session.internal.js').DesktopGuardianSession;",
+    ].join("\n"),
+    "host/src/containment/runtime/core/contained-game-runtime.ts": "export type ContainedGameRuntime = unknown;\n",
+    "host/src/containment/auth/desktop-guardian-session.internal.ts": "export type DesktopGuardianSession = unknown;\n",
+  }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    const kinds = report.violations.map((violation) => violation.kind);
+    assert.ok(kinds.includes("game_imports_generic_layer"), `expected a generic-layer violation, got ${JSON.stringify(kinds)}`);
+  });
+});
