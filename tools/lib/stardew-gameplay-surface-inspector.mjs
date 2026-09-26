@@ -410,10 +410,22 @@ export async function inspectStardewGameplaySurface({ gamePath } = {}) {
           unknownReachableEdges: [{ reason: "game1_source_missing" }],
           pendingCommandCandidates: [],
         };
-    const bridgeSource = await readFile(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../integrations/stardew/ExecutionManager.cs"),
-      "utf8",
-    );
+    // The bridge's action implementations live in the ExecutionManager partial
+    // class, split across farmhandexecutioncontroller.*.cs. Reading a single
+    // ExecutionManager.cs is not possible: no such file exists, and a partial
+    // class is only complete when every part is concatenated. Join them in a
+    // stable order so the route audit sees the same text regardless of
+    // directory enumeration order.
+    const modSourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../integrations/stardew");
+    const executionManagerParts = (await readdir(modSourceRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && /^farmhandexecutioncontroller(\.[a-z0-9]+)*\.cs$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    if (executionManagerParts.length === 0)
+      throw new Error("execution_manager_source_missing");
+    const bridgeSource = (
+      await Promise.all(executionManagerParts.map((name) => readFile(path.join(modSourceRoot, name), "utf8")))
+    ).join("\n");
     const bridgeEquivalenceAudit = auditBridgeRouteEquivalence(bridgeSource);
     const content = await inspectContent(resolvedGamePath);
     const dataLoaderProbe = await probeTargetContent(resolvedGamePath);
