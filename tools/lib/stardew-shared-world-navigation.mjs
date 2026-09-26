@@ -168,16 +168,21 @@ export async function ensureStandingTile(client, receipts, targetLocationName, s
 }
 
 /**
- * Ensure the actor stands within Chebyshev 1 of a target read from a live
- * snapshot in `targetLocationName`.
+ * Ensure the actor stands ON one of the tiles `targets` reports for a target in
+ * `targetLocationName`, re-reading the target after arriving.
  *
- * `targets(snapshot)` returns the ordered target tiles to stand next to. A
- * shared world is a live world, not a frozen fixture: a Pet walks, so the
- * target a previous observation advertised can already have moved. Each
- * attempt therefore re-reads the target from a fresh observation and retries
- * the walk, up to `attempts` times. The helper never widens an action's own
- * interaction range - it only chooses where to stand, and the contract under
- * test re-reads and re-admits the target itself.
+ * `targets(snapshot)` returns the tiles the actor must occupy for the contract to
+ * hold -- for a moving target, the neighbours of where it is now.
+ *
+ * A shared world is a live world, not a frozen fixture: a Pet walks, so the tile
+ * set read before the walk is evidence about where the target *was*. Each attempt
+ * therefore re-derives the set from a fresh observation after arriving, and the
+ * walk is planned against the tile the actor must stand on rather than against
+ * proximity to it. Being merely near an acceptable tile is not the contract: from
+ * a target's neighbour's neighbour the actor is two tiles from the target, which
+ * is outside the action's own range. The helper never widens an action's own
+ * interaction range - it only chooses where to stand, and the contract under test
+ * re-reads and re-admits the target itself.
  */
 export async function ensureAdjacentToFreshTarget(
   client,
@@ -191,24 +196,32 @@ export async function ensureAdjacentToFreshTarget(
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const { snapshot } = await ensureActorAtLocation(client, receipts, targetLocationName, { timeoutMs });
-      const candidates = targets(snapshot);
-      if (candidates.length === 0) throw new Error("no_usable_target_tile");
+      const usable = new Map(targets(snapshot).map((tile) => [`${tile.x},${tile.y}`, tile]));
+      if (usable.size === 0) throw new Error("no_usable_target_tile");
+      const here = usable.get(`${snapshot.tile.x},${snapshot.tile.y}`);
+      if (here !== undefined) return { snapshot, trace, target: here };
+
       let lastCandidateError = null;
-      for (const candidate of candidates) {
-        try {
-          const arrived = await ensureAdjacentTo(client, receipts, { location: targetLocationName, tile: candidate }, { timeoutMs });
-          trace.push(...arrived.trace);
-          return { snapshot: arrived.snapshot, target: candidate, trace };
-        } catch (error) {
-          lastCandidateError = error;
+      for (const [key, tile] of usable) {
+        const terminal = await moveToTile(client, receipts, tile, trace, { timeoutMs });
+        if (terminal === null) {
+          lastCandidateError = new Error(`target_tile_unreachable:${key}`);
+          continue;
         }
+        // Between reading the target and arriving it may have moved, so the set
+        // that was valid when the walk started says nothing about where it is now.
+        const after = await freshActionable(client, timeoutMs);
+        const nowUsable = new Map(targets(after).map((t) => [`${t.x},${t.y}`, t]));
+        const arrived = nowUsable.get(`${after.tile.x},${after.tile.y}`);
+        if (arrived !== undefined) return { snapshot: after, trace, target: arrived };
+        lastCandidateError = new Error("target_moved_before_arrival");
       }
-      throw lastCandidateError ?? new Error("no_reachable_adjacent_tile");
+      throw lastCandidateError ?? new Error("no_reachable_target_tile");
     } catch (error) {
       lastError = error;
     }
   }
-  throw lastError ?? new Error("no_reachable_adjacent_tile");
+  throw lastError ?? new Error("no_reachable_target_tile");
 }
 
 /**
