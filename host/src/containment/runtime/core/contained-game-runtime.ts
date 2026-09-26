@@ -200,7 +200,13 @@ export function createContainedGameRuntime(
       });
     },
     close() {
-      if (closed) return operation.then(() => undefined);
+      // Closing forbids any further arm/launch/contain/settle immediately, which is
+      // what `settle()`'s `closed` guard relies on. The close itself is still
+      // re-driven on every call: the platform layer deduplicates a concurrent or
+      // already-successful close, and a close that FAILED must stay retryable
+      // rather than being reported as a success to the next caller. The earlier
+      // `if (closed) return operation.then(() => undefined)` returned a resolved
+      // promise after a rejected close, which faked success.
       closed = true;
       return serialize(async () => { await platform.close(); });
     },

@@ -1194,6 +1194,17 @@ function createCoordinator(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameEndgameCommandV1,
   ): Promise<GameEndgameResultV1> => consumeBrowserAdmission(admission, "game_endgame", (browserSessionId) => {
+    // The attempt is already ended, so this is the same terminal outcome rather
+    // than a new operation -- whether the caller replays the exact key or sends a
+    // fresh one. This must be checked before the attachment-generation guard below,
+    // because the successful endgame tears the attachment down and resets
+    // `attachmentGeneration` to 0, so a repeat with the original generation would
+    // otherwise be rejected as a conflict for a game that is already over. Re-driving
+    // the runtime would likewise reach its settled latch and surface an opaque
+    // `stardew_contained_runtime_settlement_unavailable` to the browser.
+    if (endgameSettled) {
+      return Promise.resolve(Object.freeze({ apiVersion: 1 as const, status: "gameended" as const }));
+    }
     const existing = gameEndgames.get(command.idempotencyKey);
     if (existing !== undefined) {
       if (
@@ -1982,6 +1993,17 @@ function createCoordinator(
     if (confirmationKey !== undefined) {
       await cabinConfirmations.get(confirmationKey)?.promise.catch(() => undefined);
     }
+    // Join any in-flight explicit endgame before touching the contained runtime.
+    // The endgame is the only route to a terminal attempt, and it drives
+    // contain/settle on the same runtime this close is about to close. Without this
+    // join both orders are reachable: a close that lands between the endgame's
+    // contains would mark the runtime closed, so the endgame's next contain/settle
+    // rejects AFTER the Player Job was already terminated -- leaving the Player
+    // dead, the durable owner record nonterminal and the registration pointer still
+    // bound, with no path back to terminality. Joined exactly like the stop join
+    // above.
+    const endingsToJoin = [...gameEndgames.values()].map((endgame) => endgame.promise.catch(() => undefined));
+    if (endingsToJoin.length > 0) await Promise.all(endingsToJoin);
     let incomplete = false;
     if (!farmhandGameRuntimeFacadeClosed) {
       try {
