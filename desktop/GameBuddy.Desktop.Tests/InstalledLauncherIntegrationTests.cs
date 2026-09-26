@@ -16,13 +16,18 @@ public sealed class InstalledLauncherIntegrationTests
         }) Directory.CreateDirectory(directory);
         var reader = new FixtureRegistrationReader(generation.LocalApplicationData);
         await using var supervisor = new GuardianSupervisor();
-        Environment.SetEnvironmentVariable("GAMEBUDDY_ROOT", Path.Combine(generation.LocalApplicationData, "ambient-root-sentinel"));
+        var sentinel = Path.Combine(generation.LocalApplicationData, "ambient-root-sentinel");
+        Environment.SetEnvironmentVariable("GAMEBUDDY_ROOT", sentinel);
         try
         {
             var result = await Program.RunForTestingAsync(reader, new FixtureLocalApplicationData(generation.LocalApplicationData), supervisor, CancellationToken.None);
 
             Assert.Equal(DesktopLaunchResult.GuardianStarted, result);
             Assert.Equal(1, reader.ReadCount);
+            // The registration in LocalApplicationData is the only root authority.
+            // The ambient GAMEBUDDY_ROOT sentinel is not consulted, so admission
+            // never derives a layout from it and creates nothing beneath it.
+            Assert.False(Directory.Exists(sentinel), "admission must not read the ambient GAMEBUDDY_ROOT sentinel as a root");
         }
         finally
         {

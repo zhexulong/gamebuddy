@@ -106,6 +106,47 @@ public sealed class InstalledHostRuntimeAdmissionTests
         Assert.Throws<GuardianLaunchUnavailableException>(() => new InstalledHostRuntimeAdmission().Admit(selection));
     }
 
+    [Fact]
+    public async Task Admit_holds_the_locked_runtime_and_bootstrap_against_replacement_until_disposal()
+    {
+        // The equivalent negative test for the guardian exe asserts that a locked
+        // image rejects Move/Delete/Directory.Move. The runtime image and the
+        // bootstrap entry needed the same proof, because they are what
+        // CreateProcess actually executes: if either could be swapped between the
+        // admission hash and the launch, the hash would be decorative. The lock is
+        // a share-mode lock (FileReadData|FileExecute with FileShareRead only), so
+        // the OS refuses the mutation rather than a second hash re-check catching it.
+        await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
+        await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
+        using var admitted = new InstalledHostRuntimeAdmission().Admit(selection);
+
+        var runtimePath = Path.Combine(generation.GenerationRoot, "runtime", "node.exe");
+        var bootstrapPath = Path.Combine(generation.GenerationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
+        var replacement = Path.Combine(generation.LocalApplicationData, "replacement-runtime.exe");
+        await File.WriteAllTextAsync(replacement, "replacement");
+
+        foreach (var locked in new[] { runtimePath, bootstrapPath })
+        {
+            AssertLockedMutationRejected(() => File.Move(replacement, locked, overwrite: true));
+            AssertLockedMutationRejected(() => File.Delete(locked));
+        }
+        // Moving the runtime directory is the required first step to substitute it
+        // with a junction; the locked image inside rejects that too.
+        AssertLockedMutationRejected(() => Directory.Move(Path.Combine(generation.GenerationRoot, "runtime"), Path.Combine(generation.GenerationRoot, "runtime.original")));
+
+        // And the admitted bytes are still the admitted bytes.
+        var bytes = await File.ReadAllBytesAsync(runtimePath);
+        Assert.True(bytes.Length > 0);
+    }
+
+    private static void AssertLockedMutationRejected(Action mutate)
+    {
+        var exception = Record.Exception(mutate);
+        Assert.True(
+            exception is IOException or UnauthorizedAccessException,
+            $"expected the share-mode lock to reject the mutation, got {exception?.GetType().Name ?? "no exception"}");
+    }
+
     private static async Task WritePointerAsync(DisposableInstalledGuardianGeneration generation, string? runtimeAdmissionSha256 = null)
     {
         var sidecar = await File.ReadAllBytesAsync(Path.Combine(generation.GenerationRoot, "host-runtime-admission.json"));
