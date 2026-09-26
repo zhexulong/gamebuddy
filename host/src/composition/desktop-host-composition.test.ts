@@ -36,13 +36,12 @@ test("desktop product composition builds the Stardew game owner only through the
   // assembly; the Stardew lifecycle owner is built exclusively through the
   // provider registered in PRODUCT_INTEGRATION_CATALOG.
   assert.match(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)/);
-  assert.match(source, /provider\.createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*session,\s*\}\)/s);
+  assert.match(source, /provider\.createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)/s);
   assert.doesNotMatch(source, /createStardewProductionLifecycleCoordinator\(/);
   // Secondary regression guards: retired Guardian-era seams never reappear in
   // the generic composition closure.
   assert.doesNotMatch(source, /StardewBootstrapGuardianOwnerFactory|stardewBootstrapGuardianOwnerFactory/);
   assert.doesNotMatch(source, /createStardewBootstrapGuardianOwnerFromDesktopSession\(/);
-  assert.doesNotMatch(source, /createDesktopGuardianGameRuntimePlatform\(/);
   assert.match(source, /return Object\.freeze\(\{\s*close:/s);
 
   let closeCalls = 0;
@@ -125,7 +124,7 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   assert.match(source, /createChatSemanticFacadeFromSharedAuthority\(shared\.chat\)/);
   assert.match(source, /startMountedChatRuntime\(\)/);
   assert.match(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)/);
-  assert.match(source, /provider\.createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*session,\s*\}\)/s);
+  assert.match(source, /provider\.createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)/s);
   // The mounted Chat runtime is constructed before the lifecycle coordinator, so
   // a coordinator construction failure still drains the started Chat runtime
   // (not just the unmounted facade) alongside the shared owner.
@@ -153,7 +152,7 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   // The generic composition never constructs the Stardew launch assemblies or
   // imports game modules directly; the provider owns them.
   assert.doesNotMatch(source, /createStardewProductionLifecycleCoordinator\(/);
-  assert.doesNotMatch(source, /createStardewPlayerHostRuntimeLaunchCollaboratorFactory\(/);
+  assert.match(source, /createDesktopGuardianGameRuntimePlatform\(session\)/);
   assert.doesNotMatch(source, /games\/stardew\//);
   // The bootstrap mode and principal come only from the Host-owned manifest
   // input; the composition never derives them from root layout/bootstrap facts.
@@ -378,5 +377,5 @@ test("desktop product composition source selects the Chat-only/management varian
   // and presentation admission as children; no game child participates.
   assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*shared,\s*chatRuntime,\s*presentationAdmission,\s*\]\)/);
   assert.doesNotMatch(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)[\s\S]*?surface === "chat-only"/);
-  assert.doesNotMatch(source, /createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*session,\s*\}\)[\s\S]*?surface === "chat-only"/);
+  assert.doesNotMatch(source, /createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)[\s\S]*?surface === "chat-only"/);
 });
