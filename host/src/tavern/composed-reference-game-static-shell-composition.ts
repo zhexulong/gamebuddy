@@ -109,6 +109,9 @@ export async function startComposedReferenceGameStaticShellComposition(
     ...(options.lifecycleActivationBindingSink?.disconnectGame === undefined
       ? {}
       : { gameDisconnect: options.lifecycleActivationBindingSink.disconnectGame.bind(options.lifecycleActivationBindingSink) }),
+    ...(options.lifecycleActivationBindingSink?.endgameGame === undefined
+      ? {}
+      : { gameEndgame: options.lifecycleActivationBindingSink.endgameGame.bind(options.lifecycleActivationBindingSink) }),
     ...(options.lifecycleActivationBindingSink?.reopenActionAuthority === undefined
       ? {}
       : { gameReopen: options.lifecycleActivationBindingSink.reopenActionAuthority.bind(options.lifecycleActivationBindingSink) }),

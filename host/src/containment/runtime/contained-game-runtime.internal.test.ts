@@ -11,7 +11,7 @@ const launchOperation = (deadlineUnixMs = Date.now() + 60_000): RoleLaunchOperat
 const facts: TypedPrivateGameFacts = Object.freeze({ role: "player", revision: 1 });
 const produce: TypedPrivateGameAuthorizationProducer = (authorization) => authorization(facts);
 
-type PlatformOptions = { readonly failArm?: boolean; readonly failLaunch?: boolean; readonly failContain?: boolean };
+type PlatformOptions = { readonly failArm?: boolean; readonly failLaunch?: boolean; readonly failContain?: boolean; readonly failSettle?: boolean };
 
 function fakePlatform(log: string[], options: PlatformOptions = {}): ContainedGameRuntimePlatform {
   return Object.freeze({
@@ -27,6 +27,10 @@ function fakePlatform(log: string[], options: PlatformOptions = {}): ContainedGa
       log.push(`contain:${input.role}`);
       if (options.failContain) throw new Error("contain failed");
     },
+    settle: async () => {
+      log.push("settle");
+      if (options.failSettle) throw new Error("settle failed");
+    },
     close: async () => { log.push("close"); },
   });
 }
@@ -37,6 +41,7 @@ test("operation wait budgets are independent from launch deadline and are sent o
     arm: async (input) => { calls.push({ operation: "arm", input: { ...input } }); },
     launch: async (input) => { calls.push({ operation: "launch", input: { ...input } }); },
     contain: async (input) => { calls.push({ operation: "contain", input: { ...input } }); },
+    settle: async () => { calls.push({ operation: "settle", input: {} }); },
     close: async () => {},
   });
   const deadlineUnixMs = Date.now() + 60_000;
@@ -162,6 +167,7 @@ test("serialized Promise.all operations never overlap platform calls", async () 
       log.push(`contain:${input.role}`);
       active--;
     },
+    settle: async () => { log.push("settle"); },
     close: async () => {},
   });
   const runtime = createContainedGameRuntime(platform, binding);
@@ -188,4 +194,60 @@ test("requested role is bound into the platform launch input", async () => {
   const runtime = createContainedGameRuntime(fakePlatform(log), binding);
   await runtime.launchRole("requested-role", launchOperation(), produce);
   assert.deepEqual(log, ["arm:player", "launch:requested-role"]);
+});
+test("settlement is refused before any launch, so an ordinary close can never reach it", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log), binding);
+  await assert.rejects(() => runtime.settle(), /runtime was never armed/);
+  assert.deepEqual(log, []);
+});
+
+test("settlement is refused while a launched role is still uncontained", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log), binding);
+  await runtime.launchRole("player", launchOperation(), produce);
+  await assert.rejects(() => runtime.settle(), /not every launched role is contained/);
+  await runtime.containRole("player");
+  // Now the one launched role is contained, so settlement is legal.
+  assert.deepEqual(await runtime.settle(), { status: "settled" });
+  assert.deepEqual(log, ["arm:player", "launch:player", "contain:player", "settle"]);
+});
+
+test("settlement requires every launched role to be contained", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log), binding);
+  await runtime.launchRole("player", launchOperation(), produce);
+  await runtime.launchRole("ai", launchOperation(), produce);
+  await runtime.containRole("ai");
+  await assert.rejects(() => runtime.settle(), /not every launched role is contained/);
+  await runtime.containRole("player");
+  assert.deepEqual(await runtime.settle(), { status: "settled" });
+});
+
+test("a failed platform settlement reports unavailable and never fabricates settled", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log, { failSettle: true }), binding);
+  await runtime.launchRole("player", launchOperation(), produce);
+  await runtime.containRole("player");
+  assert.deepEqual(await runtime.settle(), { status: "unavailable" });
+});
+
+test("a failed launch fails settlement closed, because recovery owns that case", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log, { failLaunch: true }), binding);
+  await runtime.launchRole("player", launchOperation(), produce);
+  // A failed launch may still have created a suspended process inside the
+  // attempt's Job, so it can never be settled as if nothing happened: it must go
+  // through recovery/quarantine instead. Settlement stays fail-closed here.
+  await assert.rejects(() => runtime.settle(), /not every launched role is contained/);
+  assert.deepEqual(log, ["arm:player", "launch:player"]);
+});
+
+test("settlement is refused once the runtime is closed", async () => {
+  const log: string[] = [];
+  const runtime = createContainedGameRuntime(fakePlatform(log), binding);
+  await runtime.launchRole("player", launchOperation(), produce);
+  await runtime.containRole("player");
+  await runtime.close();
+  await assert.rejects(() => runtime.settle(), /runtime is closed/);
 });

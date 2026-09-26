@@ -16,6 +16,8 @@ import {
   type GameCreateCommandV1,
   type GameCreateResultV1,
   type GameDisconnectCommandV1,
+  type GameEndgameCommandV1,
+  type GameEndgameResultV1,
   type GameLaunchCommandV1,
   type GamePrerequisitesSetupCommandV1,
   type GameResumeCancelCommandV1,
@@ -81,6 +83,10 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameDisconnectCommandV1,
   ) => Promise<void>;
+  gameEndgame?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameEndgameCommandV1,
+  ) => Promise<GameEndgameResultV1>;
   gameDiscovery?: Readonly<{
     read(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<GameDiscoveryReadResultV1>;
     confirm(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission, command: GameDiscoveryConfirmCommandV1): Promise<GameDiscoveryMutationResultV1>;
@@ -115,6 +121,7 @@ export type ComposedReferenceGameBrowserLifecycleActivationBindingSink = Readonl
   ) => Promise<unknown>;
   stopGame?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameStop"]>;
   disconnectGame?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameDisconnect"]>;
+  endgameGame?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameEndgame"]>;
   reopenActionAuthority?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameReopen"]>;
   /**
    * Lifecycle-owner resume seam (session-keyed; the composed browser wire stays
@@ -156,6 +163,7 @@ const GAME_RESUME_PATH = `${GAME_PATH}/resume`;
 const GAME_RESUME_CANCEL_PATH = `${GAME_PATH}/resume/cancel`;
 const GAME_REOPEN_PATH = `${GAME_PATH}/reopen`;
 const GAME_DISCONNECT_PATH = `${GAME_PATH}/disconnect`;
+const GAME_ENDGAME_PATH = `${GAME_PATH}/endgame`;
 const GAME_CREATE_PATH = `${GAME_PATH}/create`;
 const LIFECYCLE_ACTIVATE_PATH = "/api/composed-reference-game/v1/lifecycle/activate";
 const DISCOVERY_PATH = `${GAME_PATH}/installation/discovery`;
@@ -377,6 +385,23 @@ function gameDisconnectProblemCode(error: unknown): string {
   }
 }
 
+function gameEndgameProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  switch (error.message) {
+    case "stardew_game_attachment_generation_conflict":
+      return "game_attachment_conflict";
+    case "stardew_game_endgame_unavailable":
+    case "stardew_lifecycle_closing":
+      return "state_unavailable";
+    case "stardew_game_endgame_idempotency_conflict":
+      return "idempotency_conflict";
+    case "stardew_contained_runtime_settlement_unavailable":
+      return "game_endgame_settlement_unavailable";
+    default:
+      return "state_unavailable";
+  }
+}
+
 function stardewCabinProblemCode(error: unknown): string {
   if (!(error instanceof Error)) return "state_unavailable";
   switch (error.message) {
@@ -525,6 +550,7 @@ type LifecycleAdmissionOperation =
   | "game_resume_cancel"
   | "game_reopen"
   | "game_disconnect"
+  | "game_endgame"
   | "game_create";
 
 type LifecycleActivationAdmissionState = {
@@ -846,6 +872,10 @@ export function createComposedReferenceGameBrowserRequestHandler(
   const gameDisconnectMounted = options.profile.gameProfile?.operationIds.includes("game.disconnect") === true;
   if (gameDisconnectMounted !== (options.gameDisconnect !== undefined)) {
     throw new Error("Composed reference-game disconnect operation is mismounted");
+  }
+  const gameEndgameMounted = options.profile.gameProfile?.operationIds.includes("game.endgame") === true;
+  if (gameEndgameMounted !== (options.gameEndgame !== undefined)) {
+    throw new Error("Composed reference-game endgame operation is mismounted");
   }
 
   let closed = false;
@@ -1270,6 +1300,29 @@ export function createComposedReferenceGameBrowserRequestHandler(
         response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
         response.end();
       } catch (error) { sendProblem(response, 409, gameDisconnectProblemCode(error)); }
+      return;
+    }
+
+    if (requestUrl.pathname === GAME_ENDGAME_PATH && request.method === "POST") {
+      if (!isEmptyQuery(requestUrl) || options.gameEndgame === undefined) {
+        sendProblem(response, options.gameEndgame === undefined ? 404 : 409, options.gameEndgame === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      let body: Buffer;
+      try { body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      let command: unknown;
+      try { command = JSON.parse(body.toString("utf8")); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      if (!GameBrowserValidatorsV1.GameEndgameCommandV1Schema.Check(command)) {
+        sendProblem(response, 409, "malformed_request"); return;
+      }
+      try {
+        const result = await options.gameEndgame(admission, command as GameEndgameCommandV1);
+        const payload = Buffer.from(JSON.stringify(result), "utf8");
+        response.writeHead(200, { "cache-control": "no-store", "content-type": "application/json", "content-length": String(payload.length) });
+        response.end(payload);
+      } catch (error) { sendProblem(response, 409, gameEndgameProblemCode(error)); }
       return;
     }
 

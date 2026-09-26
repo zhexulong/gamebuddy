@@ -19,8 +19,9 @@ import type { DesktopGuardianSession } from "../../containment/auth/desktop-guar
 import type { ContainedGameRuntimePlatform } from "../../containment/runtime/core/contained-game-runtime.js";
 import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
 import {
+  consumeStardewBootstrapGuardianOwnerBinding,
   createStardewBootstrapGuardianOwnerBinding,
-  readStardewBootstrapGuardianNativeArmFrame,
+  settleOwnedPlayerHostContainedRuntimeAttempt,
   type StardewPlayerHostRuntimeLaunchCollaborator,
 } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import type { StardewOwnedPlayerHostBootstrap } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
@@ -153,11 +154,26 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   // after a pre-claim failure reuses the exact bound runtime, while a post-
   // claim failure is terminal in the coordinator and never calls back here.
   const runtimesByOwner = new WeakMap<StardewOwnedPlayerHostBootstrap, ReturnType<typeof createContainedGameRuntime>>();
+  // Roles this attempt actually launched. Settlement must catch the durable
+  // record up from `armed` through exactly these roles, never an invented one.
+  const launchedRolesByOwner = new WeakMap<StardewOwnedPlayerHostBootstrap, Set<"playerHost" | "aiClient">>();
+  const launchedRolesFor = (owner: StardewOwnedPlayerHostBootstrap): Set<"playerHost" | "aiClient"> => {
+    let roles = launchedRolesByOwner.get(owner);
+    if (roles === undefined) {
+      roles = new Set<"playerHost" | "aiClient">();
+      launchedRolesByOwner.set(owner, roles);
+    }
+    return roles;
+  };
   const runtimeFor = (owner: StardewOwnedPlayerHostBootstrap) => {
     let runtime = runtimesByOwner.get(owner);
     if (runtime === undefined) {
       const binding = createStardewBootstrapGuardianOwnerBinding(owner);
-      const arm = readStardewBootstrapGuardianNativeArmFrame(binding);
+      // Consume the binding here so this composition seam — the only layer that
+      // holds the exact owner — owns both the native correlation and the durable
+      // owner-record transitions. The retired game-layer Guardian owner seam did
+      // the same work from the wrong layer and had no production consumer.
+      const arm = consumeStardewBootstrapGuardianOwnerBinding(binding).armFrame;
       runtime = createContainedGameRuntime(platform, Object.freeze({
         guardianInstanceId: arm.guardianInstanceId,
         guardianEpoch: arm.guardianEpoch,
@@ -175,16 +191,34 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   };
   return Object.freeze({
     launchPlayerHost(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
-      return runtimeFor(owner).launchRole("player_host", operation, launch.provideAuthorization);
+      return runtimeFor(owner).launchRole("player_host", operation, launch.provideAuthorization).then((result) => {
+        if (result.status === "succeeded") launchedRolesFor(owner).add("playerHost");
+        return result;
+      });
     },
     launchAiClient(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
-      return runtimeFor(owner).launchRole("ai_client", operation, launch.provideAuthorization);
+      return runtimeFor(owner).launchRole("ai_client", operation, launch.provideAuthorization).then((result) => {
+        if (result.status === "succeeded") launchedRolesFor(owner).add("aiClient");
+        return result;
+      });
     },
     containPlayerHost(owner: StardewOwnedPlayerHostBootstrap) {
       return requireRuntime(owner).containRole("player_host");
     },
     containAiClient(owner: StardewOwnedPlayerHostBootstrap) {
       return requireRuntime(owner).containRole("ai_client");
+    },
+    /**
+     * Protected terminal settlement for the exact owner. The platform session is
+     * released exactly once, then the durable Stardew owner attempt is advanced
+     * to `contained` and the matching Guardian settlement proof releases the
+     * bound registration pointer. Only the coordinator's explicit endgame
+     * reaches this; ordinary close, AI crash and controller EOF never do.
+     */
+    async settle(owner: StardewOwnedPlayerHostBootstrap) {
+      const settled = await requireRuntime(owner).settle();
+      if (settled.status !== "settled") throw new Error("stardew_contained_runtime_settlement_unavailable");
+      await settleOwnedPlayerHostContainedRuntimeAttempt(owner, [...launchedRolesFor(owner)]);
     },
     close(owner: StardewOwnedPlayerHostBootstrap) {
       return requireRuntime(owner).close();
@@ -204,6 +238,16 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
 export function createDesktopGuardianGameRuntimePlatform(
   session: DesktopGuardianSession,
 ): ContainedGameRuntimePlatform {
+  // The platform session terminates exactly once. Settlement is the deliberate
+  // terminal operation and the coordinator's ordinary close may still run
+  // afterwards on the same attempt, so both go through this single latch rather
+  // than racing two `close()` calls onto one authenticated session.
+  let sessionClosed = false;
+  const closeSessionOnce = async (): Promise<void> => {
+    if (sessionClosed) return;
+    sessionClosed = true;
+    await session.close();
+  };
   const encodeArmAuthorization = (facts: TypedPrivateGameFacts): Uint8Array => {
     // The attested installation executable is fixed at arm time and is later
     // enforced by the native Guardian's ParseLaunch. The Host wire mirrors the
@@ -259,8 +303,18 @@ export function createDesktopGuardianGameRuntimePlatform(
     async contain(input) {
       await session.contain(input);
     },
+    /**
+     * Terminal settlement. The durable Stardew meaning of a settlement (owner
+     * record advancement, Guardian proof, registration pointer release) is
+     * composition-owned and runs in the launch collaborator, which is the only
+     * layer that holds the exact owner. Here the platform only performs its own
+     * terminal transport step: releasing the authenticated session exactly once.
+     */
+    async settle() {
+      await closeSessionOnce();
+    },
     async close() {
-      await session.close();
+      await closeSessionOnce();
     },
   });
 }

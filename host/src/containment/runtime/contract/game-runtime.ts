@@ -35,6 +35,15 @@ export type RedactedContainmentOutcome = Readonly<{
   readonly status: "succeeded" | "failed";
 }>;
 
+/**
+ * Redacted terminal-settlement outcome. `settled` means every launched role was
+ * durably recorded as contained and the platform closed out the attempt; it
+ * never carries the platform's proof or the platform's durable state.
+ */
+export type RedactedSettlementOutcome = Readonly<{
+  readonly status: "settled" | "unavailable";
+}>;
+
 export type ContainedGameRuntime = Readonly<{
   launchRole(
     role: ContainmentRole,
@@ -42,5 +51,12 @@ export type ContainedGameRuntime = Readonly<{
     produceAuthorization: TypedPrivateGameAuthorizationProducer,
   ): Promise<RedactedRoleLaunchOutcome>;
   containRole(role: ContainmentRole): Promise<RedactedContainmentOutcome>;
+  /**
+   * Protected terminal settlement. It is legal only when every role that
+   * actually reached `launched` is already contained, so a normal close, an AI
+   * crash or a controller EOF can never reach it. The platform owns what a
+   * settlement durably means; the generic runtime only owns the guard.
+   */
+  settle(): Promise<RedactedSettlementOutcome>;
   close(): Promise<void>;
 }>;
