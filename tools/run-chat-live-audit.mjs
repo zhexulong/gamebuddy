@@ -1177,8 +1177,16 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   };
 
   const runProbeScenario = async ({ probe }) => {
+    // Scenario steps run against the real pipeline and are bounded by the
+    // turn timeout; without a progress mark a long scenario looks hung. Steps
+    // are named by the manifest, never by content, and never enter a trace.
     for (let stepIndex = 0; stepIndex < probe.steps.length; stepIndex += 1) {
       const step = probe.steps[stepIndex];
+      // Progress mark: one line per step so a long scenario is observable
+      // instead of looking hung. The step kind is public; the step text is not.
+      console.error(
+        `[chat-live-audit] probe ${probe.probeId} step ${stepIndex + 1}/${probe.steps.length} (${step.kind})`,
+      );
       if (step.kind === "probe") {
         // §3.3: a fold-distance probe is only scored once production itself has
         // folded the baseline. Otherwise the question is asked before the memory
