@@ -1089,6 +1089,10 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   // opaque probeId + manifestDigest (probeEventReason), and the keyword text
   // never enters a trace.
   const emitProbe = (probe, event, reason) => {
+    // `reason` is a scalar (or undefined); the frozen meta allow-list has no
+    // nested-object value, and `recorder.record` rejects any non-scalar meta.
+    if (reason !== undefined && (typeof reason !== "string" || reason.length === 0))
+      throw new Error("probe_event_reason_invalid");
     const meta = {
       probeId: probe.probeId,
       manifestDigest: probeManifest.manifestDigest,
@@ -1196,14 +1200,14 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
           await delay(MARKER_DRAIN_MS);
           noteProbeMarkers();
           if (seenProbe.foldCount === 0) {
-            emitProbe(probe, "observability_gap", { reason: "fold_not_observed" });
+            emitProbe(probe, "observability_gap", "fold_not_observed");
             continue;
           }
         }
         const before = environment.presentationMarkers;
         const outcome = await runTurn({ message: step.text });
         if (outcome === undefined || outcome.terminal !== true) {
-          emitProbe(probe, "observability_gap", { reason: "probe_turn_not_terminal" });
+          emitProbe(probe, "observability_gap", "probe_turn_not_terminal");
           continue;
         }
         // A committed presentation is the only authority for a keyword match;
@@ -1211,7 +1215,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
         // rather than a hit or miss.
         const committed = environment.presentationMarkers > before;
         if (!committed) {
-          emitProbe(probe, "observability_gap", { reason: "probe_turn_no_committed_presentation" });
+          emitProbe(probe, "observability_gap", "probe_turn_no_committed_presentation");
           continue;
         }
         const keywords = await readCompanionKeywordMatches(step);
