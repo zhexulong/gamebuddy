@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { createConnection } from "node:net";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -13,6 +15,7 @@ import {
   composeDesktopChildEnvironment,
   createDesktopCompositionRootLayout,
   installDesktopCompositionGeneration,
+  launchDesktopCompositionGateChild,
   readProductionPointer,
   validateBootstrapAcknowledgement,
   validateCompositionNonceDigest,
@@ -193,7 +196,7 @@ test("composition launch admits a generation exactly like the production launche
       runtimeVersion: "v24.20.0",
       runtimePlatform: "win32",
       runtimeArch: "x64",
-      runtimeClosure: [{ package: "typebox" }],
+      runtimeClosure: { schema: "host-bundled-runtime-closure/v1", files: [{ path: "runtime/node.exe", sha256: sha256(runtime) }] },
     })}\n`;
     await mkdir(join(artifactRoot, "runtime"), { recursive: true });
     await mkdir(join(artifactRoot, "bootstrap", "entry"), { recursive: true });
@@ -204,6 +207,27 @@ test("composition launch admits a generation exactly like the production launche
     const admitted = await admitDesktopCompositionGeneration({ outputRoot, pointer });
     assert.equal(admitted.runtimePath, join(artifactRoot, "runtime", "node.exe"));
     assert.equal(admitted.bootstrapPath, join(artifactRoot, "bootstrap", "entry", "desktop-host-entry.internal.js"));
+    // The closure shape is the publisher's and the production Desktop launcher's:
+    // an object `{ schema, files[] }`. A bare array is not that shape.
+    for (const runtimeClosure of [
+      [],
+      [{ path: "runtime/node.exe" }],
+      { schema: "host-bundled-runtime-closure/v1", files: [] },
+      { schema: "wrong-schema/v1", files: ["a"] },
+      { files: ["a"] },
+      { schema: "host-bundled-runtime-closure/v1", files: "a" },
+    ]) {
+      const mutated = `${JSON.stringify({ ...JSON.parse(admission), runtimeClosure })}\n`;
+      await writeFile(join(artifactRoot, "host-runtime-admission.json"), mutated);
+      await assert.rejects(
+        admitDesktopCompositionGeneration({
+          outputRoot,
+          pointer: { ...pointer, runtimeAdmissionSha256: sha256(mutated) },
+        }),
+        /desktop_compose_runtime_admission_invalid/,
+      );
+    }
+    await writeFile(join(artifactRoot, "host-runtime-admission.json"), admission);
     await writeFile(join(artifactRoot, "runtime", "node.exe"), Buffer.from("tampered runtime"));
     await assert.rejects(admitDesktopCompositionGeneration({ outputRoot, pointer }), /desktop_compose_runtime_admission_mismatch/);
   }));
@@ -234,3 +258,122 @@ test("desktop composition launch never references the removed entry or the chat-
   assert.match(source, /GameBuddy\.HostGuardian\.\$\{bootstrapId\}/);
   assert.doesNotMatch(source, /dialogue-web-main|start-production-artifact|chat-tavern-live|CHAT_LIVE_ARTIFACT|GAMEBUDDY_CHAT_LIVE_ARTIFACT/);
 });
+
+test("the launcher spawns the INSTALLED generation, never the artifact path", () =>
+  withRoot(async (root) => {
+    // Regression: the bootstrap validates that its own module directory is inside
+    // the child's `rootLayout.programRoot`. The artifact path is never inside it
+    // once the generation is published outside the repository, so spawning the
+    // artifact made every installed/composed run die with
+    // `desktop_runtime_bootstrap_unavailable` before the child could report
+    // anything. The install step exists to give the child its launcher-shaped
+    // root, and the production Desktop launcher starts the installed generation.
+    const outputRoot = join(root, "dist");
+    const generation = "g-1-2-3";
+    const artifactRoot = join(outputRoot, "generations", generation);
+    const runtime = Buffer.from("fake node runtime");
+    const bootstrap = Buffer.from("fake bootstrap entry");
+    const admission = `${JSON.stringify({
+      schema: "host-runtime-admission/v1",
+      inventoryDigest: hex,
+      generation,
+      runtimePath: "runtime/node.exe",
+      runtimeSha256: sha256(runtime),
+      bootstrapPath: "bootstrap/entry/desktop-host-entry.internal.js",
+      bootstrapSha256: sha256(bootstrap),
+      runtimeVersion: "v24.20.0",
+      runtimePlatform: "win32",
+      runtimeArch: "x64",
+      runtimeClosure: { schema: "host-bundled-runtime-closure/v1", files: [{ path: "runtime/CHANGELOG.md", sha256: sha256(runtime) }] },
+    })}\n`;
+    await mkdir(join(artifactRoot, "runtime"), { recursive: true });
+    await mkdir(join(artifactRoot, "bootstrap", "entry"), { recursive: true });
+    await writeFile(join(artifactRoot, "runtime", "node.exe"), runtime);
+    await writeFile(join(artifactRoot, "bootstrap", "entry", "desktop-host-entry.internal.js"), bootstrap);
+    await writeFile(join(artifactRoot, "host-runtime-admission.json"), admission);
+    await writeFile(join(outputRoot, "current.json"), `${JSON.stringify({ schema: "gamebuddy-host-production-current/v2", generation, inventoryDigest: hex, runtimeAdmissionSha256: sha256(admission) })}\n`);
+    // The install step also stages the entry-owned reparse-inspector pair, so the
+    // fixture must carry it or the install fails before the spawn is reached.
+    const inspectorRoot = join(artifactRoot, "native", "windows-reparse-inspector", "win-x64");
+    await mkdir(inspectorRoot, { recursive: true });
+    await writeFile(join(inspectorRoot, "GameBuddy.WindowsReparseInspector.exe"), Buffer.from("fake inspector"));
+
+    const layout = createDesktopCompositionRootLayout(root, generation);
+    let spawned;
+    // Stub only the OS process: the launcher's own admission, install and path
+    // selection all run for real, and the captured spawn is what gets asserted.
+    // The stub child then exits so the launch settles instead of waiting.
+    const launch = await launchDesktopCompositionGateChild({
+      outputRoot,
+      root,
+      surface: "chat-only",
+      nonceSha256: "a".repeat(64),
+      manifestPath: join(root, "deployment.json"),
+      readyTimeoutMs: 5_000,
+      spawnImpl: (command, args, options) => {
+        spawned = { command, args, cwd: options?.cwd };
+        // A cooperative stub: it satisfies the launcher's own wire handshake
+        // (bootstrap ack on stdout, guardian hello over the real pipe, ready on
+        // IPC) so the launch resolves and the captured spawn can be asserted,
+        // without starting a real child process.
+        const fake = new EventEmitter();
+        fake.stdout = new EventEmitter();
+        fake.stderr = new EventEmitter();
+        fake.pid = 1234;
+        fake.kill = () => true;
+        fake.stdin = {
+          write: (frameText) => {
+            queueMicrotask(() => {
+              const frame = JSON.parse(String(frameText));
+              fake.stdout.emit(
+                "data",
+                `${JSON.stringify({
+                  schema: "gamebuddy-desktop-host-bootstrap/v1",
+                  protocolVersion: 1,
+                  status: "accepted",
+                  bootstrapId: frame.bootstrapId,
+                  generation: frame.generation,
+                  inventoryDigest: frame.inventoryDigest,
+                  runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
+                  rootLayoutSchema: frame.rootLayout.schema,
+                })}\n`,
+              );
+              // The launcher awaits the guardian hello before returning, so the
+              // stub must complete that session on the real endpoint.
+              const socket = createConnection(`\\\\.\\pipe\\GameBuddy.HostGuardian.${frame.bootstrapId}`);
+              socket.once("connect", () => {
+                socket.write(
+                  `${JSON.stringify({
+                    schema: "gamebuddy-desktop-guardian-session/v1",
+                    protocolVersion: 1,
+                    operation: "hello",
+                    bootstrapId: frame.bootstrapId,
+                    generation: frame.generation,
+                    inventoryDigest: frame.inventoryDigest,
+                    runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
+                  })}\n`,
+                );
+              });
+              socket.on("error", () => undefined);
+              fake.emit("message", { schema: "gamebuddy-desktop-composition-ready/v1", protocolVersion: 1, launchUrl: "http://127.0.0.1:1/#profile=reference" });
+            });
+            return true;
+          },
+          end: () => true,
+        };
+        return fake;
+      },
+    }).then(
+      () => undefined,
+      (error) => error,
+    );
+
+    assert.ok(spawned !== undefined, `spawn must happen (launch settled as ${String(launch?.message ?? "resolved")})`);
+    assert.equal(spawned.cwd, layout.generationRoot);
+    // The decisive assertion: both runtime and entry come from the installed
+    // generation, never from the artifact tree.
+    assert.equal(spawned.command, join(layout.generationRoot, "runtime", "node.exe"));
+    assert.deepEqual(spawned.args, [join(layout.generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js")]);
+    assert.equal(spawned.command.startsWith(artifactRoot), false);
+    assert.equal(spawned.args[0].startsWith(artifactRoot), false);
+  }));
