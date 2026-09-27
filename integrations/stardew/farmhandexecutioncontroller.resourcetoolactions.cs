@@ -35,12 +35,17 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
         float before = tree.health.Value;
         bool stumpBefore = tree.stump.Value;
-        axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        float staminaBefore = Game1.player.Stamina;
+        axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
+        Game1.player.lastClick = Vector2.Zero;
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        float expectedStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
         bool sameTree = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && ReferenceEquals(afterFeature, tree);
         float after = sameTree ? tree.health.Value : float.NaN;
         bool stumpAfter = sameTree && tree.stump.Value;
         bool succeeded = sameTree && after == 5f && !stumpBefore && stumpAfter;
-        string evidence = $"target={expectedTargetId};tool=axe;slot={slot};tree={tree.treeType.Value};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={(float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={succeeded.ToString().ToLowerInvariant()}";
+        string evidence = $"target={expectedTargetId};tool=axe;slot={slot};tree={tree.treeType.Value};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={(float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={succeeded.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "tree_source_chopped" : "tree_source_chop_postcondition_unavailable", evidence);
     }
 
@@ -62,10 +67,18 @@ internal sealed partial class ExecutionManager
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || rock.QualifiedItemId != "(O)2" || !rock.IsBreakableStone() || rock.MinutesUntilReady != 1 || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
         int before = rock.MinutesUntilReady;
-        pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        float staminaBefore = Game1.player.Stamina;
+        pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
+        Game1.player.lastClick = Vector2.Zero;
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        // Pickaxe covers power with who.toolPower.Value before deducting; a plain
+        // tap holds toolPower at 0 (pressUseToolButton resets it), so a basic
+        // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
+        float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
         bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterRock);
         bool succeeded = removed;
-        string evidence = $"target={expectedTargetId};tool=pickaxe;slot={slot};qualified_item_id={rock.QualifiedItemId};durability_before={before};durability_after={(removed ? "removed" : afterRock!.MinutesUntilReady.ToString(CultureInfo.InvariantCulture))};removed={removed.ToString().ToLowerInvariant()}";
+        string evidence = $"target={expectedTargetId};tool=pickaxe;slot={slot};qualified_item_id={rock.QualifiedItemId};durability_before={before};durability_after={(removed ? "removed" : afterRock!.MinutesUntilReady.ToString(CultureInfo.InvariantCulture))};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "rock_source_broken" : "rock_source_postcondition_unavailable", evidence);
     }
 
@@ -141,10 +154,17 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
-        pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        float staminaBefore = Game1.player.Stamina;
+        pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
+        Game1.player.lastClick = Vector2.Zero;
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        // Pickaxe covers power with toolPower.Value (tap => 0), so a basic
+        // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
+        float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
         bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && afterFeature is StardewValley.TerrainFeatures.HoeDirt;
         bool removed = !hoeDirtPresentAfter;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;slot={slot};crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()}";
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;slot={slot};crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
         return this.RememberTerminal(requestId, executionId, removed ? ExecutionState.Succeeded : ExecutionState.Uncertain, removed ? "hoedirt_cleared" : "clear_hoedirt_postcondition_unavailable", evidence);
     }
 
@@ -203,9 +223,14 @@ internal sealed partial class ExecutionManager
 
         LocalSoilTillingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, this.revision, requestedDeadlineMs);
         string before = "none";
-        hoe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        float staminaBefore = Game1.player.Stamina;
+        hoe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
+        Game1.player.lastClick = Vector2.Zero;
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
         bool tilled = location.GetHoeDirtAtTile(tile) is not null;
-        LocalExecutionReceipt receipt = new(executionId, requestId, tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain, tilled ? "soil_tilled" : "soil_postcondition_unavailable", this.revision, $"location={specification.Location};target={targetX},{targetY};before={before};after={(tilled ? "HoeDirt" : "none")}");
+        LocalExecutionReceipt receipt = new(executionId, requestId, tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain, tilled ? "soil_tilled" : "soil_postcondition_unavailable", this.revision, $"location={specification.Location};target={targetX},{targetY};before={before};after={(tilled ? "HoeDirt" : "none")};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;
@@ -352,11 +377,16 @@ internal sealed partial class ExecutionManager
         // and every swing runs the native damage/debris path.
         const int maximumSwingCount = 12;
         int swingCount = 0;
+        float staminaBefore = Game1.player.Stamina;
         while (tree.health.Value > 0f && swingCount < maximumSwingCount)
         {
-            axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+            axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
             swingCount++;
         }
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        float perSwingStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
+        float expectedStaminaCost = perSwingStaminaCost * swingCount;
         // native Tree.performTreeFall() on a stump sets health = -100 (the
         // destroyed marker) and the terrainFeature is then removed by the
         // native tick (destroy.Value). Accept either the immediate -100
@@ -368,7 +398,7 @@ internal sealed partial class ExecutionManager
             : afterFeature is StardewValley.TerrainFeatures.Tree afterTree
                 ? afterTree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)
                 : "missing";
-        string evidence = $"target={expectedTargetId};type=tree_stump;tree={treeType};tool=axe;tool_level={axeLevel};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};swings={swingCount};stump_removed={(removed || terrainGone).ToString().ToLowerInvariant()}";
+        string evidence = $"target={expectedTargetId};type=tree_stump;tree={treeType};tool=axe;tool_level={axeLevel};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};swings={swingCount};stump_removed={(removed || terrainGone).ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
         if (removed || terrainGone)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "stump_cleared", evidence);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "stump_clear_postcondition_unavailable", evidence);
@@ -443,7 +473,13 @@ internal sealed partial class ExecutionManager
             }
         }
         float staminaAfter = Game1.player.Stamina;
-        string evidence = $"target={expectedTargetId};type=weed;tool=scythe;qualified_item_id={weed.QualifiedItemId};health_before={healthBefore};health_after={(removed ? "removed" : location.objects.TryGetValue(tile, out StardewValley.Object? remainingWeed) && remainingWeed is not null ? remainingWeed.MinutesUntilReady.ToString(CultureInfo.InvariantCulture) : "missing")};swings={swingCount};removed={removed.ToString().ToLowerInvariant()};stamina_delta={staminaBefore - staminaAfter:0.##}";
+        float staminaDelta = staminaAfter - staminaBefore;
+        // The scythe is a MeleeWeapon: no native code path deducts stamina for
+        // a melee swing (only Axe/Hoe/Pickaxe/WateringCan/MilkPail/Shears do),
+        // so the expected embodied cost is exactly zero. Reporting it as an
+        // explicit zero is the fact the Agent needs ("this family is free").
+        float expectedStaminaCost = 0f;
+        string evidence = $"target={expectedTargetId};type=weed;tool=scythe;qualified_item_id={weed.QualifiedItemId};health_before={healthBefore};health_after={(removed ? "removed" : location.objects.TryGetValue(tile, out StardewValley.Object? remainingWeed) && remainingWeed is not null ? remainingWeed.MinutesUntilReady.ToString(CultureInfo.InvariantCulture) : "missing")};swings={swingCount};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
         if (handled && removed)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "weeds_cut", evidence);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "weed_cut_postcondition_unavailable", evidence);

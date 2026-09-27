@@ -223,6 +223,7 @@ internal sealed record LocalAnimalProductCollectionSpec(
     int ProduceStack,
     int InventoryBefore,
     int PreviousSlot,
+    float StaminaBefore,
     long RouteRevision,
     long DeadlineMs,
     ExecutionState? DeferredTerminalState = null,
