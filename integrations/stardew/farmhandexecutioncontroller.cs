@@ -1215,6 +1215,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             location = player?.currentLocation?.NameOrUniqueName,
             tile = new { x = player?.Tile.X ?? 0f, y = player?.Tile.Y ?? 0f },
             stamina = player?.Stamina ?? 0f,
+            // The persistent exhaustion flag. It is what makes fatigue more than a
+            // one-day resource: while it is set, Farmer's day-update restores only
+            // half of MaxStamina next morning. The companion must be able to see the
+            // state it now accrues by exhausting itself, or being tired is invisible
+            // to it and it cannot choose to rest, eat, or tell the player.
+            exhausted = player?.exhausted.Value ?? false,
             health = player?.health ?? 0,
             current_tool = DescribeTool(player?.CurrentTool),
             inventory_slots = player?.Items.Count ?? 0,
