@@ -92,10 +92,17 @@ export type Snapshot = Readonly<{
    capabilities: readonly string[];
    catalogRevision: number;
    enabledActionIds: readonly string[];
-  /** Older Mod snapshots may omit fields added after the initial bridge contract. */
-  currentTool?: string | null;
-  inventorySlots?: number;
-  activeExecution?: ActiveExecution | null;
+/** Older Mod snapshots may omit fields added after the initial bridge contract. */
+currentTool?: string | null;
+inventorySlots?: number;
+/**
+ * The persistent native exhaustion flag. While set, Farmer's day-update
+ * restores only half of MaxStamina the next morning, so this is the agent's
+ * own accrued consequence, not a transient read. Optional for older Mod
+ * snapshots; false when the world is not ready.
+ */
+exhausted?: boolean;
+activeExecution?: ActiveExecution | null;
   /** Exact current Mod BCP-47 presentation locale; required on every Mod snapshot. */
   presentationLocale: string;
   /**
@@ -934,6 +941,7 @@ const SNAPSHOT_KEYS = [
   "location",
   "tile",
   "stamina",
+  "exhausted",
   "health",
   "currentTool",
   "inventorySlots",
@@ -1911,6 +1919,8 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   if (!isRecord(value.tile) || !isFiniteNumber(value.tile.x) || !isFiniteNumber(value.tile.y))
     return "invalid_snapshot:tile";
   if (!isFiniteNumber(value.stamina)) return "invalid_snapshot:stamina";
+  if (value.exhausted !== undefined && typeof value.exhausted !== "boolean")
+    return "invalid_snapshot:exhausted";
   if (!isFiniteNumber(value.health)) return "invalid_snapshot:health";
   if (typeof value.actionable !== "boolean") return "invalid_snapshot:actionable";
   if (!isBcp47Locale(value.presentationLocale)) return "invalid_snapshot:presentationLocale";
@@ -2195,6 +2205,7 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
     isFiniteNumber(value.tile.x) &&
     isFiniteNumber(value.tile.y) &&
     isFiniteNumber(value.stamina) &&
+    (value.exhausted === undefined || typeof value.exhausted === "boolean") &&
     isFiniteNumber(value.health) &&
     typeof value.actionable === "boolean" &&
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&

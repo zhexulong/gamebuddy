@@ -1527,6 +1527,9 @@
         "stamina": {
           "type": "number"
         },
+        "exhausted": {
+          "type": "boolean"
+        },
         "health": {
           "type": "number"
         },
