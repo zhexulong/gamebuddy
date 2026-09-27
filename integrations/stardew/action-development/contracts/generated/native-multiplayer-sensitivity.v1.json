@@ -325,6 +325,12 @@
           "file": "StardewValley.Tools/MilkPail.cs",
           "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
           "sensitivity": "mp-insensitive"
+        },
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Shears.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive"
         }
       ],
       "admission": {
