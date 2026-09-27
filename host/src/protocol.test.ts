@@ -612,6 +612,15 @@ test("bridge message payloads fail closed", () => {
     now,
   );
   assert.equal(validateBridgeMessage(badActive, scope, now), "invalid_snapshot");
+  // `exhausted` is an optional boolean; a non-boolean is rejected, a boolean is accepted.
+  assert.equal(
+    validateBridgeMessage(newEnvelope("snapshot", scope, { ...snapshot, exhausted: "tired" }, "snapshot_exhausted_01", now), scope, now),
+    "invalid_snapshot",
+  );
+  assert.equal(
+    validateBridgeMessage(newEnvelope("snapshot", scope, { ...snapshot, exhausted: true }, "snapshot_exhausted_02", now), scope, now),
+    null,
+  );
   assert.equal(
     validateBridgeMessage(
       newEnvelope("error", scope, { reasonCode: "authentication_failed" }, "error_01", now),
