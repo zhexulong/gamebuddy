@@ -160,8 +160,10 @@ async function collectProductionTypeScript(directory: string): Promise<string[]>
     }
     if (!entry.name.endsWith(".ts")) continue;
     // Test, test-support, and fixture modules are not shipped production modules.
+    // `*.test-support-internal.ts` is the approved test-support spelling, so both
+    // forms must be excluded or a legal test-support importer would false-fail.
     if (/\.(test|spec)\.ts$/.test(entry.name)) continue;
-    if (/\.test-support\.ts$/.test(entry.name)) continue;
+    if (/\.test-support(?:-internal)?\.ts$/.test(entry.name)) continue;
     if (/-test-fixtures?\.ts$/.test(entry.name)) continue;
     found.push(path);
   }
