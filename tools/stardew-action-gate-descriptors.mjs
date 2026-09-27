@@ -158,6 +158,10 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   craft_item: "run-stardew-native-local-player-craft-item-smoke.mjs",
   cook_recipe: "run-stardew-native-local-player-cook-recipe-smoke.mjs",
   collect_crab_pot_output: "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
+  // Lane G recovery-chain harness: drives breakpoint rejected -> equip recovery
+  // -> retry succeeded within one native-local session over the till_soil
+  // fixture. Not a new action; it grants no capability.
+  tool_recovery_chain: "run-stardew-native-local-player-tool-recovery-chain-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

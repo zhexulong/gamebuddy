@@ -321,6 +321,11 @@ export function fixtureActions(action) {
   if (action === "clear_debris") return ["move_to_tile", "travel", "equip_tool", "clear_debris"];
   if (action === "enter_exit") return ["move_to_tile", "enter_exit"];
   if (action === "till_soil") return ["move_to_tile", "travel", "equip_tool", "till_soil"];
+  // Lane G tool-recovery chain: the same till_soil fixture (Hoe in inventory,
+  // default non-Hoe current tool) drives breakpoint rejected -> equip recovery
+  // -> retry succeeded within one native-local session.
+  if (action === "tool_recovery_chain")
+    return ["move_to_tile", "travel", "equip_tool", "till_soil"];
   // Ladder 3: Jodi's Request — a real Spring-19 mail quest asking for a fresh
   // cauliflower. The fixture only supplies the player with a Hoe, a filled
   // Watering Can and cauliflower seeds; the Agent plans the whole farming

@@ -495,6 +495,23 @@ an alternate action runtime.
    save/reopen or persistence proof. An action whose declared result requires
    persistence needs a separate topology-scoped native save/reopen gate before
    any corresponding claim.
+23. `native_tool_recovery_chain_v1` has met this lane's target-version live
+   recovery-chain closure. The chain runner (`run-stardew-native-local-player-tool-recovery-chain-smoke.mjs`)
+   drives one full Agent recovery loop inside a single game session against
+   `GameBuddyFixtureStable_445936768`'s disposable working save: breakpoint
+   `till_soil` without equipping the Hoe → terminal `rejected/hoe_not_equipped`;
+   recovery `equip_tool {tool:hoe}` → `succeeded/tool_equipped`; retry
+   `till_soil` → `succeeded/soil_tilled` with Farm `(62,18)`
+   `before=none;after=HoeDirt`, fresh bare-soil targets `2→1`, and native
+   stamina `270→268` (`delta=-2`). The three receipts share one contiguous
+   journal (`revision` strictly increasing `26<27<28`, distinct execution IDs),
+   proving the §1.4 recovery contract: breakpoint receipt → recovery receipt →
+   retry receipt, all observable in one session. The profile transaction
+   restored and removed backup/lock and working save; no Stardew/SMAPI process
+   remained. This is native-local shared mechanics AND recovery-chain evidence
+   only — it proves the Agent-visible recovery loop for `hoe_not_equipped`,
+   not Farmhand, HostAutomation, Portfolio, publication, release, or
+   save/reopen evidence.
 23. The runner must restore the exact profile transaction. Then remove the
    working save through `prepare-stardew-action-fixture.ps1 -Cleanup`; verify
    no backup, lock, SMAPI/Stardew process, or working save remains.
