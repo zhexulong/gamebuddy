@@ -270,7 +270,14 @@ export async function ensureAdjacentToFreshTarget(
       lastError = error;
     }
   }
-  throw lastError ?? new Error("no_reachable_target_tile");
+  // Attach the trace to the failure. The trace holds one entry per attempt with
+  // each move's state and its receipt evidence, which is the only record of WHERE
+  // the walk stopped and WHERE it was told to go. Throwing it away leaves
+  // "target_tile_unreachable:28,34" as the whole story, which cannot distinguish
+  // an unreachable tile from an occupied one from a path that ran out of time.
+  const failure = lastError ?? new Error("no_reachable_target_tile");
+  failure.trace = trace;
+  throw failure;
 }
 
 /**
