@@ -194,8 +194,9 @@ export class CompanionLoop {
             // so absence means "no projection", never a synthetic fallback.
             if (this.#turnObserver?.presentNativeAssistantContent !== undefined) {
               nativeContentObserver = attachNativeCompanionContent(this.session as AgentSession, {
-                // Game companion deltas feed the same streaming TTS lane when a
-                // voice sink is attached; without it they stay unprojected.
+                // Raw Game companion deltas still feed the same streaming TTS
+                // lane when a voice sink is attached; without one they stay
+                // unprojected at delta granularity.
                 onPreviewDelta: async (delta) => {
                   if (this.voiceSink === undefined) return;
                   try {
@@ -205,9 +206,18 @@ export class CompanionLoop {
                     // Voice degradation is graceful.
                   }
                 },
+                // Under incremental activation every completed sentence emitted
+                // from the delta lane is already a final presentation piece;
+                // it crosses the same source-lineage presenter as the final
+                // text, in arrival order, and is never re-chunked.
+                onIncrementalText: async (piece) => {
+                  const content = Object.freeze({ sourceEventId, text: piece });
+                  await this.#turnObserver?.presentNativeAssistantContent?.(content);
+                },
                 onFinalText: async (text) => {
                   // One consumed batch admits a sequence of native expressions:
-                  // the dehydrated final text is chunked at deterministic sentence
+                  // the dehydrated final text — under incremental activation the
+                  // message_end residual — is chunked at deterministic sentence
                   // boundaries (companion-speech-chunker) so the game sees short,
                   // conversational pieces in order instead of one wall of text.
                   // Serialization is guaranteed by the observer's callbackTail
@@ -244,11 +254,12 @@ export class CompanionLoop {
                 onRejected: () => undefined,
               });
               nativeContentObserver.open();
-              // Voice needs the same incremental delta stream as browser
-              // previews. Game has no browser surface, so openPreviews only
-              // unlocks the delta lane; the only consumer is the voice sink
-              // (final text still crosses the source-lineage bridge).
-              if (this.voiceSink !== undefined) nativeContentObserver.openPreviews();
+              // Previews unlock the delta lane for every Game surface, not only
+              // voice: incremental presentation consumes completed sentences from
+              // that same stream, so the lane opens whenever a Game presenter is
+              // installed. Voice stays one of its consumers; the message_end
+              // residual still crosses the source-lineage bridge.
+              nativeContentObserver.openPreviews();
             }
           }
           if (sourceEventId !== undefined && batchId !== undefined)
