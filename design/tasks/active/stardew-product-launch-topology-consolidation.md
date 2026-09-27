@@ -27,7 +27,9 @@ owner: stardew-integration
 
 **Exact next slice / owned files (pending):** Desktop bootstrap/session handoff is owned by `desktop/GameBuddy.Desktop/Program.cs`, `RuntimeSupervisor.cs`, `DesktopHostBootstrapBroker.cs`, `GuardianSupervisor.cs` and focused Desktop tests. Host composition/lifecycle handoff is owned by `host/src/bootstrap/entry/desktop-host-entry.internal.ts`, `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`, `host/src/composition/desktop-host-composition.ts`, `host/src/stardew-production-lifecycle-coordinator.internal.ts`, `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts`, `host/src/dialogue-web-main.ts` and focused tests. This does not activate the blocked Tasks 1–6 or alter the installation/containment predecessor gate.
 
-This task is **active**. Task 0 is complete; Tasks 1–6 are now executable because the activation rule below is satisfied. The rule itself is unchanged: Tasks 1–6 remain non-executable whenever `design/domains/stardew/integration.md` states that installation registration or bootstrap containment is unclosed.
+This task is **active**. Tasks 0–5 are complete. Task 6's independent review is the remaining gate.
+
+**Status note 2026-09-27:** the route removal is implemented and locally verified. The plan's "Final migration" clause (`dialogue-web-main.ts` browser/presentation consolidation) is already satisfied independently — that file does not exist and `host/scripts/test-artifact-protocol.test.mjs` asserts its absence from the test artifact — so it is not pending work under this plan.
 
 Activation requires all of the following ordinary, reviewable project facts—no new hash, signature, attestation chain, or plan-local authority is introduced:
 
@@ -58,15 +60,21 @@ The same review recorded a HIGH finding that is worth keeping visible here: that
 
 ## Current diagnosis and intended end state
 
-The direct operator path currently resembles:
+**Outcome (2026-09-27):** the direct operator route is **removed**, and the plan's original diagnosis turned out to be partly stale. Tracing every production caller showed the shipped entry (`host/src/main.ts`) and `host/src/semantic-main-config.ts` already consumed only the manifest reference and the coordinator-owned composition; they never reached the operator-selection route. That route had **zero production importers** — only its own test — and one live consumer of `PRODUCT_INTEGRATION_CATALOG.select()`: itself. It was therefore deleted outright rather than migrated, per the no-backward-compatibility rule.
+
+**One correction worth recording:** the operator-selection facade constructed its **own** `SemanticGameProductionAuthority` (`createKnownSemanticGameProductionAuthorityFromDeploymentManifest`), whereas the coordinator-owned materializer requires the shared authority to be **injected**. The old route was not a harmless alternate wiring; if it had ever been reached in production it would have created a second Game authority. That is the substantive reason removal is correct, and it is why the retained path is asserted positively rather than assumed.
+
+The direct operator path this plan removed:
 
 ```text
 operator config
-  → PRODUCT_INTEGRATION_CATALOG
+  → PRODUCT_INTEGRATION_CATALOG.get(integrationId)
   → STARDEW_INTEGRATION_LAUNCHER.launch()
   → LocalStardewBridgeClient.connect(pipeName, bridgeToken)
   → semantic Game facade
 ```
+
+It is now unreachable: `PRODUCT_INTEGRATION_CATALOG` registers no launchers at all, so `select()` cannot be made to yield operator-supplied pipe/token launch facts.
 
 The intended shipped Game path is:
 
@@ -156,19 +164,19 @@ Do not remove catalog entries, change `main.ts`, delete `gameOperatorConfigPath`
 - Consumes: `PRODUCT_INTEGRATION_CATALOG`, `createKnownSemanticGameFacadeFromOperatorConfig`, and the current Stardew domain topology/status contract.
 - Produces: deterministic assertions that direct Stardew operator attach is not a shipped product route and that Preview/Portfolio are not affected.
 
-- [ ] **Step 1: Add a post-predecessor failing test for direct product selection**
+- [x] **Step 1: Add a post-predecessor failing test for direct product selection**
 
 Activate this assertion only after the current Stardew owner records installation registration and bootstrap containment as closed with their named production verification and independent review. Put shipped product catalog assertions in `host/src/integration-catalog-product.test.ts`; keep generic catalog/parser assertions in `host/src/integration-catalog.test.ts`. Assert through the product boundary that raw `pipeName`/`bridgeToken` configuration cannot create a shipped Stardew attachment, without claiming that the adapter launcher itself cannot exist for Preview/private materializer use.
 
-- [ ] **Step 2: Run the actual Host test build and runner**
+- [x] **Step 2: Run the actual Host test build and runner**
 
 Use the existing Host `node:test` build/test scripts and `host/scripts/run-test-suite.mjs`. Expected failure before Task 2 is the direct-route characterization.
 
-- [ ] **Step 3: Add isolation assertions**
+- [x] **Step 3: Add isolation assertions**
 
 Assert that Preview's production dependency composition remains Preview-owned and that Portfolio imports/uses are not changed by the product catalog consolidation. Do not assert that Preview becomes coordinator-backed.
 
-- [ ] **Step 4: Run the focused tests again**
+- [x] **Step 4: Run the focused tests again**
 
 The new isolation assertions may pass before implementation; the direct-route assertion must remain the failing red test until Task 2.
 
@@ -189,11 +197,11 @@ The new isolation assertions may pass before implementation; the direct-route as
 - Consumes: Task 1 failing route test; coordinator-owned private materializer; current operator-selection API.
 - Produces: semantic Game product composition with no direct raw Stardew attach route, while retaining the private adapter seam required by the coordinator materializer.
 
-- [ ] **Step 1: Verify the current-owner activation gate before editing**
+- [x] **Step 1: Verify the current-owner activation gate before editing**
 
 Do not begin this task while `design/domains/stardew/integration.md` states that installation registration or bootstrap containment is incomplete. Activation also requires the production verification and independent review named by the current owner. Numbered or archived design text, this plan, a checkbox, or a test fixture cannot satisfy the condition.
 
-- [ ] **Step 2: Trace all production callers before editing**
+- [x] **Step 2: Trace all production callers before editing**
 
 Search for:
 
@@ -213,17 +221,17 @@ shipped semantic Game product
 
 Do not remove a private materializer dependency merely because it shares the launcher module.
 
-- [ ] **Step 3: Remove the shipped direct selection**
+- [x] **Step 3: Remove the shipped direct selection**
 
 After the predecessor gate, remove Stardew from the directly selectable product catalog if that catalog has no remaining lawful consumer, or remove only the direct raw-attach selection if another lawful product consumer remains. Migrate normal and recovery entry callers to the coordinator-owned composition required by the current Stardew owner. Dead-owner recovery must accept only the deployment-manifest reference and operation identity required by the current recovery contract; it must not parse `integrationId` or opaque `integration` payload. The result must not accept `pipeName`, `bridgeToken`, installation path, profile path, PID, endpoint, or launch generation from operator config as a product Game launch fact.
 
 Do not add a second launcher entry to hide the old behavior. Do not serialize or rehydrate `AdmittedStardewInstallation`.
 
-- [ ] **Step 4: Preserve the private materializer seam**
+- [x] **Step 4: Preserve the private materializer seam**
 
 Keep `createStardewIntegrationLaunchHandleFromAuthenticatedBridge()` and the materializer because they consume the exact private Farmhand connection used by the coordinator-owned composition. Preserve `createKnownSemanticGameFacadeFromReceiptBackedBinding()` as private construction machinery; if operator-selection removal leaves it in the wrong module, move it to an existing internal composition module rather than exposing a new public API. Remove a symbol only if the implementation proves it has no Preview or private-materializer consumer; update its tests rather than retaining a compatibility export.
 
-- [ ] **Step 5: Run Task 1 tests**
+- [x] **Step 5: Run Task 1 tests**
 
 Expected: direct-route test passes; Preview and Portfolio isolation tests pass.
 
@@ -241,15 +249,15 @@ Expected: direct-route test passes; Preview and Portfolio isolation tests pass.
 - Consumes: private Farmhand bridge connection, launch generation, manifest binding, materializer, coordinator lifecycle readers.
 - Produces: deterministic proof that the only retained product construction path is private, generation-bound, receipt-backed, and coordinator-owned.
 
-- [ ] **Step 1: Add a failing assertion for raw-config absence**
+- [x] **Step 1: Add a failing assertion for raw-config absence**
 
 Test the production materializer/composition boundary with a private connection and assert that no function in that path accepts structural Stardew operator configuration. The test must exercise the public typed boundary, not rely solely on source-text scanning.
 
-- [ ] **Step 2: Add coordinator ownership and import-inventory assertions**
+- [x] **Step 2: Add coordinator ownership and import-inventory assertions**
 
 Prove that product construction requires the coordinator-produced private Farmhand connection and that the coordinator remains the component invoking the existing enter/STOP/attachment/close sequence. Add the smallest static production TypeScript import-inventory assertion, excluding `*.test.ts` and approved `*.test-support-internal.ts`, showing that only the coordinator imports the private materializer; explicitly reject imports from `main.ts`, semantic operator selection, product catalog, Preview, Portfolio, and operational runner. Pair this with the runtime private-connection test; do not treat TypeScript structural typing alone as ownership proof. Preserve existing exact-once and uncertain/quarantine tests.
 
-- [ ] **Step 3: Run focused coordinator/materializer tests**
+- [x] **Step 3: Run focused coordinator/materializer tests**
 
 Expected: all retained private-path tests pass, including failure and teardown cases.
 
@@ -266,15 +274,15 @@ Expected: all retained private-path tests pass, including failure and teardown c
 - Consumes: the current Stardew domain blocked composition contract and Host product composition.
 - Produces: operational gate that remains a harness consumer and fails closed until the current owner closes installation registration and bootstrap containment; it never becomes a direct Stardew launcher.
 
-- [ ] **Step 1: Add or update a failing assertion**
+- [x] **Step 1: Add or update a failing assertion**
 
 Assert that the operational runner does not pass raw Stardew pipe/token facts to the product child and returns the exact source-owned composition blocker defined by the current Stardew domain/product composition, rather than a generic failure or an attempted direct bridge attachment.
 
-- [ ] **Step 2: Remove the direct-route input**
+- [x] **Step 2: Remove the direct-route input**
 
 Delete `gameOperatorConfigPath` or equivalent raw Stardew launch input from the operational-gate path if it is still present, following the current Stardew domain topology contract. Retain only harness preflight references, deployment-manifest reference, per-run nonce, and task input allowed by that design.
 
-- [ ] **Step 3: Run the gate's deterministic tests**
+- [x] **Step 3: Run the gate's deterministic tests**
 
 No real game process or mutation is permitted. Expected: the gate remains explicitly blocked and does not report `passed` or `ready` from the removed route.
 
@@ -290,11 +298,11 @@ No real game process or mutation is permitted. Expected: the gate remains explic
 - Consumes: final import/selection topology from Tasks 2–4.
 - Produces: a minimal factual owner clarification in the existing current document; it does not create a new source-level architecture map.
 
-- [ ] **Step 1: Correct only factual owner/status wording if needed**
+- [x] **Step 1: Correct only factual owner/status wording if needed**
 
 Do not duplicate a source-level path map into multiple architecture documents. Update the Stardew domain owner only if the final implementation changes the stated distinction: shipped Game is coordinator-owned, Preview and Portfolio remain separate, and direct operator attach is removed after the predecessor gate.
 
-- [ ] **Step 2: Run documentation checks**
+- [x] **Step 2: Run documentation checks**
 
 Run:
 

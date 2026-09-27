@@ -13,7 +13,7 @@ owner: stardew-integration
 
 Preview、Portfolio、operational harness 和 community connector 都不能复用或制造该 topology 的 pipe、token、profile、launch generation、manifest 或 session authority。
 
-`PRODUCT_INTEGRATION_CATALOG → STARDEW_INTEGRATION_LAUNCHER → createKnownSemanticGameFacadeFromOperatorConfig()` 的直接 `pipeName`/`bridgeToken` attach 是待移除的过渡 operator 路径，不是第二个正式产品 topology。它现在仍只作为 blocked-state characterization 保留（并非因为前置未闭合 —— 两项前置已于 2026-09-26/2026-09-27 闭合，激活已由 `design/reviews/topology-activation-review.md` 授予）；`TASK-STARDEW-PRODUCT-LAUNCH-TOPOLOGY-CONSOLIDATION` 执行后必须从正式 semantic Game composition 删除，且不得保留 fallback、兼容路径或 alternate production mode。Resume 不得把该过渡 attach 当作外部游戏发现或通用绑定机制。
+`PRODUCT_INTEGRATION_CATALOG` 不再注册任何可直接选择的 integration launcher，直接 `pipeName`/`bridgeToken` attach 已移除：`STARDEW_INTEGRATION_LAUNCHER` 仍存在供 Preview 与 coordinator 私有 materializer 使用，但产品入口只能经 composition root 绑定 `stardew` game provider 到 `StardewProductionLifecycleCoordinator`，不保留 fallback、兼容路径或 alternate production mode。Resume 不得把该过渡 attach 当作外部游戏发现或通用绑定机制。
 
 `STARDEW_INTEGRATION_LAUNCHER` 仍可作为 Preview 和 coordinator 私有 Farmhand materializer 的窄 adapter 构造机械；正式产品只有 coordinator 可以消费 generation-bound private materializer。生产 import inventory 必须保持该 materializer 的 coordinator-only ownership。Preview 与 Portfolio 继续拥有各自隔离 topology，不能因产品路径收敛而接入 coordinator。
 
