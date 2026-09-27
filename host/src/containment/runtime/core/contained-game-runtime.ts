@@ -139,6 +139,13 @@ export function createContainedGameRuntime(
           return outcome(role, "succeeded");
         } catch {
           roleStates.set(role, "launch-failed");
+          // Deliberately over-conservative: a launch that failed BEFORE dispatching
+          // any native frame is recorded as `launch-failed` too, which blocks
+          // settlement for that role. The runtime cannot distinguish "definitely did
+          // not dispatch" from "may have produced a side effect" here, so it takes
+          // the safe direction and leaves the attempt to recovery/quarantine. Do not
+          // "fix" this into a dispatch assertion: that would let an uncertain side
+          // effect settle as if nothing happened.
           return outcome(role, "failed");
         }
       });
