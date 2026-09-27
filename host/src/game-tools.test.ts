@@ -564,7 +564,7 @@ catalogRevision: 1,
         reasonCode: "watering_can_refilled",
         revision: 4,
         evidence: {
-          detail: "target=watering_can_refill_01;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
+          detail: "target=watering_can_refill_01;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
         },
       };
     },
@@ -734,7 +734,7 @@ catalogRevision: 1,
         revision: 4,
         evidence: {
           detail:
-            "location=Farm;target=hoedirt_01;tile=2,3;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true",
+            "location=Farm;target=hoedirt_01;tile=2,3;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
         },
       };
     },
@@ -958,7 +958,7 @@ catalogRevision: 1,
         revision: 4,
         evidence: {
           detail:
-            "target=tree_chop_01;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
+            "target=tree_chop_01;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
         },
       };
     },
@@ -1050,7 +1050,7 @@ catalogRevision: 1,
         revision: 4,
         evidence: {
           detail:
-            "target=rock_source_01;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
+            "target=rock_source_01;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
         },
       };
     },

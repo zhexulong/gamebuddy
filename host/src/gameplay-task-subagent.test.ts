@@ -81,7 +81,7 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
     state: "succeeded" as const,
     reasonCode: "soil_tilled",
     revision: 1,
-    evidence: { detail: "location=Farm;target=3,4;before=none;after=HoeDirt" },
+    evidence: { detail: "location=Farm;target=3,4;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2" },
   };
   const report = {
     state: "completed",
