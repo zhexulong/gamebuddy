@@ -24,7 +24,7 @@ import { promisify } from "node:util";
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(HERE, "..");
+const ROOT = path.join(HERE, "..", "..", "..", "..");
 const SOURCE_ROOT = path.join(ROOT, "ref", "external", "StardewValleyDecompiled", "Stardew Valley");
 const REGISTER = "integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json";
 const execFileAsync = promisify(execFile);
@@ -37,7 +37,7 @@ async function audit() {
   await execFileAsync(
     process.execPath,
     [
-      path.join(HERE, "derive-stardew-action-candidates.mjs"),
+      path.join(HERE, "..", "src", "analysis", "stardew-action-candidates.mjs"),
       "--source-root",
       SOURCE_ROOT,
       "--action-register",
@@ -50,7 +50,7 @@ async function audit() {
   await execFileAsync(
     process.execPath,
     [
-      path.join(HERE, "audit-stardew-action-seam-terminals.mjs"),
+      path.join(HERE, "..", "src", "analysis", "stardew-action-seam-terminals-audit.mjs"),
       "--candidates",
       candPath,
       "--source-root",
@@ -98,7 +98,12 @@ test("5 个 seam 引用指向非终态位置（可疑）", async () => {
   const a = await audit();
   assert.equal(a.counts.suspectSeamReferences, 5);
   const ids = a.suspectSeamReferences.map((s) => s.actionId).sort();
-  assert.deepEqual(ids, ["cut_weeds", "harvest_crop", "pet_animal", "scythe_crop", "ship_item"]);
+  /**
+   * `pet_animal` 已不在此列：P1 修正（手持物消耗不算多持有）后它的戴帽分支成为候选。
+   * `chest_store` 取而代之：`Chest.addItem` 的终态是 `itemsForPlayer.Add(item)`
+   * 这种 mutator 调用，纯赋值提取看不到，故被归为 seam_not_terminal。
+   */
+  assert.deepEqual(ids, ["chest_store", "cut_weeds", "harvest_crop", "scythe_crop", "ship_item"]);
 });
 
 test("ship_item 的记录 seam 是取句柄方法，无任何写入", async () => {
@@ -115,7 +120,10 @@ test("harvest_crop / scythe_crop 的 seam 只写玩家动画状态，不写终�
     const s = a.suspectSeamReferences.find((x) => x.actionId === id);
     assert.equal(s.kind, "seam_writes_but_no_terminal");
     assert.ok(
-      s.writes.every((w) => /Game1\.player\.|state\.Value/.test(w), "只应写玩家动画状态或 HoeDirt.state"),
+      s.writes.every(
+        (w) => /Game1\.player\.|state\.Value|value\.Quality$/.test(w),
+        "只应写玩家动画状态或 HoeDirt 的中间字段",
+      ),
       `${id} 的写入 ${JSON.stringify(s.writes)} 不应包含世界终态`,
     );
   }
