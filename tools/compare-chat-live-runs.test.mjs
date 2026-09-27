@@ -30,6 +30,8 @@ function buildTrace({
   trailingStateReads = 0,
   frameGapMsPerTurn = 0,
   extraEvents = [],
+  generation = "gen-0000",
+  inventoryDigest = "0".repeat(64),
 } = {}) {
   const events = [];
   let at = 0;
@@ -91,7 +93,7 @@ function buildTrace({
     startedAt: "2026-09-26T00:00:00.000Z",
     completedAt: "2026-09-26T00:01:00.000Z",
     surface: "chat-only",
-    artifact: { generation: "gen-0000", inventoryDigest: "0".repeat(64) },
+    artifact: { generation, inventoryDigest },
     provider: { embedded: true, observed: true },
     originMs: 0,
     events,
@@ -135,6 +137,32 @@ test("identical traces produce zero rows", () => {
   assert.equal(parsed.summary.improvements, 0);
   assert.equal(parsed.summary.regressions, 0);
   assert.equal(parsed.summary.neutral, 0);
+});
+
+test("a comparison across two generations makes the build change visible", () => {
+  // Across a system change the generation usually changes too. That is why the
+  // comparator must NOT refuse the pair — but it must never hide it either: a
+  // clean-looking 0/0/N over two generations would imply the before/after differ
+  // only by the change under test.
+  const baseline = buildTrace({ generation: "gen-0001", inventoryDigest: "1".repeat(64) });
+  const after = buildTrace({ generation: "gen-0002", inventoryDigest: "2".repeat(64) });
+  const { code, parsed } = compareTraces(baseline, after);
+  assert.equal(code, 0);
+  assert.deepEqual(rowOf(parsed, "artifact.generation"), {
+    kind: "stage",
+    name: "artifact.generation",
+    before: "gen-0001",
+    after: "gen-0002",
+    verdict: "neutral",
+    detail: "the published generation this run measured; when it changes, the comparison also covers a build change, not only the system change under test",
+  });
+  assert.equal(rowOf(parsed, "artifact.inventoryDigest").verdict, "neutral");
+});
+
+test("the same generation produces no artifact row, so a real pair stays clean", () => {
+  const { parsed } = compareTraces(buildTrace(), buildTrace());
+  assert.equal(rowOf(parsed, "artifact.generation"), undefined);
+  assert.equal(rowOf(parsed, "artifact.inventoryDigest"), undefined);
 });
 
 test("a removed integrity finding is an improvement", () => {

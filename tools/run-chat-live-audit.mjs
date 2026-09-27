@@ -334,6 +334,24 @@ export function probeTurnCommittedGate(outcome) {
   return Object.freeze({ ok: true });
 }
 
+/**
+ * The probe turn's verdict, given its gate decision and (only when the gate
+ * passed) the keyword matches.
+ *
+ * This is the routing seam, not just the predicate: a failed gate SHORT-CIRCUITS
+ * to `observability_gap` and the keyword matches are never even consulted, so a
+ * turn whose presentation was rejected or never committed can never be scored —
+ * not against this turn, and not against older transcript text. Tested directly
+ * so that reordering this decision (scoring first, gating later) fails.
+ */
+export function probeVerdict({ gate, keywords }) {
+  if (!gate.ok) return Object.freeze({ event: "observability_gap", reason: gate.reason });
+  if (keywords === undefined) return Object.freeze({ event: "observability_gap", reason: "probe_keywords_missing" });
+  if (keywords.hit && keywords.forbiddenCount === 0) return Object.freeze({ event: "needle.hit" });
+  if (!keywords.hit && keywords.forbiddenCount === 0) return Object.freeze({ event: "needle.miss" });
+  return Object.freeze({ event: "distractor.confused" });
+}
+
 /** Substring keyword normalization mirroring the conversational quality gate. */
 function normalizeKeywordText(value) {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
@@ -1265,14 +1283,11 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
         }
         const outcome = await runTurn({ message: step.text });
         const probeGate = probeTurnCommittedGate(outcome);
-        if (!probeGate.ok) {
-          emitProbe(probe, "observability_gap", probeGate.reason);
-          continue;
-        }
-        const keywords = await readCompanionKeywordMatches(step);
-        if (keywords.hit && keywords.forbiddenCount === 0) emitProbe(probe, "needle.hit");
-        else if (!keywords.hit && keywords.forbiddenCount === 0) emitProbe(probe, "needle.miss");
-        else emitProbe(probe, "distractor.confused");
+        // A failed gate must short-circuit BEFORE any keyword read, so a turn
+        // with no durable commit is never scored against older text.
+        const keywords = probeGate.ok ? await readCompanionKeywordMatches(step) : undefined;
+        const verdict = probeVerdict({ gate: probeGate, keywords });
+        emitProbe(probe, verdict.event, verdict.reason);
         continue;
       }
       // seed/filler: advance the conversation only.

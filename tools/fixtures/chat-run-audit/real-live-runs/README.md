@@ -46,9 +46,20 @@ a distractor/needle verdict against it.
 
 The gate now uses the durable `committedCompanionDelta` from the same `/state`
 read that produces `presentation.committed`; a turn without a positive delta is
-an `observability_gap`, never a keyword score. `run-05` is the first probe run
-scored under that gate; `run-04-vs-05-comparison.json` shows the two probe runs
-are comparable and drift-free (17 neutral rows).
+an `observability_gap`, never a keyword score. `run-05` was run with that gate in
+place (that claim is supported by the harness commit history and the run log —
+see below, the trace itself cannot prove which gate version ran);
+`run-04-vs-05-comparison.json` shows the two probe runs are comparable (same
+generation, same manifest digest, same 7-turn topology) and drift-free (17
+neutral rows).
+
+> **Evidence-pending caveat (auditing-runs review):** the trace schema has no
+> harness-version field, and in run-05 all 7 turns carry BOTH a stderr marker
+> and a durable commit — so the old marker gate and the new durable gate would
+> have produced the identical verdict on this data. run-05 is *consistent with*
+> the new gate; it is not *discriminating* evidence for it. What discriminates
+> is the routing test (`probeVerdict` short-circuits a failed gate before any
+> keyword read) and the negative gate test, both in committed harness tests.
 
 ## Honest boundaries
 
@@ -67,3 +78,13 @@ are comparable and drift-free (17 neutral rows).
   The baseline generation predates the publisher closure fix and carries no
   `node_modules`, so a real run temporarily points at the self-contained
   generation; the pointer is restored afterwards.
+- **Memory evidence is absent from every run so far, and the report now says so
+  plainly.** The frozen vocabulary has no `memory.observability_gap` row, so an
+  unavailable Memory projection is not distinguishable from an idle one in a
+  trace; the report line no longer renders that as three measured zeros.
+- **The comparator does NOT gate on generation.** Its comparability gate covers
+  `provider.embedded` and probe `manifestDigest` only; `run-04-vs-05` is
+  comparable because the two runs coincidentally share a generation, not because
+  the tool guarantees it. A cross-generation pair is now *made visible* (an
+  `artifact.generation` / `artifact.inventoryDigest` neutral row appears) but
+  still allowed — the tool's purpose is comparing across a system change.
