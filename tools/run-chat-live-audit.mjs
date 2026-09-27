@@ -316,6 +316,24 @@ export function evaluateProbeReply({ transcriptText, step }) {
   return Object.freeze({ hit: hitCount >= Math.ceil(required.length * threshold), forbiddenCount });
 }
 
+/**
+ * The probe "was there a durable reply for THIS turn" gate (audit design §3.3).
+ *
+ * A keyword verdict may only be scored against the DURABLE committed-companion
+ * delta of the current turn. The Class B stderr marker only reports that the
+ * admission boundary was crossed — it can be `rejected`, and it is not the
+ * durable fact — so a turn whose presentation never committed (or was rejected)
+ * must be an observability gap, never a scored match against older transcript
+ * text.
+ */
+export function probeTurnCommittedGate(outcome) {
+  if (outcome === undefined || outcome.terminal !== true)
+    return Object.freeze({ ok: false, reason: "probe_turn_not_terminal" });
+  if (!(outcome.committedCompanionDelta > 0))
+    return Object.freeze({ ok: false, reason: "probe_turn_no_committed_presentation" });
+  return Object.freeze({ ok: true });
+}
+
 /** Substring keyword normalization mirroring the conversational quality gate. */
 function normalizeKeywordText(value) {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
@@ -960,7 +978,17 @@ async function awaitTerminal({ origin, client, recorder, stream, projectionBefor
     recorder.record("presentation", "host", "committed", {
       count: projection.committedCompanionMessages - projectionBefore.committedCompanionMessages,
     });
-  return Object.freeze({ terminal: true, projection });
+  // The durable committed-presentation delta is returned so a caller that needs
+  // "was there a durable reply for THIS turn" can use the transcript authority
+  // instead of the Class B stderr marker count. A marker only reports that the
+  // admission boundary was crossed; it can be `rejected`, and it is not the
+  // durable fact.
+  return Object.freeze({
+    terminal: true,
+    projection,
+    committedCompanionDelta:
+      projection.committedCompanionMessages - (projectionBefore?.committedCompanionMessages ?? 0),
+  });
 }
 
 function emitNewPresentationMarkers({ stderr, recorder, seen }) {
@@ -1235,18 +1263,10 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
             continue;
           }
         }
-        const before = environment.presentationMarkers;
         const outcome = await runTurn({ message: step.text });
-        if (outcome === undefined || outcome.terminal !== true) {
-          emitProbe(probe, "observability_gap", "probe_turn_not_terminal");
-          continue;
-        }
-        // A committed presentation is the only authority for a keyword match;
-        // without one the turn produced no observable reply, so it is a gap
-        // rather than a hit or miss.
-        const committed = environment.presentationMarkers > before;
-        if (!committed) {
-          emitProbe(probe, "observability_gap", "probe_turn_no_committed_presentation");
+        const probeGate = probeTurnCommittedGate(outcome);
+        if (!probeGate.ok) {
+          emitProbe(probe, "observability_gap", probeGate.reason);
           continue;
         }
         const keywords = await readCompanionKeywordMatches(step);
