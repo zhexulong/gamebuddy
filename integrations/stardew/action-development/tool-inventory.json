@@ -14,47 +14,12 @@
     "tools/check-stardew-gameplay-completeness.mjs",
     "tools/check-stardew-gameplay-completeness.test.mjs",
     "tools/check-stardew-native-mechanism-review-register.mjs",
+    "tools/check-stardew-native-multiplayer-sensitivity.mjs",
     "tools/check-stardew-native-normal-player-ingress-register.mjs",
     "tools/check-stardew-native-router-exit-classifier.mjs",
     "tools/check-stardew-native-source-closure.mjs",
     "tools/check-stardew-native-transition-ledger.mjs",
     "tools/check-stardew-phase1-prerequisites.ps1",
-    "tools/check-stardew-portfolio-command-path-charter.mjs",
-    "tools/check-stardew-portfolio-command-path-charter.test.mjs",
-    "tools/check-stardew-portfolio-isolation.mjs",
-    "tools/check-stardew-portfolio-m1-route-source-audit.mjs",
-    "tools/check-stardew-portfolio-m1-route-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-m10-donate-museum-source-boundary.mjs",
-    "tools/check-stardew-portfolio-m10-museum-source-audit.mjs",
-    "tools/check-stardew-portfolio-m10-museum-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-m2-crop-source-audit.mjs",
-    "tools/check-stardew-portfolio-m2-crop-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-m3-forage-source-audit.mjs",
-    "tools/check-stardew-portfolio-m3-forage-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-m4-resource-source-audit.mjs",
-    "tools/check-stardew-portfolio-m4-resource-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-m5-animal-source-audit.mjs",
-    "tools/check-stardew-portfolio-m5-animal-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-m6-machine-source-audit.mjs",
-    "tools/check-stardew-portfolio-m6-machine-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-m7-bundle-source-audit.mjs",
-    "tools/check-stardew-portfolio-m7-bundle-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-m8-elevator-source-realization.mjs",
-    "tools/check-stardew-portfolio-m8-mine-source-audit.mjs",
-    "tools/check-stardew-portfolio-m8-mine-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-m9-accept-special-order-source-boundary.mjs",
-    "tools/check-stardew-portfolio-m9-special-order-source-audit.mjs",
-    "tools/check-stardew-portfolio-m9-special-order-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-p0b.mjs",
-    "tools/check-stardew-portfolio-p0b.ps1",
-    "tools/check-stardew-portfolio-p3.mjs",
-    "tools/check-stardew-portfolio-prerequisites.mjs",
-    "tools/check-stardew-portfolio-prerequisites.ps1",
-    "tools/check-stardew-portfolio-sleep-day-fixture-contract.mjs",
-    "tools/check-stardew-portfolio-sleep-day-fixture-contract.test.mjs",
-    "tools/check-stardew-portfolio-sleep-day-source-audit.mjs",
-    "tools/check-stardew-portfolio-sleep-day-source-audit.test.mjs",
-    "tools/check-stardew-portfolio-sleep-day-source-boundary.mjs",
     "tools/prepare-stardew-action-fixture.ps1",
     "tools/prepare-stardew-fixture-profile.mjs",
     "tools/prepare-stardew-native-local-player-fixture.mjs",
@@ -77,10 +42,15 @@
     "tools/run-stardew-companion-fixture.mjs",
     "tools/run-stardew-companion-live-scenarios.mjs",
     "tools/run-stardew-farmhand-probe.ps1",
+    "tools/run-stardew-native-local-agent-ab-live.mjs",
+    "tools/run-stardew-native-local-agent-ab-live.test.mjs",
     "tools/run-stardew-native-local-player-bait-crab-pot-smoke.mjs",
     "tools/run-stardew-native-local-player-bait-crab-pot-smoke.test.mjs",
     "tools/run-stardew-native-local-player-break-rock-source-smoke.mjs",
     "tools/run-stardew-native-local-player-break-rock-source-smoke.test.mjs",
+    "tools/run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+    "tools/run-stardew-native-local-player-chest-store-smoke.mjs",
+    "tools/run-stardew-native-local-player-chop-stump-smoke.mjs",
     "tools/run-stardew-native-local-player-chop-tree-source-smoke.mjs",
     "tools/run-stardew-native-local-player-chop-tree-source-smoke.test.mjs",
     "tools/run-stardew-native-local-player-clear-debris-probe.mjs",
@@ -90,7 +60,11 @@
     "tools/run-stardew-native-local-player-clear-hoedirt-smoke.test.mjs",
     "tools/run-stardew-native-local-player-collect-animal-product-smoke.mjs",
     "tools/run-stardew-native-local-player-collect-animal-product-smoke.test.mjs",
+    "tools/run-stardew-native-local-player-cook-recipe-smoke.mjs",
+    "tools/run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
+    "tools/run-stardew-native-local-player-craft-item-smoke.mjs",
     "tools/run-stardew-native-local-player-crop-runner-harness.test.mjs",
+    "tools/run-stardew-native-local-player-cut-weeds-smoke.mjs",
     "tools/run-stardew-native-local-player-dig-artifact-spot-smoke.mjs",
     "tools/run-stardew-native-local-player-dig-artifact-spot-smoke.test.mjs",
     "tools/run-stardew-native-local-player-enter-exit-smoke.mjs",
@@ -103,6 +77,9 @@
     "tools/run-stardew-native-local-player-feed-animal-smoke.test.mjs",
     "tools/run-stardew-native-local-player-fertilize-tile-smoke.mjs",
     "tools/run-stardew-native-local-player-harvest-crop-smoke.mjs",
+    "tools/run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
+    "tools/run-stardew-native-local-player-machine-ab-smoke.mjs",
+    "tools/run-stardew-native-local-player-machine-ab-smoke.test.mjs",
     "tools/run-stardew-native-local-player-machine-collect-output-smoke.mjs",
     "tools/run-stardew-native-local-player-machine-collect-output-smoke.test.mjs",
     "tools/run-stardew-native-local-player-machine-inspect-smoke.mjs",
@@ -131,9 +108,12 @@
     "tools/run-stardew-native-local-player-place-crab-pot-smoke.test.mjs",
     "tools/run-stardew-native-local-player-place-wood-fence-smoke.mjs",
     "tools/run-stardew-native-local-player-place-wood-fence-smoke.test.mjs",
+    "tools/run-stardew-native-local-player-plant-sapling-smoke.mjs",
     "tools/run-stardew-native-local-player-plant-seed-smoke.mjs",
     "tools/run-stardew-native-local-player-refill-watering-can-smoke.mjs",
     "tools/run-stardew-native-local-player-refill-watering-can-smoke.test.mjs",
+    "tools/run-stardew-native-local-player-scythe-crop-smoke.mjs",
+    "tools/run-stardew-native-local-player-ship-item-smoke.mjs",
     "tools/run-stardew-native-local-player-till-soil-smoke.mjs",
     "tools/run-stardew-native-local-player-till-soil-smoke.test.mjs",
     "tools/run-stardew-native-local-player-travel-smoke.mjs",
@@ -141,6 +121,7 @@
     "tools/run-stardew-native-local-player-use-item-smoke.mjs",
     "tools/run-stardew-native-local-player-water-crop-smoke.mjs",
     "tools/run-stardew-native-local-player-water-crop-smoke.test.mjs",
+    "tools/run-stardew-native-local-stop-deadline-probe.mjs",
     "tools/run-stardew-navigation-multisource-characterization.mjs",
     "tools/run-stardew-navigation-multisource-characterization.test.mjs",
     "tools/run-stardew-navigation-p4-corpus-producer.mjs",
@@ -149,34 +130,8 @@
     "tools/run-stardew-navigation-p4-runtime-probe.test.mjs",
     "tools/run-stardew-navigation-transition-characterization.mjs",
     "tools/run-stardew-navigation-transition-characterization.test.mjs",
-    "tools/run-stardew-portfolio-interop-contract.ps1",
-    "tools/run-stardew-portfolio-m1-route-preflight.mjs",
-    "tools/run-stardew-portfolio-m1-route-preflight.test.mjs",
-    "tools/run-stardew-portfolio-m10-donate-preflight.mjs",
-    "tools/run-stardew-portfolio-m10-donate-preflight.test.mjs",
-    "tools/run-stardew-portfolio-m3-forage-preflight.mjs",
-    "tools/run-stardew-portfolio-m3-forage-preflight.test.mjs",
-    "tools/run-stardew-portfolio-m4-break-rock-source-preflight.mjs",
-    "tools/run-stardew-portfolio-m4-break-rock-source-preflight.test.mjs",
-    "tools/run-stardew-portfolio-m7-claim-reward-preflight.mjs",
-    "tools/run-stardew-portfolio-m7-claim-reward-preflight.test.mjs",
-    "tools/run-stardew-portfolio-m8-action.mjs",
-    "tools/run-stardew-portfolio-m8-action.test.mjs",
-    "tools/run-stardew-portfolio-m8-entry-action.mjs",
-    "tools/run-stardew-portfolio-m8-entry-action.test.mjs",
-    "tools/run-stardew-portfolio-m8-ladder-action.mjs",
-    "tools/run-stardew-portfolio-m8-ladder-action.test.mjs",
-    "tools/run-stardew-portfolio-m8-mine-route-action.mjs",
-    "tools/run-stardew-portfolio-m8-mine-route-action.test.mjs",
-    "tools/run-stardew-portfolio-m8-preflight.mjs",
-    "tools/run-stardew-portfolio-m8-preflight.test.mjs",
-    "tools/run-stardew-portfolio-m9-accept-preflight.mjs",
-    "tools/run-stardew-portfolio-m9-accept-preflight.test.mjs",
-    "tools/run-stardew-portfolio-observe-smoke.mjs",
-    "tools/run-stardew-portfolio-p0b-lifecycle.mjs",
-    "tools/run-stardew-portfolio-p0b-lifecycle.test.mjs",
-    "tools/run-stardew-portfolio-sleep-day-preflight.mjs",
-    "tools/run-stardew-portfolio-sleep-day-preflight.test.mjs"
+    "tools/run-stardew-shared-world-action.mjs",
+    "tools/run-stardew-shared-world-action.ps1"
   ],
   "entries": [
     {
@@ -216,6 +171,12 @@
       "futureProjectPath": "checks/check-stardew-native-mechanism-review-register.mjs"
     },
     {
+      "path": "tools/check-stardew-native-multiplayer-sensitivity.mjs",
+      "classification": "conformance-test",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "checks/check-stardew-native-multiplayer-sensitivity.mjs"
+    },
+    {
       "path": "tools/check-stardew-native-normal-player-ingress-register.mjs",
       "classification": "conformance-test",
       "disposition": "keep-project-local",
@@ -244,222 +205,6 @@
       "classification": "conformance-test",
       "disposition": "keep-project-local",
       "futureProjectPath": "checks/check-stardew-phase1-prerequisites.ps1"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-command-path-charter.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-command-path-charter.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-command-path-charter.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-command-path-charter.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-isolation.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-isolation.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m1-route-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m1-route-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m1-route-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m1-route-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m10-donate-museum-source-boundary.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m10-donate-museum-source-boundary.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m10-museum-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m10-museum-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m10-museum-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m10-museum-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m2-crop-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m2-crop-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m2-crop-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m2-crop-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m3-forage-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m3-forage-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m3-forage-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m3-forage-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m4-resource-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m4-resource-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m4-resource-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m4-resource-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m5-animal-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m5-animal-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m5-animal-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m5-animal-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m6-machine-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m6-machine-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m6-machine-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m6-machine-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m7-bundle-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m7-bundle-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m7-bundle-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m7-bundle-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m8-elevator-source-realization.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m8-elevator-source-realization.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m8-mine-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m8-mine-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m8-mine-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m8-mine-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m9-accept-special-order-source-boundary.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m9-accept-special-order-source-boundary.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m9-special-order-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-m9-special-order-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-m9-special-order-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-m9-special-order-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-p0b.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-p0b.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-p0b.ps1",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-p0b.ps1"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-p3.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-p3.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-prerequisites.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-prerequisites.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-prerequisites.ps1",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-prerequisites.ps1"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-sleep-day-fixture-contract.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-sleep-day-fixture-contract.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-sleep-day-fixture-contract.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-sleep-day-fixture-contract.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-sleep-day-source-audit.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-sleep-day-source-audit.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-sleep-day-source-audit.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/check-stardew-portfolio-sleep-day-source-audit.test.mjs"
-    },
-    {
-      "path": "tools/check-stardew-portfolio-sleep-day-source-boundary.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "checks/check-stardew-portfolio-sleep-day-source-boundary.mjs"
     },
     {
       "path": "tools/prepare-stardew-action-fixture.ps1",
@@ -594,6 +339,18 @@
       "futureProjectPath": "diagnostics/run-stardew-farmhand-probe.ps1"
     },
     {
+      "path": "tools/run-stardew-native-local-agent-ab-live.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-agent-ab-live.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-agent-ab-live.test.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "tests/legacy/run-stardew-native-local-agent-ab-live.test.mjs"
+    },
+    {
       "path": "tools/run-stardew-native-local-player-bait-crab-pot-smoke.mjs",
       "classification": "canonical-scenario",
       "disposition": "keep-project-local",
@@ -616,6 +373,24 @@
       "classification": "conformance-test",
       "disposition": "keep-project-local",
       "futureProjectPath": "tests/legacy/run-stardew-native-local-player-break-rock-source-smoke.test.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-chest-retrieve-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-chest-store-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-chest-store-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-chop-stump-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-chop-stump-smoke.mjs"
     },
     {
       "path": "tools/run-stardew-native-local-player-chop-tree-source-smoke.mjs",
@@ -672,10 +447,34 @@
       "futureProjectPath": "tests/legacy/run-stardew-native-local-player-collect-animal-product-smoke.test.mjs"
     },
     {
+      "path": "tools/run-stardew-native-local-player-cook-recipe-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-cook-recipe-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-crab-pot-collect-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-craft-item-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-craft-item-smoke.mjs"
+    },
+    {
       "path": "tools/run-stardew-native-local-player-crop-runner-harness.test.mjs",
       "classification": "conformance-test",
       "disposition": "keep-project-local",
       "futureProjectPath": "tests/legacy/run-stardew-native-local-player-crop-runner-harness.test.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-cut-weeds-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-cut-weeds-smoke.mjs"
     },
     {
       "path": "tools/run-stardew-native-local-player-dig-artifact-spot-smoke.mjs",
@@ -748,6 +547,24 @@
       "classification": "canonical-scenario",
       "disposition": "keep-project-local",
       "futureProjectPath": "scenarios/run-stardew-native-local-player-harvest-crop-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-interact-npc-with-item-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-machine-ab-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-machine-ab-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-machine-ab-smoke.test.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "tests/legacy/run-stardew-native-local-player-machine-ab-smoke.test.mjs"
     },
     {
       "path": "tools/run-stardew-native-local-player-machine-collect-output-smoke.mjs",
@@ -918,6 +735,12 @@
       "futureProjectPath": "tests/legacy/run-stardew-native-local-player-place-wood-fence-smoke.test.mjs"
     },
     {
+      "path": "tools/run-stardew-native-local-player-plant-sapling-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-plant-sapling-smoke.mjs"
+    },
+    {
       "path": "tools/run-stardew-native-local-player-plant-seed-smoke.mjs",
       "classification": "canonical-scenario",
       "disposition": "keep-project-local",
@@ -934,6 +757,18 @@
       "classification": "conformance-test",
       "disposition": "keep-project-local",
       "futureProjectPath": "tests/legacy/run-stardew-native-local-player-refill-watering-can-smoke.test.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-scythe-crop-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-scythe-crop-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-ship-item-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-ship-item-smoke.mjs"
     },
     {
       "path": "tools/run-stardew-native-local-player-till-soil-smoke.mjs",
@@ -976,6 +811,12 @@
       "classification": "conformance-test",
       "disposition": "keep-project-local",
       "futureProjectPath": "tests/legacy/run-stardew-native-local-player-water-crop-smoke.test.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-stop-deadline-probe.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-stop-deadline-probe.mjs"
     },
     {
       "path": "tools/run-stardew-navigation-multisource-characterization.mjs",
@@ -1026,172 +867,16 @@
       "futureProjectPath": "tests/legacy/run-stardew-navigation-transition-characterization.test.mjs"
     },
     {
-      "path": "tools/run-stardew-portfolio-interop-contract.ps1",
+      "path": "tools/run-stardew-shared-world-action.mjs",
       "classification": "canonical-scenario",
       "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-interop-contract.ps1"
+      "futureProjectPath": "scenarios/run-stardew-shared-world-action.mjs"
     },
     {
-      "path": "tools/run-stardew-portfolio-m1-route-preflight.mjs",
+      "path": "tools/run-stardew-shared-world-action.ps1",
       "classification": "canonical-scenario",
       "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m1-route-preflight.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m1-route-preflight.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m1-route-preflight.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m10-donate-preflight.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m10-donate-preflight.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m10-donate-preflight.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m10-donate-preflight.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m3-forage-preflight.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m3-forage-preflight.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m3-forage-preflight.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m3-forage-preflight.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m4-break-rock-source-preflight.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m4-break-rock-source-preflight.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m4-break-rock-source-preflight.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m4-break-rock-source-preflight.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m7-claim-reward-preflight.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m7-claim-reward-preflight.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m7-claim-reward-preflight.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m7-claim-reward-preflight.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-action.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m8-action.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-action.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m8-action.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-entry-action.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m8-entry-action.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-entry-action.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m8-entry-action.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-ladder-action.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m8-ladder-action.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-ladder-action.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m8-ladder-action.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-mine-route-action.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m8-mine-route-action.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-mine-route-action.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m8-mine-route-action.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-preflight.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m8-preflight.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m8-preflight.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m8-preflight.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m9-accept-preflight.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-m9-accept-preflight.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-m9-accept-preflight.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-m9-accept-preflight.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-observe-smoke.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-observe-smoke.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-p0b-lifecycle.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-p0b-lifecycle.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-p0b-lifecycle.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-p0b-lifecycle.test.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-sleep-day-preflight.mjs",
-      "classification": "canonical-scenario",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "scenarios/run-stardew-portfolio-sleep-day-preflight.mjs"
-    },
-    {
-      "path": "tools/run-stardew-portfolio-sleep-day-preflight.test.mjs",
-      "classification": "conformance-test",
-      "disposition": "keep-project-local",
-      "futureProjectPath": "tests/legacy/run-stardew-portfolio-sleep-day-preflight.test.mjs"
+      "futureProjectPath": "scenarios/run-stardew-shared-world-action.ps1"
     }
   ],
   "pilotLegacyClosure": [
