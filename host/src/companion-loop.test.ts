@@ -309,6 +309,65 @@ test("CompanionLoop cancels the voice job when a consumed batch never produces f
   assert.ok(!voiceOps.includes("finalize"));
 });
 
+test("CompanionLoop presents each final-text chunk as one native expression, in order", async () => {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_chunk", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        // A single final assistant message with two sentences: the chunker must
+        // split it at the sentence boundary and present each piece separately.
+        emit({
+          type: "message_end",
+          message: {
+            id: "assistant_chunk",
+            role: "assistant",
+            content: [{ type: "text", text: "我这就去南瓜地浇水。把杂草也一起拔了。然后把种子撒上。" }],
+            stopReason: "stop",
+          },
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content);
+      },
+    },
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_chunk",
+    eventId: "player_source_chunk",
+    text: "帮帮我",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
+  await loop.flush();
+  // One message_end with three sentences → two presentations (≤2/slice), in order.
+  assert.deepEqual(presented, [
+    { sourceEventId: "player_source_chunk", text: "我这就去南瓜地浇水。把杂草也一起拔了。" },
+    { sourceEventId: "player_source_chunk", text: "然后把种子撒上。" },
+  ]);
+});
+
 test("CompanionLoop suppresses foreign, aborted, and post-STOP native content", async () => {
   const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown) => {
