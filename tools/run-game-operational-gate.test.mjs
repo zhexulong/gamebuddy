@@ -212,19 +212,34 @@ test("fixture contains only schema, natural language task, target facts, and env
   assert.equal(fixture.environment.platform, "windows");
 });
 
-test("Task 0 current owner keeps the transitional direct route blocked on both predecessors", async () => {
+test("Task 0 current owner records both predecessors as closed and keeps the direct route transitional", async () => {
   const owner = await readFile(new URL("../design/domains/stardew/integration.md", import.meta.url), "utf8");
 
+  // The transitional direct route is still the unwanted one, and its removal rule is
+  // unchanged: it must disappear from the shipped semantic Game composition once the
+  // predecessors close, with no fallback, compatibility path or alternate mode.
   assert.match(owner, /直接 `pipeName`\/`bridgeToken` attach 是待移除的过渡 operator 路径/);
-  assert.match(owner, /安装 registration 与 bootstrap containment 闭合前，它只能作为 blocked-state characterization 保留/);
-  assert.match(owner, /闭合后必须从正式 semantic Game composition 删除，且不得保留 fallback、兼容路径或 alternate production mode/);
-  assert.match(owner, /installation registration 尚未实现\/未闭合：durable Host-private installation registration record\/selector 尚不存在/);
-  assert.match(owner, /owner 与 registration `activeAttempt` 的 exact joint prepare-bind\/settlement-release 尚未闭合/);
-  assert.match(owner, /bootstrap containment 尚未闭合：exact Desktop Host bootstrap、Host first-write root validation、authenticated Desktop↔Host Guardian broker 尚未闭合/);
-  assert.match(owner, /这两项都是 predecessor blockers；Task 0 test、fixture、旧 profile 或 fallback 均不能解除它们/);
-  assert.match(owner, /`StardewProductionLifecycleCoordinator` 仍是唯一产品 owner，native-local direct route 仍只作待移除的 characterization/);
+  assert.match(owner, /执行后必须从正式 semantic Game composition 删除，且不得保留 fallback、兼容路径或 alternate production mode/);
+
+  // Both predecessor blockers are now recorded as CLOSED, which is what turns the
+  // topology task's activation rule from blocked into satisfied. Asserting the closure
+  // (not merely its absence) is the point: a later reader must be able to tell that the
+  // route removal is now authorized rather than still predecessor-gated.
+  assert.match(owner, /installation registration \*\*已闭合\*\*(？|\()/);
+  assert.match(owner, /bootstrap containment 已闭合/);
+  assert.match(owner, /不再被 registration 阻塞/);
+
+  // The closure must be non-vacuous: the owner has to name the durable record, the
+  // production wiring and the two reviews, not just assert a status word.
+  assert.match(owner, /gamebuddy-stardew-installation-registration\/v1/);
+  assert.match(owner, /registration-authority-review\.md/);
+  assert.match(owner, /registration-topology-review\.md/);
+
+  // The single-owner statement survives closure and is what Tasks 2-3 must preserve.
+  assert.match(owner, /`StardewProductionLifecycleCoordinator` 仍是唯一产品 owner/);
+
+  // Unchanged unrelated facts that this test has always pinned.
   assert.match(owner, /action platform 与部分 M1–M10 action 已有局部 closure；这不等于完整 Game release/);
-  assert.match(owner, /guardian containment、onboarding 和 target-version live open-gameplay gate 均未闭合/);
   assert.match(owner, /ordinary Navigation 已独立完成自身 live gate 并正式发布/);
 });
 
