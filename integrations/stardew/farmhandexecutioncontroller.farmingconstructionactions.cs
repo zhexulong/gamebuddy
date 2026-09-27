@@ -34,10 +34,14 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
         int before = wateringCan.WaterLeft;
         int max = wateringCan.waterCanMax;
-        wateringCan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        float staminaBefore = Game1.player.Stamina;
+        wateringCan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        float expectedStaminaCost = 0f; // refill branch never deducts stamina (WateringCan.DoFunction refill path)
         int after = wateringCan.WaterLeft;
         bool succeeded = ReferenceEquals(Game1.player.Items[slot], wateringCan) && before < max && after == max;
-        string evidence = $"target={expectedTargetId};slot={slot};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max}";
+        string evidence = $"target={expectedTargetId};slot={slot};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "watering_can_refilled" : "watering_can_refill_postcondition_unavailable", evidence);
     }
 
@@ -84,13 +88,19 @@ internal sealed partial class ExecutionManager
         LocalCropWateringSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown", this.revision, requestedDeadlineMs);
         bool beforeWatered = dirt.isWatered();
         int beforeWater = wateringCan.WaterLeft;
-        wateringCan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        float staminaBefore = Game1.player.Stamina;
+        wateringCan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        // WateringCan covers power with toolPower.Value (tap => 0), so a basic
+        // can tap costs 2*(0+1) - Farming*0.1 = 2 - Farming*0.1.
+        float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
         bool afterWatered = dirt.isWatered();
         bool waterConsumed = wateringCan.IsBottomless || wateringCan.WaterLeft < beforeWater || Game1.player.hasWateringCanEnchantment;
         ExecutionState state = !beforeWatered && afterWatered ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "crop_watered" : "crop_water_postcondition_unavailable";
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
-            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};before_watered={beforeWatered.ToString().ToLowerInvariant()};after_watered={afterWatered.ToString().ToLowerInvariant()};water_before={beforeWater};water_after={wateringCan.WaterLeft};water_consumed={waterConsumed.ToString().ToLowerInvariant()}");
+            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};before_watered={beforeWatered.ToString().ToLowerInvariant()};after_watered={afterWatered.ToString().ToLowerInvariant()};water_before={beforeWater};water_after={wateringCan.WaterLeft};water_consumed={waterConsumed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;
@@ -632,10 +642,19 @@ internal sealed partial class ExecutionManager
         float healthBefore = clump.health.Value;
         int previousSlot = Game1.player.CurrentToolIndex;
         Game1.player.CurrentToolIndex = slot;
+        float staminaBefore = Game1.player.Stamina;
+        string activeToolKind;
         try
         {
             if (Game1.player.CurrentTool is not Tool activeTool)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_equipped", $"slot={slot}");
+            activeToolKind = activeTool switch
+            {
+                Axe => "axe",
+                Pickaxe => "pickaxe",
+                Hoe => "hoe",
+                _ => "tool",
+            };
             Vector2 hitTile = clump.Tile;
             activeTool.DoFunction(location, (int)hitTile.X * 64 + 32, (int)hitTile.Y * 64 + 32, 0, Game1.player);
             // Tool.endUsing normally advances this native swing identity after
@@ -648,6 +667,20 @@ internal sealed partial class ExecutionManager
             Game1.player.CurrentToolIndex = previousSlot;
         }
 
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        // Cleared debris uses the player's equipped tool; Axe/Hoe deduct from the
+        // passed power (tap => 2*1 - level*0.1) while Pickaxe overrides power with
+        // toolPower.Value (tap => 0, so 2*(0+1) - level*0.1). Both evaluate to
+        // 2 - level*0.1 for a basic tap; keep the formula explicit per tool.
+        float expectedStaminaCost = 0f;
+        if (Game1.player.CurrentTool is Tool activeToolForCost && activeToolKind == "axe")
+            expectedStaminaCost = activeToolForCost.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
+        else if (activeToolKind == "pickaxe")
+            expectedStaminaCost = (Game1.player.CurrentTool is Tool pickForCost && pickForCost.IsEfficient) ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
+        else if (activeToolKind == "hoe")
+            expectedStaminaCost = (Game1.player.CurrentTool is Tool hoeForCost && hoeForCost.IsEfficient) ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
+
         StardewValley.TerrainFeatures.ResourceClump? remaining = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
         float healthAfter = remaining?.health.Value ?? 0f;
         bool cleared = remaining is null;
@@ -657,7 +690,7 @@ internal sealed partial class ExecutionManager
             cleared ? ExecutionState.Succeeded : ExecutionState.PartiallySucceeded,
             cleared ? "debris_cleared" : "debris_hit",
             this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};clump_removed={cleared.ToString().ToLowerInvariant()}");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};clump_removed={cleared.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;
@@ -748,8 +781,13 @@ internal sealed partial class ExecutionManager
             || !ReferenceEquals(afterFeature, dirt)
             || ((StardewValley.TerrainFeatures.HoeDirt)afterFeature).crop is null;
         float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        // Scythe harvest goes through HoeDirt.performToolAction with a MeleeWeapon;
+        // no native path deducts stamina for a melee swing, so the expected
+        // embodied cost is exactly zero.
+        float expectedStaminaCost = 0f;
         bool succeeded = cropGone && debrisGained;
-        string evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_delta={staminaBefore - staminaAfter:0.##};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
+        string evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "scythe_crops_harvested" : "scythe_crop_harvest_postcondition_unavailable", evidence);
     }
 

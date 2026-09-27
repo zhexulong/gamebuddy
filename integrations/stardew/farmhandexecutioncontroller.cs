@@ -1050,8 +1050,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 Game1.player.CurrentToolIndex = specification.PreviousSlot;
                 this.activeAnimalProduct = null;
                 this.revision++;
+                float staminaAfter = Game1.player.Stamina;
+                float staminaDelta = staminaAfter - specification.StaminaBefore;
+                // MilkPail/Shears each deduct a flat 4f inside their DoFunction;
+                // the animation runs the native tool use exactly on the bound animal.
+                float expectedStaminaCost = 4f;
                 LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "animal_product_collected", this.revision,
-                    $"location={specification.Location};target={specification.TargetId};animal={specification.AnimalId};tool={specification.ToolKind};produce={specification.QualifiedProduceItemId};produce_stack={specification.ProduceStack};produce_cleared=true;inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};inventory_gained=true;animation_complete=true");
+                    $"location={specification.Location};target={specification.TargetId};animal={specification.AnimalId};tool={specification.ToolKind};produce={specification.QualifiedProduceItemId};produce_stack={specification.ProduceStack};produce_cleared=true;inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};inventory_gained=true;animation_complete=true;stamina_before={specification.StaminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
                 this.Remember(receipt);
                 this.AddTrace(receipt);
                 this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);

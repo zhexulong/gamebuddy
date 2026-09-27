@@ -321,8 +321,9 @@ internal sealed partial class ExecutionManager
         int previousSlot = Game1.player.CurrentToolIndex;
         int previousFacingDirection = Game1.player.FacingDirection;
         string toolKind = tool is MilkPail ? "milk_pail" : "shears";
+        float staminaBefore = Game1.player.Stamina;
         LocalAnimalProductCollectionSpec specification = new(executionId, requestId, location.NameOrUniqueName, slot, targetX, targetY, expectedTargetId,
-            animal.myID.Value, animal.type.Value, produce.QualifiedItemId, toolKind, produceStack, inventoryBefore, previousSlot, this.revision, requestedDeadlineMs);
+            animal.myID.Value, animal.type.Value, produce.QualifiedItemId, toolKind, produceStack, inventoryBefore, previousSlot, staminaBefore, this.revision, requestedDeadlineMs);
         Game1.player.CurrentToolIndex = slot;
         // Follow the target-version input path, rather than calling Tool.beginUsing
         // directly: the Farmer-owned event schedules performBeginUsingTool, which
