@@ -1,0 +1,99 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "run-hollow-success-0001",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": "2026-01-01T00:00:01.000Z",
+  "surface": "chat-only",
+  "artifact": {
+    "generation": "gen-hollow-success-0001",
+    "inventoryDigest": "1eb78174cf0a6d38b3cdc82b36147673879dffd3fc2fbba663c687ad5a6e09f8"
+  },
+  "provider": {
+    "embedded": true,
+    "observed": true
+  },
+  "originMs": 0,
+  "events": [
+    {
+      "at": 0,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.started"
+    },
+    {
+      "at": 10,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted"
+    },
+    {
+      "at": 20,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "queued"
+      }
+    },
+    {
+      "at": 30,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "running"
+      }
+    },
+    {
+      "at": 40,
+      "kind": "provider",
+      "actor": "host",
+      "code": "request.sent"
+    },
+    {
+      "at": 50,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 60,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 70,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled"
+    },
+    {
+      "at": 80,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 90,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 100,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.finished",
+      "meta": {
+        "providerObservability": "observed"
+      }
+    }
+  ]
+}

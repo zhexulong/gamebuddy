@@ -1,0 +1,126 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "run-unobserved-cancellation-0001",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": "2026-01-01T00:00:01.000Z",
+  "surface": "chat-only",
+  "artifact": {
+    "generation": "gen-unobserved-cancellation-0001",
+    "inventoryDigest": "28b475d6db1694a83f1098551f6a2662605c249e9731883fa6aed4770d279aea"
+  },
+  "provider": {
+    "embedded": true,
+    "observed": true
+  },
+  "originMs": 0,
+  "events": [
+    {
+      "at": 0,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.started"
+    },
+    {
+      "at": 10,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted"
+    },
+    {
+      "at": 20,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "queued"
+      }
+    },
+    {
+      "at": 30,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "running"
+      }
+    },
+    {
+      "at": 40,
+      "kind": "provider",
+      "actor": "host",
+      "code": "request.sent"
+    },
+    {
+      "at": 50,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 60,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 70,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "stopping"
+      }
+    },
+    {
+      "at": 80,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 90,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "admitted"
+    },
+    {
+      "at": 100,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed"
+    },
+    {
+      "at": 110,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 120,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled"
+    },
+    {
+      "at": 130,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 140,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.finished",
+      "meta": {
+        "providerObservability": "observed"
+      }
+    }
+  ]
+}

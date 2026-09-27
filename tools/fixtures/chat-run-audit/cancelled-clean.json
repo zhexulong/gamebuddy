@@ -1,0 +1,120 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "run-cancelled-clean-0001",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": "2026-01-01T00:00:01.000Z",
+  "surface": "chat-only",
+  "artifact": {
+    "generation": "gen-cancelled-clean-0001",
+    "inventoryDigest": "14467f9cc33caa5062963e1d5bcf0b134379b7215afac58d7531fad3f5656373"
+  },
+  "provider": {
+    "embedded": true,
+    "observed": true
+  },
+  "originMs": 0,
+  "events": [
+    {
+      "at": 0,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.started"
+    },
+    {
+      "at": 10,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted"
+    },
+    {
+      "at": 20,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "queued"
+      }
+    },
+    {
+      "at": 30,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "running"
+      }
+    },
+    {
+      "at": 40,
+      "kind": "provider",
+      "actor": "host",
+      "code": "request.sent"
+    },
+    {
+      "at": 50,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 60,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "stopping"
+      }
+    },
+    {
+      "at": 70,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "cancelled"
+      }
+    },
+    {
+      "at": 80,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "cancelled"
+      }
+    },
+    {
+      "at": 90,
+      "kind": "recovery",
+      "actor": "harness",
+      "code": "reload.started"
+    },
+    {
+      "at": 100,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "cancelled"
+      }
+    },
+    {
+      "at": 110,
+      "kind": "recovery",
+      "actor": "harness",
+      "code": "reload.settled",
+      "meta": {
+        "state": "cancelled"
+      }
+    },
+    {
+      "at": 120,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.finished",
+      "meta": {
+        "providerObservability": "observed"
+      }
+    }
+  ]
+}

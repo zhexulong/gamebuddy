@@ -1,0 +1,138 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "run-memory-conflict-storm-0001",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": "2026-01-01T00:00:01.000Z",
+  "surface": "chat-only",
+  "artifact": {
+    "generation": "gen-memory-conflict-storm-0001",
+    "inventoryDigest": "b5d2d1b95f6bc1570f3d179320770d8f1f9f521a74b4e52e8308f4bcb4620c22"
+  },
+  "provider": {
+    "embedded": true,
+    "observed": true
+  },
+  "originMs": 0,
+  "events": [
+    {
+      "at": 0,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.started"
+    },
+    {
+      "at": 10,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted"
+    },
+    {
+      "at": 20,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "running"
+      }
+    },
+    {
+      "at": 25,
+      "kind": "memory",
+      "actor": "host",
+      "code": "read"
+    },
+    {
+      "at": 30,
+      "kind": "memory",
+      "actor": "host",
+      "code": "conflict",
+      "meta": {
+        "reason": "revision_advanced"
+      }
+    },
+    {
+      "at": 35,
+      "kind": "memory",
+      "actor": "host",
+      "code": "conflict",
+      "meta": {
+        "reason": "revision_advanced"
+      }
+    },
+    {
+      "at": 40,
+      "kind": "memory",
+      "actor": "host",
+      "code": "conflict",
+      "meta": {
+        "reason": "revision_advanced"
+      }
+    },
+    {
+      "at": 45,
+      "kind": "memory",
+      "actor": "host",
+      "code": "conflict",
+      "meta": {
+        "reason": "revision_advanced"
+      }
+    },
+    {
+      "at": 50,
+      "kind": "memory",
+      "actor": "host",
+      "code": "conflict",
+      "meta": {
+        "reason": "revision_advanced"
+      }
+    },
+    {
+      "at": 60,
+      "kind": "provider",
+      "actor": "host",
+      "code": "request.sent"
+    },
+    {
+      "at": 70,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 80,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "admitted"
+    },
+    {
+      "at": 90,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed"
+    },
+    {
+      "at": 100,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled"
+    },
+    {
+      "at": 110,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 120,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.finished",
+      "meta": {
+        "providerObservability": "observed"
+      }
+    }
+  ]
+}

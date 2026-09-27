@@ -1,0 +1,126 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "run-stream-gap-churn-0001",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": "2026-01-01T00:00:01.000Z",
+  "surface": "chat-only",
+  "artifact": {
+    "generation": "gen-stream-gap-churn-0001",
+    "inventoryDigest": "ed323833d32eca93e10f22f97b241df8f4ba266c9db4d04a1d979d362c6c8f99"
+  },
+  "provider": {
+    "embedded": true,
+    "observed": true
+  },
+  "originMs": 0,
+  "events": [
+    {
+      "at": 0,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.started"
+    },
+    {
+      "at": 10,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted"
+    },
+    {
+      "at": 20,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "running"
+      }
+    },
+    {
+      "at": 30,
+      "kind": "provider",
+      "actor": "host",
+      "code": "request.sent"
+    },
+    {
+      "at": 40,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 50,
+      "kind": "sse",
+      "actor": "host",
+      "code": "stream.resync",
+      "meta": {
+        "reason": "gap"
+      }
+    },
+    {
+      "at": 60,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 70,
+      "kind": "sse",
+      "actor": "host",
+      "code": "stream.resync",
+      "meta": {
+        "reason": "gap"
+      }
+    },
+    {
+      "at": 80,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 90,
+      "kind": "sse",
+      "actor": "host",
+      "code": "stream.resync",
+      "meta": {
+        "reason": "epoch_changed"
+      }
+    },
+    {
+      "at": 100,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "admitted"
+    },
+    {
+      "at": 110,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed"
+    },
+    {
+      "at": 120,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled"
+    },
+    {
+      "at": 130,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 140,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.finished",
+      "meta": {
+        "providerObservability": "observed"
+      }
+    }
+  ]
+}

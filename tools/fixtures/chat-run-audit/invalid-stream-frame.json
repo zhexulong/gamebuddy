@@ -1,0 +1,26 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "fixture_invalid_stream_frame",
+  "startedAt": "2026-09-26T00:00:00.000Z",
+  "completedAt": "2026-09-26T00:00:10.000Z",
+  "surface": "chat-only",
+  "originMs": 0,
+  "provider": { "embedded": true, "observed": true },
+  "artifact": {
+    "generation": "fixture-generation",
+    "inventoryDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "events": [
+    { "at": 0, "kind": "lifecycle", "actor": "harness", "code": "run.started" },
+    { "at": 10, "kind": "lifecycle", "actor": "harness", "code": "turn.submitted" },
+    { "at": 20, "kind": "http", "actor": "harness", "code": "state.read", "meta": { "state": "running" } },
+    { "at": 30, "kind": "provider", "actor": "host", "code": "request.sent" },
+    { "at": 40, "kind": "sse", "actor": "host", "code": "frame.received" },
+    { "at": 50, "kind": "sse", "actor": "harness", "code": "frame.invalid", "meta": { "reason": "malformed_frame" } },
+    { "at": 60, "kind": "sse", "actor": "host", "code": "frame.received" },
+    { "at": 70, "kind": "presentation", "actor": "host", "code": "committed", "meta": { "count": 1 } },
+    { "at": 80, "kind": "provider", "actor": "host", "code": "settled", "meta": { "state": "completed" } },
+    { "at": 90, "kind": "lifecycle", "actor": "harness", "code": "turn.terminal", "meta": { "state": "completed" } },
+    { "at": 100, "kind": "lifecycle", "actor": "harness", "code": "run.finished", "meta": { "providerObservability": "observed" } }
+  ]
+}
