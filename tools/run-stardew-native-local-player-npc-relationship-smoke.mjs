@@ -358,7 +358,12 @@ function evidenceMatchesTarget(evidence, target, location) {
   return (
     evidence.location === location &&
     evidence.target === target.targetId &&
-    evidence.tile === `${target.x},${target.y}` &&
+    // `tile` is the villager's tile at execution time, not the tile captured in
+    // the pre-execution snapshot. Identity is (location, name) since 7bbc762; a
+    // villager that walked between discovery and execution is still the same
+    // target. Assert the field's shape, never equality with the stale snapshot
+    // coordinate, or a correct receipt is misread as a mismatch.
+    validEvidenceTile(evidence.tile) &&
     evidence.npc === target.npcName &&
     evidence.points === String(target.friendshipPoints) &&
     evidence.status === target.friendshipStatus &&
@@ -367,11 +372,20 @@ function evidenceMatchesTarget(evidence, target, location) {
     evidence.gifts_this_week === String(target.giftsThisWeek)
   );
 }
+function validEvidenceTile(value) {
+  if (typeof value !== "string") return false;
+  const parts = value.split(",");
+  return (
+    parts.length === 2 &&
+    parts.every((part) => /^[0-9]{1,4}$/.test(part))
+  );
+}
 function sameRelationshipFacts(left, right) {
   return (
     left.targetId === right.targetId &&
-    left.x === right.x &&
-    left.y === right.y &&
+    // Coordinates are deliberately not compared: admission is identity-bound
+    // (7bbc762) precisely because a villager may move between discovery and the
+    // postcondition reread. Relationship facts are the semantic postcondition.
     left.npcName === right.npcName &&
     left.friendshipPoints === right.friendshipPoints &&
     left.friendshipStatus === right.friendshipStatus &&
