@@ -3137,14 +3137,6 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 this.InitializeNativeUseItemFixture(farm);
                 return;
             }
-            if (automation.FixtureScenario == "native_ship_item_v1")
-            {
-                // Only the naturally-retained native Shipping Bin building and
-                // the bound Farmhand's backpack are needed; this runs before
-                // SetupBigFarm so the bin is never rebuilt or relocated.
-                this.InitializeNativeShipItemFixture(farm);
-                return;
-            }
 
             // SetupBigFarm's target-version ClearFarm clears spawned/object
             // contents only; it retains existing buildings, including Cabin.
@@ -3160,6 +3152,22 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             finally
             {
                 Game1.currentLocation = previousLocation;
+            }
+
+            if (automation.FixtureScenario == "native_ship_item_v1")
+            {
+                // The naturally-retained native Shipping Bin building (a
+                // Building, so ClearFarm/SetupBigFarm never removes it) and the
+                // bound Farmhand's backpack are all this needs. This runs AFTER
+                // SetupBigFarm so the shared-world driver walks a cleared,
+                // genuinely walkable Farm -- the same world machine_inspect and
+                // pet_animal already pass on -- instead of the raw native Farm
+                // layout where the landing tile (25,33) is landlocked and every
+                // approach move to the bin dies no_native_path (measured live:
+                // probe from 25,33 to 30,33 fails with fixture active, succeeds
+                // on the cleared world).
+                this.InitializeNativeShipItemFixture(farm);
+                return;
             }
 
             if (automation.FixtureScenario == "native_harvest_crop_v1")
