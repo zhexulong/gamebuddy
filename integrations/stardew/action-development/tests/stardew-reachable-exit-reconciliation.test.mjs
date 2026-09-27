@@ -16,7 +16,7 @@ import { promisify } from "node:util";
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(HERE, "..");
+const ROOT = path.join(HERE, "..", "..", "..", "..");
 const SOURCE_ROOT = path.join(ROOT, "ref", "external", "StardewValleyDecompiled", "Stardew Valley");
 const execFileAsync = promisify(execFile);
 
@@ -24,7 +24,7 @@ async function runExits() {
   const { stdout } = await execFileAsync(
     process.execPath,
     [
-      path.join(HERE, "derive-stardew-player-reachable-exits.mjs"),
+      path.join(HERE, "..", "src", "analysis", "stardew-player-reachable-exits.mjs"),
       "--source-root",
       SOURCE_ROOT,
       "--action-register",
@@ -48,7 +48,7 @@ async function reconcile() {
     const { stdout } = await execFileAsync(
       process.execPath,
       [
-        path.join(HERE, "reconcile-stardew-reachable-exits.mjs"),
+        path.join(HERE, "..", "src", "analysis", "stardew-reachable-exit-reconciliation.mjs"),
         "--exits",
         exitsPath,
         "--action-register",
