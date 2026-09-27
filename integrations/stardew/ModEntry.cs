@@ -4063,24 +4063,25 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         // walks back and forth across every exit the actor would use, and every
         // approach move dies native_path_ended with the actor never leaving
         // (measured live: 24 moves, 4 no_native_path + 20 native_path_ended).
-        // A radius of 3-4 keeps the Pet inside DiscoverPetTargets' radius-6
-        // window while leaving the actor's corridor completely open, so the
-        // driver must genuinely approach, wait through the Pet's natural
-        // still-window, and interact -- the full wandering-target contract.
+        //
+        // Radius 2 is the sweet spot. It keeps the Pet off the actor's landing
+        // corridor, yet close enough that the actor reaches it in 1-2 moves --
+        // before a Dog's Sprint (MoveSpeed 6, 1-3.5s) or its random facing
+        // re-roll can carry it out of DiscoverPetTargets' radius-6 window.
+        // At radius 3-4 the actor's ~40s approach (warp, then walk) gave the Pet
+        // the whole journey to wander away, so the actor arrived to an empty
+        // discovery list (measured live: pet placed 22,33; actor walked to
+        // 22,33; petTargets empty).
         Vector2[] candidates =
         {
-            farmArrival + new Vector2(3f, 0f),
-            farmArrival + new Vector2(-3f, 0f),
-            farmArrival + new Vector2(0f, 3f),
-            farmArrival + new Vector2(0f, -3f),
-            farmArrival + new Vector2(3f, 3f),
-            farmArrival + new Vector2(-3f, 3f),
-            farmArrival + new Vector2(3f, -3f),
-            farmArrival + new Vector2(-3f, -3f),
-            farmArrival + new Vector2(4f, 0f),
-            farmArrival + new Vector2(-4f, 0f),
-            farmArrival + new Vector2(0f, 4f),
-            farmArrival + new Vector2(0f, -4f),
+            farmArrival + new Vector2(2f, 0f),
+            farmArrival + new Vector2(-2f, 0f),
+            farmArrival + new Vector2(0f, 2f),
+            farmArrival + new Vector2(0f, -2f),
+            farmArrival + new Vector2(2f, 2f),
+            farmArrival + new Vector2(-2f, 2f),
+            farmArrival + new Vector2(2f, -2f),
+            farmArrival + new Vector2(-2f, -2f),
         };
         Vector2? targetTile = candidates
             .Where(tile => farm.isTileOnMap(tile)
@@ -4088,7 +4089,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 && !farm.objects.ContainsKey(tile)
                 && !farm.terrainFeatures.ContainsKey(tile)
                 && !farm.characters.Any(character => character.Tile == tile)
-                && Math.Max(Math.Abs(tile.X - farmArrival.X), Math.Abs(tile.Y - farmArrival.Y)) <= 4)
+                && Math.Max(Math.Abs(tile.X - farmArrival.X), Math.Abs(tile.Y - farmArrival.Y)) <= 2)
             .Cast<Vector2?>()
             .FirstOrDefault();
         if (targetTile is null)
