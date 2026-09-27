@@ -95,6 +95,62 @@ function neighbourTilesOfFirst(candidates) {
   return first === undefined ? [] : neighbourTiles(first);
 }
 
+/**
+ * Sample the pet targets repeatedly and report what actually changed.
+ *
+ * Distinguishes a pet that is genuinely wandering from one that reports a moving
+ * behaviour but is physically stuck: the first changes tile over time, the second
+ * keeps the same tile with `stationary: false` forever. Those two cases need
+ * opposite responses, and only observed positions can tell them apart.
+ */
+async function samplePetMotion(client, { samples = 6, intervalMs = 700 } = {}) {
+  const observations = [];
+  for (let i = 0; i < samples; i++) {
+    try {
+      const snapshot = await client.observe();
+      const pets = Array.isArray(snapshot?.petTargets) ? snapshot.petTargets : [];
+      observations.push({
+        revision: snapshot?.revision ?? null,
+        actorTile: snapshot?.tile ?? null,
+        pets: pets.map((pet) => ({
+          targetId: pet?.targetId ?? null,
+          x: pet?.x ?? null,
+          y: pet?.y ?? null,
+          stationary: pet?.stationary ?? null,
+        })),
+      });
+    } catch (error) {
+      observations.push({ observeError: String(error?.message ?? error) });
+    }
+    if (i < samples - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  const seen = new Map();
+  let movingSamples = 0;
+  let stillSamples = 0;
+  for (const sample of observations) {
+    for (const pet of sample.pets ?? []) {
+      const key = pet.targetId ?? `${pet.x},${pet.y}`;
+      if (!seen.has(key)) seen.set(key, new Set());
+      seen.get(key).add(`${pet.x},${pet.y}`);
+      if (pet.stationary === true) stillSamples++;
+      else movingSamples++;
+    }
+  }
+
+  const distinctTiles = [...seen].map(([targetId, tiles]) => ({ targetId, tiles: [...tiles] }));
+  return {
+    samples: observations,
+    // `observedTiles > 1` is real movement; `1` with stationary=false throughout is
+    // a pet that cannot move despite its behaviour wanting to.
+    distinctTiles,
+    realMovement: distinctTiles.some((entry) => entry.tiles.length > 1),
+    movingSamples,
+    stillSamples,
+    petVisible: distinctTiles.length > 0,
+  };
+}
+
 const ACTION_TARGETS = {
   machine_inspect: {
     location: "Farm",
@@ -230,6 +286,15 @@ try {
           shippingBinTargets: snapshot?.shippingBinTargets ?? null,
           chestRetrieveTargets: snapshot?.chestRetrieveTargets ?? null,
           petTargets: snapshot?.petTargets ?? null,
+          // Sample the pet several times so a single frame cannot be mistaken for
+          // motion or for stillness. The `stationary` fact is the Mod projecting
+          // the pet's native WalkInDirection flag, NOT a measurement of whether it
+          // actually moved: a pet whose behaviour says "Walk" but which is blocked
+          // by terrain would report stationary=false forever while never changing
+          // tile. Recording the real tiles alongside the flag is what tells those
+          // two apart, which decides whether waiting for stillness is a sound
+          // strategy or an unwinnable one.
+          petMotion: await samplePetMotion(session.client, { samples: 6, intervalMs: 700 }),
         },
         null,
         2,

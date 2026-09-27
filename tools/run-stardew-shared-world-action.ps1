@@ -40,7 +40,8 @@ param(
     [string]$DumpExperimental = "",
     [string]$ReachLocation = "",
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 180,
-    [switch]$AttachOnly
+    [switch]$AttachOnly,
+    [string]$SmokeScript = ""
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -152,7 +153,7 @@ try {
     if (-not [System.IO.Path]::IsPathFullyQualified($ProbeRoot)) { throw "ProbeRoot must be absolute: $ProbeRoot" }
     if (-not [System.IO.Path]::IsPathFullyQualified($SessionDirectory)) { throw "SessionDirectory must be absolute: $SessionDirectory" }
     if ($SaveName -notmatch '^GameBuddyFixture[A-Za-z0-9_-]{1,96}$') { throw "SaveName must be a disposable GameBuddyFixture slot: $SaveName" }
-    if (-not $AttachOnly -and -not $DumpSpatial -and [string]::IsNullOrWhiteSpace($Action)) { throw "Action is required unless -AttachOnly or -DumpSpatial is set." }
+    if (-not $AttachOnly -and -not $DumpSpatial -and [string]::IsNullOrWhiteSpace($Action) -and [string]::IsNullOrWhiteSpace($SmokeScript)) { throw "Action or -SmokeScript is required unless -AttachOnly or -DumpSpatial is set." }
     Assert-NoStardewProcesses "materialization"
 
     $script:phase = "materialize_profiles"
@@ -194,20 +195,24 @@ try {
         $setup = $ACTION_SETUP[$Action]
         $hostConfig.HostAutomation.FixtureScenario = $setup.scenario
     } elseif ($DumpSpatial -and -not [string]::IsNullOrWhiteSpace($DumpExperimental)) {
-            # A dump about an experimental action needs that action's precondition on
-            # the Farm, exactly as a run does. Without a scenario the world is empty
-            # of the very thing being inspected, so the dump reports an empty list --
-            # which is indistinguishable from "the fixture placed nothing".
-            $dumpScenario = $ACTION_SETUP[($DumpExperimental -split ",")[0]]
-            if ($null -ne $dumpScenario) {
-                $setup = $dumpScenario
-                $hostConfig.HostAutomation.FixtureScenario = $dumpScenario.scenario
-            }
+        # A dump about an experimental action needs that action's precondition on
+        # the Farm, exactly as a run does. Without a scenario the world is empty
+        # of the very thing being inspected, so the dump reports an empty list --
+        # which is indistinguishable from "the fixture placed nothing".
+        $dumpScenario = $ACTION_SETUP[($DumpExperimental -split ",")[0]]
+        if ($null -ne $dumpScenario) {
+            $setup = $dumpScenario
+            $hostConfig.HostAutomation.FixtureScenario = $dumpScenario.scenario
         }
-    $hostConfig.SaveId = $hostConfig.SaveId
-    Write-Json $hostConfigPath $hostConfig
-    Write-Json $hostSidecarPath $hostConfig
-
+    } elseif (-not [string]::IsNullOrWhiteSpace($SmokeScript) -and -not [string]::IsNullOrWhiteSpace($Action)) {
+        # A custom probe may still run against a real fixture (so pathfinding
+        # sees the actual Farm layout, not the cleared setup world), by naming
+        # the same action the ACTION_SETUP entry points at.
+        if ($ACTION_SETUP.ContainsKey($Action)) {
+            $setup = $ACTION_SETUP[$Action]
+            $hostConfig.HostAutomation.FixtureScenario = $setup.scenario
+        }
+    }
     $hostConfig.SaveId = $hostConfig.SaveId
     Write-Json $hostConfigPath $hostConfig
     Write-Json $hostSidecarPath $hostConfig
@@ -286,7 +291,19 @@ try {
         evidence        = "Host SMAPI log native-LAN readiness + signed attachment response/manifest + AI-client readyToPlay"
     }
 
-    if (-not $AttachOnly) {
+    if (-not [string]::IsNullOrWhiteSpace($SmokeScript)) {
+        # Custom diagnostics script. The ps1 owns topology materialization and
+        # the two-process launch; the custom script is invoked only after both
+        # are live, with the exact AI client config path so it can connect.
+        # It must exit non-zero on failure and speak JSON on stdout.
+        $script:phase = "action_smoke"
+        $actionArgs = @("--client-config", $aiConfigPath)
+        $smokeOutput = & node (Join-Path $PSScriptRoot $SmokeScript) @actionArgs 2>&1
+        $smokeExit = $LASTEXITCODE
+        $result.actionExitCode = $smokeExit
+        $result.actionResult = ($smokeOutput -join "`n")
+        $result.state = if ($smokeExit -eq 0) { "action_passed" } else { "action_failed" }
+    } elseif (-not $AttachOnly) {
         $script:phase = "action_smoke"
         $actionArgs = @("--client-config", $aiConfigPath, "--action", $Action)
         if ($DumpSpatial) {
