@@ -18,7 +18,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
-import { STARDEW_NON_GAMEPLAY_FIELDS } from "../stardew-source-analysis-vocabulary.mjs";
+import { STARDEW_NON_GAMEPLAY_FIELDS, STARDEW_FIELD_ACCESSOR_SUFFIX } from "../stardew-source-analysis-vocabulary.mjs";
 
 /**
  * Visual/timer/input-lock fields. Bare `Location` / `TileLocation` / `Position` are
@@ -52,9 +52,12 @@ const options = parseArgs(process.argv.slice(2));
 const candidates = JSON.parse(await readFile(options.candidates, "utf8"));
 const catalog = JSON.parse(await readFile(options.catalog, "utf8"));
 
-/** 末段字段名，去掉数组下标 */
+/** 末段字段名:先剥离属性访问器后缀(`HitTimerInstance.Milliseconds` → `HitTimerInstance`),
+ * 再去掉数组下标,最后取末段。这样 deny-list 能命中被访问器的基字段,
+ * 而 `readyForHarvest.Value` 仍取到 `readyForHarvest` 当作 gameplay。*/
 const tailOf = (w) =>
   w
+    .replace(STARDEW_FIELD_ACCESSOR_SUFFIX, "")
     .replace(/\[.*?\]/g, "")
     .split(".")
     .pop();

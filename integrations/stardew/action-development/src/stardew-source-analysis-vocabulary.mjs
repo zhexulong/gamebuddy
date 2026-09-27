@@ -215,7 +215,15 @@ export const STARDEW_SEMANTIC_EQUIVALENT_EXITS = Object.freeze({
  * included them and wrongly pushed four placement units into the "not gameplay" tier.
  */
 export const STARDEW_NON_GAMEPLAY_FIELDS =
-  /^(NeedsUpdate|invincTimer|HitTimerInstance|HitTimer|lidFlapTimer|lidFlapping|jawPosition|xVelocity|yVelocity|layerDepth|scaleChange|rotationChange|facing|Sprite|frame|loop|flicker|lightRadius|lightcolor|startSound|MusicDuckTimer|haltAfterCheck|freezePause|canReleaseTool|CanMove|pingPong|displayType|statueTimer|showWantBubbleTimer|_alreadyAttempingRemoval)$/i;
+  /^(NeedsUpdate|invincTimer|HitTimerInstance|HitTimer|lidFlapTimer|lidFlapping|jawPosition|xVelocity|yVelocity|layerDepth|scaleChange|rotationChange|facing|Sprite|frame|loop|flicker|lightRadius|lightcolor|startSound|MusicDuckTimer|haltAfterCheck|freezePause|canReleaseTool|CanMove|pingPong|displayType|statueTimer|showWantBubbleTimer|_alreadyAttempingRemoval|kickProgress|localKickStartTile|lastTentTouchedByPlayer|boulderKnockTimer|boulderKnocksLeft|doneHittingBoulderWithToolTimer)$/i;
+
+/**
+ * Property-accessor suffixes that a field write may carry (`HitTimerInstance.Milliseconds`
+ * is the hit-timer, not a gameplay terminal). Stripping them lets the deny list match the
+ * base field while leaving genuine `minutesUntilReady.Value`-style writes classified.
+ */
+export const STARDEW_FIELD_ACCESSOR_SUFFIX =
+  /\.(Value|Milliseconds|Seconds|X|Y|Count|Length|Stack)$/i;
 
 /** Purely cosmetic fields, recorded but excluded from gameplay effect accounting. */
 export const STARDEW_COSMETIC_FIELDS =
