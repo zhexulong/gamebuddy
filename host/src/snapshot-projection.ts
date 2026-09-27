@@ -21,6 +21,8 @@ export interface FarmingContextProjection {
   readonly revision: number;
   readonly location: string;
   readonly stamina: number;
+  /** Persistent fatigue: while true, the next day restores only half stamina. */
+  readonly exhausted: boolean;
   readonly soilTilesCount: number;
   readonly canTill: boolean;
   readonly canWater: boolean;
@@ -69,6 +71,7 @@ export function projectFarmingContext(snapshot: Snapshot): FarmingContextProject
     revision: snapshot.revision,
     location: snapshot.location,
     stamina: snapshot.stamina,
+    exhausted: snapshot.exhausted === true,
     soilTilesCount: snapshot.soilTiles?.length ?? 0,
     canTill: capabilities.has("till_soil"),
     canWater: capabilities.has("water_crop"),
@@ -120,7 +123,7 @@ export function projectGameSnapshotContext(
       "[Game Snapshot Projection v1:",
       `- Snapshot Revision: #${snapshot.revision} (Sampled: ${sampledAgeMs}ms ago)`,
       `- Location: ${location}, Tile: (${movement.tile.x}, ${movement.tile.y}), Actionable: ${movement.actionable}`,
-      `- Farming: Stamina=${snapshot.stamina}, Health=${snapshot.health}, SoilTiles=${farming.soilTilesCount}, CanTill=${farming.canTill}, CanWater=${farming.canWater}`,
+      `- Farming: Stamina=${snapshot.stamina}, Exhausted=${snapshot.exhausted === true}, Health=${snapshot.health}, SoilTiles=${farming.soilTilesCount}, CanTill=${farming.canTill}, CanWater=${farming.canWater}`,
       `- Tools: Slots=${inventory.inventorySlots}, Equipped=${currentTool}, Labels=${toolLabels.join(", ")}]`,
     ].join("\n"),
     MAX_PROJECTION_TEXT_BYTES,
@@ -173,6 +176,7 @@ function isSnapshotInput(value: Snapshot): boolean {
     Number.isFinite(value.tile.x) &&
     Number.isFinite(value.tile.y) &&
     Number.isFinite(value.stamina) &&
+    (value.exhausted === undefined || typeof value.exhausted === "boolean") &&
     Number.isFinite(value.health) &&
     typeof value.actionable === "boolean" &&
     Array.isArray(value.capabilities) &&
