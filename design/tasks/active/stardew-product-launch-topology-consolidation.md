@@ -1,7 +1,7 @@
 ---
 id: TASK-STARDEW-PRODUCT-LAUNCH-TOPOLOGY-CONSOLIDATION
 type: task
-status: blocked
+status: active
 owner: stardew-integration
 ---
 
@@ -27,7 +27,7 @@ owner: stardew-integration
 
 **Exact next slice / owned files (pending):** Desktop bootstrap/session handoff is owned by `desktop/GameBuddy.Desktop/Program.cs`, `RuntimeSupervisor.cs`, `DesktopHostBootstrapBroker.cs`, `GuardianSupervisor.cs` and focused Desktop tests. Host composition/lifecycle handoff is owned by `host/src/bootstrap/entry/desktop-host-entry.internal.ts`, `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`, `host/src/composition/desktop-host-composition.ts`, `host/src/stardew-production-lifecycle-coordinator.internal.ts`, `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts`, `host/src/dialogue-web-main.ts` and focused tests. This does not activate the blocked Tasks 1–6 or alter the installation/containment predecessor gate.
 
-This task is `blocked`. Task 0 is the only currently authorized task. Tasks 1–6 remain non-executable while `design/domains/stardew/integration.md` states that installation registration or bootstrap containment is unclosed.
+This task is **active**. Task 0 is complete; Tasks 1–6 are now executable because the activation rule below is satisfied. The rule itself is unchanged: Tasks 1–6 remain non-executable whenever `design/domains/stardew/integration.md` states that installation registration or bootstrap containment is unclosed.
 
 Activation requires all of the following ordinary, reviewable project facts—no new hash, signature, attestation chain, or plan-local authority is introduced:
 
@@ -38,6 +38,10 @@ Activation requires all of the following ordinary, reviewable project facts—no
 
 A worker must read the current owner at task start. If either incomplete statement remains, the worker must stop after Task 0. Tests, fixtures, checkboxes, this plan, or archived Design 101/102 documents cannot activate Tasks 1–6.
 
+**Activation record 2026-09-27:** all four facts were independently verified by `design/reviews/topology-activation-review.md`, which returned `ACTIVATION: GRANTED` after re-running the named suites on a confirmed `win32` host (registration 12/11+1 skip, registration lock 3/3, composer 108/108, coordinator+platform 95/95, guardian-live 65/65, seam checker 20/20 over 200 files, module graph clean). It also re-verified that the authority review's sole prior BLOCKER was corrected at HEAD and that every cited fix commit is an ancestor.
+
+The same review recorded a HIGH finding that is worth keeping visible here: that reviewer confirmed the containment closure must **not** be read as "guardian crash recovery works". The Host-side producer that would drive crash recovery is absent (recorded as a residual by the containment task), so the system is fail-closed but not recoverable. That gap is orthogonal to this plan's route removal and does not bar activation, but it is the reason the domain owner now says so explicitly.
+
 ## Global Constraints
 
 - Do not optimize for backward compatibility: remove the unintended direct operator attach route; do not retain a fallback, alias, migration, or compatibility mode.
@@ -46,7 +50,7 @@ A worker must read the current owner at task start. If either incomplete stateme
 - `STARDEW_INTEGRATION_LAUNCHER` may remain an internal adapter construction dependency for the coordinator-owned materializer, but no shipped product caller may use it to consume raw `pipeName`/`bridgeToken` operator configuration.
 - Do not add a new launcher registry, cross-topology interface, generic gameplay DSL, second materializer, generic dispatcher, or raw bridge/session API.
 - Do not modify Stardew action semantics, Mod capability authority, bridge protocol fields, receipts, postconditions, installation-registration design, or bootstrap-containment design.
-- Do not claim the operational gate or full player launch is unblocked; the current Stardew domain owner states that installation registration and bootstrap containment remain incomplete.
+- Do not claim the operational gate or full player launch is unblocked beyond what the current Stardew domain owner records. As of 2026-09-27 that owner records installation registration and bootstrap containment as closed, so Tasks 1-6 are activated; the gate remains a harness and this plan still does not authorize a live launch.
 - Do not discard or overwrite unrelated dirty-worktree changes.
 - No live Stardew launch, mutation, fixture preparation, or target lease acquisition is authorized by this plan; use deterministic composition tests only.
 
@@ -84,7 +88,7 @@ farmhand-companion-preview.ts
 
 Portfolio remains separate and is not part of this plan.
 
-This plan is predecessor-gated by the current Stardew domain owner. The current document says the lawful installation-registration and bootstrap-containment authorities do not yet exist. Before that owner records both implementations as closed with their named verification/review, this plan permits only characterization of the unwanted route and fail-closed blocked-state evidence. After activation, the product composition must have no import/selection path that can create a direct Stardew attachment.
+This plan is predecessor-gated by the current Stardew domain owner. **As of 2026-09-27 that owner records both predecessors as closed** (`design/domains/stardew/integration.md`: installation registration closed at :186, bootstrap containment closed at :192), and an independent activation reviewer confirmed the four activation facts and returned `ACTIVATION: GRANTED` (`design/reviews/topology-activation-review.md`). Tasks 1-6 are therefore executable. Before that closure was recorded this plan permitted only characterization of the unwanted route and fail-closed blocked-state evidence; that phase is complete. The product composition must have no import/selection path that can create a direct Stardew attachment.
 
 ---
 
@@ -119,19 +123,21 @@ No new production module is required by this plan.
 - Consumes: current product catalog, operator-selection composition, and the current Stardew domain blocked-state contract.
 - Produces: deterministic evidence that direct operator attach is transitional/unwanted while no route-removal implementation is authorized before the current owner closes both predecessor capabilities.
 
-- [ ] **Step 1: Record the current direct route as a characterization**
+- [x] **Step 1: Record the current direct route as a characterization**
 
 Use the existing `node:test` Host style to show that the current operator selection can reach the direct route. This is characterization evidence, not acceptance of the route.
 
-- [ ] **Step 2: Add the current-owner status characterization**
+- [x] **Step 2: Add the current-owner status characterization**
 
-Assert, through a documentation/status characterization test or equivalent deterministic current-owner check, that installation registration and bootstrap containment remain incomplete. Do not claim that the current runtime gate itself rejects `PASSED`: the existing runner can still mechanically pass correlated terminal evidence through the transitional direct route. Task 0 records that contradiction without changing production behavior.
+Assert, through a documentation/status characterization test or equivalent deterministic current-owner check, that the current owner records **both** predecessor capabilities as closed and names the evidence for each, so this plan's activation stays tied to observable facts rather than to a checkbox. Do not claim that the current runtime gate itself rejects `PASSED`: the existing runner can still mechanically pass correlated terminal evidence through the transitional direct route. Task 0 records that contradiction without changing production behavior.
 
-- [ ] **Step 3: Run the actual Host test build and runner**
+**Status 2026-09-27:** this step is implemented, but its original wording ("remain incomplete") was inverted by the closure it was written to detect. `tools/run-game-operational-gate.test.mjs` now asserts the closure wording and is mutation-verified (breaking the owner's closure sentence makes it fail); its four step checkboxes below are complete.
+
+- [x] **Step 3: Run the actual Host test build and runner**
 
 Use the existing Host `node:test` build/test scripts from `host/package.json` and `host/scripts/run-test-suite.mjs`. Run the root operational-gate test separately with `node --test tools/run-game-operational-gate.test.mjs`, because it is outside Host test discovery. Do not invoke Vitest; it is not a repository dependency.
 
-- [ ] **Step 4: Stop at the predecessor boundary**
+- [x] **Step 4: Stop at the predecessor boundary**
 
 Do not remove catalog entries, change `main.ts`, delete `gameOperatorConfigPath`, or add headless activation in this task. Finish with the blocker explicit and reproducible.
 
