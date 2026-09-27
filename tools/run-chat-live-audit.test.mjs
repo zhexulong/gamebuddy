@@ -37,6 +37,7 @@ import {
   prepareReportTarget,
   projectStateSnapshot,
   probeTurnCommittedGate,
+  probeVerdict,
   validateAuditEvent,
   validateAuditTrace,
   writeAuditTrace,
@@ -340,6 +341,35 @@ test("the probe committed-presentation gate requires a durable delta, never a st
   // Only a positive durable delta opens keyword scoring.
   assert.deepEqual(probeTurnCommittedGate({ terminal: true, committedCompanionDelta: 1 }), { ok: true });
   assert.deepEqual(probeTurnCommittedGate({ terminal: true, committedCompanionDelta: 3 }), { ok: true });
+});
+
+test("a failed probe gate short-circuits to a gap and never scores keywords", () => {
+  // The routing is the part that actually protects the verdict: a turn with no
+  // durable commit must produce observability_gap and the keyword matches must
+  // never be consulted. These cases feed a WOULD-HIT keyword result so that a
+  // regression which scores before gating is caught (a plain predicate test
+  // cannot catch that).
+  const wouldHit = { hit: true, forbiddenCount: 0 };
+  const wouldConfuse = { hit: true, forbiddenCount: 1 };
+  assert.deepEqual(
+    probeVerdict({ gate: { ok: false, reason: "probe_turn_no_committed_presentation" }, keywords: wouldHit }),
+    { event: "observability_gap", reason: "probe_turn_no_committed_presentation" },
+  );
+  assert.deepEqual(
+    probeVerdict({ gate: { ok: false, reason: "probe_turn_not_terminal" }, keywords: wouldConfuse }),
+    { event: "observability_gap", reason: "probe_turn_not_terminal" },
+  );
+  // A failure with no keyword read at all is still a gap, never a hit/miss.
+  assert.deepEqual(probeVerdict({ gate: { ok: false, reason: "probe_turn_not_terminal" } }), {
+    event: "observability_gap",
+    reason: "probe_turn_not_terminal",
+  });
+  // Only a passed gate scores, and then the keyword outcome decides.
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: wouldHit }), { event: "needle.hit" });
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: false, forbiddenCount: 0 } }), { event: "needle.miss" });
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: wouldConfuse }), { event: "distractor.confused" });
+  // A passed gate with no keyword evidence is a gap, not a silent miss.
+  assert.deepEqual(probeVerdict({ gate: { ok: true } }), { event: "observability_gap", reason: "probe_keywords_missing" });
 });
 
 test("audit harness writes the exact frozen schema-v2 deployment manifest for a chat-only run", () => {

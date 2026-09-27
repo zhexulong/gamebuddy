@@ -643,6 +643,25 @@ function compareTraces(baseline, after) {
     "neutral",
     "the observer self-report; a change here is a change of observation capability, not of system health (design §3.2 rule 5)",
   );
+  // The published generation each run measured. A difference is NOT gated (the
+  // whole point of this tool is to compare across a system change, which usually
+  // ships a new generation), but it must be VISIBLE: otherwise a comparison
+  // spanning two generations could report a clean 0/0/N and hide that the
+  // before/after also differ in the build under test.
+  addStage(
+    "artifact.generation",
+    baseline.trace.artifact.generation,
+    after.trace.artifact.generation,
+    "neutral",
+    "the published generation this run measured; when it changes, the comparison also covers a build change, not only the system change under test",
+  );
+  addStage(
+    "artifact.inventoryDigest",
+    baseline.trace.artifact.inventoryDigest,
+    after.trace.artifact.inventoryDigest,
+    "neutral",
+    "the canonical inventory digest of that generation",
+  );
 
   const regressions = rows.filter((row) => row.verdict === "regression");
   const improvements = rows.filter((row) => row.verdict === "improvement");
