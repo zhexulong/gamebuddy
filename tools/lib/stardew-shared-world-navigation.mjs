@@ -200,79 +200,97 @@ export async function ensureStandingTile(client, receipts, targetLocationName, s
 
 /**
  * Ensure the actor stands ON one of the tiles `targets` reports for a target in
- * `targetLocationName`, re-reading the target after arriving.
+ * `targetLocationName`, re-reading the target after every move.
  *
  * `targets(snapshot)` returns the tiles the actor must occupy for the contract to
  * hold -- for a moving target, the neighbours of where it is now.
  *
- * A shared world is a live world, not a frozen fixture: a Pet walks, so the tile
- * set read before the walk is evidence about where the target *was*. Each attempt
- * therefore re-derives the set from a fresh observation after arriving, and the
- * walk is planned against the tile the actor must stand on rather than against
- * proximity to it. Being merely near an acceptable tile is not the contract: from
- * a target's neighbour's neighbour the actor is two tiles from the target, which
- * is outside the action's own range. The helper never widens an action's own
- * interaction range - it only chooses where to stand, and the contract under test
- * re-reads and re-admits the target itself.
+ * A shared world is a live world, not a frozen fixture. A Pet walks, and it is a
+ * colliding character that also pushes the actor, so the tile set read before a
+ * walk is evidence about where the target *was*. Two things follow, and both are
+ * the difference between converging and replaying a stale plan:
+ *
+ *   * the walk is planned against the tile the actor must stand on, never against
+ *     mere proximity -- from a neighbour's neighbour the actor is two tiles away,
+ *     outside the contract's own range;
+ *   * the set is re-derived from a fresh observation after EVERY move, successful
+ *     or not. A Pet that walks off mid-approach leaves every tile of the old set
+ *     stale, and a Pet that walks into reach while a move is failing makes tiles
+ *     acceptable that the old set never held. Walking the old set to exhaustion is
+ *     what turns one unlucky sampling instant into a whole failed attempt.
+ *
+ * The helper never widens an action's own interaction range: it only chooses where
+ * to stand, and the contract under test re-reads and re-admits the target itself.
  */
 export async function ensureAdjacentToFreshTarget(
   client,
   receipts,
   targetLocationName,
   targets,
-  { attempts = 1, timeoutMs = DEFAULT_STEP_TIMEOUT_MS, waitPolls = WAIT_FOR_TARGET_POLLS, waitIntervalMs = WAIT_FOR_TARGET_INTERVAL_MS } = {},
+  {
+    attempts = 1,
+    timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
+    waitPolls = WAIT_FOR_TARGET_POLLS,
+    waitIntervalMs = WAIT_FOR_TARGET_INTERVAL_MS,
+    movesPerAttempt = 8,
+  } = {},
 ) {
   const trace = [];
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      const { snapshot } = await ensureActorAtLocation(client, receipts, targetLocationName, { timeoutMs });
-      // Waiting is the whole point for a target that moves on its own. A Pet
-      // wanders continuously and settles only for a while (its "SitDown"/
-      // "SitSide" behaviours, each about 1.7s on average at RandomChance 0.01 per
-      // tick), so at any given instant the acceptable set may be empty through no
-      // fault of the caller. Giving up on the first empty set would make the
-      // outcome depend on the sampling instant; retrying forever would hang. So
-      // each attempt observes again after a short pause, within a bounded budget,
-      // and the last observation's failure is what gets reported.
-      let usable = new Map(targets(snapshot).map((tile) => [`${tile.x},${tile.y}`, tile]));
-      for (let wait = 0; usable.size === 0 && wait < waitPolls; wait++) {
-        await delay(waitIntervalMs);
-        const polled = await freshActionable(client, timeoutMs);
-        usable = new Map(targets(polled).map((tile) => [`${tile.x},${tile.y}`, tile]));
-        if (usable.size > 0) {
-          const settled = usable.get(`${polled.tile.x},${polled.tile.y}`);
-          if (settled !== undefined) return { snapshot: polled, trace, target: settled };
-          break;
-        }
-      }
-      if (usable.size === 0) throw new Error("no_usable_target_tile");
-      const here = usable.get(`${snapshot.tile.x},${snapshot.tile.y}`);
-      if (here !== undefined) return { snapshot, trace, target: here };
-
+      const route = await ensureActorAtLocation(client, receipts, targetLocationName, { timeoutMs });
+      trace.push(...route.trace);
+      let snapshot = route.snapshot;
+      // Tiles already walked to during this attempt, so a target that keeps
+      // refusing to move on does not get the same coordinate offered forever.
+      const tried = new Set();
+      let waitsUsed = 0;
       let lastCandidateError = null;
-      for (const [key, tile] of usable) {
-        const terminal = await moveToTile(client, receipts, tile, trace, { timeoutMs });
-        if (terminal === null) {
-          lastCandidateError = new Error(`target_tile_unreachable:${key}`);
-          continue;
+
+      for (let step = 0; step < movesPerAttempt; step++) {
+        let usable = new Map(targets(snapshot).map((tile) => [`${tile.x},${tile.y}`, tile]));
+        // Waiting is the whole point for a target that moves on its own. A Pet
+        // settles into a still behaviour for a while and then walks again, so an
+        // empty acceptable set means "unavailable at this instant", not "never
+        // acceptable". Giving up on the first empty set would make the outcome
+        // depend on the sampling instant; waiting without a bound would hang. The
+        // poll budget is per attempt and never reset, so a target that never
+        // settles still terminates.
+        while (usable.size === 0 && waitsUsed < waitPolls) {
+          waitsUsed++;
+          await delay(waitIntervalMs);
+          snapshot = await freshActionable(client, timeoutMs);
+          usable = new Map(targets(snapshot).map((tile) => [`${tile.x},${tile.y}`, tile]));
         }
-        // Between reading the target and arriving it may have moved, so the set
-        // that was valid when the walk started says nothing about where it is now.
-        const after = await freshActionable(client, timeoutMs);
-        const nowUsable = new Map(targets(after).map((t) => [`${t.x},${t.y}`, t]));
-        const arrived = nowUsable.get(`${after.tile.x},${after.tile.y}`);
-        if (arrived !== undefined) return { snapshot: after, trace, target: arrived };
-        lastCandidateError = new Error("target_moved_before_arrival");
+        if (usable.size === 0) throw new Error("no_usable_target_tile");
+
+        const here = usable.get(`${snapshot.tile.x},${snapshot.tile.y}`);
+        if (here !== undefined) return { snapshot, trace, target: here };
+
+        const candidate = [...usable].find(([key]) => !tried.has(key)) ?? [...usable][0];
+        const [key, tile] = candidate;
+        tried.add(key);
+        const terminal = await moveToTile(client, receipts, tile, trace, { timeoutMs });
+        if (terminal === null) lastCandidateError = new Error(`target_tile_unreachable:${key}`);
+
+        // Re-read after EVERY move. This is the convergence step: a failed move
+        // against a moving Pet is information, not a dead end, and the next
+        // candidate must come from where the target is *now*.
+        snapshot = await freshActionable(client, timeoutMs);
+        const nowUsable = new Map(targets(snapshot).map((t) => [`${t.x},${t.y}`, t]));
+        const arrivedNow = nowUsable.get(`${snapshot.tile.x},${snapshot.tile.y}`);
+        if (arrivedNow !== undefined) return { snapshot, trace, target: arrivedNow };
       }
+
       throw lastCandidateError ?? new Error("no_reachable_target_tile");
     } catch (error) {
       lastError = error;
     }
   }
-  // Attach the trace to the failure. The trace holds one entry per attempt with
-  // each move's state and its receipt evidence, which is the only record of WHERE
-  // the walk stopped and WHERE it was told to go. Throwing it away leaves
+  // Attach the trace to the failure. The trace holds one entry per move with its
+  // state and its receipt evidence, which is the only record of WHERE the walk
+  // stopped and WHERE it was told to go. Throwing it away leaves
   // "target_tile_unreachable:28,34" as the whole story, which cannot distinguish
   // an unreachable tile from an occupied one from a path that ran out of time.
   const failure = lastError ?? new Error("no_reachable_target_tile");
