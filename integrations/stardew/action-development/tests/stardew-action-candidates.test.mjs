@@ -17,7 +17,7 @@ import { promisify } from "node:util";
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(HERE, "..");
+const ROOT = path.join(HERE, "..", "..", "..", "..");
 const SOURCE_ROOT = path.join(ROOT, "ref", "external", "StardewValleyDecompiled", "Stardew Valley");
 const REGISTER = path.join(
   ROOT,
@@ -37,7 +37,7 @@ async function derive() {
   const { stdout } = await execFileAsync(
     process.execPath,
     [
-      path.join(HERE, "derive-stardew-action-candidates.mjs"),
+      path.join(HERE, "..", "src", "analysis", "stardew-action-candidates.mjs"),
       "--source-root",
       SOURCE_ROOT,
       "--action-register",
@@ -116,7 +116,8 @@ test("已注册但九谓词拒的 seam 都被列出，供解释而非当作缺�
   assert.ok(a.registeredWithoutCandidateSeam.length > 0, "应存在此类条目");
   const ids = a.registeredWithoutCandidateSeam.map((r) => r.actionId);
   // 已知的内部方法直调型 action
-  for (const expected of ["till_soil", "chop_tree_source", "pet_animal"])
+  // 已知的终态跨委托型 action（P1 修正后 pet_animal 的戴帽分支成为候选，故已移出此列）
+  for (const expected of ["till_soil", "chop_tree_source", "ship_item"])
     assert.ok(ids.includes(expected), `${expected} 应在此列（终态跨委托或 Mod 直调内部方法）`);
   // 每个都要带 member 与 file，便于打开核对
   for (const r of a.registeredWithoutCandidateSeam) {

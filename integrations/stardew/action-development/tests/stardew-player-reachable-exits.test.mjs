@@ -21,7 +21,7 @@ import { promisify } from "node:util";
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(HERE, "..");
+const ROOT = path.join(HERE, "..", "..", "..", "..");
 const SOURCE_ROOT = path.join(ROOT, "ref", "external", "StardewValleyDecompiled", "Stardew Valley");
 const REGISTER = path.join(
   ROOT,
@@ -47,7 +47,7 @@ async function run(maxDepth = "4") {
   const { stdout } = await execFileAsync(
     process.execPath,
     [
-      path.join(HERE, "derive-stardew-player-reachable-exits.mjs"),
+      path.join(HERE, "..", "src", "analysis", "stardew-player-reachable-exits.mjs"),
       "--source-root",
       SOURCE_ROOT,
       "--action-register",
@@ -116,10 +116,7 @@ test("已注册 native seam 的 13/15 从玩家输入根可达", () => {
   // 修正后的成员集：placementAction 在，canBePlacedHere 不在
   const reachableNames = new Set(r.reachable.map((x) => x.nativeMember));
   assert.ok(reachableNames.has("placementAction"), "placementAction 应是可达 seam");
-  assert.ok(
-    !reachableNames.has("canBePlacedHere"),
-    "canBePlacedHere 是纯判断方法，不应再作为 seam 成员参与对账",
-  );
+  assert.ok(!reachableNames.has("canBePlacedHere"), "canBePlacedHere 是纯判断方法，不应再作为 seam 成员参与对账");
   assert.ok(
     r.reachableCount >= 13,
     `可达 seam 应 >=13，实测 ${r.reachableCount}：${r.reachable.map((x) => x.nativeMember).join(", ")}`,
@@ -128,14 +125,16 @@ test("已注册 native seam 的 13/15 从玩家输入根可达", () => {
   for (const x of r.reachable) assert.ok(x.actionIds.length > 0, `${x.nativeMember} 应有 action 归属`);
 });
 
-test("不可达 seam 只剩 2 个内部方法（createItem 经菜单入口已可达）", () => {
+test("不可达 seam 只剩 shipItem（collect 与 createItem 经其它根已可达）", () => {
   const r = artifact.registerReconciliation;
   const names = r.unreachable.map((x) => x.nativeMember).sort();
-  assert.deepEqual(names, ["collect", "shipItem"], "只有这两个内部方法不在玩家输入闭包里（产品事实，不是枚举缺陷）");
+  assert.deepEqual(names, ["shipItem"], "只剩 shipItem 不在玩家输入闭包里");
   const byName = new Map(r.unreachable.map((x) => [x.nativeMember, x.actionIds]));
-  assert.deepEqual(byName.get("collect"), ["pickup_item"]);
   assert.deepEqual(byName.get("shipItem"), ["ship_item"]);
-  // createItem 现在可达（经 menu_semantic_selection），必须出现在 reachable 里
+  /** `collect` 在新版反编译树里变为 d3 可达（Debris.cs:475 可从 pressUseToolButton 到达） */
+  const collect = r.reachable.find((x) => x.nativeMember === "collect");
+  assert.ok(collect, "Debris.collect 应可达");
+  // createItem 经 menu_semantic_selection 可达
   const createItem = r.reachable.find((x) => x.nativeMember === "createItem");
   assert.ok(createItem, "CraftingRecipe.createItem 应已可达");
   assert.deepEqual(createItem.actionIds, ["cook_recipe", "craft_item"]);

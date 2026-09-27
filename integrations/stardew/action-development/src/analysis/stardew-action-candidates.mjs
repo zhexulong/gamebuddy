@@ -25,38 +25,14 @@
 
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createParser, extractBranches } from "./lib/stardew-branch-writeset.mjs";
+import { STARDEW_INTERACTION_SHAPES } from "../stardew-source-analysis-vocabulary.mjs";
+import { createParser, extractBranches } from "./stardew-branch-writeset.mjs";
 
 /**
- * 交互形状名。作为**出口集合的下界**——它保证未注册的出口也能被发现。
- * 上界由已注册 seam 的方法名补足（避免像早期版本那样漏掉 `receiveGift`/`addItem`）。
+ * Interaction shapes come from the game-owned vocabulary module so a registered seam
+ * can never be missed and the list has one home.
  */
-const INTERACTION_SHAPES = Object.freeze([
-  "checkAction",
-  "performAction",
-  "performToolAction",
-  "performUseAction",
-  "performObjectDropInAction",
-  "placementAction",
-  "DoFunction",
-  "checkForAction",
-  "rotate",
-  "animateSpecialMove",
-  "receiveGift",
-  "addItem",
-  "collect",
-  "eatObject",
-  "shipItem",
-  "createItem",
-  "warpFarmer",
-  "tryToCheckAt",
-  "GetItemsForPlayer",
-  "getShippingBin",
-  "pet",
-  "canBePlacedHere",
-  "CheckPetAnimal",
-  "CheckInspectAnimal",
-]);
+const INTERACTION_SHAPES = STARDEW_INTERACTION_SHAPES;
 
 function fail(code, message) {
   process.stderr.write(`${code}: ${message}\n`);

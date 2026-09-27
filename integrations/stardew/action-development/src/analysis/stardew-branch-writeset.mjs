@@ -59,6 +59,16 @@ const DEFERRED_CALLEE = /(^|\.)(finish|finishEvent|doFinish)$|NetEvent/;
 /** 延迟完成标志字段（NetEvent 的载荷） */
 const DEFERRED_FIELD = /^(finishEvent|lastUser|endFunction|_?finish)$/;
 
+/** 手持物槽位（写它就是消耗或替换手持物，不是“同时持有多个”） */
+const HELD_SLOT = /^(Game1\.player|who)\.(ActiveObject|CurrentTool)$/;
+
+/**
+ * 编译器临时量条件：仅由 `flagN` / `numN` / `IL_xxxx` 这类变量构成。
+ * 出现在新版 ILSpy 对复杂方法（含 try/finally、大 switch）的降级输出里。
+ */
+const COMPILER_TEMPORARY_CONDITION =
+  /^(?:\(?\s*(?:!|\|\||&&|\()*\s*(?:flag|num|text|array|list|bool)\d*\s*\)?\s*(?:\|\||&&)?\s*)+$/;
+
 /**
  * 阶段标记字段：写它表示**开始一个跨 tick 的生命周期**，终态由游戏循环后续驱动，
  * 不在本次调用内完成。
@@ -268,6 +278,36 @@ export async function extractBranches({ sourceRoot, relPath, memberName, parser 
     resolveOutVarTypes(m, src, types);
     const text = (l) => src.slice(l.startIndex, l.endIndex).replace(/\s+/g, " ");
 
+    /**
+     * 集合变更调用（`X.Add/Y.Remove/Z.Clear`）。
+     *
+     * **刻意不归入 `writes`**：mutator 接收者的类型在无完整类型信息时不可靠——
+     * `Chest.addItem` 的 `itemsForPlayer.Add(item)` 写的是世界容器，而
+     * `WateringCan` 的 `List<Vector2> list = tilesAffected(...)` 后 `list.Add`
+     * 只是局部缓冲。语法层无法区分，属“unknown sink”情形。
+     *
+     * 因此单独暴露供审查，不参与九谓词（猜它会破坏已校准的裁定）。
+     */
+    const MUTATOR = /^(Add|Remove|Clear|Push|Enqueue|Dequeue|Insert|RemoveAt|AddRange)$/;
+    const _mutatorWrites = collect(m, "invocation_expression")
+      .map((i) => {
+        const f = i.childForFieldName("function");
+        if (!f) return null;
+        const parts = text(f).split(".");
+        if (parts.length < 2) return null;
+        const member = parts[parts.length - 1];
+        if (!MUTATOR.test(member)) return null;
+        return {
+          line: i.startPosition.row + 1,
+          target: parts.slice(0, -1).join("."),
+          operation: member,
+          /** 接收者是方法调用结果还是已知字段前缀 —— 前者不可判定 */
+          receiverIsCallResult: /\w+\(/.test(parts.slice(0, -1).join(".")),
+          receiverIsKnownRoot: /^(location|Game1|farm|who|this)\b/.test(parts[0]),
+        };
+      })
+      .filter(Boolean);
+
     const writes = collect(m, "assignment_expression").map((a) => {
       const left = a.childForFieldName("left");
       const target = left ? text(left) : "?";
@@ -352,7 +392,6 @@ export async function extractBranches({ sourceRoot, relPath, memberName, parser 
       if (w.inputState) b.input = true;
       if (w.deferred || w.phaseFlag) b.deferred = true;
     }
-
     for (const c of calls) {
       const b = touch(c);
       if (c.forwarding) b.forwarding.push(c.callee);
@@ -399,8 +438,20 @@ export async function extractBranches({ sourceRoot, relPath, memberName, parser 
         actor: [...actorReceivers],
         implicitThis: [...implicitThisFields],
       };
+      /**
+       * 手持物消耗：`Game1.player.ActiveObject = null` 等。
+       *
+       * 这是动作的**结果/代价**（物品被用掉），不是“同时持有多个”。
+       * 旧实现把 `ShippingBin.leftClicked` 写 `farm.lastItemShipped` +
+       * `ActiveObject = null` 误判为 P1 违例，从而错过无需菜单的出货入口。
+       */
+      b.heldConsumed = b.writes.filter((t) => HELD_SLOT.test(t));
       b.verdict = {
-        P1_singleHeld: !b.writes.some((t) => /CurrentTool|ActiveObject/.test(t)),
+        /**
+         * 只在「引用多个手持物槽」时才是多持有。
+         * 写一个槽（含置 null 消耗） + 其它世界字段 = 单一持有。
+         */
+        P1_singleHeld: b.writes.filter((t) => HELD_SLOT.test(t)).length <= 1,
         /** 只在写入多个**世界实体**时才是多目标；写自己多个字段不算 */
         P2_singleTarget: worldReceivers.size <= 1,
         P3_singleSeam: new Set(b.delegates).size <= 1,
@@ -410,6 +461,13 @@ export async function extractBranches({ sourceRoot, relPath, memberName, parser 
         P7_deterministic: !b.rng,
         P8_completesInCall: !b.deferred,
         P9_homogeneousDelegate: b.heterogeneousDelegates.length === 0,
+        /**
+         * 条件由编译器临时量构成（`flag5 || flag2 || flag4`）说明该方法的控制流
+         * 已不是源码形式——新版 ILSpy 会把复杂方法降为 `IL_xxxx:` + `flagN` 形态
+         * （实测 14 个文件如此，含 FishingRod）。这种分支的“条件”无源码语义，
+         * **不可判定**，必须拒绝而不是猜。
+         */
+        P10_sourceShapedCondition: !COMPILER_TEMPORARY_CONDITION.test(b.condition),
       };
       b.candidate = Object.values(b.verdict).every(Boolean);
       b.rejectedBy = Object.entries(b.verdict)

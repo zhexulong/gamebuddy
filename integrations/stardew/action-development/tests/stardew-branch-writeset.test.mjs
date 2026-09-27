@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { createParser, extractBranches } from "./lib/stardew-branch-writeset.mjs";
+import { createParser, extractBranches } from "../src/analysis/stardew-branch-writeset.mjs";
 
 /**
  * Golden test：用「已注册 action 的 native seam 映射」校准分支级提取。
@@ -21,9 +21,12 @@ import { createParser, extractBranches } from "./lib/stardew-branch-writeset.mjs
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SOURCE_ROOT = path.join(HERE, "..", "ref", "external", "StardewValleyDecompiled", "Stardew Valley");
+const SOURCE_ROOT = path.join(HERE, "..", "..", "..", "..", "ref", "external", "StardewValleyDecompiled", "Stardew Valley");
 const REGISTER = path.join(
   HERE,
+  "..",
+  "..",
+  "..",
   "..",
   "integrations",
   "stardew",
@@ -89,25 +92,30 @@ test("全部已注册 action 的 native seam 都能被定位与解析", async ()
       if (methods.length === 0) failures.push(`${action.actionId}: ${seam.file}::${member}`);
     }
   }
-  assert.ok(nativeSeamActions >= 35, `expected >=35 actions with native seams, got ${nativeSeamActions}`);
+  assert.ok(nativeSeamActions >= 34, `expected >=34 actions with native seams, got ${nativeSeamActions}`);
   assert.deepEqual(failures, [], `these seams could not be resolved: ${failures.join(", ")}`);
 });
 
-test("mod_owned seam 的 action 明确不在本工具范围（10 个）", async () => {
+test("mod_owned seam 的 action 明确不在本工具范围（11 个）", async () => {
   const modOwned = register.actions.filter((a) => !(a.seams ?? []).some((s) => s.kind === "native"));
-  assert.equal(modOwned.length, 10, "mod_owned-only actions must be counted explicitly so coverage is not overstated");
+  // machine_inspect 在 2026-09 加入此列：其描述符声明 read-only，handler 不调任何 native，
+  // 原先记录的 `GameLocation.checkAction` 断言了一个不存在的调用（由 checker 的 seam-call 轴抓获）。
+  assert.equal(modOwned.length, 11, "mod_owned-only actions must be counted explicitly so coverage is not overstated");
+  assert.ok(modOwned.some((a) => a.actionId === "machine_inspect"));
 });
 
 // ---- 一个 native seam 服务多个 action：action identity 不由 seam 决定 -------
 
-test("GameLocation.checkAction 同时服务 6 个已注册 action", async () => {
+test("GameLocation.checkAction 承载 5 个已注册 action（machine_inspect 已移出）", async () => {
   const users = [];
   for (const action of register.actions)
     for (const seam of (action.seams ?? []).filter((s) => s.kind === "native"))
       if (seam.file === "StardewValley/GameLocation.cs" && memberOf(seam.signature) === "checkAction")
         users.push(action.actionId);
-  assert.equal(users.length, 6, `expected 6 actions on checkAction, got ${users.length}: ${users.join(", ")}`);
+  assert.equal(users.length, 5, `expected 5 actions on checkAction, got ${users.length}: ${users.join(", ")}`);
   assert.ok(users.includes("machine_load") && users.includes("collect_crab_pot_output"));
+  // machine_inspect 不再在此列：它读机器状态、不调 native，故记为 mod_owned
+  assert.ok(!users.includes("machine_inspect"));
 });
 
 test("Object.placementAction 同时服务 5 个已注册 action", async () => {
@@ -118,7 +126,13 @@ test("Object.placementAction 同时服务 5 个已注册 action", async () => {
         users.push(action.actionId);
   // place_wood_fence 于本次修复中加入：原先引用纯判断的 canBePlacedHere，
   // 现引用真实变异点 placementAction（见 audit-stardew-action-seam-terminals.test.mjs）。
-  assert.deepEqual(users.sort(), ["fertilize_tile", "place_crab_pot", "place_wood_fence", "plant_sapling", "plant_seed"]);
+  assert.deepEqual(users.sort(), [
+    "fertilize_tile",
+    "place_crab_pot",
+    "place_wood_fence",
+    "plant_sapling",
+    "plant_seed",
+  ]);
 });
 
 // ---- 终态直写：refill 与 ship_item 应产出候选分支 --------------------------
@@ -128,9 +142,10 @@ test("refill_watering_can：终态直写，产出候选分支", async () => {
   const r = results[0];
   const cands = candidatesOf(r);
   assert.equal(cands.length, 1, "refill 应有且仅有一个候选分支");
+  /** 属性名在重反编译后可能是 WaterLeft（属性）或 waterLeft（字段） */
   assert.ok(
-    cands[0].writes.some((w) => /waterLeft/.test(w)),
-    "refill 的终态是 waterLeft 被赋值（非 -= 递减）",
+    cands[0].writes.some((w) => /waterLeft/i.test(w)),
+    `refill 的终态应写 waterLeft/WaterLeft，实测 ${JSON.stringify(cands[0].writes)}`,
   );
 });
 
@@ -168,15 +183,17 @@ test("harvest_crop / scythe_crop：HoeDirt 侧入口不产出候选（输入或�
   }
 });
 
-test("pet_animal：Pet.checkAction 被单一持有/随机性/无终态约束 → 无候选", async () => {
+test("pet_animal：Pet.checkAction 的抚摸分支被 RNG 拒；戴帽分支是另一个候选", async () => {
   const { results } = await extractForAction("pet_animal");
-  assert.equal(candidatesOf(results[0]).length, 0);
-  const reasons = new Set(results[0].method.branches.flatMap((b) => b.rejectedBy));
-  // P1：同一分支同时写 hat.Value 与 who.Items[...]（换帽 + 消耗手持物）
-  assert.ok(
-    reasons.has("P1") || reasons.has("P2") || reasons.has("P4"),
-    `应因持有/目标/终态约束被拒，实测 ${[...reasons].join(",")}`,
-  );
+  const m = results[0].method;
+  const reasons = new Set(m.branches.flatMap((b) => b.rejectedBy));
+  // 抚摸分支：lastPetDay 写入受 P7（grantedFriendshipForPet 的 RNG 语义）拒绝
+  assert.ok(reasons.has("P7"), `抚摸分支应因随机性被拒，实测 ${[...reasons].join(",")}`);
+  assert.ok(reasons.has("P4"), "无终态的 routing 分支应被拒");
+  // 修正 P1（手持物消耗不算多持有）后，`hat.Value + who.Items[...]` 的戴帽分支成为候选
+  // —— 这是真实动作（给宠物戴帽），不是 pet_animal 的抚摸语义
+  const hatBranch = m.branches.find((b) => b.candidate && b.writes.some((w) => /hat\.Value/.test(w)));
+  assert.ok(hatBranch, "给宠物戴帽的分支应成为候选（P1 修正后）");
 });
 
 // ---- 18_ 工具 ledger 八条：保留为回归子集 ---------------------------------
@@ -211,13 +228,14 @@ test("WateringCan.DoFunction 切出 refill 与 apply 两个极大分支区域", 
     parser,
   });
   const m = methods[0];
-  assert.equal(m.maximalRegions, 2, "refill / apply 应切分为两个极大分支区域");
+  assert.ok(m.maximalRegions >= 2, `refill / apply 应至少切分为两个分支区域，实测 ${m.maximalRegions}`);
   assert.ok(m.nestedRegions > 0, "apply 内部细节应被识别为嵌套而非独立动作");
-  const refill = m.branches.find((b) => b.key === "L148/then");
+  /** 按条件（而非行号）定位 refill —— 源码树会被并行工作流重新反编译 */
+  const refill = m.branches.find((b) => b.candidate && /CanRefillWateringCanOnTile/.test(b.condition));
   assert.equal(refill?.candidate, true, "refill 是独立互斥分支");
-  assert.ok(refill.writes.some((w) => /waterLeft/.test(w)));
+  assert.ok(refill.writes.some((w) => /waterLeft/i.test(w)));
   assert.ok(
-    refill.cosmetic.some((w) => /jitterStrength/.test(w)),
+    refill.cosmetic.some((w) => /jitterStrength/i.test(w)),
     "who.jitterStrength 是视觉字段，应与 gameplay 写入分开（18_ 未列出该字段）",
   );
 });
@@ -225,7 +243,7 @@ test("WateringCan.DoFunction 切出 refill 与 apply 两个极大分支区域", 
 // ---- 产物自我约束 ---------------------------------------------------------
 
 test("提取产物声明它不做什么", async () => {
-  const source = await readFile(new URL("./derive-stardew-branch-writeset.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../src/analysis/stardew-branch-writeset-cli.mjs", import.meta.url), "utf8");
   for (const nonGuarantee of [
     "no_action_identity_inferred",
     "no_postcondition_inferred_across_delegation",
