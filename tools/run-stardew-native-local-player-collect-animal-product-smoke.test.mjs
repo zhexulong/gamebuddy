@@ -69,7 +69,7 @@ test("collect-animal-product runner uses shared dispatch, exact terminal correla
         reasonCode: "animal_product_collected",
         evidence: {
           detail:
-            "target=animal_target_1;produce=(O)184;tool=milk_pail;produce_stack=1;produce_cleared=true;inventory_gained=true;animation_complete=true",
+            "target=animal_target_1;produce=(O)184;tool=milk_pail;produce_stack=1;produce_cleared=true;inventory_gained=true;animation_complete=true;stamina_before=100;stamina_after=96;stamina_delta=-4;expected_stamina_cost=4",
         },
       });
       return accepted;
@@ -125,7 +125,7 @@ test("collect-animal-product runner blocks on mismatched evidence", async () => 
         reasonCode: "animal_product_collected",
         evidence: {
           detail:
-            "target=other;produce=(O)999;tool=shears;produce_stack=2;produce_cleared=true;inventory_gained=true;animation_complete=true",
+            "target=other;produce=(O)999;tool=shears;produce_stack=2;produce_cleared=true;inventory_gained=true;animation_complete=true;stamina_before=100;stamina_after=96;stamina_delta=-4;expected_stamina_cost=4",
         },
       });
       return accepted;

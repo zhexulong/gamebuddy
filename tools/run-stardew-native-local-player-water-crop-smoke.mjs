@@ -96,6 +96,10 @@ export async function runWaterCropSmoke(
       "water_after",
       "water_before",
       "water_consumed",
+      "stamina_before",
+      "stamina_after",
+      "stamina_delta",
+      "expected_stamina_cost",
     ]);
     const after = await waitForStableRevision(client, {
       revision: terminal.revision,

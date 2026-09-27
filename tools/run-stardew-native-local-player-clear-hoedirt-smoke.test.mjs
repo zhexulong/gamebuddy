@@ -37,7 +37,7 @@ const config = {
 };
 
 const EVIDENCE =
-  "location=Farm;target=hoedirt_target_01;tile=53,54;tool=pickaxe;slot=14;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true";
+  "location=Farm;target=hoedirt_target_01;tile=53,54;tool=pickaxe;slot=14;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2";
 
 function createFake({ evidenceDetail = EVIDENCE } = {}) {
   const listeners = new Set();

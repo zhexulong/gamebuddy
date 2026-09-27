@@ -80,7 +80,7 @@ test("water-crop runner uses shared dispatch and stable fresh postcondition", as
           revision: 7,
           evidence: {
             detail:
-              "after_watered=true;before_watered=false;location=Farm;target=crop_0000000000000001;tile=2,1;water_after=39;water_before=40;water_consumed=true",
+              "after_watered=true;before_watered=false;location=Farm;target=crop_0000000000000001;tile=2,1;water_after=39;water_before=40;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
           },
         };
       }
@@ -128,7 +128,7 @@ test("water-crop runner fails closed on a stale post-terminal revision", async (
           revision: 7,
           evidence: {
             detail:
-              "after_watered=true;before_watered=false;location=Farm;target=crop_0000000000000001;tile=2,1;water_after=39;water_before=40;water_consumed=true",
+              "after_watered=true;before_watered=false;location=Farm;target=crop_0000000000000001;tile=2,1;water_after=39;water_before=40;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
           },
         };
       }

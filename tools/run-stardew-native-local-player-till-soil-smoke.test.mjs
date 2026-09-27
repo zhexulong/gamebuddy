@@ -60,7 +60,7 @@ function createFake() {
           state: "succeeded",
           reasonCode: "soil_tilled",
           revision,
-          evidence: { detail: `location=Farm;target=${args.x},${args.y};before=none;after=HoeDirt` },
+          evidence: { detail: `location=Farm;target=${args.x},${args.y};before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2` },
         });
         return receipt;
       }

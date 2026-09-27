@@ -474,7 +474,7 @@ test("Stardew refill completion evidence requires exact, internally consistent s
     reasonCode: "watering_can_refilled",
     evidence: {
       detail:
-        "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
+        "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
     },
   } as const;
   assert.equal(
@@ -608,7 +608,7 @@ test("Stardew clear-hoedirt completion evidence requires exact removal fields", 
     reasonCode: "hoedirt_cleared",
     evidence: {
       detail:
-        "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true",
+        "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
     },
   } as const;
   assert.equal(
@@ -669,7 +669,7 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
     reasonCode: "tree_source_chopped",
     evidence: {
       detail:
-        "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
+        "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
     },
   } as const;
   assert.equal(
@@ -739,7 +739,7 @@ test("Stardew break-rock-source completion evidence requires exact source-only r
     reasonCode: "rock_source_broken",
     evidence: {
       detail:
-        "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
+        "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
     },
   } as const;
   assert.equal(
