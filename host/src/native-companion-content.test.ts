@@ -302,3 +302,184 @@ test("revocation suppresses late preview and final content and close drains an a
   assert.deepEqual(previews, ["first"]);
   assert.deepEqual(finals, []);
 });
+test("incremental activation emits each completed sentence from the delta lane and nothing again at message_end", async () => {
+  const fx = fakeSession();
+  const inlines: string[] = [];
+  const finals: string[] = [];
+  const observer = attachNativeCompanionContent(fx.session, {
+    onPreviewDelta: async () => undefined,
+    onIncrementalText: async (value) => {
+      inlines.push(value);
+    },
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
+  });
+  observer.open();
+  observer.openPreviews();
+  const trackedPartial = assistant([text("")]);
+  fx.emit({ type: "message_start", message: trackedPartial });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+  });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "早", partial: trackedPartial },
+  });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "安!", partial: trackedPartial },
+  });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "今天", partial: trackedPartial },
+  });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "下雨。", partial: trackedPartial },
+  });
+  // Every sentence already left the accumulator; the whole reply presented
+  // itself incrementally, so message_end must not emit a duplicate final piece.
+  fx.emit({ type: "message_end", message: assistant([text("早安!今天下雨。")], "stop", "response-1") });
+  await observer.close();
+
+  assert.deepEqual(inlines, ["早安!", "今天下雨。"]);
+  assert.deepEqual(finals, []);
+});
+
+test("incremental activation commits only the never-completed residual at message_end", async () => {
+  const fx = fakeSession();
+  const inlines: string[] = [];
+  const finals: string[] = [];
+  const observer = attachNativeCompanionContent(fx.session, {
+    onPreviewDelta: async () => undefined,
+    onIncrementalText: async (value) => {
+      inlines.push(value);
+    },
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
+  });
+  observer.open();
+  observer.openPreviews();
+  const trackedPartial = assistant([text("")]);
+  fx.emit({ type: "message_start", message: trackedPartial });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+  });
+  // No boundary ever arrives in the stream: nothing completes incrementally.
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "我这就去", partial: trackedPartial },
+  });
+  fx.emit({ type: "message_end", message: assistant([text("我这就去。把草拔了。")], "stop", "response-1") });
+  await observer.close();
+
+  assert.deepEqual(inlines, []);
+  // The residual stream is the whole final piece; the message_end text is
+  // authority only for the non-incremental lane.
+  assert.deepEqual(finals, ["我这就去"]);
+});
+
+test("a caller without onIncrementalText keeps the exact preview/final semantics (Chat regression)", async () => {
+  const fx = fakeSession();
+  const previews: string[] = [];
+  const finals: string[] = [];
+  const observer = attachNativeCompanionContent(fx.session, {
+    onPreviewDelta: async (delta) => {
+      previews.push(delta);
+    },
+    // Exactly like the Chat consumers (p4-provider-start-execution /
+    // provider-invocation): only onPreviewDelta/onFinalText/onRejected.
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async () => undefined,
+  });
+  observer.open();
+  observer.openPreviews();
+  const trackedPartial = assistant([text("")]);
+  fx.emit({ type: "message_start", message: trackedPartial });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+  });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "早", partial: trackedPartial },
+  });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "安!", partial: trackedPartial },
+  });
+  fx.emit({
+    type: "message_end",
+    message: assistant([text("早安!")], "stop", "response-1"),
+  });
+  await observer.close();
+
+  // Preview semantics unchanged and the whole message_end text still lands.
+  assert.deepEqual(previews, ["早", "安!"]);
+  assert.deepEqual(finals, ["早安!"]);
+});
+
+test("incremental activation never opens a sentence boundary inside a thinking frame", async () => {
+  const fx = fakeSession();
+  const inlines: string[] = [];
+  const finals: string[] = [];
+  const observer = attachNativeCompanionContent(fx.session, {
+    onPreviewDelta: async () => undefined,
+    onIncrementalText: async (value) => {
+      inlines.push(value);
+    },
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
+  });
+  observer.open();
+  observer.openPreviews();
+  const trackedPartial = assistant([text("")]);
+  fx.emit({ type: "message_start", message: trackedPartial });
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+  });
+  // The `。` inside the thinking block must not complete a sentence; the whole
+  // unit completes only at the closing frame + actual dialogue boundary, and
+  // dehydration strips the scaffolding before presentation.
+  fx.emit({
+    type: "message_update",
+    message: trackedPartial,
+    assistantMessageEvent: {
+      type: "text_delta",
+      contentIndex: 0,
+      delta: "<thinking>推理。</thinking>早安!",
+      partial: trackedPartial,
+    },
+  });
+  // The unit is complete and left the accumulator; nothing remains to flush.
+  fx.emit({
+    type: "message_end",
+    message: assistant([text("<thinking>推理。</thinking>早安!")], "stop", "response-1"),
+  });
+  await observer.close();
+
+  assert.deepEqual(inlines, ["早安!"]);
+  assert.deepEqual(finals, []);
+});
