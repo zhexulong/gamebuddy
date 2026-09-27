@@ -1,0 +1,101 @@
+{
+  "schema": "chat_live_run_comparison/v1",
+  "baseline": ".audit-runs/chat-live-run-first.json",
+  "after": ".audit-runs/chat-live-run-fixed-clean.json",
+  "summary": {
+    "improvements": 2,
+    "regressions": 0,
+    "neutral": 7
+  },
+  "rows": [
+    {
+      "kind": "counter",
+      "name": "totalEventCount",
+      "before": 166,
+      "after": 211,
+      "expectedDirection": "neutral",
+      "verdict": "neutral",
+      "detail": "events recorded in the trace"
+    },
+    {
+      "kind": "counter",
+      "name": "resyncCount",
+      "before": 1,
+      "after": 0,
+      "expectedDirection": "down",
+      "verdict": "improvement",
+      "detail": "stream resynchronizations the client had to request"
+    },
+    {
+      "kind": "counter",
+      "name": "event.sse.frame.received",
+      "before": 146,
+      "after": 192,
+      "expectedDirection": "neutral",
+      "verdict": "neutral",
+      "detail": "sse.frame.received frequency"
+    },
+    {
+      "kind": "counter",
+      "name": "event.sse.stream.resync",
+      "before": 1,
+      "after": 0,
+      "expectedDirection": "down",
+      "verdict": "improvement",
+      "detail": "sse.stream.resync frequency"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[0].wallTimeMs",
+      "before": 4054,
+      "after": 4505,
+      "verdict": "neutral",
+      "detail": "submission to terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[0].firstFrameLatencyMs",
+      "before": 1,
+      "after": 3,
+      "verdict": "neutral",
+      "detail": "submission to the first valid SSE frame; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[0].maxFrameGapMs",
+      "before": 2946,
+      "after": 2957,
+      "verdict": "neutral",
+      "detail": "longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[0].providerSettlementLatencyMs",
+      "before": 3735,
+      "after": 4155,
+      "verdict": "neutral",
+      "detail": "provider pre-send marker to the durable terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[1].wallTimeMs",
+      "before": 180095,
+      "after": 128,
+      "verdict": "neutral",
+      "detail": "submission to terminal; reported, not ranked — a slower run is not by itself a system regression"
+    }
+  ]
+}
+chat_live_run_comparison/v1 — 9 changed row(s)
+  baseline: .audit-runs/chat-live-run-first.json
+  after:    .audit-runs/chat-live-run-fixed-clean.json
+  improvements: 2, regressions: 0, neutral: 7
+  [improvement] resyncCount: 1 -> 0 (stream resynchronizations the client had to request)
+  [improvement] event.sse.stream.resync: 1 -> 0 (sse.stream.resync frequency)
+  [neutral] totalEventCount: 166 -> 211 (events recorded in the trace)
+  [neutral] event.sse.frame.received: 146 -> 192 (sse.frame.received frequency)
+  [neutral] turn[0].wallTimeMs: 4054 -> 4505 (submission to terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[0].firstFrameLatencyMs: 1 -> 3 (submission to the first valid SSE frame; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[0].maxFrameGapMs: 2946 -> 2957 (longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[0].providerSettlementLatencyMs: 3735 -> 4155 (provider pre-send marker to the durable terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[1].wallTimeMs: 180095 -> 128 (submission to terminal; reported, not ranked — a slower run is not by itself a system regression)
