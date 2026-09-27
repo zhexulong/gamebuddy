@@ -173,9 +173,16 @@ const TABLE = {
     `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/Pickaxe.cs", "DoFunction")} mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) in the same method uses the id only for getFarmer(id).getStandingPosition() as the debris origin (${cite("StardewValley/Game1.cs", "getFarmer")}) while still adding to location.debris; the stone removal in the same method is mode-independent`,
   ],
   collect_animal_product: [
-    "StardewValley.Tools/MilkPail.cs",
-    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
-    "mp-insensitive",
+    [
+      "StardewValley.Tools/MilkPail.cs",
+      "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+      "mp-insensitive",
+    ],
+    [
+      "StardewValley.Tools/Shears.cs",
+      "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+      "mp-insensitive",
+    ],
   ],
   clear_debris: [
     "StardewValley/Tool.cs",
