@@ -8,6 +8,7 @@ generation — not fixtures. Kept as evidence and as a comparison baseline.
 | `run-01-clean.json` + `run-01-audit-report.txt` | First real run. 2 turns, `exit 0`, `Verdict passed`. |
 | `run-02-probe-confused.json` + `run-02-audit-report.txt` | Probe-manifest run (7 turns). Scored `distractor.confused`. |
 | `run-03-fixed-clean.json` + `run-03-audit-report.txt` | After the cursor/resync fix. 2 turns, `exit 0`, **no finding**. |
+| `run-04-probe-complete.json` + `run-04-audit-report.txt` | Probe-manifest run AFTER the cursor fix: **completed for the first time** (81 s, 7 turns, `distractor.confused`, `no finding`). |
 | `run-01-vs-03-comparison.json` | `compare-chat-live-runs` output: 2 improvements, 0 regressions. |
 
 ## What run-01 and run-02 reported, and what it actually was
