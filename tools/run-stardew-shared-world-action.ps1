@@ -37,6 +37,7 @@ param(
     [string]$ResultFile = "",
     [string]$ScenarioIdentity = "",
     [switch]$DumpSpatial,
+    [string]$DumpExperimental = "",
     [string]$ReachLocation = "",
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 180,
     [switch]$AttachOnly
@@ -192,7 +193,21 @@ try {
         if (-not $ACTION_SETUP.ContainsKey($Action)) { throw "shared_world_action_not_wired:$Action" }
         $setup = $ACTION_SETUP[$Action]
         $hostConfig.HostAutomation.FixtureScenario = $setup.scenario
-    }
+    } elseif ($DumpSpatial -and -not [string]::IsNullOrWhiteSpace($DumpExperimental)) {
+            # A dump about an experimental action needs that action's precondition on
+            # the Farm, exactly as a run does. Without a scenario the world is empty
+            # of the very thing being inspected, so the dump reports an empty list --
+            # which is indistinguishable from "the fixture placed nothing".
+            $dumpScenario = $ACTION_SETUP[($DumpExperimental -split ",")[0]]
+            if ($null -ne $dumpScenario) {
+                $setup = $dumpScenario
+                $hostConfig.HostAutomation.FixtureScenario = $dumpScenario.scenario
+            }
+        }
+    $hostConfig.SaveId = $hostConfig.SaveId
+    Write-Json $hostConfigPath $hostConfig
+    Write-Json $hostSidecarPath $hostConfig
+
     $hostConfig.SaveId = $hostConfig.SaveId
     Write-Json $hostConfigPath $hostConfig
     Write-Json $hostSidecarPath $hostConfig
@@ -200,6 +215,13 @@ try {
     $aiConfig = Read-Json $aiConfigPath
     if ($null -ne $setup -and $setup.experimental) {
         $aiConfig.ExperimentalActions = @($Action)
+    }
+    # Diagnostic dumps have no scenario, so without this they advertise no experimental
+    # action at all and every discovery list that depends on one reads as null -- which
+    # looks like "nothing there" rather than "not published", and hides exactly the
+    # facts a dump exists to show. `-DumpExperimental` names what to publish.
+    if ($DumpSpatial -and -not [string]::IsNullOrWhiteSpace($DumpExperimental)) {
+        $aiConfig.ExperimentalActions = @($DumpExperimental -split ',')
     }
     $aiConfig.FarmhandProvisioner.ManifestPath = (Join-Path $SessionDirectory "stardew-farmhand-manifest.json")
     $aiConfig.FarmhandProvisioner.SessionToken = $sessionToken
