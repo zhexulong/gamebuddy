@@ -36,6 +36,7 @@ import {
   parseSseFrame,
   prepareReportTarget,
   projectStateSnapshot,
+  probeTurnCommittedGate,
   validateAuditEvent,
   validateAuditTrace,
   writeAuditTrace,
@@ -310,6 +311,35 @@ test("probe reply evaluation uses required + forbidden keywords at the design th
   assert.deepEqual(evaluateProbeReply({ transcriptText: "", step }), { hit: false, forbiddenCount: 0, reason: "no_presentation_text" });
   // No reply text at all must never be scored as a hit.
   assert.deepEqual(evaluateProbeReply({ transcriptText: undefined, step }), { hit: false, forbiddenCount: 0, reason: "no_presentation_text" });
+});
+
+test("the probe committed-presentation gate requires a durable delta, never a stderr marker", () => {
+  // The gate is the ONLY authority for "was there a reply for THIS turn". A
+  // Class B stderr marker may be `admitted` or `rejected`; it is not the
+  // durable fact. A turn with no durable committed delta must be a gap — never
+  // a keyword match scored against older transcript text.
+  //
+  // No terminal at all is a gap.
+  assert.deepEqual(probeTurnCommittedGate(undefined), { ok: false, reason: "probe_turn_not_terminal" });
+  assert.deepEqual(probeTurnCommittedGate({ terminal: false }), { ok: false, reason: "probe_turn_not_terminal" });
+  // Terminal but zero committed delta (admission rejected / commit never landed)
+  // is a gap, even though a marker might have been seen.
+  assert.deepEqual(probeTurnCommittedGate({ terminal: true, committedCompanionDelta: 0 }), {
+    ok: false,
+    reason: "probe_turn_no_committed_presentation",
+  });
+  assert.deepEqual(probeTurnCommittedGate({ terminal: true, committedCompanionDelta: -1 }), {
+    ok: false,
+    reason: "probe_turn_no_committed_presentation",
+  });
+  // Missing delta is also a gap (an older outcome shape has no durable delta).
+  assert.deepEqual(probeTurnCommittedGate({ terminal: true }), {
+    ok: false,
+    reason: "probe_turn_no_committed_presentation",
+  });
+  // Only a positive durable delta opens keyword scoring.
+  assert.deepEqual(probeTurnCommittedGate({ terminal: true, committedCompanionDelta: 1 }), { ok: true });
+  assert.deepEqual(probeTurnCommittedGate({ terminal: true, committedCompanionDelta: 3 }), { ok: true });
 });
 
 test("audit harness writes the exact frozen schema-v2 deployment manifest for a chat-only run", () => {
@@ -675,4 +705,12 @@ test("audit harness stays on the composition bootstrap and authenticated Chat AP
   assert.match(source, /cursor: environment\.streamCursor/);
   assert.match(source, /environment\.streamCursor = stream\.cursor\(\)/);
   assert.match(source, /settleTerminal\("resync"\)/);
+  // The probe "is there a committed presentation" gate must use the DURABLE
+  // committed-companion delta, never the Class B stderr marker count (a marker
+  // can be a rejection, and is not the durable fact). Otherwise a turn that only
+  // produced an admission rejection would read older transcript text and score a
+  // distractor/needle verdict against it.
+  assert.match(source, /committedCompanionDelta/);
+  assert.match(source, /outcome\.committedCompanionDelta/);
+  assert.doesNotMatch(source, /const committed = environment\.presentationMarkers > before/);
 });
