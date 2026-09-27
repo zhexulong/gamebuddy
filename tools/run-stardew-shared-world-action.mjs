@@ -9,7 +9,7 @@ import {
 } from "./lib/stardew-shared-world-navigation.mjs";
 import { chooseOnlyShippingBinTarget } from "./run-stardew-native-local-player-ship-item-smoke.mjs";
 import { chooseOnlyChestRetrieveTarget } from "./run-stardew-native-local-player-chest-retrieve-smoke.mjs";
-import { chooseUnpettedPetTarget } from "./run-stardew-native-local-player-pet-animal-smoke.mjs";
+import { chooseStationaryUnpettedPetTargets } from "./run-stardew-native-local-player-pet-animal-smoke.mjs";
 
 /**
  * Shared-world action executor.
@@ -81,6 +81,20 @@ function neighbourTiles(target) {
   return candidateStandingTiles(target).filter((tile) => tile.x !== target.x || tile.y !== target.y);
 }
 
+/**
+ * Standing tiles beside the first candidate, or none when there is no candidate.
+ *
+ * Returning empty rather than throwing separates "nothing is acceptable at this
+ * instant" from "this can never work". A moving target is momentarily
+ * unacceptable and will settle; the caller's bounded wait turns that into a
+ * retry, whereas an error here would end the attempt on whichever instant the
+ * driver happened to look, making the outcome depend on sampling luck.
+ */
+function neighbourTilesOfFirst(candidates) {
+  const first = Array.isArray(candidates) ? candidates[0] : undefined;
+  return first === undefined ? [] : neighbourTiles(first);
+}
+
 const ACTION_TARGETS = {
   machine_inspect: {
     location: "Farm",
@@ -121,10 +135,23 @@ const ACTION_TARGETS = {
   },
   pet_animal: {
     location: "Farm",
-    // `petTargets` is a live native Pet. A Pet walks, so unlike the frozen
-    // machine/chest/bin targets the tile must be re-read from a fresh
-    // observation on every attempt instead of planned once.
-    freshTargetTiles: (snapshot) => neighbourTiles(chooseUnpettedPetTarget(snapshot)),
+    // `petTargets` is a live native Pet. A Pet walks -- its own native behaviour
+    // decides when -- so unlike the frozen machine/chest/bin targets the tile must
+    // be re-read from a fresh observation on every attempt instead of planned
+    // once.
+    //
+    // Only stationary pets are offered, and "none right now" is an empty set rather
+    // than an error so the helper's bounded wait can retry (see
+    // `neighbourTilesOfFirst`). Walking to a pet that is mid-wander is a race the
+    // driver cannot win: the pet picks a new facing every tick, so it leaves the
+    // tile before the walk finishes, and while it moves it also blocks the tiles
+    // the actor would use. Measured before this change: 20 moves accepted, 18
+    // ending native_path_ended, actor never leaving its arrival tile. Preferring a
+    // pet that is holding still is not a weakened contract -- pet_animal re-reads
+    // and re-admits the target itself, and range is still Chebyshev 1 at dispatch
+    // time -- it is choosing when to attempt, which is exactly what the published
+    // `stationary` fact is for.
+    freshTargetTiles: (snapshot) => neighbourTilesOfFirst(chooseStationaryUnpettedPetTargets(snapshot)),
   },
 };
 

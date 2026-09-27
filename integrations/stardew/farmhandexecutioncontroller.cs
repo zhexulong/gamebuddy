@@ -1397,6 +1397,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("craft_item", StringComparer.Ordinal) ? DiscoverCraftingRecipeTargets(player) : null,
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingRecipeTargets(player) : null,
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingStationTargets(player) : null,
+            // Macro time context. Game1.Date/Game1.timeOfDay are the same values the
+            // native behaviour code reads, so publishing them lets the companion
+            // reason about time without the Mod interpreting it for them.
+            TimeOfDay: Game1.timeOfDay,
+            DayOfMonth: Game1.Date?.DayOfMonth ?? 0,
+            SeasonIndex: Game1.Date?.SeasonIndex ?? 0,
+            Year: Game1.Date?.Year ?? 0,
             PresentationLocale: string.Empty);
     }
 
@@ -1417,6 +1424,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
         ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null,
+        // Unspecified while the world is not ready: the world snapshot already
+        // reports Location "unknown" and zeroed stamina/health, and every action
+        // admission rejects with world_not_ready, so no consumer plans from this.
+        TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
         PresentationLocale: string.Empty);
     }
 
@@ -1585,7 +1596,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 (int)pet.Tile.Y,
                 pet.petType.Value,
                 pet.friendshipTowardFarmer.Value,
-                pet.lastPetDay.TryGetValue(player.UniqueMultiplayerID, out int lastDay) && lastDay == Game1.Date.TotalDays))
+                pet.lastPetDay.TryGetValue(player.UniqueMultiplayerID, out int lastDay) && lastDay == Game1.Date.TotalDays,
+                // Project the native fact, do not invent a taxonomy. A Pet moves
+                // according to PetData.Behaviors, and the field that decides that
+                // is `WalkInDirection` (Data/Pets): Walk/Sprint/LeapJump set it,
+                // SitDown/SitSide/Flop do not. The game already answers "is this
+                // pet moving right now"; naming it `Stationary` and nothing more
+                // avoids collapsing several native behaviours into phases the Mod
+                // would then own and have to keep in sync.
+                Stationary: !(pet.GetCurrentPetBehavior()?.WalkInDirection ?? false)))
             .Where(target => !target.PettedToday)
             .ToArray();
     }

@@ -219,7 +219,7 @@ test("ensureAdjacentToFreshTarget re-reads a moved target instead of retrying it
 test("ensureAdjacentToFreshTarget fails closed after the attempt budget is exhausted", async () => {
   const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } }, onMove: () => ({ ok: false }) }));
   await assert.rejects(
-    ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", () => [{ x: 30, y: 40 }], { attempts: 2 }),
+    ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", () => [{ x: 30, y: 40 }], { attempts: 2, waitPolls: 0 }),
     /target_tile_unreachable/,
   );
 });
@@ -227,7 +227,38 @@ test("ensureAdjacentToFreshTarget fails closed after the attempt budget is exhau
 test("ensureAdjacentToFreshTarget rejects an empty target set instead of guessing a tile", async () => {
   const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } } }));
   await assert.rejects(
-    ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", () => [], { attempts: 1 }),
+    // waitPolls: 0 -- a target set that is never populated must fail at once, not
+    // spend the production wait budget learning that.
+    ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", () => [], { attempts: 1, waitPolls: 0 }),
     /no_usable_target_tile/,
   );
+});
+
+test("ensureAdjacentToFreshTarget waits for a moving target to settle instead of failing on first sight", async () => {
+  // A Pet wanders and is only reachable while holding still. An empty acceptable
+  // set is therefore normal at some instants and must not decide the outcome:
+  // the helper should observe again within its bounded budget and act once the
+  // target settles. Without the wait the first "moving" observation would end the
+  // attempt, making success depend on when the driver happened to look.
+  const session = sessionOf(
+    createFake({
+      start: { location: "Farm", tile: { x: 4, y: 4 } },
+      onMove: ({ args }) => ({ ok: Math.max(Math.abs(args.x - 20), Math.abs(args.y - 20)) <= 1 }),
+    }),
+  );
+  const observations = [
+    [], // pet mid-wander: nothing acceptable right now
+    [], // still moving
+    [{ x: 20, y: 20 }], // settled: reachable
+  ];
+  let read = 0;
+  // Bound the wait so the test stays fast; the production default is larger.
+  const targets = () => observations[Math.min(read++, observations.length - 1)];
+  const { target } = await ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", targets, {
+    attempts: 1,
+    waitPolls: 5,
+    waitIntervalMs: 1,
+  });
+  assert.deepEqual(target, { x: 20, y: 20 });
+  assert.ok(read >= 3, `expected the helper to observe again while the target moved (observed ${read} times)`);
 });

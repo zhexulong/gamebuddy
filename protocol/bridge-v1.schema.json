@@ -1292,32 +1292,34 @@
         "y",
         "petType",
         "friendship",
-        "pettedToday"
-      ],
-      "properties": {
-        "targetId": {
-          "$ref": "#/$defs/opaqueId"
-        },
-        "x": {
-          "$ref": "#/$defs/tile"
-        },
-        "y": {
-          "$ref": "#/$defs/tile"
-        },
-        "petType": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32
-        },
-        "friendship": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 1000
-        },
-        "pettedToday": {
-          "const": false
+          "pettedToday",
+          "stationary"
+        ],
+        "properties": {
+          "targetId": {
+            "$ref": "#/$defs/opaqueId"
+          },
+          "x": {
+            "$ref": "#/$defs/tile"
+          },
+          "y": {
+            "$ref": "#/$defs/tile"
+          },
+          "petType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "friendship": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "pettedToday": {
+            "const": false
+          },
+          "stationary": { "type": "boolean" }
         }
-      }
     },
     "animalProductTarget": {
       "type": "object",
@@ -1492,10 +1494,14 @@
         "actionable",
         "capabilities",
         "catalogRevision",
-        "enabledActionIds",
-        "presentationLocale"
-      ],
-      "properties": {
+          "enabledActionIds",
+          "presentationLocale",
+          "timeOfDay",
+          "dayOfMonth",
+          "seasonIndex",
+          "year"
+        ],
+        "properties": {
         "revision": {
           "type": "integer"
         },
@@ -1556,6 +1562,10 @@
         "presentationLocale": {
           "$ref": "#/$defs/bcp47Locale"
         },
+        "timeOfDay": { "type": "integer", "minimum": 0, "maximum": 2600 },
+        "dayOfMonth": { "type": "integer", "minimum": 0, "maximum": 28 },
+        "seasonIndex": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "year": { "type": "integer", "minimum": 0 },
         "activeExecution": {
           "anyOf": [
             {

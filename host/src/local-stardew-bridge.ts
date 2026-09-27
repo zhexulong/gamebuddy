@@ -113,10 +113,6 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   #capabilities: readonly string[] = [];
   #catalogRegistrations: readonly ActionRegistration[] = [];
   #snapshot: Snapshot | null = null;
-  /** True right after an unsolicited receipt advanced only the revision: the
-   * cached world fields still describe the pre-action location until a fresh
-   * solicited snapshot admits (same revision allowed) and replaces them. */
-  #snapshotPlaceholder = false;
   #catalogRevision: number | undefined;
   #policyIdentity: FarmhandPolicyIdentity | undefined;
   readonly #acceptedPolicyIdentityValues = new Set<string>();
@@ -669,9 +665,8 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         this.transport.close("invalid_hello_ack");
         return;
       }
-  this.#snapshot = null;
-  this.#snapshotPlaceholder = false;
-  this.#initialSnapshotReceived = false;
+    this.#snapshot = null;
+    this.#initialSnapshotReceived = false;
       this.#latestReceipt = null;
        this.#catalogRevision = message.payload.catalogRevision;
        this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
@@ -753,9 +748,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
           revision: message.payload.revision,
         });
         // The revision advanced but the world fields are still from before the
-        // action; a fresh solicited snapshot with the same revision must be
-        // admitted so the Agent observes the actual new location.
-        this.#snapshotPlaceholder = true;
+        // action; the next solicited snapshot replaces them. That snapshot may
+        // legitimately carry the same revision (see acceptSnapshot), which is
+        // exactly how the real post-action location reaches the Agent.
       }
     } else if (message.type === "semantic_event" || message.type === "lifecycle" || message.type === "error") {
       this.#latestReasonCode = message.payload.reasonCode;
@@ -798,15 +793,43 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   }
 
   private acceptSnapshot(snapshot: Snapshot): boolean {
-    // A placeholder revision advanced by an unsolicited receipt admits an equal
-    // fresh snapshot (same revision, real world fields); an older or equal
-    // non-placeholder snapshot stays fail-closed.
+    // A snapshot is always the response to a solicited observe: the protocol has
+    // no unsolicited snapshot push, so the caller asked for the world as it is
+    // now and is entitled to receive it.
+    //
+    // `revision` is the ACTION-TRANSACTION version, not a world frame counter. The
+    // Mod mints a new one when a handler is dispatched or a receipt is published,
+    // and mutates nothing else -- so in a live world it stays put while the world
+    // does not: time advances, villagers walk their schedules, a Pet wanders. The
+    // earlier rule treated "same revision" as "duplicate frame" and refused it,
+    // which reads a static-sandbox assumption (world changes only when the
+    // companion acts) into a 60Hz simulation.
+    //
+    // That misfiled a READ as a STALE WRITE. A solicited observe whose payload
+    // carried real world fields was rejected before the caller ever saw it, and
+    // the caller could not recover: nothing generates a new revision while the
+    // companion stands still, so there was no newer revision to chase, and the
+    // client fell back to a cached projection that described a place the world had
+    // already left. Concretely, a driver watching a Pet could only ever see the
+    // instant of its first observation, so it could never notice the Pet settle.
+    //
+    // Authorisation is unaffected and stays exactly as strict. Isolation is scope
+    // (integration/save/world/player/companion), authority is policyIdentity, and
+    // both capability checks below -- catalogRevision and enabledActionIds -- are
+    // untouched. Action CAS is untouched too: it compares the request's
+    // expectedRevision to the admitted revision, and this only decides whether a
+    // projection may be shown, never what revision a request may claim against.
+    // Replaying an OLDER revision is still refused. That is the property the
+    // receipt path relies on: a receipt may advance the cached revision while the
+    // world fields still describe the pre-action moment, and the next solicited
+    // observe must be able to fill them in without an older frame ever replacing a
+    // newer one. Out-of-order substitution is not a hazard here: pending requests
+    // are matched by correlationId on a single ordered pipe, so each response
+    // resolves its own call.
     if (
       snapshot.catalogRevision !== this.#catalogRevision ||
       !sameActionIds(snapshot.enabledActionIds, this.#enabledActionIds ?? []) ||
-      (this.#snapshot !== null &&
-        (snapshot.revision < this.#snapshot.revision ||
-          (snapshot.revision === this.#snapshot.revision && !this.#snapshotPlaceholder)))
+      (this.#snapshot !== null && snapshot.revision < this.#snapshot.revision)
     )
       return false;
     this.#snapshot = Object.freeze({
@@ -814,7 +837,6 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       capabilities: Object.freeze([...snapshot.capabilities]),
       enabledActionIds: Object.freeze([...snapshot.enabledActionIds]),
     });
-    this.#snapshotPlaceholder = false;
     return true;
   }
 

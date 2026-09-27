@@ -86,6 +86,10 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
           socket.write(frame({ ...request, messageId: "scene_snapshot", type: "snapshot", correlationId: "scene_snapshot", payload: {
             revision: 1, location: "Farm", tile: { x: 1, y: 1 }, stamina: 100, health: 100, actionable: true,
             capabilities: ["observe_scene"], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", activeExecution: null,
+            timeOfDay: 600,
+            dayOfMonth: 1,
+            seasonIndex: 0,
+            year: 1,
           }}));
         } else if (request.type === "observe_scene_request") {
           requestType = request.type;
@@ -165,6 +169,10 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
             catalogRevision: 1,
             enabledActionIds: [],
             presentationLocale: "en-US",
+            timeOfDay: 600,
+            dayOfMonth: 1,
+            seasonIndex: 0,
+            year: 1,
             activeExecution: null,
           },
         }),
@@ -186,6 +194,10 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
             catalogRevision: 1,
             enabledActionIds: [],
             presentationLocale: "en-US",
+            timeOfDay: 600,
+            dayOfMonth: 1,
+            seasonIndex: 0,
+            year: 1,
             activeExecution: null,
           },
         }),
@@ -292,6 +304,10 @@ test("local Stardew bridge advances the admitted snapshot revision on an unsolic
               catalogRevision: 1,
               enabledActionIds: [],
               presentationLocale: "en-US",
+              timeOfDay: 600,
+              dayOfMonth: 1,
+              seasonIndex: 0,
+              year: 1,
               activeExecution: null,
             },
           }),
@@ -345,7 +361,109 @@ test("local Stardew bridge advances the admitted snapshot revision on an unsolic
   }
 });
 
-test("local Stardew bridge never returns a solicited snapshot that fails admission", async () => {
+test("local Stardew bridge admits a repeat solicited snapshot at the same revision", async () => {
+  // A live world moves while the companion does not. `revision` is the action
+  // transaction version, so it does not advance when time passes, a villager
+  // walks, or a Pet wanders. A solicited observe therefore legitimately returns
+  // the same revision with DIFFERENT world fields, and refusing it would leave
+  // the caller stuck on a projection the world has already left -- unable to see
+  // that a moving target had settled, because no newer revision exists to chase.
+  //
+  // This asserts the observation channel is a read, not a write: the second frame
+  // carries a new location at an unchanged revision and must be admitted.
+  const pipeName = `gamebuddy_observe_same_revision_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    let observes = 0;
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type === "hello") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "same_revision_hello",
+              type: "hello_ack",
+              payload: {
+                sessionId: "session_01",
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
+        } else if (request.type === "observe_request") {
+          observes++;
+          // Same revision, different place: the world moved, the transaction did not.
+          socket.write(
+            frame({
+              ...request,
+              messageId: `observe_same_revision_${observes}`,
+              type: "snapshot",
+              payload: {
+                revision: 7,
+                location: "Farm",
+                tile: observes === 1 ? { x: 0, y: 0 } : { x: 5, y: 9 },
+                stamina: 100,
+                health: 100,
+                actionable: true,
+                capabilities: [],
+                catalogRevision: 1,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                timeOfDay: 600,
+                dayOfMonth: 1,
+                seasonIndex: 0,
+                year: 1,
+                activeExecution: null,
+              },
+            }),
+          );
+        }
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
+    const first = await client.observe();
+    assert.deepEqual(first.tile, { x: 0, y: 0 });
+    const second = await client.observe();
+    assert.deepEqual(
+      second.tile,
+      { x: 5, y: 9 },
+      "a same-revision solicited snapshot must be admitted so the caller can see the world move",
+    );
+    assert.equal(second.revision, 7);
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+test("local Stardew bridge refuses a solicited snapshot whose catalogRevision was never published", async () => {
   const pipeName = `gamebuddy_observe_stale_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
   const server = createServer((socket: Socket) => {
@@ -404,6 +522,10 @@ test("local Stardew bridge never returns a solicited snapshot that fails admissi
                 catalogRevision: 2,
                 enabledActionIds: [],
                 presentationLocale: "en-US",
+                timeOfDay: 600,
+                dayOfMonth: 1,
+                seasonIndex: 0,
+                year: 1,
                 activeExecution: null,
               },
             }),
@@ -498,6 +620,10 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
                   catalogRevision,
                   enabledActionIds: ["move_to_tile"],
                   presentationLocale: "en-US",
+                  timeOfDay: 600,
+                  dayOfMonth: 1,
+                  seasonIndex: 0,
+                  year: 1,
                   activeExecution: null,
                 },
               }),
@@ -571,6 +697,10 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
           catalogRevision: 2,
           enabledActionIds: ["move_to_tile"],
           presentationLocale: "en-US",
+          timeOfDay: 600,
+          dayOfMonth: 1,
+          seasonIndex: 0,
+          year: 1,
           activeExecution: null,
         },
       }),
@@ -679,6 +809,10 @@ test("local Stardew bridge forwards a validated player_input semantic event", as
                     actionable: true,
                     capabilities: [],
                     presentationLocale: "zh-CN",
+                    timeOfDay: 600,
+                    dayOfMonth: 1,
+                    seasonIndex: 0,
+                    year: 1,
                     activeExecution: null,
                   },
                 },
@@ -1050,6 +1184,10 @@ test("local Stardew bridge authenticates and observes Mod-declared capabilities"
                   catalogRevision: 1,
                   enabledActionIds: ["move_to_tile"],
                   presentationLocale: "en-US",
+                  timeOfDay: 600,
+                  dayOfMonth: 1,
+                  seasonIndex: 0,
+                  year: 1,
                   activeExecution: null,
                 },
               };
@@ -1229,7 +1367,7 @@ test("navigationRead dispatches an exact-correlated request without mutating bri
 
 test("navigationRead rejects a wrong correlated response type without admitting its state", async () => {
   await withNavigationBridge("wrong_type", (socket, request) => {
-    socket.write(frame({ ...request, messageId: "nav_wrong_snapshot", type: "snapshot", payload: { revision: 99, location: "Farm", tile: { x: 1, y: 1 }, stamina: 1, health: 1, actionable: true, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", activeExecution: null } }));
+    socket.write(frame({ ...request, messageId: "nav_wrong_snapshot", type: "snapshot", payload: { revision: 99, location: "Farm", tile: { x: 1, y: 1 }, stamina: 1, health: 1, actionable: true, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", timeOfDay: 600, dayOfMonth: 1, seasonIndex: 0, year: 1, activeExecution: null } }));
   }, async (client) => {
     await assert.rejects(client.navigationRead({ operation: "inspect_world_map", args: {} }), /unexpected_navigation_read_response/);
     assert.equal(client.state.snapshot, null);
@@ -1659,6 +1797,10 @@ test("a pending observe rejects through the normal close path when a fact listen
                 catalogRevision: 1,
                 enabledActionIds: [],
                 presentationLocale: "en-US",
+                timeOfDay: 600,
+                dayOfMonth: 1,
+                seasonIndex: 0,
+                year: 1,
                 activeExecution: null,
               },
             }),
