@@ -1,7 +1,7 @@
 ---
 id: ARCH-STARDEW-INSTALLATION-RUNTIME-REGISTRATION-PLAN
 type: implementation-plan
-status: draft
+status: current
 owner: stardew-integration
 ---
 
@@ -187,6 +187,24 @@ After cutover, no product/control live profile remains and no historical action-
 - Run deterministic Host and Windows tests on Windows. Review every residual raw-path/profile/config match.
 - Obtain two independent reviews: authority/recovery/redaction, and topology/profile-removal/isolation.
 - Update the current Stardew domain owner only after the implementation, all named gates and reviews have actually passed. This plan itself never changes the current status.
+
+**Closure recorded 2026-09-27 under explicit owner authorisation.** Line 189's rule (this plan never changes the current status) was honoured until the condition it names was met; the owner then instructed the status update directly. Every named gate has focused evidence and both independent reviews returned without an open blocker:
+
+| Gate | Evidence |
+|---|---|
+| 1 schema and opacity | registration suite 12 (11 pass, 1 platform skip for symlinks) |
+| 2 picker publication | coordinator suite; discovery confirm path |
+| 3 prepare-and-bind linearization | composer suite; all 4 transaction persistence points crash-covered (`1663b35`) |
+| 4 settlement, orphan and quarantine | composer suite, incl. the 4 negative assertions restored in `49fc9dc` |
+| 5 independent admissions | `3fa8493` asserts three admission points (picker-time, Stage C, Stage D) each mint a fresh capability; Stage D revalidation before the launch reservation is covered |
+| 6 lock and session lifetime | `7480879` + `4e995f7`: real two-process Windows fixture, **no skip**, proving the active pointer blocks register/replace/revoke/competing `game.launch` and that the refusal is the pointer rather than a lock timeout |
+| 7 lifecycle topology | one production coordinator (`main.ts`, `provider.ts`); no second launcher, registry, callback handoff or parallel recovery path |
+| 8 Host privacy | no `readView()`, registration DTO, endpoint or `GameBrowserStateV1` field; import-boundary assertions |
+| 9 profile deletion | static/runtime profile rejection tests; action-development-local usage isolated |
+| 10 boundary inventory and TOCTOU | `dc2e0d1`: the seam checker now inspects every non-test `host/src` module (16 → 200 files), so the plan's named flat producers are actually checked; the residual final-admission-to-spawn window stays documented rather than claimed immune |
+| two independent reviews | `design/reviews/registration-authority-review.md` (settlement/recovery/redaction, 9 findings, all dispositions closed) and `design/reviews/registration-topology-review.md` (`NO BLOCKER`, 7 findings, all dispositions closed) |
+
+The authoritative test and gate commands remain those listed above; the focused compiled `node:test` commands added by this lane are the registration selector, the bootstrap-owner transaction/crash matrix, the lifecycle-core choreography, the guardian settlement/platform interfaces and the profile-boundary tests.
 
 ## Required tests and gates
 
