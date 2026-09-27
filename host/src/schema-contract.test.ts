@@ -150,6 +150,10 @@ test("language-neutral schema and Host share closed shapes for every published s
       capabilities: [],
       ...snapshotCatalogFacts,
       presentationLocale: "en-US",
+      timeOfDay: 600,
+      dayOfMonth: 1,
+      seasonIndex: 0,
+      year: 1,
       activeExecution: null,
     },
   };
@@ -320,7 +324,7 @@ test("language-neutral schema and Host share closed shapes for every published s
         giftsThisWeek: 0,
       },
     ],
-    ["petTargets", { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false }],
+    ["petTargets", { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false, stationary: true }],
     [
       "animalProductTargets",
       {
@@ -337,6 +341,10 @@ test("language-neutral schema and Host share closed shapes for every published s
     ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 2, x: 10, y: 12, hayStack: 1 }],
     ["inventoryItemFacts", { slot: 2, qualifiedItemId: "(O)184", stack: 1 }],
     ["foodTargets", { slot: 2, qualifiedItemId: "(O)216", stack: 1, edibility: 20, isDrink: false }],
+    ["craftingRecipeTargets", { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
+    ["cookingRecipeTargets", { targetId: "Fried_Egg", displayName: "Fried Egg", ingredientsAvailable: false }],
+    ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" }],
+    ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "Farm", x: 4, y: 5, stationKind: "cookout_kit" }],
   ];
   for (const [field, target] of targets) {
     const payload = { ...(snapshot.payload as Record<string, unknown>), [field]: [target] };
@@ -365,6 +373,10 @@ test("language-neutral schema requires positive ResourceClump health in debris s
       capabilities: ["clear_debris"],
       ...snapshotCatalogFacts,
       presentationLocale: "en-US",
+      timeOfDay: 600,
+      dayOfMonth: 1,
+      seasonIndex: 0,
+      year: 1,
       activeExecution: null,
       debrisTargets: [
         {
@@ -442,6 +454,10 @@ test("language-neutral schema validates exact Wood Fence request and result targ
       capabilities: ["place_wood_fence"],
       ...snapshotCatalogFacts,
       presentationLocale: "en-US",
+      timeOfDay: 600,
+      dayOfMonth: 1,
+      seasonIndex: 0,
+      year: 1,
       activeExecution: null,
       woodFenceResultTargets: [
         {
@@ -575,6 +591,10 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
       capabilities: ["dig_artifact_spot"],
       ...snapshotCatalogFacts,
       presentationLocale: "en-US",
+      timeOfDay: 600,
+      dayOfMonth: 1,
+      seasonIndex: 0,
+      year: 1,
       artifactSpotTargets: [
         { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" },
       ],
@@ -625,6 +645,10 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
       capabilities: ["dig_artifact_spot"],
       ...snapshotCatalogFacts,
       presentationLocale: "en-US",
+      timeOfDay: 600,
+      dayOfMonth: 1,
+      seasonIndex: 0,
+      year: 1,
       artifactSpotResultTargets: [
         { targetId: "artifact_result_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true },
       ],
@@ -695,6 +719,10 @@ test("language-neutral schema validates exact clear_hoedirt request arguments an
       capabilities: ["clear_hoedirt"],
       ...snapshotCatalogFacts,
       presentationLocale: "en-US",
+      timeOfDay: 600,
+      dayOfMonth: 1,
+      seasonIndex: 0,
+      year: 1,
       clearHoeDirtTargets: [
         { targetId: "hoedirt_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true },
       ],
@@ -771,6 +799,10 @@ test("language-neutral schema validates strict chop-tree result snapshot facts",
       capabilities: ["chop_tree_source"],
       ...snapshotCatalogFacts,
       presentationLocale: "en-US",
+      timeOfDay: 600,
+      dayOfMonth: 1,
+      seasonIndex: 0,
+      year: 1,
       activeExecution: null,
       treeChopResultTargets: [
         {
