@@ -14,6 +14,17 @@
  * side of the irreversible mutation -- requires both halves on the receipt.
  *
  * Tool-family entries are keyed by handler prefix and the native tool each drives.
+ *
+ * Second invariant: the cross-day exhaustion consequence. A vanilla swing runs
+ * through `FarmerSprite` -> `Farmer.useTool`, which calls
+ * `who.checkForExhaustion(oldStamina)` after `DoFunction`. That method is the ONLY
+ * writer of the persistent `exhausted.Value` flag (`if (stamina <= 0f) exhausted.Value
+ * = true`), and that flag halves the next morning's restored stamina
+ * (`Farmer.cs` day-update: `Stamina = MaxStamina / 2 + 1`). A direct
+ * game-thread `DoFunction` bypasses `Farmer.useTool`, so it must call
+ * `checkForExhaustion` itself or the companion silently escapes vanilla's
+ * exhaustion penalty -- an embodiment difference that is invisible in the
+ * receipt without this gate.
  */
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -56,6 +67,29 @@ export const STARDEW_TOOL_FAMILY = TOOL_FAMILY;
 
 const STAMINA_EVIDENCE_ALL = /stamina_before/;
 const STAMINA_EVIDENCE_FIELDS = ["stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost"];
+
+export const STARDEW_EXHAUSTION_FAMILY = Object.freeze([
+  "RequestLocalChopTreeSource",
+  "RequestLocalChopStump",
+  "RequestLocalBreakRockSource",
+  "RequestLocalClearHoeDirt",
+  "RequestLocalDigArtifactSpot",
+  "RequestLocalTillSoil",
+  "RequestLocalWaterCrop",
+  "RequestLocalRefillWateringCan",
+  "RequestLocalClearDebris",
+]);
+
+/**
+ * Handlers that drive their tool through native `BeginUsingTool` and let the
+ * game run the swing animation. The native frame ends in `Farmer.useTool`, which
+ * calls `checkForExhaustion` for them -- so, unlike the direct-dispatch family,
+ * they must NOT hand-roll it (a second call would be redundant, not wrong, but
+ * asserting absence keeps the ownership unambiguous).
+ */
+export const STARDEW_NATIVE_ANIMATION_FAMILY = Object.freeze([
+  "RequestLocalCollectAnimalProduct",
+]);
 
 /** Extract one handler body by brace balance from its declaration. */
 function handlerBody(source, signature) {
@@ -118,6 +152,13 @@ export function validateToolFamilyStaminaEvidence(sources) {
     if (missing.length > 0) {
       failures.push(
         `${handler}: terminal receipt lacks ${missing.join("/")} (tool=${tool}, dispatch=${dispatch}; scanned ${scanned === body ? "handler body" : "terminal receipt"})`,
+      );
+    }
+    // Second invariant: a directly dispatched stamina-deducting tool must set the
+    // persistent exhaustion consequence the way Farmer.useTool does.
+    if (STARDEW_EXHAUSTION_FAMILY.includes(handler) && !body.includes("checkForExhaustion")) {
+      failures.push(
+        `${handler}: direct tool dispatch never calls checkForExhaustion, so the vanilla cross-day exhaustion penalty (exhausted.Value -> half stamina next morning) is bypassed`,
       );
     }
   }
