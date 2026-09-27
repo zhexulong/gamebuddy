@@ -470,7 +470,7 @@ function canBeSerializedExactArrival(
 function hasTillSoilCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
-  const expectedKeys = ["location", "target", "before", "after"];
+  const expectedKeys = ["location", "target", "before", "after", "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost"];
   if (
     Object.keys(evidence).length !== expectedKeys.length ||
     !expectedKeys.every((key) => key in evidence)
@@ -481,7 +481,8 @@ function hasTillSoilCompletionEvidence(detail: string): boolean {
     evidence.location !== "none" &&
     hasTileEvidenceValue(evidence.target) &&
     evidence.before === "none" &&
-    evidence.after === "HoeDirt"
+    evidence.after === "HoeDirt" &&
+    hasStaminaConservationEvidence(evidence)
   );
 }
 
@@ -497,6 +498,10 @@ function hasWaterCropCompletionEvidence(detail: string): boolean {
     "water_before",
     "water_after",
     "water_consumed",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
   ];
   if (
     Object.keys(evidence).length !== expectedKeys.length ||
@@ -521,7 +526,8 @@ function hasWaterCropCompletionEvidence(detail: string): boolean {
     // rather than inventing an unavailable branch discriminator.
     after <= before &&
     before - after <= 1 &&
-    evidence.water_consumed === "true"
+    evidence.water_consumed === "true" &&
+    hasStaminaConservationEvidence(evidence)
   );
 }
 
@@ -549,7 +555,35 @@ function parseSemicolonEvidence(
 }
 
 // Evidence values are serialized with up to four decimal places; allow rounding plus binary floating-point noise.
-const DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON = 0.011;
+const STAMINA_EVIDENCE_EPSILON = 0.011;
+
+/**
+ * Family-level embodied conservation: every tool action mutation has two halves
+ * (world + agent stamina). A succeeded receipt must prove the stamina half
+ * closes the loop: before/after/delta/expected all present, delta consistent
+ * with before→after, and the actual spend equals the native formula so a
+ * power/formula drift (e.g. power=0 feeding stamina back) is caught here.
+ */
+function hasStaminaConservationEvidence(
+  evidence: Readonly<Record<string, string>>,
+): boolean {
+  const staminaBefore = finiteEvidenceValue(evidence.stamina_before);
+  const staminaAfter = finiteEvidenceValue(evidence.stamina_after);
+  const staminaDelta = finiteEvidenceValue(evidence.stamina_delta);
+  const expectedStaminaCost = finiteEvidenceValue(
+    evidence.expected_stamina_cost,
+  );
+  return (
+    staminaBefore !== null &&
+    staminaAfter !== null &&
+    staminaDelta !== null &&
+    expectedStaminaCost !== null &&
+    Math.abs(staminaAfter - staminaBefore - staminaDelta) <= 0.001 &&
+    Math.abs(-staminaDelta - expectedStaminaCost) <= STAMINA_EVIDENCE_EPSILON &&
+    staminaDelta <= 0 &&
+    expectedStaminaCost >= 0
+  );
+}
 
 function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
@@ -578,12 +612,6 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
   )
     return false;
   const slot = integerEvidenceValue(evidence.slot);
-  const staminaBefore = finiteEvidenceValue(evidence.stamina_before);
-  const staminaAfter = finiteEvidenceValue(evidence.stamina_after);
-  const staminaDelta = finiteEvidenceValue(evidence.stamina_delta);
-  const expectedStaminaCost = finiteEvidenceValue(
-    evidence.expected_stamina_cost,
-  );
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
     hasOpaqueIdEvidenceValue(evidence.target) &&
@@ -593,15 +621,7 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
     slot !== null &&
     slot >= 0 &&
     slot <= 36 &&
-    staminaBefore !== null &&
-    staminaAfter !== null &&
-    staminaDelta !== null &&
-    expectedStaminaCost !== null &&
-    Math.abs(staminaAfter - staminaBefore - staminaDelta) <= 0.001 &&
-    Math.abs(-staminaDelta - expectedStaminaCost) <=
-      DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON &&
-    staminaDelta <= 0 &&
-    expectedStaminaCost >= 0 &&
+    hasStaminaConservationEvidence(evidence) &&
     evidence.qualified_item_id === "(O)590" &&
     evidence.source_present_before === "true" &&
     evidence.source_present_after === "false" &&
@@ -621,6 +641,10 @@ function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
     "water_before",
     "water_after",
     "water_max",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
   ];
   if (
     Object.keys(evidence).length !== expectedKeys.length ||
@@ -638,7 +662,8 @@ function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
     after !== null &&
     max !== null &&
     before < max &&
-    after === max
+    after === max &&
+    hasStaminaConservationEvidence(evidence)
   );
 }
 
@@ -653,6 +678,10 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
     "durability_before",
     "durability_after",
     "removed",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
   ];
   if (
     Object.keys(evidence).length !== expectedKeys.length ||
@@ -666,7 +695,8 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
     evidence.qualified_item_id === "(O)2" &&
     evidence.durability_before === "1" &&
     evidence.durability_after === "removed" &&
-    evidence.removed === "true"
+    evidence.removed === "true" &&
+    hasStaminaConservationEvidence(evidence)
   );
 }
 
@@ -683,6 +713,10 @@ function hasClearHoeDirtCompletionEvidence(detail: string): boolean {
     "hoedirt_present_before",
     "hoedirt_present_after",
     "removed",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
   ];
   if (
     Object.keys(evidence).length !== expectedKeys.length ||
@@ -701,7 +735,8 @@ function hasClearHoeDirtCompletionEvidence(detail: string): boolean {
     evidence.crop_before === "false" &&
     evidence.hoedirt_present_before === "true" &&
     evidence.hoedirt_present_after === "false" &&
-    evidence.removed === "true"
+    evidence.removed === "true" &&
+    hasStaminaConservationEvidence(evidence)
   );
 }
 
@@ -823,6 +858,10 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
     "stump_before",
     "stump_after",
     "source_transformed",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
   ];
   if (
     Object.keys(evidence).length !== expectedKeys.length ||
@@ -838,7 +877,8 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
     evidence.health_after === "5" &&
     evidence.stump_before === "false" &&
     evidence.stump_after === "true" &&
-    evidence.source_transformed === "true"
+    evidence.source_transformed === "true" &&
+    hasStaminaConservationEvidence(evidence)
   );
 }
 
@@ -1334,6 +1374,10 @@ function hasCollectAnimalProductCompletionEvidence(detail: string): boolean {
     "inventory_after",
     "inventory_gained",
     "animation_complete",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
   ];
   if (
     Object.keys(evidence).length !== expectedKeys.length ||
@@ -1357,7 +1401,12 @@ function hasCollectAnimalProductCompletionEvidence(detail: string): boolean {
     after !== null &&
     after >= before + produceStack &&
     evidence.inventory_gained === "true" &&
-    evidence.animation_complete === "true"
+    evidence.animation_complete === "true" &&
+    hasStaminaConservationEvidence(evidence) &&
+    // MilkPail/Shears deduct a flat 4f; the agent must observe exactly that
+    // embodied cost so an animation counting the wrong number of tool uses is
+    // caught at the approval boundary, not silently accepted.
+    Math.abs(Number(evidence.expected_stamina_cost) - 4) <= STAMINA_EVIDENCE_EPSILON
   );
 }
 
