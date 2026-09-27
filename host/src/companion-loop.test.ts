@@ -368,6 +368,90 @@ test("CompanionLoop presents each final-text chunk as one native expression, in 
   ]);
 });
 
+test("CompanionLoop finalizes the voice job once when two chunks carry identical text", async () => {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const voiceOps: string[] = [];
+  const voiceSink = {
+    begin: async (turnId: string) => voiceOps.push(`begin:${turnId}`),
+    append: async () => voiceOps.push("append"),
+    finalize: async () => voiceOps.push("finalize"),
+    cancel: async () => voiceOps.push("cancel"),
+  };
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_dup", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        const trackedPartial = { id: "assistant_dup", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+        });
+        emit({
+          type: "message_update",
+          message: { ...trackedPartial, content: [{ type: "text", text: "好" }] },
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "好", partial: trackedPartial },
+        });
+        // Four identical sentences → two chunks whose text is byte-identical.
+        // Text-identity comparison would treat the first chunk as the last and
+        // finalize the voice job twice; index comparison finalizes once.
+        emit({
+          type: "message_end",
+          message: {
+            id: "assistant_dup",
+            role: "assistant",
+            content: [{ type: "text", text: "好。好。好。好。" }],
+            stopReason: "stop",
+          },
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content);
+      },
+    },
+    undefined, // liveSourceEvidence: kept empty for this test
+    voiceSink as never,
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_dup",
+    eventId: "player_source_dup",
+    text: "在吗",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
+  await loop.flush();
+  // Two identical chunks: both must reach the game, in order.
+  assert.deepEqual(presented, [
+    { sourceEventId: "player_source_dup", text: "好。好。" },
+    { sourceEventId: "player_source_dup", text: "好。好。" },
+  ]);
+  // The voice job must open once and close exactly once, never twice.
+  assert.equal(voiceOps.filter((op) => op === "finalize").length, 1);
+  assert.equal(voiceOps.filter((op) => op.startsWith("begin:")).length, 1);
+  assert.ok(!voiceOps.includes("cancel"));
+});
+
 test("CompanionLoop suppresses foreign, aborted, and post-STOP native content", async () => {
   const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown) => {

@@ -218,10 +218,14 @@ export class CompanionLoop {
                   const chunks = chunkCompanionSpeech(text);
                   const pieces = chunks.length === 0 ? [text] : chunks;
                   let lastPresentation: Promise<void> | undefined;
-                  for (const piece of pieces) {
+                  for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex += 1) {
+                    const piece = pieces[pieceIndex]!;
                     // Voice finalizes after the last piece of this batch once,
                     // so cleanup (finally) never cancels an already-finalized job.
-                    if (this.voiceSink !== undefined && piece === pieces[pieces.length - 1]) {
+                    // Compare by index, not by text: two identical chunks must
+                    // not both look like the last one.
+                    const isLastPiece = pieceIndex === pieces.length - 1;
+                    if (this.voiceSink !== undefined && isLastPiece) {
                       try {
                         await voiceBegin;
                         await this.voiceSink.finalize();
