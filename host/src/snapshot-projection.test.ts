@@ -40,8 +40,9 @@ test("Projection Purity Invariant: project(S) == project(S) and does not mutate 
         revision: fc.integer({ min: 0, max: 100000 }),
         location: fc.string({ minLength: 1, maxLength: 20 }),
         tile: fc.record({ x: fc.integer({ min: 0, max: 200 }), y: fc.integer({ min: 0, max: 200 }) }),
-        stamina: fc.integer({ min: 0, max: 500 }),
-        health: fc.integer({ min: 0, max: 100 }),
+    stamina: fc.integer({ min: 0, max: 500 }),
+    exhausted: fc.boolean(),
+    health: fc.integer({ min: 0, max: 100 }),
         actionable: fc.boolean(),
         capabilities: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 5 }),
         catalogRevision: fc.constant(1),
@@ -78,8 +79,9 @@ test("Projection Purity Invariant: project(S) == project(S) and does not mutate 
         const farmProj1 = projectFarmingContext(frozen);
         const farmProj2 = projectFarmingContext(frozen);
         assert.deepEqual(farmProj1, farmProj2);
-        assert.equal(farmProj1.soilTilesCount, snapshot.soilTiles?.length ?? 0);
-        assert.equal(farmProj1.stamina, snapshot.stamina);
+    assert.equal(farmProj1.soilTilesCount, snapshot.soilTiles?.length ?? 0);
+    assert.equal(farmProj1.stamina, snapshot.stamina);
+    assert.equal(farmProj1.exhausted, snapshot.exhausted === true);
         assert.deepEqual(frozen, baselineClone);
       },
     ),
@@ -93,6 +95,7 @@ test("projectFarmingContext and projectInventoryContext extract structured facts
     location: "Farm",
     tile: { x: 5, y: 10 },
     stamina: 270,
+    exhausted: true,
     health: 100,
     actionable: true,
     capabilities: ["till_soil", "water_crop"],
@@ -122,7 +125,8 @@ test("projectFarmingContext and projectInventoryContext extract structured facts
   assert.equal(farming.revision, 10);
   assert.equal(farming.location, "Farm");
   assert.equal(farming.soilTilesCount, 2);
-  assert.equal(farming.stamina, 270);
+    assert.equal(farming.stamina, 270);
+    assert.equal(farming.exhausted, true);
   assert.equal(farming.canTill, true);
   assert.equal(farming.canWater, true);
   assert.ok(Object.isFrozen(farming));
@@ -246,6 +250,7 @@ test("Projections handle completely empty or missing optional fields cleanly", (
   assert.equal(farming.revision, 1);
   assert.equal(farming.location, "Town");
   assert.equal(farming.stamina, 100);
+  assert.equal(farming.exhausted, false);
   assert.equal(farming.soilTilesCount, 0);
   assert.equal(farming.canTill, false);
   assert.equal(farming.canWater, false);
