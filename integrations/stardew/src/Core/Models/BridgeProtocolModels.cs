@@ -260,7 +260,7 @@ public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, 
 /// </summary>
 public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
 
-public sealed record BridgePetTarget(string TargetId, int X, int Y, string PetType, int Friendship, bool PettedToday);
+public sealed record BridgePetTarget(string TargetId, int X, int Y, string PetType, int Friendship, bool PettedToday, bool Stationary);
 
 public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X, int Y, string AnimalType, string QualifiedProduceItemId, string DisplayName, string ToolKind, int ProduceStack);
 
@@ -360,8 +360,17 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeRecipeTarget>? CraftingRecipeTargets,
     IReadOnlyList<BridgeRecipeTarget>? CookingRecipeTargets,
     IReadOnlyList<BridgeCookingStationTarget>? CookingStationTargets,
+    // Macro time context. Native behaviour is time-driven -- a Pet sleeps from
+    // 20:00, villagers follow schedules, shops close, crops advance -- but the
+    // snapshot previously published no time at all, so the companion could not
+    // reason about any of it. These are plain reads of Game1 state: no
+    // interpretation, no derived phases, no advice about what the hour implies.
+    int TimeOfDay,
+    int DayOfMonth,
+    int SeasonIndex,
+    int Year,
     string PresentationLocale
-);
+    );
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,

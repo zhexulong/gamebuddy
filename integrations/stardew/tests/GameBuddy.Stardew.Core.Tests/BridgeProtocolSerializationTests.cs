@@ -514,6 +514,16 @@ public sealed class BridgeProtocolSerializationTests
             InventoryItemFacts: null,
             FoodTargets: null,
             ShippingBinTargets: null,
+            CraftingRecipeTargets: null,
+            CookingRecipeTargets: null,
+            CookingStationTargets: null,
+            // A real 6:00am spring day-1 clock, matching the Host test fixtures, so
+            // the wire-parity fixture carries a plausible non-zero time rather than
+            // the world-not-ready zeroes.
+            TimeOfDay: 600,
+            DayOfMonth: 1,
+            SeasonIndex: 0,
+            Year: 1,
             PresentationLocale: "en-US");
         var envelope = new BridgeEnvelope<BridgeSnapshot>(
             BridgeProtocol.Version,
@@ -544,6 +554,35 @@ public sealed class BridgeProtocolSerializationTests
         using var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         using var writer = new StreamWriter(stream, new UTF8Encoding(false));
         writer.Write(json);
+    }
+
+    [Fact]
+    public void RecipeAndCookingStationTargets_RoundTripExactWireKeys()
+    {
+        // craft_item and cook_recipe carry only expectedTargetId, so without these
+        // lists the Agent had no way to learn a recipe key or where a station is.
+        // The wire shape is what an Agent sends back, so it is pinned exactly.
+        var crafting = new[] { new BridgeRecipeTarget("Wood_Fence", "Wood Fence", true) };
+        var cooking = new[] { new BridgeRecipeTarget("Fried_Egg", "Fried Egg", false) };
+        var stations = new[] { new BridgeCookingStationTarget("cooking_station_0123456789abcdef", "FarmHouse", 4, 5, "kitchen") };
+
+        string craftingJson = JsonSerializer.Serialize(crafting, BridgeProtocol.JsonOptions);
+        using (JsonDocument document = JsonDocument.Parse(craftingJson))
+        {
+            JsonElement entry = document.RootElement[0];
+            entry.EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("targetId", "displayName", "ingredientsAvailable");
+            entry.GetProperty("targetId").GetString().Should().Be("Wood_Fence");
+        }
+
+        string cookingJson = JsonSerializer.Serialize(cooking, BridgeProtocol.JsonOptions);
+        JsonSerializer.Deserialize<BridgeRecipeTarget[]>(cookingJson, BridgeProtocol.JsonOptions)!.Should().BeEquivalentTo(cooking);
+
+        string stationJson = JsonSerializer.Serialize(stations, BridgeProtocol.JsonOptions);
+        using (JsonDocument stationDocument = JsonDocument.Parse(stationJson))
+        {
+            stationDocument.RootElement[0].EnumerateObject().Select(property => property.Name)
+                .Should().BeEquivalentTo("targetId", "location", "x", "y", "stationKind");
+        }
     }
 
     [Fact]
