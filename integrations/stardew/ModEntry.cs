@@ -4055,23 +4055,40 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         // Utility.tileWithinRadiusOfPlayer(..., 1, player) and resolves the
         // location from the actor's own currentLocation, so the Pet must sit
         // inside the Chebyshev-1 window of the arrival tile and on the Farm.
+        //
+        // Placement distance is deliberate: radius 1 would sit the Pet on the
+        // actor's landing corridor. A Pet is a colliding character that re-rolls
+        // its facing every tick (Pet.RunState -> Game1.random.Next(0,4)) and also
+        // pushes the actor (petPushEvent), so a Pet two tiles from the arrival
+        // walks back and forth across every exit the actor would use, and every
+        // approach move dies native_path_ended with the actor never leaving
+        // (measured live: 24 moves, 4 no_native_path + 20 native_path_ended).
+        // A radius of 3-4 keeps the Pet inside DiscoverPetTargets' radius-6
+        // window while leaving the actor's corridor completely open, so the
+        // driver must genuinely approach, wait through the Pet's natural
+        // still-window, and interact -- the full wandering-target contract.
         Vector2[] candidates =
         {
-            farmArrival + new Vector2(1f, 0f),
-            farmArrival + new Vector2(-1f, 0f),
-            farmArrival + new Vector2(0f, 1f),
-            farmArrival + new Vector2(0f, -1f),
-            farmArrival + new Vector2(1f, 1f),
-            farmArrival + new Vector2(-1f, 1f),
-            farmArrival + new Vector2(1f, -1f),
-            farmArrival + new Vector2(-1f, -1f),
+            farmArrival + new Vector2(3f, 0f),
+            farmArrival + new Vector2(-3f, 0f),
+            farmArrival + new Vector2(0f, 3f),
+            farmArrival + new Vector2(0f, -3f),
+            farmArrival + new Vector2(3f, 3f),
+            farmArrival + new Vector2(-3f, 3f),
+            farmArrival + new Vector2(3f, -3f),
+            farmArrival + new Vector2(-3f, -3f),
+            farmArrival + new Vector2(4f, 0f),
+            farmArrival + new Vector2(-4f, 0f),
+            farmArrival + new Vector2(0f, 4f),
+            farmArrival + new Vector2(0f, -4f),
         };
         Vector2? targetTile = candidates
             .Where(tile => farm.isTileOnMap(tile)
                 && farm.isTilePassable(tile)
                 && !farm.objects.ContainsKey(tile)
                 && !farm.terrainFeatures.ContainsKey(tile)
-                && !farm.characters.Any(character => character.Tile == tile))
+                && !farm.characters.Any(character => character.Tile == tile)
+                && Math.Max(Math.Abs(tile.X - farmArrival.X), Math.Abs(tile.Y - farmArrival.Y)) <= 4)
             .Cast<Vector2?>()
             .FirstOrDefault();
         if (targetTile is null)
