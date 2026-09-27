@@ -1,0 +1,26 @@
+## Execution Audit Summary
+- **Artifact**: tools/fixtures/chat-run-audit/real-live-runs/run-05-probe-durable-gate.json (runId 62d06c9edbe868a30e6fb33e)
+- **Topology**: Single Run — 7 turn(s), surface chat-only, observed span 55226 ms
+- **Primary Metrics**: events=1223, sse frames=1166, /state reads=16 (max 1/turn, bound 12), provider requests=1 (settled 7, errored 0), presentation commits=7, terminal state=completed, provider observability=observed
+- **Observed Anomaly**: no integrity failure and no smell detected
+
+## Resource & Waste Profile
+- /state polling: 16 read(s), worst turn 1 (bound 12); 0 conflict(s)
+- Event stream: 1166 frame(s), 0 forced resynchronization(s)
+- Idle: longest frame-free span 10037 ms (stall threshold 30000 ms)
+- Memory: 0 read(s), 0 mutation(s), 0 CAS conflict(s)
+- Recovery: 1 reload(s), 0 mismatch(es) against the durable terminal
+- Memory probe: 1 event(s) against manifest 4d1b292693040fa2d86efb0a023433b73d20a31a17aa46b489735f2e4e370349; retention hit/miss 0/0; distractor clean/confused 0/1; supersede pass/fail 0/0; isolation clean/breach 0/0; observability gaps 0; distances turn=1
+
+## Integrity & Boundary Assessment
+- Verdict: passed (no integrity failure)
+- Hollow Success / Failure: no turn claimed a terminal its evidence contradicts
+- Cancellation: no unobserved cancellation in this run
+- Provider boundary: observability=observed (request.sent=1, settled=7, error=0, observability_gap=0) — unobserved provider state is reported as a limitation, never as a failure
+- Containment: the audit consumed a content-free trace (counts, states and opaque identifiers only); no prompt, message body or credential is expressible in this schema, so containment is asserted by construction rather than by inspection
+
+## Runtime Smells & Mechanism Analysis
+- none: every detector stayed silent on this trace
+
+## Seam Attribution & Deterministic Gates
+- no finding: nothing to attribute; keep this run as the baseline for run-vs-run comparison

@@ -1,0 +1,171 @@
+{
+  "schema": "chat_live_run_comparison/v1",
+  "baseline": "tools/fixtures/chat-run-audit/real-live-runs/run-04-probe-complete.json",
+  "after": "tools/fixtures/chat-run-audit/real-live-runs/run-05-probe-durable-gate.json",
+  "summary": {
+    "improvements": 0,
+    "regressions": 0,
+    "neutral": 17
+  },
+  "rows": [
+    {
+      "kind": "counter",
+      "name": "totalEventCount",
+      "before": 1092,
+      "after": 1223,
+      "expectedDirection": "neutral",
+      "verdict": "neutral",
+      "detail": "events recorded in the trace"
+    },
+    {
+      "kind": "counter",
+      "name": "event.sse.frame.received",
+      "before": 1035,
+      "after": 1166,
+      "expectedDirection": "neutral",
+      "verdict": "neutral",
+      "detail": "sse.frame.received frequency"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[0].wallTimeMs",
+      "before": 8730,
+      "after": 10460,
+      "verdict": "neutral",
+      "detail": "submission to terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[0].maxFrameGapMs",
+      "before": 8112,
+      "after": 10037,
+      "verdict": "neutral",
+      "detail": "longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[0].providerSettlementLatencyMs",
+      "before": 8395,
+      "after": 10163,
+      "verdict": "neutral",
+      "detail": "provider pre-send marker to the durable terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[1].wallTimeMs",
+      "before": 4055,
+      "after": 6560,
+      "verdict": "neutral",
+      "detail": "submission to terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[1].maxFrameGapMs",
+      "before": 3287,
+      "after": 5768,
+      "verdict": "neutral",
+      "detail": "longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[2].wallTimeMs",
+      "before": 8401,
+      "after": 8583,
+      "verdict": "neutral",
+      "detail": "submission to terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[2].maxFrameGapMs",
+      "before": 7325,
+      "after": 7920,
+      "verdict": "neutral",
+      "detail": "longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[3].wallTimeMs",
+      "before": 8341,
+      "after": 8234,
+      "verdict": "neutral",
+      "detail": "submission to terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[3].maxFrameGapMs",
+      "before": 7564,
+      "after": 7569,
+      "verdict": "neutral",
+      "detail": "longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[4].wallTimeMs",
+      "before": 9986,
+      "after": 9455,
+      "verdict": "neutral",
+      "detail": "submission to terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[4].maxFrameGapMs",
+      "before": 9382,
+      "after": 8542,
+      "verdict": "neutral",
+      "detail": "longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[5].wallTimeMs",
+      "before": 7450,
+      "after": 5324,
+      "verdict": "neutral",
+      "detail": "submission to terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[5].maxFrameGapMs",
+      "before": 6987,
+      "after": 3742,
+      "verdict": "neutral",
+      "detail": "longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[6].wallTimeMs",
+      "before": 3870,
+      "after": 5850,
+      "verdict": "neutral",
+      "detail": "submission to terminal; reported, not ranked — a slower run is not by itself a system regression"
+    },
+    {
+      "kind": "duration",
+      "name": "turn[6].maxFrameGapMs",
+      "before": 3444,
+      "after": 5193,
+      "verdict": "neutral",
+      "detail": "longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression"
+    }
+  ]
+}
+chat_live_run_comparison/v1 — 17 changed row(s)
+  baseline: tools/fixtures/chat-run-audit/real-live-runs/run-04-probe-complete.json
+  after:    tools/fixtures/chat-run-audit/real-live-runs/run-05-probe-durable-gate.json
+  improvements: 0, regressions: 0, neutral: 17
+  [neutral] totalEventCount: 1092 -> 1223 (events recorded in the trace)
+  [neutral] event.sse.frame.received: 1035 -> 1166 (sse.frame.received frequency)
+  [neutral] turn[0].wallTimeMs: 8730 -> 10460 (submission to terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[0].maxFrameGapMs: 8112 -> 10037 (longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[0].providerSettlementLatencyMs: 8395 -> 10163 (provider pre-send marker to the durable terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[1].wallTimeMs: 4055 -> 6560 (submission to terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[1].maxFrameGapMs: 3287 -> 5768 (longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[2].wallTimeMs: 8401 -> 8583 (submission to terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[2].maxFrameGapMs: 7325 -> 7920 (longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[3].wallTimeMs: 8341 -> 8234 (submission to terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[3].maxFrameGapMs: 7564 -> 7569 (longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[4].wallTimeMs: 9986 -> 9455 (submission to terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[4].maxFrameGapMs: 9382 -> 8542 (longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[5].wallTimeMs: 7450 -> 5324 (submission to terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[5].maxFrameGapMs: 6987 -> 3742 (longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[6].wallTimeMs: 3870 -> 5850 (submission to terminal; reported, not ranked — a slower run is not by itself a system regression)
+  [neutral] turn[6].maxFrameGapMs: 3444 -> 5193 (longest silence between SSE frames in the turn, the idle-stall signal free of any threshold; reported, not ranked — a slower run is not by itself a system regression)
