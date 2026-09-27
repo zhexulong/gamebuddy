@@ -670,10 +670,14 @@ export function projectStateSnapshot(snapshot) {
   const turn = snapshot.chat.turn ?? null;
   const transcript = Array.isArray(snapshot.chat.transcript) ? snapshot.chat.transcript : [];
   const committedCompanion = transcript.filter((message) => message?.role === "companion");
-  const committedCompanionText = committedCompanion
-    .filter((message) => typeof message?.text === "string")
-    .map((message) => message.text)
-    .join("\n");
+  // Probe keyword matching sees ONLY the last committed companion message: that
+  // is the probe turn's reply. Taking the last text-BEARING message instead would
+  // fall back to an earlier turn when the newest message has no text, and joining
+  // the whole transcript would let any earlier turn satisfy the match — either way
+  // a `distractor.confused` would be a statement about the conversation rather
+  // than about the probe turn.
+  const lastCompanion = committedCompanion.at(-1);
+  const committedCompanionText = typeof lastCompanion?.text === "string" ? lastCompanion.text : "";
   return Object.freeze({
     selectionGeneration: snapshot.selection.generation,
     draftRevision: Number.isSafeInteger(snapshot.chat.draft?.revision) ? snapshot.chat.draft.revision : undefined,
@@ -810,13 +814,21 @@ async function cancelTurn({ origin, client, projection, turnHandle }) {
  * One SSE observation connection per turn. A missing stream is a harness
  * boundary degradation, not a fabricated observation: the durable `/state`
  * read-back stays authoritative either way.
+ *
+ * `cursor` is the last event id this reader actually received on this run's
+ * earlier connections. The host serves a bounded replay window and treats a
+ * request for a sequence it can no longer replay as `resync("gap")`, so a reader
+ * that reconnects without its cursor from `sequence: 0` forces a gap as soon as
+ * the window rolls — a gap the reader itself created, which then looked like a
+ * host stream defect in the audit. The cursor is therefore carried forward.
  */
-async function openEventStream({ origin, client, recorder }) {
+async function openEventStream({ origin, client, recorder, cursor = undefined }) {
   const controller = new AbortController();
   const connectDeadline = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const query = cursor === undefined ? "" : `&cursor=${encodeURIComponent(cursor)}`;
   let response;
   try {
-    response = await fetch(`${origin}/api/tavern/v1/events?apiVersion=1`, {
+    response = await fetch(`${origin}/api/tavern/v1/events?apiVersion=1${query}`, {
       headers: { Cookie: client.cookie, Origin: origin },
       signal: controller.signal,
     });
@@ -832,6 +844,7 @@ async function openEventStream({ origin, client, recorder }) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let latestCursor = cursor;
   let settleTerminal;
   const terminal = new Promise((resolveTerminal) => {
     settleTerminal = resolveTerminal;
@@ -853,8 +866,16 @@ async function openEventStream({ origin, client, recorder }) {
             continue;
           }
           recorder.record("sse", "host", "frame.received");
+          // The id carried on the frame is the reader's resume point; without
+          // recording it the next connection would start from zero again.
+          if (typeof frame.cursor === "string" && frame.cursor.length > 0) latestCursor = frame.cursor;
           if (frame.eventType === "stream.resync_required") {
             recorder.record("sse", "host", "stream.resync", { reason: boundedReason(frame.payload.payload?.reason, "unknown") });
+            // The host closes a resync response, so the observable truth for this
+            // turn comes from the durable `/state` read-back. Resolving the
+            // terminal wait here is what keeps an observer-side stream close from
+            // being reported as a 180 s product idle stall.
+            settleTerminal("resync");
             continue;
           }
           if (frame.eventType === "turn.state_changed") {
@@ -869,6 +890,8 @@ async function openEventStream({ origin, client, recorder }) {
   })();
   return Object.freeze({
     ok: true,
+    /** Last event id seen on this connection: the next connection resumes here. */
+    cursor: () => latestCursor,
     waitForTerminal: (timeoutMs) =>
       Promise.race([terminal, delay(timeoutMs).then(() => "timeout")]),
     async close() {
@@ -1126,7 +1149,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
     const opened = await readStateSnapshot({ origin, client, recorder });
     if (!opened.ok) throw new Error(opened.reasonCode);
     noteMemoryProjection(opened.projection);
-    const streamResult = await openEventStream({ origin, client, recorder });
+    const streamResult = await openEventStream({ origin, client, recorder, cursor: environment.streamCursor });
     if (!streamResult.ok) environment.boundaryReason ??= streamResult.reasonCode;
     const stream = streamResult.ok ? streamResult : undefined;
     try {
@@ -1174,6 +1197,9 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
       // `durableTerminal` captured above.
       return outcome;
     } finally {
+      // Carry this connection's last event id forward so the next turn's
+      // observation resumes instead of asking the host to replay from zero.
+      if (stream?.cursor !== undefined && stream.cursor() !== undefined) environment.streamCursor = stream.cursor();
       await stream?.close();
       // The provider marker and the stderr markers are published at the provider
       // and presentation boundaries, so both are drained before the turn's
@@ -1360,6 +1386,9 @@ export async function main(argv = process.argv.slice(2)) {
     collectionReason: undefined,
     providerObservability: "unobserved",
     presentationMarkers: 0,
+    // Last SSE event id observed on any connection, carried across turns so a
+    // reconnect resumes the bounded replay window instead of forcing a gap.
+    streamCursor: undefined,
     unsettledTurns: 0,
     unsettledProviderTurns: 0,
     started: false,

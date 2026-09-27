@@ -593,6 +593,34 @@ test("durable state projection and reload comparison use only the authoritative 
   assert.equal(projectStateSnapshot({ chat: null }), undefined);
   assert.equal(projectStateSnapshot({ selection: { generation: 1 }, chat: {} }).turnState, undefined);
 
+  // Probe keyword matching sees ONLY the last committed companion reply. Joining
+  // the transcript would let an earlier turn satisfy a keyword match, so a
+  // `distractor.confused` could not be attributed to the probe turn at all.
+  const withHistory = projectStateSnapshot({
+    selection: { generation: 7 },
+    chat: {
+      turn: { handle: "turn_02", state: "completed", canCancel: false },
+      transcript: [
+        { role: "companion", text: "an earlier reply mentioning the mine" },
+        { role: "player", text: "a later question" },
+        { role: "companion", text: "the reply to the probe turn" },
+      ],
+    },
+  });
+  assert.equal(withHistory.committedCompanionText, "the reply to the probe turn");
+  // A trailing non-text companion message must not resurrect earlier text.
+  const nonTextLast = projectStateSnapshot({
+    selection: { generation: 7 },
+    chat: {
+      turn: { handle: "turn_03", state: "completed", canCancel: false },
+      transcript: [
+        { role: "companion", text: "earlier text" },
+        { role: "companion" },
+      ],
+    },
+  });
+  assert.equal(Object.hasOwn(nonTextLast, "committedCompanionText"), false);
+
   assert.deepEqual(compareReloadSnapshot(projection, projection), { consistent: true, reason: undefined });
   assert.deepEqual(compareReloadSnapshot(projection, { ...projection, turnHandle: "turn_02" }), {
     consistent: false,
@@ -640,4 +668,11 @@ test("audit harness stays on the composition bootstrap and authenticated Chat AP
   assert.doesNotMatch(source, /commit_done[\s\S]{0,120}"committed"/);
   assert.doesNotMatch(source, /GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256/);
   assert.doesNotMatch(source, /presentation_admission|admission-marker/);
+  // The observation reader must carry its SSE cursor across turns and must stop
+  // waiting for a terminal when the host closes a resync response — otherwise the
+  // harness manufactures a `gap` and then reports its own 180 s wait as a product
+  // idle stall (which is exactly how the first two live runs read).
+  assert.match(source, /cursor: environment\.streamCursor/);
+  assert.match(source, /environment\.streamCursor = stream\.cursor\(\)/);
+  assert.match(source, /settleTerminal\("resync"\)/);
 });
