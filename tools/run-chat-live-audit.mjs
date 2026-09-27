@@ -1167,7 +1167,12 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
         return undefined;
       }
       durableTerminal = outcome.projection;
-      return outcome.projection;
+      // Return the full outcome (with `.terminal` and `.projection`) rather than
+      // just the projection: a caller that asks "did this turn reach a durable
+      // terminal AND what does the durable state look like" must see both. The
+      // probe scenario checks `outcome.terminal`, and the reload comparison uses
+      // `durableTerminal` captured above.
+      return outcome;
     } finally {
       await stream?.close();
       // The provider marker and the stderr markers are published at the provider
