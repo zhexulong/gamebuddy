@@ -86,9 +86,21 @@ public/browser/runner → never composition
 
 ```text
 bootstrap/**, containment/runtime/** → 任一 game integration、Stardew、Mod、action、installation/admission 或游戏 recipe
-games/stardew/** → runtime/core、containment auth transport、bootstrap roots、Desktop、Guardian、Windows、Win32/native 或任何 raw IPC/pipe/token/Job/PID/path
+games/stardew/** → runtime/core、containment auth transport、Desktop、Guardian、Windows、Win32/native 或任何 raw IPC/pipe/token/Job/PID/path
 browser、Preview、Portfolio、operator/control runner、ordinary main entry → containment private seam
 ```
+
+### 唯一已记录的游戏层→bootstrap 例外
+
+上一条禁令对 `bootstrap roots` 有一个、且仅有一个已批准例外，它由两个可执行门（`tools/check-host-game-physical-seam.mjs` 与 `.dependency-cruiser.host-production.cjs`）同时强制：
+
+```text
+games/stardew/lifecycle/stardew-private-bootstrap-composer.internal → bootstrap/roots/stardew-private-mod-profile-staging
+```
+
+理由：该模块只提供 staged Mod profile 的 provenance 构造（无 process、transport、pipe、token 或 launch 权限），其唯一消费者是生命周期的 bootstrap composer，且它被注入到 game 层而非由 game 层选择。这是允许的窄 provenance contract，不是第二套 launch 或 containment 权威。任何其它 `games/** → bootstrap/**` 边仍然禁止。
+
+注：`containment/runtime/core` 与 `containment auth transport` 对游戏层**没有任何例外** —— 它们在图中的豁免槽位已随退役 seam 删除（见提交 `3b12a18`、`3485dbf`、`0504f65`、`dc2e0d1`），此列表是权威。
 
 ## 可执行反侵蚀门
 

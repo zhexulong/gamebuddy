@@ -13,6 +13,7 @@ scope: >
   design/architecture/stardew-installation-runtime-registration-plan.md (gates 1-10),
   desktop/GameBuddy.Desktop/RuntimeSupervisor.cs.
 verdict: NO BLOCKER
+ownerAdjudication: 2026-09-27 (findings 4 and 5 resolved by aligning ADR-0007 and the executable gates; findings 1-3 and the hardening items fixed in 0504f65, dc2e0d1, 3485dbf)
 date: 2026-09-27
 reviewer: worker-subagent (independent adversarial review)
 reviewerModel: worker-subagent (model identifier not exposed to the reviewing agent)
@@ -581,3 +582,49 @@ its fixture, and add the two negative test cases), then resolve Finding 4 by
 either amending ADR-0007 line 89 or injecting the staging provider from
 composition. Finding 5 should be applied with the same commit that removes the
 Finding 3 allowance so the two tool configs stay in agreement.
+
+
+---
+
+## Owner adjudication (2026-09-27): findings 4 and 5 resolved by alignment
+
+Both MEDIUM findings were real: the frozen authority and the executable gates
+disagreed. The fix aligns them in the ADR direction rather than loosening the tools.
+
+### Finding 4 — the `bootstrap/roots` exception is now recorded in ADR-0007
+
+ADR-0007's forbidden list named `bootstrap roots` unconditionally, while two tool
+configs granted `games/stardew/lifecycle/stardew-private-bootstrap-composer.internal`
+access to `bootstrap/roots/stardew-private-mod-profile-staging`. ADR line 44 requires
+such a change to amend the ADR atomically with the directory-local rule, and the ADR
+had not been amended -- so an auditor reading the ADR alone would conclude the tree
+violated its own frozen authority.
+
+The ADR now records exactly one approved game-layer -> bootstrap exception, with its
+reason (the module supplies staging provenance only, holds no process/transport/pipe/
+token/launch authority, is injected into the game layer rather than chosen by it), and
+states that any other `games/** -> bootstrap/**` edge remains forbidden. The live
+importer is `stardew-private-bootstrap-composer.internal.ts:10`, unchanged.
+
+### Finding 5 — the dependency-cruiser exemptions are narrowed and the gate can fail
+
+The `pathNot` list exempted four targets, but only one has a live edge. Verified by
+direct scan: no file under `host/src/games/stardew/**` imports
+`containment/runtime/core` or the auth transport, so those two slots were stale
+permissions of exactly the class removed from the seam checker in 3b12a18/3485dbf.
+
+More seriously, both boundary rules were `severity: "warn"` with no `errorThreshold`,
+so `check:host-module-graph` could never fail on a violation -- the ADR's own
+"executable anti-erosion gate" section requires violations to fail. Both rules are now
+`severity: "error"`, and `pathNot` names only the ADR-permitted
+`containment/runtime/contract` plus the single recorded staging exception.
+
+One further correction: the generic rule listed `composition` among the layers that
+must not import games, which contradicted ADR-0007's own allowed line
+(`composition -> containment/runtime/core + one selected game adapter`). That
+contradiction is why the tree produced a permanent `warn` for the sanctioned
+composition edge; the rule now covers `bootstrap` and `containment` only.
+
+Verified: `npm run check:host-module-graph` -> no violations, exit 0; a negative probe
+(containment importing a game module) -> 1 error, exit 1, so the gate genuinely fails;
+seam checker passed over 200 production files; its suite 20/20.
