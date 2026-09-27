@@ -2,6 +2,7 @@ import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
 import { attachNativeCompanionContent, type NativeCompanionContentObserver } from "./native-companion-content.js";
 import { CompanionEventPump, type DeliveryDisposition } from "./event-pump.js";
+import { chunkCompanionSpeech } from "./companion-speech-chunker.js";
 
 export type NativeGameCompanionContent = Readonly<{
   sourceEventId: string;
@@ -134,7 +135,7 @@ export class CompanionLoop {
     let voiceBegin: Promise<void> | undefined;
     let nativeContentObserver: NativeCompanionContentObserver | undefined;
     let nativeContentFinal: Promise<void> | undefined;
-    let nativeContentDelivered = false;
+    let voiceFinalized = false;
     const tracksPlayerDelivery = sourceEventId !== undefined;
     let unsubscribe: (() => void) | undefined;
     let resolveStarted!: () => void;
@@ -205,24 +206,36 @@ export class CompanionLoop {
                   }
                 },
                 onFinalText: async (text) => {
-                  // The observer finalizes once, but keep this local guard at
-                  // the Game authority boundary: one consumed batch can admit
-                  // at most one native expression even if an event adapter is
-                  // malformed or changes its subscription semantics.
-                  if (nativeContentDelivered) return;
-                  nativeContentDelivered = true;
-                  if (this.voiceSink !== undefined) {
-                    try {
-                      await voiceBegin;
-                      await this.voiceSink.finalize();
-                    } catch {
-                      // Voice degradation is graceful.
+                  // One consumed batch admits a sequence of native expressions:
+                  // the dehydrated final text is chunked at deterministic sentence
+                  // boundaries (companion-speech-chunker) so the game sees short,
+                  // conversational pieces in order instead of one wall of text.
+                  // Serialization is guaranteed by the observer's callbackTail
+                  // (native-companion-content) and the observer itself emits one
+                  // message_end per Pi turn (its `finalizing` flag), so multiple
+                  // onFinalText calls here are the ordered chunks, not foreign
+                  // batches. Voice finalizes exactly once after the last piece.
+                  const chunks = chunkCompanionSpeech(text);
+                  const pieces = chunks.length === 0 ? [text] : chunks;
+                  let lastPresentation: Promise<void> | undefined;
+                  for (const piece of pieces) {
+                    // Voice finalizes after the last piece of this batch once,
+                    // so cleanup (finally) never cancels an already-finalized job.
+                    if (this.voiceSink !== undefined && piece === pieces[pieces.length - 1]) {
+                      try {
+                        await voiceBegin;
+                        await this.voiceSink.finalize();
+                        voiceFinalized = true;
+                      } catch {
+                        // Voice degradation is graceful.
+                      }
                     }
+                    const content = Object.freeze({ sourceEventId, text: piece });
+                    const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
+                    if (presentation !== undefined) lastPresentation = presentation;
+                    await presentation;
                   }
-                  const content = Object.freeze({ sourceEventId, text });
-                  const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
-                  if (presentation !== undefined) nativeContentFinal = presentation;
-                  await presentation;
+                  if (lastPresentation !== undefined) nativeContentFinal = lastPresentation;
                 },
                 onRejected: () => undefined,
               });
@@ -307,7 +320,7 @@ export class CompanionLoop {
       // The voice job opened with the batch but never finalized; cleanup
       // waits for the (already-ordered) open then cancels so the gateway slot
       // is released even when the presentation lineage already closed.
-      if (beganVoice && !nativeContentDelivered && this.voiceSink !== undefined) {
+      if (beganVoice && !voiceFinalized && this.voiceSink !== undefined) {
         try {
           await voiceBegin;
           await this.voiceSink.cancel();
