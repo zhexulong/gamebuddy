@@ -35,6 +35,10 @@ function snapshot(revision = 3) {
     catalogRevision: 1,
     enabledActionIds: ["move_to_tile"],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     activeExecution: null,
   } as const;
 }

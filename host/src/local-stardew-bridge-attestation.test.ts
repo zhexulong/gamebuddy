@@ -177,6 +177,10 @@ async function withHelloAck<T>(
               catalogRevision: 1,
               enabledActionIds: ["move_to_tile"],
               presentationLocale: "en-US",
+              timeOfDay: 600,
+              dayOfMonth: 1,
+              seasonIndex: 0,
+              year: 1,
               activeExecution: null,
             },
           }));
@@ -434,6 +438,10 @@ test("attested fixed body-program closures recheck restrictive live policy witho
            catalogRevision: 1,
             enabledActionIds: ["move_to_tile"],
            presentationLocale: "en-US",
+           timeOfDay: 600,
+           dayOfMonth: 1,
+           seasonIndex: 0,
+           year: 1,
           activeExecution: null,
         },
       }));
@@ -852,6 +860,10 @@ test("exact authenticated launch handle keeps catalog capabilityRevision indepen
         catalogRevision: 1,
         enabledActionIds: ["move_to_tile"],
         presentationLocale: "en-US",
+        timeOfDay: 600,
+        dayOfMonth: 1,
+        seasonIndex: 0,
+        year: 1,
         activeExecution: null,
       }));
       await until(() => client.state.snapshot?.revision === 2, "second_snapshot_not_admitted");
@@ -882,6 +894,10 @@ test("exact authenticated launch handle projects an in-flight snapshot execution
         catalogRevision: 1,
         enabledActionIds: ["move_to_tile"],
         presentationLocale: "en-US",
+        timeOfDay: 600,
+        dayOfMonth: 1,
+        seasonIndex: 0,
+        year: 1,
         activeExecution: {
           executionId: "exec_active_01",
           requestId: "req_active_01",

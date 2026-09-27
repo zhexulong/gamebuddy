@@ -155,6 +155,10 @@ function createIntegration(options: {
               catalogRevision: revision,
               enabledActionIds: snapshotCapabilities,
               presentationLocale: "en-US",
+              timeOfDay: 600,
+              dayOfMonth: 1,
+              seasonIndex: 0,
+              year: 1,
               activeExecution: null,
             }
           : null,
@@ -625,6 +629,10 @@ test("pre-dispatch recheck: disconnected integration fails closed at execution t
               catalogRevision: 1,
               enabledActionIds: ["express_emote"],
               presentationLocale: "en-US",
+              timeOfDay: 600,
+              dayOfMonth: 1,
+              seasonIndex: 0,
+              year: 1,
               activeExecution: null,
             }
           : null,
@@ -681,6 +689,10 @@ test("validateExecutionRequest validates candidate actions and preserves equip_t
     catalogRevision: 1,
     enabledActionIds: ["equip_tool", "express_emote", "face_direction"],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     activeExecution: null,
   };
 

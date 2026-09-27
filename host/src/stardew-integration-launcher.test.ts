@@ -265,6 +265,10 @@ capabilities: ["inspect_self"],
 catalogRevision: 1,
 enabledActionIds: [],
 presentationLocale: "en-US",
+timeOfDay: 600,
+dayOfMonth: 1,
+seasonIndex: 0,
+year: 1,
     activeExecution: null,
   };
 }

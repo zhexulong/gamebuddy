@@ -62,6 +62,10 @@ test("Game Snapshot crosses the boundary only as a bounded frozen advisory proje
     catalogRevision: 22,
     enabledActionIds: ["ACTION_SECRET"],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     activeExecution: {
       executionId: "EXECUTION_SECRET",
       requestId: "REQUEST_SECRET",

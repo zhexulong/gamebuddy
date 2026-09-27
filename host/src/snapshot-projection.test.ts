@@ -47,6 +47,10 @@ test("Projection Purity Invariant: project(S) == project(S) and does not mutate 
         catalogRevision: fc.constant(1),
         enabledActionIds: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 5 }),
         presentationLocale: fc.constant("en-US"),
+        timeOfDay: 600,
+        dayOfMonth: 1,
+        seasonIndex: 0,
+        year: 1,
         inventorySlots: fc.option(fc.integer({ min: 12, max: 36 }), { nil: undefined }),
         soilTiles: fc.option(fc.array(fc.record({ x: fc.integer({ min: 0, max: 200 }), y: fc.integer({ min: 0, max: 200 }) }), { minLength: 0, maxLength: 5 }), { nil: undefined }),
         toolSlots: fc.option(fc.array(fc.record({ slot: fc.integer({ min: 0, max: 36 }), label: fc.string({ minLength: 1, maxLength: 20 }) }), { minLength: 0, maxLength: 5 }), { nil: undefined }),
@@ -95,6 +99,10 @@ test("projectFarmingContext and projectInventoryContext extract structured facts
     catalogRevision: 1,
     enabledActionIds: ["till_soil", "water_crop"],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     soilTiles: [{ x: 5, y: 10 }, { x: 5, y: 11 }],
     toolSlots: [{ slot: 0, label: "Axe" }, { slot: 1, label: "Hoe" }],
     inventorySlots: 24,
@@ -140,6 +148,10 @@ test("Game snapshot projection is bounded, deterministic, frozen, and excludes a
     catalogRevision: 99,
     enabledActionIds: ["move_to_tile"],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     currentTool: "Axe",
     inventorySlots: 24,
     activeExecution: {
@@ -196,6 +208,10 @@ test("Game snapshot projection reports unavailable and bounds snapshot age", () 
     catalogRevision: 1,
     enabledActionIds: [],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
   };
   const projection = projectGameSnapshotContext(minimalSnapshot, 0, Number.MAX_SAFE_INTEGER);
   assert.equal(projection.available, true);
@@ -214,6 +230,10 @@ test("Projections handle completely empty or missing optional fields cleanly", (
     catalogRevision: 1,
     enabledActionIds: [],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
   };
 
   const movement = projectMovementContext(minimalSnapshot);
