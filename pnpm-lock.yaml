@@ -96,7 +96,14 @@ importers:
         specifier: 3.4.0
         version: 3.4.0
 
-  integrations/stardew/action-development: {}
+  integrations/stardew/action-development:
+    dependencies:
+      '@vscode/tree-sitter-wasm':
+        specifier: 0.3.1
+        version: 0.3.1
+      web-tree-sitter:
+        specifier: 0.26.11
+        version: 0.26.11
 
   packages/game-action-program: {}
 

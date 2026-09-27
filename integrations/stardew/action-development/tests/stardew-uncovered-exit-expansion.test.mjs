@@ -17,14 +17,14 @@ import { promisify } from "node:util";
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(HERE, "..");
+const ROOT = path.join(HERE, "..", "..", "..", "..");
 const SOURCE_ROOT = path.join(ROOT, "ref", "external", "StardewValleyDecompiled", "Stardew Valley");
 const REGISTER = "integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json";
 const CATALOG = "design/gameplay-capability-catalog.json";
 const execFileAsync = promisify(execFile);
 
 async function run(script, args) {
-  const { stdout } = await execFileAsync(process.execPath, [path.join(HERE, script), ...args], {
+  const { stdout } = await execFileAsync(process.execPath, [path.join(HERE, "..", "src", "analysis", script), ...args], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     cwd: ROOT,
@@ -37,7 +37,7 @@ function expansion() {
   artifactPromise ??= (async () => {
     const tmp = path.join(HERE, `.tmp-expansion-${process.pid}.json`);
     const reconTmp = path.join(HERE, `.tmp-recon-${process.pid}.json`);
-    const exits = await run("derive-stardew-player-reachable-exits.mjs", [
+    const exits = await run("stardew-player-reachable-exits.mjs", [
       "--source-root",
       SOURCE_ROOT,
       "--action-register",
@@ -46,7 +46,7 @@ function expansion() {
       "4",
     ]);
     await writeFile(tmp, JSON.stringify(exits));
-    await run("reconcile-stardew-reachable-exits.mjs", [
+    await run("stardew-reachable-exit-reconciliation.mjs", [
       "--exits",
       tmp,
       "--action-register",
@@ -58,7 +58,7 @@ function expansion() {
       "--out",
       reconTmp,
     ]);
-    const result = await run("derive-stardew-uncovered-exit-expansion.mjs", [
+    const result = await run("stardew-uncovered-exit-expansion.mjs", [
       "--source-root",
       SOURCE_ROOT,
       "--exits",

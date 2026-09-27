@@ -16,7 +16,7 @@
  */
 
 import { writeFile } from "node:fs/promises";
-import { createParser, extractBranches } from "./lib/stardew-branch-writeset.mjs";
+import { createParser, extractBranches } from "./stardew-branch-writeset.mjs";
 
 const OPTIONS = new Set(["--source-root", "--rel-path", "--member", "--out"]);
 

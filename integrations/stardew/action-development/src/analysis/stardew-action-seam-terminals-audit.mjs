@@ -21,7 +21,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createParser, extractBranches } from "./lib/stardew-branch-writeset.mjs";
+import { createParser, extractBranches } from "./stardew-branch-writeset.mjs";
 
 function fail(code, message) {
   process.stderr.write(`${code}: ${message}\n`);
