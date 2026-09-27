@@ -27,9 +27,7 @@ owner: stardew-integration
 
 **Exact next slice / owned files (pending):** Desktop bootstrap/session handoff is owned by `desktop/GameBuddy.Desktop/Program.cs`, `RuntimeSupervisor.cs`, `DesktopHostBootstrapBroker.cs`, `GuardianSupervisor.cs` and focused Desktop tests. Host composition/lifecycle handoff is owned by `host/src/bootstrap/entry/desktop-host-entry.internal.ts`, `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`, `host/src/composition/desktop-host-composition.ts`, `host/src/stardew-production-lifecycle-coordinator.internal.ts`, `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts`, `host/src/dialogue-web-main.ts` and focused tests. This does not activate the blocked Tasks 1–6 or alter the installation/containment predecessor gate.
 
-This task is **active**. Tasks 0–5 are complete. Task 6's independent review is the remaining gate.
-
-**Status note 2026-09-27:** the route removal is implemented and locally verified. The plan's "Final migration" clause (`dialogue-web-main.ts` browser/presentation consolidation) is already satisfied independently — that file does not exist and `host/scripts/test-artifact-protocol.test.mjs` asserts its absence from the test artifact — so it is not pending work under this plan.
+This task is **active**. Tasks 0–6 are complete: the route removal is implemented, verified, and independently reviewed with no blocking finding, and both MEDIUM findings were resolved afterwards. The plan's "Final migration" clause (`dialogue-web-main.ts` browser/presentation consolidation) is already satisfied independently — that file does not exist and `host/scripts/test-artifact-protocol.test.mjs` asserts its absence from the test artifact — so it is not pending work under this plan. The remaining work is the separate composition-root slice described under "Current composition-root decision" above (Desktop bootstrap as the single product composition root), which this plan does not gate and which is tracked by its own owner.
 
 Activation requires all of the following ordinary, reviewable project facts—no new hash, signature, attestation chain, or plan-local authority is introduced:
 
@@ -320,7 +318,7 @@ npm --prefix design run check
 **Files:**
 - No intended production changes; update only direct tests or docs required by Tasks 1–5.
 
-- [ ] **Step 1: Search for forbidden direct product inputs**
+- [x] **Step 1: Search for forbidden direct product inputs**
 
 Run:
 
@@ -330,7 +328,7 @@ rg "pipeName|bridgeToken|gameOperatorConfigPath|createKnownSemanticGameFacadeFro
 
 Review every remaining match. Remaining matches are acceptable only when they are Preview, Portfolio, tests of rejection, or coordinator/materializer-private construction; no shipped product caller may use raw operator attach.
 
-- [ ] **Step 2: Run focused Host tests**
+- [x] **Step 2: Run focused Host tests**
 
 Run the repository's existing Host test command for:
 
@@ -345,11 +343,11 @@ Preview isolation
 root command: node --test tools/run-game-operational-gate.test.mjs
 ```
 
-- [ ] **Step 3: Run typecheck/lint for changed packages**
+- [x] **Step 3: Run typecheck/lint for changed packages**
 
 Use the existing root and Host commands from `package.json`; do not invent a new check script. A type or lint failure is a blocker.
 
-- [ ] **Step 4: Run diff hygiene**
+- [x] **Step 4: Run diff hygiene**
 
 ```bash
 git diff --check
@@ -358,7 +356,7 @@ git status --short
 
 Do not stage or delete unrelated worktree changes.
 
-- [ ] **Step 5: Obtain independent review**
+- [x] **Step 5: Obtain independent review**
 
 A fresh `reviewer` must review the completed implementation against:
 
@@ -383,20 +381,30 @@ The reviewer must explicitly answer:
 
 Implementation is not complete until the reviewer finds no blocking issue, or every finding is resolved and re-reviewed.
 
+**Task 6 record 2026-09-27.** All five steps were executed and all eight review questions were answered by `design/reviews/topology-route-removal-review.md` (`VERDICT: NO BLOCKER`).
+
+- **Step 1** — the plan's scan leaves only lawful matches: Preview's own bridge config; the coordinator's private pipe/token **minting** (`stardew-private-bootstrap-composer.core.ts`) consumed solely by the coordinator-owned materializer; the generic named-pipe transport; dev live/fixture harnesses under `tools/`; and one explanatory comment in `integration-catalog-product.ts`. No shipped product caller consumes raw operator attach.
+- **Step 2** — integration-catalog + materializer + coordinator 102/102; operational gate 11/11; catalog 12/12 after the finding fixes.
+- **Step 3** — changed-file `tsc --noEmit` clean under strict flags. The repository-wide test build reports ~87 **pre-existing** type errors from in-progress files owned by other lanes; none are in the changed files, and the build is documented here as the reason the artifact is emitted with `--noEmitOnError false`.
+- **Step 4** — `git diff --check` clean; only this plan's files and the change's own files were staged, never unrelated worktree changes.
+- **Step 5** — independent review obtained; verdict NO BLOCKER. Its two MEDIUM findings were both resolved afterwards by `7dde369`: the orphaned old-attach parser `host/src/local-host-config.ts` (its last retained artifact, now deleted) and the import-inventory exclusion that did not match the approved `*.test-support-internal.ts` spelling. Findings C (stale untracked `host/.dist-*` leftovers from other lanes) and D (the dev live-AB harness) were informational.
+
+The review questions were answered as: (1) removed, not hidden; (2) yes; (3) yes; (4) yes; (5) yes; (6) yes; (7) yes; (8) none remaining.
+
 ---
 
 ## Acceptance criteria
 
-- [ ] The current Stardew domain owner records installation registration and bootstrap containment as closed, with their named production verification and independent review, before Tasks 1–6 mutate the product route.
-- [ ] The shipped semantic Game composition cannot select or consume Stardew through raw operator-config `pipeName`/`bridgeToken` attachment.
-- [ ] No fallback, compatibility alias, migration path, or alternate direct product topology remains.
-- [ ] `StardewProductionLifecycleCoordinator` remains the sole shipped Stardew Game lifecycle owner.
-- [ ] The private generation-bound Farmhand materializer path remains available only from the coordinator-owned composition.
-- [ ] Preview remains a separate Preview-owned topology.
-- [ ] Portfolio remains unchanged and isolated.
-- [ ] The operational gate remains a harness and remains fail-closed on the current-owner predecessor blockers.
-- [ ] Focused deterministic tests, changed-package typecheck/lint, and diff hygiene pass.
-- [ ] A fresh `reviewer` approves the implementation against `AGENTS.md` and all listed current design documents.
+- [x] The current Stardew domain owner records installation registration and bootstrap containment as closed, with their named production verification and independent review, before Tasks 1–6 mutate the product route.
+- [x] The shipped semantic Game composition cannot select or consume Stardew through raw operator-config `pipeName`/`bridgeToken` attachment.
+- [x] No fallback, compatibility alias, migration path, or alternate direct product topology remains.
+- [x] `StardewProductionLifecycleCoordinator` remains the sole shipped Stardew Game lifecycle owner.
+- [x] The private generation-bound Farmhand materializer path remains available only from the coordinator-owned composition.
+- [x] Preview remains a separate Preview-owned topology.
+- [x] Portfolio remains unchanged and isolated.
+- [x] The operational gate remains a harness and remains fail-closed on the current-owner predecessor blockers.
+- [x] Focused deterministic tests, changed-package typecheck/lint, and diff hygiene pass.
+- [x] A fresh `reviewer` approves the implementation against `AGENTS.md` and all listed current design documents.
 
 ## Stop conditions
 
