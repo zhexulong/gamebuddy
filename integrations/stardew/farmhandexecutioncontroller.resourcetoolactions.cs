@@ -38,6 +38,7 @@ internal sealed partial class ExecutionManager
         float staminaBefore = Game1.player.Stamina;
         axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
         Game1.player.lastClick = Vector2.Zero;
+        Game1.player.checkForExhaustion(staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         float expectedStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
@@ -70,6 +71,7 @@ internal sealed partial class ExecutionManager
         float staminaBefore = Game1.player.Stamina;
         pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
         Game1.player.lastClick = Vector2.Zero;
+        Game1.player.checkForExhaustion(staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         // Pickaxe covers power with who.toolPower.Value before deducting; a plain
@@ -157,6 +159,7 @@ internal sealed partial class ExecutionManager
         float staminaBefore = Game1.player.Stamina;
         pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
         Game1.player.lastClick = Vector2.Zero;
+        Game1.player.checkForExhaustion(staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         // Pickaxe covers power with toolPower.Value (tap => 0), so a basic
@@ -226,6 +229,7 @@ internal sealed partial class ExecutionManager
         float staminaBefore = Game1.player.Stamina;
         hoe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
         Game1.player.lastClick = Vector2.Zero;
+        Game1.player.checkForExhaustion(staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
@@ -381,6 +385,7 @@ internal sealed partial class ExecutionManager
         while (tree.health.Value > 0f && swingCount < maximumSwingCount)
         {
             axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
+            Game1.player.checkForExhaustion(staminaBefore);
             swingCount++;
         }
         float staminaAfter = Game1.player.Stamina;
