@@ -266,6 +266,9 @@ try {
             : await ensureStandingTile(session.client, session.receipts, plan.location, plan.standingTiles, {});
         approachTrace.push(...positioned.trace.map((entry) => ({ ...entry, phase: "reach_standing_tile" })));
       } catch (error) {
+        // The helper attaches its trace to the failure; surface it, because the
+        // trace is the only place the per-move state and receipt evidence exist.
+        approachTrace.push(...(Array.isArray(error?.trace) ? error.trace : []).map((entry) => ({ ...entry, phase: "reach_standing_tile" })));
         approachDiagnostic = { phase: "reach_standing_tile", error: String(error?.message ?? error) };
       }
     }
