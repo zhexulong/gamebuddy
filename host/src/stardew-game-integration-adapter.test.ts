@@ -100,21 +100,21 @@ test("plant, refill, break, and chop completion evidence reject opaque sentinels
     [
       "refill_watering_can",
       "watering_can_refilled",
-      "target=water_01;slot=3;can=WateringCan;water_before=0;water_after=40;water_max=40",
+      "target=water_01;slot=3;can=WateringCan;water_before=0;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
       "slot=3",
       "slot=999",
     ],
     [
       "break_rock_source",
       "rock_source_broken",
-      "target=rock_01;tool=pickaxe;slot=3;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
+      "target=rock_01;tool=pickaxe;slot=3;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
       "slot=3",
       "slot=999",
     ],
     [
       "chop_tree_source",
       "tree_source_chopped",
-      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
+      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
       "slot=3",
       "slot=999",
     ],
@@ -155,7 +155,7 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
     [
       "till_soil",
       "soil_tilled",
-      "location=Farm;target=37,18;before=none;after=HoeDirt",
+      "location=Farm;target=37,18;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
       ["location", "target"],
     ],
     [
@@ -167,13 +167,13 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
     [
       "water_crop",
       "crop_watered",
-      "location=Farm;target=crop_01;tile=37,18;before_watered=false;after_watered=true;water_before=1;water_after=0;water_consumed=true",
+      "location=Farm;target=crop_01;tile=37,18;before_watered=false;after_watered=true;water_before=1;water_after=0;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
       ["location", "target", "tile"],
     ],
     [
       "refill_watering_can",
       "watering_can_refilled",
-      "target=water_01;slot=3;can=WateringCan;water_before=0;water_after=40;water_max=40",
+      "target=water_01;slot=3;can=WateringCan;water_before=0;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
       ["target", "can"],
     ],
     [
@@ -185,19 +185,19 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
     [
       "break_rock_source",
       "rock_source_broken",
-      "target=rock_01;tool=pickaxe;slot=3;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
+      "target=rock_01;tool=pickaxe;slot=3;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
       ["target"],
     ],
     [
       "clear_hoedirt",
       "hoedirt_cleared",
-      "location=Farm;target=soil_01;tile=10,12;tool=pickaxe;slot=3;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true",
+      "location=Farm;target=soil_01;tile=10,12;tool=pickaxe;slot=3;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
       ["location", "target", "tile"],
     ],
     [
       "chop_tree_source",
       "tree_source_chopped",
-      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
+      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
       ["target", "tree"],
     ],
     [
@@ -322,7 +322,7 @@ test("move_to_tile completion evidence accepts exact native arrival after :0.## 
 });
 
 test("till_soil completion evidence requires exact location, coordinates, and soil transition", () => {
-  const valid = "location=Farm;target=37,18;before=none;after=HoeDirt";
+  const valid = "location=Farm;target=37,18;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2";
   const receipt = {
     state: "succeeded",
     reasonCode: "soil_tilled",
@@ -367,7 +367,7 @@ test("till_soil completion evidence requires exact location, coordinates, and so
 
 test("water_crop completion evidence accepts both Mod water relations and rejects inconsistent variants", () => {
   const normal =
-    "location=Farm;target=crop_abcdef0123456789;tile=38,18;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true";
+    "location=Farm;target=crop_abcdef0123456789;tile=38,18;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2";
   // FarmhandExecutionController emits no bottomless/enchantment discriminator.
   // Its producer-defined waterConsumed=true branch can leave WaterLeft
   // unchanged.
@@ -1138,7 +1138,7 @@ test("feed_animal completion evidence requires the exact trough placement", () =
 
 test("collect_animal_product completion evidence preserves opaque animal identity and produce stack", () => {
   const valid =
-    "location=Barn;target=animal_01;animal=680508790015262242;tool=milk_pail;produce=(O)184;produce_stack=1;produce_cleared=true;inventory_before=0;inventory_after=1;inventory_gained=true;animation_complete=true";
+    "location=Barn;target=animal_01;animal=680508790015262242;tool=milk_pail;produce=(O)184;produce_stack=1;produce_cleared=true;inventory_before=0;inventory_after=1;inventory_gained=true;animation_complete=true;stamina_before=100;stamina_after=96;stamina_delta=-4;expected_stamina_cost=4";
   const receipt = {
     state: "succeeded",
     reasonCode: "animal_product_collected",
@@ -1437,7 +1437,7 @@ function succeededWaterCropReceipt(): ExecutionReceipt {
     revision: 7,
     evidence: {
       detail:
-        "location=Farm;target=crop_abcdef0123456789;tile=38,18;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true",
+        "location=Farm;target=crop_abcdef0123456789;tile=38,18;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
     },
   };
 }

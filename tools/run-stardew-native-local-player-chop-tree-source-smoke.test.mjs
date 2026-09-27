@@ -113,7 +113,7 @@ function createFake({ startAtFarmHouse = true } = {}) {
           reasonCode: "tree_source_chopped",
           revision,
           evidence: {
-            detail: `target=${args.expectedTargetId};tool=axe;slot=${args.slot};health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true`,
+            detail: `target=${args.expectedTargetId};tool=axe;slot=${args.slot};health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2`,
           },
         });
         return receipt;

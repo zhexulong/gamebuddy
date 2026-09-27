@@ -14,7 +14,7 @@ const ROCK = {
 };
 
 const BREAK_EVIDENCE =
-  "location=Farm;target=rock-target;tile=4,3;tool=pickaxe;slot=2;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true";
+  "location=Farm;target=rock-target;tile=4,3;tool=pickaxe;slot=2;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2";
 
 function fixtureConfig(overrides = {}) {
   return {

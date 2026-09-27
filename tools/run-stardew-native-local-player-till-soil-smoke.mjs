@@ -274,7 +274,7 @@ function chooseReachableSoilTile(snapshot) {
 }
 function parseStrictEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  const expected = ["location", "target", "before", "after"];
+  const expected = ["location", "target", "before", "after", "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost"];
   const result = {};
   for (const part of detail.split(";")) {
     const index = part.indexOf("=");

@@ -78,7 +78,7 @@ function scriptedBridge({ postconditionRefilled = true, capabilities = EXPECTED_
           reasonCode: "watering_can_refilled",
           revision,
           evidence: {
-            detail: "target=refill-1;slot=0;water_before=0;water_after=40;water_max=40",
+            detail: "target=refill-1;slot=0;water_before=0;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
           },
         });
         snapshot = {

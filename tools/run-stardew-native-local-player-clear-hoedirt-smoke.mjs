@@ -218,6 +218,10 @@ function parseStrictEvidence(receiptEvidence) {
     "hoedirt_present_before",
     "hoedirt_present_after",
     "removed",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
   ];
   const entries = detail.split(";").map((part) => {
     const index = part.indexOf("=");
