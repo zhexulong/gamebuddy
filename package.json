@@ -140,6 +140,8 @@
     "test:stardew-branch-writeset": "node --test integrations/stardew/action-development/tests/stardew-branch-writeset.test.mjs",
     "check:stardew-action-promotion": "node tools/check-stardew-action-promotion.mjs",
     "test:stardew-action-promotion": "node --test tools/check-stardew-action-promotion.test.mjs",
+    "check:stardew-tool-family-stamina-evidence": "node tools/check-stardew-tool-family-stamina-evidence.mjs",
+    "test:stardew-tool-family-stamina-evidence": "node --test tools/check-stardew-tool-family-stamina-evidence.test.mjs",
     "derive:stardew-player-reachable-exits": "node integrations/stardew/action-development/src/analysis/stardew-player-reachable-exits.mjs",
     "test:stardew-player-reachable-exits": "node --test integrations/stardew/action-development/tests/stardew-player-reachable-exits.test.mjs",
     "reconcile:stardew-reachable-exits": "node integrations/stardew/action-development/src/analysis/stardew-reachable-exit-reconciliation.mjs",
