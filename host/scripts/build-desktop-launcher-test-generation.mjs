@@ -7,6 +7,14 @@ import { withSyntheticVerifiedReleaseBundledRuntimeFixedReleaseCompositionForTes
 
 const outputRoot = process.argv[2];
 const fixtureRuntimeRoot = process.argv[3];
+// Opt-in: package the WHOLE fixture runtime tree instead of just `node.exe`.
+// The Desktop launcher test uses a minimal synthetic runtime (a .NET apphost named
+// node.exe), which is enough to exercise install/admission but yields an EMPTY
+// `runtimeClosure.files` — because the publisher lists `runtime/**` minus the
+// executable itself, and the launcher requires that list to be non-empty. A caller
+// that needs a generation the Host can actually BOOT passes the pinned Node
+// distribution tree and this flag, so the closure carries its real files.
+const fullRuntimeTree = process.argv[4] === "--full-runtime-tree";
 if (typeof outputRoot !== "string" || outputRoot.length === 0 || typeof fixtureRuntimeRoot !== "string" || fixtureRuntimeRoot.length === 0) {
   throw new Error("desktop_launcher_test_generation_output_and_fixture_runtime_required");
 }
@@ -15,10 +23,29 @@ const hash = (value) => createHash("sha256").update(value).digest("hex");
 const u16 = (value) => { const bytes = Buffer.alloc(2); bytes.writeUInt16LE(value); return bytes; };
 const u32 = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32LE(value); return bytes; };
 
-// The test-only runtime is the published exact-child fixture, never a repository or system Node runtime.
+/**
+ * Relative POSIX paths under `root`, ascending, matching the publisher's own
+ * `files()` sort so the acquisition closure and the re-scanned tree agree.
+ */
+async function runtimeTreeEntries(root, prefix = "") {
+  const entries = [];
+  for (const entry of await readdir(resolve(root, prefix), { withFileTypes: true })) {
+    const item = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) entries.push(...await runtimeTreeEntries(root, item));
+    else if (entry.isFile()) entries.push(item);
+    else throw new Error(`desktop_launcher_test_fixture_nonregular_entry:${item}`);
+  }
+  return entries.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
+// The runtime is supplied by the caller: either the published exact-child fixture,
+// or (with --full-runtime-tree) a complete pinned Node distribution. Never system
+// Node, and never the repository's node_modules.
 async function syntheticRuntimeFixture(root) {
-  const nodePath = resolve(root, "node.exe");
-  const entries = [{ name: "node.exe", bytes: await readFile(nodePath) }];
+  const names = fullRuntimeTree ? await runtimeTreeEntries(root) : ["node.exe"];
+  if (names.length === 0) throw new Error("desktop_launcher_test_fixture_empty");
+  const entries = [];
+  for (const name of names) entries.push({ name, bytes: await readFile(resolve(root, name)) });
   const node = entries.find((entry) => entry.name === "node.exe")?.bytes;
   if (node === undefined) throw new Error("desktop_launcher_test_fixture_node_missing");
   const archiveRoot = "node-v24.20.0-win-x64";

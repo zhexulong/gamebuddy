@@ -47,6 +47,24 @@ export function validateCompositionSurface(value) {
   return value === undefined || COMPOSITION_SURFACES.includes(value);
 }
 
+/**
+ * The bundled-runtime closure is owned by the publisher, and the gate consumes
+ * the same shape the production Desktop launcher consumes: an object
+ * `{ schema: "host-bundled-runtime-closure/v1", files: [...] }`. Only the shape
+ * needed to admit the generation is checked here; full membership and ordering
+ * remain the publisher's release gate.
+ */
+function isRuntimeClosure(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    value.schema === "host-bundled-runtime-closure/v1" &&
+    Array.isArray(value.files) &&
+    value.files.length > 0
+  );
+}
+
 export function validateCompositionNonceDigest(value) {
   return value === undefined || hex64(value);
 }
@@ -221,8 +239,11 @@ export async function admitDesktopCompositionGeneration({ outputRoot, pointer })
     admission.runtimeVersion !== "v24.20.0" ||
     admission.runtimePlatform !== "win32" ||
     admission.runtimeArch !== "x64" ||
-    !Array.isArray(admission.runtimeClosure) ||
-    admission.runtimeClosure.length === 0
+    // The publisher (`host/scripts/production-artifact.mjs`), its tests, and the
+    // production Desktop consumer (`InstalledHostRuntimeAdmission.cs`) all agree
+    // on one shape: an object `{ schema, files[] }`. This gate is not a second
+    // authority and must not invent a different one.
+    !isRuntimeClosure(admission.runtimeClosure)
   )
     throw new Error("desktop_compose_runtime_admission_invalid");
   if (sha256(await readFile(runtimePath)) !== admission.runtimeSha256 || sha256(await readFile(bootstrapPath)) !== admission.bootstrapSha256)
@@ -456,7 +477,20 @@ export async function launchDesktopCompositionGateChild({
   const frame = composeDesktopBootstrapFrame({ bootstrapId, ...pointer, rootLayout });
   const peer = serveGuardianHello({ bootstrapId, ...pointer });
   await peer.listen();
-  const child = spawnImpl(admitted.runtimePath, [admitted.bootstrapPath], {
+  // Spawn the INSTALLED copy, not the artifact. The bootstrap validates that its
+  // own module directory is inside `rootLayout.programRoot` (the child's
+  // LOCALAPPDATA), which the artifact path never is once the generation is
+  // published outside the repository — so spawning the artifact made every
+  // installed/composed run die with `desktop_runtime_bootstrap_unavailable`. The
+  // install step exists precisely to give the child its launcher-shaped root, and
+  // the production Desktop launcher starts the installed generation too. Runtime
+  // and bootstrap are therefore resolved relative to the installed root; their
+  // artifact-side digests were already verified above by the admission.
+  const installedRuntimePath = join(rootLayout.generationRoot, "runtime", "node.exe");
+  const installedBootstrapPath = join(rootLayout.generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
+  await regularFile(installedRuntimePath, "installed_runtime");
+  await regularFile(installedBootstrapPath, "installed_bootstrap");
+  const child = spawnImpl(installedRuntimePath, [installedBootstrapPath], {
     cwd: rootLayout.generationRoot,
     stdio: ["pipe", "pipe", "pipe", "ipc"],
     windowsHide: true,
