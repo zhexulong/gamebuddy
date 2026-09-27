@@ -212,14 +212,13 @@ test("fixture contains only schema, natural language task, target facts, and env
   assert.equal(fixture.environment.platform, "windows");
 });
 
-test("Task 0 current owner records both predecessors as closed and keeps the direct route transitional", async () => {
+test("current owner records both predecessors as closed and the direct route as removed", async () => {
   const owner = await readFile(new URL("../design/domains/stardew/integration.md", import.meta.url), "utf8");
 
-  // The transitional direct route is still the unwanted one, and its removal rule is
-  // unchanged: it must disappear from the shipped semantic Game composition once the
-  // predecessors close, with no fallback, compatibility path or alternate mode.
-  assert.match(owner, /直接 `pipeName`\/`bridgeToken` attach 是待移除的过渡 operator 路径/);
-  assert.match(owner, /执行后必须从正式 semantic Game composition 删除，且不得保留 fallback、兼容路径或 alternate production mode/);
+  // The direct route is GONE, not transitional. The removal rule it used to carry is
+  // now satisfied, so the owner must record the removal rather than a pending plan.
+  assert.match(owner, /直接 `pipeName`\/`bridgeToken` attach 已移除/);
+  assert.match(owner, /不保留 fallback、兼容路径或 alternate production mode/);
 
   // Both predecessor blockers are now recorded as CLOSED, which is what turns the
   // topology task's activation rule from blocked into satisfied. Asserting the closure
@@ -237,7 +236,6 @@ test("Task 0 current owner records both predecessors as closed and keeps the dir
 
   // The single-owner statement survives closure and is what Tasks 2-3 must preserve.
   assert.match(owner, /`StardewProductionLifecycleCoordinator` 仍是唯一产品 owner/);
-
   // Unchanged unrelated facts that this test has always pinned.
   assert.match(owner, /action platform 与部分 M1–M10 action 已有局部 closure；这不等于完整 Game release/);
   assert.match(owner, /ordinary Navigation 已独立完成自身 live gate 并正式发布/);
@@ -248,13 +246,6 @@ test("runner source uses the production launcher-owned manifest and fresh STOP c
   const launcher = await readFile(new URL("../host/scripts/start-production-artifact.mjs", import.meta.url), "utf8");
   const internalLauncher = await readFile(new URL("../host/scripts/start-artifact.internal.mjs", import.meta.url), "utf8");
   const controlLaunch = await readFile(new URL("../host/scripts/production-control-launch.mjs", import.meta.url), "utf8");
-  const operatorSelection = await readFile(
-    new URL(
-      "../host/src/continuity-semantic-game-operator-selection/continuity-semantic-game-operator-selection.internal.ts",
-      import.meta.url,
-    ),
-    "utf8",
-  );
   assert.match(source, /start-production-artifact\.mjs/);
   assert.match(source, /gamebuddy-game-operational-gate-evidence\/v2/);
   assert.match(source, /taskkill\.exe/);
@@ -283,8 +274,12 @@ test("runner source uses the production launcher-owned manifest and fresh STOP c
   assert.match(controlLaunch, /GAMEBUDDY_CONTROL_PIPE/);
   assert.match(controlLaunch, /GAMEBUDDY_CONTROL_TOKEN/);
   assert.match(controlLaunch, /material \?\? mintProductionControlLaunch\(\)/);
-  assert.match(operatorSelection, /const manifest = await loadHostDeploymentManifest\(selected\.manifestPath\)/);
-  assert.match(operatorSelection, /createGameRuntimeBinding\([\s\S]*manifest,/);
+  // Task 4: the operator-config direct attach route was removed, so this test can no
+  // longer read it. The stronger property is asserted instead: the shipped operational
+  // entry never passes an operator config path, and no file in the production entry
+  // closure still names the removed construction route.
+  assert.doesNotMatch(source, /gameOperatorConfigPath/);
+  assert.doesNotMatch(source, /operatorConfig/);
   assert.equal(OPERATIONAL_GATE_TIMEOUT_MS, 60_000);
 });
 
