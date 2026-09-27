@@ -1,0 +1,108 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "run-idle-stall-0001",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": "2026-01-01T00:01:55.000Z",
+  "surface": "chat-only",
+  "artifact": {
+    "generation": "gen-idle-stall-0001",
+    "inventoryDigest": "d292ce900ba1338eb0334ed59faaf127de1c64cb104af68e5b902a3257a7739f"
+  },
+  "provider": {
+    "embedded": true,
+    "observed": true
+  },
+  "originMs": 0,
+  "events": [
+    {
+      "at": 0,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.started"
+    },
+    {
+      "at": 10,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted"
+    },
+    {
+      "at": 20,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "queued"
+      }
+    },
+    {
+      "at": 30,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "running"
+      }
+    },
+    {
+      "at": 40,
+      "kind": "provider",
+      "actor": "host",
+      "code": "request.sent"
+    },
+    {
+      "at": 50,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 95000,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 96000,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 97000,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "admitted"
+    },
+    {
+      "at": 98000,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed"
+    },
+    {
+      "at": 99000,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled"
+    },
+    {
+      "at": 100000,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 110000,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.finished",
+      "meta": {
+        "providerObservability": "observed"
+      }
+    }
+  ]
+}

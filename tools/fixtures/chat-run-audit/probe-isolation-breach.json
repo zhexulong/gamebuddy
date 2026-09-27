@@ -1,0 +1,92 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "run-probe-isolation-breach-0001",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": "2026-01-01T00:00:01.000Z",
+  "surface": "chat-only",
+  "artifact": {
+    "generation": "gen-probe-isolation-breach-0001",
+    "inventoryDigest": "4d0f9c7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4"
+  },
+  "provider": {
+    "embedded": true,
+    "observed": true
+  },
+  "originMs": 0,
+  "events": [
+    {
+      "at": 0,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.started"
+    },
+    {
+      "at": 10,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted"
+    },
+    {
+      "at": 20,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read",
+      "meta": {
+        "state": "running"
+      }
+    },
+    {
+      "at": 30,
+      "kind": "provider",
+      "actor": "host",
+      "code": "request.sent"
+    },
+    {
+      "at": 40,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 50,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed",
+      "meta": {
+        "count": 1
+      }
+    },
+    {
+      "at": 60,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 70,
+      "kind": "probe",
+      "actor": "harness",
+      "code": "isolation.breach",
+      "meta": {
+        "probeId": "p-iso-a",
+        "manifestDigest": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0",
+        "distance": "session",
+        "dimension": "isolation",
+        "reason": "foreign_partition_hit"
+      }
+    },
+    {
+      "at": 80,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.finished",
+      "meta": {
+        "status": "collected",
+        "providerObservability": "observed"
+      }
+    }
+  ]
+}

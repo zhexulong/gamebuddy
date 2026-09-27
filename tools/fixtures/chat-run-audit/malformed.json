@@ -1,0 +1,46 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "run-malformed-0001",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "surface": "chat-only",
+  "provider": { "embedded": true, "observed": true },
+  "transcript": "leaked-extra-top-level-field",
+  "events": [
+    { "at": 0, "kind": "lifecycle", "actor": "harness", "code": "run.started" },
+    { "at": 5000, "kind": "http", "actor": "harness", "code": "state.read", "meta": { "state": "running" } },
+    { "at": 10, "kind": "http", "actor": "harness", "code": "state.read", "meta": { "state": "completed" } },
+    {
+      "at": 20,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.payload",
+      "meta": { "text": "a metadata key that is not allowed" }
+    },
+    {
+      "at": 30,
+      "kind": "telemetry",
+      "actor": "host",
+      "code": "frame.received",
+      "meta": { "payload": { "body": "not a scalar" } }
+    },
+    { "at": 35, "kind": "sse", "actor": "host", "code": "frame.received", "meta": { "count": [1, 2] } },
+    {
+      "at": 40,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received",
+      "meta": {
+        "state": "running",
+        "reason": "r",
+        "problemCode": "p",
+        "disposition": "d",
+        "status": "s",
+        "count": 1,
+        "cursor": "c",
+        "generation": 2,
+        "providerObservability": "observed",
+        "extraKey": "too many keys"
+      }
+    }
+  ]
+}

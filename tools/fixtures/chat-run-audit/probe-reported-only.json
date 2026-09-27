@@ -1,0 +1,91 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "run-probe-reported-only-0001",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": "2026-01-01T00:00:01.000Z",
+  "surface": "chat-only",
+  "artifact": {
+    "generation": "gen-probe-reported-only-0001",
+    "inventoryDigest": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809"
+  },
+  "provider": { "embedded": true, "observed": true },
+  "originMs": 0,
+  "events": [
+    { "at": 0, "kind": "lifecycle", "actor": "harness", "code": "run.started" },
+    { "at": 10, "kind": "lifecycle", "actor": "harness", "code": "turn.submitted" },
+    { "at": 20, "kind": "http", "actor": "harness", "code": "state.read", "meta": { "state": "running" } },
+    { "at": 30, "kind": "provider", "actor": "host", "code": "request.sent" },
+    { "at": 40, "kind": "sse", "actor": "host", "code": "frame.received" },
+    { "at": 50, "kind": "presentation", "actor": "host", "code": "committed", "meta": { "count": 1 } },
+    { "at": 60, "kind": "lifecycle", "actor": "harness", "code": "turn.terminal", "meta": { "state": "completed" } },
+    {
+      "at": 70,
+      "kind": "probe",
+      "actor": "harness",
+      "code": "needle.miss",
+      "meta": {
+        "probeId": "p-turn-01",
+        "manifestDigest": "3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+        "distance": "turn",
+        "dimension": "retention"
+      }
+    },
+    {
+      "at": 80,
+      "kind": "probe",
+      "actor": "harness",
+      "code": "distractor.confused",
+      "meta": {
+        "probeId": "p-turn-01",
+        "manifestDigest": "3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+        "distance": "turn",
+        "dimension": "discrimination"
+      }
+    },
+    {
+      "at": 90,
+      "kind": "probe",
+      "actor": "harness",
+      "code": "supersede.fail",
+      "meta": {
+        "probeId": "p-supersede-short",
+        "manifestDigest": "3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+        "distance": "turn",
+        "dimension": "supersession",
+        "reason": "old_retained"
+      }
+    },
+    {
+      "at": 100,
+      "kind": "probe",
+      "actor": "harness",
+      "code": "isolation.clean",
+      "meta": {
+        "probeId": "p-iso-a",
+        "manifestDigest": "3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+        "distance": "session",
+        "dimension": "isolation"
+      }
+    },
+    {
+      "at": 110,
+      "kind": "probe",
+      "actor": "harness",
+      "code": "observability_gap",
+      "meta": {
+        "probeId": "p-fold",
+        "manifestDigest": "3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+        "distance": "fold",
+        "dimension": "retention",
+        "reason": "fold_not_observed"
+      }
+    },
+    {
+      "at": 120,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.finished",
+      "meta": { "status": "collected", "providerObservability": "observed" }
+    }
+  ]
+}
