@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -96,3 +96,75 @@ test("Preview and operational gate sources do not import the product materialize
   );
   assert.doesNotMatch(operationalGateSource, /stardew-owned-farmhand-game-session-materializer/);
 });
+
+/**
+ * Task 3 Step 2: static production import inventory.
+ *
+ * The private generation-bound materializer is the ONE seam that may construct the
+ * shipped Stardew Game facade, so exactly one production module may import it: the
+ * lifecycle coordinator. Everything the plan names as forbidden — the shipped entry,
+ * semantic operator selection, the product catalog, Preview, Portfolio, and the
+ * operational runner — must not reach it.
+ *
+ * This scans production TypeScript sources rather than relying on structural typing,
+ * because a type-compatible duplicate wiring would pass a type check while still
+ * creating a second construction path.
+ */
+test("only the lifecycle coordinator imports the private Stardew materializer", async () => {
+  const testDirectory = dirname(fileURLToPath(import.meta.url));
+  const sourceRoot = testDirectory.endsWith("src") ? testDirectory : resolve(testDirectory, "..", "src");
+  const repositoryRoot = resolve(sourceRoot, "..", "..");
+
+  const materializerModule = "stardew-owned-farmhand-game-session-materializer";
+  const files = await collectProductionTypeScript(sourceRoot);
+
+  const importers: string[] = [];
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    // Match an actual module specifier, not a comment or an unrelated identifier.
+    if (new RegExp(`from\\s+["'][^"']*${materializerModule}[^"']*["']`).test(source)) {
+      importers.push(file.slice(repositoryRoot.length + 1).replaceAll("\\", "/"));
+    }
+  }
+
+  assert.deepEqual(
+    importers,
+    ["host/src/stardew-production-lifecycle-coordinator.internal.ts"],
+    "exactly the lifecycle coordinator may import the private materializer",
+  );
+
+  // The forbidden surfaces must also not name the operator-config construction route
+  // that Task 2 removed, so a future change cannot reintroduce it under a new name.
+  for (const relative of [
+    "host/src/main.ts",
+    "host/src/semantic-main-config.ts",
+    "host/src/integration-catalog-product.ts",
+    "host/src/farmhand-companion-preview.ts",
+  ]) {
+    const source = await readFile(join(repositoryRoot, relative), "utf8");
+    assert.doesNotMatch(source, /createKnownSemanticGameFacadeFromOperatorConfig/);
+    assert.doesNotMatch(source, /createKnownSemanticGameDeadOwnerRecoveryFacadeFromOperatorConfig/);
+  }
+});
+
+/** Recursively collect production TypeScript sources, excluding tests and fixtures. */
+async function collectProductionTypeScript(directory: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      // Generated outputs and dependency trees are not production sources.
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      found.push(...(await collectProductionTypeScript(path)));
+      continue;
+    }
+    if (!entry.name.endsWith(".ts")) continue;
+    // Test, test-support, and fixture modules are not shipped production modules.
+    if (/\.(test|spec)\.ts$/.test(entry.name)) continue;
+    if (/\.test-support\.ts$/.test(entry.name)) continue;
+    if (/-test-fixtures?\.ts$/.test(entry.name)) continue;
+    found.push(path);
+  }
+  found.sort();
+  return found;
+}

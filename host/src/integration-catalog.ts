@@ -107,12 +107,19 @@ export type IntegrationCatalog = Readonly<{
 /**
  * Product composition registry. Only explicitly compiled, receipt-backed
  * adapters can be selected; fixture adapters are never registered here.
+ *
+ * A provider-only registry is a legitimate product shape: when no shipped
+ * surface may select a launcher from operator config, the launchers list is
+ * empty and the registry serves only the composition-owned provider lookup.
+ * The guard therefore requires at least one registration of *either* kind, so
+ * an accidentally empty registry still fails closed, plus an upper bound that
+ * rejects an unbounded or corrupted registration set.
  */
 export function createIntegrationCatalog(
   launchers: readonly ConfigurableIntegrationLauncher[],
   providers: readonly GameIntegrationProvider[] = [],
 ): IntegrationCatalog {
-  if (!Array.isArray(launchers) || launchers.length === 0 || launchers.length > 32) {
+  if (!Array.isArray(launchers) || !Array.isArray(providers) || launchers.length + providers.length === 0 || launchers.length > 32 || providers.length > 32) {
     throw new Error("invalid_integration_catalog");
   }
   const byId = new Map<string, ConfigurableIntegrationLauncher>();
