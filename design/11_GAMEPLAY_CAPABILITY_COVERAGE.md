@@ -4,7 +4,7 @@
 >
 > **适用范围**：锁定支持的游戏版本、Integration、原生 AI Farmhand 身份和正常目标版本游戏规则下，玩家可执行的玩法意图如何被完整地表示、执行和验证。运行时授权是独立系统，不参与本目录的完整性判定。
 >
-> **前置阅读**：[`00_CORE_PRODUCT.md`](00_CORE_PRODUCT.md)、[`02_GAME_ADAPTER_ACTIONS.md`](02_GAME_ADAPTER_ACTIONS.md)、[`03_AGENT_RUNTIME.md`](03_AGENT_RUNTIME.md)、[`04_CONTEXT_MEMORY.md`](04_CONTEXT_MEMORY.md)、[`08_IMPLEMENTATION_PLAN.md`](08_IMPLEMENTATION_PLAN.md)、[`09_BDD_VALIDATION_PLAN.md`](09_BDD_VALIDATION_PLAN.md)、[`10_GAME_ACTION_AUTHORIZATION_AND_DISCLOSURE.md`](10_GAME_ACTION_AUTHORIZATION_AND_DISCLOSURE.md)、[`12_STARDEW_PRIMITIVE_ACTION_BASIS.md`](12_STARDEW_PRIMITIVE_ACTION_BASIS.md)。
+> **前置阅读**：[`00_CORE_PRODUCT.md`](00_CORE_PRODUCT.md)、[`02_GAME_ADAPTER_ACTIONS.md`](legacy/02_GAME_ADAPTER_ACTIONS.md)、[`03_AGENT_RUNTIME.md`](03_AGENT_RUNTIME.md)、[`04_CONTEXT_MEMORY.md`](04_CONTEXT_MEMORY.md)、[`08_IMPLEMENTATION_PLAN.md`](legacy/08_IMPLEMENTATION_PLAN.md)、[`09_BDD_VALIDATION_PLAN.md`](09_BDD_VALIDATION_PLAN.md)、[`10_GAME_ACTION_AUTHORIZATION_AND_DISCLOSURE.md`](10_GAME_ACTION_AUTHORIZATION_AND_DISCLOSURE.md)、[`12_STARDEW_PRIMITIVE_ACTION_BASIS.md`](legacy/12_STARDEW_PRIMITIVE_ACTION_BASIS.md)。
 
 ## 1. 决策
 
@@ -222,7 +222,7 @@ unsupported_in_scope  玩家可做但当前明确声明的版本、身份或游�
 
 ## 5. Stardew 1.6.15 Catalog seed 与顶层目录
 
-[`gameplay-capability-catalog.json`](gameplay-capability-catalog.json) 是 versioned machine-readable **semantic catalog**：它与 [`12_STARDEW_PRIMITIVE_ACTION_BASIS.md`](12_STARDEW_PRIMITIVE_ACTION_BASIS.md) 一同是 checker 的 canonical、versioned input，描述有限的 capability decision、复用关系、composite graph 和 live-evidence 状态；二者均不是 runtime capability/policy/receipt source。Catalog 可枚举现有 Basis，但 `semanticCompleteness` 仍会诚实报告尚待展开的 target-version content operation；这不授予 action，也不表示所有玩家玩法已实现。资源取得仍是 player composite intent，而非已存在的 `collect_resource` wire action。目标版本 provenance 限制见 [`13_STARDEW_NATIVE_PROVENANCE.md`](13_STARDEW_NATIVE_PROVENANCE.md)；具体 action 目录、已发布状态和证据仍以 [`08_IMPLEMENTATION_PLAN.md`](08_IMPLEMENTATION_PLAN.md) 与版本化 registry 为准。
+[`gameplay-capability-catalog.json`](gameplay-capability-catalog.json) 是 versioned machine-readable **semantic catalog**：它与 [`12_STARDEW_PRIMITIVE_ACTION_BASIS.md`](legacy/12_STARDEW_PRIMITIVE_ACTION_BASIS.md) 一同是 checker 的 canonical、versioned input，描述有限的 capability decision、复用关系、composite graph 和 live-evidence 状态；二者均不是 runtime capability/policy/receipt source。Catalog 可枚举现有 Basis，但 `semanticCompleteness` 仍会诚实报告尚待展开的 target-version content operation；这不授予 action，也不表示所有玩家玩法已实现。资源取得仍是 player composite intent，而非已存在的 `collect_resource` wire action。目标版本 provenance 限制见 [`13_STARDEW_NATIVE_PROVENANCE.md`](13_STARDEW_NATIVE_PROVENANCE.md)；具体 action 目录、已发布状态和证据仍以 [`08_IMPLEMENTATION_PLAN.md`](legacy/08_IMPLEMENTATION_PLAN.md) 与版本化 registry 为准。
 
 下表仅是顶层导航，不是替代逐 variant catalog 的完成宣言。
 
