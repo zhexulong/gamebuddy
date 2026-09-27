@@ -13,14 +13,15 @@ const STAMINA = "stamina_before=100;stamina_after=98;stamina_delta=-2;expected_s
  * One synthetic source per handler. Each file carries exactly one member, so a
  * corruption in one receipt can never be masked by a neighbor's evidence.
  */
-function handlerSource(handler, entry, { stamina = STAMINA, includeTerminal = true } = {}) {
+function handlerSource(handler, entry, { stamina = STAMINA, includeTerminal = true, exhaustion = true } = {}) {
   const receipt = includeTerminal
     ? `string evidence = $"a=1;${stamina}";
       return this.RememberTerminal(requestId, "x", ExecutionState.Succeeded, "${entry.terminal}", evidence);`
     : `return this.RememberTerminal(requestId, "x", ExecutionState.Accepted, "accepted", null);`;
+  const fatigue = exhaustion ? "\n    Game1.player.checkForExhaustion(staminaBefore);" : "";
   return `public LocalExecutionReceipt ${handler}(string requestId)
 {
-    // ${entry.tool} ${entry.dispatch}
+    // ${entry.tool} ${entry.dispatch}${fatigue}
     ${receipt}
 }`;
 }
@@ -53,6 +54,27 @@ test("a missing handler is reported rather than silently skipped", () => {
   delete sources["fake/RequestLocalTillSoil.cs"];
   const failures = validateToolFamilyStaminaEvidence(sources);
   assert.ok(failures.some((f) => /RequestLocalTillSoil/.test(f) && /not found/.test(f)));
+});
+
+test("a direct-dispatch tool that never calls checkForExhaustion is reported", () => {
+  const sources = completeSources();
+  // A direct-dispatch tool (axe) must set the persistent exhaustion consequence.
+  sources["fake/RequestLocalChopTreeSource.cs"] = handlerSource("RequestLocalChopTreeSource", STARDEW_TOOL_FAMILY.RequestLocalChopTreeSource, {
+    exhaustion: false,
+  });
+  const failures = validateToolFamilyStaminaEvidence(sources);
+  assert.ok(failures.some((f) => /RequestLocalChopTreeSource/.test(f) && /checkForExhaustion/.test(f)));
+});
+
+test("an animation-driven tool is exempt from the manual exhaustion call", () => {
+  // collect_animal_product runs its swing through native BeginUsingTool, whose
+  // animation frame ends in Farmer.useTool -> checkForExhaustion, so the handler
+  // must not hand-roll it; the vanilla fatigue consequence still applies.
+  const sources = completeSources();
+  const failures = validateToolFamilyStaminaEvidence(sources);
+  assert.ok(
+    failures.every((f) => !/RequestLocalCollectAnimalProduct/.test(f)),
+  );
 });
 
 test("the shipped execution manager sources satisfy the family contract", async () => {
