@@ -176,7 +176,7 @@
           "file": "StardewValley.Tools/Hoe.cs",
           "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
           "sensitivity": "mp-observational",
-          "observedEffect": "Game1.multiplayer.broadcastSprites at Hoe.cs:94/97/105/108 mirrors an already-applied dirt sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); location.makeHoeDirt on the same lines decides the result identically in both modes"
+          "observedEffect": "Game1.multiplayer.broadcastSprites at DoFunction[63add298605f1a34] mirrors an already-applied dirt sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); location.makeHoeDirt in the same method decides the result identically in both modes"
         }
       ],
       "admission": {
@@ -225,7 +225,7 @@
           "file": "StardewValley.Tools/WateringCan.cs",
           "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
           "sensitivity": "mp-observational",
-          "observedEffect": "Game1.multiplayer.broadcastSprites at WateringCan.cs:173/202 mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the refill/water mutation on the same lines is mode-independent"
+          "observedEffect": "Game1.multiplayer.broadcastSprites at DoFunction[1c45008e04b52857] mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the refill/water mutation in the same method is mode-independent"
         }
       ],
       "admission": {
@@ -272,11 +272,9 @@
       "lifecycle": "published",
       "seams": [
         {
-          "kind": "native",
-          "file": "StardewValley/GameLocation.cs",
-          "signature": "public virtual bool checkAction",
-          "sensitivity": "mp-observational",
-          "observedEffect": "IsLocalPlayer only gates pickup sound/animation"
+          "kind": "mod_owned",
+          "authority": "RequestLocalInspectMachine",
+          "sensitivity": "mp-insensitive"
         }
       ],
       "admission": {
@@ -394,7 +392,7 @@
           "file": "StardewValley/Object.cs",
           "signature": "public virtual bool placementAction",
           "sensitivity": "mp-observational",
-          "observedEffect": "owner.Value records the ACTING player's own id (Object.cs:6014 who?.UniqueMultiplayerID ?? Game1.player.UniqueMultiplayerID), so it is the same value in both world modes; location.removeLightSource((int)Game1.player.UniqueMultiplayerID) at :6066 only drops a key from location.sharedLights (GameLocation.cs:7073-7076); Game1.multiplayer.broadcastSprites mirrors an already-applied local sprite (Multiplayer.cs:447 adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer). The IsLocalPlayer read at :6695 belongs to the seed-planting branch and is unreachable for this source: IsFenceItem() at :6070 returns from the closed Fence branch at :6082, and the decisive write location.objects.Add(placementTile, new Fence(...)) at :6077 is mode-independent"
+          "observedEffect": "owner.Value records the ACTING player's own id (placementAction[0d5baccf6db96ece] who?.UniqueMultiplayerID ?? Game1.player.UniqueMultiplayerID), so it is the same value in both world modes; location.removeLightSource((int)Game1.player.UniqueMultiplayerID) only drops a key from location.sharedLights (removeLightSource[95668dd4701d2129]); Game1.multiplayer.broadcastSprites mirrors an already-applied local sprite (broadcastSprites[02af3d75626ee0a1] adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer). The IsLocalPlayer read in the seed branch is unreachable for this source: IsFenceItem() returns from the closed Fence branch, and the decisive write location.objects.Add(vector, new Fence(...)) is mode-independent"
         }
       ],
       "admission": {
@@ -461,7 +459,7 @@
           "file": "StardewValley.Tools/Pickaxe.cs",
           "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
           "sensitivity": "mp-observational",
-          "observedEffect": "Game1.multiplayer.broadcastSprites at Pickaxe.cs:149/151 mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) at :160/163 uses the id only for getFarmer(id).getStandingPosition() as the debris origin (Game1.cs:10422-10424) while still adding to location.debris; the stone removal at :166-168 is mode-independent"
+          "observedEffect": "Game1.multiplayer.broadcastSprites at DoFunction[8b05472c5f84fb92] mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) in the same method uses the id only for getFarmer(id).getStandingPosition() as the debris origin (getFarmer[206985316d84935d]) while still adding to location.debris; the stone removal in the same method is mode-independent"
         }
       ],
       "admission": {
@@ -478,7 +476,7 @@
           "file": "StardewValley.Tools/Pickaxe.cs",
           "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
           "sensitivity": "mp-observational",
-          "observedEffect": "Game1.multiplayer.broadcastSprites at Pickaxe.cs:149/151 mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) at :160/163 uses the id only for getFarmer(id).getStandingPosition() as the debris origin (Game1.cs:10422-10424) while still adding to location.debris; the stone removal at :166-168 is mode-independent"
+          "observedEffect": "Game1.multiplayer.broadcastSprites at DoFunction[8b05472c5f84fb92] mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) in the same method uses the id only for getFarmer(id).getStandingPosition() as the debris origin (getFarmer[206985316d84935d]) while still adding to location.debris; the stone removal in the same method is mode-independent"
         }
       ],
       "admission": {
@@ -495,7 +493,7 @@
           "file": "StardewValley.Tools/Hoe.cs",
           "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
           "sensitivity": "mp-observational",
-          "observedEffect": "Game1.multiplayer.broadcastSprites at Hoe.cs:94/97/105/108 mirrors an already-applied dirt sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); location.makeHoeDirt on the same lines decides the result identically in both modes"
+          "observedEffect": "Game1.multiplayer.broadcastSprites at DoFunction[63add298605f1a34] mirrors an already-applied dirt sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); location.makeHoeDirt in the same method decides the result identically in both modes"
         }
       ],
       "admission": {
@@ -512,7 +510,7 @@
           "file": "StardewValley.Tools/WateringCan.cs",
           "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
           "sensitivity": "mp-observational",
-          "observedEffect": "Game1.multiplayer.broadcastSprites at WateringCan.cs:173/202 mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the refill/water mutation on the same lines is mode-independent"
+          "observedEffect": "Game1.multiplayer.broadcastSprites at DoFunction[1c45008e04b52857] mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the refill/water mutation in the same method is mode-independent"
         }
       ],
       "admission": {
@@ -620,7 +618,7 @@
           "file": "StardewValley.Characters/Pet.cs",
           "signature": "public override bool checkAction",
           "sensitivity": "mp-semantic",
-          "semanticEffect": "lastPetDay is keyed by who.UniqueMultiplayerID (Pet.cs:641/643), but the +12 friendship at :646-649 is gated on grantedFriendshipForPet, a single per-pet NetBool (:70) reset daily (:484), and friendshipTowardFarmer is a single per-pet NetInt (:73). If another farmer already petted that pet today, this action still returns handled and emotes but grants 0 friendship, so the friendship delta differs by world mode"
+          "semanticEffect": "lastPetDay is keyed by who.UniqueMultiplayerID, but the +12 friendship in the same method is gated on grantedFriendshipForPet, a single per-pet NetBool reset daily, and friendshipTowardFarmer is a single per-pet NetInt. If another farmer already petted that pet today, this action still returns handled and emotes but grants 0 friendship, so the friendship delta differs by world mode (checkAction[1fca2c7c86d00c1f])"
         }
       ],
       "admission": {
@@ -749,7 +747,7 @@
           "file": "StardewValley/Object.cs",
           "signature": "public virtual bool performToolAction",
           "sensitivity": "mp-observational",
-          "observedEffect": "Game1.multiplayer.broadcastSprites at Object.cs:1129 mirrors the twig sprite; Game1.netWorldState.Value.TreasureTotemsUsed at :1254 belongs to the artifact-spot branch of the same method and only seeds Utility.CreateDaySaveRandom, which is populated in single-player too"
+          "observedEffect": "Game1.multiplayer.broadcastSprites at performToolAction[40afa58aa44e0820] mirrors the twig sprite; Game1.netWorldState.Value.TreasureTotemsUsed belongs to the artifact-spot branch of the same method and only seeds Utility.CreateDaySaveRandom, which is populated in single-player too"
         }
       ],
       "admission": {

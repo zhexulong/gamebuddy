@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -7,7 +8,104 @@ import path from "node:path";
  * Admission is DERIVED from the Mod source (never hand-typed), so the register
  * cannot drift from the implementation. Seam classification is authored here
  * and re-verified against the exact decompiled source by the checker.
+ *
+ * Evidence cites code as `Member[<method-body-hash>]`, computed by `cite()` from the
+ * same tree the checker reads. Line numbers are never cited: they drift whenever the
+ * tree is re-decompiled (the 2026-09-26 regeneration invalidated every citation at
+ * once), while a normalised method body hash only changes with the cited code.
  */
+const SOURCE_ROOT = "ref/external/StardewValleyDecompiled/Stardew Valley";
+
+/** Brace-balanced method body extraction that skips strings and comments. */
+function extractMethodBody(text, signature) {
+  const start = text.indexOf(signature);
+  if (start < 0) return null;
+  let depth = 0;
+  let started = false;
+  let inString = false;
+  let inChar = false;
+  let inLine = false;
+  let inBlock = false;
+  for (let i = start; i < text.length; i += 1) {
+    const character = text[i];
+    const next = text[i + 1];
+    if (inLine) {
+      if (character === "\n") inLine = false;
+      continue;
+    }
+    if (inBlock) {
+      if (character === "*" && next === "/") {
+        inBlock = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (inString) {
+      if (character === "\\") i += 1;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (inChar) {
+      if (character === "\\") i += 1;
+      else if (character === "'") inChar = false;
+      continue;
+    }
+    if (character === "/" && next === "/") {
+      inLine = true;
+      i += 1;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      inBlock = true;
+      i += 1;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "'") {
+      inChar = true;
+      continue;
+    }
+    if (character === "{") {
+      depth += 1;
+      started = true;
+    } else if (character === "}") {
+      depth -= 1;
+      if (started && depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * `Member[<hash>]` anchor for the method named `member` in `file`.
+ *
+ * The signature fragment ``member(` is enough to locate the declaration; whitespace
+ * is normalised before hashing so reformatting alone does not invalidate an anchor.
+ */
+function cite(file, member) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(SOURCE_ROOT, file), "utf8");
+  } catch {
+    return `${member}[source-unavailable]`;
+  }
+  const declaration = [...text.matchAll(new RegExp(`[^\\n]*\\b${member}\\s*\\([^;]*\\)\\s*\\n?\\s*\\{`, "g"))].find(
+    (match) => !match[0].trimStart().startsWith("//"),
+  );
+  if (!declaration) return `${member}[declaration-not-found]`;
+  const body = extractMethodBody(text, declaration[0].trim());
+  if (!body) return `${member}[body-not-found]`;
+  const normalized = body
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+  const hash = createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 16);
+  return `${member}[${hash}]`;
+}
 
 // actionId -> [file, signature, sensitivity, semanticEffect?]  (native seams)
 // actionId -> ["mod_owned", authority]                      (no native seam)
@@ -28,44 +126,166 @@ const TABLE = {
   // location.temporarySprites first, then returns when !Game1.IsMultiplayer), and the
   // debris id is used only for getFarmer(id).getStandingPosition() as the origin; the
   // terrain/object mutation on the same lines is mode-independent. Collateral, not outcome.
-  till_soil: ["StardewValley.Tools/Hoe.cs", "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-observational", "Game1.multiplayer.broadcastSprites at Hoe.cs:94/97/105/108 mirrors an already-applied dirt sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); location.makeHoeDirt on the same lines decides the result identically in both modes"],
-  dig_artifact_spot: ["StardewValley.Tools/Hoe.cs", "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-observational", "Game1.multiplayer.broadcastSprites at Hoe.cs:94/97/105/108 mirrors an already-applied dirt sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); location.makeHoeDirt on the same lines decides the result identically in both modes"],
-  water_crop: ["StardewValley.Tools/WateringCan.cs", "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-observational", "Game1.multiplayer.broadcastSprites at WateringCan.cs:173/202 mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the refill/water mutation on the same lines is mode-independent"],
-  refill_watering_can: ["StardewValley.Tools/WateringCan.cs", "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-observational", "Game1.multiplayer.broadcastSprites at WateringCan.cs:173/202 mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the refill/water mutation on the same lines is mode-independent"],
-  chop_tree_source: ["StardewValley.Tools/Axe.cs", "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-insensitive"],
-  chop_stump: ["StardewValley.Tools/Axe.cs", "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-insensitive"],
-  break_rock_source: ["StardewValley.Tools/Pickaxe.cs", "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-observational", "Game1.multiplayer.broadcastSprites at Pickaxe.cs:149/151 mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) at :160/163 uses the id only for getFarmer(id).getStandingPosition() as the debris origin (Game1.cs:10422-10424) while still adding to location.debris; the stone removal at :166-168 is mode-independent"],
-  clear_hoedirt: ["StardewValley.Tools/Pickaxe.cs", "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-observational", "Game1.multiplayer.broadcastSprites at Pickaxe.cs:149/151 mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) at :160/163 uses the id only for getFarmer(id).getStandingPosition() as the debris origin (Game1.cs:10422-10424) while still adding to location.debris; the stone removal at :166-168 is mode-independent"],
-  collect_animal_product: ["StardewValley.Tools/MilkPail.cs", "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-insensitive"],
-  clear_debris: ["StardewValley/Tool.cs", "public virtual void DoFunction(GameLocation location, int x, int y, int power, Farmer who)", "mp-insensitive"],
+  till_soil: [
+    "StardewValley.Tools/Hoe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/Hoe.cs", "DoFunction")} mirrors an already-applied dirt sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); location.makeHoeDirt in the same method decides the result identically in both modes`,
+  ],
+  dig_artifact_spot: [
+    "StardewValley.Tools/Hoe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/Hoe.cs", "DoFunction")} mirrors an already-applied dirt sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); location.makeHoeDirt in the same method decides the result identically in both modes`,
+  ],
+  water_crop: [
+    "StardewValley.Tools/WateringCan.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/WateringCan.cs", "DoFunction")} mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the refill/water mutation in the same method is mode-independent`,
+  ],
+  refill_watering_can: [
+    "StardewValley.Tools/WateringCan.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/WateringCan.cs", "DoFunction")} mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the refill/water mutation in the same method is mode-independent`,
+  ],
+  chop_tree_source: [
+    "StardewValley.Tools/Axe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-insensitive",
+  ],
+  chop_stump: [
+    "StardewValley.Tools/Axe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-insensitive",
+  ],
+  break_rock_source: [
+    "StardewValley.Tools/Pickaxe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/Pickaxe.cs", "DoFunction")} mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) in the same method uses the id only for getFarmer(id).getStandingPosition() as the debris origin (${cite("StardewValley/Game1.cs", "getFarmer")}) while still adding to location.debris; the stone removal in the same method is mode-independent`,
+  ],
+  clear_hoedirt: [
+    "StardewValley.Tools/Pickaxe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/Pickaxe.cs", "DoFunction")} mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) in the same method uses the id only for getFarmer(id).getStandingPosition() as the debris origin (${cite("StardewValley/Game1.cs", "getFarmer")}) while still adding to location.debris; the stone removal in the same method is mode-independent`,
+  ],
+  collect_animal_product: [
+    "StardewValley.Tools/MilkPail.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-insensitive",
+  ],
+  clear_debris: [
+    "StardewValley/Tool.cs",
+    "public virtual void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-insensitive",
+  ],
   // Outcome fork, not collateral: grantedFriendshipForPet is one NetBool per PET
   // (Pet.cs:70) and friendshipTowardFarmer one NetInt per PET (Pet.cs:73), while only
   // lastPetDay is keyed by UniqueMultiplayerID (:67). Once ANY farmer has petted the
   // pet today, :646 is false for everyone, so this farmer's pet grants 0 friendship.
   // The Mod receipt nonetheless asserts before+12 (:378/:387) — a pre-existing defect.
-  pet_animal: ["StardewValley.Characters/Pet.cs", "public override bool checkAction", "mp-semantic", "lastPetDay is keyed by who.UniqueMultiplayerID (Pet.cs:641/643), but the +12 friendship at :646-649 is gated on grantedFriendshipForPet, a single per-pet NetBool (:70) reset daily (:484), and friendshipTowardFarmer is a single per-pet NetInt (:73). If another farmer already petted that pet today, this action still returns handled and emotes but grants 0 friendship, so the friendship delta differs by world mode"],
+  pet_animal: [
+    "StardewValley.Characters/Pet.cs",
+    "public override bool checkAction",
+    "mp-semantic",
+    `lastPetDay is keyed by who.UniqueMultiplayerID, but the +12 friendship in the same method is gated on grantedFriendshipForPet, a single per-pet NetBool reset daily, and friendshipTowardFarmer is a single per-pet NetInt. If another farmer already petted that pet today, this action still returns handled and emotes but grants 0 friendship, so the friendship delta differs by world mode (${cite("StardewValley.Characters/Pet.cs", "checkAction")})`,
+  ],
   pickup_forage: ["StardewValley/Game1.cs", "public static bool tryToCheckAt", "mp-insensitive"],
   enter_exit: ["StardewValley/Farmer.cs", "public void warpFarmer(", "mp-insensitive"],
   // pickup_item hands delivery to native magnetic pickup: the bridge never calls
   // collect or touches the inventory itself.
   pickup_item: ["StardewValley/Debris.cs", "public virtual bool collect(", "mp-insensitive"],
-  plant_seed: ["StardewValley/Object.cs", "public virtual bool placementAction", "mp-observational", "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"],
-  plant_sapling: ["StardewValley/Object.cs", "public virtual bool placementAction", "mp-observational", "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"],
-  place_crab_pot: ["StardewValley/Object.cs", "public virtual bool placementAction", "mp-observational", "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"],
-  fertilize_tile: ["StardewValley/Object.cs", "public virtual bool placementAction", "mp-observational", "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result"],
+  plant_seed: [
+    "StardewValley/Object.cs",
+    "public virtual bool placementAction",
+    "mp-observational",
+    "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result",
+  ],
+  plant_sapling: [
+    "StardewValley/Object.cs",
+    "public virtual bool placementAction",
+    "mp-observational",
+    "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result",
+  ],
+  place_crab_pot: [
+    "StardewValley/Object.cs",
+    "public virtual bool placementAction",
+    "mp-observational",
+    "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result",
+  ],
+  fertilize_tile: [
+    "StardewValley/Object.cs",
+    "public virtual bool placementAction",
+    "mp-observational",
+    "IsLocalPlayer only gates the sprinkler/chest auto-harvest hook, after dirt.plant already decided the result",
+  ],
   // canBePlacedHere is only the Mod's pre-check (farmingconstructionactions.cs:360);
   // the mutation is Object.placementAction, reached from
   // PlaceQualifiedWoodFenceNative (farmhandexecutioncontroller.cs:2528-2532).
-  place_wood_fence: ["StardewValley/Object.cs", "public virtual bool placementAction", "mp-observational", "owner.Value records the ACTING player's own id (Object.cs:6014 who?.UniqueMultiplayerID ?? Game1.player.UniqueMultiplayerID), so it is the same value in both world modes; location.removeLightSource((int)Game1.player.UniqueMultiplayerID) at :6066 only drops a key from location.sharedLights (GameLocation.cs:7073-7076); Game1.multiplayer.broadcastSprites mirrors an already-applied local sprite (Multiplayer.cs:447 adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer). The IsLocalPlayer read at :6695 belongs to the seed-planting branch and is unreachable for this source: IsFenceItem() at :6070 returns from the closed Fence branch at :6082, and the decisive write location.objects.Add(placementTile, new Fence(...)) at :6077 is mode-independent"],
-  bait_crab_pot: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
-  machine_inspect: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
-  machine_load: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
-  machine_collect_output: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
-  feed_animal: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
-  harvest_crop: ["StardewValley.TerrainFeatures/HoeDirt.cs", "public override bool performUseAction", "mp-insensitive", "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
-  scythe_crop: ["StardewValley.TerrainFeatures/HoeDirt.cs", "public override bool performToolAction", "mp-insensitive", "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
-  cut_weeds: ["StardewValley/Object.cs", "public virtual bool performToolAction", "mp-observational", "Game1.multiplayer.broadcastSprites at Object.cs:1129 mirrors the twig sprite; Game1.netWorldState.Value.TreasureTotemsUsed at :1254 belongs to the artifact-spot branch of the same method and only seeds Utility.CreateDaySaveRandom, which is populated in single-player too"],
-  use_item: ["StardewValley/Farmer.cs", "public void eatObject(", "mp-observational", "IsLocalPlayer only gates a buff-awareness shortcut"],
+  place_wood_fence: [
+    "StardewValley/Object.cs",
+    "public virtual bool placementAction",
+    "mp-observational",
+    `owner.Value records the ACTING player's own id (${cite("StardewValley/Object.cs", "placementAction")} who?.UniqueMultiplayerID ?? Game1.player.UniqueMultiplayerID), so it is the same value in both world modes; location.removeLightSource((int)Game1.player.UniqueMultiplayerID) only drops a key from location.sharedLights (${cite("StardewValley/GameLocation.cs", "removeLightSource")}); Game1.multiplayer.broadcastSprites mirrors an already-applied local sprite (${cite("StardewValley/Multiplayer.cs", "broadcastSprites")} adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer). The IsLocalPlayer read in the seed branch is unreachable for this source: IsFenceItem() returns from the closed Fence branch, and the decisive write location.objects.Add(vector, new Fence(...)) is mode-independent`,
+  ],
+  bait_crab_pot: [
+    "StardewValley/GameLocation.cs",
+    "public virtual bool checkAction",
+    "mp-observational",
+    "IsLocalPlayer only gates pickup sound/animation",
+  ],
+  // machine_inspect is declared read-only in FarmhandActionDefinitions
+  // (`EmbodiedActorResource, "read"`) and its handler performs no native call at all:
+  // it reads the machine's state and mints a receipt from it. Recording a native seam
+  // here asserted an invocation that does not exist (the checker's seam-call axis
+  // catches exactly this). The observation surface is the Mod's own, like the other
+  // read-only actions.
+  machine_inspect: ["mod_owned", "RequestLocalInspectMachine"],
+  machine_load: [
+    "StardewValley/GameLocation.cs",
+    "public virtual bool checkAction",
+    "mp-observational",
+    "IsLocalPlayer only gates pickup sound/animation",
+  ],
+  machine_collect_output: [
+    "StardewValley/GameLocation.cs",
+    "public virtual bool checkAction",
+    "mp-observational",
+    "IsLocalPlayer only gates pickup sound/animation",
+  ],
+  feed_animal: [
+    "StardewValley/GameLocation.cs",
+    "public virtual bool checkAction",
+    "mp-observational",
+    "IsLocalPlayer only gates pickup sound/animation",
+  ],
+  harvest_crop: [
+    "StardewValley.TerrainFeatures/HoeDirt.cs",
+    "public override bool performUseAction",
+    "mp-insensitive",
+    "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral",
+  ],
+  scythe_crop: [
+    "StardewValley.TerrainFeatures/HoeDirt.cs",
+    "public override bool performToolAction",
+    "mp-insensitive",
+    "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral",
+  ],
+  cut_weeds: [
+    "StardewValley/Object.cs",
+    "public virtual bool performToolAction",
+    "mp-observational",
+    `Game1.multiplayer.broadcastSprites at ${cite("StardewValley/Object.cs", "performToolAction")} mirrors the twig sprite; Game1.netWorldState.Value.TreasureTotemsUsed belongs to the artifact-spot branch of the same method and only seeds Utility.CreateDaySaveRandom, which is populated in single-player too`,
+  ],
+  use_item: [
+    "StardewValley/Farmer.cs",
+    "public void eatObject(",
+    "mp-observational",
+    "IsLocalPlayer only gates a buff-awareness shortcut",
+  ],
   // Shipping has two seams: the write itself, and the container resolution that
   // decides WHERE the write lands.
   ship_item: [
@@ -95,9 +315,24 @@ const TABLE = {
   inspect_world_map: ["mod_owned", "WorldMap"],
   find_destination: ["mod_owned", "DerivedDestinationSet"],
   observe_scene: ["mod_owned", "SceneObservation"],
-  craft_item: ["StardewValley/CraftingRecipe.cs", "public virtual Item createItem()", "mp-insensitive", "team.SpecialOrderRuleActive(\"QI_COOKING\") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
-  cook_recipe: ["StardewValley/CraftingRecipe.cs", "public virtual Item createItem()", "mp-insensitive", "team.SpecialOrderRuleActive(\"QI_COOKING\") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral"],
-  collect_crab_pot_output: ["StardewValley/GameLocation.cs", "public virtual bool checkAction", "mp-observational", "IsLocalPlayer only gates pickup sound/animation"],
+  craft_item: [
+    "StardewValley/CraftingRecipe.cs",
+    "public virtual Item createItem()",
+    "mp-insensitive",
+    'team.SpecialOrderRuleActive("QI_COOKING") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral',
+  ],
+  cook_recipe: [
+    "StardewValley/CraftingRecipe.cs",
+    "public virtual Item createItem()",
+    "mp-insensitive",
+    'team.SpecialOrderRuleActive("QI_COOKING") only stamps orderData on a cooking recipe; FarmerTeam is populated in single-player too, so the read is mode-neutral',
+  ],
+  collect_crab_pot_output: [
+    "StardewValley/GameLocation.cs",
+    "public virtual bool checkAction",
+    "mp-observational",
+    "IsLocalPlayer only gates pickup sound/animation",
+  ],
 };
 
 const MP_REJECT_PATTERN =
@@ -108,7 +343,8 @@ const actionToMethod = new Map();
 for (const f of fs.readdirSync("integrations/stardew/Handlers")) {
   if (!f.endsWith(".cs")) continue;
   const t = fs.readFileSync(path.join("integrations/stardew/Handlers", f), "utf8");
-  for (const m of t.matchAll(/"([a-z_]+)"\s*=>\s*this\.executions\.(RequestLocal\w+)\(/g)) actionToMethod.set(m[1], m[2]);
+  for (const m of t.matchAll(/"([a-z_]+)"\s*=>\s*this\.executions\.(RequestLocal\w+)\(/g))
+    actionToMethod.set(m[1], m[2]);
 }
 const methodBody = new Map();
 for (const f of fs.readdirSync("integrations/stardew")) {
@@ -125,7 +361,7 @@ for (const f of fs.readdirSync("integrations/stardew")) {
 // Actions routed through the read pipelines / navigation admission rather than a
 // RequestLocal* handler. Derived from the same sources the checker uses.
 const READ_PIPELINE_ACTIONS = new Set(["inspect_world_map", "find_destination", "observe_scene"]);
-const NAVIGATION_ADMISSION_ACTIONS = new Set(["navigate_to_destination"]);
+const _NAVIGATION_ADMISSION_ACTIONS = new Set(["navigate_to_destination"]);
 
 const surface = { actions: readCatalog() };
 function readCatalog() {
@@ -162,7 +398,7 @@ const actions = [];
 for (const entry of surface.actions) {
   const actionId = entry.actionId;
   const registered = actionToMethod.has(actionId);
-  const admission = registered ? methodBody.get(actionToMethod.get(actionId)) ?? "" : "";
+  const admission = registered ? (methodBody.get(actionToMethod.get(actionId)) ?? "") : "";
   const head = admission.split("\n").slice(0, 45).join("\n");
   const rejects = registered && MP_REJECT_PATTERN.test(head);
   const admissionEntry = READ_PIPELINE_ACTIONS.has(actionId)
@@ -171,7 +407,7 @@ for (const entry of surface.actions) {
       ? { verdict: "rejects_multiplayer", reasonCode: "native_local_player_required" }
       : { verdict: "admits_multiplayer" };
   const seam = TABLE[actionId];
-  if (seam === null) throw new Error("action needs an explicit seam entry: " + actionId);
+  if (seam === null) throw new Error(`action needs an explicit seam entry: ${actionId}`);
 
   // A seam entry is either one tuple or a list of tuples.
   const seamList = seam[0] === "mod_owned" || typeof seam[0] === "string" ? [seam] : seam;
@@ -200,7 +436,8 @@ for (const entry of surface.actions) {
     : seams.some((s) => s.sensitivity === "mp-observational")
       ? "mp-observational"
       : "mp-insensitive";
-  const requiredLiveTopology = derivedSensitivity === "mp-semantic" ? "shared_world_multiplayer" : "single_player_native_companion";
+  const requiredLiveTopology =
+    derivedSensitivity === "mp-semantic" ? "shared_world_multiplayer" : "single_player_native_companion";
 
   actions.push({
     actionId,
@@ -311,7 +548,7 @@ const register = {
           predicate: "if (Game1.IsMultiplayer)",
           forkClass: "outcome_fork",
           reason:
-            "Shared world branches to Game1.netReady.SetLocalReady(\"sleep\", true) plus a ReadyCheckDialog whose confirm " +
+            'Shared world branches to Game1.netReady.SetLocalReady("sleep", true) plus a ReadyCheckDialog whose confirm ' +
             "callback is the only path to doSleep(); single-player calls doSleep() directly. The day therefore advances on a " +
             "different trigger and after a different set of conditions.",
         },
@@ -322,7 +559,7 @@ const register = {
           forkClass: "outcome_fork",
           reason:
             "Single-player passes out straight into NewDay(0f); a shared world instead sets player.passedOut, swaps in a " +
-            "non-cancelable ReadyCheckDialog(\"sleep\") and advances only via that dialog's confirm callback.",
+            'non-cancelable ReadyCheckDialog("sleep") and advances only via that dialog\'s confirm callback.',
         },
         {
           file: "StardewValley/Game1.cs",
@@ -349,7 +586,10 @@ const register = {
   actions,
 };
 
-fs.writeFileSync("integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json", JSON.stringify(register, null, 2) + "\n");
+fs.writeFileSync(
+  "integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json",
+  `${JSON.stringify(register, null, 2)}\n`,
+);
 console.log("wrote", actions.length, "actions");
 console.log("rejects-MP:", actions.filter((a) => a.admission.verdict === "rejects_multiplayer").length);
 console.log("read-only:", actions.filter((a) => a.admission.verdict === "read_only").length);
