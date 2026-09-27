@@ -66,21 +66,27 @@ test("三档计数之和等于未匹配候选总数", async () => {
     counts.tierA_catalogIntentExists + counts.tierB_noCatalogIntent + counts.tierC_nonGameplayWrites,
     counts.unmatchedCandidateUnits,
   );
-  assert.equal(counts.unmatchedCandidateUnits, 65);
-  // P1 修正（手持物消耗不算多持有）+ leftClick 族加入后
+  assert.equal(counts.unmatchedCandidateUnits, 64);
+  // P1 修正(手持物消耗不算多持有)+ leftClick 族加入后
   assert.equal(counts.tierA_catalogIntentExists, 22);
-  assert.equal(counts.tierB_noCatalogIntent, 31);
-  assert.equal(counts.tierC_nonGameplayWrites, 12);
+  // 字段分类修正:Shears.DoFunction 已登记为 collect_animal_product 的第二个 seam(handler 本就覆盖 MilkPail/Shears),
+  // kickProgress/localKickStartTile(Chest 踢动画)、lastTentTouchedByPlayer(Tent 交互辅助静态)、
+  // HitTimerInstance.Milliseconds(Chest 命中计时)、boulderKnockTimer/boulderKnocksLeft/
+  // doneHittingBoulderWithToolTimer(IslandNorth 岩缝敲击计时)从 gameplay 移至非 gameplay
+  // -> 未匹配候选从 65 降到 64,B 档从 28 降到 26
+  assert.equal(counts.tierB_noCatalogIntent, 26);
+  assert.equal(counts.tierC_nonGameplayWrites, 16);
 });
 
 test("C 档只含视觉/计时器写入（不含 gameplay 字段）", async () => {
   const a = await report();
   const nonGameplay =
-    /^(NeedsUpdate|invincTimer|HitTimerInstance|HitTimer|freezePause|CanMove|haltAfterCheck|pingPong|statueTimer|showWantBubbleTimer|frame|loop|lightRadius|lightcolor)$/i;
+    /^(NeedsUpdate|invincTimer|HitTimerInstance|HitTimer|freezePause|CanMove|haltAfterCheck|pingPong|statueTimer|showWantBubbleTimer|frame|loop|lightRadius|lightcolor|kickProgress|localKickStartTile|lastTentTouchedByPlayer|boulderKnockTimer|boulderKnocksLeft|doneHittingBoulderWithToolTimer)$/i;
   for (const r of a.tiers.C_non_gameplay_writes) {
     assert.equal(r.gameplayWrites.length, 0, `${r.class}.${r.member} 不应有 gameplay 写入`);
     for (const w of r.nonGameplayWrites) {
       const tail = w
+        .replace(/[.](Value|Milliseconds|Seconds|X|Y|Count|Length|Stack)$/i, "")
         .replace(/\[.*?\]/g, "")
         .split(".")
         .pop();
