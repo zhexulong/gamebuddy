@@ -1,6 +1,7 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
-import { dehydrateCompanionSpeech } from "./companion-speech-dehydration.js";
+import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
+import { IncrementalSpeechAccumulator } from "./companion-speech-incremental.js";
 
 const MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES = 16_384;
 
@@ -28,6 +29,14 @@ export type NativeCompanionContentSinks = Readonly<{
    * The observer opens this only after its caller's explicit durable barrier.
    */
   onPreviewDelta(delta: string): void | Promise<void>;
+  /**
+   * Optional complete-sentence projection: when this sink is provided the
+   * observer treats the delta lane as the presentation lane and emits each
+   * dehydrated sentence the moment its boundary arrives, in arrival order.
+   * When it is absent the observer keeps its preview/final semantics exactly;
+   * Chat consumers never provide it.
+   */
+  onIncrementalText?(text: string): void | Promise<void>;
   /** The one final safe native assistant text value, emitted at most once. */
   onFinalText(text: string): void | Promise<void>;
   /** No content is supplied to this sink. */
@@ -52,8 +61,11 @@ export type NativeCompanionContentObserver = Readonly<{
  * Projects one exact Pi assistant message's ordinary native text without
  * exposing any presentation, game, store, or provider authority to Pi. It
  * filters reasoning and tool calls structurally and accepts only final text
- * from the matching assistant message. Callers own surface-specific durable
- * commit and cancellation admission.
+ * from the matching assistant message. When the caller supplies
+ * `onIncrementalText`, completed sentences are emitted from the delta lane as
+ * they arrive and `onFinalText` then commits only the never-completed
+ * residual; without that sink the preview/final semantics are unchanged.
+ * Callers own surface-specific durable commit and cancellation admission.
  */
 export function attachNativeCompanionContent(
   session: Pick<AgentSession, "subscribe"> | Readonly<{ subscribe(listener: (event: NativeCompanionContentEvent) => void): () => void }>,
@@ -74,6 +86,11 @@ export function attachNativeCompanionContent(
   let previewsEnabled = false;
   let allowTextDeltas = false;
   let trackedTextContentIndexes = new Set<number>();
+  // Sentence accumulator per tracked assistant message. The accumulator starts
+  // empty; only the delta lane feeds it, and every completed sentence leaves it
+  // permanently, so consecutive conjunctions cannot double-emit.
+  let incrementalAccumulator = new IncrementalSpeechAccumulator();
+  const incrementalActive = sinks.onIncrementalText !== undefined;
   let callbackTail = Promise.resolve();
   let unsubscribe: (() => void) | undefined;
 
@@ -93,6 +110,9 @@ export function attachNativeCompanionContent(
         tracked = event.message;
         trackedIdentity = identityOf(event.message);
         trackedTextContentIndexes = new Set<number>();
+        // A new tracked message must not inherit a previous message's buffered
+        // stream: each assistant message owns its own sentence accumulator.
+        incrementalAccumulator = new IncrementalSpeechAccumulator();
       }
       return;
     }
@@ -132,7 +152,20 @@ export function attachNativeCompanionContent(
         typeof assistantMessageEvent.delta === "string" &&
         assistantMessageEvent.delta.length > 0
       ) {
-        dispatch(async () => await sinks.onPreviewDelta(assistantMessageEvent.delta as string));
+        const delta = assistantMessageEvent.delta as string;
+        // Preview semantics stay unchanged. Under incremental activation every
+        // delta additionally feeds this message's accumulator; each sentence
+        // completed in arrival order is dehydrated and emitted immediately, so
+        // the surface can present finished dialogue before message_end.
+        dispatch(async () => await sinks.onPreviewDelta(delta));
+        if (incrementalActive) {
+          for (const sentence of incrementalAccumulator.push(delta)) {
+            dispatch(async () => {
+              if (isEmptyAfterDehydration(sentence)) return;
+              await sinks.onIncrementalText!(dehydrateCompanionSpeech(sentence));
+            });
+          }
+        }
       }
       return;
     }
@@ -147,13 +180,18 @@ export function attachNativeCompanionContent(
       tracked = undefined;
       trackedIdentity = undefined;
       trackedTextContentIndexes = new Set<number>();
+      incrementalAccumulator = new IncrementalSpeechAccumulator();
       dispatch(async () => await sinks.onRejected("identity_mismatch"));
       return;
     }
     if (tracked !== undefined) {
+      // Capture the exact accumulator before resetting the binding: message_end
+      // must be able to flush the residual stream it never emitted as sentences.
+      const messageAccumulator = incrementalAccumulator;
       tracked = undefined;
       trackedIdentity = undefined;
       trackedTextContentIndexes = new Set<number>();
+      incrementalAccumulator = new IncrementalSpeechAccumulator();
       // A tool-use assistant message is an intermediate agent-loop result, not
       // the player-visible final response. It may be followed by a typed Game
       // action and another assistant message, so it must neither preview nor
@@ -167,6 +205,17 @@ export function attachNativeCompanionContent(
       }
       if (stopReason === "error") {
         dispatch(async () => await sinks.onRejected("error"));
+        return;
+      }
+      if (incrementalActive) {
+        // Every sentence already emitted through onIncrementalText was consumed
+        // by this accumulator and is now gone; only the residual that never
+        // finished a sentence remains, so it can never repeat what the game
+        // already presented. An empty residual means the whole reply crossed
+        // the presentation boundary, and this message needs no final piece.
+        const residual = messageAccumulator.flush();
+        if (!isEmptyAfterDehydration(residual))
+          dispatch(async () => await sinks.onFinalText(dehydrateCompanionSpeech(residual)));
         return;
       }
       const text = readSafeAssistantText(finalMessage);

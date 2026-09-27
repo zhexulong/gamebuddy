@@ -118,6 +118,19 @@ test("CompanionLoop forwards only final native assistant content from an exact c
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_1", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
+        const trackedPartial = { id: "assistant_1", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+        });
+        // The full reply arrives inside one delta without a sentence boundary;
+        // it buffers and the residual presents once through the final path.
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "I am here.", partial: trackedPartial },
+        });
         emit({
           type: "message_end",
           message: { id: "assistant_1", role: "assistant", content: [{ type: "text", text: "I am here." }], stopReason: "stop" },
@@ -160,7 +173,7 @@ test("CompanionLoop forwards only final native assistant content from an exact c
   assert.deepEqual(lifecycle, ["begin", "end"]);
 });
 
-test("CompanionLoop streams companion speech deltas to the voice sink and finalizes on final text", async () => {
+test("CompanionLoop streams companion speech deltas to the voice sink and finalizes on the residual final text", async () => {
   const lifecycle: string[] = [];
   const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown) => {
@@ -205,7 +218,9 @@ test("CompanionLoop streams companion speech deltas to the voice sink and finali
           message: {
             id: "assistant_voice",
             role: "assistant",
-            content: [{ type: "text", text: "早安!" }],
+            // No boundary: the deltas buffered above form the residual that
+            // commits through the final path, so voice still finalizes once.
+            content: [{ type: "text", text: "早安" }],
             stopReason: "stop",
           },
         });
@@ -252,7 +267,7 @@ test("CompanionLoop streams companion speech deltas to the voice sink and finali
       .map((op) => (op.startsWith("begin") ? "begin" : op)),
     ["begin", "finalize"],
   );
-  assert.deepEqual(presented, [{ sourceEventId: "player_source_voice", text: "早安!" }]);
+  assert.deepEqual(presented, [{ sourceEventId: "player_source_voice", text: "早安" }]);
 });
 
 test("CompanionLoop cancels the voice job when a consumed batch never produces final text", async () => {
@@ -309,7 +324,144 @@ test("CompanionLoop cancels the voice job when a consumed batch never produces f
   assert.ok(!voiceOps.includes("finalize"));
 });
 
-test("CompanionLoop presents each final-text chunk as one native expression, in order", async () => {
+test("CompanionLoop presents incremental sentences without any voice sink", async () => {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const presented: unknown[] = [];
+  // No voiceSink argument: the delta lane still opens (previews are unlocked
+  // for every Game presenter), so completed sentences present immediately.
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_incr", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        const trackedPartial = { id: "assistant_incr", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+        });
+        for (const delta of ["早", "安!", "今天", "下雨。"]) {
+          emit({
+            type: "message_update",
+            message: trackedPartial,
+            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial: trackedPartial },
+          });
+        }
+        emit({
+          type: "message_end",
+          message: {
+            id: "assistant_incr",
+            role: "assistant",
+            content: [{ type: "text", text: "早安!今天下雨。" }],
+            stopReason: "stop",
+          },
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content);
+      },
+    },
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_incr",
+    eventId: "player_source_incr",
+    text: "在哪里",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
+  await loop.flush();
+  assert.deepEqual(presented, [
+    { sourceEventId: "player_source_incr", text: "早安!" },
+    { sourceEventId: "player_source_incr", text: "今天下雨。" },
+  ]);
+});
+
+test("CompanionLoop presents only the buffered residual when no sentence ever completed", async () => {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_residual", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        const trackedPartial = { id: "assistant_residual", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+        });
+        // No boundary arrives before message_end: nothing presents
+        // incrementally, and the whole stream commits once as the residual.
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "我这就去", partial: trackedPartial },
+        });
+        emit({
+          type: "message_end",
+          message: {
+            id: "assistant_residual",
+            role: "assistant",
+            content: [{ type: "text", text: "我这就去。把草拔了。" }],
+            stopReason: "stop",
+          },
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content);
+      },
+    },
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_residual",
+    eventId: "player_source_residual",
+    text: "去吧",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
+  await loop.flush();
+  assert.deepEqual(presented, [{ sourceEventId: "player_source_residual", text: "我这就去" }]);
+});
+
+test("CompanionLoop presents incremental sentences as they arrive and the message_end residual last", async () => {
   const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown) => {
     for (const listener of [...listeners]) listener(event);
@@ -321,8 +473,25 @@ test("CompanionLoop presents each final-text chunk as one native expression, in 
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_chunk", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        // A single final assistant message with two sentences: the chunker must
-        // split it at the sentence boundary and present each piece separately.
+        const trackedPartial = { id: "assistant_chunk", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+        });
+        // The stream completes two sentences inside one delta; each presents
+        // immediately. The last sentence loses its boundary to message_end, so
+        // it stays buffered and lands as the single residual final piece.
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "我这就去南瓜地浇水。把杂草也一起拔了。然后把种子撒上",
+            partial: trackedPartial,
+          },
+        });
         emit({
           type: "message_end",
           message: {
@@ -361,14 +530,15 @@ test("CompanionLoop presents each final-text chunk as one native expression, in 
     timestampMs: 1,
   });
   await loop.flush();
-  // One message_end with three sentences → two presentations (≤2/slice), in order.
+  // Two incremental presentations, then the buffered residual as the last piece.
   assert.deepEqual(presented, [
-    { sourceEventId: "player_source_chunk", text: "我这就去南瓜地浇水。把杂草也一起拔了。" },
-    { sourceEventId: "player_source_chunk", text: "然后把种子撒上。" },
+    { sourceEventId: "player_source_chunk", text: "我这就去南瓜地浇水。" },
+    { sourceEventId: "player_source_chunk", text: "把杂草也一起拔了。" },
+    { sourceEventId: "player_source_chunk", text: "然后把种子撒上" },
   ]);
 });
 
-test("CompanionLoop finalizes the voice job once when two chunks carry identical text", async () => {
+test("CompanionLoop finalizes the voice job exactly once with identical incremental sentences and one residual", async () => {
   const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown) => {
     for (const listener of [...listeners]) listener(event);
@@ -393,14 +563,28 @@ test("CompanionLoop finalizes the voice job once when two chunks carry identical
           message: trackedPartial,
           assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
         });
+        // Three identical sentences complete incrementally; the trailing "好"
+        // without its boundary stays buffered as the message_end residual.
         emit({
           type: "message_update",
-          message: { ...trackedPartial, content: [{ type: "text", text: "好" }] },
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "好。", partial: trackedPartial },
+        });
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "好。", partial: trackedPartial },
+        });
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "好。", partial: trackedPartial },
+        });
+        emit({
+          type: "message_update",
+          message: trackedPartial,
           assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "好", partial: trackedPartial },
         });
-        // Four identical sentences → two chunks whose text is byte-identical.
-        // Text-identity comparison would treat the first chunk as the last and
-        // finalize the voice job twice; index comparison finalizes once.
         emit({
           type: "message_end",
           message: {
@@ -441,12 +625,14 @@ test("CompanionLoop finalizes the voice job once when two chunks carry identical
     timestampMs: 1,
   });
   await loop.flush();
-  // Two identical chunks: both must reach the game, in order.
+  // Three identical incremental sentences plus one residual piece, in order.
   assert.deepEqual(presented, [
-    { sourceEventId: "player_source_dup", text: "好。好。" },
-    { sourceEventId: "player_source_dup", text: "好。好。" },
+    { sourceEventId: "player_source_dup", text: "好。" },
+    { sourceEventId: "player_source_dup", text: "好。" },
+    { sourceEventId: "player_source_dup", text: "好。" },
+    { sourceEventId: "player_source_dup", text: "好" },
   ]);
-  // The voice job must open once and close exactly once, never twice.
+  // The voice job must open once and finalize exactly once, never twice.
   assert.equal(voiceOps.filter((op) => op === "finalize").length, 1);
   assert.equal(voiceOps.filter((op) => op.startsWith("begin:")).length, 1);
   assert.ok(!voiceOps.includes("cancel"));
@@ -607,6 +793,19 @@ test("CompanionLoop grants a bounded presentation lease to salient sensory world
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_salient_1", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
+        const trackedPartial = { id: "assistant_salient_1", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+        });
+        // Both sentences complete inside one delta: each presents immediately
+        // and the empty residual never produces a duplicate final piece.
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "早安!今天也要加油。", partial: trackedPartial },
+        });
         emit({
           type: "message_end",
           message: { id: "assistant_salient_1", role: "assistant", content: [{ type: "text", text: "早安!今天也要加油。" }], stopReason: "stop" },
@@ -648,7 +847,10 @@ test("CompanionLoop grants a bounded presentation lease to salient sensory world
   });
   await loop.flush();
   assert.deepEqual(lifecycle, ["begin", "end"]);
-  assert.deepEqual(presented, [{ sourceEventId: "day_started_day_3", text: "早安!今天也要加油。" }]);
+  assert.deepEqual(presented, [
+    { sourceEventId: "day_started_day_3", text: "早安!" },
+    { sourceEventId: "day_started_day_3", text: "今天也要加油。" },
+  ]);
 });
 
 test("CompanionLoop steers a busy Pi session without aborting it", async () => {
