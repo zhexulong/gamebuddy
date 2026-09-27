@@ -216,6 +216,43 @@ test("ensureAdjacentToFreshTarget re-reads a moved target instead of retrying it
   assert.equal(isAdjacent(snapshot.tile, { x: 50, y: 50 }), true);
 });
 
+test("ensureAdjacentToFreshTarget re-reads the target after a FAILED move, inside one attempt", async () => {
+  // A Pet that walks while a stale walk is failing must be picked up by the
+  // re-read that follows the failure. With a single attempt this can only pass
+  // if the failure itself triggers the re-read: exhausting the stale set and
+  // retrying the whole attempt needs attempts >= 2, which is exactly the
+  // weakness being pinned. Replaying the pre-walk tile set against a target
+  // that has since moved is what turns one unlucky sampling instant into a
+  // failed run.
+  let walkedOff = false;
+  const petAtSnapshot = { x: 30, y: 40 };
+  let pet = { ...petAtSnapshot };
+  const session = sessionOf(
+    createFake({
+      start: { location: "Farm", tile: { x: 4, y: 4 } },
+      onMove: ({ args }) => {
+        if (!walkedOff && isAdjacent(args, pet)) {
+          // The Pet walks away exactly as the walk towards its old tile lands.
+          // Production behaves this way (RandomizeDirection re-rolls each tick):
+          // the tile in the snapshot is where it was, not where it is.
+          walkedOff = true;
+          pet = { x: 50, y: 50 };
+          return { ok: false };
+        }
+        return { ok: isAdjacent(args, pet) };
+      },
+    }),
+  );
+  const targets = () =>
+    candidateStandingTiles(pet).filter((tile) => tile.x !== pet.x || tile.y !== pet.y);
+  const { snapshot, target } = await ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", targets, {
+    attempts: 1,
+    waitPolls: 0,
+  });
+  assert.equal(isAdjacent(snapshot.tile, pet), true);
+  assert.deepEqual(snapshot.tile, target);
+});
+
 test("ensureAdjacentToFreshTarget fails closed after the attempt budget is exhausted", async () => {
   const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } }, onMove: () => ({ ok: false }) }));
   await assert.rejects(
