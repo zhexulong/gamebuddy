@@ -31,6 +31,10 @@ const snapshot: Snapshot = {
   catalogRevision: 1,
   enabledActionIds: ["move_to_tile"],
   presentationLocale: "en-US",
+  timeOfDay: 600,
+  dayOfMonth: 1,
+  seasonIndex: 0,
+  year: 1,
   activeExecution: null,
 };
 const now = 1_700_000_000_000;
@@ -572,6 +576,10 @@ test("bridge message payloads fail closed", () => {
       actionable: true,
       capabilities: [],
       presentationLocale: "en-US",
+      timeOfDay: 600,
+      dayOfMonth: 1,
+      seasonIndex: 0,
+      year: 1,
       activeExecution: null,
     },
     "snapshot_01",
@@ -681,7 +689,7 @@ test("bridge message payloads fail closed", () => {
           inCurrentLocation: false,
         },
       ],
-      petTargets: [{ targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 500, pettedToday: false }],
+      petTargets: [{ targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 500, pettedToday: false, stationary: false }],
       animalProductTargets: [
         {
           targetId: "animal_product_deadbeef",
@@ -965,7 +973,7 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
         giftsThisWeek: 0,
       },
     ],
-    ["petTargets", { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false }],
+    ["petTargets", { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false, stationary: true }],
     [
       "animalProductTargets",
       {
@@ -982,6 +990,9 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
     ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 4, x: 10, y: 12, hayStack: 1 }],
     ["inventoryItemFacts", { slot: 4, qualifiedItemId: "(O)184", stack: 1 }],
     ["foodTargets", { slot: 4, qualifiedItemId: "(O)216", stack: 1, edibility: 20, isDrink: false }],
+    ["craftingRecipeTargets", { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
+    ["cookingRecipeTargets", { targetId: "Fried_Egg", displayName: "Fried Egg", ingredientsAvailable: false }],
+    ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" }],
   ];
   for (const [field, target] of families) {
     assert.equal(
@@ -2233,6 +2244,10 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
     catalogRevision: 1,
     enabledActionIds: ["chest_store", "chest_retrieve"],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     activeExecution: null,
     chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 2, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 5 }],
     chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 3 }],
@@ -2289,6 +2304,10 @@ test("snapshot admits treeStumpTargets and rejects malformed rows", () => {
     catalogRevision: 1,
     enabledActionIds: ["chop_stump"],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     activeExecution: null,
     treeStumpTargets: [{ targetId: "tree_stump_0123456789abcdef", location: "Farm", x: 12, y: 13, treeType: "Tree", health: 5 }],
   };
@@ -2310,6 +2329,10 @@ test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
     catalogRevision: 1,
     enabledActionIds: ["plant_sapling"],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     activeExecution: null,
     treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 2, x: 4, y: 5, qualifiedItemId: "(O)309", displayName: "Acorn" }],
   };
@@ -2344,6 +2367,10 @@ test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows",
     catalogRevision: 1,
     enabledActionIds: ["cut_weeds", "scythe_crop"],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     activeExecution: null,
     weedTargets: [{ targetId: "weed_0123456789abcdef", location: "Farm", x: 6, y: 7, health: 1 }],
     scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "(O)262", displayName: "Wheat" }],
@@ -2490,6 +2517,10 @@ test("snapshot admits villagerWhereabouts and rejects malformed rows", () => {
     catalogRevision: 1,
     enabledActionIds: [],
     presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
     activeExecution: null,
   };
   const row = { npcName: "Jodi", displayName: "Jodi", location: "SeedShop", x: 3, y: 8, inCurrentLocation: false };
@@ -2513,5 +2544,75 @@ test("snapshot admits villagerWhereabouts and rejects malformed rows", () => {
   assert.equal(
     diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: Array.from({ length: 65 }, () => row) }, "vw_many", now), scope, now),
     "invalid_snapshot:villagerWhereabouts",
+  );
+});
+
+test("snapshot admits crafting/cooking recipe and cooking-station discovery and rejects malformed rows", () => {
+  // craft_item and cook_recipe accept only expectedTargetId, so without these
+  // lists an Agent had no way to learn a recipe key - and cook_recipe had no way
+  // to learn where any cooking station is at all.
+  const base = {
+    revision: 5,
+    location: "FarmHouse",
+    tile: { x: 4, y: 5 },
+    stamina: 270,
+    health: 100,
+    actionable: true,
+    capabilities: [],
+    catalogRevision: 1,
+    enabledActionIds: [],
+    presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
+    activeExecution: null,
+  };
+  const recipe = { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true };
+  const station = { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" };
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, craftingRecipeTargets: [recipe], cookingRecipeTargets: [{ ...recipe, targetId: "Fried_Egg" }], cookingStationTargets: [station] }, "recipe_ok", now), scope, now),
+    "accepted",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, craftingRecipeTargets: [], cookingRecipeTargets: [], cookingStationTargets: [] }, "recipe_empty", now), scope, now),
+    "accepted",
+  );
+  // The cookout kit is a first-class station kind, so it must round trip too.
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, cookingStationTargets: [{ ...station, stationKind: "cookout_kit" }] }, "recipe_kit", now), scope, now),
+    "accepted",
+  );
+  for (const [field, bad] of [
+    ["craftingRecipeTargets", { ...recipe, extra: 1 }],
+    ["craftingRecipeTargets", { ...recipe, ingredientsAvailable: "yes" }],
+    ["cookingRecipeTargets", { ...recipe, displayName: "" }],
+    ["cookingRecipeTargets", { targetId: "Wood Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
+  ] as const) {
+    assert.equal(
+      diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, [field]: [bad] }, `recipe_bad_${field}`, now), scope, now),
+      `invalid_snapshot:${field}`,
+      field,
+    );
+  }
+  for (const bad of [
+    { ...station, extra: 1 },
+    { ...station, stationKind: "stove" },
+    { ...station, targetId: "cooking_station_zzzz" },
+    { ...station, x: -1 },
+  ]) {
+    assert.equal(
+      diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, cookingStationTargets: [bad] }, "station_bad", now), scope, now),
+      "invalid_snapshot:cookingStationTargets",
+    );
+  }
+  // Both recipe lists are bounded at 64, stations at 16.
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, craftingRecipeTargets: Array.from({ length: 65 }, () => recipe) }, "recipe_many", now), scope, now),
+    "invalid_snapshot:craftingRecipeTargets",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, cookingStationTargets: Array.from({ length: 17 }, () => station) }, "station_many", now), scope, now),
+    "invalid_snapshot:cookingStationTargets",
   );
 });
