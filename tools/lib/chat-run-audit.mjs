@@ -1490,6 +1490,21 @@ function formatProbeLine(probe) {
 }
 
 /**
+ * The Memory evidence line.
+ *
+ * A bare `0 read(s), 0 mutation(s), 0 CAS conflict(s)` reads as three measured
+ * zeros, but the schema has no `memory.observability_gap` row, so an absent
+ * Memory projection is NOT distinguishable from an idle one. Say that plainly
+ * instead of letting the zeros imply the Memory path was exercised and found
+ * quiet.
+ */
+function formatMemoryEvidenceLine(memory, conflicts) {
+  const counts = `${memory.read} read(s), ${memory.mutated} mutation(s), ${conflicts} CAS conflict(s)`;
+  if (memory.read > 0 || memory.mutated > 0 || conflicts > 0) return counts;
+  return `${counts} — no Memory evidence in this trace; the frozen vocabulary has no \`memory.observability_gap\` row, so an unavailable projection is not distinguishable from an idle one (a Memory claim must not rest on this run)`;
+}
+
+/**
  * Build the bounded JSON report for one audit.
  *
  * @param {{audit: any, artifact?: string|null}} input
@@ -1549,7 +1564,7 @@ export function formatChatRunAuditReportText(report) {
     `- Idle: longest frame-free span ${formatMs(report.waste.maxFrameGapMs)} (stall threshold ${formatMs(report.waste.idleStallThresholdMs)})`,
   );
   lines.push(
-    `- Memory: ${summary.memory.read} read(s), ${summary.memory.mutated} mutation(s), ${report.waste.memoryConflicts} CAS conflict(s)`,
+    `- Memory: ${formatMemoryEvidenceLine(summary.memory, report.waste.memoryConflicts)}`,
   );
   lines.push(
     `- Recovery: ${report.waste.reloads} reload(s), ${report.waste.reloadMismatches} mismatch(es) against the durable terminal`,
