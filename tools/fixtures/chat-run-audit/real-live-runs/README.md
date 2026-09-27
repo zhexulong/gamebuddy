@@ -9,7 +9,9 @@ generation — not fixtures. Kept as evidence and as a comparison baseline.
 | `run-02-probe-confused.json` + `run-02-audit-report.txt` | Probe-manifest run (7 turns). Scored `distractor.confused`. |
 | `run-03-fixed-clean.json` + `run-03-audit-report.txt` | After the cursor/resync fix. 2 turns, `exit 0`, **no finding**. |
 | `run-04-probe-complete.json` + `run-04-audit-report.txt` | Probe-manifest run AFTER the cursor fix: **completed for the first time** (81 s, 7 turns, `distractor.confused`, `no finding`). |
+| `run-05-probe-durable-gate.json` + `run-05-audit-report.txt` | Probe-manifest run AFTER the durable-commit gate fix: 7 turns, `distractor.confused`, `no finding`. Same generation and manifest digest as run-04. |
 | `run-01-vs-03-comparison.json` | `compare-chat-live-runs` output: 2 improvements, 0 regressions. |
+| `run-04-vs-05-comparison.json` | The first apples-to-apples probe pair (same 7-turn topology, generation and manifest digest): 0 improvements, **0 regressions**, 17 neutral. |
 
 ## What run-01 and run-02 reported, and what it actually was
 
@@ -34,6 +36,20 @@ verdict       idle_stall + stream_gap_churn -> no finding
 
 `run-01-vs-03-comparison.json` records this as 2 improvements, 0 regressions.
 
+## The probe committed-presentation gate
+
+An independent audit review found that the probe's "was there a reply for THIS
+ turn" gate used the Class B stderr marker count, which also counts admission
+**rejections** and is not the durable fact. A turn whose presentation was
+rejected or never committed could therefore read older transcript text and score
+a distractor/needle verdict against it.
+
+The gate now uses the durable `committedCompanionDelta` from the same `/state`
+read that produces `presentation.committed`; a turn without a positive delta is
+an `observability_gap`, never a keyword score. `run-05` is the first probe run
+scored under that gate; `run-04-vs-05-comparison.json` shows the two probe runs
+are comparable and drift-free (17 neutral rows).
+
 ## Honest boundaries
 
 - **No process exit code is in a trace.** `run.finished.status=collected` is what
@@ -47,3 +63,7 @@ verdict       idle_stall + stream_gap_churn -> no finding
 - **These runs use `provider.embedded`** and the generation published by the
   sanctioned test publisher; the production release path obtains its runtime from
   protected CI.
+- **The current pointer is restored to its baseline generation after each run.**
+  The baseline generation predates the publisher closure fix and carries no
+  `node_modules`, so a real run temporarily points at the self-contained
+  generation; the pointer is restored afterwards.
