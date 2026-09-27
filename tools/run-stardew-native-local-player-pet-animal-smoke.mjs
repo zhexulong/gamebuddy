@@ -80,6 +80,45 @@ export async function runPetAnimalSmoke(
       topology,
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
       latestReceipt: summarizeReceipt(client.state?.latestReceipt),
+      // Include the observable facts that decide the outcome. Without these a
+      // failure is indistinguishable between "no pet exists", "a pet exists but
+      // is out of range", and "the actor is not where the driver left it".
+      diagnostic: {
+        location: client.state?.snapshot?.location ?? null,
+        tile: client.state?.snapshot?.tile ?? null,
+        actionable: client.state?.snapshot?.actionable ?? null,
+        petTargetCount: Array.isArray(client.state?.snapshot?.petTargets) ? client.state.snapshot.petTargets.length : null,
+        liveUnpettedCount: Array.isArray(client.state?.snapshot?.petTargets)
+          ? liveUnpettedPetTargets(client.state.snapshot).length
+          : null,
+        validCount: Array.isArray(client.state?.snapshot?.petTargets)
+          ? validTargets(client.state.snapshot).length
+          : null,
+        // The counts alone cannot distinguish "no pet", "pet out of range" and
+        // "pet at an unexpected tile". Record where the discovered pet actually
+        // is, and the Chebyshev distance from the actor.
+        petTargets: Array.isArray(client.state?.snapshot?.petTargets)
+          ? client.state.snapshot.petTargets.map((target) => ({
+              targetId: target?.targetId ?? null,
+              x: target?.x ?? null,
+              y: target?.y ?? null,
+              petType: target?.petType ?? null,
+              friendship: target?.friendship ?? null,
+              pettedToday: target?.pettedToday ?? null,
+        // The native mobility fact this attempt was gated on. Without it a
+        // `no_stationary_unpetted_pet_target` failure cannot be told apart from
+        // a projection that never reports true at all.
+        stationary: target?.stationary ?? null,
+              distance:
+                Number.isInteger(target?.x) && Number.isInteger(client.state?.snapshot?.tile?.x)
+                  ? Math.max(
+                      Math.abs(target.x - client.state.snapshot.tile.x),
+                      Math.abs(target.y - client.state.snapshot.tile.y),
+                    )
+                  : null,
+            }))
+          : null,
+      },
       durationMs: Date.now() - startedAt,
     };
   }
@@ -135,6 +174,35 @@ function liveUnpettedPetTargets(snapshot) {
       target.friendship <= 1000 &&
       target.pettedToday === false,
   );
+}
+
+/**
+ * The live unpetted Pet that is also holding still, if exactly one qualifies.
+ *
+ * `stationary` is the Mod's projection of the native `WalkInDirection` flag for
+ * the pet's current behaviour: a Pet in Walk/Sprint/LeapJump is moving and will
+ * not be where it was by the time an action reaches it, while one in
+ * SitDown/SitSide/Flop holds still. Callers use this to choose *when* to attempt;
+ * it never widens what the contract will accept.
+ *
+ * Shaped like `chooseUnpettedPetTarget` -- one target, or a named failure --
+ * because callers hand the result straight to a single-target helper. Returning a
+ * collection here would make that helper's tile arithmetic NaN, which serializes
+ * as null and is rejected as a malformed request rather than reported as a
+ * positioning failure.
+ */
+export function chooseStationaryUnpettedPetTarget(snapshot) {
+  const targets = chooseStationaryUnpettedPetTargets(snapshot);
+  if (targets.length !== 1)
+    throw new Error(
+      targets.length === 0 ? "no_stationary_unpetted_pet_target" : "ambiguous_stationary_unpetted_pet_target",
+    );
+  return targets[0];
+}
+
+/** Every live unpetted Pet target that is currently holding still. */
+export function chooseStationaryUnpettedPetTargets(snapshot) {
+  return liveUnpettedPetTargets(snapshot).filter((target) => target.stationary === true);
 }
 
 function validTargets(snapshot) {

@@ -98,6 +98,21 @@ export type Snapshot = Readonly<{
   activeExecution?: ActiveExecution | null;
   /** Exact current Mod BCP-47 presentation locale; required on every Mod snapshot. */
   presentationLocale: string;
+  /**
+   * Macro time context, read straight from the game clock and calendar.
+   *
+   * Native behaviour is time-driven: a Pet sleeps from 20:00, villagers follow
+   * schedules, shops open and close, crops advance. The snapshot previously
+   * published no time at all, so the companion could not reason about any of it
+   * -- including that the animal it was trying to reach was about to settle for
+   * the night. These are the same values the native code reads, published
+   * without interpretation: no derived phase such as "morning", no advice about
+   * what the hour implies. Zero when the world is not ready.
+   */
+  timeOfDay: number;
+  dayOfMonth: number;
+  seasonIndex: number;
+  year: number;
   /** Live native warp targets; older Mod snapshots may omit this field. */
   warps?: readonly Readonly<{
     sourceX: number;
@@ -399,6 +414,20 @@ export type Snapshot = Readonly<{
     petType: string;
     friendship: number;
     pettedToday: boolean;
+    /**
+     * The pet's native `WalkInDirection` for its current behaviour, negated.
+     *
+     * A Pet moves only in behaviours whose `WalkInDirection` is true (Walk,
+     * Sprint, LeapJump); in the others (SitDown, SitSide, Flop) it holds still
+     * for a while. That makes this the fact that answers "can I reach it right
+     * now": a wandering pet will not be where it was when you observed it, and
+     * the native interaction needs it to still be within one tile at the moment
+     * of dispatch. Publishing the native flag rather than a phase name keeps the
+     * Mod a projector -- adding idle/wandering/resting would be an interpretation
+     * the game does not make and that this repo would then have to keep aligned
+     * with Data/Pets across versions.
+     */
+    stationary: boolean;
   }>[];
   /** Nearby adult farm animals with a specific native MilkPail/Shears target and capacity for their current produce. */
   animalProductTargets?: readonly Readonly<{
@@ -913,6 +942,10 @@ const SNAPSHOT_KEYS = [
   "catalogRevision",
   "enabledActionIds",
   "presentationLocale",
+  "timeOfDay",
+  "dayOfMonth",
+  "seasonIndex",
+  "year",
   "activeExecution",
   "warps",
   "doorTargets",
@@ -1881,6 +1914,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   if (!isFiniteNumber(value.health)) return "invalid_snapshot:health";
   if (typeof value.actionable !== "boolean") return "invalid_snapshot:actionable";
   if (!isBcp47Locale(value.presentationLocale)) return "invalid_snapshot:presentationLocale";
+  // Time context: bounded non-negative integers, so no consumer can be handed a
+  // nonsense clock. Zero is the "unknown" value the Mod uses when the world is
+  // not ready, which is why non-negative and not positive.
+  if (!isNonNegativeSafeInteger(value.timeOfDay) || value.timeOfDay > 2600) return "invalid_snapshot:timeOfDay";
+  if (!isNonNegativeSafeInteger(value.dayOfMonth) || value.dayOfMonth > 28) return "invalid_snapshot:dayOfMonth";
+  if (!isNonNegativeSafeInteger(value.seasonIndex) || value.seasonIndex > 3) return "invalid_snapshot:seasonIndex";
+  if (!isNonNegativeSafeInteger(value.year)) return "invalid_snapshot:year";
   if (value.currentTool !== undefined && value.currentTool !== null && typeof value.currentTool !== "string")
     return "invalid_snapshot:currentTool";
   if (value.inventorySlots !== undefined && !Number.isSafeInteger(value.inventorySlots))
@@ -2160,6 +2200,13 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&
     (value.inventorySlots === undefined || Number.isSafeInteger(value.inventorySlots)) &&
     isBcp47Locale(value.presentationLocale) &&
+  isNonNegativeSafeInteger(value.timeOfDay) &&
+  value.timeOfDay <= 2600 &&
+  isNonNegativeSafeInteger(value.dayOfMonth) &&
+  value.dayOfMonth <= 28 &&
+  isNonNegativeSafeInteger(value.seasonIndex) &&
+  value.seasonIndex <= 3 &&
+  isNonNegativeSafeInteger(value.year) &&
     (value.warps === undefined ||
       (Array.isArray(value.warps) && value.warps.length <= 512 && value.warps.every(isWarp))) &&
     (value.doorTargets === undefined ||
@@ -3399,7 +3446,7 @@ function isVillagerWhereaboutsFact(value: unknown): boolean {
 function isPetTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "petType", "friendship", "pettedToday"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "petType", "friendship", "pettedToday", "stationary"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -3410,7 +3457,8 @@ function isPetTargetFact(value: unknown): boolean {
     Number.isSafeInteger(value.friendship) &&
     value.friendship >= 0 &&
     value.friendship <= 1000 &&
-    value.pettedToday === false
+    value.pettedToday === false &&
+    typeof value.stationary === "boolean"
   );
 }
 

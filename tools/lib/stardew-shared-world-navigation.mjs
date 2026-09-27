@@ -16,6 +16,15 @@ import { executeFresh, waitForFreshSnapshot, waitForTerminal } from "./stardew-n
 const MAX_ROUTE_HOPS = 4;
 const DEFAULT_STEP_TIMEOUT_MS = 20_000;
 
+// Bounded wait for a target whose acceptable set is momentarily empty because the
+// target is moving. A Pet's still behaviours last about 1.7s on average
+// (RandomChance 0.01 per tick), so 20 polls a second apart covers it several
+// times over without letting a permanently-moving target hang the driver.
+const WAIT_FOR_TARGET_POLLS = 20;
+const WAIT_FOR_TARGET_INTERVAL_MS = 1000;
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Observe a fresh actionable snapshot, tolerating an equal-revision projection.
  *
@@ -87,14 +96,26 @@ function rank(tile, target) {
 export async function moveToTile(client, receipts, tile, trace, { timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {}) {
   const snapshot = await freshActionable(client, timeoutMs);
   const requestId = `shared_world_move_${Date.now()}_${tile.x}_${tile.y}`;
-  const accepted = await executeFresh(client, {
-    requestId,
-    idempotencyKey: `${requestId}_idem`,
-    action: "move_to_tile",
-    args: { x: tile.x, y: tile.y },
-    snapshot,
-    timeoutMs,
-  });
+  const args = { x: tile.x, y: tile.y };
+  let accepted;
+  try {
+    accepted = await executeFresh(client, {
+      requestId,
+      idempotencyKey: `${requestId}_idem`,
+      action: "move_to_tile",
+      args,
+      snapshot,
+      timeoutMs,
+    });
+  } catch (error) {
+    // A refusal here names a reason the receipt never will, because no execution
+    // was ever created. Record exactly what was sent alongside it: the request is
+    // rejected for its own shape, so the shape is the evidence.
+    throw new Error(
+      `${String(error?.message ?? error)} [request={action=move_to_tile,args=${JSON.stringify(args)},expectedRevision=${snapshot?.revision},actionable=${snapshot?.actionable}}]`,
+      { cause: error },
+    );
+  }
   const terminal = await waitForTerminal(receipts, accepted, timeoutMs);
   trace.push({
     step: "move_to_tile",
@@ -199,14 +220,32 @@ export async function ensureAdjacentToFreshTarget(
   receipts,
   targetLocationName,
   targets,
-  { attempts = 1, timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {},
+  { attempts = 1, timeoutMs = DEFAULT_STEP_TIMEOUT_MS, waitPolls = WAIT_FOR_TARGET_POLLS, waitIntervalMs = WAIT_FOR_TARGET_INTERVAL_MS } = {},
 ) {
   const trace = [];
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const { snapshot } = await ensureActorAtLocation(client, receipts, targetLocationName, { timeoutMs });
-      const usable = new Map(targets(snapshot).map((tile) => [`${tile.x},${tile.y}`, tile]));
+      // Waiting is the whole point for a target that moves on its own. A Pet
+      // wanders continuously and settles only for a while (its "SitDown"/
+      // "SitSide" behaviours, each about 1.7s on average at RandomChance 0.01 per
+      // tick), so at any given instant the acceptable set may be empty through no
+      // fault of the caller. Giving up on the first empty set would make the
+      // outcome depend on the sampling instant; retrying forever would hang. So
+      // each attempt observes again after a short pause, within a bounded budget,
+      // and the last observation's failure is what gets reported.
+      let usable = new Map(targets(snapshot).map((tile) => [`${tile.x},${tile.y}`, tile]));
+      for (let wait = 0; usable.size === 0 && wait < waitPolls; wait++) {
+        await delay(waitIntervalMs);
+        const polled = await freshActionable(client, timeoutMs);
+        usable = new Map(targets(polled).map((tile) => [`${tile.x},${tile.y}`, tile]));
+        if (usable.size > 0) {
+          const settled = usable.get(`${polled.tile.x},${polled.tile.y}`);
+          if (settled !== undefined) return { snapshot: polled, trace, target: settled };
+          break;
+        }
+      }
       if (usable.size === 0) throw new Error("no_usable_target_tile");
       const here = usable.get(`${snapshot.tile.x},${snapshot.tile.y}`);
       if (here !== undefined) return { snapshot, trace, target: here };
