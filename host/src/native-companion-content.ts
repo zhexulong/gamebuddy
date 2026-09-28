@@ -91,6 +91,20 @@ export function attachNativeCompanionContent(
   // permanently, so consecutive conjunctions cannot double-emit.
   let incrementalAccumulator = new IncrementalSpeechAccumulator();
   const incrementalActive = sinks.onIncrementalText !== undefined;
+  // Completed sentences held until message_end decides whether this assistant
+  // message is the player-visible response. A Pi turn's intermediate tool-use
+  // messages also carry text (the model's running commentary between actions),
+  // and the non-incremental lane deliberately withholds those. Emitting at delta
+  // time presented that commentary as companion speech — a real live run showed
+  // the game saying "我在屋子里，先出门去农场。" and "先摘一颗。" to the player.
+  //
+  // Tradeoff: holding until message_end forfeits progressive emission of the
+  // FINAL reply too, so a slowly-streamed reply reaches the surface later. That
+  // is accepted because (a) presenting planning text is a hard product breach and
+  // (b) `stopReason` is unavailable during the stream, so no deterministic rule
+  // can separate reply from preamble earlier. Sentence chunking — the actual
+  // goal here — is unaffected.
+  let pendingSentences: string[] = [];
   let callbackTail = Promise.resolve();
   let unsubscribe: (() => void) | undefined;
 
@@ -113,6 +127,7 @@ export function attachNativeCompanionContent(
         // A new tracked message must not inherit a previous message's buffered
         // stream: each assistant message owns its own sentence accumulator.
         incrementalAccumulator = new IncrementalSpeechAccumulator();
+        pendingSentences = [];
       }
       return;
     }
@@ -159,12 +174,10 @@ export function attachNativeCompanionContent(
         // the surface can present finished dialogue before message_end.
         dispatch(async () => await sinks.onPreviewDelta(delta));
         if (incrementalActive) {
-          for (const sentence of incrementalAccumulator.push(delta)) {
-            dispatch(async () => {
-              if (isEmptyAfterDehydration(sentence)) return;
-              await sinks.onIncrementalText!(dehydrateCompanionSpeech(sentence));
-            });
-          }
+          // Hold completed sentences; message_end is the first point at which we
+          // know whether this message is the player-visible response or an
+          // intermediate tool-use step, so emission cannot happen here.
+          for (const sentence of incrementalAccumulator.push(delta)) pendingSentences.push(sentence);
         }
       }
       return;
@@ -181,6 +194,7 @@ export function attachNativeCompanionContent(
       trackedIdentity = undefined;
       trackedTextContentIndexes = new Set<number>();
       incrementalAccumulator = new IncrementalSpeechAccumulator();
+      pendingSentences = [];
       dispatch(async () => await sinks.onRejected("identity_mismatch"));
       return;
     }
@@ -188,14 +202,17 @@ export function attachNativeCompanionContent(
       // Capture the exact accumulator before resetting the binding: message_end
       // must be able to flush the residual stream it never emitted as sentences.
       const messageAccumulator = incrementalAccumulator;
+      const messageSentences = pendingSentences;
       tracked = undefined;
       trackedIdentity = undefined;
       trackedTextContentIndexes = new Set<number>();
       incrementalAccumulator = new IncrementalSpeechAccumulator();
+      pendingSentences = [];
       // A tool-use assistant message is an intermediate agent-loop result, not
       // the player-visible final response. It may be followed by a typed Game
       // action and another assistant message, so it must neither preview nor
-      // terminalize this observer.
+      // terminalize this observer — and its text (the model's running commentary
+      // between actions) must be discarded, not presented as companion speech.
       if (finalMessage.stopReason === "toolUse") return;
       finalizing = true;
       const stopReason = typeof finalMessage.stopReason === "string" ? finalMessage.stopReason : "stop";
@@ -208,11 +225,15 @@ export function attachNativeCompanionContent(
         return;
       }
       if (incrementalActive) {
-        // Every sentence already emitted through onIncrementalText was consumed
-        // by this accumulator and is now gone; only the residual that never
-        // finished a sentence remains, so it can never repeat what the game
-        // already presented. An empty residual means the whole reply crossed
-        // the presentation boundary, and this message needs no final piece.
+        // This message is the player-visible reply, so release its completed
+        // sentences in arrival order, then the residual that never finished a
+        // sentence. Sentences are held until here because `stopReason` is the
+        // first point that separates the reply from an intermediate tool-use
+        // preamble; see the accumulator comment above.
+        for (const sentence of messageSentences) {
+          if (isEmptyAfterDehydration(sentence)) continue;
+          dispatch(async () => await sinks.onIncrementalText!(dehydrateCompanionSpeech(sentence)));
+        }
         const residual = messageAccumulator.flush();
         if (!isEmptyAfterDehydration(residual))
           dispatch(async () => await sinks.onFinalText(dehydrateCompanionSpeech(residual)));
