@@ -509,10 +509,10 @@ export function visibleActionsFromModCatalog(
 
   for (const registration of registrations) {
     const adapter = adapters.get(registration.actionId);
-    // Candidate actions (express_emote / face_direction) are deliberately
-    // Experimental in the Mod catalog; the Host admits them only when their
-    // descriptor is complete (checked below) and the live capability is
-    // advertised. Every other action must still be published.
+    // Candidate actions use an alternate admission path: the Mod catalog may
+    // still carry an action as Experimental while its descriptor is complete
+    // and the live capability is advertised. Once an action passes its required
+    // live topology it moves to live_verified and takes the normal path above.
     const isAdmittedCandidate =
       isCandidateActionId(registration.actionId) &&
       isCandidateDescriptorComplete(registration.actionId, registration.descriptor);
