@@ -564,7 +564,7 @@ export type ObserveSceneRequest = Readonly<{ radius?: number }>;
 
 export type ObserveSceneAffordance = Readonly<{
   ref: string;
-  kind: "npc" | "chest" | "crop" | "tree" | "animal" | "forage" | "door" | "machine" | "water_source";
+  kind: "npc" | "chest" | "crop" | "tree" | "animal" | "forage" | "door" | "machine" | "water_source" | "weed" | "stone" | "debris" | "artifact_spot";
   name: string;
   distance: number;
   direction: "North" | "South" | "East" | "West" | "CurrentTile";
@@ -1333,7 +1333,7 @@ function isBodyCanonicalValue(value: unknown): boolean {
 }
 function isPositiveSafeInteger(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) > 0; }
 
-const OBSERVE_SCENE_KINDS = new Set(["npc", "chest", "crop", "tree", "animal", "forage", "door", "machine", "water_source"]);
+const OBSERVE_SCENE_KINDS = new Set(["npc", "chest", "crop", "tree", "animal", "forage", "door", "machine", "water_source", "weed", "stone", "debris", "artifact_spot"]);
 const OBSERVE_SCENE_DIRECTIONS = new Set(["North", "South", "East", "West", "CurrentTile"]);
 const OBSERVE_SCENE_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit"]);
 
