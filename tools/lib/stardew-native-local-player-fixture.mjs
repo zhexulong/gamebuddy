@@ -353,6 +353,11 @@ export function fixtureActions(action) {
   // -> retry succeeded within one native-local session.
   if (action === "tool_recovery_chain")
     return ["move_to_tile", "travel", "equip_tool", "till_soil"];
+  // Lane G resource-depletion recovery chain: the empty-can water_crop fixture
+  // drives breakpoint rejected/watering_can_empty -> refill recovery -> retry
+  // succeeded on the SAME crop target within one native-local session.
+  if (action === "water_crop_resource_recovery_chain")
+    return ["move_to_tile", "travel", "equip_tool", "water_crop", "refill_watering_can"];
   // Ladder 3: Jodi's Request — a real Spring-19 mail quest asking for a fresh
   // cauliflower. The fixture only supplies the player with a Hoe, a filled
   // Watering Can and cauliflower seeds; the Agent plans the whole farming
@@ -479,6 +484,11 @@ export function fixtureScenario(actions, action) {
   if (action === "fridge_store") return "native_fridge_store_v1";
   if (action === "fridge_retrieve") return "native_fridge_retrieve_v1";
   if (action === "ship_item_island") return "native_ship_item_island_v1";
+  // Lane G resource-depletion recovery chain: the same water_crop action set plus
+  // refill_watering_can, but the fixture must supply an EMPTY can. Without this
+  // override the `water_crop` check below would select the charged-can scenario
+  // and the chain would have no breakpoint.
+  if (action === "water_crop_resource_recovery_chain") return "native_water_crop_empty_can_recovery_v1";
   // Ladder 1 walk→look→do must win over the plain navigation scenario: the
   // action set is exactly the three-node DAG plus read-only retrieval.
   if (actions.includes("navigate_to_destination") && actions.includes("machine_inspect") && actions.includes("machine_load"))
