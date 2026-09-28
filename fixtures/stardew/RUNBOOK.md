@@ -597,11 +597,18 @@ an alternate action runtime.
    `import.meta.main` block, so the first live run threw "Cannot access before
    initialization"; importing the module always evaluates the whole file first, so
    no import-based test could see it — a structural test now pins the declaration
-   order. The offline suite (10 cases) binds state/reason/disposition to the Mod
+   order. The offline suite (11 cases) binds state/reason/disposition to the Mod
    source by anchor+regex extraction, so drift in either the `PartiallySucceeded`
-   terminal or the `partially_dropped_on_ground` literal fails it. This is
-   native-local shared mechanics AND recovery-chain evidence only — never Farmhand,
-   HostAutomation, Portfolio, publication, release, or save/reopen evidence.
+   terminal or the `partially_dropped_on_ground` literal fails it. It also mirrors
+   the Mod's own `droppedToGround` guard (`dropped_stack == 0 || dropped_debris
+   == 1`, `craftingactions.cs`), which the chain had read but not validated: the
+   breakpoint (a partial drop) must carry `dropped_stack=4`/`dropped_debris=1` and
+   the retry (a full pickup) `dropped_stack=0`/`dropped_debris=0`, both measured
+   live in the recorded run, so a receipt claiming a drop with no debris behind it
+   is refused instead of passing a check the Mod would have called Uncertain.
+   This is native-local shared mechanics AND recovery-chain evidence only — never
+   Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen
+   evidence.
 Current native-local validation record: `move_to_tile`, `till_soil`,
 `equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
 `harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
