@@ -118,11 +118,14 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
       options.timeoutSeconds ?? 90,
       actions,
       options.binding,
+      options.action,
     );
     // Opt-in evidence-only probe block. It is written only when the caller
     // supplies it, so ordinary action runs keep an unchanged config shape.
     if (options.sleepModalProbe !== undefined)
       configured.SleepModalProbe = options.sleepModalProbe;
+    if (options.sleepLifecycle !== undefined)
+      configured.SleepLifecycle = options.sleepLifecycle;
     await writeJson(context.configPath, configured);
     await deployBundle(context);
     await verifyNativeLocalPlayerFixture({ ...options, ...context });
@@ -172,7 +175,7 @@ async function bootstrapNativeLocalPlayerFixtureInternal(options) {
     await backupBodyProgramJournal(options, backup);
     await writeJson(
       context.configPath,
-      configureNativeLocalPlayerBootstrap(original, options.logicalSaveName, options.timeoutSeconds ?? 90, actions),
+      configureNativeLocalPlayerBootstrap(original, options.logicalSaveName, options.timeoutSeconds ?? 90, actions, options.action),
     );
     await deployBundle(context);
     return Object.freeze({
@@ -206,7 +209,7 @@ export async function verifyNativeLocalPlayerFixture(options) {
     fixture.LogicalSaveName !== logicalNameForObservedSlot(options.saveName) ||
     fixture.ObservedSaveSlot !== options.saveName ||
     !Number.isInteger(fixture.TimeoutSeconds) ||
-    fixture.FixtureScenario !== fixtureScenario(actions)
+    fixture.FixtureScenario !== fixtureScenario(actions, options.action)
   )
     throw new Error("native_local_fixture_config_invalid");
   if (
@@ -225,6 +228,11 @@ export async function verifyNativeLocalPlayerFixture(options) {
       probe.Mode !== options.sleepModalProbe.Mode ||
       probe.EvidencePath !== options.sleepModalProbe.EvidencePath
     )
+      throw new Error("native_local_fixture_config_invalid");
+  }
+  if (options.sleepLifecycle !== undefined) {
+    const lifecycle = config.SleepLifecycle;
+    if (lifecycle?.Enable !== true || lifecycle.EvidencePath !== options.sleepLifecycle.EvidencePath)
       throw new Error("native_local_fixture_config_invalid");
   }
   assertBridgeConfig(config);
@@ -327,6 +335,9 @@ export function fixtureActions(action) {
   // The M2 sleep-modal probe owns the actor's route itself (native pathfind to
   // the bed) and reads the game-owned modal; it needs no Host action surface.
   if (action === "sleep_modal_probe") return ["move_to_tile"];
+  // The M2 cross-day lifecycle likewise owns the route, the native answer and
+  // the Saving/Saved/DayStarted observation; it is not a wire action.
+  if (action === "sleep_lifecycle") return ["move_to_tile"];
   if (action === "navigation_mutation")
     return ["inspect_world_map", "find_destination", "navigate_to_destination"];
   if (action === "equip_tool") return ["equip_tool"];
@@ -425,6 +436,11 @@ export function fixtureActions(action) {
   if (action === "collect_animal_product") return ["collect_animal_product"];
   if (action === "chest_store") return ["chest_store"];
   if (action === "chest_retrieve") return ["chest_retrieve"];
+  // The built-in kitchen fridge is the same Chest store/take intent as a placed
+  // chest; the fixture only upgrades the house to a kitchen, supplies the item,
+  // and places the actor beside the fridge's map tile.
+  if (action === "fridge_store") return ["chest_store"];
+  if (action === "fridge_retrieve") return ["chest_retrieve"];
   if (action === "chop_stump") return ["equip_tool", "chop_stump"];
   if (action === "plant_sapling") return ["plant_sapling"];
   if (action === "cut_weeds") return ["equip_tool", "cut_weeds"];
@@ -443,7 +459,13 @@ export function fixtureActions(action) {
   if (action === "collect_crab_pot_output") return ["collect_crab_pot_output"];
   throw new Error("invalid_native_local_fixture_action");
 }
-export function fixtureScenario(actions) {
+export function fixtureScenario(actions, action) {
+  // The requested harness action can select a distinct scenario for the SAME
+  // action set: the built-in kitchen fridge is the chest store/take intent over a
+  // different container, so both publish chest_store/chest_retrieve yet must
+  // provision a kitchen instead of a placed chest.
+  if (action === "fridge_store") return "native_fridge_store_v1";
+  if (action === "fridge_retrieve") return "native_fridge_retrieve_v1";
   // Ladder 1 walk→look→do must win over the plain navigation scenario: the
   // action set is exactly the three-node DAG plus read-only retrieval.
   if (actions.includes("navigate_to_destination") && actions.includes("machine_inspect") && actions.includes("machine_load"))
@@ -526,7 +548,7 @@ function assertSourceTopologyIsolated(config) {
   )
     throw new Error("native_local_fixture_topology_not_isolated");
 }
-function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSeconds, actions) {
+function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSeconds, actions, action) {
   assertFixtureLogicalName(logicalSaveName);
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
@@ -539,7 +561,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
     // SaveLoaded; no bridge is opened while Bootstrap.Enable is true.
     ObservedSaveSlot: `${logicalSaveName}_0`,
     TimeoutSeconds: timeoutSeconds,
-    FixtureScenario: fixtureScenario(actions),
+    FixtureScenario: fixtureScenario(actions, action),
     Bootstrap: { Enable: true, SaveName: logicalSaveName, PlayerName: "GameBuddy" },
   };
   result.Portfolio = { ...(result.Portfolio ?? {}), Enable: false };
@@ -561,7 +583,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.PresentationLocale = companionLocale;
   return result;
 }
-function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, actions, binding) {
+function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, actions, binding, action) {
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
   assertNativeLocalBinding(binding, observedSaveSlot);
@@ -576,7 +598,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
     LogicalSaveName: logicalNameForObservedSlot(observedSaveSlot),
     ObservedSaveSlot: observedSaveSlot,
     TimeoutSeconds: timeoutSeconds,
-    FixtureScenario: fixtureScenario(actions),
+    FixtureScenario: fixtureScenario(actions, action),
   };
   result.Portfolio = { ...(result.Portfolio ?? {}), Enable: false };
   result.HostAutomation = { ...(result.HostAutomation ?? {}), Enable: false };

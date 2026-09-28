@@ -56,6 +56,37 @@ public sealed class ContainerActionTests
     }
 
     [Fact]
+    public void Container_Handlers_ResolveTheBuiltInKitchenFridgeAsAnEligibleTarget()
+    {
+        // The fridge is the same store/take intent as a placed chest because it IS a
+        // Chest (FarmHouse.fridge / IslandFarmHouse.fridge are NetRef<Chest> built with
+        // playerChest: true). It never enters location.objects, so the handler must
+        // reach it through GameLocation.GetFridge() and the room's map tile. This pins
+        // that resolution so a refactor cannot silently shrink the container family
+        // back to placed chests only.
+        string? source = TryFindRepoFile(@"integrations\stardew\farmhandexecutioncontroller.cs");
+        source.Should().NotBeNull("the execution controller source must exist (looked upward from test output and working dir)");
+        string? handlers = TryFindRepoFile(@"integrations\stardew\farmhandexecutioncontroller.containeractions.cs");
+        handlers.Should().NotBeNull();
+        string controller = File.ReadAllText(source!);
+        string containers = File.ReadAllText(handlers!);
+
+        controller.Should().Contain("location.GetFridge()", "the fridge target must resolve through the native accessor");
+        controller.Should().Contain("fridgePosition", "the fridge map tile comes from the room's cached position");
+        controller.Should().Contain("BuildFridgeTargetId", "the fridge needs its own opaque target identity");
+        controller.Should().Contain("ResolveStorageContainerAt", "both container handlers share one resolver");
+        // Both handlers must go through the shared resolver rather than reading
+        // location.objects directly: a direct object-layer lookup cannot see a fridge.
+        containers.Should().Contain("ResolveStorageContainerAt(location, targetX, targetY)");
+        containers.Should().NotContain(
+            "location.objects.TryGetValue",
+            "a direct object-layer lookup would silently exclude the built-in fridge");
+        // The native transaction stays identical for both target kinds.
+        containers.Should().Contain("chest.addItem(storedItem)");
+        containers.Should().Contain("chest.GetItemsForPlayer().Remove(target)");
+    }
+
+    [Fact]
     public void Router_ChestRetrieve_WhenWorldNotReady_Rejects()
     {
         var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "chest_retrieve" });
@@ -89,5 +120,27 @@ public sealed class ContainerActionTests
         receipt.Should().NotBeNull();
         receipt.State.Should().Be(ExecutionState.Rejected);
         receipt.ReasonCode.Should().Be("world_not_ready");
+    }
+
+    private static string? TryFindRepoFile(string relativePath)
+    {
+        // Tests can run from the project directory or from the bin output directory;
+        // walk upward from both until the committed file (which sits at the repo root)
+        // is found.
+        string[] starts = { AppContext.BaseDirectory, Environment.CurrentDirectory };
+        foreach (string start in starts)
+        {
+            DirectoryInfo? dir = new(start);
+            for (int depth = 0; dir is not null && depth < 12; depth++, dir = dir.Parent)
+            {
+                string candidate = Path.Combine(dir.FullName, relativePath);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        return null;
     }
 }

@@ -149,6 +149,12 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
   chest_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
   chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+  // Same container store/take capability over the built-in kitchen fridge. The
+  // fridge IS a Chest and advertises through the same chest targets, so the
+  // runner is identical; only the fixture scenario (kitchen instead of a placed
+  // chest) and the resulting evidence identity differ.
+  fridge_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
+  fridge_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
   chop_stump: "run-stardew-native-local-player-chop-stump-smoke.mjs",
   plant_sapling: "run-stardew-native-local-player-plant-sapling-smoke.mjs",
   cut_weeds: "run-stardew-native-local-player-cut-weeds-smoke.mjs",
