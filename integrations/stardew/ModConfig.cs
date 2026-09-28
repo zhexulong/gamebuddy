@@ -212,6 +212,44 @@ public sealed class NativeLocalPlayerFixtureConfig
     /// </summary>
     public NativeLocalPlayerFixtureBootstrapConfig? Bootstrap { get; init; }
 
+    /// <summary>
+    /// The closed set of fixture scenarios this build understands. Kept in one
+    /// place because the same list gates both the armed and the bootstrap
+    /// validation path; a scenario that appears in ModEntry's dispatcher but not
+    /// here is rejected before it can run, which is exactly how a new scenario
+    /// silently failed to arm.
+    /// </summary>
+    private static readonly string[] KnownFixtureScenarios = new[]
+    {
+        "", "navigation_mutation_v1", "native_till_soil_v1", "native_water_crop_v1",
+        "native_crop_research_v1", "native_plant_seed_v1", "native_fertilize_tile_v1",
+        "native_harvest_crop_v1", "native_pickup_forage_v1", "native_pickup_item_v1",
+        "native_machine_inspect_v1", "native_machine_coffee_load_v1",
+        "native_machine_coffee_collect_v1", "native_machine_navigate_ab_v1",
+        "native_npc_relationship_v1", "native_interact_npc_with_item_v1",
+        "native_pet_animal_v1", "native_water_pet_bowl_v1",
+        "native_water_slime_hutch_trough_v1", "native_use_item_v1",
+        "native_place_wood_fence_v1", "native_tree_first_hit_v1",
+        "native_chop_tree_source_v1", "native_break_rock_source_v1",
+        "native_clear_hoedirt_v1", "native_clear_debris_resource_clump_v1",
+        "native_water_crop_empty_can_recovery_v1",
+        "native_harvest_crop_inventory_full_recovery_v1", "native_stamina_recovery_v1",
+        "native_refill_watering_can_v1", "native_feed_animal_v1",
+        "native_collect_animal_product_v1", "native_dig_artifact_spot_v1",
+        "native_place_crab_pot_v1", "native_bait_crab_pot_v1",
+        "native_chest_store_v1", "native_chest_retrieve_v1",
+        "native_fridge_store_v1", "native_fridge_retrieve_v1",
+        "native_ship_item_island_v1", "native_chop_stump_v1", "native_plant_sapling_v1",
+        "native_cut_weeds_v1", "native_scythe_crop_v1", "native_craft_item_v1",
+        "native_cook_recipe_v1", "native_craft_item_partial_v1",
+        "native_crab_pot_collect_v1", "native_ship_item_v1",
+        "native_jodi_harvest_deliver_v1", "native_pass_out_v1",
+        // Pure embodied-actor expression actions: Farmer.doEmote / Farmer
+        // .faceDirection need no world object, inventory slot or prior action,
+        // so this scenario provisions no fixture fact at all.
+        "native_express_emote_v1",
+    };
+
     internal bool IsValid => Enable
         && LogicalSaveName.Length is >= 1 and <= 96
         && LogicalSaveName.StartsWith("GameBuddyFixture", StringComparison.Ordinal)
@@ -220,14 +258,14 @@ public sealed class NativeLocalPlayerFixtureConfig
         && TimeoutSeconds is >= 10 and <= 300
         && NavigationMutationTargetLabel.Length <= 128
         && (FixtureScenario == "navigation_mutation_v1" || NavigationMutationTargetLabel.Length == 0)
-        && (FixtureScenario is "" or "navigation_mutation_v1" or "native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_interact_npc_with_item_v1" or "native_pet_animal_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_ship_item_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1")
+        && KnownFixtureScenarios.Contains(FixtureScenario, StringComparer.Ordinal)
         && (Bootstrap is null || !Bootstrap.Enable);
 
     internal bool IsBootstrapValid => Enable
         && TimeoutSeconds is >= 10 and <= 300
         && NavigationMutationTargetLabel.Length <= 128
         && (FixtureScenario == "navigation_mutation_v1" || NavigationMutationTargetLabel.Length == 0)
-        && (FixtureScenario is "" or "navigation_mutation_v1" or "native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_interact_npc_with_item_v1" or "native_pet_animal_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_ship_item_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1")
+        && KnownFixtureScenarios.Contains(FixtureScenario, StringComparer.Ordinal)
         && Bootstrap is { IsValid: true };
 
     private static bool IsObservedFixtureSlot(string slot, string logicalName)
