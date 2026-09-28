@@ -374,7 +374,7 @@
   },
   "liveObservation": {
     "state": "unavailable",
-    "reason": "no_real_game_thread_harness_exists",
-    "description": "Source and API characterization only. Live native side-effect verification requires formal game-thread execution harness."
+    "reason": "no_live_evidence_recorded_at_this_path",
+    "description": "Source and API characterization only. This file records the target-version contract surface, not a live run.\n\nHistory: this field previously read `no_real_game_thread_harness_exists`, which was true when written (2026-09-09) but stopped being true on 2026-09-26 when the shared native-local smoke harness landed (tools/lib/stardew-native-smoke-harness-v1.mjs); it was never updated.\n\nThe emote/facing actions do have live history: `SDW-LIVE-COOP-01` (fixtures/stardew/RUNBOOK.md, tools/run-stardew-companion-live-coop-01.mjs) dispatched `express_emote: happy` against a live SMAPI process and paused 2.5s so a human could see the native emote bubble. That runner was deleted in 089c9c8 as an incidental part of an unrelated multiplayer-sensitivity cleanup, so its evidence no longer has a carrier in this tree.\n\nRe-running that scenario against the current harness is what would move these two actions from `experimental` to `live_verified`; see design/10_GAME_ACTION_AUTHORIZATION_AND_DISCLOSURE.md section 3.1.1."
   }
 }
