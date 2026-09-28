@@ -290,10 +290,30 @@ piece 0 为 `"I'll take a look around first."`（3483 ms）—— 即从 tool-us
 | 03 | `blocked` | 4 | 73943 ms | wire 标识符泄漏 |
 | 04 | `blocked` | 8 | 4443 ms | tool-use 规划旁白泄漏 |
 | 05 | **`passed`** | 3 | 81333 ms | —（但玩家静默 81s） |
-| 06 | `blocked` | 3 | **3483 ms** | 工作短评落地；新的 `summary_too_long`（309 字） |
-| 05 | **`passed`** | 3 | 81333 ms | — |
+| 06 | `blocked` | 3 | **3483 ms** | 工作短评落地；`summary_too_long`（309 码点，已归因于语言 bug） |
 
 run-05 的 3 片全部是玩家可见回复，`claimedNpcReaction=false`、`machineTokens=[]`，目标 receipt 均落地。
+
+#### 5.1.7 run-06 的 `summary_too_long` 已归因：是语言 bug，不是“说话变长”
+
+六次 run 的长度数据直接推翻了“允许说话导致变长”的假设：
+
+| run | 片数 | 长度（码点） | 当时 reasons |
+|---|---|---|---|
+| 01 | 5 | 83 | — |
+| 02 | 3 | 75 | `unobserved_event` |
+| 03 | 4 | **160** | `summary_too_long` |
+| 04 | 8 | **159** | `summary_too_long` |
+| 05 | 3 | 104 | — |
+| 06 | 3 | **309** | `summary_too_long` |
+
+两点结论：
+
+1. **`summary_too_long` 不是工作短评引入的** —— run-03/run-04 在本轮改动之前就已触发它。
+2. **run-06 的 309 是 5.1.6 那个语言 bug 的产物。** run-05（中文、3 片）= 104，run-06（英文、3 片）= 309 —— **片数相同，长度差 3 倍**，差异完全来自表达密度。所以不需要新的行为解释。
+
+它还暴露了一个真实的**门标定缺陷**：`summary_too_long` 的阈值是 **120 个码点**（`tools/lib/companion-interaction-gate.mjs`），这个标定对中文合理，但对英文过严 —— 同一句话英文的码点数约为中文的两倍。标定应基于**语言无关的度量**（字节数或词数），而不是码点数；但在拿到中文对照数据之前不自行调整阈值。
+
 
 证据快照见 `tools/fixtures/stardew-presence-live-runs/`（含 README 说明使用边界与真实代价）。
 
