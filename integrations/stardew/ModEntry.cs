@@ -85,7 +85,7 @@ public sealed partial class ModEntry : Mod
     private FarmhandProvisioningProbe? provisioningProbe;
     private SleepModalProbe? sleepModalProbe;
     private bool sleepModalProbeRejected;
-    private SinglePlayerSleepLifecycle? sleepLifecycle;
+    private SleepAndAdvanceDayLifecycle? sleepLifecycle;
     private bool sleepLifecycleRejected;
     private bool embodimentInitialized;
     private bool hostRoleConfigured;
@@ -278,13 +278,8 @@ public sealed partial class ModEntry : Mod
             }
             if (this.config.SleepLifecycle?.Enable == true)
             {
-                if (this.config.SleepLifecycle is not { IsValid: true })
-                {
-                    this.sleepLifecycleRejected = true;
-                    this.Monitor.Log("GameBuddy rejected the M2 sleep lifecycle: an absolute evidence path is required.", LogLevel.Error);
+                if (!this.TryArmSleepLifecycle())
                     return;
-                }
-                this.sleepLifecycle = SinglePlayerSleepLifecycle.TryStart(this.Monitor, this.config.SleepLifecycle);
             }
             return;
         }
@@ -310,6 +305,11 @@ public sealed partial class ModEntry : Mod
         }
         if (hostConfigured)
         {
+            // The Host is the *other* farmer in a co-op night: for the day to
+            // roll over, its player must sleep too. Each process arms its own
+            // lifecycle for its own farmer; neither marks the other ready.
+            if (!this.TryArmSleepLifecycle())
+                return;
             this.hostFarmhandProvisioner = HostFarmhandProvisioner.TryStart(
                 this.Helper,
                 this.Monitor,
@@ -339,12 +339,41 @@ public sealed partial class ModEntry : Mod
                 this.Monitor.Log("GameBuddy rejected Stardew AI-client provisioning configuration; the formal client requires a valid controlled manifest path, token, and target version.", LogLevel.Error);
                 return;
             }
+            // The cross-day lifecycle is a coordinated capability, not a wire
+            // action, so it is armed here rather than through the action policy.
+            // It only starts once the world is ready (see OnUpdateTicked).
+            if (!this.TryArmSleepLifecycle())
+                return;
             // Start while the native title/farmhand menu owns available-Farmhand
             // reception; the manifest itself binds the later world scope.
             this.TryStartFarmhandProvisioner();
             return;
         }
+        if (!this.TryArmSleepLifecycle())
+            return;
         this.provisioningProbe = FarmhandProvisioningProbe.TryStart(this.Monitor, this.config.FarmhandProvisioningProbe);
+    }
+
+    /// <summary>
+    /// Arm the opt-in cross-day lifecycle when its configuration asks for it.
+    /// It is available on every topology the capability covers -- the native-local
+    /// fixture lane and the formal AI-client/Farmhand lane -- because a co-op
+    /// night is exactly the case the multiplayer ready barrier exists for.
+    /// Returns false when the configuration is invalid, so the caller refuses the
+    /// whole profile instead of running a half-configured lifecycle.
+    /// </summary>
+    private bool TryArmSleepLifecycle()
+    {
+        if (this.config.SleepLifecycle?.Enable != true)
+            return true;
+        if (this.config.SleepLifecycle is not { IsValid: true })
+        {
+            this.sleepLifecycleRejected = true;
+            this.Monitor.Log("GameBuddy rejected the sleep lifecycle: an absolute evidence path and in-range budgets are required.", LogLevel.Error);
+            return false;
+        }
+        this.sleepLifecycle = SleepAndAdvanceDayLifecycle.TryStart(this.Monitor, this.config.SleepLifecycle);
+        return true;
     }
 
     private void StopChatCommand(string[] command, ChatBox chat)
@@ -3013,6 +3042,11 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         this.TryObserveNativeAutomationClientExit();
         this.TryTriggerNativeAutomationSave();
         this.TryInitializeNativeFixtureScenario();
+        // A co-op night has one lifecycle per farmer: the Host process arms one
+        // for the host player and the AI-client process arms one for the Farmhand.
+        // Each owns only its own actor, so both are pumped here.
+        if (this.sleepLifecycle is not null && this.sleepLifecycle.Update())
+            this.sleepLifecycle = null;
         if (this.farmhandProvisioner is not null && this.farmhandProvisioner.Update())
         {
             if (!this.farmhandProvisioner.IsReady)

@@ -41,7 +41,20 @@ param(
     [string]$ReachLocation = "",
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 180,
     [switch]$AttachOnly,
-    [string]$SmokeScript = ""
+    [string]$SmokeScript = "",
+    # Cross-day lifecycle only: where the AI client writes its lifecycle evidence,
+    # and how many frames it waits for the other player to reach the native ready
+    # barrier before honestly reporting requires_other_player.
+    [string]$SleepLifecycleEvidence = "",
+    [ValidateRange(1, 36000)][int]$SleepReadyBarrierFrames = 300,
+    # Farmers that must be online before either lifecycle may start. A co-op night
+    # must not be advanced alone: a host that sleeps while its partner is still
+    # connecting would satisfy the barrier by itself.
+    [ValidateRange(1, 8)][int]$SleepMinimumOnlineFarmers = 2,
+    # The Host is the *other* farmer in a co-op night. For the day to actually
+    # roll over, its player must sleep too. Each process drives only its own
+    # farmer through the same native lifecycle; neither marks the other ready.
+    [string]$HostSleepLifecycleEvidence = ""
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -71,6 +84,11 @@ $ACTION_SETUP = @{
     ship_item       = @{ scenario = "native_ship_item_v1"; experimental = $true }
     chest_retrieve  = @{ scenario = "native_chest_retrieve_v1"; experimental = $true }
     pet_animal      = @{ scenario = "native_pet_animal_v1"; experimental = $true }
+    # The cross-day lifecycle is a coordinated lifecycle, not a wire action: no
+    # Host fixture precondition is needed beyond the Farmhand's own cabin and
+    # bed, so the scenario is the move-only empty one. It is also not a policy
+    # action, so the AI client must not list it under ExperimentalActions.
+    sleep_lifecycle = @{ scenario = ""; experimental = $false }
 }
 
 function Assert-PathExists([string]$Path, [string]$Label, [string]$Kind = "Leaf") {
@@ -214,12 +232,49 @@ try {
         }
     }
     $hostConfig.SaveId = $hostConfig.SaveId
+    # A co-op night needs BOTH farmers asleep: each process runs the same native
+    # lifecycle for its own farmer, declares only its own readiness, and the
+    # native ready barrier advances the day once both are ready. Neither side
+    # marks the other ready and neither calls NewDay directly.
+    if ($Action -eq "sleep_lifecycle" -and -not [string]::IsNullOrWhiteSpace($HostSleepLifecycleEvidence)) {
+        if (-not [System.IO.Path]::IsPathFullyQualified($HostSleepLifecycleEvidence)) {
+            throw "HostSleepLifecycleEvidence must be absolute: $HostSleepLifecycleEvidence"
+        }
+        $hostConfig | Add-Member -NotePropertyName SleepLifecycle -NotePropertyValue @{
+            Enable                  = $true
+            EvidencePath            = $HostSleepLifecycleEvidence
+            TimeoutSeconds          = [Math]::Max(30, $TimeoutSeconds)
+            SettleFrameBudget       = 240
+            ReadyBarrierFrameBudget = $SleepReadyBarrierFrames
+            MinimumOnlineFarmers    = $SleepMinimumOnlineFarmers
+        } -Force
+    }
     Write-Json $hostConfigPath $hostConfig
     Write-Json $hostSidecarPath $hostConfig
 
     $aiConfig = Read-Json $aiConfigPath
     if ($null -ne $setup -and $setup.experimental) {
         $aiConfig.ExperimentalActions = @($Action)
+    }
+    # The cross-day lifecycle is opt-in Mod configuration, not a policy action.
+    # It is enabled on the AI client only, because that is the process whose
+    # Farmhand walks to its own cabin bed and declares readiness; the Host player
+    # is a real human whose sleep stays their own decision.
+    if ($Action -eq "sleep_lifecycle") {
+        if ([string]::IsNullOrWhiteSpace($SleepLifecycleEvidence)) {
+            throw "sleep_lifecycle requires -SleepLifecycleEvidence (an absolute path for the lifecycle evidence file)."
+        }
+        if (-not [System.IO.Path]::IsPathFullyQualified($SleepLifecycleEvidence)) {
+            throw "SleepLifecycleEvidence must be absolute: $SleepLifecycleEvidence"
+        }
+        $aiConfig | Add-Member -NotePropertyName SleepLifecycle -NotePropertyValue @{
+            Enable                  = $true
+            EvidencePath            = $SleepLifecycleEvidence
+            TimeoutSeconds          = [Math]::Max(30, $TimeoutSeconds)
+            SettleFrameBudget       = 240
+            ReadyBarrierFrameBudget = $SleepReadyBarrierFrames
+            MinimumOnlineFarmers    = $SleepMinimumOnlineFarmers
+        } -Force
     }
     # Diagnostic dumps have no scenario, so without this they advertise no experimental
     # action at all and every discovery list that depends on one reads as null -- which
@@ -306,6 +361,7 @@ try {
     } elseif (-not $AttachOnly) {
         $script:phase = "action_smoke"
         $actionArgs = @("--client-config", $aiConfigPath, "--action", $Action)
+        if ($Action -eq "sleep_lifecycle") { $actionArgs += @("--lifecycle-evidence", $SleepLifecycleEvidence) }
         if ($DumpSpatial) {
             $actionArgs = @("--client-config", $aiConfigPath, "--dump-spatial", "--poll-trace")
             if (-not [string]::IsNullOrWhiteSpace($ReachLocation)) { $actionArgs += @("--reach-location", $ReachLocation) }

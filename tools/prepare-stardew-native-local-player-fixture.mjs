@@ -29,6 +29,7 @@ console.log(
             EvidencePath: required(values, "--sleep-lifecycle-evidence"),
             TimeoutSeconds: 180,
             SettleFrameBudget: 240,
+            ReadyBarrierFrameBudget: 3600,
           }
         : undefined,
     }),
