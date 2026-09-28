@@ -335,9 +335,13 @@ export function fixtureActions(action) {
   // The M2 sleep-modal probe owns the actor's route itself (native pathfind to
   // the bed) and reads the game-owned modal; it needs no Host action surface.
   if (action === "sleep_modal_probe") return ["move_to_tile"];
-  // The M2 cross-day lifecycle likewise owns the route, the native answer and
-  // the Saving/Saved/DayStarted observation; it is not a wire action.
-  if (action === "sleep_lifecycle") return ["move_to_tile"];
+  // The M2 cross-day lifecycle is now a real execution action: the Mod owns the
+  // route, the native answer and the Saving/Saved/DayStarted observation, and the
+  // Host dispatches advance_day exactly like any other action.
+  if (action === "sleep_lifecycle") return ["move_to_tile", "advance_day"];
+  // The pass-out variant establishes only a low-stamina live precondition and
+  // lets the native gate (Game1.cs:6452) start the pass-out by itself.
+  if (action === "sleep_pass_out_lifecycle") return ["move_to_tile"];
   if (action === "navigation_mutation")
     return ["inspect_world_map", "find_destination", "navigate_to_destination"];
   if (action === "equip_tool") return ["equip_tool"];
@@ -358,6 +362,11 @@ export function fixtureActions(action) {
   // succeeded on the SAME crop target within one native-local session.
   if (action === "water_crop_resource_recovery_chain")
     return ["move_to_tile", "travel", "equip_tool", "water_crop", "refill_watering_can"];
+  // Lane G container-full recovery chain: the full-backpack harvest fixture drives
+  // breakpoint rejected/inventory_full -> chest_store recovery -> harvest retry
+  // succeeded on the SAME crop target within one native-local session.
+  if (action === "harvest_inventory_full_recovery_chain")
+    return ["move_to_tile", "travel", "harvest_crop", "chest_store"];
   // Ladder 3: Jodi's Request — a real Spring-19 mail quest asking for a fresh
   // cauliflower. The fixture only supplies the player with a Hoe, a filled
   // Watering Can and cauliflower seeds; the Agent plans the whole farming
@@ -474,6 +483,11 @@ export function fixtureActions(action) {
   // The fixture grows crab pots, baits them and advances to a mature output;
   // production alone collects. The existing place/bait actions stay separate.
   if (action === "collect_crab_pot_output") return ["collect_crab_pot_output"];
+  // The cross-day lifecycle is a real wire action now: the fixture publishes
+  // advance_day and production dispatches it. Its own route, native sleep answer
+  // and Saving/Saved/DayStarted observation are the action's business, so no
+  // other capability is a prerequisite here.
+  if (action === "advance_day") return ["advance_day"];
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions, action) {
@@ -489,6 +503,18 @@ export function fixtureScenario(actions, action) {
   // override the `water_crop` check below would select the charged-can scenario
   // and the chain would have no breakpoint.
   if (action === "water_crop_resource_recovery_chain") return "native_water_crop_empty_can_recovery_v1";
+  // Lane G container-full recovery chain: the same harvest_crop action set plus
+  // chest_store, but the fixture must supply a FULL backpack. Without this override
+  // the `harvest_crop` check below would select the ordinary ready-crop scenario and
+  // the chain would have no breakpoint.
+  if (action === "harvest_inventory_full_recovery_chain") return "native_harvest_crop_inventory_full_recovery_v1";
+  // The lifecycle action owns its own route and preconditions; it needs no
+  // fixture scenario beyond the ordinary move-only world.
+  if (actions.includes("advance_day")) return "";
+  // The pass-out lifecycle supplies only a low-stamina precondition; the native
+  // gate starts the pass-out itself. This is keyed off the action name rather
+  // than a synthetic action so EnabledActions stays exactly the real surface.
+  if (action === "sleep_pass_out_lifecycle") return "native_pass_out_v1";
   // Ladder 1 walk→look→do must win over the plain navigation scenario: the
   // action set is exactly the three-node DAG plus read-only retrieval.
   if (actions.includes("navigate_to_destination") && actions.includes("machine_inspect") && actions.includes("machine_load"))
@@ -597,7 +623,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "water_pet_bowl", "water_slime_hutch_trough", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "water_pet_bowl", "water_slime_hutch_trough", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output", "advance_day"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
@@ -633,7 +659,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "water_pet_bowl", "water_slime_hutch_trough", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "water_pet_bowl", "water_slime_hutch_trough", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output", "advance_day"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the

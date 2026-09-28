@@ -176,6 +176,10 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   craft_item: "run-stardew-native-local-player-craft-item-smoke.mjs",
   cook_recipe: "run-stardew-native-local-player-cook-recipe-smoke.mjs",
   collect_crab_pot_output: "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
+  // The M2 cross-day lifecycle. Its fixture scenario is the ordinary move-only
+  // world: the action owns its own route to the actor's bed and its own native
+  // sleep-answer/observation, so there is no precondition to provision.
+  advance_day: "run-stardew-native-local-player-advance-day-smoke.mjs",
   // Lane G recovery-chain harness: drives breakpoint rejected -> equip recovery
   // -> retry succeeded within one native-local session over the till_soil
   // fixture. Not a new action; it grants no capability.
