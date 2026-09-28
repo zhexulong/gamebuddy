@@ -538,9 +538,24 @@ an alternate action runtime.
    tile (a self-centred ring re-centres each step and never tries the tiles that
    reach both targets), and a usable chain position requires the crop AND the
    chest in reach, since settling on a crop-only tile strands the recovery step.
-   These are native-local shared mechanics AND recovery-chain evidence only —
-   never Farmhand, HostAutomation, Portfolio, publication, release, or
-   save/reopen evidence.
+25. `stamina_recovery_chain` has met this lane's target-version live recovery-chain
+   closure (2026-09-28), proving the fourth §1.4 mode. It is deliberately **not**
+   rejection-triggered: the contracts record that no `insufficient_stamina`
+   reasonCode exists, because stamina is a continuous fact every tool handler spends
+   and every tool receipt reports. The breakpoint is therefore a READING:
+   `succeeded/soil_tilled` (rev 21) with the receipt's own evidence showing stamina
+   `12 -> 10`, then `succeeded/item_used` (rev 23) showing the eaten Bread restoring
+   `10 -> 60` and the stack leaving `1 -> 0`, then `succeeded/soil_tilled` (rev 24)
+   on a DIFFERENT bare tile with stamina `60 -> 58` and the tile gone from the next
+   snapshot. Three terminals, one journal, strictly advancing revisions and distinct
+   execution ids; the profile restored with backup/lock and working save removed and
+   no Stardew/SMAPI process left. Every assertion stays strictly above the native
+   pass-out floor of `-15` (`Game1.cs:6452`), so this gate cannot silently become a
+   pass-out test. The scenario sets `player.stamina` directly as its precondition
+   (the same technique `native_pass_out_v1` uses) and never tills, eats, or emits a
+   receipt. This is native-local shared mechanics AND recovery-chain evidence only —
+   never Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen
+   evidence.
 Current native-local validation record: `move_to_tile`, `till_soil`,
 `equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
 `harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
