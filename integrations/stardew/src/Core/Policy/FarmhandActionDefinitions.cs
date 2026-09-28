@@ -20,7 +20,7 @@ public sealed record FarmhandActionObservationBindingDescriptor(string Type, int
 public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
-public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression }
+public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression, WorldLifecycle }
 public static class FarmhandActionHandlerGroupWire
 {
     public static string ToWireValue(this FarmhandActionHandlerGroup group) => group switch
@@ -31,6 +31,7 @@ public static class FarmhandActionHandlerGroupWire
         FarmhandActionHandlerGroup.MachinesAndAnimals => "machines_and_animals",
         FarmhandActionHandlerGroup.ResourceTools => "resource_tools",
         FarmhandActionHandlerGroup.Expression => "expression",
+        FarmhandActionHandlerGroup.WorldLifecycle => "world_lifecycle",
         _ => throw new ArgumentOutOfRangeException(nameof(group)),
     };
 }
@@ -69,6 +70,14 @@ public static class FarmhandActionCatalog
     /// matching its ordinary-pipeline 10-minute deadline ceiling
     /// (BridgeSession.IsFreshExecutionRequest; action-specific coarse upper bound).</summary>
     public const long NavigationWatchdogMs = 600_000;
+
+    /// <summary>
+    /// Action-specific watchdog for the cross-day lifecycle. A co-op night waits
+    /// on other players' native ready state, a save, and a new-day transition, so
+    /// it cannot fit the 60s ordinary-action ceiling; 10 minutes matches the
+    /// navigation ceiling and the lifecycle's own ready-barrier budget.
+    /// </summary>
+    public const long LifecycleWatchdogMs = 600_000;
 
     public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
     {
@@ -117,6 +126,18 @@ public static class FarmhandActionCatalog
         E("cook_recipe", "crafting_cooking", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "native_action_postcondition", ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
         E("collect_crab_pot_output", "buildings_farm_management", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental),
         E("ship_item", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.Experimental),
+        // M2 cross-day lifecycle wiring. The catalog contract
+        // (single_player_sleep_and_advance_day / end_day_with_all_players_ready)
+        // is coordinated, but the AI's own share of it is one bounded native
+        // lifecycle: walk to the actor's own bed, let the native sleep path run
+        // exactly as the keyboard/mouse paths do, declare local ready through
+        // that same native path, then OBSERVE the native Saving/Saved/DayStarted
+        // pipeline. It carries no arguments because the target is the actor's own
+        // bed and the ready state is native; nothing about it is client-supplied.
+        // The receipt is minted by the one execution ledger, so a coordinated
+        // terminal (requires_other_player) is traceable rather than a second
+        // receipt authority.
+        E("advance_day", "world_lifecycle", FarmhandActionHandlerGroup.WorldLifecycle, Lifecycle(), FarmhandActionLifecycle.Experimental),
     });
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, descriptor);
@@ -139,6 +160,19 @@ public static class FarmhandActionCatalog
         null,
         new FarmhandActionObservationBindingDescriptor("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
     private static FarmhandActionDescriptor SlotTarget() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedTargetId","string"));
+
+    /// <summary>advance_day carries no arguments: its target is the actor's own bed and its
+    /// readiness is native state, so no client coordinate, slot, or target identity is trusted.</summary>
+    private static FarmhandActionDescriptor Lifecycle() => new FarmhandActionDescriptor(
+        Array.Empty<FarmhandActionArgument>(),
+        new Dictionary<string, string>(),
+        EmbodiedActorResource,
+        "write",
+        "day_advanced",
+        null) with
+    {
+        WatchdogMs = FarmhandActionCatalog.LifecycleWatchdogMs,
+    };
     private static FarmhandActionDescriptor SlotItemTarget(string? exactQualifiedItemId = null) => exactQualifiedItemId is null
         ? A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedQualifiedItemId","string"),("expectedTargetId","string"))
         : A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedQualifiedItemId","string"),("expectedTargetId","string")) with

@@ -96,6 +96,18 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private int requiredAtCompletion;
     private bool finished;
 
+    /// <summary>
+    /// Terminal outcome handed back to the owning execution. The lifecycle is the
+    /// mechanism owner; the wire receipt is still minted by the one execution
+    /// ledger, so both the evidence file and the bridge receipt describe the same
+    /// run rather than two authorities.
+    /// </summary>
+    internal string TerminalState { get; private set; } = string.Empty;
+
+    internal string TerminalReasonCode { get; private set; } = string.Empty;
+
+    internal string TerminalEvidence { get; private set; } = string.Empty;
+
     private enum Phase
     {
         AwaitingEligibility,
@@ -699,6 +711,45 @@ internal sealed class SleepAndAdvanceDayLifecycle
     }
 
     /// <summary>
+    /// Bounded, content-safe projection of the terminal for a bridge receipt.
+    /// Deliberately a flat key=value evidence string, the shape every other
+    /// action receipt uses, so no receipt consumer needs a lifecycle-specific
+    /// parser.
+    /// </summary>
+    private string BuildReceiptEvidence(string state, string reasonCode, Dictionary<string, object?>? settlement)
+    {
+        var parts = new List<string>
+        {
+            $"state={state}",
+            $"reason={reasonCode}",
+            $"topology={this.Topology()}",
+            $"entered_via={this.enteredVia}",
+            $"saving_observed={this.savingObserved.ToString().ToLowerInvariant()}",
+            $"saved_observed={this.savedObserved.ToString().ToLowerInvariant()}",
+            $"day_started_observed={this.dayStartedObserved.ToString().ToLowerInvariant()}",
+        };
+        if (this.dayBaselineCaptured)
+        {
+            parts.Add($"day_before={this.dayBefore}");
+            parts.Add($"days_before={this.daysBefore}");
+            parts.Add($"day_after={Game1.Date.TotalDays}");
+            parts.Add($"days_after={Game1.stats.DaysPlayed}");
+        }
+        if (this.multiPlayer)
+        {
+            parts.Add($"ready_check_observed={this.readyCheckObserved.ToString().ToLowerInvariant()}");
+            parts.Add($"ready_at_completion={this.readyAtCompletion}");
+            parts.Add($"required_at_completion={this.requiredAtCompletion}");
+        }
+        if (settlement is not null)
+        {
+            foreach (KeyValuePair<string, object?> entry in settlement)
+                parts.Add($"{entry.Key}={entry.Value}");
+        }
+        return string.Join(';', parts);
+    }
+
+    /// <summary>
     /// Build the event chain from what this run actually observed.
     ///
     /// This must never be a topology-shaped template: a yielded pass-out run
@@ -760,8 +811,24 @@ internal sealed class SleepAndAdvanceDayLifecycle
             ["eventChain"] = this.BuildEventChain(),
         };
 
+        // The same facts feed the bridge receipt when an execution owns this
+        // lifecycle. Never a second authority: this is the evidence projection of
+        // the identical terminal, and the ledger mints the receipt.
+        this.TerminalState = state;
+        this.TerminalReasonCode = reasonCode;
+        this.TerminalEvidence = BuildReceiptEvidence(state, reasonCode, settlement);
+
         try
         {
+            // An execution-owned night has no file to write; its receipt carries
+            // the same facts. Only the configured evidence lane writes a file.
+            if (this.evidencePath.Length == 0)
+            {
+                this.monitor.Log(
+                    $"GameBuddy sleep lifecycle finished: state={state}; reason={reasonCode}; evidence=receipt.",
+                    LogLevel.Info);
+                return;
+            }
             string? directory = Path.GetDirectoryName(this.evidencePath);
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
@@ -804,7 +871,9 @@ public sealed class SleepAndAdvanceDayLifecycleConfig
     public int MinimumOnlineFarmers { get; init; } = 1;
 
     internal bool IsValid => this.Enable
-        && Path.IsPathFullyQualified(this.EvidencePath)
+        // The evidence file is optional: an execution-owned night is observable
+        // through its receipt, so requiring a path would reject every such night.
+        && (this.EvidencePath.Length == 0 || Path.IsPathFullyQualified(this.EvidencePath))
         && this.TimeoutSeconds is >= 10 and <= 3600
         && this.SettleFrameBudget is >= 1 and <= 600
         && this.ReadyBarrierFrameBudget is >= 1 and <= 36000
