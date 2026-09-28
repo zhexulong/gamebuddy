@@ -125,7 +125,7 @@ public sealed class ModConfig
         "crafting_cooking", "machines_processing", "animals_pets", "npc_social", "shops_economy",
         "buildings_farm_management", "quests_progression", "story_world_scripts", "festivals_minigames", "calendar_day_progression", "expression",
     }, StringComparer.Ordinal);
-    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "express_emote", "face_direction", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "craft_item", "cook_recipe", "collect_crab_pot_output", "ship_item" }, StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "express_emote", "face_direction", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "craft_item", "cook_recipe", "collect_crab_pot_output", "ship_item", "advance_day" }, StringComparer.Ordinal);
 
     private static string ActionFamily(string action) => action switch
     {
