@@ -118,6 +118,7 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
       options.timeoutSeconds ?? 90,
       actions,
       options.binding,
+      options.action,
     );
     // Opt-in evidence-only probe block. It is written only when the caller
     // supplies it, so ordinary action runs keep an unchanged config shape.
@@ -208,7 +209,7 @@ export async function verifyNativeLocalPlayerFixture(options) {
     fixture.LogicalSaveName !== logicalNameForObservedSlot(options.saveName) ||
     fixture.ObservedSaveSlot !== options.saveName ||
     !Number.isInteger(fixture.TimeoutSeconds) ||
-    fixture.FixtureScenario !== fixtureScenario(actions)
+    fixture.FixtureScenario !== fixtureScenario(actions, options.action)
   )
     throw new Error("native_local_fixture_config_invalid");
   if (
@@ -337,6 +338,9 @@ export function fixtureActions(action) {
   // The M2 cross-day lifecycle likewise owns the route, the native answer and
   // the Saving/Saved/DayStarted observation; it is not a wire action.
   if (action === "sleep_lifecycle") return ["move_to_tile"];
+  // The pass-out variant establishes only a low-stamina live precondition and
+  // lets the native gate (Game1.cs:6452) start the pass-out by itself.
+  if (action === "sleep_pass_out_lifecycle") return ["move_to_tile"];
   if (action === "navigation_mutation")
     return ["inspect_world_map", "find_destination", "navigate_to_destination"];
   if (action === "equip_tool") return ["equip_tool"];
@@ -453,7 +457,11 @@ export function fixtureActions(action) {
   if (action === "collect_crab_pot_output") return ["collect_crab_pot_output"];
   throw new Error("invalid_native_local_fixture_action");
 }
-export function fixtureScenario(actions) {
+export function fixtureScenario(actions, action) {
+  // The pass-out lifecycle supplies only a low-stamina precondition; the native
+  // gate starts the pass-out itself. This is keyed off the action name rather
+  // than a synthetic action so EnabledActions stays exactly the real surface.
+  if (action === "sleep_pass_out_lifecycle") return "native_pass_out_v1";
   // Ladder 1 walk→look→do must win over the plain navigation scenario: the
   // action set is exactly the three-node DAG plus read-only retrieval.
   if (actions.includes("navigate_to_destination") && actions.includes("machine_inspect") && actions.includes("machine_load"))
@@ -571,7 +579,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.PresentationLocale = companionLocale;
   return result;
 }
-function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, actions, binding) {
+function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, actions, binding, action) {
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
   assertNativeLocalBinding(binding, observedSaveSlot);
@@ -586,7 +594,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
     LogicalSaveName: logicalNameForObservedSlot(observedSaveSlot),
     ObservedSaveSlot: observedSaveSlot,
     TimeoutSeconds: timeoutSeconds,
-    FixtureScenario: fixtureScenario(actions),
+    FixtureScenario: fixtureScenario(actions, action),
   };
   result.Portfolio = { ...(result.Portfolio ?? {}), Enable: false };
   result.HostAutomation = { ...(result.HostAutomation ?? {}), Enable: false };
