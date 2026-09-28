@@ -291,8 +291,26 @@ piece 0 为 `"I'll take a look around first."`（3483 ms）—— 即从 tool-us
 | 04 | `blocked` | 8 | 4443 ms | tool-use 规划旁白泄漏 |
 | 05 | **`passed`** | 3 | 81333 ms | —（但玩家静默 81s） |
 | 06 | `blocked` | 3 | **3483 ms** | 工作短评落地；`summary_too_long`（309 码点，已归因于语言 bug） |
+| 07 | **`passed`** | 4 | **3565 ms** | —（工作短评 + 语言修复同时生效） |
 
 run-05 的 3 片全部是玩家可见回复，`claimedNpcReaction=false`、`machineTokens=[]`，目标 receipt 均落地。
+
+#### 5.1.8 run-07：第一次同时“判定通过”且“首个声音快”
+
+修掉语言 bug（5.1.6）后重跑得到 run-07（`run-07-locale-fixed-passed.json`）：
+
+| | run-05（基） | run-06（工作短评） | run-07（+语言修复） |
+|---|---|---|---|
+| 状态 | `passed` | `blocked` | **`passed`** |
+| 语言 | 中文 | **英文** ❌ | **中文** ✅ |
+| 长度（码点） | 104 | 309 | **105** |
+| 首个声音 | 81333 ms | 3483 ms | **3565 ms** |
+| `claimedNpcReaction` | false | false | false |
+| `machineTokens` | `[]` | `[]` | `[]` |
+
+piece 0 = `我先看看农场现在什么情况。`（3565 ms）—— 工作短评仍然生效。
+
+而长度从 309 回到 105，**直接证实了 5.1.7 的归因**：同样三片内容，英文的码点数约为中文的 3 倍，所谓“说得太长”实际上是“说错了语言”。因此没有对门的阈值做任何修改。
 
 #### 5.1.7 run-06 的 `summary_too_long` 已归因：是语言 bug，不是“说话变长”
 
