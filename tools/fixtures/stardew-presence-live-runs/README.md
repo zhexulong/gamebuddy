@@ -1,13 +1,13 @@
 # Stardew 临场感 live run 证据（机制 A + 机制 B）
 
 这些 JSON 是 `tools/run-stardew-native-local-agent-ab-live.mjs` 的真实产物，不是手工构造的 fixture。
-五次 run 依次暴露了四类真实缺陷，最终 run-05 才第一次真正 `passed`。
+五次 run 依次暴露了四类真实缺陷，最终 run-05 才第一次真正 `passed`；run-06 又把“玩家静默期”从 81s 降到 3.5s。
 
 通道：`tools/_ladder-live-orchestrator.mjs` → `tools/run-stardew-native-local-agent-ab-live.mjs`
 （single SMAPI + `--mods-path`），fixture `native_jodi_harvest_deliver_v1`（ladder 4），`zh-CN`。
 环境变量是 `GAMEBUDDY_AGENT_LADDER` / `GAMEBUDDY_RESULT_FILE`（写错会静默跑成 ladder 1）。
 
-## 五次 run 总表
+## 六次 run 总表
 
 | run | 文件 | 状态 | 片数 | 首片 TTFB | 暴露的问题 |
 |---|---|---|---|---|---|
@@ -15,7 +15,8 @@
 | 02 | `run-02-gate-fixed-blocked.json` | `blocked` | 3 | 54876 ms | 复现同一穿帮 → 证明系统性 |
 | 03 | `run-03-guidance-token-leak.json` | `blocked` | 4 | 73943 ms | prompt 引导引出 wire 标识符泄漏 |
 | 04 | `run-04-guidance-tooluse-preamble.json` | `blocked` | 8 | 4443 ms | 前 4 片是 tool-use 规划旁白 |
-| 05 | `run-05-all-fixes-passed.json` | **`passed`** | 3 | 81333 ms | — |
+| 05 | `run-05-all-fixes-passed.json` | **`passed`** | 3 | 81333 ms | —（但玩家静默 81s） |
+| 06 | `run-06-working-remark.json` | `blocked` | 3 | **3483 ms** | 工作短评落地（静默 81s→3.5s）；新露出 `summary_too_long`（309 字） |
 
 注意首片 TTFB 这一列**不能跨 run 比较**：修前（01–04）它测的是**规划旁白**到达时间，修后（05）才是玩家可见回复。详见下文“真实代价”。
 
@@ -49,6 +50,19 @@
   3. `要不再等等看，还是你先去跟她聊两句探探口风？`
 - 首片 TTFB 81333 ms
 
+### run-06（工作短评落地）
+- 状态 `blocked`，**唯一理由是 `summary_too_long`（309 字 > 120），不是穿帮**：`claimedNpcReaction=false`、`machineTokens=[]`
+- 3 片：
+  1. `I'll take a look around first.`（**3483 ms**，来自 tool-use 消息的工作短评）
+  2. `Hmm, that's a snag. …`（127244 ms）
+  3. `I kept the second cauliflower, at least. …`（127277 ms）
+- 目标 receipt 均落地：`crop_harvested` ×2、`gift_given`
+
+两点必须如实标注：
+
+1. **这次 run 终判 `blocked`，但不是内容不诚实，是说太长。** 需下一轮 loop 判断“允许说话”是否连带总长度上升。
+2. **输出是英文而 `zh-CN` 配置未变。** 非本次改动引起（prompt 确实是中文），但需归因（persona/worldbook 物化、provider 侧、agent 示例），归因前不假定原因。
+
 ## run-05 的真实代价（不要读成“修好了就更好”）
 
 修复 tool-use 泄漏必须把句子**推迟到 `message_end`** 才能判定。原因已用真实 Pi session 探针证实（**不是推断**）：流式到达顺序是
@@ -79,9 +93,11 @@ msg（中间消息）: thinking_start → thinking_delta → text_start → text
 - `run-01` 的 `state=passed` **不应**被当作产品合格的证据；它只记录“当时的门没响”。
 - 门的正确主张边界是**高精度、低召回**（见 `tools/lib/companion-interaction-gate.mjs` 的
   `CLAIM BOUNDARY` 注释）：报出的基本是真穿帮，但会漏（16 条自然中文反应说法实测仍漏 7 条）。
-- `presenceProjection.claimsMade=[]` 在五次 run 中都为空，且经自证为**真阴性**（机制 B 只解析
+- `presenceProjection.claimsMade=[]` 在六次 run 中都为空，且经自证为**真阴性**（机制 B 只解析
   第一人称动作承诺；这些 run 说的都是过去时叙述，没有承诺）。
 - `showed_response=false` 是 `integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs`
   （第 775 行）里的**硬编码字面量** —— 礼物路径刻意零 UI（`receiveGift(..., showResponse: false)`）。
   所以这个 topology 下游戏从不演出 NPC 反应，任何反应类台词必然不可兑现；这是**能力缺口**，
   不是模型幻觉。详见 `design/architecture/stardew-companion-presence-mechanisms.md` §5.1。
+- `summary_too_long` 的阈值是 **120 字**（`tools/lib/companion-interaction-gate.mjs`）。run-06 以 309 字触发它；
+  该阈值是否需按新行为重新标定，应由后续证据决定，不在无证据时自行调整阈值。
