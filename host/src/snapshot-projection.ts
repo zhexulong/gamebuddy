@@ -7,6 +7,7 @@ const MAX_PROJECTION_TEXT_BYTES = 1_024;
 const MAX_PROJECTION_STRING_BYTES = 128;
 const MAX_PROJECTION_TOOL_LABELS = 12;
 const MAX_PROJECTION_PETS = 12;
+const MAX_PROJECTION_PET_BOWLS = 8;
 const MAX_SNAPSHOT_AGE_MS = 24 * 60 * 60 * 1_000;
 
 export interface MovementContextProjection {
@@ -49,6 +50,13 @@ export interface PetContextProjection {
   readonly stationary: boolean;
 }
 
+/** A live, unwatered native Pet Bowl: the companion needs to know where one is, not its state. */
+export interface PetBowlContextProjection {
+  readonly targetId: string;
+  readonly x: number;
+  readonly y: number;
+}
+
 export type GameSnapshotContextProjection = Readonly<
   | {
       readonly schema: typeof GAME_SNAPSHOT_PROJECTION_SCHEMA;
@@ -60,7 +68,8 @@ export type GameSnapshotContextProjection = Readonly<
       readonly movement: MovementContextProjection;
       readonly farming: FarmingContextProjection;
       readonly inventory: InventoryContextProjection;
-      readonly pets: readonly PetContextProjection[];
+        readonly pets: readonly PetContextProjection[];
+      readonly petBowls: readonly PetBowlContextProjection[];
     }
   | {
       readonly schema: typeof GAME_SNAPSHOT_PROJECTION_SCHEMA;
@@ -115,6 +124,20 @@ export function projectClockContext(snapshot: Snapshot): ClockContextProjection 
   });
 }
 
+export function projectPetBowlContext(snapshot: Snapshot): readonly PetBowlContextProjection[] {
+  return Object.freeze(
+    (snapshot.petBowlTargets ?? []) // Nearby pet bowls are situational context, not an inventory dump; keep the structured helper bounded.
+      .slice(0, MAX_PROJECTION_PET_BOWLS)
+      .map((bowl) =>
+        Object.freeze({
+          targetId: boundedUtf8(bowl.targetId, MAX_PROJECTION_STRING_BYTES),
+          x: Number.isFinite(bowl.x) ? bowl.x : 0,
+          y: Number.isFinite(bowl.y) ? bowl.y : 0,
+        }),
+      ),
+  );
+}
+
 export function projectPetContext(snapshot: Snapshot): readonly PetContextProjection[] {
   return Object.freeze(
     (snapshot.petTargets ?? []) // Nearby pets are situational context, not a roster; keep the structured helper bounded.
@@ -148,6 +171,7 @@ export function projectGameSnapshotContext(
   const inventorySource = projectInventoryContext(snapshot);
   const clockSource = projectClockContext(snapshot);
   const petSource = projectPetContext(snapshot);
+  const petBowlSource = projectPetBowlContext(snapshot);
   const location = boundedUtf8(snapshot.location, MAX_PROJECTION_STRING_BYTES);
   const currentTool = boundedUtf8(snapshot.currentTool ?? "none", MAX_PROJECTION_STRING_BYTES);
   const toolLabels = Object.freeze(
@@ -160,6 +184,7 @@ export function projectGameSnapshotContext(
   const inventory = Object.freeze({ ...inventorySource, toolLabels });
   const clock = Object.freeze({ ...clockSource });
   const pets = Object.freeze(petSource.map((pet) => Object.freeze({ ...pet })));
+  const petBowls = Object.freeze(petBowlSource.map((bowl) => Object.freeze({ ...bowl })));
   const sampledAgeMs = boundedAge(sampledAtMs, nowMs);
   const seasonName = ["Spring", "Summer", "Fall", "Winter"][clock.seasonIndex] ?? "Unknown";
   const text = boundedUtf8(
@@ -185,6 +210,7 @@ export function projectGameSnapshotContext(
     farming,
     inventory,
     pets,
+    petBowls,
   });
 
   // The static field caps above make this a normal path, while this assertion
@@ -255,6 +281,16 @@ function isSnapshotInput(value: Snapshot): boolean {
             typeof pet.targetId === "string" &&
             typeof pet.petType === "string" &&
             typeof pet.stationary === "boolean",
+        ))) &&
+    (value.petBowlTargets === undefined ||
+      (Array.isArray(value.petBowlTargets) &&
+        value.petBowlTargets.every(
+          (bowl) =>
+            bowl !== null &&
+            typeof bowl === "object" &&
+            typeof bowl.targetId === "string" &&
+            Number.isFinite(bowl.x) &&
+            Number.isFinite(bowl.y),
         ))) &&
     (value.toolSlots === undefined ||
       (Array.isArray(value.toolSlots) &&
