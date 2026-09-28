@@ -810,7 +810,7 @@ export type ActionRegistration = Readonly<{
   actionId: string;
   familyId: string;
   identityVersion: number;
-  lifecycle: "published" | "experimental";
+  lifecycle: "published" | "live_verified" | "experimental";
   kind: "execution" | "read_only";
   descriptor?: ActionRegistrationDescriptor;
 }>;
@@ -3909,7 +3909,7 @@ function isValidActionRegistrations(value: unknown): boolean {
     if (!hasExactKeys(item, allowedKeys)) return false;
     if (!isOpaqueId(item.actionId) || !isOpaqueId(item.familyId)) return false;
     if (typeof item.identityVersion !== "number" || !Number.isSafeInteger(item.identityVersion) || item.identityVersion < 1) return false;
-    if (item.lifecycle !== "published" && item.lifecycle !== "experimental") return false;
+    if (item.lifecycle !== "published" && item.lifecycle !== "live_verified" && item.lifecycle !== "experimental") return false;
     if (item.kind !== "execution" && item.kind !== "read_only") return false;
     if ("descriptor" in item && (item.descriptor === undefined || !isValidActionDescriptor(item.descriptor))) return false;
     if (seen.has(item.actionId)) return false;

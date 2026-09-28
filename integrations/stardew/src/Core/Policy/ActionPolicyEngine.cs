@@ -19,7 +19,7 @@ public static class ActionPolicyEngine
             HashSet<string> deniedActions = new(options.DeniedActions ?? Array.Empty<string>(), StringComparer.Ordinal);
             HashSet<string> deniedFamilies = new(options.DeniedActionFamilies ?? Array.Empty<string>(), StringComparer.Ordinal);
             HashSet<string> result = new(FarmhandActionCatalog.Registrations
-                .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Published
+                .Where(registration => IsDefaultConsentLifecycle(registration.Lifecycle)
                     && !deniedActions.Contains(registration.ActionId)
                     && !deniedFamilies.Contains(registration.FamilyId))
                 .Select(registration => registration.ActionId), StringComparer.Ordinal);
@@ -41,6 +41,17 @@ public static class ActionPolicyEngine
         HashSet<string> definedActions = new(FarmhandActionCatalog.Registrations.Select(registration => registration.ActionId), StringComparer.Ordinal);
         return new HashSet<string>((options.EnabledActions ?? Array.Empty<string>()).Where(definedActions.Contains), StringComparer.Ordinal);
     }
+
+    /// <summary>
+    /// A registration enters the default-consent set once it is either fully published or
+    /// live-verified on its required target topology. <c>live_verified</c> means the action has
+    /// really run on the target game version and produced a native receipt/postcondition, which
+    /// is enough to be visible to the Agent; <c>published</c> additionally means the full
+    /// publication admission (contract, BDD, cancellation/deadline/replay, multiplayer
+    /// synchronization, migration) is complete.
+    /// </summary>
+    public static bool IsDefaultConsentLifecycle(FarmhandActionLifecycle lifecycle) =>
+        lifecycle is FarmhandActionLifecycle.Published or FarmhandActionLifecycle.LiveVerified;
 
     public static bool ValidateActionPolicy(ActionPolicyOptions options)
     {

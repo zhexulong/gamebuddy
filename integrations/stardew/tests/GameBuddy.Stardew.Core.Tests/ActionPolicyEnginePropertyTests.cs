@@ -1,6 +1,7 @@
 using FsCheck;
 using FsCheck.Xunit;
 using GameBuddy.Stardew.Core.Policy;
+using Xunit;
 
 namespace GameBuddy.Stardew.Core.Tests;
 
@@ -10,6 +11,39 @@ public sealed class ActionPolicyEnginePropertyTests
         .Where(d => d.Lifecycle == FarmhandActionLifecycle.Published)
         .Select(d => d.ActionId)
         .ToArray();
+
+    [Fact]
+    public void DefaultConsentCoversPublishedAndLiveVerifiedButNotExperimental()
+    {
+        // live_verified means the action already ran on its required target topology and
+        // produced a native receipt/postcondition; that is enough to be visible. Full
+        // publication adds the independent reviewer pass, so both states are default-consent.
+        Assert.True(ActionPolicyEngine.IsDefaultConsentLifecycle(FarmhandActionLifecycle.Published));
+        Assert.True(ActionPolicyEngine.IsDefaultConsentLifecycle(FarmhandActionLifecycle.LiveVerified));
+        Assert.False(ActionPolicyEngine.IsDefaultConsentLifecycle(FarmhandActionLifecycle.Experimental));
+    }
+
+    [Fact]
+    public void LiveVerifiedLifecycleWireValueIsSnakeCase()
+    {
+        Assert.Equal("live_verified", FarmhandActionLifecycle.LiveVerified.ToWireValue());
+    }
+
+    [Fact]
+    public void ExperimentalActionsCannotBeNamedInTheLiveVerifiedSet()
+    {
+        // A policy that lists an experimental action under ExperimentalActions must not
+        // accidentally treat it as live-verified; and a live-verified action must be
+        // enabled by default consent without being named explicitly.
+        var liveVerified = FarmhandActionCatalog.Registrations
+            .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.LiveVerified)
+            .Select(registration => registration.ActionId)
+            .ToArray();
+        if (liveVerified.Length == 0) return;
+
+        IReadOnlySet<string> enabled = ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions());
+        Assert.All(liveVerified, actionId => Assert.Contains(actionId, enabled));
+    }
 
     [Property(MaxTest = 100)]
     public Property EnabledActions_AreAlwaysSubsetOfTheSingleFarmhandCatalog(

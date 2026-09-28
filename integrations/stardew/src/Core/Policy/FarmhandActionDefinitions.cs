@@ -1,7 +1,7 @@
 ﻿namespace GameBuddy.Stardew.Core.Policy;
 
-public enum FarmhandActionLifecycle { Published, Experimental }
-public static class FarmhandActionLifecycleWire { public static string ToWireValue(this FarmhandActionLifecycle lifecycle) => lifecycle switch { FarmhandActionLifecycle.Published => "published", FarmhandActionLifecycle.Experimental => "experimental", _ => throw new ArgumentOutOfRangeException(nameof(lifecycle)) }; }
+public enum FarmhandActionLifecycle { Published, LiveVerified, Experimental }
+public static class FarmhandActionLifecycleWire { public static string ToWireValue(this FarmhandActionLifecycle lifecycle) => lifecycle switch { FarmhandActionLifecycle.Published => "published", FarmhandActionLifecycle.LiveVerified => "live_verified", FarmhandActionLifecycle.Experimental => "experimental", _ => throw new ArgumentOutOfRangeException(nameof(lifecycle)) }; }
 public enum FarmhandOperationKind { Execution, ReadOnly }
 public static class FarmhandOperationKindWire { public static string ToWireValue(this FarmhandOperationKind kind) => kind switch { FarmhandOperationKind.Execution => "execution", FarmhandOperationKind.ReadOnly => "read_only", _ => throw new ArgumentOutOfRangeException(nameof(kind)) }; }
 public enum FarmhandResourceTemplateValue { ScopePlayer = 1 }
