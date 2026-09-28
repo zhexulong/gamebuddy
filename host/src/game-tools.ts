@@ -502,6 +502,12 @@ export function buildCandidateToolSchema(
     );
   }
 
+  if (actionId === "advance_day") {
+    // No client-supplied target: the Farmhand's own bed and its native ready
+    // state are the whole input, so there is nothing to synthesize or spoof.
+    return Type.Object({}, { additionalProperties: false });
+  }
+
   throw new Error(`Unsupported candidate action: ${actionId}`);
 }
 
@@ -1403,6 +1409,28 @@ export function createStardewActionTools(
             y: params.y,
             expectedTargetId: params.expectedTargetId,
           }),
+        }),
+      );
+    }
+  }
+  if (isVisible("advance_day")) {
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "advance_day",
+    );
+    if (
+      registration?.descriptor &&
+      isCandidateDescriptorComplete("advance_day", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("advance_day", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.advance_day,
+          label: "Sleep and Advance the Day",
+          description:
+            "End the day the way the player does: the Farmhand walks to its own bed, lets the native sleep path run, declares sleep-ready through that same native path, and then observes the native save and new-day transition. In a shared world the night completes only when every required player is ready; the Farmhand never marks another player ready and never forces the day. Takes no arguments. Returns day_advanced when the native save and day transition are observed, blocked with requires_other_player when the ready barrier is still waiting on someone else.",
+          parameters: schema,
+          action: "advance_day",
+          toArgs: () => ({}),
         }),
       );
     }

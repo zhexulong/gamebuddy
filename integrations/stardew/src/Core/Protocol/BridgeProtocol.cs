@@ -1774,6 +1774,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "craft_item" or "cook_recipe" => new[] { "expectedTargetId" },
         "collect_crab_pot_output" => new[] { "x", "y", "expectedTargetId" },
         "ship_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
+        // advance_day targets the actor's own bed and its readiness is native
+        // state, so it carries no client-supplied arguments at all.
+        "advance_day" => Array.Empty<string>(),
+        // advance_day targets the actor's own bed and its readiness is native
+        // state, so it carries no client-supplied arguments at all.
         _ => null,
     };
 }

@@ -85,6 +85,8 @@ public sealed partial class ModEntry : Mod
     private FarmhandProvisioningProbe? provisioningProbe;
     private SleepModalProbe? sleepModalProbe;
     private bool sleepModalProbeRejected;
+    private SleepAndAdvanceDayLifecycle? sleepLifecycle;
+    private bool sleepLifecycleRejected;
     private bool embodimentInitialized;
     private bool hostRoleConfigured;
     private bool provisioningConfigurationRejected;
@@ -274,6 +276,11 @@ public sealed partial class ModEntry : Mod
                 }
                 this.sleepModalProbe = SleepModalProbe.TryStart(this.Monitor, this.config.SleepModalProbe);
             }
+            if (this.config.SleepLifecycle?.Enable == true)
+            {
+                if (!this.TryArmSleepLifecycle())
+                    return;
+            }
             return;
         }
         bool hostConfigured = this.config.HostFarmhandProvisioning?.Enable == true;
@@ -298,6 +305,11 @@ public sealed partial class ModEntry : Mod
         }
         if (hostConfigured)
         {
+            // The Host is the *other* farmer in a co-op night: for the day to
+            // roll over, its player must sleep too. Each process arms its own
+            // lifecycle for its own farmer; neither marks the other ready.
+            if (!this.TryArmSleepLifecycle())
+                return;
             this.hostFarmhandProvisioner = HostFarmhandProvisioner.TryStart(
                 this.Helper,
                 this.Monitor,
@@ -327,12 +339,41 @@ public sealed partial class ModEntry : Mod
                 this.Monitor.Log("GameBuddy rejected Stardew AI-client provisioning configuration; the formal client requires a valid controlled manifest path, token, and target version.", LogLevel.Error);
                 return;
             }
+            // The cross-day lifecycle is a coordinated capability, not a wire
+            // action, so it is armed here rather than through the action policy.
+            // It only starts once the world is ready (see OnUpdateTicked).
+            if (!this.TryArmSleepLifecycle())
+                return;
             // Start while the native title/farmhand menu owns available-Farmhand
             // reception; the manifest itself binds the later world scope.
             this.TryStartFarmhandProvisioner();
             return;
         }
+        if (!this.TryArmSleepLifecycle())
+            return;
         this.provisioningProbe = FarmhandProvisioningProbe.TryStart(this.Monitor, this.config.FarmhandProvisioningProbe);
+    }
+
+    /// <summary>
+    /// Arm the opt-in cross-day lifecycle when its configuration asks for it.
+    /// It is available on every topology the capability covers -- the native-local
+    /// fixture lane and the formal AI-client/Farmhand lane -- because a co-op
+    /// night is exactly the case the multiplayer ready barrier exists for.
+    /// Returns false when the configuration is invalid, so the caller refuses the
+    /// whole profile instead of running a half-configured lifecycle.
+    /// </summary>
+    private bool TryArmSleepLifecycle()
+    {
+        if (this.config.SleepLifecycle?.Enable != true)
+            return true;
+        if (this.config.SleepLifecycle is not { IsValid: true })
+        {
+            this.sleepLifecycleRejected = true;
+            this.Monitor.Log("GameBuddy rejected the sleep lifecycle: an absolute evidence path and in-range budgets are required.", LogLevel.Error);
+            return false;
+        }
+        this.sleepLifecycle = SleepAndAdvanceDayLifecycle.TryStart(this.Monitor, this.config.SleepLifecycle);
+        return true;
     }
 
     private void StopChatCommand(string[] command, ChatBox chat)
@@ -839,7 +880,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -871,6 +912,19 @@ public sealed partial class ModEntry : Mod
                 // Pet.checkAction, records the daily interaction, applies
                 // friendship, and emits a matching terminal receipt.
                 InitializeNativeLocalPetFixture(player, farm);
+                return;
+            }
+            if (fixture.FixtureScenario == "native_pass_out_v1")
+            {
+                // Establish ONLY a legal live precondition and let the native
+                // gate fire by itself: Game1.cs:6452 reads
+                // `timeOfDay >= 2600 || player.stamina <= -15f`. Nothing here
+                // starts the pass-out, calls a trigger, or touches the actor
+                // again - the lifecycle under test must yield to whatever the
+                // native pipeline does next. The player already stands inside
+                // the FarmHouse, so no placement is needed.
+                player.stamina = -20;
+                this.nativeLocalPlayerFixtureInitialized = true;
                 return;
             }
             if (player.MaxItems < 36)
@@ -1232,6 +1286,93 @@ public sealed partial class ModEntry : Mod
                     throw new InvalidOperationException("fixture_native_local_harvest_inventory_unavailable");
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized native harvest-crop fixture before bridge attachment: selected={selected.Value.Value.crop.netSeedIndex.Value ?? "unknown"}@{(int)selected.Value.Key.X},{(int)selected.Value.Key.Y}; harvest={harvestItem.QualifiedItemId}; ready=true; production alone harvests and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_harvest_crop_inventory_full_recovery_v1")
+            {
+                // Lane G container-full recovery precondition. Establishes only the
+                // declared Given: one READY ordinary grab-harvest crop on the Farm, a
+                // FULL backpack, and one owned ordinary Chest beside that crop. The
+                // chain is then driven entirely by production actions
+                // (`harvest_crop` rejected/inventory_full -> `chest_store` -> retry
+                // `harvest_crop` on the SAME target).
+                //
+                // Readiness setup uses the same target-version command sequence the
+                // shipped harvest fixture uses; the backpack fill is plain inventory
+                // placement and never harvests, stores, or emits a receipt.
+                GameLocation? fullBagSetupPreviousLocation = Game1.currentLocation;
+                try
+                {
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("RemoveDirt", null)
+                        || !Game1.game1.parseDebugInput("SpreadDirt", null)
+                        || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
+                        || !Game1.game1.parseDebugInput("GrowCrops 6", null))
+                        throw new InvalidOperationException("fixture_native_local_harvest_full_bag_setup_unavailable");
+                }
+                finally { Game1.currentLocation = fullBagSetupPreviousLocation; }
+
+                KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? fullBagSelected = farm.terrainFeatures.Pairs
+                    .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
+                        && dirt.crop is not null
+                        && !dirt.crop.forageCrop.Value
+                        && dirt.readyForHarvest()
+                        && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab
+                        && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value))
+                    .Select(pair => new KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>(pair.Key, (StardewValley.TerrainFeatures.HoeDirt)pair.Value))
+                    .Cast<KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?>()
+                    .FirstOrDefault();
+                if (fullBagSelected is null || fullBagSelected.Value.Value.crop is null)
+                    throw new InvalidOperationException("fixture_native_local_ready_grab_crop_missing");
+                StardewValley.Item fullBagHarvestItem;
+                try { fullBagHarvestItem = ItemRegistry.Create(fullBagSelected.Value.Value.crop.indexOfHarvest.Value, 1); }
+                catch (Exception) { throw new InvalidOperationException("fixture_native_local_harvest_item_missing"); }
+
+                // Keep exactly ONE ready crop: a dense field makes the single adjacent
+                // harvest target ambiguous, and `harvest_crop` binds one exact target.
+                foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in farm.terrainFeatures.Pairs.ToArray())
+                {
+                    if (pair.Key == fullBagSelected.Value.Key) continue;
+                    if (pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } otherDirt
+                        && otherDirt.readyForHarvest()
+                        && otherDirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab)
+                        farm.terrainFeatures.Remove(pair.Key);
+                }
+
+                // Fill every backpack slot so the harvest cannot be accepted.
+                //
+                // The filler must not stack with the harvest item: `couldInventoryAcceptThisItem`
+                // accepts if ANY slot can take it, and the parsnip harvest is itself (O)24.
+                // Filling with (O)24 would therefore let the harvest stack and destroy the
+                // breakpoint. Slot 0 holds one DIFFERENT ordinary object (the item the chain
+                // stores, so `chest_store` has an Object to move) and every other slot holds a
+                // Tool, which is not an `Object` and so can never stack an Object.
+                player.Items.Clear();
+                player.Items.Add(ItemRegistry.Create<StardewValley.Object>("(O)390", 1));
+                while (player.Items.Count < player.MaxItems)
+                {
+                    Tool fillerTool = player.Items.Count % 2 == 0 ? new Axe() : new Pickaxe();
+                    player.Items.Add(fillerTool);
+                }
+                if (Game1.player.couldInventoryAcceptThisItem(fullBagHarvestItem))
+                    throw new InvalidOperationException("fixture_native_local_harvest_full_bag_inventory_still_accepts");
+
+                (Vector2 TargetTile, Vector2 StandingTile)? fullBagChestSpot = FindNativeLocalHarvestFullBagChestSpot(farm, fullBagSelected.Value.Key);
+                if (fullBagChestSpot is null)
+                    throw new InvalidOperationException("fixture_native_local_harvest_full_bag_chest_target_missing");
+                if (farm.objects.ContainsKey(fullBagChestSpot.Value.TargetTile))
+                    throw new InvalidOperationException("fixture_native_local_harvest_full_bag_chest_occupied");
+                StardewValley.Objects.Chest fullBagChest = new(playerChest: true, fullBagChestSpot.Value.TargetTile);
+                farm.objects.Add(fullBagChestSpot.Value.TargetTile, fullBagChest);
+                if (!farm.objects.TryGetValue(fullBagChestSpot.Value.TargetTile, out StardewValley.Object? fullBagPlaced)
+                    || fullBagPlaced is not StardewValley.Objects.Chest placedFullBagChest
+                    || !ReferenceEquals(placedFullBagChest, fullBagChest))
+                    throw new InvalidOperationException("fixture_native_local_harvest_full_bag_chest_placement_failed");
+
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)fullBagChestSpot.Value.StandingTile.X, (int)fullBagChestSpot.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized harvest inventory-full recovery precondition before bridge attachment: crop={fullBagSelected.Value.Key.X},{fullBagSelected.Value.Key.Y}; harvest_item={fullBagHarvestItem.QualifiedItemId}; backpack_full=true; chest={fullBagChest.QualifiedItemId}@{fullBagChestSpot.Value.TargetTile.X},{fullBagChestSpot.Value.TargetTile.Y}; standing={fullBagChestSpot.Value.StandingTile.X},{fullBagChestSpot.Value.StandingTile.Y}; production alone rejects, stores, and harvests.", LogLevel.Info);
                 return;
             }
 
@@ -2915,6 +3056,39 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         return null;
     }
 
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalHarvestFullBagChestSpot(GameLocation farm, Vector2 cropTile)
+    {
+        // Keep the chest next to the crop so the whole recovery chain runs from one
+        // standing tile: `harvest_crop` requires Chebyshev-1 to the crop and
+        // `chest_store` requires Chebyshev-1 to the chest. Only a tile that satisfies
+        // BOTH counts, so the retry needs no extra movement.
+        Vector2[] candidates =
+        {
+            new(cropTile.X, cropTile.Y + 1), new(cropTile.X, cropTile.Y - 1),
+            new(cropTile.X + 1, cropTile.Y), new(cropTile.X - 1, cropTile.Y),
+            new(cropTile.X + 1, cropTile.Y + 1), new(cropTile.X - 1, cropTile.Y - 1),
+            new(cropTile.X + 1, cropTile.Y - 1), new(cropTile.X - 1, cropTile.Y + 1),
+        };
+        foreach (Vector2 target in candidates)
+        {
+            if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target))
+                continue;
+            Vector2[] cardinal =
+            {
+                target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
+                target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
+            };
+            Vector2[] validStanding = cardinal
+                .Where(standing => farm.isTileOnMap(standing)
+                    && farm.isTilePassable(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)
+                    && Math.Max(Math.Abs(standing.X - cropTile.X), Math.Abs(standing.Y - cropTile.Y)) <= 1)
+                .ToArray();
+            if (validStanding.Length == 1) return (target, validStanding[0]);
+        }
+        return null;
+    }
+
     private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalTreeStumpFixtureSpot(GameLocation farm)
     {
         int width = farm.map.Layers[0].LayerWidth;
@@ -3352,6 +3526,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         MachineAndAnimalActionHandler machinesAndAnimals = new(executions);
         ResourceToolActionHandler resourceTools = new(executions);
         ExpressionActionHandler expression = new(executions);
+        WorldLifecycleActionHandler lifecycle = new(executions);
         FarmhandActionRouter router = new();
 
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
@@ -3366,6 +3541,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 FarmhandActionHandlerGroup.MachinesAndAnimals => machinesAndAnimals,
                 FarmhandActionHandlerGroup.ResourceTools => resourceTools,
                 FarmhandActionHandlerGroup.Expression => expression,
+                FarmhandActionHandlerGroup.WorldLifecycle => lifecycle,
                 _ => throw new InvalidOperationException("Unknown Farmhand execution action handler group."),
             };
             router.Register(registration, handler);
@@ -3386,7 +3562,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             this.ClearState(pendingTeardownState, "body_program_teardown_drain");
             return;
         }
-        if (this.sleepModalProbeRejected)
+        if (this.sleepModalProbeRejected || this.sleepLifecycleRejected)
             return;
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
@@ -3402,6 +3578,15 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             {
                 if (this.sleepModalProbe.Update())
                     this.sleepModalProbe = null;
+                return;
+            }
+            // The single-player cross-day lifecycle is the other exclusive body
+            // owner on this lane: it walks to the bed, answers the native prompt
+            // and observes Saving/Saved/DayStarted.
+            if (this.sleepLifecycle is not null)
+            {
+                if (this.sleepLifecycle.Update())
+                    this.sleepLifecycle = null;
                 return;
             }
             this.TryInitializeEmbodiment();
@@ -3434,6 +3619,11 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         this.TryObserveNativeAutomationClientExit();
         this.TryTriggerNativeAutomationSave();
         this.TryInitializeNativeFixtureScenario();
+        // A co-op night has one lifecycle per farmer: the Host process arms one
+        // for the host player and the AI-client process arms one for the Farmhand.
+        // Each owns only its own actor, so both are pumped here.
+        if (this.sleepLifecycle is not null && this.sleepLifecycle.Update())
+            this.sleepLifecycle = null;
         if (this.farmhandProvisioner is not null && this.farmhandProvisioner.Update())
         {
             if (!this.farmhandProvisioner.IsReady)
@@ -4689,9 +4879,11 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
+        this.sleepLifecycle?.ObserveDayStarted();
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
         ExecutionManager executions = state.Executions!;
+        executions.ObserveDayAdvanceDayStarted();
         executions.InvalidateForLifecycle("day_started");
         this.PublishLifecycle(state, "connected", "day_started");
     }
@@ -4885,6 +5077,9 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
     private void OnSaved(object? sender, SavedEventArgs e)
     {
+        this.sleepLifecycle?.ObserveSaved();
+        if (this.TryGetAiState(out ScreenEmbodimentState savedState))
+            savedState.Executions!.ObserveDayAdvanceSaved();
         this.hostFarmhandProvisioner?.OnSaved();
         // A request can arrive while the previous native SaveGameMenu cycle is
         // still settling. Release the fixture latch at the authoritative Saved

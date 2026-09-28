@@ -529,10 +529,13 @@ export type ExecutionRequest = Readonly<{
     | "interact_npc_with_item"
     | "craft_item"
     | "cook_recipe"
-      | "collect_crab_pot_output"
-      | "ship_item"
-      | "water_pet_bowl"
-      | "water_slime_hutch_trough";
+    | "collect_crab_pot_output"
+    | "ship_item"
+    | "water_pet_bowl"
+    | "water_slime_hutch_trough"
+    // The cross-day lifecycle. It carries no arguments: its target is the
+    // actor's own bed and its readiness is native state.
+    | "advance_day";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
@@ -1520,7 +1523,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "craft_item" &&
     value.action !== "cook_recipe" &&
     value.action !== "collect_crab_pot_output" &&
-    value.action !== "ship_item"
+    value.action !== "ship_item" &&
+    value.action !== "advance_day"
   )
     return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
@@ -1531,7 +1535,11 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     typeof value.deadlineMs !== "number" ||
     !Number.isFinite(value.deadlineMs) ||
     value.deadlineMs < nowMs ||
-    value.deadlineMs > nowMs + (value.action === "navigate_to_destination" ? 600_000 : 60_000)
+    // A co-op night waits on other players' native ready state, a host save and
+    // a new-day transition, so it shares the navigation ceiling rather than the
+    // ordinary one-minute action ceiling.
+    value.deadlineMs >
+      nowMs + (value.action === "navigate_to_destination" || value.action === "advance_day" ? 600_000 : 60_000)
   )
     return "invalid_deadline";
   if (!snapshot.actionable) return "player_not_actionable";
@@ -1917,6 +1925,9 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_ship_target";
+  } else if (value.action === "advance_day") {
+    // No client-supplied target: the bed and the ready state are native facts.
+    if (!hasExactKeys(value.args, [])) return "invalid_args";
   }
   return null;
 }
@@ -2496,7 +2507,8 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "craft_item" ||
       value.action === "cook_recipe" ||
       value.action === "collect_crab_pot_output" ||
-      value.action === "ship_item") &&
+      value.action === "ship_item" ||
+      value.action === "advance_day") &&
     isRecord(value.args) &&
     Object.keys(value.args).length <= 8 &&
     Number.isSafeInteger(value.expectedRevision) &&
