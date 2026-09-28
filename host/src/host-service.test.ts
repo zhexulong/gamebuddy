@@ -7,6 +7,7 @@ import {
   CompanionHostService,
   createGamePresentationAdmissionProvider,
   GameTurnLineageTracker,
+  MAX_NATIVE_PRESENTATIONS_PER_TURN,
 } from "./host-service.js";
 
 function reducedSession(sendUserMessage: (text: string) => Promise<void> | void) {
@@ -918,14 +919,14 @@ test("native assistant content presenter rejects mismatch without consuming line
   service.close();
 });
 
-test("native assistant content presenter is at-most-once for one captured lineage", async () => {
+test("a repeated line inside one turn is legal, but the turn's budget is finite", async () => {
   const adapter = eventHarness();
   const tracker = new GameTurnLineageTracker();
   const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
   const presented: unknown[] = [];
   const presenter = service.createNativeAssistantContentPresenter({
-    sessionId: "game_session_replay",
-    locale: "en-US",
+    sessionId: "game_session_repeat",
+    locale: "zh-CN",
     admissionProvider: createGamePresentationAdmissionProvider(tracker, createCompanionInterruption()),
     textPort: {
       present(expression) {
@@ -934,14 +935,111 @@ test("native assistant content presenter is at-most-once for one captured lineag
     },
   });
 
-  tracker.beginPlayerBatch("source_replay");
-  await presenter({ sourceEventId: "source_replay", text: "first" });
-  await assert.rejects(
-    presenter({ sourceEventId: "source_replay", text: "replay" }),
-    /player_turn_presentation_already_committed/,
-  );
-  assert.equal(presented.length, 1);
+  // A reply may legitimately repeat a line ("好的。好的。"), so repeating text is
+  // NOT an admission failure. Replay is refused by the Game port's per-piece
+  // expressionId idempotency and by closing a turn whose commit failed.
+  tracker.beginPlayerBatch("source_repeat");
+  await presenter({ sourceEventId: "source_repeat", text: "好的。" });
+  await presenter({ sourceEventId: "source_repeat", text: "好的。" });
+  assert.equal(presented.length, 2);
   tracker.endBatch();
+  service.close();
+});
+
+test("one consumed turn admits an ordered sequence of distinct pieces", async () => {
+  const adapter = eventHarness();
+  const tracker = new GameTurnLineageTracker();
+  const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
+  const presented: { text: string }[] = [];
+  const presenter = service.createNativeAssistantContentPresenter({
+    sessionId: "game_session_sequence",
+    locale: "zh-CN",
+    admissionProvider: createGamePresentationAdmissionProvider(tracker, createCompanionInterruption()),
+    textPort: {
+      present(expression, admission) {
+        admission.assertHostCurrent(admission.hostBinding);
+        presented.push(expression as { text: string });
+      },
+    },
+  });
+
+  // Incremental presentation legitimately commits several short pieces for one
+  // reply; each must cross the same admission and land in arrival order.
+  const pieces = ["piece-one", "piece-two", "piece-three"];
+  tracker.beginPlayerBatch("source_sequence");
+  for (const piece of pieces) {
+    await presenter({ sourceEventId: "source_sequence", text: piece });
+  }
+  tracker.endBatch();
+  assert.deepEqual(
+    presented.map((expression) => expression.text),
+    pieces,
+  );
+  service.close();
+});
+
+test("an early piece stays committable while later pieces are still arriving", async () => {
+  const adapter = eventHarness();
+  const tracker = new GameTurnLineageTracker();
+  const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
+  const provider = createGamePresentationAdmissionProvider(tracker, createCompanionInterruption());
+  const presenter = service.createNativeAssistantContentPresenter({
+    sessionId: "game_session_concurrent",
+    locale: "zh-CN",
+    admissionProvider: provider,
+    textPort: { present: () => undefined },
+  });
+
+  // The slow-commit case that motivated the sequence contract: a piece captured
+  // before a later piece is admitted must still pass its pre-commit reassert.
+  tracker.beginPlayerBatch("source_concurrent");
+  const first = provider.capture("source_concurrent", "first piece");
+  await presenter({ sourceEventId: "source_concurrent", text: "second piece" });
+  first.admission.assertHostCurrent(first.admission.hostBinding);
+  tracker.endBatch();
+  service.close();
+});
+
+test("a turn refuses an unbounded piece sequence and a terminal turn refuses late pieces", async () => {
+  const adapter = eventHarness();
+  const tracker = new GameTurnLineageTracker();
+  const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
+  let presentations = 0;
+  const presenter = service.createNativeAssistantContentPresenter({
+    sessionId: "game_session_budget",
+    locale: "en-US",
+    admissionProvider: createGamePresentationAdmissionProvider(tracker, createCompanionInterruption()),
+    textPort: {
+      present() {
+        presentations++;
+      },
+    },
+  });
+
+  // A looping delta stream must fail closed instead of being drawn into
+  // unbounded native chat.
+  tracker.beginPlayerBatch("source_budget");
+  let rejected = false;
+  for (let i = 0; i <= MAX_NATIVE_PRESENTATIONS_PER_TURN; i += 1) {
+    try {
+      await presenter({ sourceEventId: "source_budget", text: `piece-${i}` });
+    } catch {
+      rejected = true;
+      break;
+    }
+  }
+  assert.equal(rejected, true);
+  assert.ok(presentations <= MAX_NATIVE_PRESENTATIONS_PER_TURN);
+
+  // A turn that never spoke is legitimate and must not fail its close.
+  tracker.beginPlayerBatch("source_silent");
+  tracker.endBatch();
+
+  // A piece from the closed turn can no longer be committed.
+  await assert.rejects(
+    presenter({ sourceEventId: "source_silent", text: "late" }),
+    /presentation_lineage_unavailable/,
+  );
   service.close();
 });
 
@@ -965,9 +1063,11 @@ test("native assistant content presenter consumes lineage when text port fails",
     presenter({ sourceEventId: "source_failure", text: "cannot deliver" }),
     /native_text_port_failed/,
   );
+  // The failed piece may have landed, so the turn is over: a later piece — even
+  // a different one — must not be attempted.
   await assert.rejects(
     presenter({ sourceEventId: "source_failure", text: "do not retry uncertain delivery" }),
-    /player_turn_presentation_already_committed/,
+    /presentation_lineage_unavailable/,
   );
   tracker.endBatch();
   service.close();
