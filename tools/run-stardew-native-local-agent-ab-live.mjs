@@ -81,6 +81,9 @@ const identity = Object.freeze({ playerId: config.PlayerId, companionId: config.
 const deadline = Date.now() + 600_000;
 const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken, STARDEW_GAME_INTEGRATION_ADAPTER, undefined, "1.6.15");
 const factLog = [];
+/** Exact serialized bridge entries already printed, so a contract-legal
+ * redelivery of the same transition does not read as a second action. */
+const loggedFactLines = new Set();
 // Ladder 2: when the Mod returns the terminal machine_coffee_loaded receipt,
 // stream a companion voice line through the real Voice Gateway (MiMo TTS)
 // and wait for its terminal playback observation. Voice stays a one-shot
@@ -176,8 +179,23 @@ const onCompanionTextPresented = (text, locale) => {
 };
 client.onFact((fact) => {
   if (fact.type === "execution_receipt" || fact.type === "semantic_event" || fact.type === "error" || fact.type === "lifecycle") {
-    factLog.push({ type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId, evidence: fact.payload?.evidence ?? null });
-    console.error("BRIDGE_FACT", JSON.stringify(factLog.at(-1)));
+    const entry = { type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId, evidence: fact.payload?.evidence ?? null };
+    // The Mod legitimately delivers one bridge transition over two routes: the
+    // fact route and the execute-response path, and the second delivery is an
+    // idempotent no-op by contract (action-execution-coordinator.internal.test.ts:
+    // "...are the same bridge transition"). A redelivery is byte-identical, so
+    // deduplicate the console line on the exact serialized entry — distinct
+    // progress events (e.g. per-tile `tile_advanced`) differ and still log. Every
+    // entry still reaches factLog verbatim; only the log line is deduplicated, so
+    // a redelivered receipt cannot read as a second action.
+    const serialized = JSON.stringify(entry);
+    factLog.push(entry);
+    if (!loggedFactLines.has(serialized)) {
+      loggedFactLines.add(serialized);
+      console.error("BRIDGE_FACT", serialized);
+    } else {
+      console.error("BRIDGE_FACT_REDELIVERED", JSON.stringify({ type: entry.type, reasonCode: entry.reasonCode, executionId: entry.executionId }));
+    }
   }
   if (LADDER === "2" && fact.type === "execution_receipt" && fact.payload?.reasonCode === "machine_coffee_loaded" && !voiceStarted) {
     void (async () => {
