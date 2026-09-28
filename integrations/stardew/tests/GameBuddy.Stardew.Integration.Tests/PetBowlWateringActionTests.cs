@@ -151,6 +151,18 @@ public sealed class PetBowlWateringActionTests
         actionSource.Should().NotContain("tileY.Value + 1");
         actionSource.Should().NotContain("new Vector2(1, 0)");
         discoverySource.Should().NotContain("bowl.tileX.Value +");
+
+        // The YIELDED tile is the predicate's own (x, y), not the footprint origin.
+        // Pinning only the predicate's presence would leave the exact live failure
+        // undetected: a regression that keeps `doesTileHaveProperty` but yields the
+        // origin would compile, resolve and water the wrong tile, and still satisfy
+        // every assertion above. Assert the yielded expression itself. The genuinely
+        // behavioral proof of this remains the native-local live gate (scenario
+        // native_water_pet_bowl_v1), which is what originally caught this bug; the
+        // test project has no Game1 harness to construct a bowl with building data.
+        actionSource.Should().Contain("yield return new Vector2(x, y);");
+        actionSource.Should().NotContain("yield return new Vector2(bowl.tileX.Value");
+        actionSource.Should().NotContain("yield return new Vector2((int)bowl.tileX.Value");
     }
 
     /// <summary>Tests run from the project or its bin output; walk up to the repository root.</summary>
