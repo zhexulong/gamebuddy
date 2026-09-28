@@ -592,6 +592,27 @@ yielded expression as well (`71a076d`), and that pin was confirmed against a
 simulated origin-yield revert. The behavioural proof of that tile stays the live
 gate above, which is what originally caught the bug; the integration test project
 has no Game1 harness for constructing a bowl with building data.
+`water_slime_hutch_trough` has also met this lane's standard (2026-09-28). It is a
+**distinct** action, not an alias of `water_crop` or `water_pet_bowl`: the native
+terminal is `SlimeHutch.waterSpots[y - 6]` (`SlimeHutch.cs:154-161`), and
+`SlimeHutch.DayUpdate` (`:68-94`) consumes those spots to produce slimes, so a
+`crop_watered` receipt would assert something false. The template save has neither
+a Slime Hutch building nor a `SlimeHutch` location, so `native_water_slime_hutch_trough_v1`
+**builds** the real building through the target-version `Build` debug route
+(`DebugCommands.cs:1420-1446`, which calls `buildStructure` then completes
+construction), takes the lazily created interior from `Building.createIndoors`
+(`Building.cs:1873-1920`), supplies one charged Watering Can, and enters through the
+normal warp lifecycle; it never waters a spot, never writes `waterSpots`, and emits
+no receipt. `water_slime_hutch_trough` returned same-execution
+`succeeded/slime_hutch_trough_watered` for opaque
+`slime_hutch_trough_06850c49f949ac00` at interior tile `16,6`, with
+`before_watered=false` -> `after_watered=true`, water `39 -> 38`,
+`native_menu_opened=false`, and stamina `270 -> 268` (`delta=-2`, `expected=2`);
+the target was absent from the following production snapshot. The transaction
+restored its profile, removed backup/lock and the working save, and left no
+Stardew/SMAPI process. This is only `native_local_player_fixture` shared mechanics
+evidence, never Farmhand, HostAutomation, Portfolio, publication, release, or
+save/reopen evidence.
 `water_crop` has also met this lane's live
 receipt-plus-fresh-postcondition standard. Its scenario first uses the exact
 pre-attachment native setup `SpreadDirt → SpreadSeeds 472` to make dry crops;
