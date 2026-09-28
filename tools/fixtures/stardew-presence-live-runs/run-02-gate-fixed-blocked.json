@@ -1,0 +1,522 @@
+{
+  "state": "blocked",
+  "ladder": "4",
+  "presentation": {
+    "pieces": [
+      {
+        "index": 0,
+        "text": "（松了一口气）新鲜花椰菜已经到乔迪手里啦——她那个开心劲儿，值 45 点好感呢。",
+        "locale": "zh-CN",
+        "elapsedMs": 54876
+      },
+      {
+        "index": 1,
+        "text": "地里的花椰菜其实还剩一大片，要不要顺手再收几颗备着？",
+        "locale": "zh-CN",
+        "elapsedMs": 56155
+      },
+      {
+        "index": 2,
+        "text": "还是先去做点别的？",
+        "locale": "zh-CN",
+        "elapsedMs": 56157
+      }
+    ],
+    "pieceCount": 3,
+    "firstPieceTtfbMs": 54876,
+    "chunked": true
+  },
+  "presenceProjection": {
+    "turns": [
+      {
+        "turnId": "turn-1",
+        "claimsMade": [],
+        "claimsVisible": 0,
+        "claimsReceipted": 0,
+        "findings": []
+      }
+    ],
+    "findings": []
+  },
+  "programStatus": null,
+  "walkReceipt": null,
+  "inspectReceipt": null,
+  "loadReceipt": null,
+  "tillReceipt": null,
+  "plantReceipt": null,
+  "waterReceipt": null,
+  "harvestReceipt": {
+    "type": "execution_receipt",
+    "reasonCode": "crop_harvested",
+    "requestId": "hv-2",
+    "executionId": "898595da703d4239ad07fd14a7a711d5",
+    "evidence": {
+      "detail": "location=Farm;target=crop_dbad7e163aba7541;tile=63,18;crop=474;item=(O)190;native_path_return=true;native_accepted=true;regrows=false;phase_before=5;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false"
+    }
+  },
+  "offerReceipt": {
+    "type": "execution_receipt",
+    "reasonCode": "gift_given",
+    "requestId": "740fa987-fb20-46c5-b9f7-7717f5f11488",
+    "executionId": "ed94f203893b4a9b9543321c74bf5891",
+    "evidence": {
+      "detail": "location=Farm;target=npc_relationship_40b17bf391e1abb1;tile=64,17;npc=Jodi;item=(O)190;slot=5;stack_before=1;points_before=0;gifts_today_before=0;gifts_this_week_before=0;quest_25_completed_before=false;stack_after=0;points_after=45;gifts_today_after=1;gifts_this_week_after=1;quest_25_completed_after=false;update_gift_limit=true;showed_response=false;gift_recorded=true;points_changed=true;spouse_jealousy=false;spouse_points_before=-1;spouse_points_after=-1;menu_open_after=false;dialogue_open_after=false"
+    }
+  },
+  "personaWorldBook": {
+    "expectedProfile": {
+      "profileId": "gamebuddy.companion.default",
+      "revision": 1,
+      "canonicalHash": "9b26c86038b88711ccc1d134df350586a885c69adb6415ffa8591b97a298bf97"
+    },
+    "expectedWorldBook": null,
+    "mountedProfileId": "gamebuddy.companion.default",
+    "mountedProfileRevision": 1,
+    "mountedProfileHash": "9b26c86038b88711ccc1d134df350586a885c69adb6415ffa8591b97a298bf97",
+    "mountedWorldBookId": null,
+    "mountedWorldBookRevision": null,
+    "manifestPresent": true
+  },
+  "contextAssembled": true,
+  "worldBookAssembled": true,
+  "interactionAssessment": {
+    "passed": false,
+    "reasons": [
+      "unobserved_event"
+    ],
+    "metrics": {
+      "length": 75,
+      "hasPlayerAddress": true,
+      "claimedNpcReaction": true
+    }
+  },
+  "systemFindings": {
+    "findings": [
+      {
+        "id": "rejection_observed",
+        "component": "observation",
+        "severity": "medium",
+        "action": null,
+        "count": 1,
+        "detail": "1 of 7 actions were rejected (target_out_of_range x1) across observation",
+        "recommendation": "read each reason code above; a rejection is information, not noise",
+        "sampleCodes": [
+          "target_out_of_range"
+        ]
+      }
+    ],
+    "reasonSummaries": {
+      "target_out_of_range": 1
+    },
+    "rejectedCount": 1,
+    "acceptedCount": 6,
+    "totalCount": 7
+  },
+  "presentedSummary": "（松了一口气）新鲜花椰菜已经到乔迪手里啦——她那个开心劲儿，值 45 点好感呢。地里的花椰菜其实还剩一大片，要不要顺手再收几颗备着？还是先去做点别的？",
+  "voiceResult": {
+    "state": "disabled",
+    "disabledReason": "voice_preference_absent"
+  },
+  "agentTurn": {
+    "settled": true
+  },
+  "bridgeFacts": [
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "route_revision=1;target=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "route_revision=1;target=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "target=3,12"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "tile=8,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "tile=7,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "tile=6,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "tile=5,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "tile=4,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "tile=3,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "tile=3,10;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "mv-1",
+      "executionId": "61f8cdd140744bfdbded3f6a575c1bf0",
+      "evidence": {
+        "detail": "tile=3,11;target=3,12;arrival=warp_adjacent;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "mv-2",
+      "executionId": "8fbc05719f1f4407a760cde63ca777e5",
+      "evidence": {
+        "detail": "route_revision=11;target=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "mv-2",
+      "executionId": "8fbc05719f1f4407a760cde63ca777e5",
+      "evidence": {
+        "detail": "route_revision=11;target=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "mv-2",
+      "executionId": "8fbc05719f1f4407a760cde63ca777e5",
+      "evidence": {
+        "detail": "target=3,12"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "mv-2",
+      "executionId": "8fbc05719f1f4407a760cde63ca777e5",
+      "evidence": {
+        "detail": "tile=3,11;target=3,12;arrival=warp_adjacent;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "tv-1",
+      "executionId": "acdb6e0cd9c54362adc0fdb50ef01ba6",
+      "evidence": {
+        "detail": "source=FarmHouse:3,12;target=Farm:64,15"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "tv-1",
+      "executionId": "acdb6e0cd9c54362adc0fdb50ef01ba6",
+      "evidence": {
+        "detail": "source=FarmHouse:3,12;target=Farm:64,15"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "travel_completed",
+      "requestId": "tv-1",
+      "executionId": "acdb6e0cd9c54362adc0fdb50ef01ba6",
+      "evidence": {
+        "detail": "expected=Farm:64,15;actual=Farm:64,15"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "warped",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_out_of_range",
+      "requestId": "hv-1",
+      "executionId": "35a39a190fd34d0f8ce0a2e320cc4cbc",
+      "evidence": {
+        "detail": "target=63,18"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_out_of_range",
+      "requestId": "hv-1",
+      "executionId": "35a39a190fd34d0f8ce0a2e320cc4cbc",
+      "evidence": {
+        "detail": "target=63,18"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "mv-3",
+      "executionId": "060a34c4dcbd4c95875cc6c66f3a64ab",
+      "evidence": {
+        "detail": "route_revision=17;target=63,17"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "mv-3",
+      "executionId": "060a34c4dcbd4c95875cc6c66f3a64ab",
+      "evidence": {
+        "detail": "route_revision=17;target=63,17"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "mv-3",
+      "executionId": "060a34c4dcbd4c95875cc6c66f3a64ab",
+      "evidence": {
+        "detail": "target=63,17"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "mv-3",
+      "executionId": "060a34c4dcbd4c95875cc6c66f3a64ab",
+      "evidence": {
+        "detail": "tile=63,15;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "mv-3",
+      "executionId": "060a34c4dcbd4c95875cc6c66f3a64ab",
+      "evidence": {
+        "detail": "tile=63,16;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "mv-3",
+      "executionId": "060a34c4dcbd4c95875cc6c66f3a64ab",
+      "evidence": {
+        "detail": "tile=63,17;target=63,17;arrival=exact;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "crop_harvested",
+      "requestId": "hv-2",
+      "executionId": "898595da703d4239ad07fd14a7a711d5",
+      "evidence": {
+        "detail": "location=Farm;target=crop_dbad7e163aba7541;tile=63,18;crop=474;item=(O)190;native_path_return=true;native_accepted=true;regrows=false;phase_before=5;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "crop_harvested",
+      "requestId": "hv-2",
+      "executionId": "898595da703d4239ad07fd14a7a711d5",
+      "evidence": {
+        "detail": "location=Farm;target=crop_dbad7e163aba7541;tile=63,18;crop=474;item=(O)190;native_path_return=true;native_accepted=true;regrows=false;phase_before=5;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "gift_given",
+      "requestId": "740fa987-fb20-46c5-b9f7-7717f5f11488",
+      "executionId": "ed94f203893b4a9b9543321c74bf5891",
+      "evidence": {
+        "detail": "location=Farm;target=npc_relationship_40b17bf391e1abb1;tile=64,17;npc=Jodi;item=(O)190;slot=5;stack_before=1;points_before=0;gifts_today_before=0;gifts_this_week_before=0;quest_25_completed_before=false;stack_after=0;points_after=45;gifts_today_after=1;gifts_this_week_after=1;quest_25_completed_after=false;update_gift_limit=true;showed_response=false;gift_recorded=true;points_changed=true;spouse_jealousy=false;spouse_points_before=-1;spouse_points_after=-1;menu_open_after=false;dialogue_open_after=false"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "gift_given",
+      "requestId": "740fa987-fb20-46c5-b9f7-7717f5f11488",
+      "executionId": "ed94f203893b4a9b9543321c74bf5891",
+      "evidence": {
+        "detail": "location=Farm;target=npc_relationship_40b17bf391e1abb1;tile=64,17;npc=Jodi;item=(O)190;slot=5;stack_before=1;points_before=0;gifts_today_before=0;gifts_this_week_before=0;quest_25_completed_before=false;stack_after=0;points_after=45;gifts_today_after=1;gifts_this_week_after=1;quest_25_completed_after=false;update_gift_limit=true;showed_response=false;gift_recorded=true;points_changed=true;spouse_jealousy=false;spouse_points_before=-1;spouse_points_after=-1;menu_open_after=false;dialogue_open_after=false"
+      }
+    }
+  ],
+  "authenticated": true,
+  "revision": 23
+}
