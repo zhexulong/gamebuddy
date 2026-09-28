@@ -160,6 +160,10 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   cut_weeds: "run-stardew-native-local-player-cut-weeds-smoke.mjs",
   scythe_crop: "run-stardew-native-local-player-scythe-crop-smoke.mjs",
   ship_item: "run-stardew-native-local-player-ship-item-smoke.mjs",
+  // Same ship_item capability over IslandWest's island bin. The runner is
+  // identical because the action advertises through the same shippingBinTargets
+  // channel; only the fixture scenario (island house upgraded) differs.
+  ship_item_island: "run-stardew-native-local-player-ship-item-smoke.mjs",
   interact_npc_with_item: "run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
   craft_item: "run-stardew-native-local-player-craft-item-smoke.mjs",
   cook_recipe: "run-stardew-native-local-player-cook-recipe-smoke.mjs",

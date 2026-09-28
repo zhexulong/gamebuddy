@@ -523,6 +523,23 @@ test("the fridge reuses the chest container runner and its second fixture scenar
   assert.equal(resolveStardewActionGateRunner("fridge_retrieve"), "run-stardew-native-local-player-chest-retrieve-smoke.mjs");
 });
 
+test("the island shipping bin reuses the ship_item runner and its own fixture scenario", async () => {
+  const { fixtureActions, fixtureScenario } = await import("./lib/stardew-native-local-player-fixture.mjs");
+  assert.deepEqual(fixtureActions("ship_item_island"), ["ship_item"]);
+  assert.equal(
+    fixtureScenario(fixtureActions("ship_item_island"), "ship_item_island"),
+    "native_ship_item_island_v1",
+  );
+  // The Farm bin harness action keeps its original scenario and action set.
+  assert.deepEqual(fixtureActions("ship_item"), ["ship_item"]);
+  assert.equal(fixtureScenario(fixtureActions("ship_item"), "ship_item"), "native_ship_item_v1");
+  const { resolveStardewActionGateRunner } = await import("./resolve-stardew-action-gate-runner.mjs");
+  assert.equal(
+    resolveStardewActionGateRunner("ship_item_island"),
+    "run-stardew-native-local-player-ship-item-smoke.mjs",
+  );
+});
+
 test("native-local jodi-harvest-deliver fixture supplies a mature crop and a reachable villager only", async (t) => {
   const options = { ...(await createFixture(t, "jodi-harvest-deliver")), action: "jodi_harvest_deliver" };
   await prepareNativeLocalPlayerFixture(options);

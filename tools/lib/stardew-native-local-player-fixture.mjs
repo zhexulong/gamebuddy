@@ -441,6 +441,10 @@ export function fixtureActions(action) {
   // and places the actor beside the fridge's map tile.
   if (action === "fridge_store") return ["chest_store"];
   if (action === "fridge_retrieve") return ["chest_retrieve"];
+  // The island shipping bin is the same ship_item capability over IslandWest's
+  // own bin position; the fixture only enables the island house upgrade and
+  // places the actor beside the bin.
+  if (action === "ship_item_island") return ["ship_item"];
   if (action === "chop_stump") return ["equip_tool", "chop_stump"];
   if (action === "plant_sapling") return ["plant_sapling"];
   if (action === "cut_weeds") return ["equip_tool", "cut_weeds"];
@@ -466,6 +470,7 @@ export function fixtureScenario(actions, action) {
   // provision a kitchen instead of a placed chest.
   if (action === "fridge_store") return "native_fridge_store_v1";
   if (action === "fridge_retrieve") return "native_fridge_retrieve_v1";
+  if (action === "ship_item_island") return "native_ship_item_island_v1";
   // Ladder 1 walk→look→do must win over the plain navigation scenario: the
   // action set is exactly the three-node DAG plus read-only retrieval.
   if (actions.includes("navigate_to_destination") && actions.includes("machine_inspect") && actions.includes("machine_load"))
