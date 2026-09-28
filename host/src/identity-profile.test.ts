@@ -53,6 +53,22 @@ test("the Game conduct forbids claiming an NPC reaction the game never reported"
   assert.match(gamePrompt, /say what they MEAN to a person instead of reading them out/);
 });
 
+test("the Game system prompt names the language the player actually speaks", () => {
+  // A live run on a zh-CN fixture answered entirely in English: the system
+  // prompt is written in English and only said "speak the player's language",
+  // never which language that was. The locale now reaches the builder.
+  const zh = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "zh-CN");
+  assert.match(zh, /Answer the player in Chinese \(Simplified\)\./);
+  const en = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "en-US");
+  assert.match(en, /Answer the player in English\./);
+  // A tag we do not map still yields an instruction rather than silence.
+  const other = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "fr-FR");
+  assert.match(other, /Answer the player in fr-FR\./);
+  // Omitting the locale keeps the previous prompt shape (no dangling sentence).
+  const bare = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.doesNotMatch(bare, /Answer the player in/);
+});
+
 test("the Game conduct permits company while working but still forbids step reports", () => {
   // Real live runs measured the opposite failure from the two above: the conduct
   // said "never narrate your own actions", and A/B runs of the same task produced

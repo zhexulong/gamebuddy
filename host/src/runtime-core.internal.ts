@@ -792,7 +792,7 @@ export async function createRuntimeWithFixedToolsCore(
     systemPrompt:
       runtimeSurface === "chat"
         ? buildChatCompanionSystemPrompt(profile)
-        : buildGameCompanionSystemPrompt(profile),
+        : buildGameCompanionSystemPrompt(profile, presentation?.profile.locale),
     appendSystemPrompt: [],
   });
   // The fork must never spawn the external `pi` CLI from a GameBuddy runtime.
