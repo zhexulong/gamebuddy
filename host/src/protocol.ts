@@ -165,6 +165,8 @@ activeExecution?: ActiveExecution | null;
   refillWateringCanTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
   /** Nearby unwatered crops available through the native WateringCan path. */
   cropTargets?: readonly Readonly<{ targetId: string; x: number; y: number; cropId: string; displayName: string }>[];
+  /** The current location's completed, unwatered native Pet Bowl (water_pet_bowl). */
+  petBowlTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
   /** Nearby ready, ordinary Grab crops available through native Crop.harvest. */
   harvestTargets?: readonly Readonly<{
     targetId: string;
@@ -525,8 +527,9 @@ export type ExecutionRequest = Readonly<{
     | "interact_npc_with_item"
     | "craft_item"
     | "cook_recipe"
-    | "collect_crab_pot_output"
-    | "ship_item";
+      | "collect_crab_pot_output"
+      | "ship_item"
+      | "water_pet_bowl";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
@@ -964,6 +967,7 @@ const SNAPSHOT_KEYS = [
   "forageTargets",
   "itemTargets",
   "cropTargets",
+  "petBowlTargets",
   "harvestTargets",
   "seedTargets",
   "fertilizerTargets",
@@ -1478,6 +1482,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "pickup_forage" &&
     value.action !== "pickup_item" &&
     value.action !== "water_crop" &&
+    value.action !== "water_pet_bowl" &&
     value.action !== "refill_watering_can" &&
     value.action !== "harvest_crop" &&
     value.action !== "plant_seed" &&
@@ -1598,6 +1603,15 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_crop_target";
+  } else if (value.action === "water_pet_bowl") {
+    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    if (
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_pet_bowl_target";
   } else if (value.action === "harvest_crop") {
     if (!hasExactKeys(value.args, ["x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
     
@@ -1987,6 +2001,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:cropTargets";
   if (
+    value.petBowlTargets !== undefined &&
+    (!Array.isArray(value.petBowlTargets) ||
+      value.petBowlTargets.length > 8 ||
+      !value.petBowlTargets.every(isPetBowlTargetFact))
+  )
+    return "invalid_snapshot:petBowlTargets";
+  if (
     value.harvestTargets !== undefined &&
     (!Array.isArray(value.harvestTargets) ||
       value.harvestTargets.length > 64 ||
@@ -2246,6 +2267,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.cropTargets) &&
         value.cropTargets.length <= 64 &&
         value.cropTargets.every(isCropTargetFact))) &&
+    (value.petBowlTargets === undefined ||
+      (Array.isArray(value.petBowlTargets) &&
+        value.petBowlTargets.length <= 8 &&
+        value.petBowlTargets.every(isPetBowlTargetFact))) &&
     (value.harvestTargets === undefined ||
       (Array.isArray(value.harvestTargets) &&
         value.harvestTargets.length <= 64 &&
@@ -2412,6 +2437,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "pickup_forage" ||
       value.action === "pickup_item" ||
       value.action === "water_crop" ||
+      value.action === "water_pet_bowl" ||
       value.action === "refill_watering_can" ||
       value.action === "harvest_crop" ||
       value.action === "plant_seed" ||
@@ -2887,6 +2913,16 @@ function isWateringCanFact(value: unknown): boolean {
   );
 }
 function isRefillWateringCanTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y"]) &&
+    isOpaqueId(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y)
+  );
+}
+
+function isPetBowlTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
     hasExactKeys(value, ["targetId", "x", "y"]) &&

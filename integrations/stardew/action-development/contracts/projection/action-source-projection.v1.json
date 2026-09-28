@@ -1252,6 +1252,43 @@
         "handlerGroup": null
       },
       {
+        "actionId": "water_pet_bowl",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "water_pet_bowl",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "interact_npc_with_item",
         "identityVersion": 1,
         "lifecycle": "experimental",
@@ -1813,6 +1850,7 @@
       "clear_debris",
       "npc_relationship",
       "pet_animal",
+      "water_pet_bowl",
       "interact_npc_with_item",
       "express_emote",
       "face_direction",
@@ -1854,6 +1892,7 @@
       "machine_load",
       "move_to_tile",
       "navigate_to_destination",
+      "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -1885,6 +1924,7 @@
       "machine_load",
       "move_to_tile",
       "navigate_to_destination",
+      "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -1916,6 +1956,7 @@
       "machine_load",
       "move_to_tile",
       "navigate_to_destination",
+      "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -1969,7 +2010,8 @@
       "till_soil",
       "travel",
       "use_item",
-      "water_crop"
+      "water_crop",
+      "water_pet_bowl"
     ],
     "envelopeValidatorActionIds": [
       "bait_crab_pot",
@@ -2013,7 +2055,8 @@
       "till_soil",
       "travel",
       "use_item",
-      "water_crop"
+      "water_crop",
+      "water_pet_bowl"
     ],
     "executionRequestUnionActionIds": [
       "bait_crab_pot",
@@ -2057,7 +2100,8 @@
       "till_soil",
       "travel",
       "use_item",
-      "water_crop"
+      "water_crop",
+      "water_pet_bowl"
     ],
     "bridgeMessageTypes": [
       "hello",
@@ -2195,7 +2239,8 @@
       "till_soil",
       "travel",
       "use_item",
-      "water_crop"
+      "water_crop",
+      "water_pet_bowl"
     ]
   },
   "router": {
@@ -2253,7 +2298,8 @@
       "npc_relationship",
       "pet_animal",
       "ship_item",
-      "use_item"
+      "use_item",
+      "water_pet_bowl"
     ],
     "ResourceTools": [
       "bait_crab_pot",
