@@ -47,7 +47,15 @@ const runnerFile = dumpSpatial
       chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
       pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
     }[action];
-if (!dumpSpatial && runnerFile === undefined) throw new Error(`shared_world_runner_not_wired:${action}`);
+// The cross-day lifecycle is not a wire action: there is no execution request and
+// no action receipt. The Mod on each side drives its own farmer through the
+// native sleep path and writes its own evidence file; the driver only waits for
+// that file and reports it. So it needs no runner and no target plan.
+const isSleepLifecycle = !dumpSpatial && action === "sleep_lifecycle";
+const lifecycleEvidence = isSleepLifecycle ? option("--lifecycle-evidence") : null;
+if (isSleepLifecycle && !lifecycleEvidence) throw new Error("sleep_lifecycle_requires_lifecycle_evidence");
+if (!dumpSpatial && !isSleepLifecycle && runnerFile === undefined)
+  throw new Error(`shared_world_runner_not_wired:${action}`);
 
 /**
  * How the driver reaches each wired action's target.
@@ -300,6 +308,26 @@ try {
         2,
       ),
     );
+  } else if (isSleepLifecycle) {
+    // Wait, bounded, for the AI client's own Mod-side lifecycle to reach its
+    // terminal state. The file is written once, by the Mod, on the game thread.
+    const deadline = Date.now() + 120_000;
+    let evidence = null;
+    while (Date.now() < deadline) {
+      try {
+        evidence = JSON.parse((await readFile(lifecycleEvidence, "utf8")).replace(/^\uFEFF/, ""));
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    if (evidence === null) {
+      console.log(JSON.stringify({ state: "blocked", reasonCode: "lifecycle_evidence_absent", evidencePath: lifecycleEvidence }));
+      process.exitCode = 2;
+    } else {
+      console.log(JSON.stringify({ ...evidence, topologyAssertion: "shared_world_farmhand", evidencePath: lifecycleEvidence }));
+      if (evidence.state !== "passed") process.exitCode = 2;
+    }
   } else {
     const runner = await import(`./${runnerFile}`);
     const runSmoke = Object.entries(runner).find(([name]) => /^run[A-Za-z]*Smoke$/.test(name))?.[1];
