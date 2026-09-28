@@ -16,7 +16,8 @@
 | 03 | `run-03-guidance-token-leak.json` | `blocked` | 4 | 73943 ms | prompt 引导引出 wire 标识符泄漏 |
 | 04 | `run-04-guidance-tooluse-preamble.json` | `blocked` | 8 | 4443 ms | 前 4 片是 tool-use 规划旁白 |
 | 05 | `run-05-all-fixes-passed.json` | **`passed`** | 3 | 81333 ms | —（但玩家静默 81s） |
-| 06 | `run-06-working-remark.json` | `blocked` | 3 | **3483 ms** | 工作短评落地（静默 81s→3.5s）；新露出 `summary_too_long`（309 字） |
+| 06 | `run-06-working-remark.json` | `blocked` | 3 | **3483 ms** | 工作短评落地（81s→3.5s）；输出是英文 |
+| 07 | `run-07-locale-fixed-passed.json` | **`passed`** | 4 | **3565 ms** | —（工作短评 + 语言修复同时生效） |
 
 注意首片 TTFB 这一列**不能跨 run 比较**：修前（01–04）它测的是**规划旁白**到达时间，修后（05）才是玩家可见回复。详见下文“真实代价”。
 
@@ -62,6 +63,15 @@
 
 1. **这次 run 终判 `blocked`，但不是内容不诚实，是说太长。** 需下一轮 loop 判断“允许说话”是否连带总长度上升。
 2. **输出是英文而 `zh-CN` 配置未变。** 非本次改动引起（prompt 确实是中文），但需归因（persona/worldbook 物化、provider 侧、agent 示例），归因前不假定原因。
+
+### run-07（工作短评 + 语言修复同时生效）
+- 状态 **`passed`**；`claimedNpcReaction=false`；`machineTokens=[]`；长度 105
+- 4 片，首片 3565 ms：
+  1. `我先看看农场现在什么情况。`（**3565 ms**，来自 tool-use 消息的工作短评）
+  2. `花椰菜递过去了，可回执看着像是普普通通送了个礼物——乔迪的好感涨了，但信上那件事没被勾掉。`（82416 ms）
+  3. `大概是任务还没正式接下来，得先在日志里领了才算数。`（82450 ms）
+  4. `要不要我去镇上找找看有没有登记这桩活的地方？`（82484 ms）
+- 与 run-06 对比直接证实了归因：run-06 长度 309（英文，3 片），run-07 长度 105（中文，4 片）。**片数更少而码点更多**，差异全部来自语言，不是“说得太长”。因此门阈值未改。
 
 ## run-05 的真实代价（不要读成“修好了就更好”）
 
