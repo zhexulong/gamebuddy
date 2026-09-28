@@ -37,6 +37,17 @@ test("buildChatCompanionSystemPrompt and buildGameCompanionSystemPrompt render p
   assert.match(gamePrompt, /\[Character: GameBuddy Companion\]/);
 });
 
+test("the Game conduct forbids claiming an NPC reaction the game never reported", () => {
+  // Prompt-side half of the presence loop: two real live runs narrated an NPC
+  // reaction ("她那个开心劲儿" / "连眼睛都弯了") while the gift receipt recorded
+  // showed_response=false — the game never staged any reaction to read. The
+  // detector lives in tools/lib/companion-interaction-gate.mjs; this pins the
+  // guidance that stops the model from needing it.
+  const gamePrompt = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(gamePrompt, /Only state what you actually observed/);
+  assert.match(gamePrompt, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
+});
+
 test("IdentityProfile rejects malformed or control-bearing content", () => {
   assert.throws(
     () => validateIdentityProfile({ ...DEFAULT_IDENTITY_PROFILE, revision: 0 }),
