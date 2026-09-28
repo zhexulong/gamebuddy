@@ -1065,7 +1065,7 @@
       {
         "actionId": "express_emote",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "emote": {
@@ -1089,7 +1089,7 @@
       {
         "actionId": "face_direction",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "direction": {
@@ -1430,12 +1430,33 @@
         "postcondition": {
           "name": "native_action_postcondition"
         }
+      },
+      {
+        "actionId": "advance_day",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {},
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "day_advanced"
+        }
       }
     ]
   },
   "lifecycle": {
     "admittedLifecycles": [
       "published",
+      "live_verified",
       "experimental"
     ],
     "executableActionIds": [
@@ -1464,7 +1485,9 @@
       "clear_hoedirt",
       "dig_artifact_spot",
       "refill_watering_can",
-      "navigate_to_destination"
+      "navigate_to_destination",
+      "express_emote",
+      "face_direction"
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
@@ -1478,8 +1501,6 @@
       "water_pet_bowl",
       "water_slime_hutch_trough",
       "interact_npc_with_item",
-      "express_emote",
-      "face_direction",
       "chest_store",
       "chest_retrieve",
       "chop_stump",
@@ -1489,7 +1510,8 @@
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",
-      "ship_item"
+      "ship_item",
+      "advance_day"
     ]
   },
   "protocol": {
@@ -1535,7 +1557,9 @@
       "clear_hoedirt",
       "dig_artifact_spot",
       "refill_watering_can",
-      "navigate_to_destination"
+      "navigate_to_destination",
+      "express_emote",
+      "face_direction"
     ]
   },
   "fixtureOwnedFiles": [

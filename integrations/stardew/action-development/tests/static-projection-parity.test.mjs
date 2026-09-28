@@ -12,6 +12,7 @@ import {
   PROJECTION_PARITY_KINDS,
   PROJECTION_PARITY_SCHEMA,
   PROJECTION_PARITY_SURFACE_SCHEMA,
+  PROJECTION_PARITY_VISIBLE_LIFECYCLES,
   parseActionProjectionParity,
   validateActionProjectionParity,
 } from "../src/static-projection/action-projection-parity.mjs";
@@ -110,11 +111,13 @@ test("preserves registration identity/lifecycle/kind and the published-vs-withdr
 
   const executable = new Set(validated.lifecycle.executableActionIds);
   for (const actionId of executable) {
-    assert.equal(byId.get(actionId).lifecycle, "published");
+    // Both visible rungs qualify: live_verified means a passed live run already
+    // made the action visible, published means the same action after review.
+    assert.ok(PROJECTION_PARITY_VISIBLE_LIFECYCLES.includes(byId.get(actionId).lifecycle));
     assert.equal(byId.get(actionId).kind, "execution");
   }
   for (const actionId of validated.lifecycle.readOnlyActionIds) {
-    assert.equal(byId.get(actionId).lifecycle, "published");
+    assert.ok(PROJECTION_PARITY_VISIBLE_LIFECYCLES.includes(byId.get(actionId).lifecycle));
     assert.equal(byId.get(actionId).kind, "read_only");
   }
   for (const actionId of validated.lifecycle.experimentalActionIds) {

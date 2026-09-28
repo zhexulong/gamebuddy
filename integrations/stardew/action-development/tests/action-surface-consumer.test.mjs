@@ -101,7 +101,7 @@ test("schema and consumer field sets are exact and versioned", async () => {
   assert.equal(schema.additionalProperties, false);
   assert.equal(schema.$defs.action.additionalProperties, false);
   assert.equal(schema.properties.actions["x-gamebuddy-uniqueBy"], "actionId");
-  assert.deepEqual(schema.$defs.action.properties.lifecycle.enum, ["published", "experimental"]);
+  assert.deepEqual(schema.$defs.action.properties.lifecycle.enum, ["published", "live_verified", "experimental"]);
   assert.deepEqual(schema.$defs.action.properties.kind.enum, ["execution", "read_only"]);
 });
 

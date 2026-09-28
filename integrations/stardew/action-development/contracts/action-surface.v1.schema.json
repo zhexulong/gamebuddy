@@ -62,6 +62,7 @@
         "lifecycle": {
           "enum": [
             "published",
+            "live_verified",
             "experimental"
           ]
         },

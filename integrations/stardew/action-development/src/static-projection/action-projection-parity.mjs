@@ -36,7 +36,13 @@ const PROJECTION_PARITY_OWNERSHIP_KEYS = Object.freeze([
   "localFixtureOwnedActionIds",
   "nativeActionIds",
 ]);
-export const PROJECTION_PARITY_ADMITTED_LIFECYCLES = Object.freeze(["published", "experimental"]);
+export const PROJECTION_PARITY_ADMITTED_LIFECYCLES = Object.freeze(["published", "live_verified", "experimental"]);
+// The partition splits admitted actions into "player-visible execution",
+// "player-visible read-only" and "not yet player-visible". live_verified sits on
+// the visible side because a passed live run already makes the action visible;
+// published is the same action after independent review. Both rungs are
+// therefore admitted into the executable/read-only subsets.
+export const PROJECTION_PARITY_VISIBLE_LIFECYCLES = Object.freeze(["published", "live_verified"]);
 export const PROJECTION_PARITY_KINDS = Object.freeze(["execution", "read_only"]);
 export const PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS = Object.freeze([
   "inspect_self",
@@ -379,13 +385,13 @@ export function validateActionProjectionParity(input) {
   // guard: surface_subsets — each subset matches action identity facts
   for (const actionId of executableIds) {
     const action = actionById.get(actionId);
-    if (action.lifecycle !== "published" || action.kind !== "execution") {
+    if (!PROJECTION_PARITY_VISIBLE_LIFECYCLES.includes(action.lifecycle) || action.kind !== "execution") {
       fail("executable_subset_invalid");
     }
   }
   for (const actionId of readOnlyIds) {
     const action = actionById.get(actionId);
-    if (action.lifecycle !== "published" || action.kind !== "read_only") {
+    if (!PROJECTION_PARITY_VISIBLE_LIFECYCLES.includes(action.lifecycle) || action.kind !== "read_only") {
       fail("readonly_subset_invalid");
     }
   }

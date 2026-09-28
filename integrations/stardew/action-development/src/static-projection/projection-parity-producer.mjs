@@ -13,6 +13,7 @@ import {
   PROJECTION_PARITY_FIXED_PROTOCOL_CONTROLS,
   PROJECTION_PARITY_GUARD_ORDER,
   PROJECTION_PARITY_SCHEMA,
+  PROJECTION_PARITY_VISIBLE_LIFECYCLES,
   validateActionProjectionParity,
 } from "./action-projection-parity.mjs";
 
@@ -70,10 +71,10 @@ export async function produceProjectionParitySnapshot() {
   }));
   const actions = artifact.actions;
   const executableActionIds = actions
-    .filter((action) => action.lifecycle === "published" && action.kind === "execution")
+    .filter((action) => PROJECTION_PARITY_VISIBLE_LIFECYCLES.includes(action.lifecycle) && action.kind === "execution")
     .map((action) => action.actionId);
   const readOnlyActionIds = actions
-    .filter((action) => action.lifecycle === "published" && action.kind === "read_only")
+    .filter((action) => PROJECTION_PARITY_VISIBLE_LIFECYCLES.includes(action.lifecycle) && action.kind === "read_only")
     .map((action) => action.actionId);
   const experimentalActionIds = actions
     .filter((action) => action.lifecycle === "experimental")
