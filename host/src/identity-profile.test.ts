@@ -46,6 +46,11 @@ test("the Game conduct forbids claiming an NPC reaction the game never reported"
   const gamePrompt = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.match(gamePrompt, /Only state what you actually observed/);
   assert.match(gamePrompt, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
+  // A third live run answered that instruction by reading the receipt's wire
+  // format to the player ("（gift_given）…quest_25_completed 还是 false"), so the
+  // conduct must also say which language to use, not just what to assert.
+  assert.match(gamePrompt, /Speak in the player's language, never in the game's internal one/);
+  assert.match(gamePrompt, /say what they MEAN to a person instead of reading them out/);
 });
 
 test("IdentityProfile rejects malformed or control-bearing content", () => {
