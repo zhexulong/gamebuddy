@@ -698,6 +698,50 @@ internal sealed class SleepAndAdvanceDayLifecycle
         return true;
     }
 
+    /// <summary>
+    /// Build the event chain from what this run actually observed.
+    ///
+    /// This must never be a topology-shaped template: a yielded pass-out run
+    /// answers no dialogue and settles no modal of its own, so listing
+    /// <c>answerDialogue(Yes)+beginOutro</c> or <c>modality_settled</c> there
+    /// would report events that did not happen. Each entry is derived from the
+    /// recorded trace instead.
+    /// </summary>
+    private object[] BuildEventChain()
+    {
+        var chain = new List<string>();
+        // Only claim eligibility when this run actually became eligible: a
+        // yielded pass-out can fire before that, and reporting "eligibility"
+        // there would describe a gate that never opened.
+        if (this.trace.Any(entry => entry.StartsWith("eligible=", StringComparison.Ordinal)))
+            chain.Add("eligibility");
+        if (this.enteredVia == "native_pass_out")
+            chain.Add("native_pass_out_before_eligibility");
+        if (this.trace.Any(entry => entry.StartsWith("pathfind_to_bed_tile", StringComparison.Ordinal)))
+            chain.Add("pathfind_to_bed_tile");
+        if (this.trace.Any(entry => entry.StartsWith("modal_observed", StringComparison.Ordinal)))
+        {
+            chain.Add("native_sleep_touch_action");
+            chain.Add("game_owned_dialogue_box");
+        }
+        if (this.answerDispatched)
+        {
+            chain.Add("answerDialogue(Yes)+beginOutro");
+            chain.Add("modality_settled");
+        }
+        if (this.enteredVia == "native_pass_out" && !chain.Contains("native_pass_out_before_eligibility"))
+            chain.Add("native_pass_out_yielded");
+        if (this.readyCheckObserved)
+            chain.Add("native_ready_barrier");
+        if (this.savingObserved)
+            chain.Add("saving");
+        if (this.savedObserved)
+            chain.Add("saved");
+        if (this.dayStartedObserved)
+            chain.Add("day_started");
+        return chain.ToArray();
+    }
+
     private void Finish(string state, string reasonCode, Dictionary<string, object?>? settlement)
     {
         if (this.finished)
@@ -713,30 +757,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
             ["targetVersion"] = new Dictionary<string, object?> { ["game"] = Game1.version },
             ["settlement"] = settlement,
             ["trace"] = this.trace.ToArray(),
-            ["eventChain"] = this.multiPlayer
-                ? new object[]
-                {
-                    "eligibility",
-                    "pathfind_to_bed_tile",
-                    "native_sleep_touch_action",
-                    "game_owned_ready_check_dialog",
-                    "native_ready_barrier",
-                    "saving",
-                    "saved",
-                    "day_started",
-                }
-                : new object[]
-                {
-                    "eligibility",
-                    "pathfind_to_bed_tile",
-                    "native_sleep_touch_action",
-                    "game_owned_dialogue_box",
-                    "answerDialogue(Yes)+beginOutro",
-                    "modality_settled",
-                    "saving",
-                    "saved",
-                    "day_started",
-                },
+            ["eventChain"] = this.BuildEventChain(),
         };
 
         try
