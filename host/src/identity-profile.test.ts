@@ -53,6 +53,24 @@ test("the Game conduct forbids claiming an NPC reaction the game never reported"
   assert.match(gamePrompt, /say what they MEAN to a person instead of reading them out/);
 });
 
+test("the Game conduct permits company while working but still forbids step reports", () => {
+  // Real live runs measured the opposite failure from the two above: the conduct
+  // said "never narrate your own actions", and A/B runs of the same task produced
+  // zero companion words across a whole multi-action chain (2/2 tool messages
+  // with no text), leaving the player in silence for the length of the task.
+  // The conduct now permits a short remark while working while still forbidding
+  // the step checklist, and still routes body language through native actions.
+  const gamePrompt = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(gamePrompt, /You may speak while you work/);
+  assert.match(gamePrompt, /never list your steps/);
+  assert.match(gamePrompt, /silence while thinking is fine/);
+  // Parenthesised stage directions must stay out: body language goes through
+  // express_emote / face_direction, which the conduct must still name.
+  assert.match(gamePrompt, /express_emote \/ face_direction/);
+  assert.match(gamePrompt, /do not write action or mood in parentheses/);
+  assert.doesNotMatch(gamePrompt, /Never narrate your own actions step by step/);
+});
+
 test("IdentityProfile rejects malformed or control-bearing content", () => {
   assert.throws(
     () => validateIdentityProfile({ ...DEFAULT_IDENTITY_PROFILE, revision: 0 }),
