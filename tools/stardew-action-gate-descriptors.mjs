@@ -207,11 +207,12 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // action; it grants no capability.
   stamina_recovery_chain: "run-stardew-native-local-player-stamina-recovery-chain-smoke.mjs",
   // Lane G partial-completion recovery-chain harness: the fixture fills the
-  // backpack with 998 Bait beside one Bug Meat, so the native Bait recipe (one
-  // Bug Meat -> five Bait, max stack 999) can only retain one and must drop four.
-  // The chain reads the honest `partially_succeeded/crafted_item_created`
-  // receipt, stores the retained stack, and picks the dropped remainder back up.
-  // Not a new action; it grants no capability.
+  // backpack with 998 Bait beside two Bug Meat, so the native Bait recipe (one Bug
+  // Meat -> five Bait, max stack 999) can only retain one and must drop four. The
+  // chain reads the honest `partially_succeeded/crafted_item_created` receipt,
+  // stores the retained stack so the native debris homing can deliver the dropped
+  // remainder, then re-crafts the SAME recipe to a full success. Not a new action;
+  // it grants no capability.
   craft_partial_recovery_chain: "run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs",
 });
 
