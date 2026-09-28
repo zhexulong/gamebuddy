@@ -105,6 +105,13 @@ export function attachNativeCompanionContent(
   // can separate reply from preamble earlier. Sentence chunking — the actual
   // goal here — is unaffected.
   let pendingSentences: string[] = [];
+  // One working remark per Pi turn, released from the FIRST intermediate
+  // tool-use message that carries one. A step report is emitted step by step,
+  // so it appears in EVERY tool-use message; allowing exactly one piece per
+  // turn therefore lets company through while making a running narration
+  // structurally unable to reach the surface. This is a shape rule (how many
+  // pieces, from where), not a semantic filter over the wording.
+  let workingRemarkReleased = false;
   let callbackTail = Promise.resolve();
   let unsubscribe: (() => void) | undefined;
 
@@ -210,10 +217,36 @@ export function attachNativeCompanionContent(
       pendingSentences = [];
       // A tool-use assistant message is an intermediate agent-loop result, not
       // the player-visible final response. It may be followed by a typed Game
-      // action and another assistant message, so it must neither preview nor
-      // terminalize this observer — and its text (the model's running commentary
-      // between actions) must be discarded, not presented as companion speech.
-      if (finalMessage.stopReason === "toolUse") return;
+      // action and another assistant message, so it must never terminalize this
+      // observer. Its text is the model's running commentary between actions:
+      // the non-incremental lane withholds it entirely, because that lane's
+      // single-shot contract has nowhere to put it.
+      //
+      // Under incremental activation (Game only) the surface is a sequence of
+      // short native expressions instead of one message, so a bounded remark
+      // from such a message is legitimate company while working -- and its
+      // absence is what left the player in silence for the whole task.
+      //
+      // This stays a structural rule: one piece, from the first sentence, under
+      // a byte bound. It deliberately does NOT try to judge whether a short
+      // remark reads as company or as narration, because that is the conduct's
+      // job and a semantic filter here would be a detector whose recall we would
+      // have to trust. What the rule guarantees is that a multi-step checklist
+      // and a long report cannot reach the surface. Whether the surviving short
+      // pieces feel like company is measured by the live run, not asserted here.
+      if (finalMessage.stopReason === "toolUse") {
+        if (!incrementalActive || workingRemarkReleased) return;
+        // Text of this intermediate message, already dehydrated at emission
+        // time below; the first piece of the stream is where a genuine
+        // "here I am / look at this" lands, so that is the one we take.
+        const remark = messageSentences[0] ?? messageAccumulator.flush();
+        if (isEmptyAfterDehydration(remark)) return;
+        const dehydrated = dehydrateCompanionSpeech(remark);
+        if (dehydrated.length === 0) return;
+        workingRemarkReleased = true;
+        dispatch(async () => await sinks.onIncrementalText!(dehydrated));
+        return;
+      }
       finalizing = true;
       const stopReason = typeof finalMessage.stopReason === "string" ? finalMessage.stopReason : "stop";
       if (stopReason === "aborted") {
