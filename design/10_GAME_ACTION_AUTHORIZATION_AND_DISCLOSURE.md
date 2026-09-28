@@ -81,6 +81,35 @@ bridge hello/hello_ack     → session/transport lifecycle
 
 只有 Published Action 才进入默认同意的集合。`experimental`、`diagnostic`、`fixture`、`internal` 或仅在设计中列出的 action 不属于产品 action surface。
 
+### 3.1.1 Live-verified 与 published 的区分
+
+**决策（2026-09-27）：** “live run 通过”与“发布”是两个不同的事实，必须有不同名字：
+
+```text
+experimental  →  live_verified  →  published
+                （live run 通过    （live run 通过
+                  即可见）           + 独立 reviewer 审查通过）
+```
+
+- **`live_verified`** —— 该 action 已在目标游戏版本上跑过**它自己 `requiredLiveTopology` 所要求的那次 live run**，并产生真实 native receipt 与 fresh postcondition。达到该状态即**可见**（进入默认同意集合），可以被 Agent 调用。
+- **`published`** —— `live_verified` **加上一次独立 reviewer 审查通过**。live run 能够发现机械断言覆盖不到的问题（本仓库已有多个实例：Chat live run 中独立 reviewer 抓到机械门判通过、但同伴在向玩家朗读 wire 标识符的穿帮），所以“跑过一次”不足以构成发布承诺。发布要求这次独立审查。
+
+状态是**单调递进**的：`experimental → live_verified → published`。没有 live 证据的动作不得进入 `live_verified`；`live_verified` 的可见性来自**已发生的真实 live 证据**，不是来自默认同意。
+
+单个 action 需要哪一次 live run 由派生的 `requiredLiveTopology` 决定（见 `integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json`）：
+
+| `requiredLiveTopology` | 达到 `live_verified` 所需的 live run |
+|---|---|
+| `single_player_native_companion` | 单机原生同伴 live run |
+| `shared_world_multiplayer` | 多人共享世界 live run |
+
+`mp-semantic`（有 native seam 读取影响结果的多人状态）的 action，其 `live_verified` 本身就要求多人 live；`mp-insensitive` 的动作单机 live 即可。该划分是**派生的**，不手写。
+
+**边界：**
+
+- `live_verified` 只断言“这个 action 在目标版本上真实跑过并产生了受验证的原生结果”。它**不**断言 contract、BDD、取消/deadline/watchdog、幂等/重放或迁移登记的完整性。
+- `published` 所要求的独立审查针对 action 的**发布就绪性**，不是体验质量验收。live run 发现的体验类问题记入审计面并跟进，不阻止可见。
+
 ### 3.2 User Policy
 
 `User Policy` 是玩家在 App/Integration 控制面表达的长期偏好。它绑定：
@@ -293,7 +322,7 @@ type PublishedAction = Readonly<{
   contextTags: readonly string[];
   lifecycle: "instant" | "async";
   supportsCancellation: boolean;
-  status: "published" | "experimental" | "diagnostic" | "retired";
+  status: "published" | "live_verified" | "experimental" | "diagnostic" | "retired";
   introducedInProductVersion: string;
   gameVersionRange: readonly string[];
   bddScenarioIds: readonly string[];
@@ -306,13 +335,15 @@ Registry 不保存动态目标，也不取代 Mod 的实时 snapshot。它只说
 
 action 进入 `published` 前必须满足：
 
-1. 目标游戏版本、SMAPI/Mod 版本和身份/scope 已固定；
-2. 原生执行路径或受控 adapter 已通过真实或合适的确定性证据；
+1. 它已经处于 `live_verified`（即已完成它 `requiredLiveTopology` 所要求的 live run，见 §3.1.1）；
+2. 一次独立 reviewer 审查已经通过，且审查所针对的就是第 1 条的那次 live 证据；
 3. 前置、后置、失败、部分成功、取消、deadline、watchdog 和重放语义已定义；
 4. receipt/evidence 可验证并不会以模型文本替代；
 5. 对存档、多人同步、生命周期和玩家停止有测试；
 6. action-level BDD、回放 fixture、文档、许可证和版本迁移已登记；
 7. Host、Agent tool surface 和知识包的适用性过滤已覆盖。
+
+第 2 条不可由机械门代替。机械检查只能验证静态一致性；live run 的价值恰在于发现静态断言覆盖不到的问题，所以发布要求一次真正的独立审查。
 
 撤回 action 时：
 
