@@ -608,11 +608,22 @@ no receipt. `water_slime_hutch_trough` returned same-execution
 `slime_hutch_trough_06850c49f949ac00` at interior tile `16,6`, with
 `before_watered=false` -> `after_watered=true`, water `39 -> 38`,
 `native_menu_opened=false`, and stamina `270 -> 268` (`delta=-2`, `expected=2`);
-the target was absent from the following production snapshot. The transaction
-restored its profile, removed backup/lock and the working save, and left no
-Stardew/SMAPI process. This is only `native_local_player_fixture` shared mechanics
-evidence, never Farmhand, HostAutomation, Portfolio, publication, release, or
-save/reopen evidence.
+the target was absent from the following production snapshot. A later confirming
+run after the in-place fix below produced the same evidence shape for
+`slime_hutch_trough_aad2a79e8ca37f6c`. The transaction restored its profile,
+removed backup/lock and the working save, and left no Stardew/SMAPI process. An
+earlier revision of this gate passed only by accident: the trough is a COLUMN of up
+to four tiles, so a lawful standing tile is adjacent to several of them at once,
+and a runner that demanded exactly one reachable target (the single-waterable-tile
+Pet Bowl rule) treated a reachable trough as unreachable and walked a 27-waypoint
+circle until it happened to land on a tile with a unique neighbour. Any accepted
+tile is a valid target, and the settle now polls through the pre-attachment interior
+warp rather than rejecting the first mid-transition snapshot; the confirming run
+traces `equip_tool` then `water_slime_hutch_trough 16,6` with no waypoint, and
+`run-stardew-native-local-player-water-slime-hutch-trough-smoke.test.mjs` pins the
+multi-tile case (verified to fail against the old exactly-one rule). This is only
+`native_local_player_fixture` shared mechanics evidence, never Farmhand,
+HostAutomation, Portfolio, publication, release, or save/reopen evidence.
 `water_crop` has also met this lane's live
 receipt-plus-fresh-postcondition standard. Its scenario first uses the exact
 pre-attachment native setup `SpreadDirt → SpreadSeeds 472` to make dry crops;
