@@ -12,6 +12,7 @@ import {
 } from "./lib/voice-gateway-launch.mjs";
 import { assessCompanionInteraction } from "./lib/companion-interaction-gate.mjs";
 import { summarizeSystemFindings } from "./lib/system-findings.mjs";
+import { buildPresenceProjection } from "./lib/stardew-companion-presence-projection.mjs";
 import { STARDEW_GAME_INTEGRATION_ADAPTER, } from "../host/dist-test/stardew-game-integration-adapter.js";
 import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge, STARDEW_INTEGRATION_LAUNCHER } from "../host/dist-test/stardew-integration-launcher.js";
 import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
@@ -47,6 +48,27 @@ const configuredRuntimeRoot = process.env.GAMEBUDDY_RUNTIME_ROOT;
 // it, walks to Jodi and offers it. The runner is a single evolving live carrier;
 // later ladders add their own acceptance on top instead of new runners.
 const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
+/**
+ * Scenario vocabulary for the presence projection (design
+ * architecture/stardew-companion-presence-audit-dimensions.md §3.2): maps the
+ * Mod-owned action ids the ladder scenarios exercise to the Chinese phrases a
+ * companion utterance would use. The parser still applies the first-person
+ * subject/mood guardrail, so a bare noun or a player-directed line does not
+ * count. This is runner scenario data, not product authority.
+ */
+const PRESENCE_ACTION_VOCABULARY = Object.freeze({
+  harvest_crop: ["收获", "收菜", "收走", "摘下来", "收割"],
+  interact_npc_with_item: ["送给", "交给", "递给", "送礼", "送过去"],
+  water_crop: ["浇水", "浇了水", "汲水"],
+  till_soil: ["锄地", "翻地", "耕地", "松土"],
+  plant_seed: ["种下", "播种", "种了", "种菜"],
+  machine_load: ["放进桶里", "放进机器", "装进桶", "倒入"],
+  machine_inspect: ["检查一下机器", "看看机器", "查看机器"],
+  equip_tool: ["拿起", "装备", "换上工具", "换上"],
+  pickup_item: ["捡起", "拾取", "捡到"],
+  move_to_tile: ["走过去", "走到", "过去看看"],
+  travel: ["前往", "出发去", "去镇上"],
+});
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 const config = JSON.parse(await readFile(configPath, "utf8"));
 const scope = Object.freeze({ integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId });
@@ -72,6 +94,30 @@ let voiceChild = null;
 let voiceObservation = null;
 let voiceStarted = false;
 let presentedSummary = null;
+// Presence-mechanism instrumentation (design stardew-companion-presence-mechanisms §1.5 / §2.4).
+// `presentationPieces` records every companion_text commit EXACTLY as the
+// presentation port saw it, in arrival order — the raw evidence for chunked /
+// incremental presentation. `turnStartedAtMs` is the wall-clock moment the
+// agent turn was accepted, so the first piece's time-to-first-bubble is
+// measurable instead of inferred.
+const presentationPieces = [];
+let turnStartedAtMs = null;
+/**
+ * Presence-mechanism evidence for the run result (design
+ * stardew-companion-presence-mechanisms §1.5): the committed companion_text
+ * pieces in arrival order plus the headline TTFB of the first bubble. Used by
+ * both the success and failure result paths so a blocked run still reports what
+ * the presentation layer actually did.
+ */
+function summarizePresentationEvidence() {
+  return Object.freeze({
+    pieces: Object.freeze([...presentationPieces]),
+    pieceCount: presentationPieces.length,
+    firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].elapsedMs : null,
+    // A turn that arrived as one wall at the end vs several pieces over time.
+    chunked: presentationPieces.length > 1,
+  });
+}
 /** Exact configuration answer for voice in this run; `enabled:false` carries the reason. */
 let voiceConfiguration = null;
 const voiceObservationPromise = new Promise((resolvePromise) => {
@@ -82,13 +128,24 @@ const voiceObservationPromise = new Promise((resolvePromise) => {
 // the voice lane. No game/presentation authority is touched here.
 const onCompanionTextPresented = (text, locale) => {
   if (LADDER !== "3" && LADDER !== "4") return;
-  if (voiceStarted || typeof text !== "string" || text.trim().length === 0) return;
-  // Dee-hydate model scaffolding before TTS: the chat box and the voice line
-  // must both speak the same clean dialogue — never read out `**` / `---` / emoji.
+  if (typeof text !== "string" || text.trim().length === 0) return;
+  // Record EVERY committed piece before any single-shot voice logic runs: the
+  // chunked-presentation evidence must not depend on voice being enabled or on
+  // whether the piece happened to be the first one.
+  const elapsedMs = turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs;
+  presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, elapsedMs }));
+  console.error("AGENT_PRESENTATION_PIECE", JSON.stringify({ index: presentationPieces.length - 1, elapsedMs, chars: text.length }));
+  // Dee-hydrate model scaffolding: the chat box and the voice line must both
+  // speak the same clean dialogue — never read out `**` / `---` / emoji.
   const speakable = dehydrateCompanionSpeech(text);
   if (speakable.length === 0) return;
-  presentedSummary = speakable;
+  // Accumulate every piece into the turn's spoken text: under incremental
+  // presentation the final sentence may arrive as its own piece, so the
+  // interaction gate must assess the whole turn, not only its first bubble.
+  presentedSummary = presentedSummary === null ? speakable : `${presentedSummary}${speakable}`;
   console.error("AGENT_SUMMARY", JSON.stringify({ text: presentedSummary, locale }));
+  if (voiceStarted) return;
+  const spokenSoFar = presentedSummary;
   void (async () => {
     try {
       // Voice enablement is configuration. When the stored preference (or the
@@ -107,7 +164,7 @@ const onCompanionTextPresented = (text, locale) => {
       // bracketed audio tags natively, emoji do not stall synthesis (probe:
       // short emoji text completes), and the frozen Voice contract is zero
       // intermediate processing (voice-gateway-streaming-submodule §2.5).
-      const { promiseVoiceObservation } = await startLadder2Voice(speakable);
+      const { promiseVoiceObservation } = await startLadder2Voice(spokenSoFar);
       voiceObservation = await promiseVoiceObservation;
       voice?.();
     } catch (error) {
@@ -310,6 +367,10 @@ try {
       : LADDER === "1" || LADDER === "2"
       ? "You are the AI companion in Stardew Valley, standing inside the FarmHouse. An empty Keg machine is on the Bus Stop doorstep outside, and your backpack has 5 Coffee Beans. Do not just reply with text — use the game tools yourself and check each real result before moving on. Summarize in one sentence when done."
       : "You are the AI companion in Stardew Valley. There is an empty Keg machine in your farmhouse with 5 Coffee Beans in your backpack. Do not just reply with text — use the game tools yourself based on real tool results. Summarize in one sentence when done."));
+  // Time origin for chunked-presentation TTFB: the moment the agent turn is
+  // admitted, so the first companion bubble's elapsed time is measured from the
+  // real turn boundary, not from process start.
+  turnStartedAtMs = Date.now();
   const agentTurn = tools.acceptPlayerText(prompt, "zh-CN").then(() => ({ settled: true })).catch((error) => ({ settled: false, error: String(error?.message ?? error) }));
   let status = null;
   let turn = null;
@@ -412,9 +473,40 @@ try {
   // the observation/contract layer, not at the model. Compare two runs with
   // tools/compare-live-run-findings.mjs to judge whether a fix helped.
   const systemFindings = summarizeSystemFindings(actionTrace);
+  // Presence mechanisms (design stardew-companion-presence-mechanisms §1.5/§2.4),
+  // computed from facts this run already holds — no new product producer:
+  //  - chunking: every committed companion_text piece in arrival order, with
+  //    each piece's elapsed time; `firstPieceTtfbMs` is the headline TTFB the
+  //    incremental-presentation work targets (≤1s ideal).
+  //  - claims: the deterministic presence projection compares spoken promises
+  //    against the same-turn receipts and the run's visible capability face.
+  const presentation = summarizePresentationEvidence();
+  const turnStartedMs = turnStartedAtMs;
+  // Same-turn receipts for the claim projection come from the execution trace
+  // (which carries both the Mod action id and its terminal state), never from
+  // the raw fact log (which has no actionId).
+  const executedReceipts = actionTrace.map((entry) => ({
+    turnId: "turn-1",
+    actionId: entry.action ?? "unknown",
+    terminalState: entry.state ?? "failed",
+  }));
+  const visibleActionIds = Array.isArray(client.state.snapshot?.capabilities)
+    ? client.state.snapshot.capabilities
+    : [];
+  const presenceProjection = presentationPieces.length > 0
+    ? buildPresenceProjection({
+        turnTexts: [{ turnId: "turn-1", text: presentedSummary ?? "" }],
+        actionVocabulary: PRESENCE_ACTION_VOCABULARY,
+        visibleActionIds,
+        executedReceipts,
+      })
+    : null;
+  void turnStartedMs;
   const result = {
     state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && contextPassed && interactionPassed ? "passed" : "blocked",
     ladder: LADDER,
+    presentation,
+    presenceProjection,
     programStatus: status,
     walkReceipt: walkReceipt ?? null,
     inspectReceipt: inspectReceipt ?? null,
@@ -450,6 +542,7 @@ try {
     state: "blocked",
     ladder: LADDER,
     error: String(error instanceof Error ? error.message : error),
+    presentation: summarizePresentationEvidence(),
     tillReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "soil_tilled") ?? null,
     plantReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "seed_planted") ?? null,
     waterReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_watered") ?? null,
