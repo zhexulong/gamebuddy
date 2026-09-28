@@ -880,7 +880,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -998,6 +998,56 @@ public sealed partial class ModEntry : Mod
                     throw new InvalidOperationException("fixture_native_tillable_soil_missing");
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log("GameBuddy native-local-player initialized native till-soil fixture before bridge attachment: Hoe equipped candidate available; production alone creates HoeDirt and receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_stamina_recovery_v1")
+            {
+                // Lane G low-stamina recovery precondition. Establishes only the
+                // declared Given: a Hoe, bare diggable soil, one edible Object, and a LOW
+                // but SAFE starting stamina.
+                //
+                // Stamina is a continuous fact, not a rejection gate: the tool handlers
+                // drain it and report `stamina_before/after/delta/expected_stamina_cost`
+                // on every receipt, and there is no `insufficient_stamina` reasonCode. So
+                // this chain's breakpoint is the READING in the first receipt, not a
+                // rejected terminal. The native pass-out fires at
+                // `timeOfDay >= 2600 || player.stamina <= -15f` (Game1.cs:6452-6460), so the
+                // starting value stays low AND comfortably above that floor. Setting
+                // `player.stamina` directly is the established precondition technique for
+                // this (see `native_pass_out_v1`); it does not till, eat, or emit a receipt.
+                if (!player.Items.OfType<Hoe>().Any() && player.addItemToInventory(new Hoe()) is not null)
+                    throw new InvalidOperationException("fixture_native_local_stamina_hoe_inventory_full");
+                if (!player.Items.OfType<Hoe>().Any())
+                    throw new InvalidOperationException("fixture_native_local_stamina_hoe_missing_after_add");
+                const string staminaFoodId = "(O)216";
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == staminaFoodId && item.Stack > 0)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(staminaFoodId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_stamina_food_inventory_full");
+                StardewValley.Object? staminaFood = player.Items.OfType<StardewValley.Object>()
+                    .FirstOrDefault(item => item.QualifiedItemId == staminaFoodId && item.Stack > 0);
+                if (staminaFood is null || staminaFood.Edibility == -300
+                    || (Game1.objectData.TryGetValue(staminaFood.ItemId, out var staminaFoodData) && staminaFoodData.IsDrink))
+                    throw new InvalidOperationException("fixture_native_local_stamina_food_missing_after_add");
+                GameLocation? staminaSetupPreviousLocation = Game1.currentLocation;
+                try
+                {
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("RemoveDirt", null))
+                        throw new InvalidOperationException("fixture_native_remove_dirt_command_unavailable");
+                }
+                finally { Game1.currentLocation = staminaSetupPreviousLocation; }
+                bool staminaGroundExists = Enumerable.Range(0, farm.map.Layers[0].LayerWidth)
+                    .SelectMany(x => Enumerable.Range(0, farm.map.Layers[0].LayerHeight).Select(y => new Vector2(x, y)))
+                    .Any(tile => farm.GetHoeDirtAtTile(tile) is null
+                        && farm.doesTileHaveProperty((int)tile.X, (int)tile.Y, "Diggable", "Back") is not null
+                        && !farm.isWaterTile((int)tile.X, (int)tile.Y));
+                if (!staminaGroundExists)
+                    throw new InvalidOperationException("fixture_native_tillable_soil_missing");
+                // Below the runner's low-stamina threshold, well above the -15 pass-out floor.
+                player.stamina = 12f;
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized stamina-recovery precondition before bridge attachment: stamina={player.stamina.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}; hoe=true; food={staminaFood.QualifiedItemId}; actor=unwarped; production alone tills, eats, and tills again.", LogLevel.Info);
                 return;
             }
 
