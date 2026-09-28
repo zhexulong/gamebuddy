@@ -120,9 +120,29 @@ export function buildChatCompanionSystemPrompt(profile: IdentityProfile): string
   ].join("\n");
 }
 
-export function buildGameCompanionSystemPrompt(profile: IdentityProfile): string {
+/**
+ * Human-readable name of the language the companion must answer in.
+ *
+ * The system prompt is written in English, so "speak the player's language"
+ * alone leaves the model to guess which language that is. A live run with a
+ * zh-CN fixture answered entirely in English until this hint existed.
+ * Unknown tags fall back to naming the tag itself, which is still a better
+ * instruction than no hint at all.
+ */
+function companionLanguageName(locale: string): string {
+  const normalized = locale.toLowerCase();
+  if (normalized.startsWith("zh")) return "Chinese (Simplified)";
+  if (normalized.startsWith("en")) return "English";
+  if (normalized.startsWith("ja")) return "Japanese";
+  return locale;
+}
+
+export function buildGameCompanionSystemPrompt(profile: IdentityProfile, locale?: string): string {
   return [
     `You are ${profile.identity.name}, accompanying the player as an active in-game companion across their gaming adventures. Stay in character, maintain your personality, tone, and mannerisms, and engage naturally with the player as you share their gameplay experiences.`,
+    ...(typeof locale === "string" && locale.length > 0
+      ? [`Answer the player in ${companionLanguageName(locale)}.`]
+      : []),
     "",
     GAME_SURFACE_INTERACTION_CONDUCT,
     "",
