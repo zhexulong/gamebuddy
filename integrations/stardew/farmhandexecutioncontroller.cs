@@ -1372,6 +1372,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("pickup_forage", StringComparer.Ordinal) ? DiscoverForageTargets(player) : null,
             advertisedCapabilities.Contains("pickup_item", StringComparer.Ordinal) ? DiscoverItemTargets(player) : null,
             advertisedCapabilities.Contains("water_crop", StringComparer.Ordinal) ? DiscoverCropTargets(player) : null,
+            advertisedCapabilities.Contains("water_pet_bowl", StringComparer.Ordinal) ? DiscoverPetBowlTargets(player) : null,
             advertisedCapabilities.Contains("harvest_crop", StringComparer.Ordinal) ? DiscoverHarvestTargets(player) : null,
             advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal) ? DiscoverSeedTargets(player) : null,
             advertisedCapabilities.Contains("fertilize_tile", StringComparer.Ordinal) ? DiscoverFertilizerTargets(player) : null,
@@ -1427,7 +1428,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CatalogRevision: FarmhandActionSurfacePublication.CatalogRevision, EnabledActionIds: capabilityPublication.EnabledActionIds,
         ActiveExecution: null,
         Warps: Array.Empty<BridgeWarp>(), DoorTargets: null, SoilTiles: null, ToolSlots: Array.Empty<BridgeToolSlot>(),
-        WateringCanFacts: null, RefillWateringCanTargets: null, ForageTargets: null, ItemTargets: null, CropTargets: null,
+        WateringCanFacts: null, RefillWateringCanTargets: null, ForageTargets: null, ItemTargets: null, CropTargets: null, PetBowlTargets: null,
         HarvestTargets: null, SeedTargets: null, FertilizerTargets: null, WoodFenceTargets: null, WoodFenceResultTargets: null,
         CrabPotTargets: null, CrabPotResultTargets: null, CrabPotCollectTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
@@ -2171,6 +2172,35 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:watering_can_refill";
         return $"watering_can_refill_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    /// <summary>
+    /// The current location's completed Pet Bowl, advertised at each tile the
+    /// native watering gate accepts so the actor plans a walk to an adjacent
+    /// tile. The handler revalidates the exact tile identity and never trusts
+    /// this coordinate as the target of the native call.
+    /// </summary>
+    private static IReadOnlyList<BridgePetBowlTarget> DiscoverPetBowlTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgePetBowlTarget>();
+        List<BridgePetBowlTarget> result = new();
+        foreach (StardewValley.Buildings.PetBowl bowl in location.buildings.OfType<StardewValley.Buildings.PetBowl>())
+        {
+            if (bowl.daysOfConstructionLeft.Value > 0) continue;
+            // A watered bowl admits no further watering, so it is not a target.
+            if (bowl.watered.Value) continue;
+            // Advertise only the tiles the native watering gate accepts, derived
+            // from the building's own tile-property data rather than assumed to be
+            // the footprint origin.
+            foreach (Vector2 tile in PetBowlWaterableTiles(bowl))
+            {
+                if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
+                result.Add(new BridgePetBowlTarget(BuildPetBowlTargetId(location, (int)tile.X, (int)tile.Y), (int)tile.X, (int)tile.Y));
+            }
+            if (result.Count >= 8) break;
+        }
+        return result;
     }
 
     private static IReadOnlyList<BridgeToolSlot> DiscoverToolSlots(Farmer player)

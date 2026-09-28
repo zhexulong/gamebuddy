@@ -839,7 +839,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_pet_bowl_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1717,6 +1717,118 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 player.warpFarmer(new StardewValley.Warp(0, 0, home.NameOrUniqueName, (int)standingTile.Value.X, (int)standingTile.Value.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized fridge precondition before bridge attachment: scenario={fixture.FixtureScenario}; fridge={fridge.QualifiedItemId}; fridge_tile={fridgeTile.X},{fridgeTile.Y}; standing={standingTile.Value.X},{standingTile.Value.Y}; item={fridgeItemId}; production alone runs the native container transaction and emits the receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_water_pet_bowl_v1")
+            {
+                // Pre-attachment fixture only: the naturally-loaded Farm already owns
+                // its built-in Pet Bowl building on the template save (PetBowl is a
+                // Building, not an Object, so it never appears in location.objects).
+                // Establish only the declared Given: one charged Watering Can in the
+                // backpack and the local player standing on a lawful adjacent tile, so
+                // the fresh production snapshot can discover the bowl. Equipping and
+                // walking stay independently receipted production actions; the fixture
+                // must not perform a step a receipt is supposed to prove. Production
+                // alone calls the native watering path and emits the receipt; the
+                // fixture never waters the bowl, never writes PetBowl.watered, and
+                // emits no receipt.
+                foreach (Item? ownedItem in player.Items.Where(item => item is WateringCan).ToArray())
+                    player.Items.Remove(ownedItem);
+                WateringCan suppliedCan = new();
+                suppliedCan.WaterLeft = Math.Max(1, suppliedCan.waterCanMax - 1);
+                if (player.addItemToInventory(suppliedCan) is not null)
+                    throw new InvalidOperationException("fixture_native_water_pet_bowl_can_missing");
+                if (!player.Items.OfType<WateringCan>().Any())
+                    throw new InvalidOperationException("fixture_native_water_pet_bowl_can_missing");
+                StardewValley.Buildings.PetBowl? bowl = farm.buildings.OfType<StardewValley.Buildings.PetBowl>()
+                    .FirstOrDefault(candidate => candidate.daysOfConstructionLeft.Value <= 0);
+                if (bowl is null)
+                    throw new InvalidOperationException("fixture_native_water_pet_bowl_bowl_missing");
+                if (bowl.watered.Value)
+                    throw new InvalidOperationException("fixture_native_water_pet_bowl_already_watered");
+                // The template's shipped Pet Bowl stands where none of its waterable
+                // tile's neighbours is walkable (three are the bowl's own footprint and
+                // the rest are impassable), so no player could ever stand adjacent and
+                // water it. The declared Given ("actor stands on a lawful adjacent
+                // tile") is therefore unsatisfiable for THAT placement, so relocate this
+                // same bowl onto clear ground that does have a lawful standing tile
+                // beside its own waterable tile. The bowl keeps its identity (id,
+                // petGuid) through the move, and production still performs the watering
+                // and emits the receipt.
+                Vector2? placement = null;
+                Vector2 bowlStanding = Vector2.Zero;
+                int previousX = bowl.tileX.Value;
+                int previousY = bowl.tileY.Value;
+                int mapWidth = farm.map.Layers[0].LayerWidth;
+                int mapHeight = farm.map.Layers[0].LayerHeight;
+                for (int x = 1; x < mapWidth - bowl.tilesWide.Value - 1 && placement is null; x++)
+                {
+                    for (int y = 1; y < mapHeight - bowl.tilesHigh.Value - 1 && placement is null; y++)
+                    {
+                        // Park the bowl off-map first: occupancy and passability must be
+                        // judged against the terrain, and a bowl standing on its own candidate
+                        // footprint would otherwise report that footprint as occupied by itself.
+                        bowl.tileX.Value = -1000;
+                        bowl.tileY.Value = -1000;
+                        List<Vector2> footprint = new();
+                        for (int footprintX = x; footprintX < x + bowl.tilesWide.Value; footprintX++)
+                        {
+                            for (int footprintY = y; footprintY < y + bowl.tilesHigh.Value; footprintY++)
+                            {
+                                footprint.Add(new Vector2(footprintX, footprintY));
+                            }
+                        }
+                        bool footprintClear = footprint.All(tile => farm.isTileOnMap(tile)
+                            && farm.isTilePassable(tile)
+                            && !farm.IsTileOccupiedBy(tile, CollisionMask.All, CollisionMask.None, useFarmerTile: false));
+                        if (!footprintClear) continue;
+                        // Now place the bowl at the candidate so its own relative tile-property
+                        // data maps onto the right absolute tiles.
+                        bowl.tileX.Value = x;
+                        bowl.tileY.Value = y;
+                        Vector2? waterable = ExecutionManager.PetBowlWaterableTiles(bowl).Cast<Vector2?>().FirstOrDefault();
+                        if (waterable is null) continue;
+                        int waterableX = (int)waterable.Value.X;
+                        int waterableY = (int)waterable.Value.Y;
+                        Vector2[] neighbours =
+                        {
+                            new(waterableX, waterableY - 1), new(waterableX - 1, waterableY),
+                            new(waterableX + 1, waterableY), new(waterableX, waterableY + 1),
+                            new(waterableX - 1, waterableY - 1), new(waterableX + 1, waterableY - 1),
+                            new(waterableX - 1, waterableY + 1), new(waterableX + 1, waterableY + 1),
+                        };
+                        Vector2? standing = neighbours
+                            .Where(tile => !footprint.Contains(tile)
+                                && farm.isTileOnMap(tile)
+                                && farm.isTilePassable(tile)
+                                && !farm.IsTileOccupiedBy(tile, CollisionMask.All, CollisionMask.None, useFarmerTile: false))
+                            .Cast<Vector2?>()
+                            .FirstOrDefault();
+                        if (standing is null) continue;
+                        placement = new Vector2(x, y);
+                        bowlStanding = standing.Value;
+                    }
+                }
+                if (placement is null)
+                {
+                    // Never leave the bowl somewhere unusable after a failed fixture.
+                    bowl.tileX.Value = previousX;
+                    bowl.tileY.Value = previousY;
+                    throw new InvalidOperationException("fixture_native_water_pet_bowl_placement_missing");
+                }
+                int bowlX = bowl.tileX.Value;
+                int bowlY = bowl.tileY.Value;
+                Vector2 standingTile = bowlStanding;
+                string waterableTile = string.Join(
+                    "|",
+                    ExecutionManager.PetBowlWaterableTiles(bowl).Select(tile => $"{(int)tile.X},{(int)tile.Y}"));
+                // The runner equips the can through its own receipted equip_tool; this
+                // warp only places the actor on a lawful adjacent tile. Fixture starting
+                // state, not an action receipt.
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)standingTile.X, (int)standingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized water-pet-bowl precondition before bridge attachment: can_water={suppliedCan.WaterLeft}; can_max={suppliedCan.waterCanMax}; bowl={bowlX},{bowlY}; waterable={waterableTile}; standing={(int)standingTile.X},{(int)standingTile.Y}; watered={bowl.watered.Value}; production alone equips, waters and emits receipts.", LogLevel.Info);
                 return;
             }
 
