@@ -839,7 +839,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_pet_bowl_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1829,6 +1829,101 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)standingTile.X, (int)standingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized water-pet-bowl precondition before bridge attachment: can_water={suppliedCan.WaterLeft}; can_max={suppliedCan.waterCanMax}; bowl={bowlX},{bowlY}; waterable={waterableTile}; standing={(int)standingTile.X},{(int)standingTile.Y}; watered={bowl.watered.Value}; production alone equips, waters and emits receipts.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_water_slime_hutch_trough_v1")
+            {
+                // Pre-attachment fixture only: the template save has no Slime Hutch
+                // building and no SlimeHutch interior, so this scenario must create the
+                // real building through target-version native construction and then enter
+                // its lazily-created interior. `Build` (DebugCommands.cs:1420-1446) calls
+                // `currentLocation.buildStructure(type, tile, player, out constructed, ...)`
+                // and then sets `daysOfConstructionLeft = 0`, so the building is COMPLETE;
+                // the interior is created on data load via Building.createIndoors
+                // (Building.cs:1873-1920) using the building data's IndoorMapType.
+                //
+                // Establish only the declared Given: one charged Watering Can in the
+                // backpack and the local player standing on a lawful tile adjacent to one of
+                // the fixed trough coordinates `SlimeHutch.performToolAction` accepts
+                // (`x == 16`, `y in 6..9`, SlimeHutch.cs:154-161). Production alone equips,
+                // waters and emits the receipt; the fixture never waters a spot, never
+                // writes `waterSpots`, and emits no receipt.
+                StardewValley.SlimeHutch? existing = farm.buildings
+                    .Select(candidate => candidate.GetIndoors())
+                    .OfType<StardewValley.SlimeHutch>()
+                    .FirstOrDefault();
+                StardewValley.SlimeHutch? hutch = existing;
+                if (hutch is null)
+                {
+                    GameLocation? previousLocation = Game1.currentLocation;
+                    StardewValley.Buildings.Building? constructed = null;
+                    try
+                    {
+                        Game1.currentLocation = farm;
+                        // Candidate tiles are scanned in map order; `Build` refuses an
+                        // illegal placement and logs a warning, so the first success wins.
+                        int mapWidth = farm.map.Layers[0].LayerWidth;
+                        int mapHeight = farm.map.Layers[0].LayerHeight;
+                        for (int x = 1; x < mapWidth - 2 && constructed is null; x++)
+                        {
+                            for (int y = 1; y < mapHeight - 2 && constructed is null; y++)
+                            {
+                                if (Game1.game1.parseDebugInput($"Build \"Slime Hutch\" {x} {y}", null)
+                                    && farm.buildings.Select(candidate => candidate.GetIndoors()).OfType<StardewValley.SlimeHutch>().Any())
+                                {
+                                    constructed = farm.buildings.LastOrDefault();
+                                }
+                            }
+                        }
+                    }
+                    finally { Game1.currentLocation = previousLocation; }
+                    if (constructed is null)
+                        throw new InvalidOperationException("fixture_native_water_slime_hutch_trough_build_unavailable");
+                    hutch = constructed.GetIndoors() as StardewValley.SlimeHutch;
+                }
+
+                if (hutch is null)
+                    throw new InvalidOperationException("fixture_native_water_slime_hutch_trough_interior_unavailable");
+
+                // First unwatered trough tile with a lawful adjacent standing tile.
+                Vector2? troughTile = null;
+                Vector2 troughStanding = Vector2.Zero;
+                for (int y = 6; y <= 9 && troughTile is null; y++)
+                {
+                    if (hutch.waterSpots[y - 6]) continue;
+                    Vector2[] neighbours =
+                    {
+                        new(17, y), new(15, y), new(16, y - 1), new(16, y + 1),
+                        new(17, y - 1), new(17, y + 1), new(15, y - 1), new(15, y + 1),
+                    };
+                    Vector2? standing = neighbours
+                        .Where(tile => hutch.isTileOnMap(tile)
+                            && hutch.isTilePassable(tile)
+                            && !hutch.IsTileOccupiedBy(tile, CollisionMask.All, CollisionMask.None, useFarmerTile: false))
+                        .Cast<Vector2?>()
+                        .FirstOrDefault();
+                    if (standing is null) continue;
+                    troughTile = new Vector2(16, y);
+                    troughStanding = standing.Value;
+                }
+                if (troughTile is null)
+                    throw new InvalidOperationException("fixture_native_water_slime_hutch_trough_approach_missing");
+
+                foreach (Item? ownedItem in player.Items.Where(item => item is WateringCan).ToArray())
+                    player.Items.Remove(ownedItem);
+                WateringCan suppliedTroughCan = new();
+                suppliedTroughCan.WaterLeft = Math.Max(1, suppliedTroughCan.waterCanMax - 1);
+                if (player.addItemToInventory(suppliedTroughCan) is not null)
+                    throw new InvalidOperationException("fixture_native_water_slime_hutch_trough_can_missing");
+                if (!player.Items.OfType<WateringCan>().Any())
+                    throw new InvalidOperationException("fixture_native_water_slime_hutch_trough_can_missing");
+
+                // Enter through the normal warp lifecycle (the same shape the AnimalHouse
+                // fixture uses), not a raw currentLocation assignment.
+                player.warpFarmer(new StardewValley.Warp(0, 0, hutch.NameOrUniqueName, (int)troughStanding.X, (int)troughStanding.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized water-slime-hutch-trough precondition before bridge attachment: can_water={suppliedTroughCan.WaterLeft}; can_max={suppliedTroughCan.waterCanMax}; interior={hutch.NameOrUniqueName}; trough={(int)troughTile.Value.X},{(int)troughTile.Value.Y}; standing={(int)troughStanding.X},{(int)troughStanding.Y}; production alone equips, waters and emits receipts.", LogLevel.Info);
                 return;
             }
 

@@ -997,6 +997,36 @@
         }
       },
       {
+        "actionId": "water_slime_hutch_trough",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
         "actionId": "interact_npc_with_item",
         "identityVersion": 1,
         "lifecycle": "experimental",
@@ -1446,6 +1476,7 @@
       "npc_relationship",
       "pet_animal",
       "water_pet_bowl",
+      "water_slime_hutch_trough",
       "interact_npc_with_item",
       "express_emote",
       "face_direction",

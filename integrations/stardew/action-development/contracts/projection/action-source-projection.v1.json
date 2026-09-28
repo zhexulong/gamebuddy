@@ -1289,6 +1289,43 @@
         "handlerGroup": null
       },
       {
+        "actionId": "water_slime_hutch_trough",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "water_slime_hutch_trough",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "interact_npc_with_item",
         "identityVersion": 1,
         "lifecycle": "experimental",
@@ -1851,6 +1888,7 @@
       "npc_relationship",
       "pet_animal",
       "water_pet_bowl",
+      "water_slime_hutch_trough",
       "interact_npc_with_item",
       "express_emote",
       "face_direction",
@@ -2011,7 +2049,8 @@
       "travel",
       "use_item",
       "water_crop",
-      "water_pet_bowl"
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
     ],
     "envelopeValidatorActionIds": [
       "bait_crab_pot",
@@ -2056,7 +2095,8 @@
       "travel",
       "use_item",
       "water_crop",
-      "water_pet_bowl"
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
     ],
     "executionRequestUnionActionIds": [
       "bait_crab_pot",
@@ -2101,7 +2141,8 @@
       "travel",
       "use_item",
       "water_crop",
-      "water_pet_bowl"
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
     ],
     "bridgeMessageTypes": [
       "hello",
@@ -2240,7 +2281,8 @@
       "travel",
       "use_item",
       "water_crop",
-      "water_pet_bowl"
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
     ]
   },
   "router": {
@@ -2299,7 +2341,8 @@
       "pet_animal",
       "ship_item",
       "use_item",
-      "water_pet_bowl"
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
     ],
     "ResourceTools": [
       "bait_crab_pot",
