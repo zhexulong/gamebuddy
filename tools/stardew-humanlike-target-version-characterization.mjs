@@ -391,9 +391,12 @@ export async function characterizeStardewTargetVersion({
     },
     liveObservation: {
       state: "unavailable",
-      reason: "no_real_game_thread_harness_exists",
+      reason: "no_live_evidence_recorded_at_this_path",
       description:
-        "Source and API characterization only. Live native side-effect verification requires formal game-thread execution harness.",
+        "Source and API characterization only. This generator emits the target-version contract surface, not a live run."
+        + " The emote/facing actions do have live history: SDW-LIVE-COOP-01 dispatched express_emote: happy against"
+        + " a live SMAPI process; its runner was deleted as an incidental part of an unrelated cleanup, so re-running"
+        + " that scenario against the current harness is what would establish live_verified.",
     },
   };
 
