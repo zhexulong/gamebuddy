@@ -162,6 +162,80 @@ test("water-slime-hutch-trough runner does not claim success when the native pos
   assert.equal(result.reasonCode, "water_slime_hutch_trough_postcondition_mismatch");
 });
 
+test("water-slime-hutch-trough runner refuses an uncertain terminal even when every other signal is perfect", async () => {
+  // Isolates the terminal-state term of the success conjunction: the receipt is
+  // `uncertain` while the evidence, water delta, and fresh-postcondition reread are
+  // all exactly what a passing run produces. If the runner ever dropped
+  // `terminal.state === "succeeded"` from its conjunction, this test is the only
+  // one that would catch it.
+  let snapshot = baseSnapshot(5, { x: 17, y: 6 }, { slimeHutchTroughTargets: [{ ...TROUGH_TARGET }] });
+  const client = {
+    state: { snapshot },
+    observe: async () => snapshot,
+    execute: async (request) => {
+      if (request.action === "water_slime_hutch_trough") {
+        snapshot = baseSnapshot(6, { x: 17, y: 6 }, { slimeHutchTroughTargets: [] });
+        client.state.snapshot = snapshot;
+        return {
+          requestId: request.requestId,
+          executionId: "water-trough-execution",
+          state: "uncertain",
+          // Deliberately the SUCCESS reason code with SUCCESS evidence: only the
+          // terminal state itself distinguishes this from a pass.
+          reasonCode: "slime_hutch_trough_watered",
+          revision: 6,
+          evidence: { detail: WATER_EVIDENCE },
+        };
+      }
+      throw new Error(`unexpected_action:${request.action}`);
+    },
+  };
+
+  const result = await runWaterSlimeHutchTroughSmoke(client, [], config);
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "water_slime_hutch_trough_postcondition_mismatch");
+});
+
+test("water-slime-hutch-trough runner waters a reachable column tile without walking the map", async () => {
+  // A trough is a column, so a lawful standing tile is adjacent to SEVERAL of its
+  // tiles at once. An earlier revision required exactly one reachable target (the
+  // single-waterable-tile Pet Bowl rule), which made a reachable trough look
+  // unreachable and sent the actor on a pointless map walk. This pins that a
+  // multi-tile reach set is acted on directly: no move_to_tile may precede the
+  // water request when a lawful target is already in reach.
+  const column = [
+    { targetId: "slime_hutch_trough_0000000000000001", x: 16, y: 6 },
+    { targetId: "slime_hutch_trough_0000000000000002", x: 16, y: 7 },
+  ];
+  let snapshot = baseSnapshot(5, { x: 15, y: 6 }, { slimeHutchTroughTargets: column.map((entry) => ({ ...entry })) });
+  const calls = [];
+  const client = {
+    state: { snapshot },
+    observe: async () => snapshot,
+    execute: async (request) => {
+      calls.push(request.action);
+      if (request.action === "water_slime_hutch_trough") {
+        snapshot = baseSnapshot(6, { x: 15, y: 6 }, { slimeHutchTroughTargets: [] });
+        client.state.snapshot = snapshot;
+        return {
+          requestId: request.requestId,
+          executionId: "water-trough-execution",
+          state: "succeeded",
+          reasonCode: "slime_hutch_trough_watered",
+          revision: 6,
+          evidence: { detail: WATER_EVIDENCE },
+        };
+      }
+      throw new Error(`unexpected_action:${request.action}`);
+    },
+  };
+
+  const result = await runWaterSlimeHutchTroughSmoke(client, [], config);
+  assert.equal(result.state, "passed");
+  assert.equal(result.troughTargetCountBefore, 2);
+  assert.deepEqual(calls, ["water_slime_hutch_trough"], "an in-reach column must be watered in place");
+});
+
 test("water-slime-hutch-trough runner rejects a scenario or action set it is not authorized for", async () => {
   const client = { state: {}, observe: async () => baseSnapshot(1, { x: 17, y: 6 }, {}) };
   const wrongScenario = {
