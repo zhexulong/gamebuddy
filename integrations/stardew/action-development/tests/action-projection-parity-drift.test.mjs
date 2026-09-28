@@ -56,7 +56,7 @@ test("registrations preserve exact identity/lifecycle/kind tuples of the generat
   assert.deepEqual(
     produced.lifecycle.executableActionIds,
     artifact.actions
-      .filter((action) => action.lifecycle === "published" && action.kind === "execution")
+      .filter((action) => (action.lifecycle === "published" || action.lifecycle === "live_verified") && action.kind === "execution")
       .map((action) => action.actionId),
   );
   assert.deepEqual(

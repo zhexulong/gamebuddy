@@ -1371,12 +1371,12 @@
       {
         "actionId": "express_emote",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "express_emote",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "emote": {
@@ -1402,12 +1402,12 @@
       {
         "actionId": "face_direction",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "face_direction",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "direction": {
@@ -1820,6 +1820,33 @@
           }
         },
         "handlerGroup": null
+      },
+      {
+        "actionId": "advance_day",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "advance_day",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {},
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "day_advanced"
+          }
+        },
+        "handlerGroup": null
       }
     ],
     "publishedExecutionActionIds": [
@@ -1848,7 +1875,9 @@
       "clear_hoedirt",
       "dig_artifact_spot",
       "refill_watering_can",
-      "navigate_to_destination"
+      "navigate_to_destination",
+      "express_emote",
+      "face_direction"
     ],
     "executableActionIds": [
       "move_to_tile",
@@ -1876,7 +1905,9 @@
       "clear_hoedirt",
       "dig_artifact_spot",
       "refill_watering_can",
-      "navigate_to_destination"
+      "navigate_to_destination",
+      "express_emote",
+      "face_direction"
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
@@ -1890,8 +1921,6 @@
       "water_pet_bowl",
       "water_slime_hutch_trough",
       "interact_npc_with_item",
-      "express_emote",
-      "face_direction",
       "chest_store",
       "chest_retrieve",
       "chop_stump",
@@ -1901,7 +1930,8 @@
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",
-      "ship_item"
+      "ship_item",
+      "advance_day"
     ],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
@@ -1911,6 +1941,7 @@
   },
   "host": {
     "adapterActionIds": [
+      "advance_day",
       "bait_crab_pot",
       "break_rock_source",
       "chop_tree_source",
@@ -1943,6 +1974,7 @@
       "water_crop"
     ],
     "toolActionIds": [
+      "advance_day",
       "bait_crab_pot",
       "break_rock_source",
       "chop_tree_source",
@@ -1975,6 +2007,7 @@
       "water_crop"
     ],
     "toolRouteActionIds": [
+      "advance_day",
       "bait_crab_pot",
       "break_rock_source",
       "chop_tree_source",
@@ -2007,6 +2040,7 @@
       "water_crop"
     ],
     "requestValidatorActionIds": [
+      "advance_day",
       "bait_crab_pot",
       "break_rock_source",
       "chest_retrieve",
@@ -2053,6 +2087,7 @@
       "water_slime_hutch_trough"
     ],
     "envelopeValidatorActionIds": [
+      "advance_day",
       "bait_crab_pot",
       "break_rock_source",
       "chest_retrieve",
@@ -2099,6 +2134,7 @@
       "water_slime_hutch_trough"
     ],
     "executionRequestUnionActionIds": [
+      "advance_day",
       "bait_crab_pot",
       "break_rock_source",
       "chest_retrieve",
@@ -2239,6 +2275,7 @@
       "stop_all"
     ],
     "schemaExecutionActionIds": [
+      "advance_day",
       "bait_crab_pot",
       "break_rock_source",
       "chest_retrieve",
@@ -2484,6 +2521,16 @@
         "actionId": "bait_crab_pot",
         "runner": "run-stardew-native-local-player-bait-crab-pot-smoke.mjs",
         "fixtureScenario": "native_bait_crab_pot_v1"
+      },
+      {
+        "actionId": "express_emote",
+        "runner": "run-stardew-native-local-player-expression-smoke.mjs",
+        "fixtureScenario": "native_express_emote_v1"
+      },
+      {
+        "actionId": "face_direction",
+        "runner": "run-stardew-native-local-player-expression-smoke.mjs",
+        "fixtureScenario": "native_express_emote_v1"
       }
     ],
     "sharedHarnessImport": "from \"./lib/stardew-native-smoke-harness-v1.mjs\"",
