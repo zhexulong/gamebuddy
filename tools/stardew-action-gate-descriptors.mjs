@@ -190,6 +190,12 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // empty-can fixture. Not a new action; it grants no capability.
   water_crop_resource_recovery_chain:
     "run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs",
+  // Lane G container-full recovery-chain harness: drives breakpoint
+  // rejected/inventory_full -> chest_store recovery -> harvest_crop retry
+  // succeeded on the same target within one native-local session over the
+  // full-backpack fixture. Not a new action; it grants no capability.
+  harvest_inventory_full_recovery_chain:
+    "run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

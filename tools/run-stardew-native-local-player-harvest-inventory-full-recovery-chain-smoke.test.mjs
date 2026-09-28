@@ -1,0 +1,243 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { runHarvestInventoryFullRecoveryChainSmoke } from "./run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs";
+
+const SCENARIO = "native_harvest_crop_inventory_full_recovery_v1";
+const CROP = {
+  targetId: "harvest_0000000000000001",
+  x: 62,
+  y: 18,
+  qualifiedHarvestItemId: "(O)24",
+  regrowsAfterHarvest: false,
+};
+const CHEST = {
+  targetId: "chest_0000000000000001",
+  x: 61,
+  y: 18,
+  slot: 0,
+  qualifiedItemId: "(O)390",
+};
+
+const config = {
+  SaveId: "save",
+  WorldId: "world",
+  PlayerId: "player",
+  CompanionId: "companion",
+  PipeName: "pipe",
+  BridgeToken: "token",
+  ActionPolicyVersion: 0,
+  EnabledActions: ["move_to_tile", "travel", "harvest_crop", "chest_store"],
+  NativeLocalPlayerFixture: {
+    Enable: true,
+    Bootstrap: { Enable: false },
+    FixtureScenario: SCENARIO,
+    LogicalSaveName: "GameBuddyFixtureFullBag",
+    ObservedSaveSlot: "GameBuddyFixtureFullBag_1",
+  },
+};
+
+const CAPABILITIES = ["cancel_active_execution", "chest_store", "harvest_crop", "inspect_self", "move_to_tile", "travel"];
+
+// Field spellings must match the Mod exactly: the handler emits
+// `regrowsAfterHarvest.ToString().ToLowerInvariant()`, i.e. a lowercase boolean.
+const HARVEST_EVIDENCE =
+  "crop_present_after=false;inventory_after=1;inventory_before=0;inventory_gained=true;item=(O)24;native_accepted=true;regrow_advanced=false;regrows=false;target=harvest_0000000000000001;tile=62,18";
+const STORE_EVIDENCE =
+  "chest_stack_after=1;chest_stack_before=0;item=(O)390;native_menu_opened=false;source_consumed=true;target=chest_0000000000000001;tile=61,18";
+
+/** Mock bridge whose observable revision tracks every terminal revision. */
+function createMock({ revision, cropPresent, chestStorePresent }) {
+  const state = { revision, cropPresent, chestStorePresent, client: null };
+  const snapshot = () => ({
+    revision: state.revision,
+    location: "Farm",
+    tile: { x: 62, y: 19 },
+    actionable: true,
+    activeExecution: null,
+    capabilities: [...CAPABILITIES],
+    warps: [],
+    harvestTargets: state.cropPresent ? [{ ...CROP }] : [],
+    chestStoreTargets: state.chestStorePresent ? [{ ...CHEST }] : [],
+  });
+  const advance = (patch) => {
+    state.revision += 1;
+    Object.assign(state, patch);
+    const next = snapshot();
+    if (state.client) state.client.state.snapshot = next;
+    return next;
+  };
+  return { state, snapshot, advance };
+}
+
+test("container-full chain: reject inventory_full -> chest_store -> same-target retry succeeds", async () => {
+  const mock = createMock({ revision: 5, cropPresent: true, chestStorePresent: true });
+  const calls = [];
+  const client = {
+    state: { snapshot: mock.snapshot() },
+    observe: async () => mock.snapshot(),
+    execute: async (request) => {
+      calls.push({ action: request.action, args: request.args });
+      if (request.action === "harvest_crop") {
+        // The fixture's backpack is full, so the first harvest is a deterministic
+        // rejection that leaves the crop in the world.
+        if (mock.state.chestStorePresent) {
+          const revision = mock.advance({}).revision;
+          return {
+            requestId: request.requestId,
+            executionId: "bp-execution",
+            state: "rejected",
+            reasonCode: "inventory_full",
+            revision,
+            evidence: { detail: "item=(O)24" },
+          };
+        }
+        const revision = mock.advance({ cropPresent: false }).revision;
+        return {
+          requestId: request.requestId,
+          executionId: "retry-execution",
+          state: "succeeded",
+          reasonCode: "crop_harvested",
+          revision,
+          evidence: { detail: HARVEST_EVIDENCE },
+        };
+      }
+      if (request.action === "chest_store") {
+        assert.deepEqual(request.args, {
+          slot: CHEST.slot,
+          x: CHEST.x,
+          y: CHEST.y,
+          expectedQualifiedItemId: CHEST.qualifiedItemId,
+          expectedTargetId: CHEST.targetId,
+        });
+        // One carried item moves into the chest, freeing a slot.
+        const revision = mock.advance({ chestStorePresent: false }).revision;
+        return {
+          requestId: request.requestId,
+          executionId: "recovery-execution",
+          state: "succeeded",
+          reasonCode: "chest_stored",
+          revision,
+          evidence: { detail: STORE_EVIDENCE },
+        };
+      }
+      throw new Error(`unexpected_action:${request.action}`);
+    },
+  };
+  mock.state.client = client;
+
+  const result = await runHarvestInventoryFullRecoveryChainSmoke(client, [], config);
+  assert.equal(result.state, "passed", `unexpected reason: ${result.reasonCode}`);
+  assert.equal(result.reasonCode, "crop_harvested");
+  assert.equal(result.chain.breakpointReceipt.reasonCode, "inventory_full");
+  assert.equal(result.chain.recoveryReceipt.reasonCode, "chest_stored");
+  assert.equal(result.chain.retryReceipt.reasonCode, "crop_harvested");
+  assert.equal(result.chain.breakpointReceipt.revision < result.chain.recoveryReceipt.revision, true);
+  assert.equal(result.chain.recoveryReceipt.revision < result.chain.retryReceipt.revision, true);
+  assert.equal(result.sameJournalLineage, true);
+  assert.equal(result.storeConsumed, true);
+  assert.equal(result.inventoryGained, true);
+  assert.equal(result.targetGone, true);
+  assert.equal(result.freshPostcondition, true);
+  // The chain must harvest twice (breakpoint + retry) around exactly one store.
+  assert.equal(calls.filter((entry) => entry.action === "harvest_crop").length, 2);
+  assert.equal(calls.filter((entry) => entry.action === "chest_store").length, 1);
+});
+
+test("container-full chain fails closed when the breakpoint never rejects", async () => {
+  // If the harvest succeeds on the first attempt there is no container-full
+  // breakpoint, so the chain must not report a recovery.
+  const mock = createMock({ revision: 5, cropPresent: true, chestStorePresent: true });
+  const client = {
+    state: { snapshot: mock.snapshot() },
+    observe: async () => mock.snapshot(),
+    execute: async (request) => {
+      if (request.action === "harvest_crop") {
+        const revision = mock.advance({ cropPresent: false }).revision;
+        return {
+          requestId: request.requestId,
+          executionId: "unexpected-success",
+          state: "succeeded",
+          reasonCode: "crop_harvested",
+          revision,
+          evidence: { detail: HARVEST_EVIDENCE },
+        };
+      }
+      throw new Error("store_must_not_run_without_a_breakpoint");
+    },
+  };
+  mock.state.client = client;
+
+  const result = await runHarvestInventoryFullRecoveryChainSmoke(client, [], config);
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /recovery_chain_breakpoint_missing/);
+});
+
+test("container-full chain does not claim success when the retry postcondition is absent", async () => {
+  const mock = createMock({ revision: 5, cropPresent: true, chestStorePresent: true });
+  const client = {
+    state: { snapshot: mock.snapshot() },
+    observe: async () => mock.snapshot(),
+    execute: async (request) => {
+      if (request.action === "harvest_crop") {
+        if (mock.state.chestStorePresent) {
+          const revision = mock.advance({}).revision;
+          return {
+            requestId: request.requestId,
+            executionId: "bp-execution",
+            state: "rejected",
+            reasonCode: "inventory_full",
+            revision,
+            evidence: { detail: "item=(O)24" },
+          };
+        }
+        // Native ran but the crop stays advertised, so the fresh postcondition
+        // cannot hold.
+        const revision = mock.advance({}).revision;
+        return {
+          requestId: request.requestId,
+          executionId: "retry-execution",
+          state: "uncertain",
+          reasonCode: "harvest_postcondition_unavailable",
+          revision,
+          evidence: { detail: HARVEST_EVIDENCE.replace("crop_present_after=false", "crop_present_after=true") },
+        };
+      }
+      if (request.action === "chest_store") {
+        const revision = mock.advance({ chestStorePresent: false }).revision;
+        return {
+          requestId: request.requestId,
+          executionId: "recovery-execution",
+          state: "succeeded",
+          reasonCode: "chest_stored",
+          revision,
+          evidence: { detail: STORE_EVIDENCE },
+        };
+      }
+      throw new Error(`unexpected_action:${request.action}`);
+    },
+  };
+  mock.state.client = client;
+
+  const result = await runHarvestInventoryFullRecoveryChainSmoke(client, [], config);
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /retry_harvest_failed/);
+});
+
+test("container-full chain refuses a scenario it is not authorized for", async () => {
+  const mock = createMock({ revision: 5, cropPresent: true, chestStorePresent: true });
+  const client = { state: { snapshot: mock.snapshot() }, observe: async () => mock.snapshot() };
+  const wrongScenario = {
+    ...config,
+    NativeLocalPlayerFixture: { ...config.NativeLocalPlayerFixture, FixtureScenario: "native_harvest_crop_v1" },
+  };
+  await assert.rejects(
+    () => runHarvestInventoryFullRecoveryChainSmoke(client, [], wrongScenario),
+    /native_local_fixture_config_invalid/,
+  );
+
+  const wrongActions = { ...config, EnabledActions: ["move_to_tile", "travel", "harvest_crop"] };
+  await assert.rejects(
+    () => runHarvestInventoryFullRecoveryChainSmoke(client, [], wrongActions),
+    /native_local_harvest_full_bag_action_policy_invalid/,
+  );
+});
