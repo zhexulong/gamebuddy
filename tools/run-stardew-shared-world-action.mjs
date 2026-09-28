@@ -46,11 +46,17 @@ const runnerFile = dumpSpatial
       ship_item: "run-stardew-native-local-player-ship-item-smoke.mjs",
       chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
       pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
+      advance_day: "run-stardew-native-local-player-advance-day-smoke.mjs",
     }[action];
-// The cross-day lifecycle is not a wire action: there is no execution request and
-// no action receipt. The Mod on each side drives its own farmer through the
-// native sleep path and writes its own evidence file; the driver only waits for
-// that file and reports it. So it needs no runner and no target plan.
+// Two distinct ways to drive one night, and they are not substitutes:
+//
+//  - `sleep_lifecycle` is the Mod-internal, evidence-file lane. There is no
+//    execution request and no action receipt; each process drives its own farmer
+//    and writes its own evidence file. It is what produced the mechanism-level
+//    co-op evidence, and it still runs.
+//  - `advance_day` is the wire action. The Agent submits an execution request and
+//    receives the receipt the one execution ledger mints, which is what makes the
+//    night reachable by the companion rather than only by the Mod itself.
 const isSleepLifecycle = !dumpSpatial && action === "sleep_lifecycle";
 const lifecycleEvidence = isSleepLifecycle ? option("--lifecycle-evidence") : null;
 if (isSleepLifecycle && !lifecycleEvidence) throw new Error("sleep_lifecycle_requires_lifecycle_evidence");
@@ -217,6 +223,10 @@ const ACTION_TARGETS = {
     // `stationary` fact is for.
     freshTargetTiles: (snapshot) => neighbourTilesOfFirst(chooseStationaryUnpettedPetTargets(snapshot)),
   },
+  // `advance_day` deliberately has no entry: a co-op night has no external
+  // target. The action walks the Farmhand to its own cabin bed itself and the
+  // native ready barrier owns the rest, so there is no standing tile for the
+  // driver to plan and no precondition for the Host fixture to provision.
 };
 
 const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
