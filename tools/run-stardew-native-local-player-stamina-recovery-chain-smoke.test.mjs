@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { runStaminaRecoveryChainSmoke } from "./run-stardew-native-local-player-stamina-recovery-chain-smoke.mjs";
 
@@ -7,6 +8,35 @@ const SCENARIO = "native_stamina_recovery_v1";
 const SOIL_BREAKPOINT = { x: 62, y: 18 };
 const SOIL_RESUME = { x: 64, y: 18 };
 const FOOD = { slot: 5, qualifiedItemId: "(O)216" };
+
+// The mock must emit the terminals the Mod ACTUALLY produces, not copies of the
+// runner's own constants — otherwise a tandem-but-wrong pair stays green (the bug
+// class that shipped an invented `harvest_` target prefix once). Extract the three
+// terminal reason codes from the Mod source directly.
+function terminalFromSource(file, anchor, re) {
+  const src = readFileSync(file, "utf8");
+  const idx = src.indexOf(anchor);
+  assert.ok(idx >= 0, `anchor ${JSON.stringify(anchor)} not found in ${file}`);
+  const m = src.slice(idx, idx + 400).match(re);
+  assert.ok(m, `terminal not matched near ${JSON.stringify(anchor)} in ${file}`);
+  return m[1];
+}
+
+const TILL_SOURCE = fileURLToPath(new URL("../integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs", import.meta.url));
+const ITEM_SOURCE = fileURLToPath(new URL("../integrations/stardew/farmhandexecutioncontroller.cs", import.meta.url));
+
+/** The Mod's till_soil success terminal (unique in source). */
+const SOURCE_TILL_REASON = terminalFromSource(
+  TILL_SOURCE,
+  "tilled ? \"",
+  /tilled \? "([a-z_]+)" : "soil_postcondition_unavailable"/,
+);
+/** The Mod's use_item success terminal (unique in source). */
+const SOURCE_ITEM_REASON = terminalFromSource(
+  ITEM_SOURCE,
+  "ExecutionState.Succeeded, \"item_used\"",
+  /ExecutionState\.Succeeded, "(item_used)"/,
+);
 
 const config = {
   SaveId: "save",
@@ -112,7 +142,7 @@ test("stamina chain: low-stamina till -> eat -> resume till succeeds", async () 
             requestId: request.requestId,
             executionId: "breakpoint-execution",
             state: "succeeded",
-            reasonCode: "soil_tilled",
+            reasonCode: SOURCE_TILL_REASON,
             revision,
             evidence: { detail: TILL_EVIDENCE(SOIL_BREAKPOINT.x, SOIL_BREAKPOINT.y, 12, 10) },
           };
@@ -122,7 +152,7 @@ test("stamina chain: low-stamina till -> eat -> resume till succeeds", async () 
           requestId: request.requestId,
           executionId: "resume-execution",
           state: "succeeded",
-          reasonCode: "soil_tilled",
+          reasonCode: SOURCE_TILL_REASON,
           revision,
           evidence: { detail: TILL_EVIDENCE(SOIL_RESUME.x, SOIL_RESUME.y, 39, 37) },
         };
@@ -134,7 +164,7 @@ test("stamina chain: low-stamina till -> eat -> resume till succeeds", async () 
           requestId: request.requestId,
           executionId: "recovery-execution",
           state: "succeeded",
-          reasonCode: "item_used",
+          reasonCode: SOURCE_ITEM_REASON,
           revision,
           evidence: { detail: EAT_EVIDENCE(10, 39) },
         };
@@ -145,10 +175,10 @@ test("stamina chain: low-stamina till -> eat -> resume till succeeds", async () 
 
   const result = await runStaminaRecoveryChainSmoke(client, [], config);
   assert.equal(result.state, "passed", `unexpected reason: ${result.reasonCode}`);
-  assert.equal(result.reasonCode, "soil_tilled");
-  assert.equal(result.chain.breakpointReceipt.reasonCode, "soil_tilled");
-  assert.equal(result.chain.recoveryReceipt.reasonCode, "item_used");
-  assert.equal(result.chain.resumeReceipt.reasonCode, "soil_tilled");
+  assert.equal(result.reasonCode, SOURCE_TILL_REASON);
+  assert.equal(result.chain.breakpointReceipt.reasonCode, SOURCE_TILL_REASON);
+  assert.equal(result.chain.recoveryReceipt.reasonCode, SOURCE_ITEM_REASON);
+  assert.equal(result.chain.resumeReceipt.reasonCode, SOURCE_TILL_REASON);
   assert.equal(result.chain.breakpointReceipt.revision < result.chain.recoveryReceipt.revision, true);
   assert.equal(result.chain.recoveryReceipt.revision < result.chain.resumeReceipt.revision, true);
   assert.equal(result.staminaDropped, true);
@@ -218,7 +248,7 @@ test("stamina chain does not claim success when the eating restored nothing", as
           requestId: request.requestId,
           executionId: "breakpoint-execution",
           state: "succeeded",
-          reasonCode: "soil_tilled",
+          reasonCode: SOURCE_TILL_REASON,
           revision,
           evidence: { detail: TILL_EVIDENCE(SOIL_BREAKPOINT.x, SOIL_BREAKPOINT.y, 12, 10) },
         };
@@ -230,7 +260,7 @@ test("stamina chain does not claim success when the eating restored nothing", as
           requestId: request.requestId,
           executionId: "recovery-execution",
           state: "succeeded",
-          reasonCode: "item_used",
+          reasonCode: SOURCE_ITEM_REASON,
           revision,
           evidence: { detail: EAT_EVIDENCE(10, 10) },
         };
