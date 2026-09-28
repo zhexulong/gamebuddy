@@ -428,6 +428,10 @@ export function fixtureActions(action) {
   if (action === "clear_hoedirt") return ["move_to_tile", "travel", "equip_tool", "clear_hoedirt"];
   if (action === "dig_artifact_spot") return ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"];
   if (action === "refill_watering_can") return ["move_to_tile", "equip_tool", "refill_watering_can"];
+  // The fixture supplies one charged Watering Can and a completed native Pet Bowl;
+  // equipping and walking stay independently receipted production actions, matching
+  // the water_crop lane.
+  if (action === "water_pet_bowl") return ["move_to_tile", "travel", "equip_tool", "water_pet_bowl"];
   // Native AnimalHouse entry uses separately receipted typed travel,
   // movement, and enter_exit routes. The product fixture instead completes
   // its pre-attachment native warp so the fresh production snapshot can
@@ -506,6 +510,7 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("dig_artifact_spot")) return "native_dig_artifact_spot_v1";
   if (actions.includes("clear_debris")) return "native_clear_debris_resource_clump_v1";
   if (actions.includes("refill_watering_can")) return "native_refill_watering_can_v1";
+  if (actions.includes("water_pet_bowl")) return "native_water_pet_bowl_v1";
   if (actions.includes("feed_animal")) return "native_feed_animal_v1";
   if (actions.includes("collect_animal_product")) return "native_collect_animal_product_v1";
   if (actions.includes("chest_store")) return "native_chest_store_v1";
@@ -577,7 +582,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "water_pet_bowl", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
@@ -613,7 +618,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "water_pet_bowl", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
