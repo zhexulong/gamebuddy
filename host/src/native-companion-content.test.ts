@@ -226,13 +226,24 @@ test("skips intermediate tool-use assistant messages and commits the following n
   assert.deepEqual(finals, ["Action complete."]);
 });
 
-test("incremental activation never presents an intermediate tool-use message's own text", async () => {
-  // A real live run narrated the companion's plan to the player: the game showed
-  // "我在屋子里，先出门去农场。" and "先摘一颗。" before the actual reply. The
-  // session transcript proved those were the text of intermediate
-  // stopReason=toolUse messages, which the non-incremental lane deliberately
-  // withholds. The existing tool-use test above only used assistant([toolCall]),
-  // so it had no text to leak and missed this.
+test("incremental activation releases at most one working remark per turn", async () => {
+  // History: a real live run narrated the companion's plan to the player --
+  // "我在屋子里，先出门去农场。" and "先摘一颗。" -- and the fix at the time was to
+  // discard every intermediate tool-use message's text. Two later A/B runs of
+  // the same task then measured the opposite failure: the conduct said "never
+  // narrate your own actions", the model complied, and the player heard nothing
+  // at all for the whole multi-action chain.
+  //
+  // Owner decision (2026-09-29): a companion should be able to say something
+  // while working, so the runtime no longer discards that text outright. The
+  // guard that replaces it is a SHAPE rule, not a semantic filter: at most one
+  // piece per Pi turn, taken from the first intermediate message that carries
+  // one. A step-by-step narration appears in every tool-use message, so it
+  // cannot use this seam to become a running commentary.
+  //
+  // Whether the surviving single piece reads as company or as narration is a
+  // wording question the conduct owns and the live-run audit measures; this
+  // test pins only the shape guarantee.
   const fx = fakeSession();
   const inlines: string[] = [];
   const finals: string[] = [];
@@ -249,27 +260,28 @@ test("incremental activation never presents an intermediate tool-use message's o
   observer.open();
   observer.openPreviews();
 
-  // An intermediate tool-use message that STREAMS its planning commentary.
-  const planning = assistant([text("")]);
-  fx.emit({ type: "message_start", message: planning });
-  fx.emit({
-    type: "message_update",
-    message: planning,
-    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: planning },
-  });
-  for (const delta of ["我在屋子里，", "先出门去农场。", "先摘一颗。"]) {
+  // Three consecutive intermediate tool-use messages, each streaming a step of
+  // a running narration. Only the first may be released.
+  for (const step of ["先出门去农场。", "先摘一颗。", "再去找乔迪。"]) {
+    const planning = assistant([text("")]);
+    fx.emit({ type: "message_start", message: planning });
     fx.emit({
       type: "message_update",
       message: planning,
-      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial: planning },
+      assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: planning },
+    });
+    fx.emit({
+      type: "message_update",
+      message: planning,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: step, partial: planning },
+    });
+    fx.emit({
+      type: "message_end",
+      message: assistant([thinking("plan"), text(step), toolCall], "toolUse"),
     });
   }
-  fx.emit({
-    type: "message_end",
-    message: assistant([thinking("plan"), text("我在屋子里，先出门去农场。先摘一颗。"), toolCall], "toolUse"),
-  });
 
-  // The player-visible reply that follows.
+  // The player-visible reply that follows is always released in full.
   const reply = assistant([text("")]);
   fx.emit({ type: "message_start", message: reply });
   fx.emit({
@@ -285,8 +297,7 @@ test("incremental activation never presents an intermediate tool-use message's o
   fx.emit({ type: "message_end", message: assistant([text("花椰菜给她了。")], "stop") });
   await observer.close();
 
-  // Only the reply's sentences cross the boundary; the planning text is gone.
-  assert.deepEqual(inlines, ["花椰菜给她了。"]);
+  assert.deepEqual(inlines, ["先出门去农场。", "花椰菜给她了。"]);
   assert.deepEqual(finals, []);
 });
 
