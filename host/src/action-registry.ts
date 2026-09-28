@@ -193,6 +193,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Offer one carried inventory item to an adjacent villager; a matching quest delivery completes first.",
     ["npc", "inventory_slot"],
   ),
+  actionAdapter(
+    "pet_animal",
+    "Pet a nearby animal",
+    "Pet one fresh adjacent pet target; the native interaction requires the pet to still be within one tile at dispatch.",
+    ["pet"],
+  ),
 ]) satisfies readonly StardewActionAdapter[];
 
 export type StardewActionId =
@@ -252,6 +258,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   express_emote: "stardew_express_emote",
   face_direction: "stardew_face_direction",
   interact_npc_with_item: "stardew_interact_npc_with_item",
+  pet_animal: "stardew_pet_animal",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
 /**
@@ -371,6 +378,7 @@ export const STARDEW_CANDIDATE_ACTION_IDS = Object.freeze([
   "express_emote",
   "face_direction",
   "interact_npc_with_item",
+  "pet_animal",
 ] as const);
 
 export type StardewCandidateActionId = (typeof STARDEW_CANDIDATE_ACTION_IDS)[number];
@@ -441,6 +449,17 @@ export function isCandidateDescriptorComplete(
     // the exact five-argument shape and the write postcondition instead.
     const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
     const expected = ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"];
+    if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
+    if (descriptor.effect !== "write") return false;
+    if (!descriptor.postcondition) return false;
+    return true;
+  }
+  if (actionId === "pet_animal") {
+    // An animal moves between observation and dispatch, so the pet target is
+    // bound by identity (expectedTargetId) with live coordinates as geometry,
+    // matching the Mod's identity-locked admission.
+    const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
+    const expected = ["x", "y", "expectedTargetId"];
     if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
     if (descriptor.effect !== "write") return false;
     if (!descriptor.postcondition) return false;

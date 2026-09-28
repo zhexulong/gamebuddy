@@ -94,6 +94,20 @@ const VALID_FACE_DIRECTION_DESCRIPTOR: ActionRegistrationDescriptor = Object.fre
   nativeBinding: "Farmer.faceDirection",
 });
 
+const VALID_PET_ANIMAL_DESCRIPTOR: ActionRegistrationDescriptor = Object.freeze({
+  arguments: Object.freeze([
+    Object.freeze({ name: "x", type: "integer" }),
+    Object.freeze({ name: "y", type: "integer" }),
+    Object.freeze({ name: "expectedTargetId", type: "string" }),
+  ]),
+  outputFacts: Object.freeze({}),
+  resourceTemplate: Object.freeze({
+    claims: Object.freeze([{ key: "embodied_actor", value: "ScopePlayer" }]),
+  }),
+  effect: "write",
+  postcondition: "native_action_postcondition",
+});
+
 function createTestAdmission() {
   return () => ({
     observer: {
@@ -219,6 +233,38 @@ test("candidate action schemas are derived dynamically from Mod descriptor enums
   assert.equal(Value.Check(npcSchema, { ...validNpcArgs, requestId: "req_01" }), false);
   assert.equal(Value.Check(npcSchema, { ...validNpcArgs, expectedQualifiedItemId: undefined }), false);
   assert.equal(Value.Check(npcSchema, { slot: 5, x: 12, y: 34, expectedQualifiedItemId: "(O)190" }), false);
+
+  const petSchema = buildCandidateToolSchema("pet_animal", VALID_PET_ANIMAL_DESCRIPTOR);
+  assert.equal((petSchema as { additionalProperties?: unknown }).additionalProperties, false);
+  const validPetArgs = { x: 10, y: 12, expectedTargetId: "pet_deadbeef" };
+  assert.equal(Value.Check(petSchema, validPetArgs), true);
+  // Identity binding is required: no target id, or an extraneous key, is rejected.
+  assert.equal(Value.Check(petSchema, { x: 10, y: 12 }), false);
+  assert.equal(Value.Check(petSchema, { ...validPetArgs, slot: 3 }), false);
+});
+
+test("pet_animal descriptor completeness requires the identity-locked three-argument shape", () => {
+  assert.equal(isCandidateDescriptorComplete("pet_animal", VALID_PET_ANIMAL_DESCRIPTOR), true);
+  // Coordinates alone are not enough: without expectedTargetId the target is
+  // not identity-bound and the descriptor must be rejected.
+  assert.equal(
+    isCandidateDescriptorComplete("pet_animal", {
+      ...VALID_PET_ANIMAL_DESCRIPTOR,
+      arguments: [
+        { name: "x", type: "integer" },
+        { name: "y", type: "integer" },
+      ],
+    }),
+    false,
+  );
+  // A read-only effect would not be a mutation and is rejected.
+  assert.equal(
+    isCandidateDescriptorComplete("pet_animal", {
+      ...VALID_PET_ANIMAL_DESCRIPTOR,
+      effect: "read",
+    }),
+    false,
+  );
 });
 
 test("candidate schemas do NOT hardcode enums: custom Mod descriptor enums are respected", () => {
@@ -322,6 +368,38 @@ test("createStardewActionTools mounts candidate tools with a complete descriptor
   assert.ok(toolNames.includes(STARDEW_ACTION_TOOL_NAMES.equip_tool), "equip_tool should be mounted");
   assert.ok(toolNames.includes("stardew_express_emote"), "express_emote must be mounted with a complete descriptor");
   assert.ok(toolNames.includes("stardew_face_direction"), "face_direction must be mounted with a complete descriptor");
+});
+
+test("pet_animal is visible and mounted as a first-class tool while experimental", () => {
+  const catalog: readonly ActionRegistration[] = [
+    {
+      actionId: "pet_animal",
+      familyId: "animals_pets",
+      identityVersion: 1,
+      lifecycle: "experimental",
+      kind: "execution",
+      descriptor: VALID_PET_ANIMAL_DESCRIPTOR,
+    },
+  ];
+
+  const visible = visibleActionsFromModCatalog(catalog, ["pet_animal"], DEFAULT_ACTION_POLICY);
+  assert.deepEqual(
+    visible.map((e) => e.actionId),
+    ["pet_animal"],
+    "pet_animal must be Agent-visible while experimental with a complete descriptor",
+  );
+
+  const integration = createIntegration({
+    capabilities: ["pet_animal"],
+    catalogRegistrations: catalog,
+  });
+  const tools = createStardewActionTools(integration, DEFAULT_ACTION_POLICY, createTestAdmission());
+  assert.ok(
+    tools.map((t) => t.name).includes(STARDEW_ACTION_TOOL_NAMES.pet_animal),
+    "pet_animal must be mounted as a Host tool",
+  );
+  // The previous gap: a field the Agent could see with no tool to act on it.
+  // This asserts the tool now exists, not merely that the capability is declared.
 });
 
 test("observation catalog reveals experimental candidates with a complete descriptor", async () => {
