@@ -2964,6 +2964,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         MachineAndAnimalActionHandler machinesAndAnimals = new(executions);
         ResourceToolActionHandler resourceTools = new(executions);
         ExpressionActionHandler expression = new(executions);
+        WorldLifecycleActionHandler lifecycle = new(executions);
         FarmhandActionRouter router = new();
 
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
@@ -2978,6 +2979,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 FarmhandActionHandlerGroup.MachinesAndAnimals => machinesAndAnimals,
                 FarmhandActionHandlerGroup.ResourceTools => resourceTools,
                 FarmhandActionHandlerGroup.Expression => expression,
+                FarmhandActionHandlerGroup.WorldLifecycle => lifecycle,
                 _ => throw new InvalidOperationException("Unknown Farmhand execution action handler group."),
             };
             router.Register(registration, handler);
@@ -4319,6 +4321,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
         ExecutionManager executions = state.Executions!;
+        executions.ObserveDayAdvanceDayStarted();
         executions.InvalidateForLifecycle("day_started");
         this.PublishLifecycle(state, "connected", "day_started");
     }
@@ -4513,6 +4516,8 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     private void OnSaved(object? sender, SavedEventArgs e)
     {
         this.sleepLifecycle?.ObserveSaved();
+        if (this.TryGetAiState(out ScreenEmbodimentState savedState))
+            savedState.Executions!.ObserveDayAdvanceSaved();
         this.hostFarmhandProvisioner?.OnSaved();
         // A request can arrive while the previous native SaveGameMenu cycle is
         // still settling. Release the fixture latch at the authoritative Saved

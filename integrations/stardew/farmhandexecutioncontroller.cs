@@ -862,6 +862,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     public void Update()
     {
         this.tick++;
+        // The owned cross-day night advances first: it is the only execution whose
+        // work is driven by the native day pipeline rather than by the body
+        // controller, and it must observe its terminal on the same game thread
+        // that produced the save/day facts.
+        this.UpdateActiveDayAdvance();
         if (this.activeNavigate is not null)
             this.LogNavigationDiagnostic("tick", $"destination={this.activeNavigate.CanonicalDestinationIdentity}");
         // Deferred Navigation approach commit. The body controller marks an

@@ -199,6 +199,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Pet one fresh adjacent pet target; the native interaction requires the pet to still be within one tile at dispatch.",
     ["pet"],
   ),
+  actionAdapter(
+    "advance_day",
+    "Sleep and advance the day",
+    "Walk the Farmhand to its own bed, let the native sleep path run, declare local sleep-ready through that same native path, and observe the native save/new-day pipeline. In a shared world the night completes only when every required player is ready, so a barrier that never completes is reported honestly rather than forced.",
+    ["own_bed", "day_lifecycle"],
+  ),
 ]) satisfies readonly StardewActionAdapter[];
 
 export type StardewActionId =
@@ -259,6 +265,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   face_direction: "stardew_face_direction",
   interact_npc_with_item: "stardew_interact_npc_with_item",
   pet_animal: "stardew_pet_animal",
+  advance_day: "stardew_advance_day",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
 /**
@@ -379,6 +386,7 @@ export const STARDEW_CANDIDATE_ACTION_IDS = Object.freeze([
   "face_direction",
   "interact_npc_with_item",
   "pet_animal",
+  "advance_day",
 ] as const);
 
 export type StardewCandidateActionId = (typeof STARDEW_CANDIDATE_ACTION_IDS)[number];
@@ -463,6 +471,15 @@ export function isCandidateDescriptorComplete(
     if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
     if (descriptor.effect !== "write") return false;
     if (!descriptor.postcondition) return false;
+    return true;
+  }
+  if (actionId === "advance_day") {
+    // The night carries no arguments at all: the bed and the ready state are
+    // native facts, so the complete-descriptor gate is the empty argument list
+    // plus the declared day-advanced postcondition.
+    if ((descriptor.arguments ?? []).length !== 0) return false;
+    if (descriptor.effect !== "write") return false;
+    if (descriptor.postcondition !== "day_advanced") return false;
     return true;
   }
   return false;
