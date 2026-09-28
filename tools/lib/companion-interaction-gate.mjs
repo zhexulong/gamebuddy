@@ -45,6 +45,17 @@ export function assessCompanionInteraction(text, observedEvents = []) {
   if (/先[^。；!！?？]{1,60}(再|然后|接着|又)[^。；!！?？]{1,60}/.test(trimmed)) {
     reasons.push("step_checklist");
   }
+  // Machine identifiers leaking into player-facing speech. A live run (after the
+  // NPC-reaction hole was fixed) told the player “回执显示这算普通送礼
+  // （gift_given）…quest_25_completed 还是 false” — it read the receipt's wire
+  // format out loud. Unlike reaction wording this is a SHAPE, not an open
+  // vocabulary: receipt reason codes and evidence keys are lower snake_case, so a
+  // bounded pattern detects the whole class instead of chasing phrasings. Neither
+  // Chinese prose nor ordinary English contains `_`, so precision is high.
+  // The same leak in enum/constant style (SCREAMING_SNAKE) is caught too.
+  const machineTokens = trimmed.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [];
+  const constants = trimmed.match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g) ?? [];
+  if (machineTokens.length > 0 || constants.length > 0) reasons.push("machine_token_leak");
   // Asserting a specific in-world reaction that never happened. `observedEvents`
   // carries the event kinds the receipts actually prove (e.g. "npc_dialogue");
   // a narration of a concrete reaction without that evidence is fabrication.
@@ -86,6 +97,6 @@ export function assessCompanionInteraction(text, observedEvents = []) {
   return Object.freeze({
     passed: reasons.length === 0,
     reasons,
-    metrics: Object.freeze({ ...metrics, hasPlayerAddress, claimedNpcReaction: claimsNpcReaction }),
+    metrics: Object.freeze({ ...metrics, hasPlayerAddress, claimedNpcReaction: claimsNpcReaction, machineTokens: Object.freeze([...machineTokens, ...constants]) }),
   });
 }

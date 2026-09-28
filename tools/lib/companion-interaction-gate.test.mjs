@@ -54,6 +54,23 @@ test("rejects narrating an NPC reaction the receipts never recorded", () => {
   assert.equal(withEvidence.passed, true);
 });
 
+test("rejects reading the receipt's wire format out loud to the player", () => {
+  // A third live run — after the NPC-reaction hole was closed — told the player
+  // “回执显示这算普通送礼（gift_given）…quest_25_completed 还是 false”. It spoke
+  // the receipt's machine identifiers. This is a SHAPE, so one pattern covers the
+  // class; Chinese prose and ordinary English carry no `_`.
+  const leaked =
+    "不过有一点要说清楚：回执显示这算普通送礼（gift_given），乔迪信里那单任务并没有因此打勾，quest_25_completed 还是 false。";
+  const result = assessCompanionInteraction(leaked, []);
+  assert.equal(result.passed, false);
+  assert.ok(result.reasons.includes("machine_token_leak"));
+  assert.deepEqual(result.metrics.machineTokens, ["gift_given", "quest_25_completed"]);
+  // Constant-style identifiers are the same leak class.
+  const constant = assessCompanionInteraction("状态是 GIFT_RECORDED，不是 QUEST_COMPLETED。", []);
+  assert.equal(constant.passed, false);
+  assert.ok(constant.reasons.includes("machine_token_leak"));
+});
+
 test("does not flag a player-directed line that mentions no NPC reaction", () => {
   const line = "（满意）花椰菜收好了，你想现在送去给乔迪，还是先回屋歇会儿？";
   const result = assessCompanionInteraction(line, []);
