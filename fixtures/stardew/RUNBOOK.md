@@ -581,6 +581,17 @@ preserving its pet assignment. The transaction restored its profile, removed
 backup/lock and the working save, and left no Stardew/SMAPI process. These are
 only `native_local_player_fixture` shared mechanics evidence, never Farmhand,
 HostAutomation, Portfolio, publication, release, or save/reopen evidence.
+Independent review of `water_pet_bowl` (2026-09-28) returned **no blockers**: one
+native mutation call, every rejection before it, `succeeded` reachable only from
+the action's own before/after `watered` observation, and resolution/discovery/
+identity all flowing through the single `PetBowlWaterableTiles` helper. The review
+found one real coverage gap — the test pinned the building predicate but not the
+**yielded** tile, so a regression that kept `doesTileHaveProperty` while yielding
+the footprint origin would have passed. `PetBowlWateringActionTests` now pins the
+yielded expression as well (`71a076d`), and that pin was confirmed against a
+simulated origin-yield revert. The behavioural proof of that tile stays the live
+gate above, which is what originally caught the bug; the integration test project
+has no Game1 harness for constructing a bowl with building data.
 `water_crop` has also met this lane's live
 receipt-plus-fresh-postcondition standard. Its scenario first uses the exact
 pre-attachment native setup `SpreadDirt → SpreadSeeds 472` to make dry crops;
