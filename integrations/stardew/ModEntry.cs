@@ -839,7 +839,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1650,6 +1650,73 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized chest-retrieve precondition before bridge attachment: item={retrieveItemId}; chest={chest.QualifiedItemId}; standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y}; production alone invokes the native chest take path and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario is "native_fridge_store_v1" or "native_fridge_retrieve_v1")
+            {
+                // Pre-attachment fixture only: the real built-in kitchen fridge is
+                // a Chest (FarmHouse.fridge is NetRef<Chest> built with
+                // playerChest: true), so it serves the same store/take intent as a
+                // placed chest and runs the identical Chest.addItem /
+                // GetItemsForPlayer().Remove transaction. The fixture therefore
+                // establishes only the native precondition: a kitchen upgrade so
+                // the room owns a fridge (GameLocation.GetFridge() returns null
+                // while fridgePosition is Point.Zero), one ordinary storable item
+                // in the backpack, and a lawful standing tile beside the fridge
+                // map tile. Production alone moves the item and emits the receipt.
+                bool retrieving = fixture.FixtureScenario == "native_fridge_retrieve_v1";
+                const string fridgeItemId = "(O)24";
+                if (player.currentLocation is not StardewValley.Locations.FarmHouse home)
+                    throw new InvalidOperationException("fixture_native_local_fridge_home_missing");
+                // The vanilla house has no kitchen at upgrade 0 and FarmHouse.xnb
+                // therefore has no fridge tile, so fridgePosition stays Point.Zero
+                // and GetFridge() returns null. Use the target-version house route
+                // (the same class of native setup as SpreadDirt/SetupBigFarm) to
+                // reach the kitchen the fridge belongs to.
+                if (home.fridgePosition == Point.Zero)
+                {
+                    Game1.game1.parseDebugInput("HouseUpgrade 1", null);
+                    if (home.fridgePosition == Point.Zero)
+                        throw new InvalidOperationException("fixture_native_local_fridge_kitchen_unavailable");
+                }
+                StardewValley.Objects.Chest? fridge = home.GetFridge();
+                if (fridge is null || !fridge.playerChest.Value)
+                    throw new InvalidOperationException("fixture_native_local_fridge_missing");
+                Vector2 fridgeTile = new(home.fridgePosition.X, home.fridgePosition.Y);
+                if (retrieving)
+                {
+                    if (fridge.GetItemsForPlayer().Any(item => item is not null))
+                        throw new InvalidOperationException("fixture_native_local_fridge_retrieve_not_empty");
+                    StardewValley.Object contained = ItemRegistry.Create<StardewValley.Object>(fridgeItemId, 1);
+                    if (fridge.addItem(contained) is not null)
+                        throw new InvalidOperationException("fixture_native_local_fridge_retrieve_fill_failed");
+                    if (!player.couldInventoryAcceptThisItem(contained))
+                        throw new InvalidOperationException("fixture_native_local_fridge_retrieve_inventory_unavailable");
+                }
+                else
+                {
+                    if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == fridgeItemId && item.Stack > 0)
+                        && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(fridgeItemId, 1)) is not null)
+                        throw new InvalidOperationException("fixture_native_local_fridge_store_inventory_full");
+                    if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == fridgeItemId && item.Stack > 0))
+                        throw new InvalidOperationException("fixture_native_local_fridge_store_item_missing_after_add");
+                }
+                Vector2[] approach =
+                {
+                    fridgeTile + new Vector2(0f, 1f), fridgeTile + new Vector2(0f, -1f),
+                    fridgeTile + new Vector2(-1f, 0f), fridgeTile + new Vector2(1f, 0f),
+                };
+                Vector2? standingTile = approach
+                    .Where(candidate => home.isTileOnMap(candidate) && home.isTilePassable(candidate)
+                        && !home.IsTileOccupiedBy(candidate, CollisionMask.All, CollisionMask.None, useFarmerTile: false))
+                    .Cast<Vector2?>()
+                    .FirstOrDefault();
+                if (standingTile is null)
+                    throw new InvalidOperationException("fixture_native_local_fridge_approach_missing");
+                player.warpFarmer(new StardewValley.Warp(0, 0, home.NameOrUniqueName, (int)standingTile.Value.X, (int)standingTile.Value.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized fridge precondition before bridge attachment: scenario={fixture.FixtureScenario}; fridge={fridge.QualifiedItemId}; fridge_tile={fridgeTile.X},{fridgeTile.Y}; standing={standingTile.Value.X},{standingTile.Value.Y}; item={fridgeItemId}; production alone runs the native container transaction and emits the receipt.", LogLevel.Info);
                 return;
             }
 
