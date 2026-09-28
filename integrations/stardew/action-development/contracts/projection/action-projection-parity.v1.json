@@ -967,6 +967,36 @@
         }
       },
       {
+        "actionId": "water_pet_bowl",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
         "actionId": "interact_npc_with_item",
         "identityVersion": 1,
         "lifecycle": "experimental",
@@ -1415,6 +1445,7 @@
       "clear_debris",
       "npc_relationship",
       "pet_animal",
+      "water_pet_bowl",
       "interact_npc_with_item",
       "express_emote",
       "face_direction",
