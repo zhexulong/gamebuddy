@@ -519,7 +519,9 @@ export function visibleActionsFromModCatalog(
     if (
       adapter === undefined ||
       !adapter.supportedIdentityVersions.includes(registration.identityVersion) ||
-      (registration.lifecycle !== "published" && !isAdmittedCandidate) ||
+      (registration.lifecycle !== "published" &&
+        registration.lifecycle !== "live_verified" &&
+        !isAdmittedCandidate) ||
       registration.kind !== "execution" ||
       !live.has(adapter.requiredCapability) ||
       deniedActions.has(registration.actionId) ||

@@ -131,6 +131,40 @@ test("complete candidate actions are visible despite the experimental lifecycle"
   assert.equal(visible.find((entry) => entry.actionId === "face_direction")?.lifecycle, "experimental");
 });
 
+test("live_verified actions are visible without being candidates", () => {
+  // live_verified means the action already ran on its required target topology
+  // and produced a native receipt/postcondition. That is enough to be visible;
+  // it does not require the experimental candidate admission path (which exists
+  // for actions whose descriptor completeness must still be proven at runtime),
+  // and it does not require full publication.
+  const capabilities = ["equip_tool", "harvest_crop"];
+  const liveVerified = [
+    {
+      actionId: "equip_tool",
+      familyId: "body_tools",
+      identityVersion: 1,
+      lifecycle: "live_verified" as const,
+      kind: "execution" as const,
+    },
+    {
+      actionId: "harvest_crop",
+      familyId: "farming_crops",
+      identityVersion: 1,
+      lifecycle: "live_verified" as const,
+      kind: "execution" as const,
+    },
+  ];
+  assert.deepEqual(
+    visibleActionsFromModCatalog(liveVerified, capabilities).map((entry) => entry.actionId).sort(),
+    ["equip_tool", "harvest_crop"],
+  );
+
+  // The same registrations at experimental lifecycle stay invisible: visibility
+  // tracks the real live evidence, not merely the catalog entry existing.
+  const stillExperimental = liveVerified.map((entry) => ({ ...entry, lifecycle: "experimental" as const }));
+  assert.deepEqual(visibleActionsFromModCatalog(stillExperimental, capabilities), []);
+});
+
 test("incomplete candidate descriptors stay invisible", () => {
   const catalog = [
     {
