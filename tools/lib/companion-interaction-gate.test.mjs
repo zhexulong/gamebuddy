@@ -60,3 +60,26 @@ test("does not flag a player-directed line that mentions no NPC reaction", () =>
   assert.equal(result.passed, true);
   assert.deepEqual(result.reasons, []);
 });
+
+test("rejects a body-part reaction claim the receipts never recorded", () => {
+  // A later live run narrated "她收下的时候连眼睛都弯了" while the same receipts
+  // recorded showed_response=false. The direct-verb list missed it because the
+  // reaction was expressed through a body part, not an emotion word.
+  const fabricated = "（笑）她收下的时候连眼睛都弯了——45点好感，一颗花椰菜换来的。";
+  const result = assessCompanionInteraction(fabricated, []);
+  assert.equal(result.passed, false);
+  assert.ok(result.reasons.includes("unobserved_event"));
+  assert.equal(result.metrics.claimedNpcReaction, true);
+  // And it is acceptable once the game really showed the reaction.
+  assert.equal(assessCompanionInteraction(fabricated, ["npc_dialogue"]).passed, true);
+});
+
+test("a motionless body-part description is not a reaction claim", () => {
+  // Naming a body part without a change verb is description, not a claim that
+  // the world reacted, so the hard signal must stay off.
+  for (const line of ["她的眼睛很大，头发也是黑的。", "乔迪站在柜台后面，穿着一件蓝外套。"]) {
+    const result = assessCompanionInteraction(line, []);
+    assert.equal(result.passed, true, line);
+    assert.equal(result.metrics.claimedNpcReaction, false, line);
+  }
+});
