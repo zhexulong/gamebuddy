@@ -108,3 +108,31 @@ test("the fact log keeps receipt evidence so observed events can be derived", ()
   assert.match(RUNNER_SOURCE, /evidence: fact\.payload\?\.evidence \?\? null/);
   assert.match(RUNNER_SOURCE, /offerReceipt\.evidence\.showed_response === true/);
 });
+
+test("the run records chunked-presentation evidence so the presence mechanism is measured", () => {
+  // The mechanism-A design requires measurable TTFB and piece granularity, not
+  // just a pass/blocked verdict: the runner records every committed
+  // companion_text piece in arrival order and the first piece's elapsed time
+  // from the real turn boundary.
+  assert.match(RUNNER_SOURCE, /const presentationPieces = \[\]/);
+  assert.match(RUNNER_SOURCE, /AGENT_PRESENTATION_PIECE/);
+  assert.match(RUNNER_SOURCE, /turnStartedAtMs = Date\.now\(\)/);
+  assert.match(RUNNER_SOURCE, /firstPieceTtfbMs/);
+  assert.match(RUNNER_SOURCE, /const presentation = summarizePresentationEvidence\(\)/);
+  // Recorded before the single-shot voice gate: chunk evidence must not depend
+  // on voice being enabled or on a piece being the first one.
+  assert.doesNotMatch(RUNNER_SOURCE, /if \(voiceStarted \|\| typeof text/);
+  // The failure path also reports presentation evidence.
+  assert.match(RUNNER_SOURCE, /presentation: summarizePresentationEvidence\(\),/);
+});
+
+test("the run computes the deterministic claim-fulfillability presence projection", () => {
+  // Mechanism-B / audit-dimension §3: spoken promises are compared against the
+  // same-turn receipts and the live capability face. The vocabulary is scenario
+  // data; the parser applies the first-person guardrail.
+  assert.match(RUNNER_SOURCE, /import \{ buildPresenceProjection \} from "\.\/lib\/stardew-companion-presence-projection\.mjs"/);
+  assert.match(RUNNER_SOURCE, /PRESENCE_ACTION_VOCABULARY/);
+  assert.match(RUNNER_SOURCE, /const presenceProjection = presentationPieces\.length > 0/);
+  assert.match(RUNNER_SOURCE, /visibleActionIds/);
+  assert.match(RUNNER_SOURCE, /presenceProjection,/);
+});
