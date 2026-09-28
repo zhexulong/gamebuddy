@@ -556,6 +556,52 @@ an alternate action runtime.
    receipt. This is native-local shared mechanics AND recovery-chain evidence only —
    never Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen
    evidence.
+26. `craft_partial_recovery_chain` has met this lane's target-version live
+   recovery-chain closure (2026-09-28), proving the fifth §1.4 mode
+   (断点续作 / 部分完成). Like the stamina mode it is NOT rejection-triggered: the
+   native recipe transaction really runs and the product really exists, so the
+   honest terminal is `partially_succeeded` (line `partially_succeeded`,
+   `farmhandexecutioncontroller.craftingactions.cs`) with
+   `disposition=partially_dropped_on_ground`, and the Mod's own comment forbids
+   reporting that as a full success. Measured chain: `partially_succeeded` /
+   `crafted_item_created` (rev 1) with gained `1` + dropped `4` = produced `5`,
+   then `succeeded/chest_stored` (rev 2) moving the retained `999` into the chest,
+   then `succeeded/crafted_item_created` (rev 3) re-crafting the SAME recipe to
+   `disposition=added_to_inventory` with gained `5` and dropped `0`. Three
+   terminals, one journal, strictly advancing revisions, distinct execution ids,
+   and conservation `999 + 9 = 998 + 5x2`; the profile restored with backup/lock and
+   working save removed and no Stardew/SMAPI process left. The scenario learns Bait
+   (data row `684 1/Home/685 5/false/Fishing 2/`: one Bug Meat becomes five Bait,
+   and `(O)685`'s native max stack is 999), fills the backpack with `(O)685` at 998
+   plus `(O)684` at 2 plus Tool fillers, and warps to a lawful tile beside one owned
+   Chest; it never crafts, stores, or emits a receipt. The Bug Meat stack is 2 so
+   that consumption leaves a live stack behind — with a single Bug Meat the consume
+   would free the very slot that absorbs the drop and hide the breakpoint.
+   Four live iterations were needed, and they exposed **three** real defects that
+   the offline mock could not catch, all of the same class (the mock encoded the
+   runner's wrong assumption): (a) the recipe selector matched on `displayName`,
+   but the Mod publishes `BridgeRecipeTarget(wireIdentity, recipe.DisplayName, …)`
+   and that display name is LOCALIZED (the Bait content row is
+   `[LocalizedText Strings\Objects:Bait_Name]`, measured as 鱼饵), so the runner
+   found no target while the live snapshot was advertising `Bait`; it now matches
+   on the wire identity. (b) The resume leg submitted an explicit `pickup_item`,
+   but `Debris.updateChunks` homes the chunks onto the nearest farmer and collects
+   them whenever `farmer.couldInventoryAcceptThisItem(this.item)` holds (OBJECT
+   debris also bounces for 600 ms), so a full backpack keeps them still and
+   `chest_store` freeing a slot makes the GAME deliver them — the explicit pick
+   measured `rejected/no_native_path` mid-bounce, and after a settle wait found no
+   target at all. The chain now follows the contract's own shape (breakpoint →
+   container recovery → retry of the SAME action) and proves completion by
+   conservation instead of claiming a pickup the agent never needed. (c)
+   `CRAFT_EVIDENCE_KEYS` was a module-scope `const` declared below the
+   `import.meta.main` block, so the first live run threw "Cannot access before
+   initialization"; importing the module always evaluates the whole file first, so
+   no import-based test could see it — a structural test now pins the declaration
+   order. The offline suite (10 cases) binds state/reason/disposition to the Mod
+   source by anchor+regex extraction, so drift in either the `PartiallySucceeded`
+   terminal or the `partially_dropped_on_ground` literal fails it. This is
+   native-local shared mechanics AND recovery-chain evidence only — never Farmhand,
+   HostAutomation, Portfolio, publication, release, or save/reopen evidence.
 Current native-local validation record: `move_to_tile`, `till_soil`,
 `equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
 `harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
