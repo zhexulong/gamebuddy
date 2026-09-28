@@ -17,6 +17,13 @@ namespace GameBuddy.Stardew;
 // directly, and only player-owned ordinary Chests are eligible
 // (IsOwnedOrdinaryChest / BuildChestTargetId live next to the Discover radar
 // in farmhandexecutioncontroller.cs and are shared by the partial class).
+//
+// Target family: "storage container" is deliberately wider than "placed chest".
+// The built-in kitchen fridge IS a Chest (FarmHouse.fridge / IslandFarmHouse.fridge
+// are NetRef<Chest> built with playerChest: true), it serves the same store/take
+// intent, and it resolves through GameLocation.GetFridge() + the room's map tile
+// because it never enters location.objects. Both targets run the identical
+// transaction, so only resolution and the opaque target id differ.
 internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalChestStore(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
@@ -39,12 +46,12 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
 
         GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? chestObject)
-            || chestObject is not Chest chest
-            || !IsOwnedOrdinaryChest(chest)
-            || !string.Equals(BuildChestTargetId(location, targetX, targetY, chest), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, chestObject is Chest eligible ? "chest_target_changed" : "chest_not_owned", $"target={targetX},{targetY}");
+        (StardewValley.Objects.Chest Chest, bool IsFridge)? resolved = ResolveStorageContainerAt(location, targetX, targetY);
+        if (resolved is not { } container)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_not_owned", $"target={targetX},{targetY}");
+        Chest chest = container.Chest;
+        if (!string.Equals(BuildContainerTargetId(location, targetX, targetY, chest, container.IsFridge), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_target_changed", $"target={targetX},{targetY}");
 
         int playerStackBefore = storedItem.Stack;
         int chestStackBefore = ChestItemCount(chest, expectedQualifiedItemId);
@@ -63,7 +70,7 @@ internal sealed partial class ExecutionManager
         int chestStackAfter = ChestItemCount(chest, expectedQualifiedItemId);
         bool sourceConsumed = Game1.player.Items[slot] is null || !ReferenceEquals(Game1.player.Items[slot], storedItem);
         bool postconditionHeld = stored && sourceConsumed && chestStackAfter == chestStackBefore + playerStackBefore;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};chest=chest;item={expectedQualifiedItemId};player_stack_before={playerStackBefore};player_stack_after={playerStackAfter};source_consumed={sourceConsumed.ToString().ToLowerInvariant()};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};container={(container.IsFridge ? "fridge" : "chest")};item={expectedQualifiedItemId};player_stack_before={playerStackBefore};player_stack_after={playerStackAfter};source_consumed={sourceConsumed.ToString().ToLowerInvariant()};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
         if (postconditionHeld)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "chest_stored", evidence);
         // A partial accept (some stack merged, remainder still held) mutated the
@@ -89,12 +96,12 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
 
         GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? chestObject)
-            || chestObject is not Chest chest
-            || !IsOwnedOrdinaryChest(chest)
-            || !string.Equals(BuildChestTargetId(location, targetX, targetY, chest), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, chestObject is Chest eligible ? "chest_target_changed" : "chest_not_owned", $"target={targetX},{targetY}");
+        (StardewValley.Objects.Chest Chest, bool IsFridge)? resolved = ResolveStorageContainerAt(location, targetX, targetY);
+        if (resolved is not { } container)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_not_owned", $"target={targetX},{targetY}");
+        Chest chest = container.Chest;
+        if (!string.Equals(BuildContainerTargetId(location, targetX, targetY, chest, container.IsFridge), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_target_changed", $"target={targetX},{targetY}");
 
         Item? target = chest.GetItemsForPlayer().FirstOrDefault(item => item is not null && string.Equals(item.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal) && item.Stack > 0);
         if (target is null)
@@ -113,7 +120,7 @@ internal sealed partial class ExecutionManager
         int chestStackAfter = ChestItemCount(chest, expectedQualifiedItemId);
         int inventoryAfter = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
         bool retrieved = leftover is null && chestStackAfter == chestStackBefore - target.Stack && inventoryAfter == inventoryBefore + target.Stack;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};chest=chest;item={expectedQualifiedItemId};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};inventory_before={inventoryBefore};inventory_after={inventoryAfter};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};container={(container.IsFridge ? "fridge" : "chest")};item={expectedQualifiedItemId};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};inventory_before={inventoryBefore};inventory_after={inventoryAfter};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
         return this.RememberTerminal(requestId, executionId, retrieved ? ExecutionState.Succeeded : ExecutionState.Uncertain, retrieved ? "chest_retrieved" : "chest_retrieve_postcondition_unavailable", evidence);
     }
 
