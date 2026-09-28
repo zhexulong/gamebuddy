@@ -151,6 +151,10 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // `PetBowl.watered` is not a crop postcondition, so water_crop's `crop_watered`
   // receipt would be false for a bowl.
   water_pet_bowl: "run-stardew-native-local-player-water-pet-bowl-smoke.mjs",
+  // Same native WateringCan.DoFunction seam again, but the trough is a
+  // `waterSpots[]` postcondition inside a Slime Hutch interior, so it is its own
+  // action rather than a water_crop target extension.
+  water_slime_hutch_trough: "run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
   chest_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
   chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
   // Same container store/take capability over the built-in kitchen fridge. The
