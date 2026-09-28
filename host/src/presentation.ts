@@ -56,7 +56,18 @@ type GamePresentationAdmissionCapture = Readonly<{
  * entering a Game presentation port.
  */
 export interface HostPresentationAdmissionProvider {
-  capture(expectedSourceEventId: string): ChatPresentationAdmissionCapture | GamePresentationAdmissionCapture;
+  capture(
+    expectedSourceEventId: string,
+    /** The exact text about to be presented, when this is a text commit. */
+    text?: string,
+  ): ChatPresentationAdmissionCapture | GamePresentationAdmissionCapture;
+  /**
+   * Ends this provider's current turn after a native commit failed with an
+   * uncertain outcome. The failed piece may have landed, so the turn is over and
+   * no later piece may be attempted. Presenters call this on commit failure;
+   * providers without a multi-piece turn simply implement it as a no-op.
+   */
+  closeForUncertainCommit?(): void;
 }
 
 export interface CompanionTextPort {
