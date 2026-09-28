@@ -23,6 +23,14 @@ console.log(
             SettleFrameBudget: 240,
           }
         : undefined,
+      sleepLifecycle: values.has("--sleep-lifecycle-evidence")
+        ? {
+            Enable: true,
+            EvidencePath: required(values, "--sleep-lifecycle-evidence"),
+            TimeoutSeconds: 180,
+            SettleFrameBudget: 240,
+          }
+        : undefined,
     }),
   ),
 );

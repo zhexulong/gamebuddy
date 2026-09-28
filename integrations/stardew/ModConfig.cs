@@ -45,6 +45,13 @@ public sealed class ModConfig
     /// </summary>
     public SleepModalProbeConfig? SleepModalProbe { get; init; }
 
+    /// <summary>
+    /// Opt-in, evidence-only M2 cross-day lifecycle
+    /// (<c>single_player_sleep_and_advance_day</c>). Not a wire action and never
+    /// part of a user profile.
+    /// </summary>
+    public SinglePlayerSleepLifecycleConfig? SleepLifecycle { get; init; }
+
     /// <summary>Formal host-side attachment authority. Disabled unless explicitly configured.</summary>
     public HostFarmhandProvisioningConfig? HostFarmhandProvisioning { get; init; }
 
