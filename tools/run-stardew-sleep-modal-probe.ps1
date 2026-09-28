@@ -7,7 +7,7 @@ param(
     [Parameter(Mandatory = $true)][string]$TemplateName,
     [Parameter(Mandatory = $true)][string]$ReleaseDir,
     [Parameter(Mandatory = $true)][string]$EvidencePath,
-    [Parameter(Mandatory = $true)][ValidateSet('p1_readonly', 'p2_answer', 'lifecycle')][string]$Mode,
+    [Parameter(Mandatory = $true)][ValidateSet('p1_readonly', 'p2_answer', 'lifecycle', 'pass_out_lifecycle')][string]$Mode,
     [string]$WindowMode = "hidden",
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 150
 )
@@ -75,6 +75,10 @@ try {
     )
     if ($Mode -eq 'lifecycle') {
         $prepareArgs += @('--action', 'sleep_lifecycle', '--sleep-lifecycle-evidence', $evidenceFull)
+    } elseif ($Mode -eq 'pass_out_lifecycle') {
+        # The pass-out variant establishes only a low-stamina precondition; the
+        # native gate starts the pass-out itself and the lifecycle only observes.
+        $prepareArgs += @('--action', 'sleep_pass_out_lifecycle', '--sleep-lifecycle-evidence', $evidenceFull)
     } else {
         $prepareArgs += @('--action', 'sleep_modal_probe', '--sleep-modal-probe-mode', $Mode, '--sleep-modal-probe-evidence', $evidenceFull)
     }
@@ -113,7 +117,7 @@ try {
     }
 
     $evidence = Get-Content -Raw -LiteralPath $evidenceFull | ConvertFrom-Json
-    $schema = if ($Mode -eq 'lifecycle') { 'gamebuddy-sleep-lifecycle/v1' } else { 'gamebuddy-sleep-modal-probe/v1' }
+    $schema = if ($Mode -in @('lifecycle', 'pass_out_lifecycle')) { 'gamebuddy-sleep-lifecycle/v1' } else { 'gamebuddy-sleep-modal-probe/v1' }
     if ($null -eq $evidence -or $evidence.schema -ne $schema) {
         throw "Sleep-modal probe evidence schema is invalid."
     }
