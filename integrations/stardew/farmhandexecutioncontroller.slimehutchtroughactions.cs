@@ -67,9 +67,14 @@ internal sealed partial class ExecutionManager
         if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty", null);
 
-        if (ResolveSlimeHutchTrough(targetX, targetY) is not { } hutch
-            || !string.Equals(BuildSlimeHutchTroughTargetId(hutch, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_not_current_location", $"target={targetX},{targetY}");
+        if (ResolveSlimeHutchTrough(targetX, targetY) is not { } hutch)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_not_current_location", $"location={Game1.player.currentLocation?.NameOrUniqueName};target={targetX},{targetY}");
+        // Split from the location rejection on purpose: a wrong location and a stale
+        // plan are different Agent decisions (re-plan the route vs re-derive the
+        // target), so they must not share one reasonCode. This mirrors ship_item's
+        // `farm_required` / `shipping_bin_target_changed` split.
+        if (!string.Equals(BuildSlimeHutchTroughTargetId(hutch, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_trough_target_changed", $"target={targetX},{targetY};expected={expectedTargetId}");
         // The spot is read live after the native call too, so the postcondition is
         // this execution's own before/after observation rather than a Mod-authored
         // claim.
