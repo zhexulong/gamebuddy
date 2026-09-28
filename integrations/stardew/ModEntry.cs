@@ -1325,20 +1325,53 @@ public sealed partial class ModEntry : Mod
                     .FirstOrDefault();
                 if (fullBagSelected is null || fullBagSelected.Value.Value.crop is null)
                     throw new InvalidOperationException("fixture_native_local_ready_grab_crop_missing");
+                // Resolve the Farm warp-in the actor will actually use, so the kept crop can be
+                // anchored near it rather than at the field's first scan-order tile.
+                StardewValley.Warp? fullBagFarmWarp = player.currentLocation is StardewValley.Locations.FarmHouse fullBagFarmHouse
+                    ? fullBagFarmHouse.warps.FirstOrDefault(warp => !warp.npcOnly.Value
+                        && string.Equals(warp.TargetName, farm.Name, StringComparison.Ordinal)
+                        && warp.TargetX >= 0 && warp.TargetY >= 0)
+                    : null;
+                if (fullBagFarmWarp is null)
+                    throw new InvalidOperationException("fixture_native_local_harvest_full_bag_farm_warp_missing");
+                Vector2 farmArrival = new(fullBagFarmWarp.TargetX, fullBagFarmWarp.TargetY);
                 StardewValley.Item fullBagHarvestItem;
                 try { fullBagHarvestItem = ItemRegistry.Create(fullBagSelected.Value.Value.crop.indexOfHarvest.Value, 1); }
                 catch (Exception) { throw new InvalidOperationException("fixture_native_local_harvest_item_missing"); }
 
-                // Keep exactly ONE ready crop: a dense field makes the single adjacent
-                // harvest target ambiguous, and `harvest_crop` binds one exact target.
+                // Keep exactly ONE ready crop, and keep the one CLOSEST to the farm's
+                // FarmHouse warp-in. Scan order picks the top-left tile of a ~1700-crop
+                // field, which can sit ~60 tiles from where the actor arrives; the runner's
+                // bounded approach search cannot cross that, so it walks the whole map and
+                // fails. Anchoring on the arrival neighbourhood makes the single ready crop
+                // reachable without a long march, and `harvest_crop` still binds one exact
+                // target because the field is reduced to one.
+                Vector2 fullBagArrival = farmArrival;
+                Vector2 fullBagKeep = fullBagSelected.Value.Key;
+                int fullBagBestDistance = int.MaxValue;
                 foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in farm.terrainFeatures.Pairs.ToArray())
                 {
-                    if (pair.Key == fullBagSelected.Value.Key) continue;
+                    if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt { crop: not null } readyDirt
+                        || !readyDirt.readyForHarvest()
+                        || readyDirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
+                        continue;
+                    int distance = (int)(Math.Abs(pair.Key.X - fullBagArrival.X) + Math.Abs(pair.Key.Y - fullBagArrival.Y));
+                    if (distance < fullBagBestDistance)
+                    {
+                        fullBagBestDistance = distance;
+                        fullBagKeep = pair.Key;
+                    }
+                }
+                foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in farm.terrainFeatures.Pairs.ToArray())
+                {
+                    if (pair.Key == fullBagKeep) continue;
                     if (pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } otherDirt
                         && otherDirt.readyForHarvest()
                         && otherDirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab)
                         farm.terrainFeatures.Remove(pair.Key);
                 }
+                fullBagSelected = new KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>(
+                    fullBagKeep, (StardewValley.TerrainFeatures.HoeDirt)farm.terrainFeatures[fullBagKeep]);
 
                 // Fill every backpack slot so the harvest cannot be accepted.
                 //
@@ -1370,9 +1403,14 @@ public sealed partial class ModEntry : Mod
                     || !ReferenceEquals(placedFullBagChest, fullBagChest))
                     throw new InvalidOperationException("fixture_native_local_harvest_full_bag_chest_placement_failed");
 
-                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)fullBagChestSpot.Value.StandingTile.X, (int)fullBagChestSpot.Value.StandingTile.Y, false));
+                // Deliberately NO warp here. The shipped harvest fixture also leaves the
+                // actor where the template put it (FarmHouse) and lets the runner travel to
+                // the Farm; warping directly onto a crop-adjacent tile can land in a
+                // landlocked pocket (measured live: Farm 4,13 rejected every move with
+                // no_native_path). Travel and movement stay independently receipted
+                // production steps.
                 this.nativeLocalPlayerFixtureInitialized = true;
-                this.Monitor.Log($"GameBuddy native-local-player initialized harvest inventory-full recovery precondition before bridge attachment: crop={fullBagSelected.Value.Key.X},{fullBagSelected.Value.Key.Y}; harvest_item={fullBagHarvestItem.QualifiedItemId}; backpack_full=true; chest={fullBagChest.QualifiedItemId}@{fullBagChestSpot.Value.TargetTile.X},{fullBagChestSpot.Value.TargetTile.Y}; standing={fullBagChestSpot.Value.StandingTile.X},{fullBagChestSpot.Value.StandingTile.Y}; production alone rejects, stores, and harvests.", LogLevel.Info);
+                this.Monitor.Log($"GameBuddy native-local-player initialized harvest inventory-full recovery precondition before bridge attachment: crop={fullBagSelected.Value.Key.X},{fullBagSelected.Value.Key.Y}; harvest_item={fullBagHarvestItem.QualifiedItemId}; backpack_full=true; chest={fullBagChest.QualifiedItemId}@{fullBagChestSpot.Value.TargetTile.X},{fullBagChestSpot.Value.TargetTile.Y}; actor=unwarped; production alone travels, rejects, stores, and harvests.", LogLevel.Info);
                 return;
             }
 
@@ -3352,6 +3390,13 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             trace => this.PublishBodyTrace(state, trace),
             executionJournal,
             executionScope);
+        // The profile's declared co-op night minimum governs the wire action too,
+        // so a dispatched advance_day cannot quietly become a solo night when the
+        // other player is not connected yet. This is deliberately a separate field
+        // from SleepLifecycle: that one arms the evidence-file lifecycle, and
+        // arming both would make the file lane own the actor while the dispatched
+        // action bounces off `body_owned`.
+        state.Executions.ConfigureLifecycleMinimumFarmers(this.config.AdvanceDayMinimumOnlineFarmers);
         bool saveScopeMatches = saveId == Game1.uniqueIDForThisGame.ToString();
         bool worldScopeMatches = worldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString();
         bool playerScopeMatches = playerId == localPlayer!.UniqueMultiplayerID.ToString();
