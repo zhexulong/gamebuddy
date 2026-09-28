@@ -22,7 +22,7 @@ export type IntegrationWorldScope = Readonly<{
 }>;
 
 type IntegrationActionLifecycle =
-  "published" | "experimental" | "diagnostic" | "planned";
+  "published" | "live_verified" | "experimental" | "diagnostic" | "planned";
 
 /** The common deny-by-exception policy shape. Each adapter owns its parser. */
 export type IntegrationActionPolicy = Readonly<{

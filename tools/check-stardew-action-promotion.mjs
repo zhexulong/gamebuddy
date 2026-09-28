@@ -130,13 +130,13 @@ function parseModDefinitions(source) {
   if (!body) throw new Error("mod_action_registrations_not_found");
   const definitions = [];
   for (const match of body.matchAll(
-    /Registration\("([a-z0-9_]+)", "([a-z0-9_]+)", (\d+), FarmhandActionHandlerGroup\.[A-Za-z]+(?:, FarmhandActionLifecycle\.(Published|Experimental))?\)/g,
+    /Registration\("([a-z0-9_]+)", "([a-z0-9_]+)", (\d+), FarmhandActionHandlerGroup\.[A-Za-z]+(?:, FarmhandActionLifecycle\.(Published|LiveVerified|Experimental))?\)/g,
   )) {
     definitions.push({
       actionId: match[1],
       familyId: match[2],
       identityVersion: Number(match[3]),
-      lifecycle: (match[4] ?? "Published").toLowerCase(),
+      lifecycle: (match[4] === "LiveVerified" ? "live_verified" : (match[4] ?? "published").toLowerCase()),
       kind: "execution",
     });
   }
@@ -153,7 +153,8 @@ function parseModDefinitions(source) {
       const nextMatch = body.slice(start + 1).search(/\b(E|R)\(\s*"/);
       const chunk = nextMatch >= 0 ? body.slice(start, start + 1 + nextMatch) : body.slice(start);
       const isExperimental = chunk.includes("FarmhandActionLifecycle.Experimental");
-      definitions.push({ actionId, familyId, identityVersion: 1, lifecycle: isExperimental ? "experimental" : "published", kind: "execution" });
+      const isLiveVerified = chunk.includes("FarmhandActionLifecycle.LiveVerified");
+      definitions.push({ actionId, familyId, identityVersion: 1, lifecycle: isLiveVerified ? "live_verified" : isExperimental ? "experimental" : "published", kind: "execution" });
     }
   }
   return definitions;

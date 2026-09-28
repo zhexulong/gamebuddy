@@ -628,7 +628,7 @@
          "actionId": { "$ref": "#/$defs/opaqueId" },
          "familyId": { "$ref": "#/$defs/opaqueId" },
          "identityVersion": { "type": "integer", "minimum": 1 },
-         "lifecycle": { "enum": ["published", "experimental"] },
+         "lifecycle": { "enum": ["published", "live_verified", "experimental"] },
          "kind": { "enum": ["execution", "read_only"] }
        }
     },
