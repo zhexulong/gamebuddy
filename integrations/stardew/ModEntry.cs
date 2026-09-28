@@ -839,7 +839,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -2387,6 +2387,111 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)selected.Value.StandingTile.X, (int)selected.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized crab-pot-collect precondition before bridge attachment: pot={maturePotId}@{potTile.X},{potTile.Y}; output={matureOutputId}; tile_index=714; standing={selected.Value.StandingTile.X},{selected.Value.StandingTile.Y}; production alone collects and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_water_crop_empty_can_recovery_v1")
+            {
+                // Lane G resource-depletion recovery precondition. Establishes
+                // only the declared Given: dry unwatered crops on the Farm, exactly
+                // ONE EMPTY Watering Can, and a reachable native refill tile. The
+                // chain itself is driven entirely by production actions
+                // (`equip_tool` -> `water_crop` rejected/watering_can_empty ->
+                // `refill_watering_can` -> `water_crop` on the same target).
+                //
+                // The water source is created with the SAME target-version
+                // technique the shipped `native_refill_watering_can_v1` fixture
+                // uses: write the Back-layer `WaterSource` property on a tile and
+                // let the verified `GameLocation.CanRefillWateringCanOnTile`
+                // predicate accept it. It is placed on the FARM (not the
+                // FarmHouse) so the whole chain stays in one location with the
+                // crops: `water_crop` needs the actor beside a HoeDirt crop, and
+                // `refill_watering_can` needs the actor beside the source tile, so
+                // splitting them across two maps would add a travel leg that this
+                // chain is not meant to exercise. No save XML is edited.
+                foreach (Item? ownedCan in player.Items.Where(item => item is WateringCan).ToArray())
+                    player.Items.Remove(ownedCan);
+                WateringCan emptyCan = new()
+                {
+                    WaterLeft = 0,
+                };
+                if (player.addItemToInventory(emptyCan) is not null)
+                    throw new InvalidOperationException("fixture_native_local_water_crop_empty_can_inventory_full");
+                WateringCan? suppliedEmptyCan = player.Items.OfType<WateringCan>().FirstOrDefault();
+                if (suppliedEmptyCan is null || suppliedEmptyCan.WaterLeft != 0)
+                    throw new InvalidOperationException("fixture_native_local_water_crop_empty_can_missing");
+                if (player.Items.OfType<WateringCan>().Count() != 1)
+                    throw new InvalidOperationException("fixture_native_local_water_crop_empty_can_ambiguous");
+
+                GameLocation? emptyCanSetupPreviousLocation = Game1.currentLocation;
+                try
+                {
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("SpreadDirt", null))
+                        throw new InvalidOperationException("fixture_native_spread_dirt_command_unavailable");
+                    if (!Game1.game1.parseDebugInput("SpreadSeeds 472", null))
+                        throw new InvalidOperationException("fixture_native_spread_seeds_command_unavailable");
+                }
+                finally { Game1.currentLocation = emptyCanSetupPreviousLocation; }
+
+                int emptyCanDryCropCount = farm.terrainFeatures.Pairs.Count(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
+                    && dirt.needsWatering() && !dirt.isWatered());
+                if (emptyCanDryCropCount == 0)
+                    throw new InvalidOperationException("fixture_native_local_water_crop_empty_can_unwatered_crop_missing");
+                // SpreadDirt+SpreadSeeds fills the whole farm (~1700 crops). Keep exactly
+                // ONE dry crop and remove the rest: `water_crop` binds the single adjacent
+                // unwatered crop target, and standing inside a dense field makes that
+                // binding ambiguous. This is fixture-only world setup (the same class as
+                // the shipped SpreadDirt/SetupBigFarm initializers), never an action call.
+                Vector2? keptCrop = null;
+                foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in farm.terrainFeatures.Pairs.ToArray())
+                {
+                    if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt { crop: not null } dryDirt
+                        || !dryDirt.needsWatering() || dryDirt.isWatered())
+                        continue;
+                    if (keptCrop is null)
+                    {
+                        keptCrop = pair.Key;
+                        continue;
+                    }
+                    farm.terrainFeatures.Remove(pair.Key);
+                }
+                if (keptCrop is null)
+                    throw new InvalidOperationException("fixture_native_local_water_crop_empty_can_unwatered_crop_missing");
+                emptyCanDryCropCount = farm.terrainFeatures.Pairs.Count(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
+                    && dirt.needsWatering() && !dirt.isWatered());
+                if (emptyCanDryCropCount != 1)
+                    throw new InvalidOperationException("fixture_native_local_water_crop_empty_can_crop_count_unexpected");
+
+                Vector2? sourceTile = null;
+                xTile.Layers.Layer? farmBackLayer = farm.map.GetLayer("Back");
+                Vector2 onlyCropTile = keptCrop.Value;
+                foreach (Vector2 candidate in new[]
+                {
+                    new Vector2(onlyCropTile.X, onlyCropTile.Y + 1), new Vector2(onlyCropTile.X, onlyCropTile.Y - 1),
+                    new Vector2(onlyCropTile.X + 1, onlyCropTile.Y), new Vector2(onlyCropTile.X - 1, onlyCropTile.Y),
+                })
+                {
+                    if (sourceTile is not null) break;
+                    if (farm.terrainFeatures.ContainsKey(candidate)) continue;
+                    if (farm.objects.ContainsKey(candidate)) continue;
+                    if (!farm.isTileOnMap(candidate) || !farm.isTilePassable(candidate)) continue;
+                    if (farm.IsTileOccupiedBy(candidate, CollisionMask.All, CollisionMask.None, useFarmerTile: false)) continue;
+                    if (farmBackLayer?.Tiles[(int)candidate.X, (int)candidate.Y] is null) continue;
+                    farmBackLayer.Tiles[(int)candidate.X, (int)candidate.Y].Properties["WaterSource"] = "GameBuddyNativeLocalFixture";
+                    if (!farm.CanRefillWateringCanOnTile((int)candidate.X, (int)candidate.Y))
+                    {
+                        farmBackLayer.Tiles[(int)candidate.X, (int)candidate.Y].Properties.Remove("WaterSource");
+                        continue;
+                    }
+                    sourceTile = candidate;
+                }
+                if (sourceTile is null)
+                    throw new InvalidOperationException("fixture_native_local_water_crop_empty_can_source_missing");
+
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)sourceTile.Value.X, (int)sourceTile.Value.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized water-crop empty-can recovery precondition before bridge attachment: can_water=0; can_max={suppliedEmptyCan.waterCanMax}; unwatered_crop_count={emptyCanDryCropCount}; farm_water_source={(int)sourceTile.Value.X},{(int)sourceTile.Value.Y}; production alone equips, rejects, refills, and waters.", LogLevel.Info);
                 return;
             }
 
