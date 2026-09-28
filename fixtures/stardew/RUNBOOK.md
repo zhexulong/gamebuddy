@@ -515,6 +515,32 @@ an alternate action runtime.
 23. The runner must restore the exact profile transaction. Then remove the
    working save through `prepare-stardew-action-fixture.ps1 -Cleanup`; verify
    no backup, lock, SMAPI/Stardew process, or working save remains.
+24. `water_crop_resource_recovery_chain` and
+   `harvest_inventory_full_recovery_chain` have met this lane's target-version
+   live recovery-chain closure (2026-09-28), extending item 23's
+   breakpoint → recovery → retry shape to two more §1.4 modes. **Resource
+   depletion**: `rejected/watering_can_empty` (rev 2) →
+   `succeeded/watering_can_refilled` (rev 3, water `0→40` of `40`) →
+   `succeeded/crop_watered` (rev 4, same crop target, `before_watered=false` →
+   `after_watered=true`, water `40→39`, stamina `270→268`). **Container full**:
+   `rejected/inventory_full` (rev 19) → `succeeded/chest_stored` (rev 20) →
+   `succeeded/crop_harvested` (rev 21, same crop target, inventory gained, crop
+   target gone). Both chains showed three terminals on one journal with strictly
+   advancing revisions and distinct execution ids, and both profiles restored
+   with backup/lock and working save removed and no Stardew/SMAPI process left.
+   Two real defects were found by these live runs and are worth remembering:
+   (a) the container-full runner validated target ids against an invented
+   `harvest_` prefix while the Mod emits `crop_<hex16>`, so **every** real target
+   failed validation and the actor circled the map for 152 waypoints — a test now
+   pins the accepted prefix against the Mod source, because an offline mock
+   shares the runner's own regex and cannot catch that drift; and (b) the
+   approach search must be anchored on the crop target, not on the moving actor's
+   tile (a self-centred ring re-centres each step and never tries the tiles that
+   reach both targets), and a usable chain position requires the crop AND the
+   chest in reach, since settling on a crop-only tile strands the recovery step.
+   These are native-local shared mechanics AND recovery-chain evidence only —
+   never Farmhand, HostAutomation, Portfolio, publication, release, or
+   save/reopen evidence.
 Current native-local validation record: `move_to_tile`, `till_soil`,
 `equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
 `harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
