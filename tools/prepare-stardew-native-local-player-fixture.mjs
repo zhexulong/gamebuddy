@@ -14,6 +14,15 @@ console.log(
       action: values.get("--action"),
       binding: JSON.parse(await readFile(required(values, "--binding-path"), "utf8")),
       stardewSaveRoot: values.get("--stardew-save-root"),
+      sleepModalProbe: values.has("--sleep-modal-probe-mode")
+        ? {
+            Enable: true,
+            Mode: required(values, "--sleep-modal-probe-mode"),
+            EvidencePath: required(values, "--sleep-modal-probe-evidence"),
+            TimeoutSeconds: 60,
+            SettleFrameBudget: 240,
+          }
+        : undefined,
     }),
   ),
 );

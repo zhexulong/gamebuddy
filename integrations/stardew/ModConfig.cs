@@ -39,6 +39,12 @@ public sealed class ModConfig
     /// </summary>
     public FarmhandProvisioningProbeConfig? FarmhandProvisioningProbe { get; init; }
 
+    /// <summary>
+    /// Opt-in, evidence-only M2 sleep-modal probe (design/tasks/active/
+    /// loop-m2-cross-day-seam-decision.md §11.2). Never part of a user profile.
+    /// </summary>
+    public SleepModalProbeConfig? SleepModalProbe { get; init; }
+
     /// <summary>Formal host-side attachment authority. Disabled unless explicitly configured.</summary>
     public HostFarmhandProvisioningConfig? HostFarmhandProvisioning { get; init; }
 

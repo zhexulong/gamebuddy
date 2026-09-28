@@ -83,6 +83,8 @@ public sealed partial class ModEntry : Mod
     private HostFarmhandProvisioner? hostFarmhandProvisioner;
     private FarmhandProvisioner? farmhandProvisioner;
     private FarmhandProvisioningProbe? provisioningProbe;
+    private SleepModalProbe? sleepModalProbe;
+    private bool sleepModalProbeRejected;
     private bool embodimentInitialized;
     private bool hostRoleConfigured;
     private bool provisioningConfigurationRejected;
@@ -262,6 +264,16 @@ public sealed partial class ModEntry : Mod
             this.Monitor.Log(this.config.NativeLocalPlayerFixture.Bootstrap is { Enable: true }
                 ? "GameBuddy native-local-player fixture bootstrap armed: target-version new-game creation will run at title screen and bridge remains closed until native SaveLoaded records its slot/scope."
                 : "GameBuddy native-local-player fixture armed for its explicit observed native save slot.", LogLevel.Info);
+            if (this.config.SleepModalProbe?.Enable == true)
+            {
+                if (this.config.SleepModalProbe is not { IsValid: true })
+                {
+                    this.sleepModalProbeRejected = true;
+                    this.Monitor.Log("GameBuddy rejected the M2 sleep-modal probe: an absolute evidence path and mode p1_readonly/p2_answer are required.", LogLevel.Error);
+                    return;
+                }
+                this.sleepModalProbe = SleepModalProbe.TryStart(this.Monitor, this.config.SleepModalProbe);
+            }
             return;
         }
         bool hostConfigured = this.config.HostFarmhandProvisioning?.Enable == true;
@@ -2932,6 +2944,8 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             this.ClearState(pendingTeardownState, "body_program_teardown_drain");
             return;
         }
+        if (this.sleepModalProbeRejected)
+            return;
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
             this.TryInitializeNativeLocalPlayerFixture();
@@ -2939,6 +2953,15 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 return;
             if (!this.nativeLocalPlayerFixtureInitialized)
                 return;
+            // The M2 sleep-modal probe owns the actor's route and the (P2)
+            // answer; once the fixture scope is established it must be the only
+            // body owner, so it is consulted before any bridge work.
+            if (this.sleepModalProbe is not null)
+            {
+                if (this.sleepModalProbe.Update())
+                    this.sleepModalProbe = null;
+                return;
+            }
             this.TryInitializeEmbodiment();
             if (!this.IsConfiguredNativeLocalPlayer(out _, out _))
                 return;

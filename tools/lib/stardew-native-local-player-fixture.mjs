@@ -119,6 +119,10 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
       actions,
       options.binding,
     );
+    // Opt-in evidence-only probe block. It is written only when the caller
+    // supplies it, so ordinary action runs keep an unchanged config shape.
+    if (options.sleepModalProbe !== undefined)
+      configured.SleepModalProbe = options.sleepModalProbe;
     await writeJson(context.configPath, configured);
     await deployBundle(context);
     await verifyNativeLocalPlayerFixture({ ...options, ...context });
@@ -214,6 +218,15 @@ export async function verifyNativeLocalPlayerFixture(options) {
     throw new Error("native_local_fixture_topology_not_isolated");
   if (config.ActionPolicyVersion !== 0 || JSON.stringify(config.EnabledActions) !== JSON.stringify(actions))
     throw new Error("native_local_fixture_action_policy_invalid");
+  if (options.sleepModalProbe !== undefined) {
+    const probe = config.SleepModalProbe;
+    if (
+      probe?.Enable !== true ||
+      probe.Mode !== options.sleepModalProbe.Mode ||
+      probe.EvidencePath !== options.sleepModalProbe.EvidencePath
+    )
+      throw new Error("native_local_fixture_config_invalid");
+  }
   assertBridgeConfig(config);
   for (const name of BUNDLE_FILES)
     if (!(await exists(join(context.modRoot, name)))) throw new Error(`native_local_fixture_bundle_missing:${name}`);
@@ -311,6 +324,9 @@ function assertBackupName(value) {
 }
 export function fixtureActions(action) {
   if (action === undefined || action === "move_to_tile") return ["move_to_tile"];
+  // The M2 sleep-modal probe owns the actor's route itself (native pathfind to
+  // the bed) and reads the game-owned modal; it needs no Host action surface.
+  if (action === "sleep_modal_probe") return ["move_to_tile"];
   if (action === "navigation_mutation")
     return ["inspect_world_map", "find_destination", "navigate_to_destination"];
   if (action === "equip_tool") return ["equip_tool"];
