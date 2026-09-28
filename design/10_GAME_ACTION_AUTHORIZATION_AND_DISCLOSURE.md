@@ -110,6 +110,17 @@ experimental  →  live_verified  →  published
 - `live_verified` 只断言“这个 action 在目标版本上真实跑过并产生了受验证的原生结果”。它**不**断言 contract、BDD、取消/deadline/watchdog、幂等/重放或迁移登记的完整性。
 - `published` 所要求的独立审查针对 action 的**发布就绪性**，不是体验质量验收。live run 发现的体验类问题记入审计面并跟进，不阻止可见。
 
+#### 3.1.2 如何取得 `live_verified`
+
+进入 `live_verified` 需要该 action 自己的原生 live runner 与 fixture 场景。具体机制（已在 Stardew 实现）：
+
+1. **Runner** —— `tools/run-stardew-native-local-player-<action>-smoke.mjs`，复用共享 harness（`tools/lib/stardew-native-smoke-harness-v1.mjs`）做连接、dispatch、terminal 等待与 teardown，只把 action 特有的目标选择、前置与 postcondition 断言留在 runner 内。
+2. **注册** —— 在 `tools/stardew-action-gate-descriptors.mjs` 声明 runner 与 terminal reason code。已发布动作进 `STARDEW_PUBLISHED_ACTION_GATES`；`experimental` 动作进 `STARDEW_EXPERIMENTAL_ACTION_RUNNERS`（该表仅用于解析 runner，**不授予能力、不改变 lifecycle、也不构成发布或成功主张**）。
+3. **fixture** —— `tools/lib/stardew-native-local-player-fixture.mjs` 的 action set 与 scenario；Mod 侧 `ModEntry.TryInitializeNativeLocalPlayerFixtureScenario` 只提供该 action 真的需要的世界前置（纯 actor 动作可以一个前置都不需要）。
+4. **通过** —— runner 返回 `state: "passed"` 且带真实 native receipt 与 fresh postcondition，才写入 `live_verified`。
+
+该路径与派生的 `requiredLiveTopology` 配合：`single_player_native_companion` 的动作跑到单机 live 即可；`shared_world_multiplayer` 的动作必须跑多人 live。
+
 ### 3.2 User Policy
 
 `User Policy` 是玩家在 App/Integration 控制面表达的长期偏好。它绑定：

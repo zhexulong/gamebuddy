@@ -446,6 +446,18 @@ piece 0 = `我先看看农场现在什么情况。`（3565 ms）—— 工作短
 
 行动：做真实 live run 前确认游戏进程与 fixture 写入均已安静。
 
+#### 5.4.1 第二次实例：并发 harness 真的拦掉了一次 emote live run
+
+2026-09-29 跑 `express_emote` 原生 live smoke 时再次碰上同一问题，而这次证据是决定性的：
+
+- 本次 run 以 `pipe_readiness failed`（`Native-local SMAPI process exited before bridge smoke`）结束，未产出 action result；
+- 同时间段的 SMAPI 日志里出现 `native_local_chain_breakpoint_craft_1790620930458_0` 与 `native_local_chain_recover_store_1790620930547_1` 两条收据 —— 这两个 requestId 前缀只由 Lane G 的 craft partial-recovery chain runner 产生（`tools/run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs`），**不属于 emote 场景**；
+- 紧接提交 `82e6e49 feat(stardew): prove the Lane G partial-completion recovery chain` 落盘，时间窗口完全重合。
+
+所以 5.4 里“很可能”这个限定现在可以收紧：**已证实存在另一条 lane 的 native-local harness 在同一时间使用同一个游戏/bridge**，它接管了本次 bridge 导致 emote run 无法就绪。注意这**不是 emote 代码缺陷**：同一提交的 fixture-action 与 scenario 解析已独立验证为 `["express_emote","face_direction"]` / `native_express_emote_v1`，且真机上部署的 DLL 确实包含 `native_express_emote_v1`。
+
+**实践要求（已用 B5.2 的方法）：emote/facing 与其他 native-local action 一样，必须独占运行。** 并发时 harness 之间不互相隔离，后到的会抢走 bridge。
+
 ### 5.5 观测缺口（妨碍 TTFB 独立归因）
 
 runner 日志**没有** Pi `message_start`、首个 text delta、thinking 完成、bridge 请求与回执的时间戳，所以单从 runner 日志**无法**独立拆出首片 14s 内各阶段的占比（§5.2 的拆分来自 session transcript，而非 runner 产物）。应当补一个事件时间戳 seam，把 turn 入场、首个 text delta、首个完整句、bridge 请求、回执都记下来 —— 否则每次 TTFB 变化都只能靠 transcript 侧查。
