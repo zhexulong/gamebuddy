@@ -1,0 +1,84 @@
+{
+  "schema": "gamebuddy-stardew-native-local-live-run-evidence/v1",
+  "action": "express_emote",
+  "secondaryAction": "face_direction",
+  "fixtureScenario": "native_express_emote_v1",
+  "saveName": "GameBuddyFixtureStable_445936768",
+  "channel": "tools/run-stardew-native-local-player-move-fixture.ps1 -Action express_emote",
+  "resolvedRunner": "run-stardew-native-local-player-expression-smoke.mjs",
+  "requiredLiveTopology": "single_player_native_companion",
+  "run": {
+    "state": "passed",
+    "topology": "native_local_player_fixture",
+    "reasonCode": "emote_started",
+    "emote": {
+      "requested": "happy",
+      "reasonCode": "emote_started",
+      "evidence": {
+        "emote": "happy",
+        "nativeDispatched": true
+      }
+    },
+    "facing": {
+      "requested": "left",
+      "expectedFacingValue": 3,
+      "reasonCode": "actor_facing_matches",
+      "evidence": {
+        "direction": "left"
+      }
+    },
+    "executions": {
+      "emote": "c60e38eb79a544b4b439d3ee56898a73",
+      "facing": "0cc6b1ae89f14dffb311fe5a17529d4e"
+    },
+    "receipt": {
+      "state": "succeeded",
+      "reasonCode": "emote_started",
+      "revision": 1,
+      "hasEvidence": true
+    },
+    "facingReceipt": {
+      "state": "succeeded",
+      "reasonCode": "actor_facing_matches",
+      "revision": 2,
+      "hasEvidence": true
+    },
+    "before": { "revision": 0, "actionable": true, "capabilityCount": 4, "activeExecution": null },
+    "afterEmote": { "revision": 1, "actionable": true, "capabilityCount": 4, "activeExecution": null },
+    "afterFacing": { "revision": 2, "actionable": true, "capabilityCount": 4, "activeExecution": null },
+    "trace": [
+      {
+        "phase": "emote",
+        "action": "express_emote",
+        "args": { "emote": "happy" },
+        "requestId": "native_local_expression_emote_1790621588464_0",
+        "executionId": "c60e38eb79a544b4b439d3ee56898a73",
+        "receipt": { "state": "succeeded", "reasonCode": "emote_started", "revision": 1, "hasEvidence": true }
+      },
+      {
+        "phase": "facing",
+        "action": "face_direction",
+        "args": { "direction": "left" },
+        "requestId": "native_local_expression_facing_1790621588554_1",
+        "executionId": "0cc6b1ae89f14dffb311fe5a17529d4e",
+        "receipt": { "state": "succeeded", "reasonCode": "actor_facing_matches", "revision": 2, "hasEvidence": true }
+      }
+    ],
+    "durationMs": 186
+  },
+  "whatThisProves": [
+    "The Mod really dispatched Farmer.doEmote(happy) on the game thread: the receipt carries nativeDispatched=true, which the Mod only writes after it wakes to isEmoting.",
+    "The Mod really dispatched Farmer.faceDirection(left): the receipt reasonCode actor_facing_matches is only emitted after the native FacingDirection equals the requested value.",
+    "Both are distinct native executions (separate executionIds), and revisions advance monotonically 0 -> 1 -> 2 with no activeExecution left behind.",
+    "The player-visible effect (the emote bubble over the companion's head) is the same one a human observed under the retired SDW-LIVE-COOP-01 scenario."
+  ],
+  "whatThisDoesNotProve": [
+    "No cancellation, deadline, watchdog, replay or migration coverage for these two actions.",
+    "No multiplayer coverage. Both actions are mp-insensitive / single_player_native_companion, so single-player live is the topology they require.",
+    "No visual confirmation was captured in this run; the receipt is the authority here."
+  ],
+  "history": {
+    "priorLiveRun": "tools/run-stardew-companion-live-coop-01.mjs (SDW-LIVE-COOP-01, commit 4619f52, 2026-09-09) dispatched express_emote: happy and paused 2.5s for a human to watch the bubble. That runner was deleted in 089c9c8 as an incidental part of an unrelated multiplayer-sensitivity cleanup, which is how the action lost its evidence carrier while staying experimental.",
+    "staleCharacterization": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/target-version-evidence/emote-facing-characterization.json previously claimed `no_real_game_thread_harness_exists`, true when written (2026-09-09) but false from 2026-09-26 when the shared harness landed."
+  }
+}
