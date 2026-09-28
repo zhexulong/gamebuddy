@@ -196,6 +196,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // full-backpack fixture. Not a new action; it grants no capability.
   harvest_inventory_full_recovery_chain:
     "run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs",
+  // Lane G low-stamina recovery-chain harness: the fixture sets stamina low and the
+  // chain reads the drop from the first till receipt, eats, then tills again. Low
+  // stamina is a fact, not a reasonCode, so this chain is fact-triggered. Not a new
+  // action; it grants no capability.
+  stamina_recovery_chain: "run-stardew-native-local-player-stamina-recovery-chain-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

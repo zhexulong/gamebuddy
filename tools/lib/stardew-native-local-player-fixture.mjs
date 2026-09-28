@@ -367,6 +367,12 @@ export function fixtureActions(action) {
   // succeeded on the SAME crop target within one native-local session.
   if (action === "harvest_inventory_full_recovery_chain")
     return ["move_to_tile", "travel", "harvest_crop", "chest_store"];
+  // Lane G low-stamina recovery chain: the fixture sets stamina low (above the native
+  // pass-out floor) and the chain reads the drop from the first receipt, eats, then
+  // tills a second tile. Low stamina is NOT a reasonCode, so this chain is
+  // fact-triggered rather than rejection-triggered.
+  if (action === "stamina_recovery_chain")
+    return ["move_to_tile", "travel", "equip_tool", "till_soil", "use_item"];
   // Ladder 3: Jodi's Request — a real Spring-19 mail quest asking for a fresh
   // cauliflower. The fixture only supplies the player with a Hoe, a filled
   // Watering Can and cauliflower seeds; the Agent plans the whole farming
@@ -508,6 +514,11 @@ export function fixtureScenario(actions, action) {
   // the `harvest_crop` check below would select the ordinary ready-crop scenario and
   // the chain would have no breakpoint.
   if (action === "harvest_inventory_full_recovery_chain") return "native_harvest_crop_inventory_full_recovery_v1";
+  // Lane G low-stamina recovery chain: the same till_soil action set plus use_item,
+  // but the fixture must set LOW stamina. Without this override the `till_soil` check
+  // below would select the ordinary till-soil scenario and the chain would have no
+  // low-stamina breakpoint.
+  if (action === "stamina_recovery_chain") return "native_stamina_recovery_v1";
   // The lifecycle action owns its own route and preconditions; it needs no
   // fixture scenario beyond the ordinary move-only world.
   if (actions.includes("advance_day")) return "";
