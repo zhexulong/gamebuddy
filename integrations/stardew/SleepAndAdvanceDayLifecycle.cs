@@ -52,6 +52,14 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// </summary>
     private const int SaveBoundaryFrameBudget = 300;
 
+    /// <summary>
+    /// Bounds how long the lifecycle may wait to become eligible. The operational
+    /// deadline only starts at eligibility, so a lifecycle that never becomes
+    /// eligible (actor passed out, menu open, wrong time) would otherwise spin
+    /// forever and be misreported as a generic timeout.
+    /// </summary>
+    private const int EligibilityFrameBudget = 36000;
+
     private readonly int minimumOnlineFarmers;
 
     private readonly IMonitor monitor;
@@ -66,6 +74,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private Phase phase = Phase.AwaitingEligibility;
     private string lastEligibilityReason = string.Empty;
     private int eligibilityWaitFrames;
+    private PathFindController? installedController;
+    private bool yieldedToPassOut;
+    private string enteredVia = "native_sleep_prompt";
     private bool arrivalDispatched;
     private bool answerDispatched;
     private bool savedTraceLogged;
@@ -75,6 +86,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private int ticks;
     private int dayBefore;
     private int daysBefore;
+    private bool dayBaselineCaptured;
     private bool multiPlayer;
     private bool savedObserved;
     private bool savingObserved;
@@ -90,6 +102,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
         WalkingToBed,
         AwaitingModal,
         AwaitingSettlement,
+        AwaitingPassOutPipeline,
         AwaitingReadyBarrier,
         AwaitingSave,
         AwaitingDayStart,
@@ -188,6 +201,24 @@ internal sealed class SleepAndAdvanceDayLifecycle
                     {
                         this.monitor.Log($"GameBuddy sleep lifecycle still waiting: {eligibilityReason}", LogLevel.Info);
                     }
+                    // The status budget starts at eligibility, so a lifecycle that
+                    // never becomes eligible has no deadline at all and would spin
+                    // forever. Bound that separately and report the REAL reason:
+                    // "we never slept because the actor was passed out / a menu
+                    // was open" is not a generic timeout and must not be reported
+                    // as one.
+                    if (this.eligibilityWaitFrames >= EligibilityFrameBudget)
+                    {
+                        this.Finish(
+                            "blocked",
+                            $"never_eligible:{eligibilityReason}",
+                            new Dictionary<string, object?>
+                            {
+                                ["topology"] = this.Topology(),
+                                ["eligibilityReason"] = eligibilityReason,
+                            });
+                        return true;
+                    }
                     return false;
                 }
                 this.trace.Add($"eligible={eligibilityReason};topology={this.Topology()}");
@@ -199,6 +230,16 @@ internal sealed class SleepAndAdvanceDayLifecycle
                 return false;
 
             case Phase.WalkingToBed:
+                // Pass-out is an AUTOMATIC native gate, not an action this
+                // lifecycle may start or race. Game1.cs:6452 fires
+                // `player.startToPassOut()` when `timeOfDay >= 2600 ||
+                // player.stamina <= -15f`, and Farmer.performPassOut()
+                // (Farmer.cs:5766-5782) answers by calling
+                // `completelyStopAnimatingOrDoingAction()` + `animateOnce(293)`.
+                // If THAT happened, continuing to drive PathFindController here
+                // would fight the native animation for the same actor.
+                if (this.YieldToNativePassOut())
+                    return false;
                 if (this.WalkToBed())
                     this.phase = Phase.AwaitingModal;
                 return false;
@@ -210,8 +251,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
                 // ReadyCheckDialog, so the no-question form does not exist.
                 if (Game1.activeClickableMenu is not DialogueBox)
                     return false;
-                this.dayBefore = Game1.Date.TotalDays;
-                this.daysBefore = (int)Game1.stats.DaysPlayed;
+                this.CaptureDayBaseline();
                 this.trace.Add(
                     $"modal_observed;menu={Game1.activeClickableMenu.GetType().Name};dialogueUp={Game1.dialogueUp};"
                         + $"canMove={Game1.player.CanMove};hasMoved={Game1.player.hasMoved};"
@@ -221,6 +261,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
 
             case Phase.AwaitingSettlement:
                 return this.AnswerSleepPrompt();
+
+            case Phase.AwaitingPassOutPipeline:
+                return this.AwaitForPassOutPipeline();
 
             case Phase.AwaitingReadyBarrier:
                 return this.WaitForReadyBarrier();
@@ -278,6 +321,117 @@ internal sealed class SleepAndAdvanceDayLifecycle
     }
 
     /// <summary>
+    /// Return true when the native pass-out path has taken the actor over.
+    ///
+    /// Pass-out is an AUTOMATIC native gate (Game1.cs:6452), so the lifecycle
+    /// must yield rather than compete for the actor. Every signal here is a
+    /// public native fact:
+    ///  - <c>Farmer.passedOut</c>;
+    ///  - <c>FarmerSprite.isPassingOut()</c>, which is what
+    ///    <c>Farmer.performPassOut()</c> (Farmer.cs:5766-5782) installs via
+    ///    <c>completelyStopAnimatingOrDoingAction()</c> + <c>animateOnce(293)</c>;
+    ///  - the non-cancelable <see cref="ReadyCheckDialog"/> that
+    ///    <c>Game1.PassOutNewDay()</c> (Game1.cs:10357-10360) installs in a
+    ///    shared world.
+    ///
+    /// <c>CanMove</c> alone is deliberately NOT a signal: it is also false for
+    /// benign reasons, and a false yield would misreport a healthy night.
+    /// </summary>
+    private bool YieldToNativePassOut()
+    {
+        bool passedOut = Game1.player.passedOut;
+        bool spritePassingOut = Game1.player.FarmerSprite is { } sprite && sprite.isPassingOut();
+        bool nonCancelableBarrier = Game1.activeClickableMenu is ReadyCheckDialog { } barrier
+            && !barrier.isCancelable();
+        if (!IsPassOutHazard(passedOut, spritePassingOut, nonCancelableBarrier))
+            return false;
+
+        if (this.yieldedToPassOut)
+            return true;
+
+        this.yieldedToPassOut = true;
+        this.enteredVia = "native_pass_out";
+        // The native path owns the actor from here. Stop driving it: the path
+        // finder this lifecycle installed must not keep issuing moves against
+        // the pass-out animation.
+        if (this.installedController is not null && ReferenceEquals(Game1.player.controller, this.installedController))
+            Game1.player.controller = null;
+        this.CaptureDayBaseline();
+        this.trace.Add(
+            $"yielded_to_native_pass_out;passedOut={passedOut};spritePassingOut={spritePassingOut};"
+                + $"nonCancelableBarrier={nonCancelableBarrier};day_before={this.dayBefore}");
+        this.monitor.Log(
+            "GameBuddy sleep lifecycle yielded to the native pass-out path; the lifecycle will only observe from here.",
+            LogLevel.Info);
+        this.phase = Phase.AwaitingPassOutPipeline;
+        return true;
+    }
+
+    /// <summary>
+    /// The pass-out hazard predicate, separated from the live game so it can be
+    /// pinned without a running instance.
+    ///
+    /// Every signal is a distinct native fact, and each is deliberately narrow:
+    ///  - <paramref name="passedOut"/>: <c>Farmer.passedOut</c>, set by the native
+    ///    pass-out pipeline (Game1.cs:10351) and by <c>NewDay</c> (Game1.cs:10380);
+    ///  - <paramref name="spritePassingOut"/>: the <c>animateOnce(293)</c> frame
+    ///    that <c>Farmer.performPassOut()</c> installs (Farmer.cs:5766-5782);
+    ///  - <paramref name="nonCancelableBarrier"/>: the non-cancelable
+    ///    <c>ReadyCheckDialog("sleep", allowCancel: false)</c> that
+    ///    <c>Game1.PassOutNewDay()</c> installs in a shared world
+    ///    (Game1.cs:10357-10360).
+    ///
+    /// <c>CanMove</c> is deliberately NOT part of this predicate. It is false for
+    /// many benign reasons, and yielding on it would abandon a healthy night.
+    /// </summary>
+    internal static bool IsPassOutHazard(bool passedOut, bool spritePassingOut, bool nonCancelableBarrier)
+        => passedOut || spritePassingOut || nonCancelableBarrier;
+
+    /// <summary>
+    /// Observe what the native pass-out path does next without ever driving it.
+    /// In a shared world it installs the ready barrier; in single player
+    /// <c>Game1.PassOutNewDay()</c> (Game1.cs:10344-10347) calls
+    /// <c>NewDay(0f)</c> itself, so the day rollover is simply observed.
+    /// </summary>
+    private bool AwaitForPassOutPipeline()
+    {
+        if (this.multiPlayer && Game1.activeClickableMenu is ReadyCheckDialog { } barrier)
+        {
+            this.readyCheckObserved = true;
+            this.trace.Add(
+                $"pass_out_ready_barrier_observed;cancelable={barrier.isCancelable()};"
+                    + $"ready={this.ReadyCount()}/{this.RequiredCount()}");
+            this.phase = Phase.AwaitingReadyBarrier;
+            return false;
+        }
+
+        // Single player (and the tail of the shared-world path) reaches the day
+        // fact without any modal of this lifecycle's making.
+        if (Game1.Date.TotalDays != this.dayBefore)
+        {
+            this.trace.Add("pass_out_day_advanced");
+            this.phase = Phase.AwaitingDayStart;
+            return false;
+        }
+
+        if (this.ticks % 120 == 0 && this.trace.Count < 64)
+            this.trace.Add(
+                $"pass_out_pipeline_waiting;canMove={Game1.player.CanMove};passedOut={Game1.player.passedOut};"
+                    + $"menu={(Game1.activeClickableMenu?.GetType().Name ?? "none")}");
+        return false;
+    }
+
+    /// <summary>Capture the pre-advance day baseline exactly once.</summary>
+    private void CaptureDayBaseline()
+    {
+        if (this.dayBaselineCaptured)
+            return;
+        this.dayBefore = Game1.Date.TotalDays;
+        this.daysBefore = (int)Game1.stats.DaysPlayed;
+        this.dayBaselineCaptured = true;
+    }
+
+    /// <summary>
     /// Return true once the actor is standing on the bed tile, so the game
     /// itself raises the Sleep touch action.
     /// </summary>
@@ -300,6 +454,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
             // use; it is not input injection.
             var controller = new PathFindController(Game1.player, farmHouse, bedSpot, Game1.player.FacingDirection);
             Game1.player.controller = controller;
+            this.installedController = controller;
             this.arrivalDispatched = true;
             this.trace.Add($"pathfind_to_bed_tile:{bedSpot.X},{bedSpot.Y}");
             return false;
@@ -515,6 +670,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
 
         var settlement = new Dictionary<string, object?>
         {
+            ["enteredVia"] = this.enteredVia,
             ["topology"] = this.Topology(),
             ["dayBefore"] = this.dayBefore,
             ["dayAfter"] = dayAfter,
