@@ -6,6 +6,8 @@
 
 **Architecture:** Pi native assistant text is the sole source of player-visible companion dialogue. `message_update` provides ephemeral text deltas to surface-local observers; the final assistant `message_end` supplies the authoritative assembled content for one Host-controlled durable commit. Chat commits through the existing exact P5 transition authority after the durable running barrier and synchronous cancel/commit reservation; Game submits the same finalized text through its existing source-event, epoch, revision and idempotency-checked native presentation port. Tool calls remain typed Game actions only and are never display text.
 
+> **后续修订（2026-09-28，经 owner 裁决采用方案 A）：** Game 表面的「one expression」已被 `design/architecture/stardew-companion-presence-mechanisms.md` §1.3 的「增量即呈现」取代：Game 允许**有界单调序列**——一个已消费的 player turn 可按句子边界依次提交多个短 expression，它们共享同一条 turn lineage，每一片都重新走同一个 sourceEventId + interruption epoch admission。Chat 表面仍保持**恰好一条** durable message。反重放纪律不再靠「恰好一次」计数，而靠两条**精确**上界 + 失败关闭：turn 累计提交字节不得超过一份回复自身的文本预算（`MAX_NATIVE_PRESENTATION_TURN_BYTES`），条数上界 `MAX_NATIVE_PRESENTATIONS_PER_TURN` 为次级护栏；任一分片提交失败即关闭该 turn（uncertain delivery 不得扩展成一串新台词）。文本相等**不是** admission 条件（回复可合法重复同一句），重放由 Game port 按 `expressionId` 幂等拒绝。
+
 **Tech Stack:** TypeScript, Node.js, embedded Pi `AgentSession` v0.84.1, SQLite ChatThreadStore, Host SSE browser contract, Stardew/SMAPI bridge.
 
 **Spec:** User approval in this conversation (2026-04-13); `design/review/CHAT_PIPELINE_ARCHITECTURE_AND_IMMERSION_REVIEW.md`; `design/review/CHAT_PIPELINE_AND_COGNITIVE_COMPANION_IMPLEMENTATION_PLAN.md`; preserve the still-valid safety invariants from `design/71_CHAT_PIPELINE_BATCH_08_P5_PRESENTATION_COMMIT_AND_TERMINALIZATION.md`, `design/34_REALTIME_COMPANION_COORDINATION_AND_LIVE_RUN_DESIGN.md`, and project memory.
@@ -60,8 +62,8 @@ Acceptance scenario:
   then a safe provisional SSE delta appears; when its matching message_end succeeds,
   exactly one durable companion message is committed and survives /state reload.
   And if Stop wins before final commit, no late delta is accepted and no uncommitted message appears after reload.
-  Given an exact Pi-consumed Game player batch with sourceEventId, when its matching native assistant message ends with text,
-  then the existing Game presentation port receives one expression bound to that sourceEventId and current epoch; native text never proves a game action.
+  Given an exact Pi-consumed Game player batch with sourceEventId, when its matching native assistant message yields text,
+  then the existing Game presentation port receives an ordered, bounded sequence of expressions bound to that sourceEventId and current epoch (one per committed sentence piece, sharing that turn's lineage); native text never proves a game action. A turn's cumulative presented bytes cannot exceed one reply's budget, a piece after a failed commit is refused, and a repeated line is legal (replay is refused by the port's per-piece expressionId idempotency).
 
 Cheapest checks:
   new observer unit tests; P4/P5 focused tests; CompanionLoop/Game port tests; browser contract/API/UI tests; host/dialogue-web typechecks.
