@@ -278,7 +278,14 @@ export async function runWaterCropResourceRecoveryChainSmoke(
       typeof recovery.executionId === "string" &&
       typeof retry.executionId === "string" &&
       breakpoint.executionId !== recovery.executionId &&
-      recovery.executionId !== retry.executionId;
+      recovery.executionId !== retry.executionId &&
+      breakpoint.executionId !== retry.executionId;
+    // Request-identity correlation is enforced upstream by the shared harness:
+    // `executeFresh` validates every immediate/long-poll receipt against the exact
+    // request it submitted (`assertImmediateReceipt` / `assertReceiptIdentity` raise
+    // `native_receipt_request_id_mismatch` / `..._execution_id_mismatch`). A runner
+    // therefore cannot observe a receipt belonging to a different request, so the
+    // chain does not re-derive that proof here.
     const freshPostcondition =
       after.revision === retry.revision &&
       after.actionable === true &&
@@ -301,7 +308,7 @@ export async function runWaterCropResourceRecoveryChainSmoke(
         breakpoint: summarizeReceipt(breakpoint),
         recovery: summarizeReceipt(recovery),
         retry: summarizeReceipt(retry),
-        contiguousJournal: true,
+        contiguousJournal: sameJournalLineage,
         breakpointReceipt: {
           requestId: breakpoint.requestId,
           executionId: breakpoint.executionId,
