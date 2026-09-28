@@ -488,6 +488,41 @@ test("native-local crop-research fixture preps the Jodi's-Request start state on
   await restoreNativeLocalPlayerFixture(options);
 });
 
+test("native-local fridge fixture provisions a kitchen container without touching it", async (t) => {
+  const options = { ...(await createFixture(t, "fridge-store")), action: "fridge_store" };
+  await prepareNativeLocalPlayerFixture(options);
+  const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
+  // The fridge is the same Chest store/take intent, so it publishes the same
+  // container action; only the fixture scenario differs.
+  assert.deepEqual(configured.EnabledActions, ["chest_store"]);
+  assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_fridge_store_v1");
+  const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
+  const branchStart = entry.indexOf('if (fixture.FixtureScenario is "native_fridge_store_v1" or "native_fridge_retrieve_v1")');
+  assert.ok(branchStart >= 0, "ModEntry must own the fridge fixture branch");
+  const branch = entry.slice(branchStart, entry.indexOf('if (fixture.FixtureScenario == "native_chop_stump_v1")', branchStart));
+  // The fixture establishes only the native precondition: a kitchen so the room
+  // owns a fridge, a storable item, and a lawful standing tile. It must never run
+  // the container transaction or emit a receipt.
+  assert.match(branch, /parseDebugInput\("HouseUpgrade 1", null\)/);
+  assert.match(branch, /home\.GetFridge\(\)/);
+  assert.match(branch, /warpFarmer\(/);
+  assert.doesNotMatch(branch, /RequestLocalChestStore|RequestLocalChestRetrieve|checkAction|PublishReceipt|addItem\(storedItem\)/);
+  await restoreNativeLocalPlayerFixture(options);
+});
+
+test("the fridge reuses the chest container runner and its second fixture scenario", async () => {
+  const { fixtureActions, fixtureScenario } = await import("./lib/stardew-native-local-player-fixture.mjs");
+  assert.deepEqual(fixtureActions("fridge_store"), ["chest_store"]);
+  assert.deepEqual(fixtureActions("fridge_retrieve"), ["chest_retrieve"]);
+  assert.equal(fixtureScenario(fixtureActions("fridge_store"), "fridge_store"), "native_fridge_store_v1");
+  assert.equal(fixtureScenario(fixtureActions("fridge_retrieve"), "fridge_retrieve"), "native_fridge_retrieve_v1");
+  // The placed-chest harness action keeps its original scenario.
+  assert.equal(fixtureScenario(fixtureActions("chest_store"), "chest_store"), "native_chest_store_v1");
+  const { resolveStardewActionGateRunner } = await import("./resolve-stardew-action-gate-runner.mjs");
+  assert.equal(resolveStardewActionGateRunner("fridge_store"), "run-stardew-native-local-player-chest-store-smoke.mjs");
+  assert.equal(resolveStardewActionGateRunner("fridge_retrieve"), "run-stardew-native-local-player-chest-retrieve-smoke.mjs");
+});
+
 test("native-local jodi-harvest-deliver fixture supplies a mature crop and a reachable villager only", async (t) => {
   const options = { ...(await createFixture(t, "jodi-harvest-deliver")), action: "jodi_harvest_deliver" };
   await prepareNativeLocalPlayerFixture(options);
