@@ -262,6 +262,8 @@ public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayNam
 
 public sealed record BridgePetBowlTarget(string TargetId, int X, int Y);
 
+public sealed record BridgeSlimeHutchTroughTarget(string TargetId, int X, int Y);
+
 public sealed record BridgePetTarget(string TargetId, int X, int Y, string PetType, int Friendship, bool PettedToday, bool Stationary);
 
 public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X, int Y, string AnimalType, string QualifiedProduceItemId, string DisplayName, string ToolKind, int ProduceStack);
@@ -327,6 +329,7 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeItemTarget>? ItemTargets,
     IReadOnlyList<BridgeCropTarget>? CropTargets,
     IReadOnlyList<BridgePetBowlTarget>? PetBowlTargets,
+    IReadOnlyList<BridgeSlimeHutchTroughTarget>? SlimeHutchTroughTargets,
     IReadOnlyList<BridgeHarvestTarget>? HarvestTargets,
     IReadOnlyList<BridgeSeedTarget>? SeedTargets,
     IReadOnlyList<BridgeFertilizerTarget>? FertilizerTargets,

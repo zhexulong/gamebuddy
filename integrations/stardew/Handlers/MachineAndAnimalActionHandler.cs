@@ -131,6 +131,13 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "water_slime_hutch_trough" => this.executions.RequestLocalWaterSlimeHutchTrough(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "ship_item" => this.executions.RequestLocalShipItem(
                 request.RequestId,
                 request.Args.Slot ?? 0,

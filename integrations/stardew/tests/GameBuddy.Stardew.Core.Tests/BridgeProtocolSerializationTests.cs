@@ -482,6 +482,7 @@ public sealed class BridgeProtocolSerializationTests
             ItemTargets: null,
             CropTargets: null,
             PetBowlTargets: null,
+            SlimeHutchTroughTargets: null,
             HarvestTargets: null,
             SeedTargets: null,
             FertilizerTargets: null,
