@@ -187,6 +187,14 @@ internal sealed class SleepAndAdvanceDayLifecycle
         switch (this.phase)
         {
             case Phase.AwaitingEligibility:
+                // Check the native pass-out hazard BEFORE the eligibility wait.
+                // Pass-out can begin while the actor is still ineligible (for
+                // example a menu is open, or the actor is not home yet). Without
+                // this the lifecycle would block on a reason like "passed_out"
+                // until the eligibility budget expired and then misreport a night
+                // it should simply have observed.
+                if (this.YieldToNativePassOut())
+                    return false;
                 if (!this.TryEnterEligibility(out string eligibilityReason))
                 {
                     // A lifecycle that never becomes eligible is indistinguishable
