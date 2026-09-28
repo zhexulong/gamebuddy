@@ -13,6 +13,10 @@ internal enum SceneAffordanceKind
     Door,
     Machine,
     WaterSource,
+    Weed,
+    Stone,
+    Debris,
+    ArtifactSpot,
 }
 
 internal enum SceneDirection
@@ -146,10 +150,19 @@ internal static class SceneAffordanceKindWire
     /// must skip null results instead of publishing a default kind.
     /// </para>
     /// </summary>
-    internal static SceneAffordanceKind? ClassifyWorldObject(bool isForage, bool hasMachineData, bool isChest) =>
+    internal static SceneAffordanceKind? ClassifyWorldObject(
+        bool isForage,
+        bool hasMachineData,
+        bool isChest,
+        bool isArtifactSpot = false,
+        bool isWeeds = false,
+        bool isBreakableStone = false) =>
         isForage ? SceneAffordanceKind.Forage
         : hasMachineData ? SceneAffordanceKind.Machine
         : isChest ? SceneAffordanceKind.Chest
+        : isArtifactSpot ? SceneAffordanceKind.ArtifactSpot
+        : isWeeds ? SceneAffordanceKind.Weed
+        : isBreakableStone ? SceneAffordanceKind.Stone
         : null;
 
     internal static bool IsDefined(SceneAffordanceKind kind) => kind is
@@ -161,7 +174,11 @@ internal static class SceneAffordanceKindWire
         or SceneAffordanceKind.Forage
         or SceneAffordanceKind.Door
         or SceneAffordanceKind.Machine
-        or SceneAffordanceKind.WaterSource;
+        or SceneAffordanceKind.WaterSource
+        or SceneAffordanceKind.Weed
+        or SceneAffordanceKind.Stone
+        or SceneAffordanceKind.Debris
+        or SceneAffordanceKind.ArtifactSpot;
 
     internal static string ToWireValue(SceneAffordanceKind kind) => kind switch
     {
@@ -174,6 +191,10 @@ internal static class SceneAffordanceKindWire
         SceneAffordanceKind.Door => "door",
         SceneAffordanceKind.Machine => "machine",
         SceneAffordanceKind.WaterSource => "water_source",
+        SceneAffordanceKind.Weed => "weed",
+        SceneAffordanceKind.Stone => "stone",
+        SceneAffordanceKind.Debris => "debris",
+        SceneAffordanceKind.ArtifactSpot => "artifact_spot",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown scene affordance kind."),
     };
 
@@ -188,6 +209,10 @@ internal static class SceneAffordanceKindWire
         SceneAffordanceKind.Door => "d",
         SceneAffordanceKind.Machine => "m",
         SceneAffordanceKind.WaterSource => "w",
+        SceneAffordanceKind.Weed => "wd",
+        SceneAffordanceKind.Stone => "st",
+        SceneAffordanceKind.Debris => "db",
+        SceneAffordanceKind.ArtifactSpot => "af",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown scene affordance kind."),
     };
 
@@ -204,6 +229,8 @@ internal static class SceneAffordanceKindWire
     {
         SceneAffordanceKind.Tree => 1,
         SceneAffordanceKind.Animal => 1,
+        SceneAffordanceKind.Weed => 1,
+        SceneAffordanceKind.Stone => 1,
         _ => 0,
     };
 
@@ -214,7 +241,9 @@ internal static class SceneAffordanceKindWire
     /// </summary>
     internal static bool IsDensityCapped(SceneAffordanceKind kind) => kind is
         SceneAffordanceKind.Tree
-        or SceneAffordanceKind.Animal;
+        or SceneAffordanceKind.Animal
+        or SceneAffordanceKind.Weed
+        or SceneAffordanceKind.Stone;
 
     /// <summary>Per-kind ceiling for <see cref="IsDensityCapped"/> kinds.</summary>
     internal const int MaximumDenseKindAffordances = 3;

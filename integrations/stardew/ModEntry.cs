@@ -5905,12 +5905,23 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             SceneAffordanceKind? kind = SceneAffordanceKindWire.ClassifyWorldObject(
                 isForage: item.isForage(),
                 hasMachineData: item.GetMachineData() is not null,
-                isChest: item is StardewValley.Objects.Chest);
+                isChest: item is StardewValley.Objects.Chest,
+                isArtifactSpot: item.QualifiedItemId == "(O)590",
+                isWeeds: item.IsWeeds(),
+                isBreakableStone: item.QualifiedItemId == "(O)2" && item.IsBreakableStone());
             if (kind is null)
                 continue;
             SceneAffordanceKind resolvedKind = kind.Value;
+            string? actionHint = resolvedKind switch
+            {
+                SceneAffordanceKind.Forage => "pickup_forage",
+                SceneAffordanceKind.ArtifactSpot => "dig_artifact_spot",
+                SceneAffordanceKind.Weed => "cut_weeds",
+                SceneAffordanceKind.Stone => "break_rock_source",
+                _ => null,
+            };
             candidates.Add(new SceneAffordanceSource(resolvedKind, item.Name, item.QualifiedItemId, location.NameOrUniqueName,
-                (int)tile.X, (int)tile.Y, item.isForage() ? "pickup_forage" : null, SceneAffordanceKindWire.DefaultPriority(resolvedKind)));
+                (int)tile.X, (int)tile.Y, actionHint, SceneAffordanceKindWire.DefaultPriority(resolvedKind)));
         }
         foreach (StardewValley.NPC npc in location.characters)
         {
@@ -5958,6 +5969,24 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                     location.NameOrUniqueName, (int)tile.X, (int)tile.Y, stump ? "chop_stump" : "chop_tree_source",
                     SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Tree)));
             }
+        }
+        foreach (StardewValley.TerrainFeatures.ResourceClump clump in location.resourceClumps)
+        {
+            // Debris are the ResourceClumps `clear_debris` clears (600/602 axe;
+            // 148/622/672/752/754/756/758 pickaxe). A boulder or log that no
+            // registered action can clear must not become an Agent-visible affordance
+            // with no way to act on it.
+            int sheet = clump.parentSheetIndex.Value;
+            bool clearable = sheet is 600 or 602 or 148 or 622 or 672 or 752 or 754 or 756 or 758;
+            if (!clearable)
+                continue;
+            candidates.Add(new SceneAffordanceSource(
+                SceneAffordanceKind.Debris,
+                clump is StardewValley.TerrainFeatures.GiantCrop ? "GiantCrop" : "Debris",
+                $"debris:{location.NameOrUniqueName}:{(int)clump.Tile.X},{(int)clump.Tile.Y}:{sheet}",
+                location.NameOrUniqueName,
+                (int)clump.Tile.X, (int)clump.Tile.Y, "clear_debris",
+                SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Debris)));
         }
         // WaterSource affordance (A.2): project each refillable water tile's
         // standable neighbors within the player radius. The ref always binds
