@@ -8,6 +8,8 @@ const MAX_PROJECTION_STRING_BYTES = 128;
 const MAX_PROJECTION_TOOL_LABELS = 12;
 const MAX_PROJECTION_PETS = 12;
 const MAX_PROJECTION_PET_BOWLS = 8;
+// The Slime Hutch gate accepts exactly x == 16, y in 6..9, so at most 4 rows.
+const MAX_PROJECTION_SLIME_HUTCH_TROUGHS = 4;
 const MAX_SNAPSHOT_AGE_MS = 24 * 60 * 60 * 1_000;
 
 export interface MovementContextProjection {
@@ -57,6 +59,13 @@ export interface PetBowlContextProjection {
   readonly y: number;
 }
 
+/** A live, unwatered Slime Hutch trough row: the companion needs to know where to stand, not its state. */
+export interface SlimeHutchTroughContextProjection {
+  readonly targetId: string;
+  readonly x: number;
+  readonly y: number;
+}
+
 export type GameSnapshotContextProjection = Readonly<
   | {
       readonly schema: typeof GAME_SNAPSHOT_PROJECTION_SCHEMA;
@@ -70,6 +79,7 @@ export type GameSnapshotContextProjection = Readonly<
       readonly inventory: InventoryContextProjection;
         readonly pets: readonly PetContextProjection[];
       readonly petBowls: readonly PetBowlContextProjection[];
+      readonly slimeHutchTroughs: readonly SlimeHutchTroughContextProjection[];
     }
   | {
       readonly schema: typeof GAME_SNAPSHOT_PROJECTION_SCHEMA;
@@ -138,6 +148,20 @@ export function projectPetBowlContext(snapshot: Snapshot): readonly PetBowlConte
   );
 }
 
+export function projectSlimeHutchTroughContext(snapshot: Snapshot): readonly SlimeHutchTroughContextProjection[] {
+  return Object.freeze(
+    (snapshot.slimeHutchTroughTargets ?? []) // The current hutch's unwatered rows are situational context; keep the structured helper bounded.
+      .slice(0, MAX_PROJECTION_SLIME_HUTCH_TROUGHS)
+      .map((trough) =>
+        Object.freeze({
+          targetId: boundedUtf8(trough.targetId, MAX_PROJECTION_STRING_BYTES),
+          x: Number.isFinite(trough.x) ? trough.x : 0,
+          y: Number.isFinite(trough.y) ? trough.y : 0,
+        }),
+      ),
+  );
+}
+
 export function projectPetContext(snapshot: Snapshot): readonly PetContextProjection[] {
   return Object.freeze(
     (snapshot.petTargets ?? []) // Nearby pets are situational context, not a roster; keep the structured helper bounded.
@@ -172,6 +196,7 @@ export function projectGameSnapshotContext(
   const clockSource = projectClockContext(snapshot);
   const petSource = projectPetContext(snapshot);
   const petBowlSource = projectPetBowlContext(snapshot);
+  const slimeHutchTroughSource = projectSlimeHutchTroughContext(snapshot);
   const location = boundedUtf8(snapshot.location, MAX_PROJECTION_STRING_BYTES);
   const currentTool = boundedUtf8(snapshot.currentTool ?? "none", MAX_PROJECTION_STRING_BYTES);
   const toolLabels = Object.freeze(
@@ -185,6 +210,7 @@ export function projectGameSnapshotContext(
   const clock = Object.freeze({ ...clockSource });
   const pets = Object.freeze(petSource.map((pet) => Object.freeze({ ...pet })));
   const petBowls = Object.freeze(petBowlSource.map((bowl) => Object.freeze({ ...bowl })));
+  const slimeHutchTroughs = Object.freeze(slimeHutchTroughSource.map((trough) => Object.freeze({ ...trough })));
   const sampledAgeMs = boundedAge(sampledAtMs, nowMs);
   const seasonName = ["Spring", "Summer", "Fall", "Winter"][clock.seasonIndex] ?? "Unknown";
   const text = boundedUtf8(
@@ -211,6 +237,7 @@ export function projectGameSnapshotContext(
     inventory,
     pets,
     petBowls,
+    slimeHutchTroughs,
   });
 
   // The static field caps above make this a normal path, while this assertion
@@ -291,6 +318,16 @@ function isSnapshotInput(value: Snapshot): boolean {
             typeof bowl.targetId === "string" &&
             Number.isFinite(bowl.x) &&
             Number.isFinite(bowl.y),
+        ))) &&
+    (value.slimeHutchTroughTargets === undefined ||
+      (Array.isArray(value.slimeHutchTroughTargets) &&
+        value.slimeHutchTroughTargets.every(
+          (trough) =>
+            trough !== null &&
+            typeof trough === "object" &&
+            typeof trough.targetId === "string" &&
+            Number.isFinite(trough.x) &&
+            Number.isFinite(trough.y),
         ))) &&
     (value.toolSlots === undefined ||
       (Array.isArray(value.toolSlots) &&
