@@ -376,11 +376,10 @@ export function fixtureActions(action) {
   // Lane G partial-completion recovery chain: the Bait recipe turns one Bug Meat
   // into five Bait while the backpack already holds 998 Bait, so the native
   // transaction can only take one and must drop four. The chain reads the honest
-  // `partially_succeeded/crafted_item_created` receipt, stores the retained stack,
-  // then picks the dropped remainder back up. Not a new action; it grants no
-  // capability.
-  if (action === "craft_partial_recovery_chain")
-    return ["move_to_tile", "travel", "craft_item", "chest_store", "pickup_item"];
+  // `partially_succeeded/crafted_item_created` receipt, stores the retained stack so
+  // the native debris homing can deliver the dropped remainder, then re-crafts the
+  // SAME recipe to a full success. Not a new action; it grants no capability.
+  if (action === "craft_partial_recovery_chain") return ["move_to_tile", "travel", "craft_item", "chest_store"];
   // Ladder 3: Jodi's Request — a real Spring-19 mail quest asking for a fresh
   // cauliflower. The fixture only supplies the player with a Hoe, a filled
   // Watering Can and cauliflower seeds; the Agent plans the whole farming
