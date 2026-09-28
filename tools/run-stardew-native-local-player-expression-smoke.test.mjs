@@ -27,7 +27,7 @@ function capabilitySnapshot(revision) {
  * per execution so the monotonic-revision proof is real, and the receipts buffer
  * carries the Mod-owned terminal for each request exactly as production does.
  */
-function expressionClient({ nativeDispatched = "true", emoteReason = "emote_started" } = {}) {
+function expressionClient({ nativeDispatched = "true", emoteReason = "emote_started", immediateTerminal = false } = {}) {
   let revision = 10;
   const client = {
     state: { snapshot: capabilitySnapshot(revision), latestReceipt: undefined },
@@ -45,8 +45,7 @@ function expressionClient({ nativeDispatched = "true", emoteReason = "emote_star
         revision,
       };
       client.state.snapshot = capabilitySnapshot(revision);
-      client.state.latestReceipt = accepted;
-      client.terminals.push({
+      const terminal = {
         ...accepted,
         state: "succeeded",
         reasonCode: request.action === "express_emote" ? emoteReason : "actor_facing_matches",
@@ -56,8 +55,12 @@ function expressionClient({ nativeDispatched = "true", emoteReason = "emote_star
               ? `emote=${request.args.emote};native_dispatched=${nativeDispatched}`
               : `direction=${request.args.direction}`,
         },
-      });
-      return accepted;
+      };
+      client.state.latestReceipt = accepted;
+      client.terminals.push(terminal);
+      // A synchronous action may return its terminal receipt as the immediate
+      // bridge response rather than an interim acceptance.
+      return immediateTerminal ? terminal : accepted;
     },
     terminals: [],
   };
@@ -112,6 +115,19 @@ test("expression runner refuses a non-isolated fixture topology", async () => {
   });
   assert.equal(result.state, "blocked");
   assert.equal(result.reasonCode, "native_local_fixture_topology_not_isolated");
+});
+
+test("expression runner accepts a bridge that answers with the terminal receipt directly", async () => {
+  // Observed on a real run: a native emote arms synchronously, so the bridge
+  // answered `succeeded/emote_started` as the immediate response instead of an
+  // interim `accepted`. The runner originally required `accepted` and reported
+  // `express_emote_not_accepted:emote_started` even though the Mod had already
+  // performed the native mutation successfully. Both shapes must pass.
+  const client = expressionClient({ immediateTerminal: true });
+  const result = await runExpressionSmoke(client, client.terminals, config);
+  assert.equal(result.state, "passed");
+  assert.equal(result.reasonCode, "emote_started");
+  assert.equal(result.receipt.reasonCode, "emote_started");
 });
 
 test("expression runner blocks on malformed Mod evidence", async () => {

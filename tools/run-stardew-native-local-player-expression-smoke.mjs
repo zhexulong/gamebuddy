@@ -17,6 +17,7 @@ import {
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
+  TERMINAL_STATES,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
@@ -50,7 +51,13 @@ export async function runExpressionSmoke(
     if (before.activeExecution != null) throw new Error("native_local_expression_actor_busy");
 
     const emote = await dispatch(client, trace, "emote", EMOTE_ACTION, { emote: EMOTE }, before);
-    if (emote.state !== "accepted") throw new Error(`express_emote_not_accepted:${emote.reasonCode}`);
+    // A native emote arms synchronously, so the bridge can answer with the
+    // terminal receipt directly instead of an interim `accepted`. Both shapes
+    // are legitimate: `waitForTerminal` accepts the immediate response when it
+    // already carries a terminal state, and otherwise waits on the receipt
+    // stream for the same request/execution pair.
+    if (emote.state !== "accepted" && !isTerminalState(emote.state))
+      throw new Error(`express_emote_not_accepted:${emote.reasonCode}`);
     const emoteTerminal = await waitForTerminal(receipts, emote, terminalTimeoutMs);
     if (emoteTerminal.state !== "succeeded" || emoteTerminal.reasonCode !== "emote_started")
       throw new Error(`express_emote_failed:${emoteTerminal.reasonCode}`);
@@ -78,7 +85,8 @@ export async function runExpressionSmoke(
       { direction: requested },
       facingTarget,
     );
-    if (facing.state !== "accepted") throw new Error(`face_direction_not_accepted:${facing.reasonCode}`);
+    if (facing.state !== "accepted" && !isTerminalState(facing.state))
+      throw new Error(`face_direction_not_accepted:${facing.reasonCode}`);
     const facingTerminal = await waitForTerminal(receipts, facing, terminalTimeoutMs);
     if (facingTerminal.state !== "succeeded" || facingTerminal.reasonCode !== "actor_facing_matches")
       throw new Error(`face_direction_failed:${facingTerminal.reasonCode}`);
@@ -143,6 +151,11 @@ if (import.meta.main) {
   } finally {
     session.close();
   }
+}
+
+/** A synchronous native action may answer with its terminal receipt directly. */
+function isTerminalState(state) {
+  return TERMINAL_STATES.has(state);
 }
 
 async function dispatch(client, trace, phase, action, args, snapshot) {
