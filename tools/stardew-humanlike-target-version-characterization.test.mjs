@@ -345,7 +345,10 @@ test("verified target-version characterization artifact exists, is schema-valid,
   assert.equal(facing.movingCheck.method.returnType, "System.Boolean");
   assert.match(facing.movingCheck.semantics, /actor_moving/);
 
-  // Live observation
+  // Live observation: this evidence file is the target-version CONTRACT surface,
+  // not a live run. The reason must not claim the harness is missing -- it
+  // existed from 2026-09-26 and these actions did run live under SDW-LIVE-COOP-01.
   assert.equal(data.liveObservation.state, "unavailable");
-  assert.equal(data.liveObservation.reason, "no_real_game_thread_harness_exists");
+  assert.equal(data.liveObservation.reason, "no_live_evidence_recorded_at_this_path");
+  assert.doesNotMatch(data.liveObservation.reason, /harness/);
 });
