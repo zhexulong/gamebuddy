@@ -6,6 +6,13 @@ import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptor
 
 const ROOT = resolve(import.meta.dirname, "..");
 
+// Lifecycles that carry a live-run gate descriptor. `live_verified` and
+// `published` both do: they are adjacent rungs of the same ladder
+// (live run passed -> independently reviewed), and both are player-visible.
+// `experimental` is deliberately absent so an unverified action can never
+// acquire a gate descriptor.
+const descriptorEligibleLifecycles = new Set(["live_verified", "published"]);
+
 export function validatePromotionSources({
   farmhandActionDefinitions,
   bridgeSession,
@@ -35,7 +42,7 @@ export function validatePromotionSources({
   failures.push(
     ...findMissingBridgeHelloAdvertisements(
       bridgeSession,
-      definitions.filter((definition) => definition.lifecycle === "published").map((definition) => definition.actionId),
+      definitions.filter((definition) => descriptorEligibleLifecycles.has(definition.lifecycle)).map((definition) => definition.actionId),
     ),
   );
   if (!hasSnapshotCapabilitySurfaceProvenance(executionManager)) failures.push("snapshot_not_from_capability_surface");
@@ -53,7 +60,7 @@ export function validatePromotionSources({
   for (const definition of definitions) {
     if (definition.kind === "read_only") continue;
     const host = hostEntries.filter((entry) => entry.actionId === definition.actionId);
-    if (definition.lifecycle === "published") {
+    if (descriptorEligibleLifecycles.has(definition.lifecycle)) {
       if (host.length !== 1) failures.push(`published_host_projection:${definition.actionId}`);
       // The Host only inventories a concrete typed adapter. It deliberately
       // does not duplicate Mod-owned family, identity-version, or lifecycle.
@@ -106,7 +113,11 @@ export function validatePromotionSources({
     if (toolCount !== 1) failures.push(`host_tool_count:${host.actionId}:${toolCount}`);
   }
   for (const id of descriptorIds)
-    if (!definitions.some((entry) => entry.actionId === id && entry.lifecycle === "published"))
+    // A gate descriptor is a promise that this action has a live-run gate, so it
+    // requires at least `live_verified`. `published` also qualifies: publication
+    // is a strictly later rung on the same ladder. `experimental` never qualifies,
+    // which is what keeps an unverified action from carrying a descriptor.
+    if (!definitions.some((entry) => entry.actionId === id && descriptorEligibleLifecycles.has(entry.lifecycle)))
       failures.push(`gate_descriptor_not_published:${id}`);
   return { failures, definitions, hostEntries };
 }

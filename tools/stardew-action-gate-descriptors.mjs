@@ -2,6 +2,12 @@
  * Published-action gate metadata used only for consistency checks and
  * verification planning. It does not generate Mod execution logic, grant
  * capabilities, or stand in for a live native receipt/postcondition gate.
+ *
+ * Coverage is "every action with native live evidence", which since
+ * design/10 section 3.1.1 means both `published` and `live_verified`. The table
+ * is NOT lifecycle authority: an action's lifecycle lives in the Mod catalog
+ * (FarmhandActionDefinition), and promotion to `published` requires an
+ * independent review the live run alone cannot supply.
  */
 export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("move_to_tile", 1, "run-stardew-native-local-player-move-smoke.mjs", "target_reached"),
@@ -131,6 +137,19 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "crab_pot_baited",
     "native_bait_crab_pot_v1",
   ),
+  // Pure embodied-actor mutations with no world precondition: Farmer.doEmote and
+  // Farmer.faceDirection need no object, inventory slot or prior navigation, so
+  // both share one runner and one fixture scenario. They are live_verified rather
+  // than published (see design/10 section 3.1.1): the live run exists, the
+  // independent publication review does not yet.
+  gate("express_emote", 1, "run-stardew-native-local-player-expression-smoke.mjs", "emote_started", "native_express_emote_v1"),
+  gate(
+    "face_direction",
+    1,
+    "run-stardew-native-local-player-expression-smoke.mjs",
+    "actor_facing_matches",
+    "native_express_emote_v1",
+  ),
 ]);
 
 /**
@@ -156,11 +175,10 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // action rather than a water_crop target extension.
   water_slime_hutch_trough: "run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
   chest_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
-  // Pure embodied-actor mutations with no world precondition: Farmer.doEmote and
-  // Farmer.faceDirection need no object, inventory slot or prior navigation, so
-  // both share one runner and one fixture scenario.
-  express_emote: "run-stardew-native-local-player-expression-smoke.mjs",
-  face_direction: "run-stardew-native-local-player-expression-smoke.mjs",
+  // express_emote / face_direction are no longer experimental: a real
+  // target-version live run produced emote_started (nativeDispatched=true) and
+  // actor_facing_matches, so they are live_verified and now appear in
+  // STARDEW_PUBLISHED_ACTION_GATES with their runner.
   chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
   // Same container store/take capability over the built-in kitchen fridge. The
   // fridge IS a Chest and advertises through the same chest targets, so the

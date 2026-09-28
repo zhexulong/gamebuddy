@@ -99,6 +99,11 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     place_wood_fence: "run-stardew-native-local-player-place-wood-fence-smoke.mjs",
     place_crab_pot: "run-stardew-native-local-player-place-crab-pot-smoke.mjs",
     bait_crab_pot: "run-stardew-native-local-player-bait-crab-pot-smoke.mjs",
+    // Promoted to live_verified by a real native-local run: express_emote and
+    // face_direction share one runner because one fixture turn proves both
+    // actor-expression mutations in the same revision chain.
+    express_emote: "run-stardew-native-local-player-expression-smoke.mjs",
+    face_direction: "run-stardew-native-local-player-expression-smoke.mjs",
   });
   // Obsolete parallel-route runner IDs that must never be re-selected.
   const forbiddenRouteIds = Object.freeze([
@@ -175,6 +180,8 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "place_wood_fence",
       "place_crab_pot",
       "bait_crab_pot",
+      "express_emote",
+      "face_direction",
     ],
   );
   assert.deepEqual(
