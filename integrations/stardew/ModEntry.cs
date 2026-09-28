@@ -85,6 +85,8 @@ public sealed partial class ModEntry : Mod
     private FarmhandProvisioningProbe? provisioningProbe;
     private SleepModalProbe? sleepModalProbe;
     private bool sleepModalProbeRejected;
+    private SinglePlayerSleepLifecycle? sleepLifecycle;
+    private bool sleepLifecycleRejected;
     private bool embodimentInitialized;
     private bool hostRoleConfigured;
     private bool provisioningConfigurationRejected;
@@ -273,6 +275,16 @@ public sealed partial class ModEntry : Mod
                     return;
                 }
                 this.sleepModalProbe = SleepModalProbe.TryStart(this.Monitor, this.config.SleepModalProbe);
+            }
+            if (this.config.SleepLifecycle?.Enable == true)
+            {
+                if (this.config.SleepLifecycle is not { IsValid: true })
+                {
+                    this.sleepLifecycleRejected = true;
+                    this.Monitor.Log("GameBuddy rejected the M2 sleep lifecycle: an absolute evidence path is required.", LogLevel.Error);
+                    return;
+                }
+                this.sleepLifecycle = SinglePlayerSleepLifecycle.TryStart(this.Monitor, this.config.SleepLifecycle);
             }
             return;
         }
@@ -2944,7 +2956,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             this.ClearState(pendingTeardownState, "body_program_teardown_drain");
             return;
         }
-        if (this.sleepModalProbeRejected)
+        if (this.sleepModalProbeRejected || this.sleepLifecycleRejected)
             return;
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
@@ -2960,6 +2972,15 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             {
                 if (this.sleepModalProbe.Update())
                     this.sleepModalProbe = null;
+                return;
+            }
+            // The single-player cross-day lifecycle is the other exclusive body
+            // owner on this lane: it walks to the bed, answers the native prompt
+            // and observes Saving/Saved/DayStarted.
+            if (this.sleepLifecycle is not null)
+            {
+                if (this.sleepLifecycle.Update())
+                    this.sleepLifecycle = null;
                 return;
             }
             this.TryInitializeEmbodiment();
@@ -4247,6 +4268,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
+        this.sleepLifecycle?.ObserveDayStarted();
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
         ExecutionManager executions = state.Executions!;
@@ -4443,6 +4465,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
     private void OnSaved(object? sender, SavedEventArgs e)
     {
+        this.sleepLifecycle?.ObserveSaved();
         this.hostFarmhandProvisioner?.OnSaved();
         // A request can arrive while the previous native SaveGameMenu cycle is
         // still settling. Release the fixture latch at the authoritative Saved
