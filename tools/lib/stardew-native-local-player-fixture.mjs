@@ -391,6 +391,11 @@ export function fixtureActions(action) {
   // plant_seed selects its published seed slot inside the typed production
   // action; equip_tool cannot equip an Object seed, so it is not a prerequisite.
   if (action === "plant_seed") return ["move_to_tile", "travel", "plant_seed"];
+  // express_emote / face_direction are pure embodied-actor actions: Farmer.doEmote
+  // and Farmer.faceDirection need no world precondition, no inventory and no
+  // other action first. They are exercised together because both are the
+  // companion's body-language channel and neither mutates world state.
+  if (action === "express_emote") return ["express_emote", "face_direction"];
   // Fertilizing uses its published inventory slot directly; navigation is its
   // only separately receipted prerequisite in this native-local slice.
   if (action === "fertilize_tile") return ["move_to_tile", "travel", "fertilize_tile"];
@@ -553,6 +558,11 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("harvest_crop") && actions.includes("interact_npc_with_item"))
     return "native_jodi_harvest_deliver_v1";
   if (actions.includes("till_soil")) return "native_till_soil_v1";
+  // The expression actions need no scenario: both are pure embodied-actor
+  // mutations that run on an ordinary target-version world with no
+  // fixture-created player or world fact. They still get a named scenario so
+  // the run records which fixture intent produced the evidence.
+  if (actions.includes("express_emote")) return "native_express_emote_v1";
   if (actions.includes("water_crop")) return "native_water_crop_v1";
   if (actions.includes("plant_seed")) return "native_plant_seed_v1";
   if (actions.includes("fertilize_tile")) return "native_fertilize_tile_v1";

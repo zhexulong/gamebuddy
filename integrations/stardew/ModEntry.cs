@@ -829,6 +829,18 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
+        if (fixture.FixtureScenario == "native_express_emote_v1")
+        {
+            // express_emote and face_direction are pure embodied-actor mutations:
+            // Farmer.doEmote and Farmer.faceDirection need no world object, no
+            // inventory slot and no prior action, so this scenario creates no
+            // fixture fact at all. The named scenario exists so the run records
+            // which fixture intent produced the evidence; production alone
+            // performs the native mutation and emits the receipt.
+            this.nativeLocalPlayerFixtureInitialized = true;
+            this.Monitor.Log("GameBuddy native-local-player initialized expression fixture before bridge attachment: no world fact required; production alone performs native emote/facing and emits receipts.", LogLevel.Info);
+            return;
+        }
         if (fixture.FixtureScenario == "navigation_mutation_v1")
         {
             // Select one reachable target from the same production destination,

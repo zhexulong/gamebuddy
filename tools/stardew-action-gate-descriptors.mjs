@@ -156,6 +156,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // action rather than a water_crop target extension.
   water_slime_hutch_trough: "run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
   chest_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
+  // Pure embodied-actor mutations with no world precondition: Farmer.doEmote and
+  // Farmer.faceDirection need no object, inventory slot or prior navigation, so
+  // both share one runner and one fixture scenario.
+  express_emote: "run-stardew-native-local-player-expression-smoke.mjs",
+  face_direction: "run-stardew-native-local-player-expression-smoke.mjs",
   chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
   // Same container store/take capability over the built-in kitchen fridge. The
   // fridge IS a Chest and advertises through the same chest targets, so the
