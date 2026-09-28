@@ -337,7 +337,7 @@ export function fixtureActions(action) {
   if (action === "sleep_modal_probe") return ["move_to_tile"];
   // The M2 cross-day lifecycle likewise owns the route, the native answer and
   // the Saving/Saved/DayStarted observation; it is not a wire action.
-  if (action === "sleep_lifecycle") return ["move_to_tile"];
+  if (action === "sleep_lifecycle") return ["move_to_tile", "advance_day"];
   // The pass-out variant establishes only a low-stamina live precondition and
   // lets the native gate (Game1.cs:6452) start the pass-out by itself.
   if (action === "sleep_pass_out_lifecycle") return ["move_to_tile"];
@@ -455,9 +455,17 @@ export function fixtureActions(action) {
   // The fixture grows crab pots, baits them and advances to a mature output;
   // production alone collects. The existing place/bait actions stay separate.
   if (action === "collect_crab_pot_output") return ["collect_crab_pot_output"];
+  // The cross-day lifecycle is a real wire action now: the fixture publishes
+  // advance_day and production dispatches it. Its own route, native sleep answer
+  // and Saving/Saved/DayStarted observation are the action's business, so no
+  // other capability is a prerequisite here.
+  if (action === "advance_day") return ["advance_day"];
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions, action) {
+  // The lifecycle action owns its own route and preconditions; it needs no
+  // fixture scenario beyond the ordinary move-only world.
+  if (actions.includes("advance_day")) return "";
   // The pass-out lifecycle supplies only a low-stamina precondition; the native
   // gate starts the pass-out itself. This is keyed off the action name rather
   // than a synthetic action so EnabledActions stays exactly the real surface.
@@ -568,7 +576,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output", "advance_day"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
@@ -604,7 +612,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output"].includes(action),
+    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output", "advance_day"].includes(action),
   );
   result.EnabledActions = actions;
   // Same single language configuration point as the live runner: the
