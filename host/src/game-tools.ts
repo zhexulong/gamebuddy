@@ -489,6 +489,19 @@ export function buildCandidateToolSchema(
     );
   }
 
+  if (actionId === "pet_animal") {
+    // Identity-locked target: the opaque pet target id is copied verbatim from
+    // the most recent observation, while x/y are the observed geometry.
+    return Type.Object(
+      {
+        x: Type.Integer({ minimum: 0, maximum: 1000 }),
+        y: Type.Integer({ minimum: 0, maximum: 1000 }),
+        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+      },
+      { additionalProperties: false },
+    );
+  }
+
   throw new Error(`Unsupported candidate action: ${actionId}`);
 }
 
@@ -1362,6 +1375,32 @@ export function createStardewActionTools(
             x: params.x,
             y: params.y,
             expectedQualifiedItemId: params.expectedQualifiedItemId,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  if (isVisible("pet_animal")) {
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "pet_animal",
+    );
+    if (
+      registration?.descriptor &&
+      isCandidateDescriptorComplete("pet_animal", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("pet_animal", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.pet_animal,
+          label: "Pet Animal",
+          description:
+            "Pet a nearby pet. x, y and expectedTargetId must be copied exactly from the petTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The pet target is bound by identity: if it has moved away, the native interaction returns a rejection instead of petting a different pet. A pet that is stationary right now is the reliable target; a moving one may leave before dispatch returns. Returns pet_completed.",
+          parameters: schema,
+          action: "pet_animal",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
             expectedTargetId: params.expectedTargetId,
           }),
         }),
