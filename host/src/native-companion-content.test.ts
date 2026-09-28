@@ -226,6 +226,70 @@ test("skips intermediate tool-use assistant messages and commits the following n
   assert.deepEqual(finals, ["Action complete."]);
 });
 
+test("incremental activation never presents an intermediate tool-use message's own text", async () => {
+  // A real live run narrated the companion's plan to the player: the game showed
+  // "我在屋子里，先出门去农场。" and "先摘一颗。" before the actual reply. The
+  // session transcript proved those were the text of intermediate
+  // stopReason=toolUse messages, which the non-incremental lane deliberately
+  // withholds. The existing tool-use test above only used assistant([toolCall]),
+  // so it had no text to leak and missed this.
+  const fx = fakeSession();
+  const inlines: string[] = [];
+  const finals: string[] = [];
+  const observer = attachNativeCompanionContent(fx.session, {
+    onPreviewDelta: async () => undefined,
+    onIncrementalText: async (value) => {
+      inlines.push(value);
+    },
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async () => assert.fail("unexpected rejection"),
+  });
+  observer.open();
+  observer.openPreviews();
+
+  // An intermediate tool-use message that STREAMS its planning commentary.
+  const planning = assistant([text("")]);
+  fx.emit({ type: "message_start", message: planning });
+  fx.emit({
+    type: "message_update",
+    message: planning,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: planning },
+  });
+  for (const delta of ["我在屋子里，", "先出门去农场。", "先摘一颗。"]) {
+    fx.emit({
+      type: "message_update",
+      message: planning,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial: planning },
+    });
+  }
+  fx.emit({
+    type: "message_end",
+    message: assistant([thinking("plan"), text("我在屋子里，先出门去农场。先摘一颗。"), toolCall], "toolUse"),
+  });
+
+  // The player-visible reply that follows.
+  const reply = assistant([text("")]);
+  fx.emit({ type: "message_start", message: reply });
+  fx.emit({
+    type: "message_update",
+    message: reply,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: reply },
+  });
+  fx.emit({
+    type: "message_update",
+    message: reply,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "花椰菜给她了。", partial: reply },
+  });
+  fx.emit({ type: "message_end", message: assistant([text("花椰菜给她了。")], "stop") });
+  await observer.close();
+
+  // Only the reply's sentences cross the boundary; the planning text is gone.
+  assert.deepEqual(inlines, ["花椰菜给她了。"]);
+  assert.deepEqual(finals, []);
+});
+
 test("never commits aborted, error, empty, control-text, or foreign assistant output", async () => {
   for (const [stopReason, content, expected] of [
     ["aborted", [text("late")], "aborted"],
