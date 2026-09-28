@@ -2,6 +2,7 @@ import {
   ACTION_SURFACE_SCHEMA,
   ACTION_SURFACE_MAX_ARRAY_ITEMS,
   ACTION_SURFACE_MAX_IDENTIFIER_LENGTH,
+  ACTION_SURFACE_VISIBLE_LIFECYCLES,
   isActionSurfaceIdentifier,
   parseActionSurface,
   validateActionSurface,
@@ -107,7 +108,9 @@ function sourceRegistrations(input) {
 }
 
 function isExecutable(registration) {
-  return registration.lifecycle === "published" && registration.kind === "execution";
+  // A visible execution action: live_verified (passed its live run) or published
+  // (additionally reviewed). experimental is never projected as executable.
+  return ACTION_SURFACE_VISIBLE_LIFECYCLES.includes(registration.lifecycle) && registration.kind === "execution";
 }
 
 function freezeArray(values) {
@@ -152,7 +155,7 @@ export function validateActionProjection(input, options) {
   const projection = projectActionSurface(input, options);
   const sourceIds = new Set(projection.actions.map((action) => action.actionId));
   for (const action of projection.executable) {
-    if (!sourceIds.has(action.actionId) || action.lifecycle !== "published" || action.kind !== "execution") {
+    if (!sourceIds.has(action.actionId) || !ACTION_SURFACE_VISIBLE_LIFECYCLES.includes(action.lifecycle) || action.kind !== "execution") {
       fail("executable_projection_widened");
     }
   }

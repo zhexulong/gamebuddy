@@ -27,7 +27,17 @@ const ACTION_SURFACE_MAX_OBJECT_KEYS = 16;
 export const ACTION_SURFACE_MAX_ARRAY_ITEMS = 128;
 
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
-const LIFECYCLES = new Set(["published", "experimental"]);
+// Three-rung ladder: experimental -> live_verified -> published.
+// `live_verified` means the action passed a real live run on its required
+// topology; `published` additionally requires independent review.
+// Exported so every consumer in this layer validates against one vocabulary
+// instead of restating a subset (which is how `live_verified` used to be
+// silently rejected in several places).
+export const ACTION_SURFACE_LIFECYCLES = Object.freeze(["published", "live_verified", "experimental"]);
+// The rungs that make an action player-visible. `experimental` is deliberately
+// absent: it can never enter a visible subset.
+export const ACTION_SURFACE_VISIBLE_LIFECYCLES = Object.freeze(["published", "live_verified"]);
+const LIFECYCLES = new Set(ACTION_SURFACE_LIFECYCLES);
 const KINDS = new Set(["execution", "read_only"]);
 const ACTION_VALUE_TYPES = new Set(["integer", "string", "boolean", "object", "destination_selector", "destination_arrival"]);
 const DYNAMIC_PUBLICATION_FIELDS = new Set([

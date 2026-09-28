@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ACTION_SURFACE_LIFECYCLES, ACTION_SURFACE_VISIBLE_LIFECYCLES } from "./action-surface.mjs";
 
 /**
  * Stardew-owned deterministic actual-source projection producer.
@@ -183,7 +184,7 @@ function parseModCatalog(source) {
   const registrations = artifact.actions.map((action) => {
     if (!action || typeof action !== "object" || !IDENTIFIER.test(action.actionId)
       || !Number.isSafeInteger(action.identityVersion) || action.identityVersion < 1
-      || (action.lifecycle !== "published" && action.lifecycle !== "experimental")
+      || !ACTION_SURFACE_LIFECYCLES.includes(action.lifecycle)
       || (action.kind !== "execution" && action.kind !== "read_only")) fail("catalog_action_invalid");
     return Object.freeze({
       actionId: action.actionId,
@@ -396,7 +397,10 @@ function parseGateDescriptors(source) {
   }));
   if (gates.length === 0) fail("gate_descriptors_empty");
   assertUnique(gates.map((gate) => gate.actionId), "gate_descriptor_action_duplicates");
-  assertUnique(gates.map((gate) => gate.runner), "gate_descriptor_runner_duplicates");
+  // One runner may legitimately prove several actions: the experimental map
+  // already shares a runner between actions that differ only by target surface
+  // (chest/fridge, ship_item/island). Requiring runner uniqueness here would
+  // reject that established shape, so only the action id must be unique.
   return gates;
 }
 
@@ -465,7 +469,7 @@ export function deriveActionSourceProjection(sources) {
   const registrations = parseModCatalog(sources.canonical_action_surface);
   const publishedExecutionActionIds = assertUnique(
     registrations
-      .filter((registration) => registration.lifecycle === "published" && registration.kind === "execution")
+      .filter((registration) => ACTION_SURFACE_VISIBLE_LIFECYCLES.includes(registration.lifecycle) && registration.kind === "execution")
       .map((registration) => registration.actionId),
     "published_partition_duplicates",
   );
@@ -475,7 +479,7 @@ export function deriveActionSourceProjection(sources) {
   });
   const readOnlyActionIds = assertUnique(
     registrations
-      .filter((registration) => registration.lifecycle === "published" && registration.kind === "read_only")
+      .filter((registration) => ACTION_SURFACE_VISIBLE_LIFECYCLES.includes(registration.lifecycle) && registration.kind === "read_only")
       .map((registration) => registration.actionId),
     "readonly_partition_duplicates",
   );
