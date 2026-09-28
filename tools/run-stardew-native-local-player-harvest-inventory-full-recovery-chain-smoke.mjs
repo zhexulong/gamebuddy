@@ -62,6 +62,7 @@ export async function runHarvestInventoryFullRecoveryChainSmoke(
     postconditionTimeoutMs = 5_000,
     stabilizeTimeoutMs = 10_000,
     moveTimeoutMs = 55_000,
+    travelTimeoutMs = 15_000,
   } = {},
 ) {
   const trace = [];
@@ -69,6 +70,14 @@ export async function runHarvestInventoryFullRecoveryChainSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeHarvestActionable(client);
+    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+
+    // The fixture deliberately does not warp the actor (warping onto a crop-adjacent
+    // tile measured live as landlocked), so travel and movement are ordinary
+    // receipted production steps here, exactly like the harvest_crop lane.
+    if (snapshot.location !== "Farm")
+      snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
+    snapshot = await observeHarvestActionable(client);
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
 
     // The fixture's declared Given is a FULL backpack, so the breakpoint below is
@@ -311,40 +320,153 @@ async function execute(phase, action, args, snapshot, trace, client) {
   return receipt;
 }
 
+async function travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
+  let fresh = await observeHarvestActionable(client);
+  const warp = resolveFarmWarp(fresh);
+  if (!adjacent(fresh.tile, { x: warp.sourceX, y: warp.sourceY }))
+    fresh = await moveToTile(
+      client,
+      receipts,
+      fresh,
+      { x: warp.sourceX, y: warp.sourceY },
+      "move_to_farm_warp",
+      trace,
+      stabilizeTimeoutMs,
+      terminalTimeoutMs,
+    );
+  fresh = await observeHarvestActionable(client);
+  const freshWarp = fresh.warps.find(
+    (entry) =>
+      validWarp(entry) &&
+      entry.sourceX === warp.sourceX &&
+      entry.sourceY === warp.sourceY &&
+      entry.targetLocation === "Farm" &&
+      entry.targetX === warp.targetX &&
+      entry.targetY === warp.targetY,
+  );
+  if (!freshWarp || !adjacent(fresh.tile, { x: freshWarp.sourceX, y: freshWarp.sourceY }))
+    throw new Error("fresh_farm_warp_unavailable");
+  const accepted = await execute(
+    "travel_to_farm",
+    "travel",
+    { x: freshWarp.sourceX, y: freshWarp.sourceY },
+    fresh,
+    trace,
+    client,
+  );
+  if (accepted.state !== "accepted") throw new Error(`travel_not_accepted:${accepted.reasonCode}`);
+  const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
+  if (terminal.state !== "succeeded" || terminal.reasonCode !== "travel_completed")
+    throw new Error(`travel_failed:${terminal.reasonCode}`);
+  return waitForFreshSnapshot(client, {
+    minRevision: terminal.revision,
+    timeoutMs: stabilizeTimeoutMs,
+    requireActionable: true,
+    check: (latest) => latest.location === "Farm" && latest.activeExecution == null,
+  });
+}
+
+function resolveFarmWarp(snapshot) {
+  const matches = Array.isArray(snapshot.warps)
+    ? snapshot.warps.filter(
+        (warp) =>
+          warp?.targetLocation === "Farm" &&
+          Number.isInteger(warp.sourceX) &&
+          Number.isInteger(warp.sourceY) &&
+          Number.isInteger(warp.targetX) &&
+          Number.isInteger(warp.targetY) &&
+          warp.sourceX >= 0 &&
+          warp.sourceY >= 0,
+      )
+    : [];
+  if (matches.length !== 1) throw new Error(matches.length ? "ambiguous_farm_warp" : "farm_warp_missing");
+  return matches[0];
+}
+
+function validWarp(entry) {
+  return (
+    typeof entry?.targetLocation === "string" &&
+    Number.isInteger(entry?.sourceX) &&
+    Number.isInteger(entry?.sourceY) &&
+    Number.isInteger(entry?.targetX) &&
+    Number.isInteger(entry?.targetY)
+  );
+}
+
 async function waitForReachableHarvestTarget(client, snapshot, trace, receipts, stabilizeTimeoutMs, moveTimeoutMs) {
   if (chooseReachableHarvestTargetOrNull(snapshot)) return snapshot;
-  for (let radius = 2; radius <= 12; radius++) {
-    const candidates = [];
-    for (let dx = -radius; dx <= radius; dx++) {
-      for (let dy = -radius; dy <= radius; dy++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
-        candidates.push({ x: snapshot.tile.x + dx, y: snapshot.tile.y + dy });
-      }
-    }
-    for (const waypoint of candidates) {
-      try {
-        const moved = await moveToTile(
-          client,
-          receipts,
-          snapshot,
-          waypoint,
-          "move_to_native_harvest_full_bag_fixture",
-          trace,
-          stabilizeTimeoutMs,
-          moveTimeoutMs,
-        );
-        if (chooseReachableHarvestTargetOrNull(moved)) return moved;
-        snapshot = moved;
-      } catch (error) {
-        const reason = String(error instanceof Error ? error.message : error);
-        if (!reason.endsWith("_not_accepted:no_native_path") && !reason.startsWith("navigation_failed:no_native_path"))
-          throw error;
-        snapshot = await observeFresh(client);
-        if (chooseReachableHarvestTargetOrNull(snapshot)) return snapshot;
-      }
+  // Anchor the approach on the CROP itself, never on the actor's current tile. A ring
+  // centred on the moving actor re-centres after every step, so it circles forever
+  // without ever trying the tiles that actually reach both targets (measured live: 152
+  // waypoints).
+  //
+  // Two different ranges are in play and must not be conflated: the Mod DISCOVERS a
+  // crop within `TargetDiscoveryRadius` (6), but `harvest_crop` ACCEPTS a target only
+  // within Chebyshev 1. So wait for discovery with the raw snapshot field, then walk
+  // onto one of the crop's own neighbours, where both the crop and the fixture's
+  // crop-adjacent chest are in reach.
+  const discovered = await waitForCropDiscovery(client, snapshot, stabilizeTimeoutMs);
+  if (chooseReachableHarvestTargetOrNull(discovered)) return discovered;
+  const crop = discoveredHarvestTargets(discovered)[0];
+  if (crop === undefined) throw new Error("no_discovered_live_harvest_target");
+  const neighbours = [
+    { x: crop.x, y: crop.y + 1 },
+    { x: crop.x, y: crop.y - 1 },
+    { x: crop.x + 1, y: crop.y },
+    { x: crop.x - 1, y: crop.y },
+    { x: crop.x + 1, y: crop.y + 1 },
+    { x: crop.x - 1, y: crop.y - 1 },
+    { x: crop.x + 1, y: crop.y - 1 },
+    { x: crop.x - 1, y: crop.y + 1 },
+  ];
+  let current = discovered;
+  for (const waypoint of neighbours) {
+    try {
+      const moved = await moveToTile(
+        client,
+        receipts,
+        current,
+        waypoint,
+        "move_to_native_harvest_full_bag_fixture",
+        trace,
+        stabilizeTimeoutMs,
+        moveTimeoutMs,
+      );
+      if (chooseReachableHarvestTargetOrNull(moved)) return moved;
+      current = moved;
+    } catch (error) {
+      const reason = String(error instanceof Error ? error.message : error);
+      if (!reason.endsWith("_not_accepted:no_native_path") && !reason.startsWith("navigation_failed:no_native_path"))
+        throw error;
+      current = await observeFresh(client);
+      if (chooseReachableHarvestTargetOrNull(current)) return current;
     }
   }
   throw new Error("no_reachable_native_harvest_full_bag_fixture_target");
+}
+
+/** Poll until the single ready crop enters the Mod's discovery radius (which may be wider
+ * than the Chebyshev-1 the action itself requires). */
+async function waitForCropDiscovery(client, snapshot, stabilizeTimeoutMs) {
+  if (discoveredHarvestTargets(snapshot).length > 0) return snapshot;
+  return waitForFreshSnapshot(client, {
+    minRevision: snapshot.revision,
+    timeoutMs: stabilizeTimeoutMs,
+    requireActionable: true,
+    check: (latest) => discoveredHarvestTargets(latest).length === 1 && latest.activeExecution == null,
+  });
+}
+
+/** The Mod's advertised ready crops, before the Chebyshev-1 action-range filter. */
+function discoveredHarvestTargets(snapshot) {
+  return (snapshot.harvestTargets ?? []).filter(
+    (target) =>
+      /^crop_[a-f0-9]{16}$/.test(target?.targetId ?? "") &&
+      Number.isInteger(target.x) &&
+      Number.isInteger(target.y) &&
+      typeof target.qualifiedHarvestItemId === "string" &&
+      target.qualifiedHarvestItemId.length > 0,
+  );
 }
 
 async function moveToTile(client, receipts, snapshot, target, phase, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
@@ -365,6 +487,17 @@ async function moveToTile(client, receipts, snapshot, target, phase, trace, stab
   });
 }
 
+/**
+ * A tile is a usable chain position only when BOTH the crop and the chest are in
+ * reach: `harvest_crop` requires Chebyshev-1 to the crop and `chest_store` requires
+ * Chebyshev-1 to the chest. Searching for the crop alone can settle on a tile that
+ * cannot reach the chest (measured live: crop 64,18 / chest 65,19 with the actor at
+ * 63,17), which strands the recovery step.
+ */
+function isChainPosition(snapshot) {
+  return validHarvestTargets(snapshot).length === 1 && validChestStoreTargets(snapshot).length > 0;
+}
+
 function chooseOnlyFreshHarvestTarget(snapshot) {
   const targets = validHarvestTargets(snapshot);
   if (targets.length !== 1)
@@ -375,14 +508,17 @@ function chooseOnlyFreshHarvestTarget(snapshot) {
 }
 
 function chooseReachableHarvestTargetOrNull(snapshot) {
-  const targets = validHarvestTargets(snapshot);
-  return targets.length === 1 ? targets[0] : null;
+  return isChainPosition(snapshot) ? validHarvestTargets(snapshot)[0] : null;
 }
 
 function validHarvestTargets(snapshot) {
   return (snapshot.harvestTargets ?? []).filter(
     (target) =>
-      /^harvest_[a-f0-9]{16}$/.test(target?.targetId ?? "") &&
+      // The Mod's own crop target id is `crop_<hex16>` (see `BuildCropTargetId` in
+      // `farmhandexecutioncontroller.cs`). An invented `harvest_` prefix here would make
+      // every real target invalid, so the runner would never see a reachable target and
+      // would walk the map indefinitely.
+      /^crop_[a-f0-9]{16}$/.test(target?.targetId ?? "") &&
       Number.isInteger(target.x) &&
       Number.isInteger(target.y) &&
       target.x >= 0 &&
@@ -399,8 +535,8 @@ function hasHarvestTarget(snapshot, target) {
   );
 }
 
-function chooseOnlyChestStoreTarget(snapshot) {
-  const targets = (snapshot.chestStoreTargets ?? []).filter(
+function validChestStoreTargets(snapshot) {
+  return (snapshot.chestStoreTargets ?? []).filter(
     (target) =>
       /^chest_[a-f0-9]{16}$/.test(target?.targetId ?? "") &&
       Number.isInteger(target.x) &&
@@ -410,6 +546,10 @@ function chooseOnlyChestStoreTarget(snapshot) {
       target.qualifiedItemId.length > 0 &&
       adjacent(snapshot.tile, target),
   );
+}
+
+function chooseOnlyChestStoreTarget(snapshot) {
+  const targets = validChestStoreTargets(snapshot);
   if (targets.length === 0) throw new Error("no_adjacent_live_chest_store_target");
   // A chest can offer several storable slots; any one frees a backpack slot, which
   // is the whole recovery. Order deterministically rather than requiring exactly one.
