@@ -18,7 +18,7 @@ public sealed class CandidateActionRegistrationTests
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("expression");
         reg.IdentityVersion.Should().Be(1);
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Expression);
 
@@ -50,7 +50,7 @@ public sealed class CandidateActionRegistrationTests
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("movement_navigation");
         reg.IdentityVersion.Should().Be(1);
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Movement);
 
@@ -148,29 +148,38 @@ public sealed class CandidateActionRegistrationTests
     }
 
     [Fact]
-    public void CandidateActions_AreExcludedFromDefaultPolicySurface()
+    public void LiveVerifiedActions_AreIncludedInDefaultPolicySurface()
     {
+        // express_emote / face_direction became live_verified after a real
+        // target-version native run (nativeDispatched=true / actor_facing_matches,
+        // evidence under target-version-evidence/expression-native-local-live-run.json).
+        // live_verified is default-consent: running once on the required topology
+        // is what makes an action visible, so these no longer need an experimental opt-in.
         var defaultOptions = new ActionPolicyOptions();
         ActionPolicyEngine.ValidateActionPolicy(defaultOptions).Should().BeTrue();
 
         IReadOnlySet<string> enabled = ActionPolicyEngine.ComputeEnabledActions(defaultOptions);
         FarmhandCapabilitySet capabilities = FarmhandCapabilitySet.FromPolicyEnabledOperations(enabled);
 
-        capabilities.AllowsExecutionAction("express_emote").Should().BeFalse();
-        capabilities.AllowsExecutionAction("face_direction").Should().BeFalse();
+        capabilities.AllowsExecutionAction("express_emote").Should().BeTrue();
+        capabilities.AllowsExecutionAction("face_direction").Should().BeTrue();
     }
 
     [Fact]
-    public void CandidateActions_AreIncludedWhenOptedIntoExperimentalActions()
+    public void LiveVerifiedActions_DoNotNeedAnExperimentalOptIn()
     {
+        // The experimental opt-in route remains valid for the actions that are
+        // still experimental (interact_npc_with_item and friends), but it is no
+        // longer what makes the expression actions available. Listing a
+        // live_verified action there is rejected: ValidateActionPolicy only
+        // accepts experimental action ids in ExperimentalActions.
         var experimentalOptions = new ActionPolicyOptions(
             ExperimentalActions: new[] { "express_emote", "face_direction" }
         );
-        ActionPolicyEngine.ValidateActionPolicy(experimentalOptions).Should().BeTrue();
+        ActionPolicyEngine.ValidateActionPolicy(experimentalOptions).Should().BeFalse();
 
-        IReadOnlySet<string> enabled = ActionPolicyEngine.ComputeEnabledActions(experimentalOptions);
+        IReadOnlySet<string> enabled = ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions());
         FarmhandCapabilitySet capabilities = FarmhandCapabilitySet.FromPolicyEnabledOperations(enabled);
-
         capabilities.AllowsExecutionAction("express_emote").Should().BeTrue();
         capabilities.AllowsExecutionAction("face_direction").Should().BeTrue();
     }
