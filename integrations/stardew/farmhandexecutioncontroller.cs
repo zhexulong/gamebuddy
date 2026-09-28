@@ -1373,6 +1373,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("pickup_item", StringComparer.Ordinal) ? DiscoverItemTargets(player) : null,
             advertisedCapabilities.Contains("water_crop", StringComparer.Ordinal) ? DiscoverCropTargets(player) : null,
             advertisedCapabilities.Contains("water_pet_bowl", StringComparer.Ordinal) ? DiscoverPetBowlTargets(player) : null,
+            advertisedCapabilities.Contains("water_slime_hutch_trough", StringComparer.Ordinal) ? DiscoverSlimeHutchTroughTargets(player) : null,
             advertisedCapabilities.Contains("harvest_crop", StringComparer.Ordinal) ? DiscoverHarvestTargets(player) : null,
             advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal) ? DiscoverSeedTargets(player) : null,
             advertisedCapabilities.Contains("fertilize_tile", StringComparer.Ordinal) ? DiscoverFertilizerTargets(player) : null,
@@ -1428,7 +1429,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CatalogRevision: FarmhandActionSurfacePublication.CatalogRevision, EnabledActionIds: capabilityPublication.EnabledActionIds,
         ActiveExecution: null,
         Warps: Array.Empty<BridgeWarp>(), DoorTargets: null, SoilTiles: null, ToolSlots: Array.Empty<BridgeToolSlot>(),
-        WateringCanFacts: null, RefillWateringCanTargets: null, ForageTargets: null, ItemTargets: null, CropTargets: null, PetBowlTargets: null,
+        WateringCanFacts: null, RefillWateringCanTargets: null, ForageTargets: null, ItemTargets: null, CropTargets: null, PetBowlTargets: null, SlimeHutchTroughTargets: null,
         HarvestTargets: null, SeedTargets: null, FertilizerTargets: null, WoodFenceTargets: null, WoodFenceResultTargets: null,
         CrabPotTargets: null, CrabPotResultTargets: null, CrabPotCollectTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
@@ -2199,6 +2200,30 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 result.Add(new BridgePetBowlTarget(BuildPetBowlTargetId(location, (int)tile.X, (int)tile.Y), (int)tile.X, (int)tile.Y));
             }
             if (result.Count >= 8) break;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// The current Slime Hutch's unwatered trough tiles. `SlimeHutch.
+    /// performToolAction` accepts the literal interior tiles x == 16, y in 6..9,
+    /// so discovery advertises exactly those coordinates (and only the ones the
+    /// actor can legally stand beside / walk to) rather than asking the building
+    /// for tile properties; the handler revalidates the coordinate and the
+    /// location identity and never trusts this list.
+    /// </summary>
+    private static IReadOnlyList<BridgeSlimeHutchTroughTarget> DiscoverSlimeHutchTroughTargets(Farmer player)
+    {
+        if (player.currentLocation is not StardewValley.SlimeHutch hutch)
+            return Array.Empty<BridgeSlimeHutchTroughTarget>();
+        List<BridgeSlimeHutchTroughTarget> result = new();
+        for (int y = SlimeHutchTroughFirstRow; y <= SlimeHutchTroughLastRow; y++)
+        {
+            if (!IsSlimeHutchTroughTile(SlimeHutchTroughColumn, y)) continue;
+            // A watered spot admits no further watering, so it is not a target.
+            if (hutch.waterSpots[y - SlimeHutchTroughFirstRow]) continue;
+            if (!IsTileWithinChebyshevRadius(player, SlimeHutchTroughColumn, y, TargetDiscoveryRadius)) continue;
+            result.Add(new BridgeSlimeHutchTroughTarget(BuildSlimeHutchTroughTargetId(hutch, SlimeHutchTroughColumn, y), SlimeHutchTroughColumn, y));
         }
         return result;
     }
