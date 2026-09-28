@@ -157,4 +157,69 @@ public sealed class SleepAndAdvanceDayLifecycleTests
     {
         SleepAndAdvanceDayLifecycle.TryStart(new DummyMonitor(), ValidConfig).Should().NotBeNull();
     }
+
+    // --- Pass-out hazard predicate --------------------------------------------
+    //
+    // Pass-out is an automatic native gate (Game1.cs:6452: `timeOfDay >= 2600 ||
+    // stamina <= -15f` -> `player.startToPassOut()`), not something this lifecycle
+    // may start. It must YIELD to it instead of competing for the same actor: the
+    // path finder this lifecycle installs would otherwise keep issuing moves while
+    // Farmer.performPassOut() runs `completelyStopAnimatingOrDoingAction()` +
+    // `animateOnce(293)` (Farmer.cs:5766-5782).
+
+    [Fact]
+    public void PassOutPredicate_IsFalseWhenTheActorIsHealthy()
+    {
+        SleepAndAdvanceDayLifecycle.IsPassOutHazard(
+            passedOut: false,
+            spritePassingOut: false,
+            nonCancelableBarrier: false).Should().BeFalse();
+    }
+
+    [Fact]
+    public void PassOutPredicate_IsTrueWhenTheNativePipelineOwnsTheActor()
+    {
+        SleepAndAdvanceDayLifecycle.IsPassOutHazard(
+            passedOut: true,
+            spritePassingOut: false,
+            nonCancelableBarrier: false).Should().BeTrue();
+    }
+
+    [Fact]
+    public void PassOutPredicate_IsTrueWhileTheNativeAnimationIsRunning()
+    {
+        // This is the case that the earlier implementation missed: the animation
+        // can be running before `passedOut` flips, and continuing to drive the
+        // controller there is exactly the interference this predicate prevents.
+        SleepAndAdvanceDayLifecycle.IsPassOutHazard(
+            passedOut: false,
+            spritePassingOut: true,
+            nonCancelableBarrier: false).Should().BeTrue();
+    }
+
+    [Fact]
+    public void PassOutPredicate_IsTrueForTheNonCancelableSharedWorldBarrier()
+    {
+        // PassOutNewDay() installs `ReadyCheckDialog("sleep", allowCancel: false)`
+        // in a shared world (Game1.cs:10357-10360), which is a different ingress
+        // from a normal bedtime ready check (that one is cancelable).
+        SleepAndAdvanceDayLifecycle.IsPassOutHazard(
+            passedOut: false,
+            spritePassingOut: false,
+            nonCancelableBarrier: true).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ValidConfig_AcceptsAMultiplayerMinimumOfTwoFarmers()
+    {
+        // A co-op night must not be advanced alone, so the driver declares 2.
+        var config = new SleepAndAdvanceDayLifecycleConfig
+        {
+            Enable = true,
+            EvidencePath = EvidencePath,
+            MinimumOnlineFarmers = 2,
+        };
+
+        config.IsValid.Should().BeTrue();
+    }
 }
