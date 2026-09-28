@@ -270,6 +270,42 @@ test("craft partial chain refuses to claim a partial completion that was never p
   assert.equal(submitted.length, 1);
 });
 
+test("craft partial chain fails closed when the drop has no debris chunk behind it", async () => {
+  // The Mod's own guard is droppedToGround = droppedStack == 0 || debrisAfter ==
+  // debrisBefore + 1 (craftingactions.cs). A receipt that reports a partial drop
+  // while no debris chunk appeared would have been Uncertain in the Mod, so the
+  // chain must refuse to treat its numbers as an honest partial completion.
+  const mock = createMock({
+    revision: 7,
+    retainedStack: EXISTING_STACK,
+    carriedStack: 0,
+    count: 0,
+    chestStack: 0,
+  });
+  const client = createClient(mock, {
+    execute: async (request) => {
+      const revision = mock.advance({}).revision;
+      return {
+        requestId: request.requestId,
+        executionId: "breakpoint-execution",
+        state: SOURCE_CRAFT_PARTIAL_STATE,
+        reasonCode: SOURCE_CRAFT_REASON,
+        revision,
+        evidence: {
+          detail: CRAFT_EVIDENCE(SOURCE_PARTIAL_DISPOSITION, BREAKPOINT_GAINED, PRODUCED_STACK - BREAKPOINT_GAINED, 0, PRODUCED_STACK).replace(
+            ";dropped_debris=1",
+            ";dropped_debris=0",
+          ),
+        },
+      };
+    },
+  });
+
+  const result = await runCraftPartialRecoveryChainSmoke(client, [], config);
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /recovery_chain_breakpoint_postcondition_mismatch/);
+});
+
 test("craft partial chain fails closed when the retained stack does not add up", async () => {
   // The receipt claims a partial drop but its own numbers contradict it. A chain
   // that accepted this would report a completion the Mod never established.

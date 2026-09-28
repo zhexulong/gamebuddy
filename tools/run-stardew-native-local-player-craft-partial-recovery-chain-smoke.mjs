@@ -397,6 +397,11 @@ function craftHonest(evidence) {
     evidence.count_postcondition === "true" &&
     evidence.materials_consumed_exactly === "true" &&
     evidence.native_menu_opened === "false" &&
+    // Mirrors the Mod's droppedToGround guard (craftingactions.cs): the stack it
+    // reports as left out must be zero, or exactly one debris chunk must have
+    // appeared. Without this the chain could pass on a receipt the Mod itself
+    // would have called Uncertain.
+    (Number(evidence.dropped_stack) === 0 || Number(evidence.dropped_debris) === 1) &&
     Number.isSafeInteger(Number(evidence.count_before)) &&
     Number(evidence.count_after) === Number(evidence.count_before) + Number(evidence.produced_per_craft)
   );
