@@ -518,7 +518,32 @@ an alternate action runtime.
 Current native-local validation record: `move_to_tile`, `till_soil`,
 `equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
 `harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
-receipt-plus-fresh-postcondition standard. `water_crop` has also met this lane's live
+receipt-plus-fresh-postcondition standard. The built-in kitchen fridge has
+also met this lane's standard as a **container target**, over the same
+`chest_store`/`chest_retrieve` capability: the fridge IS a `Chest`
+(`FarmHouse.fridge`/`IslandFarmHouse.fridge` are `NetRef<Chest>` built with
+`playerChest: true`) and runs the identical `Chest.addItem` /
+`GetItemsForPlayer().Remove` transaction, so only resolution differs — the
+fridge never enters `location.objects` and can only be reached through
+`GameLocation.GetFridge()` plus the room's cached `fridgePosition` tile, which
+is why `chest_store`/`chest_retrieve` previously silently missed it. Both
+scenarios upgrade the real house to a kitchen (`HouseUpgrade 1`, the same class
+of target-version native setup as `SpreadDirt`/`SetupBigFarm`) so
+`GetFridge()` returns the built-in `Chest`, supply one `(O)24` in the backpack
+(store) or inside the fridge (retrieve), and warp only to a lawful fridge
+approach tile; the fixture never runs the container transaction. `fridge_store`
+returned same-execution `succeeded/chest_stored` for opaque
+`fridge_17a1dedfce967e56` at FarmHouse `(6,4)`, with `container=fridge`,
+`item=(O)24`, `player_stack_before=1`, `player_stack_after=0`,
+`source_consumed=true`, `chest_stack_before=0`, `chest_stack_after=1`, and
+`native_menu_opened=false`. `fridge_retrieve` returned same-execution
+`succeeded/chest_retrieved` for the same fridge identity, with
+`chest_stack_before=1`, `chest_stack_after=0`, `inventory_before=0`,
+`inventory_after=1`, and `native_menu_opened=false`. Both transactions restored
+their profile, removed backup/lock and the working save, and left no
+Stardew/SMAPI process. This is only `native_local_player_fixture` shared
+mechanics evidence, never Farmhand, HostAutomation, Portfolio, publication,
+release, or save/reopen evidence. `water_crop` has also met this lane's live
 receipt-plus-fresh-postcondition standard. Its scenario first uses the exact
 pre-attachment native setup `SpreadDirt → SpreadSeeds 472` to make dry crops;
 that initializer itself is not evidence. The action run independently equipped
