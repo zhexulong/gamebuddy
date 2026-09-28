@@ -373,6 +373,14 @@ export function fixtureActions(action) {
   // fact-triggered rather than rejection-triggered.
   if (action === "stamina_recovery_chain")
     return ["move_to_tile", "travel", "equip_tool", "till_soil", "use_item"];
+  // Lane G partial-completion recovery chain: the Bait recipe turns one Bug Meat
+  // into five Bait while the backpack already holds 998 Bait, so the native
+  // transaction can only take one and must drop four. The chain reads the honest
+  // `partially_succeeded/crafted_item_created` receipt, stores the retained stack,
+  // then picks the dropped remainder back up. Not a new action; it grants no
+  // capability.
+  if (action === "craft_partial_recovery_chain")
+    return ["move_to_tile", "travel", "craft_item", "chest_store", "pickup_item"];
   // Ladder 3: Jodi's Request — a real Spring-19 mail quest asking for a fresh
   // cauliflower. The fixture only supplies the player with a Hoe, a filled
   // Watering Can and cauliflower seeds; the Agent plans the whole farming
@@ -519,6 +527,12 @@ export function fixtureScenario(actions, action) {
   // below would select the ordinary till-soil scenario and the chain would have no
   // low-stamina breakpoint.
   if (action === "stamina_recovery_chain") return "native_stamina_recovery_v1";
+  // Lane G partial-completion recovery chain: the same craft_item action set plus
+  // chest_store/pickup_item, but the fixture must supply a backpack that is nearly
+  // FULL of the product. Without this override the `craft_item` check below would
+  // select the ordinary craft scenario whose product fits, and the chain would have
+  // no partial disposition to recover from.
+  if (action === "craft_partial_recovery_chain") return "native_craft_item_partial_v1";
   // The lifecycle action owns its own route and preconditions; it needs no
   // fixture scenario beyond the ordinary move-only world.
   if (actions.includes("advance_day")) return "";
