@@ -839,7 +839,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1717,6 +1717,69 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 player.warpFarmer(new StardewValley.Warp(0, 0, home.NameOrUniqueName, (int)standingTile.Value.X, (int)standingTile.Value.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized fridge precondition before bridge attachment: scenario={fixture.FixtureScenario}; fridge={fridge.QualifiedItemId}; fridge_tile={fridgeTile.X},{fridgeTile.Y}; standing={standingTile.Value.X},{standingTile.Value.Y}; item={fridgeItemId}; production alone runs the native container transaction and emits the receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_ship_item_island_v1")
+            {
+                // Pre-attachment fixture only: IslandWest's shipping bin is not a
+                // Building. It lives at the location's own `shippingBinPosition` and is
+                // admitted only after the island house upgrade (IslandWest.cs:237 and
+                // :311 both gate on farmhouseRestored). The game's own island UI path
+                // hands `Game1.getFarm().shipItem` to ItemGrabMenu (IslandWest.cs:313),
+                // which is exactly the call production makes, so the fixture only
+                // establishes the declared Given: the island house restored, one
+                // ordinary shippable Object in the backpack, the native bin emptied so
+                // the shipped-stack delta is unambiguous, and the local player standing
+                // on a lawful tile beside the native bin footprint. Production alone
+                // calls Farm.shipItem and owns every postcondition; the fixture never
+                // ships the item, never writes bin contents, and emits no receipt.
+                if (Game1.getLocationFromName("IslandWest") is not StardewValley.Locations.IslandWest island)
+                    throw new InvalidOperationException("fixture_native_local_ship_item_island_missing");
+                // The island house is restored by the parrot upgrade the save may not have
+                // bought yet; setting the native flag is the same end state that upgrade
+                // produces (IslandWest.cs:174) and is disposable fixture state only.
+                island.farmhouseRestored.Value = true;
+                if (!island.farmhouseRestored.Value)
+                    throw new InvalidOperationException("fixture_native_local_ship_item_island_not_restored");
+                const string islandShipItemId = "(O)24";
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == islandShipItemId && item.Stack > 0)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(islandShipItemId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_ship_item_island_inventory_full");
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == islandShipItemId && item.Stack > 0))
+                    throw new InvalidOperationException("fixture_native_local_ship_item_island_item_missing_after_add");
+                // Native bin tile bounds are x in [X, X+1] and y in [Y-1, Y]
+                // (IslandWest.cs:241 and :311), so the footprint origin is (X, Y-1) with
+                // a 2x2 extent. Exploration candidates ring that footprint, and the
+                // handler revalidates the exact target identity and adjacency.
+                int binX = island.shippingBinPosition.X;
+                int binY = island.shippingBinPosition.Y - 1;
+                farm.getShippingBin(player).Clear();
+                if (farm.getShippingBin(player).CountItemStacks() != 0)
+                    throw new InvalidOperationException("fixture_native_local_ship_item_island_bin_not_empty");
+                List<Vector2> candidates = new();
+                for (int x = binX - 1; x <= binX + 2; x++)
+                {
+                    for (int y = binY - 1; y <= binY + 2; y++)
+                    {
+                        Vector2 tile = new(x, y);
+                        if (!island.isTileOnMap(tile) || !island.isTilePassable(tile))
+                            continue;
+                        if (island.IsTileOccupiedBy(tile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                            continue;
+                        candidates.Add(tile);
+                    }
+                }
+                Vector2? islandStanding = candidates
+                    .OrderBy(tile => Math.Max(Math.Abs(tile.X - binX), Math.Abs(tile.Y - binY)))
+                    .ThenBy(tile => Math.Abs(tile.X - binX) + Math.Abs(tile.Y - binY))
+                    .Cast<Vector2?>()
+                    .FirstOrDefault();
+                if (islandStanding is null)
+                    throw new InvalidOperationException("fixture_native_local_ship_item_island_standing_tile_missing");
+                player.warpFarmer(new StardewValley.Warp(0, 0, island.NameOrUniqueName, (int)islandStanding.Value.X, (int)islandStanding.Value.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized island ship-item precondition before bridge attachment: item={islandShipItemId}; bin={island.shippingBinPosition.X},{island.shippingBinPosition.Y}; standing={islandStanding.Value.X},{islandStanding.Value.Y}; production alone invokes Farm.shipItem and emits receipt.", LogLevel.Info);
                 return;
             }
 
