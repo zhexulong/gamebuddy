@@ -78,6 +78,27 @@ const EXPECTED_CAPABILITIES = [
 
 const RECIPE_ALIAS = "Bait";
 const PRODUCT_ITEM_ID = "(O)685";
+
+/** Evidence keys the craft terminal always carries. Declared before use: a `const`
+ *  read from an earlier-executing statement would be a temporal-dead-zone error. */
+const CRAFT_EVIDENCE_KEYS = [
+  "count_after",
+  "count_before",
+  "count_postcondition",
+  "disposition",
+  "dropped_debris",
+  "dropped_stack",
+  "inventory_accepting_before",
+  "inventory_gained_stack",
+  "inventory_postcondition",
+  "location",
+  "materials_consumed_exactly",
+  "native_menu_opened",
+  "output",
+  "produced_per_craft",
+  "produced_stack",
+  "recipe",
+];
 /** Bait's data row produces five per craft; (O)685's native max stack is 999. */
 const PRODUCED_STACK = 5;
 const EXISTING_STACK = 998;
@@ -367,25 +388,6 @@ if (import.meta.main) {
     session.close();
   }
 }
-
-const CRAFT_EVIDENCE_KEYS = [
-  "count_after",
-  "count_before",
-  "count_postcondition",
-  "disposition",
-  "dropped_debris",
-  "dropped_stack",
-  "inventory_accepting_before",
-  "inventory_gained_stack",
-  "inventory_postcondition",
-  "location",
-  "materials_consumed_exactly",
-  "native_menu_opened",
-  "output",
-  "produced_per_craft",
-  "produced_stack",
-  "recipe",
-];
 
 /** Every craft honesty field the Mod itself asserted before its terminal. */
 function craftHonest(evidence) {
