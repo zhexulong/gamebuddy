@@ -38,25 +38,85 @@ export type StopSettledPayload = Readonly<{
   observationRevision: number;
 }>;
 
-/** Private production turn authority; no model/tool identity can mint lineage. */
+/**
+ * One consumed player turn admits a bounded sequence of native expressions, not
+ * exactly one: incremental presentation commits each completed sentence as it
+ * arrives so the player sees the companion speak before the turn ends, and a
+ * single reply legitimately spans several short pieces.
+ *
+ * The bounds keep the surface replay-safe without ever refusing a reply the text
+ * layer already accepted:
+ *
+ * - Every piece comes from the same reply, so the turn's cumulative presented
+ *   bytes can never exceed one reply's own text budget
+ *   (`MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES`). A duplicated or looping delta
+ *   stream is what pushes past it, and that must fail closed instead of being
+ *   drawn into unbounded native chat. This is an exact bound, not a heuristic:
+ *   a healthy reply's pieces sum to exactly its own length.
+ * - The piece count is a secondary denial-of-service guard, set far above any
+ *   real reply (the design targets 1-3 pieces and treats >3 as a health
+ *   signal), purely to stop a stream of one-byte pieces.
+ *
+ * Text equality is deliberately NOT an admission check: a reply may legitimately
+ * repeat a line ("好的。好的。"), so refusing repeats would crash on valid output.
+ * Replay of a re-sent request is already refused by the Game port's per-piece
+ * `expressionId` idempotency, and an uncertain commit closes the turn.
+ */
+export const MAX_NATIVE_PRESENTATIONS_PER_TURN = 256;
+export const MAX_NATIVE_PRESENTATION_TURN_BYTES = 16_384;
+
+/**
+ * Private production turn authority; no model/tool identity can mint lineage.
+ * Every captured admission stays valid for the whole turn and for every piece,
+ * so a piece produced before an earlier piece finishes committing is never
+ * rejected as stale during normal sequential draining.
+ */
 export class GameTurnLineageTracker {
-  #lineage: Readonly<{ sourceEventId: string; generation: number; presentations: number }> | undefined;
+  #lineage: Readonly<{ sourceEventId: string; generation: number }> | undefined;
+  #presentations = 0;
+  #presentedBytes = 0;
   #generation = 0;
   beginPlayerBatch(sourceEventId: string): void {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(sourceEventId)) throw new Error("invalid_presentation_source_event_id");
-    this.#lineage = Object.freeze({ sourceEventId, generation: this.#generation, presentations: 0 });
+    this.#lineage = Object.freeze({ sourceEventId, generation: this.#generation });
+    this.#presentations = 0;
+    this.#presentedBytes = 0;
   }
   endBatch(): void {
-    const lineage = this.#lineage;
+    // Clearing the lineage ends the turn's admission window. A consumed batch
+    // that never spoke is legitimate (tool-only, empty, or rejected text), and
+    // an over-budget batch already failed closed at capture, so there is no
+    // count condition left to assert here.
     this.#lineage = undefined;
-    if (lineage !== undefined && lineage.presentations !== 1)
-      throw new Error("player_turn_requires_exactly_one_presentation");
+    this.#presentations = 0;
+    this.#presentedBytes = 0;
   }
   revoke(): void {
     this.#generation += 1;
     this.#lineage = undefined;
+    this.#presentations = 0;
+    this.#presentedBytes = 0;
   }
-  capture(expectedSourceEventId?: string): Readonly<{
+  /**
+   * A piece whose native commit failed is an uncertain delivery for the whole
+   * turn: the failed piece may have landed, so the turn is over and no later
+   * piece may be admitted. This keeps the sequence contract from quietly turning
+   * one uncertain commit into a stream of further native chat.
+   */
+  closeForUncertainDelivery(): void {
+    this.#lineage = undefined;
+    this.#presentations = 0;
+    this.#presentedBytes = 0;
+  }
+  capture(
+    expectedSourceEventId?: string,
+    /**
+     * The exact text about to be presented, when this is a text commit. Its
+     * UTF-8 size feeds the turn's cumulative budget; the value itself is not
+     * inspected (a reply may legitimately repeat a line).
+     */
+    text?: string,
+  ): Readonly<{
     surface: "game";
     sourceEventId: string;
     admission: Readonly<{ hostBinding: object; assertHostCurrent(binding: object): void }>;
@@ -65,17 +125,28 @@ export class GameTurnLineageTracker {
     if (lineage === undefined) throw new Error("presentation_lineage_unavailable");
     if (expectedSourceEventId !== undefined && lineage.sourceEventId !== expectedSourceEventId)
       throw new Error("native_game_presentation_lineage_mismatch");
-    if (lineage.presentations !== 0) throw new Error("player_turn_presentation_already_committed");
-    const committed = Object.freeze({ ...lineage, presentations: 1 });
-    this.#lineage = committed;
-    const binding = Object.freeze({ generation: committed.generation });
+    if (this.#presentations >= MAX_NATIVE_PRESENTATIONS_PER_TURN)
+      throw new Error("player_turn_presentation_budget_exceeded");
+    if (text !== undefined) {
+      const textBytes = Buffer.byteLength(text, "utf8");
+      if (textBytes <= 0) throw new Error("invalid_presentation_text_size");
+      if (this.#presentedBytes + textBytes > MAX_NATIVE_PRESENTATION_TURN_BYTES)
+        throw new Error("player_turn_presentation_budget_exceeded");
+      this.#presentedBytes += textBytes;
+    }
+    this.#presentations += 1;
+    const binding = Object.freeze({ generation: lineage.generation });
     return Object.freeze({
       surface: "game" as const,
-      sourceEventId: committed.sourceEventId,
+      sourceEventId: lineage.sourceEventId,
       admission: Object.freeze({
         hostBinding: binding,
+        // Identity is asserted against this exact turn's lineage object, so a
+        // piece that finishes after the turn closed (or that belongs to another
+        // turn) is still rejected. Within one turn the identity stays stable,
+        // so ordered pieces cannot invalidate each other.
         assertHostCurrent: (candidate: object) => {
-          if (candidate !== binding || this.#generation !== committed.generation || this.#lineage !== committed)
+          if (candidate !== binding || this.#generation !== lineage.generation || this.#lineage !== lineage)
             throw new Error("stale_presentation_lineage");
         },
       }),
@@ -92,15 +163,20 @@ export function createGamePresentationAdmissionProvider(
   turnTracker: GameTurnLineageTracker,
   interruption: CompanionInterruption,
 ): Readonly<{
-  capture(expectedSourceEventId: string): Readonly<{
+  capture(
+    expectedSourceEventId: string,
+    /** The exact text about to be presented, when this is a text commit. */
+    text?: string,
+  ): Readonly<{
     surface: "game";
     sourceEventId: string;
     admission: Readonly<{ hostBinding: object; assertHostCurrent(binding: object): void }>;
   }>;
+  closeForUncertainCommit(): void;
 }> {
   return Object.freeze({
-    capture: (expectedSourceEventId: string) => {
-      const capturedLineage = turnTracker.capture(expectedSourceEventId);
+    capture: (expectedSourceEventId: string, text?: string) => {
+      const capturedLineage = turnTracker.capture(expectedSourceEventId, text);
       const interruptionBinding = interruption.capture();
       const binding = Object.freeze({});
       return Object.freeze({
@@ -116,6 +192,7 @@ export function createGamePresentationAdmissionProvider(
         }),
       });
     },
+    closeForUncertainCommit: () => turnTracker.closeForUncertainDelivery(),
   });
 }
 
@@ -405,7 +482,11 @@ export class CompanionHostService {
   ): NativeGameContentPresenter {
     return async (content: NativeGameCompanionContent): Promise<void> => {
       if (this.#closed || !this.#integrationAdmissionOpen || content.text.trim().length === 0) return;
-      const captured = options.admissionProvider.capture(content.sourceEventId);
+      // Text is part of admission: the turn's cumulative presented bytes must
+      // stay inside one reply's budget and a repeated piece is refused, so a
+      // duplicated or looping delta stream fails closed before it turns into
+      // unbounded native chat.
+      const captured = options.admissionProvider.capture(content.sourceEventId, content.text);
       if (captured.surface !== "game") throw new Error("native_game_presentation_lineage_mismatch");
       const expression: GameCompanionTextExpression = Object.freeze({
         surface: "game",
@@ -415,7 +496,16 @@ export class CompanionHostService {
         text: content.text,
         locale: options.locale,
       });
-      await options.textPort.present(expression, captured.admission);
+      try {
+        await options.textPort.present(expression, captured.admission);
+      } catch (error) {
+        // A failed native commit is an uncertain delivery for the whole turn:
+        // the piece may have landed. End the turn's admission (through the same
+        // provider that admitted this piece) so no later piece turns one
+        // uncertain commit into a stream of further native chat.
+        options.admissionProvider.closeForUncertainCommit?.();
+        throw error;
+      }
     };
   }
 
