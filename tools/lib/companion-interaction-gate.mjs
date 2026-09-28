@@ -23,6 +23,13 @@
  *   - hasPlayerAddress   : mentions the player or asks a question (recorded,
  *                          not enforced — a companion may also just exclaim)
  * All hard signals must pass for the summary to be acceptable.
+ *
+ * CLAIM BOUNDARY: this is a high-precision, LOW-RECALL detector. The reaction
+ * vocabulary is closed, so natural phrasings outside it pass silently — a probe
+ * with 16 ordinary Chinese NPC-reaction lines still missed 7 (e.g. 「她哼了一声」
+ * 「她微微一愣」「她的神情缓和了」). Treat a pass as "no KNOWN-class breach",
+ * never as "the line matches the world state". Widening recall needs a
+ * non-vocabulary mechanism, which is a separate design.
  */
 export function assessCompanionInteraction(text, observedEvents = []) {
   const trimmed = String(text ?? "").trim();
