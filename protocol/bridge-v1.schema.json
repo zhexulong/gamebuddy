@@ -1635,6 +1635,13 @@
           },
           "maxItems": 8
         },
+        "slimeHutchTroughTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/slimeHutchTroughTarget"
+          },
+          "maxItems": 4
+        },
         "harvestTargets": {
           "type": "array",
           "items": {
@@ -1801,6 +1808,12 @@
       "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } }
     },
     "petBowlTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "x", "y"],
+      "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } }
+    },
+    "slimeHutchTroughTarget": {
       "type": "object",
       "additionalProperties": false,
       "required": ["targetId", "x", "y"],
@@ -2002,7 +2015,8 @@
     { "if": { "required": ["action"], "properties": { "action": { "enum": ["craft_item", "cook_recipe"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/recipeTargetArgs" } } } },
     { "if": { "required": ["action"], "properties": { "action": { "const": "collect_crab_pot_output" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
     { "if": { "required": ["action"], "properties": { "action": { "const": "ship_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
-    { "if": { "required": ["action"], "properties": { "action": { "const": "water_pet_bowl" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } }
+    { "if": { "required": ["action"], "properties": { "action": { "const": "water_pet_bowl" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
+    { "if": { "required": ["action"], "properties": { "action": { "const": "water_slime_hutch_trough" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } }
       ],
       "properties": {
         "requestId": {
@@ -2055,7 +2069,8 @@
             "cook_recipe",
             "collect_crab_pot_output",
             "ship_item",
-            "water_pet_bowl"
+            "water_pet_bowl",
+            "water_slime_hutch_trough"
           ]
         },
         "args": {
