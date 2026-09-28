@@ -2214,19 +2214,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeChestStoreTarget>();
+        // Advertise one storable inventory slot per container: the first
+        // non-tool, non-empty item the Farmhand could move into it.
+        int slot = FindFirstStorableSlot(player);
+        if (slot < 0) return Array.Empty<BridgeChestStoreTarget>();
+        StardewValley.Item item = player.Items[slot]!;
         List<BridgeChestStoreTarget> result = new();
-        foreach (StardewValley.Object obj in location.objects.Values)
+        foreach ((StardewValley.Objects.Chest chest, int x, int y, bool isFridge) in DiscoverStorageContainers(player, location))
         {
-            if (obj is not StardewValley.Objects.Chest chest || !IsOwnedOrdinaryChest(chest) || !IsChestTargetInRange(player, (int)chest.TileLocation.X, (int)chest.TileLocation.Y))
-                continue;
-            // Advertise one storable inventory slot per chest: the first
-            // non-tool, non-empty item the Farmhand could move into it.
-            int slot = FindFirstStorableSlot(player);
-            if (slot < 0) continue;
-            StardewValley.Item item = player.Items[slot]!;
             result.Add(new BridgeChestStoreTarget(
-                BuildChestTargetId(location, (int)chest.TileLocation.X, (int)chest.TileLocation.Y, chest),
-                (int)chest.TileLocation.X, (int)chest.TileLocation.Y, slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), item.Stack));
+                BuildContainerTargetId(location, x, y, chest, isFridge),
+                x, y, slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), item.Stack));
             if (result.Count >= 16) break;
         }
         return result;
@@ -2237,19 +2235,88 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeChestRetrieveTarget>();
         List<BridgeChestRetrieveTarget> result = new();
-        foreach (StardewValley.Object obj in location.objects.Values)
+        foreach ((StardewValley.Objects.Chest chest, int x, int y, bool isFridge) in DiscoverStorageContainers(player, location))
         {
-            if (obj is not StardewValley.Objects.Chest chest || !IsOwnedOrdinaryChest(chest) || !IsChestTargetInRange(player, (int)chest.TileLocation.X, (int)chest.TileLocation.Y))
-                continue;
             StardewValley.Item? first = chest.GetItemsForPlayer().FirstOrDefault(item => item is not null && item.Stack > 0);
             if (first is null) continue;
             if (!player.couldInventoryAcceptThisItem(first)) continue;
             result.Add(new BridgeChestRetrieveTarget(
-                BuildChestTargetId(location, (int)chest.TileLocation.X, (int)chest.TileLocation.Y, chest),
-                (int)chest.TileLocation.X, (int)chest.TileLocation.Y, first.QualifiedItemId, RequireDisplayName(first.QualifiedItemId), first.Stack));
+                BuildContainerTargetId(location, x, y, chest, isFridge),
+                x, y, first.QualifiedItemId, RequireDisplayName(first.QualifiedItemId), first.Stack));
             if (result.Count >= 16) break;
         }
         return result;
+    }
+
+    /// <summary>
+    /// Every eligible storage container in discovery range: player-owned ordinary
+    /// Chests placed in the location's object layer, plus the location's built-in
+    /// kitchen fridge.
+    ///
+    /// The built-in fridge deserves the same player intent as any chest — store or
+    /// take one adjacent item — because it literally IS a Chest
+    /// (`FarmHouse.fridge`/`IslandFarmHouse.fridge` are `NetRef&lt;Chest&gt;` built with
+    /// `playerChest: true`), and the production transaction is the same
+    /// `Chest.addItem` / `GetItemsForPlayer().Remove` pair. The only difference is
+    /// resolution: the fridge never enters `location.objects`, so it can only be
+    /// reached through `GameLocation.GetFridge()` and its map tile.
+    /// </summary>
+    private static IEnumerable<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> DiscoverStorageContainers(
+        Farmer player, StardewValley.GameLocation location)
+    {
+        foreach (StardewValley.Object obj in location.objects.Values)
+        {
+            if (obj is not StardewValley.Objects.Chest chest || !IsOwnedOrdinaryChest(chest)
+                || !IsChestTargetInRange(player, (int)chest.TileLocation.X, (int)chest.TileLocation.Y))
+                continue;
+            yield return (chest, (int)chest.TileLocation.X, (int)chest.TileLocation.Y, false);
+        }
+        if (KitchenFridgeTile(location) is { } fridgeTile
+            && IsChestTargetInRange(player, (int)fridgeTile.X, (int)fridgeTile.Y)
+            && location.GetFridge() is { } fridge
+            && IsOwnedOrdinaryChest(fridge))
+            yield return (fridge, (int)fridgeTile.X, (int)fridgeTile.Y, true);
+    }
+
+    /// <summary>
+    /// Resolve exactly one eligible storage container at an acting-adjacent tile.
+    /// Objects win over the fridge when both somehow claim the tile.
+    /// </summary>
+    private static (StardewValley.Objects.Chest Chest, bool IsFridge)? ResolveStorageContainerAt(
+        StardewValley.GameLocation location, int x, int y)
+    {
+        Vector2 tile = new(x, y);
+        if (location.objects.TryGetValue(tile, out StardewValley.Object? placed)
+            && placed is StardewValley.Objects.Chest chest
+            && IsOwnedOrdinaryChest(chest))
+            return (chest, false);
+        if (IsKitchenFridgeTile(location, x, y) && location.GetFridge() is { } fridge && IsOwnedOrdinaryChest(fridge))
+            return (fridge, true);
+        return null;
+    }
+
+    /// <summary>The map tile holding the built-in kitchen fridge, or null without a kitchen.</summary>
+    private static Vector2? KitchenFridgeTile(StardewValley.GameLocation location) => location switch
+    {
+        StardewValley.Locations.FarmHouse farmHouse when farmHouse.fridgePosition != Point.Zero
+            => new Vector2(farmHouse.fridgePosition.X, farmHouse.fridgePosition.Y),
+        StardewValley.Locations.IslandFarmHouse islandFarmHouse when islandFarmHouse.fridgePosition != Point.Zero
+            => new Vector2(islandFarmHouse.fridgePosition.X, islandFarmHouse.fridgePosition.Y),
+        _ => null,
+    };
+
+    private static bool IsKitchenFridgeTile(StardewValley.GameLocation location, int x, int y) =>
+        KitchenFridgeTile(location) is { } tile && (int)tile.X == x && (int)tile.Y == y;
+
+    private static string BuildContainerTargetId(
+        StardewValley.GameLocation location, int x, int y, StardewValley.Objects.Chest chest, bool isFridge) =>
+        isFridge ? BuildFridgeTargetId(location, x, y, chest) : BuildChestTargetId(location, x, y, chest);
+
+    private static string BuildFridgeTargetId(
+        StardewValley.GameLocation location, int x, int y, StardewValley.Objects.Chest fridge)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:fridge:{fridge.QualifiedItemId}";
+        return $"fridge_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
     private static bool IsOwnedOrdinaryChest(StardewValley.Objects.Chest chest) =>
