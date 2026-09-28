@@ -60,6 +60,16 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// </summary>
     private const int EligibilityFrameBudget = 36000;
 
+    /// <summary>
+    /// Frames to keep waiting for the new day to truly begin (SMAPI DayStarted)
+    /// once the date counter has advanced. The counter alone is NOT the day
+    /// start: on the master it advances while the save is still in flight, and on
+    /// a client it syncs over the network; both happen before the new day is
+    /// actually playable. Claiming <c>day_advanced</c> before DayStarted would
+    /// let the Agent act mid-save.
+    /// </summary>
+    private const int DayStartFrameBudget = 3600;
+
     private readonly int minimumOnlineFarmers;
 
     private readonly IMonitor monitor;
@@ -88,9 +98,20 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private int daysBefore;
     private bool dayBaselineCaptured;
     private bool multiPlayer;
-    private bool savedObserved;
     private bool savingObserved;
-    private bool dayStartedObserved;
+    private int dayStartWaitFrames;
+
+    // Event edges are COUNTERS, not sticky flags. The load-time Saved/DayStarted
+    // fire long before the night is slept, so a boolean would already be true when
+    // the night begins and the gate below would be vacuous. Measured live: the
+    // host's sticky dayStartedObserved was set at 23:02:34 by the initial load,
+    // and the lifecycle then minted day_advanced at 23:02:49 while the real save
+    // only began at 23:02:49 and the new day started at 23:02:51.
+    private int savedCount;
+    private int dayStartedCount;
+    private int savedBaseline;
+    private int dayStartedBaseline;
+    private bool eventEdgeBaselineCaptured;
     private bool readyCheckObserved;
     private int readyAtCompletion;
     private int requiredAtCompletion;
@@ -160,13 +181,41 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// <summary>The native event edges this lifecycle consumes, forwarded by ModEntry.</summary>
     internal void ObserveSaved()
     {
-        this.savedObserved = true;
+        this.savedCount++;
     }
 
     internal void ObserveDayStarted()
     {
-        this.dayStartedObserved = true;
+        this.dayStartedCount++;
     }
+
+    /// <summary>
+    /// True once THIS night's save has been observed. Deliberately derived by
+    /// counting edges relative to the baseline captured when the night began, so
+    /// the load-time Saved cannot satisfy it.
+    /// </summary>
+    private bool NightSavedObserved => HasFreshEdge(this.savedCount, this.savedBaseline, this.eventEdgeBaselineCaptured);
+
+    /// <summary>
+    /// True once THIS night's new day has actually begun. The date counter alone
+    /// is not the day start (it advances mid-save on the master and syncs early on
+    /// a client), and the load-time DayStarted is not this night's either.
+    /// </summary>
+    private bool NightDayStartedObserved =>
+        HasFreshEdge(this.dayStartedCount, this.dayStartedBaseline, this.eventEdgeBaselineCaptured);
+
+    /// <summary>
+    /// A fresh native edge relative to the baseline captured when this night
+    /// began. SMAPI raises DayStarted "including when the player loads a save"
+    /// (and Saved on load too), so a sticky boolean is already true before the
+    /// night is slept: the load-time edge would satisfy the day-start gate and the
+    /// receipt would claim day_advanced while the real save had not even started.
+    /// Measured live: the host's sticky flag was set by the initial load at
+    /// 23:02:34, and day_advanced was minted at 23:02:49 while the real save began
+    /// at 23:02:49 and the new day started at 23:02:51.
+    /// </summary>
+    internal static bool HasFreshEdge(int count, int baseline, bool baselineCaptured)
+        => baselineCaptured && count > baseline;
 
     /// <summary>Returns true once the lifecycle reached a terminal state.</summary>
     internal bool Update()
@@ -408,6 +457,39 @@ internal sealed class SleepAndAdvanceDayLifecycle
         => passedOut || spritePassingOut || nonCancelableBarrier;
 
     /// <summary>
+    /// Pure day-start decision, separated from the live game so it can be pinned.
+    /// The date counter is NOT the day start: on the master it advances while the
+    /// save is still in flight, on a client it syncs over the network. Claiming
+    /// <c>day_advanced</c> before DayStarted would let the Agent act mid-save, so
+    /// the counter alone must wait, and exhausting the wait must report
+    /// <c>day_start_not_observed</c> instead of forging success.
+    /// </summary>
+    internal enum DayStartOutcome
+    {
+        Waiting,
+        Confirmed,
+        UnexpectedDelta,
+        NotObserved,
+    }
+
+    internal static DayStartOutcome DecideDayStart(
+        int delta,
+        bool dayStartedObserved,
+        int dayStartWaitFrames,
+        int budget)
+    {
+        if (delta == 0)
+            return DayStartOutcome.Waiting;
+        if (delta != 1)
+            return DayStartOutcome.UnexpectedDelta;
+        if (dayStartedObserved)
+            return DayStartOutcome.Confirmed;
+        if (dayStartWaitFrames < budget)
+            return DayStartOutcome.Waiting;
+        return DayStartOutcome.NotObserved;
+    }
+
+    /// <summary>
     /// Observe what the native pass-out path does next without ever driving it.
     /// In a shared world it installs the ready barrier; in single player
     /// <c>Game1.PassOutNewDay()</c> (Game1.cs:10344-10347) calls
@@ -449,6 +531,11 @@ internal sealed class SleepAndAdvanceDayLifecycle
         this.dayBefore = Game1.Date.TotalDays;
         this.daysBefore = (int)Game1.stats.DaysPlayed;
         this.dayBaselineCaptured = true;
+        // Anchor the event-edge counters at the same moment, so only edges that
+        // fire after the night actually began can satisfy the day-start gate.
+        this.savedBaseline = this.savedCount;
+        this.dayStartedBaseline = this.dayStartedCount;
+        this.eventEdgeBaselineCaptured = true;
     }
 
     /// <summary>
@@ -583,7 +670,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
             return false;
         }
 
-        if (this.savedObserved)
+        if (this.NightSavedObserved)
         {
             if (!this.savedTraceLogged)
             {
@@ -672,20 +759,52 @@ internal sealed class SleepAndAdvanceDayLifecycle
         int delta = dayAfter - this.dayBefore;
 
         // A save can only be mid-flight on the master; on a client the day fact
-        // arrives over the network. Neither is required to finish, but both are
-        // reported.
+        // arrives over the network. Either way the rollover must not be reported
+        // while the save barrier is still open.
         if (Game1.game1.IsSaving)
-            return false;
-
-        if (delta == 0)
-            return false;
-
-        if (delta != 1)
         {
-            // A +2 jump means a second rollover was triggered (e.g. an overnight
-            // event that also calls NewDay). That is not one bounded lifecycle.
-            this.Finish("blocked", $"unexpected_day_delta:{delta}", null);
-            return true;
+            this.savingObserved = true;
+            return false;
+        }
+
+        switch (DecideDayStart(delta, this.NightDayStartedObserved, this.dayStartWaitFrames, DayStartFrameBudget))
+        {
+            case DayStartOutcome.Waiting:
+                if (delta != 0)
+                    this.dayStartWaitFrames++;
+                if (this.dayStartWaitFrames % 120 == 0 && this.trace.Count < 64)
+                    this.trace.Add(
+                        $"awaiting_day_start;counter_advanced=true;frames={this.dayStartWaitFrames}");
+                return false;
+
+            case DayStartOutcome.UnexpectedDelta:
+                // A +2 jump means a second rollover was triggered (e.g. an overnight
+                // event that also calls NewDay). That is not one bounded lifecycle.
+                this.Finish("blocked", $"unexpected_day_delta:{delta}", null);
+                return true;
+
+            case DayStartOutcome.Confirmed:
+                this.trace.Add("day_started_observed");
+                break;
+
+            case DayStartOutcome.NotObserved:
+                // The day counter moved but the new day never became playable within
+                // the budget. Report honestly instead of forging day_advanced, so the
+                // Agent cannot act mid-save off a counter that raced ahead of the
+                // save boundary.
+                this.Finish(
+                    "blocked",
+                    "day_start_not_observed",
+                    new Dictionary<string, object?>
+                    {
+                        ["topology"] = this.Topology(),
+                        ["dayAfter"] = dayAfter,
+                        ["deltas"] = delta,
+                        ["savingObserved"] = this.savingObserved,
+                        ["savedObserved"] = this.NightSavedObserved,
+                        ["readyCheckObserved"] = this.readyCheckObserved,
+                    });
+                return true;
         }
 
         var settlement = new Dictionary<string, object?>
@@ -697,8 +816,8 @@ internal sealed class SleepAndAdvanceDayLifecycle
             ["daysPlayedBefore"] = this.daysBefore,
             ["daysPlayedAfter"] = daysAfter,
             ["savingObserved"] = this.savingObserved,
-            ["savedObserved"] = this.savedObserved,
-            ["dayStartedObserved"] = this.dayStartedObserved,
+            ["savedObserved"] = this.NightSavedObserved,
+            ["dayStartedObserved"] = this.NightDayStartedObserved,
             ["readyCheckObserved"] = this.readyCheckObserved,
         };
         if (this.multiPlayer)
@@ -725,8 +844,8 @@ internal sealed class SleepAndAdvanceDayLifecycle
             $"topology={this.Topology()}",
             $"entered_via={this.enteredVia}",
             $"saving_observed={this.savingObserved.ToString().ToLowerInvariant()}",
-            $"saved_observed={this.savedObserved.ToString().ToLowerInvariant()}",
-            $"day_started_observed={this.dayStartedObserved.ToString().ToLowerInvariant()}",
+            $"saved_observed={this.NightSavedObserved.ToString().ToLowerInvariant()}",
+            $"day_started_observed={this.NightDayStartedObserved.ToString().ToLowerInvariant()}",
         };
         if (this.dayBaselineCaptured)
         {
@@ -786,9 +905,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
             chain.Add("native_ready_barrier");
         if (this.savingObserved)
             chain.Add("saving");
-        if (this.savedObserved)
+        if (this.NightSavedObserved)
             chain.Add("saved");
-        if (this.dayStartedObserved)
+        if (this.NightDayStartedObserved)
             chain.Add("day_started");
         return chain.ToArray();
     }

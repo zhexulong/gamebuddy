@@ -84,11 +84,18 @@ $ACTION_SETUP = @{
     ship_item       = @{ scenario = "native_ship_item_v1"; experimental = $true }
     chest_retrieve  = @{ scenario = "native_chest_retrieve_v1"; experimental = $true }
     pet_animal      = @{ scenario = "native_pet_animal_v1"; experimental = $true }
-    # The cross-day lifecycle is a coordinated lifecycle, not a wire action: no
-    # Host fixture precondition is needed beyond the Farmhand's own cabin and
-    # bed, so the scenario is the move-only empty one. It is also not a policy
-    # action, so the AI client must not list it under ExperimentalActions.
+    # The cross-day lifecycle has two drivers, and the mapping differs because the
+    # precondition differs:
+    #
+    #  - `sleep_lifecycle` is the Mod-internal evidence-file lane: it owns its own
+    #    route and answer, so it needs no Host fixture precondition and is NOT a
+    #    policy action (the AI client must not list it under ExperimentalActions).
+    #  - `advance_day` is the wire action: the shared world dispatches it through
+    #    the bridge like the actions above, so it needs the policy opt-in. It still
+    #    needs no Host fixture precondition beyond the Farmhand's own cabin and
+    #    bed, so its scenario is the move-only empty one.
     sleep_lifecycle = @{ scenario = ""; experimental = $false }
+    advance_day     = @{ scenario = ""; experimental = $true }
 }
 
 function Assert-PathExists([string]$Path, [string]$Label, [string]$Kind = "Leaf") {
@@ -232,11 +239,18 @@ try {
         }
     }
     $hostConfig.SaveId = $hostConfig.SaveId
-    # A co-op night needs BOTH farmers asleep: each process runs the same native
-    # lifecycle for its own farmer, declares only its own readiness, and the
-    # native ready barrier advances the day once both are ready. Neither side
-    # marks the other ready and neither calls NewDay directly.
-    if ($Action -eq "sleep_lifecycle" -and -not [string]::IsNullOrWhiteSpace($HostSleepLifecycleEvidence)) {
+    # A co-op night needs BOTH farmers asleep: each process drives its own farmer,
+    # declares only its own readiness, and the native ready barrier advances the
+    # day once both are ready. Neither side marks the other ready and neither calls
+    # NewDay directly.
+    #
+    # This applies to both drivers of the same night. `sleep_lifecycle` is the
+    # Mod-internal file lane on both sides; `advance_day` is the wire action on the
+    # AI side, but the HOST side still has to go to bed, and driving it through the
+    # same file lane is exactly what the mechanism-level co-op evidence did. The
+    # Host player is a real human whose sleep is their own decision in production;
+    # in this gate the Host side is driven so the barrier can actually complete.
+    if ($Action -in @("sleep_lifecycle", "advance_day") -and -not [string]::IsNullOrWhiteSpace($HostSleepLifecycleEvidence)) {
         if (-not [System.IO.Path]::IsPathFullyQualified($HostSleepLifecycleEvidence)) {
             throw "HostSleepLifecycleEvidence must be absolute: $HostSleepLifecycleEvidence"
         }
@@ -255,6 +269,13 @@ try {
     $aiConfig = Read-Json $aiConfigPath
     if ($null -ne $setup -and $setup.experimental) {
         $aiConfig.ExperimentalActions = @($Action)
+    }
+    # A dispatched advance_day must not quietly become a solo night: if the other
+    # player is still connecting the world looks single-player and the native path
+    # would advance the day alone. This governs the WIRE action and is deliberately
+    # separate from SleepLifecycle below, which arms the evidence-file lifecycle.
+    if ($Action -eq "advance_day") {
+        $aiConfig | Add-Member -NotePropertyName AdvanceDayMinimumOnlineFarmers -NotePropertyValue $SleepMinimumOnlineFarmers -Force
     }
     # The cross-day lifecycle is opt-in Mod configuration, not a policy action.
     # It is enabled on the AI client only, because that is the process whose
@@ -361,8 +382,7 @@ try {
     } elseif (-not $AttachOnly) {
         $script:phase = "action_smoke"
         $actionArgs = @("--client-config", $aiConfigPath, "--action", $Action)
-        if ($Action -eq "sleep_lifecycle") { $actionArgs += @("--lifecycle-evidence", $SleepLifecycleEvidence) }
-        if ($DumpSpatial) {
+        if ($Action -eq "sleep_lifecycle") { $actionArgs += @("--lifecycle-evidence", $SleepLifecycleEvidence) }        if ($DumpSpatial) {
             $actionArgs = @("--client-config", $aiConfigPath, "--dump-spatial", "--poll-trace")
             if (-not [string]::IsNullOrWhiteSpace($ReachLocation)) { $actionArgs += @("--reach-location", $ReachLocation) }
         }

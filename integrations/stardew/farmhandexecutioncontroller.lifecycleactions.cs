@@ -32,18 +32,22 @@ internal sealed partial class ExecutionManager
     private ActiveDayAdvance? activeDayAdvance;
 
     /// <summary>
-    /// Optional evidence file for the lifecycle. An execution-owned night does not
-    /// need one: it is observable through its receipt. The fixture lane sets this
-    /// so its existing live evidence keeps working.
+    /// Farmers that must be online before an <c>advance_day</c> execution may
+    /// start. Default 1 is the honest single-player minimum; a co-op profile
+    /// declares 2, because a night that starts while the other player is still
+    /// connecting would otherwise take the single-player native path and advance
+    /// the day alone.
     /// </summary>
-    private string? lifecycleEvidencePath;
-
-    /// <summary>Farmers that must be online before a co-op night may start.</summary>
     private int lifecycleMinimumOnlineFarmers = 1;
 
-    internal void ConfigureLifecycleEvidence(string? evidencePath, int minimumOnlineFarmers)
+    /// <summary>
+    /// Declares the profile's co-op minimum for the <c>advance_day</c> execution
+    /// path. The evidence-only file lane carries its own copy of this value; this
+    /// one governs the wire action so an explicit request cannot silently become
+    /// a solo night when the other player drops between dispatch and execution.
+    /// </summary>
+    internal void ConfigureLifecycleMinimumFarmers(int minimumOnlineFarmers)
     {
-        this.lifecycleEvidencePath = evidencePath;
         this.lifecycleMinimumOnlineFarmers = Math.Clamp(minimumOnlineFarmers, 1, 8);
     }
 
@@ -96,8 +100,17 @@ internal sealed partial class ExecutionManager
         SleepAndAdvanceDayLifecycleConfig config = new()
         {
             Enable = true,
-            EvidencePath = this.lifecycleEvidencePath ?? string.Empty,
+            // An execution-owned night is observable through its receipt, so it
+            // writes no evidence file; the configured evidence lane is separate.
+            EvidencePath = string.Empty,
             MinimumOnlineFarmers = this.lifecycleMinimumOnlineFarmers,
+            // A dispatched night waits on another player's own decision to sleep,
+            // which is not an animation and has no natural upper bound. These
+            // budgets sit just inside the action's 600s watchdog so a night that
+            // does complete is never cut short, while one that will not complete
+            // still terminates with the honest truth instead of hanging.
+            TimeoutSeconds = 540,
+            ReadyBarrierFrameBudget = 18000,
         };
         SleepAndAdvanceDayLifecycle? lifecycle = SleepAndAdvanceDayLifecycle.TryStart(this.monitor, config);
         if (lifecycle is null)

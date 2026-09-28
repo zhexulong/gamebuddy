@@ -44,15 +44,28 @@ public sealed class SleepAndAdvanceDayLifecycleTests
         config.IsValid.Should().BeFalse();
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("relative/evidence.json")]
-    public void NonAbsoluteEvidencePath_IsRejected(string evidencePath)
+    [Fact]
+    public void EmptyEvidencePath_IsAcceptedForAnExecutionOwnedNight()
+    {
+        // An execution-owned night (the wire `advance_day` action) has no file to
+        // write: the bridge receipt carries the same facts, and the ledger mints
+        // it. Requiring a path here would reject every such night.
+        var config = new SleepAndAdvanceDayLifecycleConfig
+        {
+            Enable = true,
+            EvidencePath = string.Empty,
+        };
+
+        config.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void NonAbsoluteEvidencePath_IsRejected()
     {
         var config = new SleepAndAdvanceDayLifecycleConfig
         {
             Enable = true,
-            EvidencePath = evidencePath,
+            EvidencePath = "relative/evidence.json",
         };
 
         config.IsValid.Should().BeFalse();
@@ -221,5 +234,107 @@ public sealed class SleepAndAdvanceDayLifecycleTests
         };
 
         config.IsValid.Should().BeTrue();
+    }
+
+    // --- Day-start decision ----------------------------------------------------
+    //
+    // The date counter is NOT the day start. On the master it advances while
+    // NewDay's save is still in flight; on a client it syncs over the network.
+    // Measured live in co-op: the client saw delta==1 at the same moment the
+    // master logged "before save", so a receipt built on the counter alone could
+    // report success while the game was still writing to disk and the Agent could
+    // dispatch the next action mid-save.
+
+    [Fact]
+    public void DayStartDecision_WaitsOnTheCounterAloneEvenWhenItHasAdvanced()
+    {
+        SleepAndAdvanceDayLifecycle.DecideDayStart(
+            delta: 1,
+            dayStartedObserved: false,
+            dayStartWaitFrames: 0,
+            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Waiting);
+    }
+
+    [Fact]
+    public void DayStartDecision_ConfirmsOnlyOnceTheNewDayActuallyBegan()
+    {
+        SleepAndAdvanceDayLifecycle.DecideDayStart(
+            delta: 1,
+            dayStartedObserved: true,
+            dayStartWaitFrames: 0,
+            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Confirmed);
+    }
+
+    [Fact]
+    public void DayStartDecision_ReportsHonestlyWhenTheNewDayNeverBegan()
+    {
+        // Reporting day_advanced here would forge a success the game never
+        // reached, so the terminal must be day_start_not_observed instead.
+        SleepAndAdvanceDayLifecycle.DecideDayStart(
+            delta: 1,
+            dayStartedObserved: false,
+            dayStartWaitFrames: 3600,
+            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.NotObserved);
+    }
+
+    [Fact]
+    public void DayStartDecision_WaitsWhileTheDayHasNotRolled()
+    {
+        SleepAndAdvanceDayLifecycle.DecideDayStart(
+            delta: 0,
+            dayStartedObserved: false,
+            dayStartWaitFrames: 0,
+            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Waiting);
+    }
+
+    [Fact]
+    public void DayStartDecision_RejectsASecondRollover()
+    {
+        // A +2 jump means two rollovers ran under one bounded lifecycle.
+        SleepAndAdvanceDayLifecycle.DecideDayStart(
+            delta: 2,
+            dayStartedObserved: true,
+            dayStartWaitFrames: 0,
+            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.UnexpectedDelta);
+    }
+
+    // --- Fresh event edge ------------------------------------------------------
+    //
+    // SMAPI raises DayStarted "including when the player loads a save", so the
+    // load-time edge already happened before the night is slept. The counter is
+    // therefore only meaningful relative to a baseline, and these tests pin the
+    // comparison itself: a sticky boolean (or a count compared against zero rather
+    // than the baseline) would let the load-time edge satisfy the gate.
+
+    [Fact]
+    public void FreshEdge_IsFalseWhenTheBaselineWasNeverCaptured()
+    {
+        // Before the night begins there is no baseline, so no edge may count.
+        SleepAndAdvanceDayLifecycle.HasFreshEdge(
+            count: 1,
+            baseline: 0,
+            baselineCaptured: false).Should().BeFalse();
+    }
+
+    [Fact]
+    public void FreshEdge_IsFalseForTheLoadTimeEdgeThatAlreadyFired()
+    {
+        // This is the exact live failure: one DayStarted fired at load, the
+        // baseline was captured at 1, and the count is still 1. The night's new day
+        // has NOT begun, so the gate must stay closed.
+        SleepAndAdvanceDayLifecycle.HasFreshEdge(
+            count: 1,
+            baseline: 1,
+            baselineCaptured: true).Should().BeFalse();
+    }
+
+    [Fact]
+    public void FreshEdge_IsTrueOnlyAfterAnEdgeFiresPastTheBaseline()
+    {
+        // The night's own DayStarted: the baseline was 1 and the count is now 2.
+        SleepAndAdvanceDayLifecycle.HasFreshEdge(
+            count: 2,
+            baseline: 1,
+            baselineCaptured: true).Should().BeTrue();
     }
 }

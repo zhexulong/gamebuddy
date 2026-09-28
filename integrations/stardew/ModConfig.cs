@@ -52,6 +52,18 @@ public sealed class ModConfig
     /// </summary>
     public SleepAndAdvanceDayLifecycleConfig? SleepLifecycle { get; init; }
 
+    /// <summary>
+    /// Farmers that must be online before a dispatched <c>advance_day</c> wire
+    /// action may start a night. Default 1 is the honest single-player minimum; a
+    /// co-op profile declares 2 so a night cannot start while the other player is
+    /// still connecting.
+    ///
+    /// Deliberately separate from <see cref="SleepLifecycle"/>: that one arms the
+    /// evidence-file lifecycle, and arming both would make the file lane own the
+    /// actor while the dispatched action bounces off <c>body_owned</c>.
+    /// </summary>
+    public int AdvanceDayMinimumOnlineFarmers { get; init; } = 1;
+
     /// <summary>Formal host-side attachment authority. Disabled unless explicitly configured.</summary>
     public HostFarmhandProvisioningConfig? HostFarmhandProvisioning { get; init; }
 
