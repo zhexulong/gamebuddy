@@ -123,6 +123,8 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
     // supplies it, so ordinary action runs keep an unchanged config shape.
     if (options.sleepModalProbe !== undefined)
       configured.SleepModalProbe = options.sleepModalProbe;
+    if (options.sleepLifecycle !== undefined)
+      configured.SleepLifecycle = options.sleepLifecycle;
     await writeJson(context.configPath, configured);
     await deployBundle(context);
     await verifyNativeLocalPlayerFixture({ ...options, ...context });
@@ -227,6 +229,11 @@ export async function verifyNativeLocalPlayerFixture(options) {
     )
       throw new Error("native_local_fixture_config_invalid");
   }
+  if (options.sleepLifecycle !== undefined) {
+    const lifecycle = config.SleepLifecycle;
+    if (lifecycle?.Enable !== true || lifecycle.EvidencePath !== options.sleepLifecycle.EvidencePath)
+      throw new Error("native_local_fixture_config_invalid");
+  }
   assertBridgeConfig(config);
   for (const name of BUNDLE_FILES)
     if (!(await exists(join(context.modRoot, name)))) throw new Error(`native_local_fixture_bundle_missing:${name}`);
@@ -327,6 +334,9 @@ export function fixtureActions(action) {
   // The M2 sleep-modal probe owns the actor's route itself (native pathfind to
   // the bed) and reads the game-owned modal; it needs no Host action surface.
   if (action === "sleep_modal_probe") return ["move_to_tile"];
+  // The M2 cross-day lifecycle likewise owns the route, the native answer and
+  // the Saving/Saved/DayStarted observation; it is not a wire action.
+  if (action === "sleep_lifecycle") return ["move_to_tile"];
   if (action === "navigation_mutation")
     return ["inspect_world_map", "find_destination", "navigate_to_destination"];
   if (action === "equip_tool") return ["equip_tool"];

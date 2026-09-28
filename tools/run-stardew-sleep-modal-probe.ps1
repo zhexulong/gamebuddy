@@ -7,7 +7,7 @@ param(
     [Parameter(Mandatory = $true)][string]$TemplateName,
     [Parameter(Mandatory = $true)][string]$ReleaseDir,
     [Parameter(Mandatory = $true)][string]$EvidencePath,
-    [Parameter(Mandatory = $true)][ValidateSet('p1_readonly', 'p2_answer')][string]$Mode,
+    [Parameter(Mandatory = $true)][ValidateSet('p1_readonly', 'p2_answer', 'lifecycle')][string]$Mode,
     [string]$WindowMode = "hidden",
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 150
 )
@@ -68,11 +68,17 @@ try {
     if ([string]::IsNullOrWhiteSpace($bindingPath)) {
         throw "Sleep-modal probe requires a bootstrap-captured binding whose observed slot is $SaveName."
     }
-    node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") `
-        --root $FixtureRoot --mods-path $ModsPath --release-dir $releaseDir `
-        --save-name $SaveName --backup-name $backupName --timeout-seconds $TimeoutSeconds `
-        --action sleep_modal_probe --binding-path $bindingPath --stardew-save-root $stardewSaveRoot `
-        --sleep-modal-probe-mode $Mode --sleep-modal-probe-evidence $evidenceFull
+    $prepareArgs = @(
+        '--root', $FixtureRoot, '--mods-path', $ModsPath, '--release-dir', $releaseDir,
+        '--save-name', $SaveName, '--backup-name', $backupName, '--timeout-seconds', $TimeoutSeconds,
+        '--binding-path', $bindingPath, '--stardew-save-root', $stardewSaveRoot
+    )
+    if ($Mode -eq 'lifecycle') {
+        $prepareArgs += @('--action', 'sleep_lifecycle', '--sleep-lifecycle-evidence', $evidenceFull)
+    } else {
+        $prepareArgs += @('--action', 'sleep_modal_probe', '--sleep-modal-probe-mode', $Mode, '--sleep-modal-probe-evidence', $evidenceFull)
+    }
+    node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") @prepareArgs
     if ($LASTEXITCODE -ne 0) { throw "Sleep-modal probe fixture prepare failed." }
     $prepared = $true
 
@@ -107,7 +113,8 @@ try {
     }
 
     $evidence = Get-Content -Raw -LiteralPath $evidenceFull | ConvertFrom-Json
-    if ($null -eq $evidence -or $evidence.schema -ne 'gamebuddy-sleep-modal-probe/v1') {
+    $schema = if ($Mode -eq 'lifecycle') { 'gamebuddy-sleep-lifecycle/v1' } else { 'gamebuddy-sleep-modal-probe/v1' }
+    if ($null -eq $evidence -or $evidence.schema -ne $schema) {
         throw "Sleep-modal probe evidence schema is invalid."
     }
     $evidence | ConvertTo-Json -Depth 12
