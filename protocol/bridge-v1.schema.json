@@ -1906,6 +1906,7 @@
     "slotXYQualifiedTargetArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "slotQualifiedArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "expectedQualifiedItemId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
     "recipeTargetArgs": { "type": "object", "additionalProperties": false, "required": ["expectedTargetId"], "properties": { "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "advanceDayArgs": { "type": "object", "additionalProperties": false, "maxProperties": 0 },
     "machineLoadArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)433" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "navigationDestinationArgs": {
       "type": "object",
@@ -2015,8 +2016,10 @@
     { "if": { "required": ["action"], "properties": { "action": { "enum": ["craft_item", "cook_recipe"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/recipeTargetArgs" } } } },
     { "if": { "required": ["action"], "properties": { "action": { "const": "collect_crab_pot_output" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
     { "if": { "required": ["action"], "properties": { "action": { "const": "ship_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
+    { "if": { "required": ["action"], "properties": { "action": { "const": "ship_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
     { "if": { "required": ["action"], "properties": { "action": { "const": "water_pet_bowl" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
-    { "if": { "required": ["action"], "properties": { "action": { "const": "water_slime_hutch_trough" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } }
+    { "if": { "required": ["action"], "properties": { "action": { "const": "water_slime_hutch_trough" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
+    { "if": { "required": ["action"], "properties": { "action": { "const": "advance_day" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/advanceDayArgs" } } } }
       ],
       "properties": {
         "requestId": {
@@ -2070,7 +2073,8 @@
             "collect_crab_pot_output",
             "ship_item",
             "water_pet_bowl",
-            "water_slime_hutch_trough"
+            "water_slime_hutch_trough",
+            "advance_day"
           ]
         },
         "args": {
