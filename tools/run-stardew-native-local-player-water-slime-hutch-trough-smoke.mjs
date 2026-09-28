@@ -52,22 +52,22 @@ export async function runWaterSlimeHutchTroughSmoke(
   const startedAt = Date.now();
   validateNativeLocalConfig(config);
   try {
-    let snapshot = await observeSlimeHutch(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
     // The fixture warps the actor into the hutch interior before bridge attachment,
     // but the native warp completes on a later tick. An observe taken mid-transition
-    // still reports the previous location (the FixtureHost begins in `FarmHouse`), and
-    // discovery only advertises trough tiles when the actor is already inside a
-    // `SlimeHutch`. Settle on the interior before deriving any target or waypoint.
+    // is not yet actionable and still reports the previous location (the fixture host
+    // begins in `FarmHouse`), and discovery only advertises trough tiles when the
+    // actor is already inside a `SlimeHutch`. Settle through `waitForActionable`
+    // BEFORE the strict first observe, so a mid-warp snapshot is polled through
+    // rather than rejected.
+    let snapshot = await waitForActionable(client, undefined, stabilizeTimeoutMs);
     snapshot = await waitForFreshSnapshot(client, {
       minRevision: snapshot.revision,
       timeoutMs: stabilizeTimeoutMs,
       requireActionable: true,
       check: (latest) =>
-        typeof latest.location === "string" &&
-        /^Slime ?Hutch/i.test(latest.location) &&
-        latest.activeExecution == null,
+        typeof latest.location === "string" && /^Slime ?Hutch/i.test(latest.location),
     });
+    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
 
     const wateringCan = chooseWateringCan(snapshot);
     if (snapshot.currentTool !== wateringCan.label) {
@@ -91,10 +91,12 @@ export async function runWaterSlimeHutchTroughSmoke(
     if (snapshot.actionable !== true || snapshot.activeExecution != null)
       throw new Error("player_not_actionable_before_water_slime_hutch_trough");
 
-    const target = chooseOnlyReachableTrough(snapshot);
+    const target = chooseReachableTrough(snapshot);
     const troughTargetCountBefore = validTroughTargets(snapshot).length;
-    if (troughTargetCountBefore !== 1)
-      throw new Error(`native_local_water_slime_hutch_trough_fixture_target_count_before:${troughTargetCountBefore}`);
+    // More than one tile of the column can be in reach at once; the contract is
+    // only that at least one lawful target exists before the request is sent.
+    if (troughTargetCountBefore < 1)
+      throw new Error("native_local_water_slime_hutch_trough_fixture_target_missing");
     const accepted = await execute(
       client,
       trace,
@@ -241,7 +243,7 @@ async function move(client, receipts, snapshot, target, phase, trace, stabilizeT
 }
 
 async function moveToReachableTrough(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs) {
-  if (chooseOnlyReachableTroughOrNull(snapshot)) return snapshot;
+  if (validTroughTargets(snapshot).length > 0) return snapshot;
   for (let radius = 2; radius <= 12; radius++) {
     const candidates = [];
     for (let dx = -radius; dx <= radius; dx++)
@@ -260,7 +262,7 @@ async function moveToReachableTrough(client, receipts, snapshot, trace, stabiliz
           stabilizeTimeoutMs,
           moveTimeoutMs,
         );
-        if (chooseOnlyReachableTroughOrNull(moved)) return moved;
+        if (validTroughTargets(moved).length > 0) return moved;
         snapshot = moved;
       } catch (error) {
         const reason = String(error instanceof Error ? error.message : error);
@@ -271,26 +273,24 @@ async function moveToReachableTrough(client, receipts, snapshot, trace, stabiliz
         )
           throw error;
         snapshot = await observeSlimeHutch(client);
-        if (chooseOnlyReachableTroughOrNull(snapshot)) return snapshot;
+        if (validTroughTargets(snapshot).length > 0) return snapshot;
       }
     }
   }
   throw new Error("no_reachable_native_water_slime_hutch_trough_fixture_target");
 }
 
-function chooseOnlyReachableTrough(snapshot) {
+function chooseReachableTrough(snapshot) {
   const targets = validTroughTargets(snapshot);
-  if (targets.length !== 1)
-    throw new Error(
-      targets.length === 0 ? "no_adjacent_live_trough_target" : "ambiguous_adjacent_live_trough_targets",
-    );
+  if (targets.length === 0) throw new Error("no_adjacent_live_trough_target");
+  // A trough is a COLUMN of up to four tiles, so a lawful standing tile is often
+  // adjacent to more than one of them. Requiring exactly one (the single-waterable
+  // -tile Pet Bowl rule) makes a reachable trough look unreachable and sends the
+  // actor on a pointless map walk; any accepted tile is a valid target here.
+  // Order is stable: discovery emits the column top-to-bottom.
   return targets[0];
 }
 
-function chooseOnlyReachableTroughOrNull(snapshot) {
-  const targets = validTroughTargets(snapshot);
-  return targets.length === 1 ? targets[0] : null;
-}
 
 function validTroughTargets(snapshot) {
   return (snapshot.slimeHutchTroughTargets ?? []).filter(
