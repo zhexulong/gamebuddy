@@ -543,7 +543,45 @@ returned same-execution `succeeded/chest_stored` for opaque
 their profile, removed backup/lock and the working save, and left no
 Stardew/SMAPI process. This is only `native_local_player_fixture` shared
 mechanics evidence, never Farmhand, HostAutomation, Portfolio, publication,
-release, or save/reopen evidence. `water_crop` has also met this lane's live
+release, or save/reopen evidence. `ship_item` has also met this lane's standard
+over the **island** shipping bin, which is the same capability rather than a new
+action: `IslandWest.leftClick` ships through `farm.getShippingBin(who)`, and the
+game's own `ItemGrabMenu` path for that bin passes `Game1.getFarm().shipItem`,
+so only target resolution differs. `native_ship_item_island_v1` enables the real
+island house upgrade (`farmhouseRestored`, the same class of target-version
+native setup as `HouseUpgrade 1`) because the shipping branch is gated on it,
+clears the native bin, supplies one shippable object, and warps only to a lawful
+tile beside the bin footprint; it never ships the item or writes bin contents.
+`ship_item_island` returned same-execution `succeeded/item_shipped` for opaque
+`shipping_bin_island_22f174a4433bc2c2` at IslandWest `(90,38)`, with inventory
+`1→0`, bin `0→1`, `last_item_shipped_matched=true`, and
+`native_menu_opened=false`. The transaction restored its profile, removed
+backup/lock and the working save, and left no Stardew/SMAPI process. This is
+only `native_local_player_fixture` shared mechanics evidence, never Farmhand,
+HostAutomation, Portfolio, publication, release, or save/reopen evidence. The
+`water_pet_bowl` action has met this lane's standard on
+`GameBuddyFixtureStable_445936768`. It is a **distinct** action, not an alias:
+`PetBowl.watered` is a bowl postcondition, and `Pet.cs` reads it at day update
+to add `+6` pet friendship before clearing it, so `water_crop`'s `crop_watered`
+receipt would assert something false. The scenario supplies one charged
+Watering Can and warps only to a lawful tile beside the bowl's waterable tile;
+it never waters. The action independently equipped `(T)WateringCan` and reached
+the fresh opaque bowl target at Farm `(4,21)`: same-execution receipt
+`succeeded/pet_bowl_watered` recorded `before_watered=false`,
+`after_watered=true`, water `39→38`, and stamina `270→268` (`delta=-2`,
+`expected=2`) with `native_menu_opened=false`; the target was absent from the
+following production snapshot. That live run also proved a **target-resolution**
+fact worth recording: the PetBowl tile property sits at the building-data's
+**relative** offset, and the sampled template placement put it off the footprint
+origin, so footprint arithmetic would silently miss it — resolution therefore
+asks the building for the tiles its own property data declares waterable. The
+same run showed the template's bowl placement has **no** lawful adjacent
+standing tile at all, so the fixture relocates that bowl onto clear ground while
+preserving its pet assignment. The transaction restored its profile, removed
+backup/lock and the working save, and left no Stardew/SMAPI process. These are
+only `native_local_player_fixture` shared mechanics evidence, never Farmhand,
+HostAutomation, Portfolio, publication, release, or save/reopen evidence.
+`water_crop` has also met this lane's live
 receipt-plus-fresh-postcondition standard. Its scenario first uses the exact
 pre-attachment native setup `SpreadDirt → SpreadSeeds 472` to make dry crops;
 that initializer itself is not evidence. The action run independently equipped
