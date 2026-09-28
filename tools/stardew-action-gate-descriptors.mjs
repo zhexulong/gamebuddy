@@ -180,6 +180,12 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // -> retry succeeded within one native-local session over the till_soil
   // fixture. Not a new action; it grants no capability.
   tool_recovery_chain: "run-stardew-native-local-player-tool-recovery-chain-smoke.mjs",
+  // Lane G resource-depletion recovery-chain harness: drives breakpoint
+  // rejected/watering_can_empty -> refill_watering_can recovery -> water_crop
+  // retry succeeded on the same target within one native-local session over the
+  // empty-can fixture. Not a new action; it grants no capability.
+  water_crop_resource_recovery_chain:
+    "run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {
