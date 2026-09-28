@@ -44,25 +44,27 @@ export type StopSettledPayload = Readonly<{
  * arrives so the player sees the companion speak before the turn ends, and a
  * single reply legitimately spans several short pieces.
  *
- * The bounds keep the surface replay-safe without ever refusing a reply the text
- * layer already accepted:
+ * The bound keeps the surface replay-safe without ever refusing a reply the text
+ * layer already accepted: every piece comes from the same reply, so the turn's
+ * cumulative presented bytes can never exceed one reply's own text budget
+ * (`MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES`). A duplicated or looping delta stream
+ * is what pushes past it, and that must fail closed instead of being drawn into
+ * unbounded native chat. This is an exact bound, not a heuristic — and it is
+ * also the only one needed: a piece is refused when empty, so every accepted
+ * piece is at least one byte and the piece count is therefore bounded by the
+ * byte budget itself.
  *
- * - Every piece comes from the same reply, so the turn's cumulative presented
- *   bytes can never exceed one reply's own text budget
- *   (`MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES`). A duplicated or looping delta
- *   stream is what pushes past it, and that must fail closed instead of being
- *   drawn into unbounded native chat. This is an exact bound, not a heuristic:
- *   a healthy reply's pieces sum to exactly its own length.
- * - The piece count is a secondary denial-of-service guard, set far above any
- *   real reply (the design targets 1-3 pieces and treats >3 as a health
- *   signal), purely to stop a stream of one-byte pieces.
+ * A separate piece-count ceiling is deliberately NOT imposed: a legal reply may
+ * consist of thousands of one-sentence units (e.g. "好。" repeated) inside the
+ * same byte budget, and a count cap below the byte budget would refuse text the
+ * text layer already accepted — the exact false-rejection class this bound
+ * exists to avoid.
  *
  * Text equality is deliberately NOT an admission check: a reply may legitimately
  * repeat a line ("好的。好的。"), so refusing repeats would crash on valid output.
  * Replay of a re-sent request is already refused by the Game port's per-piece
  * `expressionId` idempotency, and an uncertain commit closes the turn.
  */
-export const MAX_NATIVE_PRESENTATIONS_PER_TURN = 256;
 export const MAX_NATIVE_PRESENTATION_TURN_BYTES = 16_384;
 
 /**
@@ -73,28 +75,24 @@ export const MAX_NATIVE_PRESENTATION_TURN_BYTES = 16_384;
  */
 export class GameTurnLineageTracker {
   #lineage: Readonly<{ sourceEventId: string; generation: number }> | undefined;
-  #presentations = 0;
   #presentedBytes = 0;
   #generation = 0;
   beginPlayerBatch(sourceEventId: string): void {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(sourceEventId)) throw new Error("invalid_presentation_source_event_id");
     this.#lineage = Object.freeze({ sourceEventId, generation: this.#generation });
-    this.#presentations = 0;
     this.#presentedBytes = 0;
   }
   endBatch(): void {
     // Clearing the lineage ends the turn's admission window. A consumed batch
     // that never spoke is legitimate (tool-only, empty, or rejected text), and
-    // an over-budget batch already failed closed at capture, so there is no
-    // count condition left to assert here.
+    // an over-budget turn already failed closed at capture, so there is no
+    // remaining condition to assert here.
     this.#lineage = undefined;
-    this.#presentations = 0;
     this.#presentedBytes = 0;
   }
   revoke(): void {
     this.#generation += 1;
     this.#lineage = undefined;
-    this.#presentations = 0;
     this.#presentedBytes = 0;
   }
   /**
@@ -105,7 +103,6 @@ export class GameTurnLineageTracker {
    */
   closeForUncertainDelivery(): void {
     this.#lineage = undefined;
-    this.#presentations = 0;
     this.#presentedBytes = 0;
   }
   capture(
@@ -125,8 +122,6 @@ export class GameTurnLineageTracker {
     if (lineage === undefined) throw new Error("presentation_lineage_unavailable");
     if (expectedSourceEventId !== undefined && lineage.sourceEventId !== expectedSourceEventId)
       throw new Error("native_game_presentation_lineage_mismatch");
-    if (this.#presentations >= MAX_NATIVE_PRESENTATIONS_PER_TURN)
-      throw new Error("player_turn_presentation_budget_exceeded");
     if (text !== undefined) {
       const textBytes = Buffer.byteLength(text, "utf8");
       if (textBytes <= 0) throw new Error("invalid_presentation_text_size");
@@ -134,7 +129,6 @@ export class GameTurnLineageTracker {
         throw new Error("player_turn_presentation_budget_exceeded");
       this.#presentedBytes += textBytes;
     }
-    this.#presentations += 1;
     const binding = Object.freeze({ generation: lineage.generation });
     return Object.freeze({
       surface: "game" as const,

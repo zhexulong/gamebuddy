@@ -7,7 +7,7 @@ import {
   CompanionHostService,
   createGamePresentationAdmissionProvider,
   GameTurnLineageTracker,
-  MAX_NATIVE_PRESENTATIONS_PER_TURN,
+  MAX_NATIVE_PRESENTATION_TURN_BYTES,
 } from "./host-service.js";
 
 function reducedSession(sendUserMessage: (text: string) => Promise<void> | void) {
@@ -1000,7 +1000,7 @@ test("an early piece stays committable while later pieces are still arriving", a
   service.close();
 });
 
-test("a turn refuses an unbounded piece sequence and a terminal turn refuses late pieces", async () => {
+test("a turn refuses an over-budget byte stream and a terminal turn refuses late pieces", async () => {
   const adapter = eventHarness();
   const tracker = new GameTurnLineageTracker();
   const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
@@ -1017,19 +1017,24 @@ test("a turn refuses an unbounded piece sequence and a terminal turn refuses lat
   });
 
   // A looping delta stream must fail closed instead of being drawn into
-  // unbounded native chat.
+  // unbounded native chat: the turn's cumulative bytes cannot exceed one
+  // reply's own budget, however many pieces arrive.
+  const chunk = "x".repeat(1024);
   tracker.beginPlayerBatch("source_budget");
   let rejected = false;
-  for (let i = 0; i <= MAX_NATIVE_PRESENTATIONS_PER_TURN; i += 1) {
+  let accepted = 0;
+  for (let i = 0; i < 64; i += 1) {
     try {
-      await presenter({ sourceEventId: "source_budget", text: `piece-${i}` });
+      await presenter({ sourceEventId: "source_budget", text: chunk });
+      accepted += 1;
     } catch {
       rejected = true;
       break;
     }
   }
   assert.equal(rejected, true);
-  assert.ok(presentations <= MAX_NATIVE_PRESENTATIONS_PER_TURN);
+  assert.ok(accepted * chunk.length <= MAX_NATIVE_PRESENTATION_TURN_BYTES);
+  assert.equal(presentations, accepted);
 
   // A turn that never spoke is legitimate and must not fail its close.
   tracker.beginPlayerBatch("source_silent");
@@ -1040,6 +1045,35 @@ test("a turn refuses an unbounded piece sequence and a terminal turn refuses lat
     presenter({ sourceEventId: "source_silent", text: "late" }),
     /presentation_lineage_unavailable/,
   );
+  service.close();
+});
+
+test("a legal reply made of many tiny sentences is not refused by a piece count", async () => {
+  const adapter = eventHarness();
+  const tracker = new GameTurnLineageTracker();
+  const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
+  const presented: unknown[] = [];
+  const presenter = service.createNativeAssistantContentPresenter({
+    sessionId: "game_session_many",
+    locale: "zh-CN",
+    admissionProvider: createGamePresentationAdmissionProvider(tracker, createCompanionInterruption()),
+    textPort: {
+      present(expression) {
+        presented.push(expression);
+      },
+    },
+  });
+
+  // "好。" repeated is legal, accepted by the text layer, and each unit is far
+  // below one piece's byte allowance — 600 pieces must not be refused merely
+  // because the count looks large. A count cap below the byte budget would
+  // refuse text the text layer already accepted.
+  tracker.beginPlayerBatch("source_many");
+  for (let i = 0; i < 600; i += 1) {
+    await presenter({ sourceEventId: "source_many", text: "好。" });
+  }
+  tracker.endBatch();
+  assert.equal(presented.length, 600);
   service.close();
 });
 
