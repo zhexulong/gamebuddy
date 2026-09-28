@@ -880,7 +880,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -2549,6 +2549,71 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                     throw new InvalidOperationException("fixture_native_local_craft_ingredient_missing");
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized craft-item precondition before bridge attachment: recipe={craftRecipeKey}; ingredient={craftIngredientId}x{craftIngredientStack}; production alone runs the native recipe transaction and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_craft_item_partial_v1")
+            {
+                // Pre-attachment fixture only: learn a recipe whose product is
+                // larger than the room left in a FULL backpack, so the native
+                // recipe transaction must leave part of the product on the
+                // ground. Production alone runs the transaction and emits the
+                // honest PartiallySucceeded receipt.
+                //
+                // Bait's data row is "684 1/Home/685 5/false/Fishing 2/": one Bug
+                // Meat becomes FIVE Bait. (O)685's native max stack is 999
+                // (Object.maximumStackSize returns 1 only for (O)79/842/911 and
+                // category -22), so an existing Bait stack of 998 absorbs exactly
+                // one of the five and the other four leave the backpack. The Bug
+                // Meat is placed with stack 2 so that consuming one leaves a live
+                // stack behind: ingredient consumption must NOT free the slot that
+                // would otherwise absorb the drop and hide the partial. Every
+                // other slot holds a Tool, which is not an Object and can never
+                // stack with the product.
+                const string partialRecipeKey = "Bait";
+                const string partialIngredientId = "(O)684";
+                const int partialIngredientStack = 2;
+                const string partialProductId = "(O)685";
+                const int partialExistingStack = 998;
+                const int partialProducedStack = 5;
+                if (CraftingRecipe.craftingRecipes is null || !CraftingRecipe.craftingRecipes.ContainsKey(partialRecipeKey))
+                    throw new InvalidOperationException("fixture_native_local_craft_partial_recipe_key_missing");
+                Game1.player.craftingRecipes[partialRecipeKey] = 0;
+                if (!Game1.player.craftingRecipes.ContainsKey(partialRecipeKey))
+                    throw new InvalidOperationException("fixture_native_local_craft_partial_recipe_not_learned");
+                if (ItemRegistry.Create<StardewValley.Object>(partialProductId, 1).maximumStackSize() != 999)
+                    throw new InvalidOperationException("fixture_native_local_craft_partial_product_stack_unexpected");
+                player.Items.Clear();
+                player.Items.Add(ItemRegistry.Create<StardewValley.Object>(partialProductId, partialExistingStack));
+                player.Items.Add(ItemRegistry.Create<StardewValley.Object>(partialIngredientId, partialIngredientStack));
+                while (player.Items.Count < player.MaxItems)
+                    player.Items.Add(player.Items.Count % 2 == 0 ? new Axe() : new Pickaxe());
+                if (player.Items.Any(item => item is null))
+                    throw new InvalidOperationException("fixture_native_local_craft_partial_backpack_has_hole");
+                if (player.couldInventoryAcceptThisItem(ItemRegistry.Create<StardewValley.Object>(partialProductId, partialProducedStack)))
+                    throw new InvalidOperationException("fixture_native_local_craft_partial_backpack_still_accepts_product");
+
+                // One owned ordinary Chest beside a standable Farm tile. The actor
+                // is warped onto that standable tile, exactly like the shipped
+                // chest_store fixture, so the same session can store the partial
+                // product without an extra navigation leg. `craft_item` itself is
+                // location-agnostic, so this warp cannot invalidate the craft
+                // precondition.
+                (Vector2 TargetTile, Vector2 StandingTile)? partialChestSpot = FindNativeLocalChestFixtureSpot(farm);
+                if (partialChestSpot is null)
+                    throw new InvalidOperationException("fixture_native_local_craft_partial_chest_target_missing");
+                if (farm.objects.ContainsKey(partialChestSpot.Value.TargetTile))
+                    throw new InvalidOperationException("fixture_native_local_craft_partial_chest_occupied");
+                StardewValley.Objects.Chest partialChest = new(playerChest: true, partialChestSpot.Value.TargetTile);
+                farm.objects.Add(partialChestSpot.Value.TargetTile, partialChest);
+                if (!IsFixtureOwnedOrdinaryChest(partialChest))
+                    throw new InvalidOperationException("fixture_native_local_craft_partial_chest_invalid");
+                if (!farm.objects.TryGetValue(partialChestSpot.Value.TargetTile, out StardewValley.Object? partialPlaced)
+                    || !ReferenceEquals(partialPlaced, partialChest))
+                    throw new InvalidOperationException("fixture_native_local_craft_partial_chest_placement_failed");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)partialChestSpot.Value.StandingTile.X, (int)partialChestSpot.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized craft partial-completion precondition before bridge attachment: recipe={partialRecipeKey}; product={partialProductId}@{partialExistingStack}; ingredient={partialIngredientId}x{partialIngredientStack}; chest={partialChest.QualifiedItemId}@{partialChestSpot.Value.TargetTile.X},{partialChestSpot.Value.TargetTile.Y}; standing={partialChestSpot.Value.StandingTile.X},{partialChestSpot.Value.StandingTile.Y}; production alone crafts, stores, and re-crafts.", LogLevel.Info);
                 return;
             }
 
