@@ -370,6 +370,25 @@ test("craft partial chain refuses a scenario it is not authorized for", async ()
   );
 });
 
+test("craft partial chain declares every module-scope constant the main path uses before it runs", () => {
+  // The live gate caught this: the `if (import.meta.main)` block executes during
+  // module evaluation, so a `const` referenced by the chain but declared BELOW it is
+  // still in its temporal dead zone and throws "Cannot access before initialization".
+  // Importing the module (which every other test here does) cannot catch that, because
+  // the functions only run after the whole module has evaluated.
+  const source = readFileSync(
+    new URL("./run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  const mainIndex = source.indexOf("if (import.meta.main)");
+  assert.ok(mainIndex > 0, "runner must expose an import.meta.main entrypoint");
+  for (const name of ["CRAFT_EVIDENCE_KEYS", "RECIPE_ALIAS", "PRODUCT_ITEM_ID", "SCENARIO", "PARTIAL_DISPOSITION"]) {
+    const declIndex = source.search(new RegExp(`const ${name}\\b`));
+    assert.ok(declIndex > 0, `${name} must be a module-scope const`);
+    assert.ok(declIndex < mainIndex, `${name} must be declared before the import.meta.main block executes`);
+  }
+});
+
 test("craft partial chain's terminals and dispositions exist in the Mod source", () => {
   const craft = readFileSync(CRAFT_SOURCE, "utf8");
   const container = readFileSync(CONTAINER_SOURCE, "utf8");
