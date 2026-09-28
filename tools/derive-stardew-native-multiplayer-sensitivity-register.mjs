@@ -371,6 +371,18 @@ const READ_PIPELINE_ACTIONS = new Set(["inspect_world_map", "find_destination", 
 const _NAVIGATION_ADMISSION_ACTIONS = new Set(["navigate_to_destination"]);
 
 const surface = { actions: readCatalog() };
+
+// Registration lifecycle, read from the same source span the action id came from.
+// `FarmhandActionLifecycle.LiveVerified` must be distinguished from `Published`:
+// "not Experimental" is not enough, because it silently reported a live-verified
+// action as published.
+function parseRegistrationLifecycle(prefix, call) {
+  if (prefix === "R") return "published";
+  if (/FarmhandActionLifecycle\.LiveVerified/.test(call)) return "live_verified";
+  if (/FarmhandActionLifecycle\.Experimental/.test(call)) return "experimental";
+  return "published";
+}
+
 function readCatalog() {
   // The Mod's FarmhandActionCatalog is the authority for which actions exist and
   // their lifecycle (memory #1704). Parsed from source with paren matching so
@@ -394,7 +406,7 @@ function readCatalog() {
     const call = text.slice(match.index, end + 1);
     rows.push({
       actionId: match[2],
-      lifecycle: match[1] === "R" || !/FarmhandActionLifecycle\.Experimental/.test(call) ? "published" : "experimental",
+      lifecycle: parseRegistrationLifecycle(match[1], call),
     });
   }
   return rows;
