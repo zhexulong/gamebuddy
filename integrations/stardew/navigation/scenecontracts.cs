@@ -146,8 +146,15 @@ internal static class SceneAffordanceKindWire
     /// nested ternary: the previous fallback collapsed every non-forage,
     /// non-machine object (weeds, stones, artifact spots, fences, crab pots)
     /// into `chest`, and the wire validator only checks that a kind is one of
-    /// the seven allowed values, so the mislabel was never rejected. Callers
+    /// the defined values, so the mislabel was never rejected. Callers
     /// must skip null results instead of publishing a default kind.
+    /// </para>
+    /// <para>
+    /// This signature covers the `objects` layer only. Terrain features
+    /// (`WaterSource`, `Crop`, `Tree`), characters (`Npc`), farm animals
+    /// (`Animal`) and resource clumps (`Debris`) are classified by their own
+    /// scanners; `IsDefined` is the single source of truth for the full kind
+    /// set, and `ToWireValue` is the single source of truth for wire values.
     /// </para>
     /// </summary>
     internal static SceneAffordanceKind? ClassifyWorldObject(
