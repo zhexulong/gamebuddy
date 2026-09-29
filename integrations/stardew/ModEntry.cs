@@ -6067,7 +6067,12 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 isChest: item is StardewValley.Objects.Chest,
                 isArtifactSpot: NativeItemPredicates.IsArtifactSpot(item),
                 isWeeds: item.IsWeeds(),
-                isBreakableStone: item.QualifiedItemId == "(O)2" && item.IsBreakableStone());
+                // The scanner must advertise exactly what break_rock_source can
+                // settle, which is the one-hit stone. Using the bare native
+                // IsBreakableStone() here would publish a durability-8 stone as
+                // a `stone` affordance with hint break_rock_source, and the
+                // action would then refuse it.
+                isBreakableStone: NativeItemPredicates.IsOneHitBreakableStone(item));
             if (kind is null)
                 continue;
             SceneAffordanceKind resolvedKind = kind.Value;

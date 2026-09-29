@@ -66,12 +66,29 @@ internal static class NativeItemPredicates
     /// <remarks>
     /// Delegates to the native <c>Object.IsBreakableStone()</c>
     /// (<c>Object.cs:6082</c>: <c>Category == -999 &amp;&amp; Name == "Stone"</c>)
-    /// rather than pinning a single id. Several ids carry that name, and
-    /// <c>Object.cs:920-943</c> only gives 8/10/12/14/25 a non-default
-    /// durability, so a stone at the default durability is not necessarily
-    /// <c>(O)2</c>. Callers that need the one-hit litter stone must pair this
-    /// with their own <c>MinutesUntilReady</c> check.
+    /// rather than pinning a single id. The engine itself never pins an id
+    /// here: <c>MineShaft.cs:1450</c>, <c>:1672</c>, <c>:1683</c> and the
+    /// tool branch at <c>Object.cs:1121</c> all call this predicate, and the
+    /// constructor at <c>Object.cs:920-943</c> only gives 8/10/12/14/25 a
+    /// non-default durability, so a stone at the default durability is not
+    /// necessarily <c>(O)2</c>.
     /// </remarks>
     internal static bool IsBreakableStone(StardewValley.Object item) =>
         item is not null && item.IsBreakableStone();
+
+    /// <summary>
+    /// Whether this object is a stone the basic pickaxe removes in one hit.
+    /// </summary>
+    /// <remarks>
+    /// <c>break_rock_source</c> spends exactly one <c>Pickaxe.DoFunction</c>
+    /// call, and <c>Object.cs:1123-1133</c> subtracts
+    /// <c>upgradeLevel + 1</c> (so 1 for a basic pickaxe) from
+    /// <c>MinutesUntilReady</c>. The stone is therefore removed only when its
+    /// durability is 1, which is what the <c>default</c> arm of
+    /// <c>Object.cs:939-941</c> assigns. Discovery and admission must use this
+    /// same conjunction, otherwise the scanner would advertise a stone the
+    /// action then refuses.
+    /// </remarks>
+    internal static bool IsOneHitBreakableStone(StardewValley.Object item) =>
+        IsBreakableStone(item) && item.MinutesUntilReady == 1;
 }
