@@ -345,6 +345,45 @@ test("language-neutral schema and Host share closed shapes for every published s
     ["cookingRecipeTargets", { targetId: "Fried_Egg", displayName: "Fried Egg", ingredientsAvailable: false }],
     ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" }],
     ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "Farm", x: 4, y: 5, stationKind: "cookout_kit" }],
+    // The seven families below were live on the wire and validated by the Host
+    // before the language-neutral schema declared them, so a promotion message
+    // carrying one could not be admitted by the schema leg at all.
+    [
+      "treeStumpTargets",
+      { targetId: "tree_stump_deadbeef", location: "Farm", x: 10, y: 12, treeType: "Oak", health: 5 },
+    ],
+    [
+      "treeSaplingTargets",
+      { targetId: "tree_sapling_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)309", displayName: "Acorn" },
+    ],
+    [
+      "weedTargets",
+      { targetId: "weed_deadbeef", location: "Farm", x: 10, y: 12, health: 2 },
+    ],
+    [
+      "scytheCropTargets",
+      {
+        targetId: "scythe_crop_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        cropId: "483",
+        qualifiedHarvestItemId: "(O)483",
+        displayName: "Wheat",
+      },
+    ],
+    [
+      "chestStoreTargets",
+      { targetId: "chest_deadbeef", x: 10, y: 12, slot: 2, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 },
+    ],
+    [
+      "chestRetrieveTargets",
+      { targetId: "chest_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 },
+    ],
+    [
+      "shippingBinTargets",
+      { targetId: "shipping_bin_0123456789abcdef", x: 71, y: 14, slot: 2, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 1 },
+    ],
   ];
   for (const [field, target] of targets) {
     const payload = { ...(snapshot.payload as Record<string, unknown>), [field]: [target] };
