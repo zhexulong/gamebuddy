@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -10,11 +10,12 @@ import {
   waitForFreshSnapshot,
   waitForStableRevision,
   waitForTerminal,
+  validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_chop_tree_source_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "chop_tree_source",
   "equip_tool",
@@ -41,7 +42,7 @@ export async function runChopTreeSourceSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     if (snapshot.location !== "FarmHouse") throw new Error("chop_tree_source_route_must_start_at_farmhouse");
     snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
     snapshot = await moveToReachableChopTree(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs);
@@ -324,12 +325,7 @@ function validateNativeLocalFixtureConfig(value) {
     value.FarmhandProvisioner?.Enable !== false
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (
-    value.ActionPolicyVersion !== 0 ||
-    JSON.stringify(value.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS) ||
-    JSON.stringify(value.ExperimentalActions ?? []) !== JSON.stringify([])
-  )
-    throw new Error("native_local_chop_tree_source_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 function validFixtureSlotRelationship(logicalName, observedSaveSlot) {
   return (

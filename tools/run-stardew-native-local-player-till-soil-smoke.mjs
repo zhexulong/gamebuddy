@@ -10,6 +10,7 @@ import {
   waitForFreshSnapshot,
   waitForStableRevision,
   waitForTerminal,
+  validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_till_soil_v1";
@@ -311,12 +312,10 @@ function validateNativeLocalFixtureConfig(value) {
     value.FarmhandProvisioner?.Enable !== false
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (
-    value.ActionPolicyVersion !== 0 ||
-    JSON.stringify(value.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS) ||
-    JSON.stringify(value.ExperimentalActions ?? []) !== JSON.stringify([])
-  )
-    throw new Error("native_local_till_soil_action_policy_invalid");
+  // The retired `ActionPolicyVersion` + `EnabledActions` allowlist is gone; the
+  // surface is derived from the Mod catalog. What still needs proving is that
+  // this config does not deny an action the run requires.
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 function validFixtureSlotRelationship(logicalName, observedSaveSlot) {
   return (

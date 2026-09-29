@@ -15,7 +15,9 @@ const target = {
 };
 
 const config = {
-  EnabledActions: ["bait_crab_pot"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
   SaveId: "save",
   WorldId: "world",
   PlayerId: "player",
