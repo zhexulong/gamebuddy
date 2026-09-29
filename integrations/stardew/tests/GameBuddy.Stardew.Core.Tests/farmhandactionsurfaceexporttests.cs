@@ -90,7 +90,13 @@ public sealed class FarmhandActionSurfaceExportTests
         first.Should().Contain("\"catalogRevision\":1");
         first.Should().Contain("\"actionId\":\"move_to_tile\"");
         first.Should().Contain("\"actionId\":\"pet_animal\"");
-        first.Should().Contain("\"lifecycle\":\"experimental\"");
+        // Every catalog action has now passed its live run, so the artifact carries
+        // no experimental entry. Assert the lifecycles that MUST appear from the
+        // live catalog rather than a fixed rung that may legitimately be empty.
+        foreach (FarmhandActionLifecycle lifecycle in FarmhandActionCatalog.Registrations
+            .Select(registration => registration.Lifecycle)
+            .Distinct())
+            first.Should().Contain($"\"lifecycle\":\"{lifecycle.ToWireValue()}\"");
         first.Should().Contain("\"kind\":\"read_only\"");
     }
 
@@ -156,13 +162,17 @@ public sealed class FarmhandActionSurfaceExportTests
     }
 
     [Fact]
-    public void Publication_RetainsExperimentalAndReadOnlyCatalogEntries()
+    public void Publication_RetainsEveryCatalogEntryIncludingReadOnly()
     {
         IReadOnlyList<FarmhandActionDescriptorProjection> actions = FarmhandActionSurfacePublication.Actions;
 
         actions.Should().Contain(action => action.Kind == "read_only");
         actions.Should().Contain(action => action.ActionId == "inspect_world_map");
+        // The publication is the whole catalog, not only the published rung: a
+        // live_verified action is exported too, so promotion never removes an entry.
         actions.Should().Contain(action => action.ActionId == "clear_debris");
+        actions.Select(action => action.ActionId).Should().BeEquivalentTo(
+            FarmhandActionCatalog.Registrations.Select(registration => registration.ActionId));
     }
 
     [Fact]

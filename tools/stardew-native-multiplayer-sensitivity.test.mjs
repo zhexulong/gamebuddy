@@ -318,9 +318,14 @@ test("the committed register derives cleanly against the exact decompiled source
   // a pin is an acknowledged gap, never a silent suppression. The list is asserted
   // exactly rather than by count, so neither a stale pin nor a hand-typed one can
   // hide here. Update this list deliberately when a shared-world action lands.
+  //
+  // It is now empty: every mp-semantic action (pet_animal, chest_retrieve,
+  // ship_item, advance_day) has reached live_verified, and a live_verified action
+  // cannot also be an unverified-scope gap -- the shared-world run IS the
+  // evidence. An empty list is the correct outcome here, not a missing pin.
   assert.deepEqual(
     report.acknowledged.map((ack) => `${ack.defect}:${ack.actionId}`).sort(),
-    ["unverified_scope:chest_retrieve", "unverified_scope:ship_item"],
+    [],
   );
   for (const ack of report.acknowledged) {
     assert.ok(ack.reason && ack.reason.length > 0, `${ack.actionId} pin must carry a reason`);

@@ -41,14 +41,14 @@ public sealed class SlimeHutchTroughActionTests
     };
 
     [Fact]
-    public void Catalog_WaterSlimeHutchTrough_RegisteredAsExperimentalAnimalsPetsWithTarget()
+    public void Catalog_WaterSlimeHutchTrough_RegisteredAsLiveVerifiedAnimalsPetsWithTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "water_slime_hutch_trough");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("animals_pets");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         reg.Descriptor.Should().NotBeNull();

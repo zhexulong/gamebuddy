@@ -123,7 +123,12 @@ test("preserves registration identity/lifecycle/kind and the published-vs-withdr
   for (const actionId of validated.lifecycle.experimentalActionIds) {
     assert.equal(byId.get(actionId).lifecycle, "experimental");
   }
-  assert.ok(validated.lifecycle.experimentalActionIds.length > 0);
+  // The experimental partition may legitimately be empty: once every action has
+  // passed its live run, nothing sits on the experimental rung. What must hold
+  // is that the three lists still partition the surface exactly (asserted just
+  // below), so an accidentally dropped action still fails.
+  assert.ok(Array.isArray(validated.lifecycle.experimentalActionIds));
+  assert.equal(new Set(validated.lifecycle.experimentalActionIds).size, validated.lifecycle.experimentalActionIds.length);
 
   const partition = new Set([
     ...validated.lifecycle.executableActionIds,
@@ -220,8 +225,17 @@ test("rejects envelope, registration, and lifecycle drift with exact codes", asy
   fails("readonly_subset_invalid", () => validateActionProjectionParity(readonlyViolation));
 
   const experimentalViolation = clone(snapshot);
-  const vulnerableExperimental = experimentalViolation.surface.actions.find((registration) => registration.actionId === "clear_debris");
-  vulnerableExperimental.lifecycle = "published";
+  // Every action has passed its live run, so the experimental list is empty and
+  // there is no experimental action left to mislabel. Exercise the same guard by
+  // MOVING one visible action onto the experimental rung: removing it from the
+  // executable list keeps the partition complete (no overlap, no size change),
+  // so the failure can only come from the experimental subset check itself.
+  const movedId = experimentalViolation.lifecycle.executableActionIds[0];
+  experimentalViolation.lifecycle.executableActionIds =
+    experimentalViolation.lifecycle.executableActionIds.filter(
+      (actionId) => actionId !== movedId,
+    );
+  experimentalViolation.lifecycle.experimentalActionIds = [movedId];
   fails("experimental_subset_invalid", () => validateActionProjectionParity(experimentalViolation));
 });
 

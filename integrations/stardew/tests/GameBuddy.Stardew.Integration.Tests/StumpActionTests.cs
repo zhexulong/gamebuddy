@@ -23,14 +23,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class StumpActionTests
 {
     [Fact]
-    public void Catalog_ChopStump_RegisteredAsExperimentalResourceToolsWithSlotTarget()
+    public void Catalog_ChopStump_RegisteredAsLiveVerifiedResourceToolsWithSlotTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "chop_stump");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("resource_gathering");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
         reg.Descriptor.Should().NotBeNull();
