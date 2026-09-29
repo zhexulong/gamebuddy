@@ -8,7 +8,8 @@
       "actions": [
         "pet_animal",
         "chest_retrieve",
-        "ship_item"
+        "ship_item",
+        "advance_day"
       ],
       "reason": "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. For `chest_retrieve` the container is resolved by `Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves `Game1.player.UniqueMultiplayerID`. For `pet_animal` the +12 friendship is gated on the single per-pet `grantedFriendshipForPet` flag rather than the acting farmer's `lastPetDay` entry, so a second farmer's pet in the same day grants 0 friendship while the Mod receipt asserts before+12. No shared-world live evidence exists yet for any of them.",
       "owner": "stardew-integration"
@@ -91,6 +92,8 @@
     "clear_debris",
     "npc_relationship",
     "pet_animal",
+    "water_pet_bowl",
+    "water_slime_hutch_trough",
     "interact_npc_with_item",
     "express_emote",
     "face_direction",
@@ -103,7 +106,8 @@
     "craft_item",
     "cook_recipe",
     "collect_crab_pot_output",
-    "ship_item"
+    "ship_item",
+    "advance_day"
   ],
   "actions": [
     {
@@ -633,6 +637,40 @@
       "requiredLiveTopology": "shared_world_multiplayer"
     },
     {
+      "actionId": "water_pet_bowl",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/WateringCan.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "Game1.multiplayer.broadcastSprites at DoFunction[1c45008e04b52857] mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the bowl's watered write reached through PetBowl.performToolAction is mode-independent"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "water_slime_hutch_trough",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/WateringCan.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "Game1.multiplayer.broadcastSprites at DoFunction[1c45008e04b52857] mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the trough write reached through SlimeHutch.performToolAction is mode-independent"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
       "actionId": "interact_npc_with_item",
       "lifecycle": "experimental",
       "seams": [
@@ -650,7 +688,7 @@
     },
     {
       "actionId": "express_emote",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "mod_owned",
@@ -665,7 +703,7 @@
     },
     {
       "actionId": "face_direction",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "mod_owned",
@@ -845,6 +883,23 @@
           "signature": "public IInventory getShippingBin(Farmer who)",
           "sensitivity": "mp-semantic",
           "semanticEffect": "getShippingBin(who) returns who.personalShippingBin instead of the shared bin when Game1.player.team.useSeparateWallets is set, so the settlement target depends on the world's wallet mode"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "shared_world_multiplayer"
+    },
+    {
+      "actionId": "advance_day",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "private void startSleep()",
+          "sensitivity": "mp-semantic",
+          "semanticEffect": "Single player calls doSleep() directly, but a shared world instead sets Game1.netReady.SetLocalReady(\"sleep\") and installs a ReadyCheckDialog whose confirm callback is the only path to doSleep(); the day advances on a different trigger, after the barrier every required player satisfies. A Farmhand client cannot roll the date itself (dayOfMonth/stats.DaysPlayed advance only when Game1.IsMasterGame), so a single-player pass cannot stand in for it."
         }
       ],
       "admission": {
