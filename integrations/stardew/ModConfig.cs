@@ -74,117 +74,39 @@ public sealed class ModConfig
     public FarmhandProvisionerConfig? FarmhandProvisioner { get; init; }
 
     /// <summary>
-    /// Versioned deny-by-exception policy. In policy version 1, all published
-    /// actions are consented by default; these fields only remove actions from
-    /// the Agent-visible capability surface.
+    /// Versioned deny-by-exception policy. Every action the Mod catalog marks
+    /// published or live-verified is consented by default; these fields only
+    /// remove actions or whole families from the Agent-visible capability
+    /// surface. <see cref="ExperimentalActions"/> is a separate test-only opt-in.
     /// </summary>
-    public int ActionPolicyVersion { get; init; }
     public List<string> DeniedActions { get; init; } = new();
     public List<string> DeniedActionFamilies { get; init; } = new();
 
-    /// <summary>Test-only actions; these never enter the default Agent surface.</summary>
+    /// <summary>
+    /// Test-only actions. These never enter the default Agent surface; the
+    /// fixture harness arms them so a not-yet-live-proven action can still earn
+    /// its live evidence. It only opts a registration in, so it can never grant
+    /// an action the registry does not define.
+    /// </summary>
     public List<string> ExperimentalActions { get; init; } = new();
 
-    /// <summary>Legacy allowlist retained only for explicit pre-policy configs.</summary>
-    public List<string>? EnabledActions { get; init; }
+    /// <summary>
+    /// The Agent-visible action set, derived from the Mod's own registration
+    /// catalog rather than a second hand-written list. Default consent is
+    /// deny-by-exception: every registration whose lifecycle is published or
+    /// live-verified is on, and <see cref="DeniedActions"/> /
+    /// <see cref="DeniedActionFamilies"/> are the only things that remove an
+    /// action again. <see cref="ExperimentalActions"/> is a test-only opt-in and
+    /// never contributes to the player-facing default.
+    /// </summary>
+    internal IReadOnlySet<string> EnabledActionSet => ActionPolicyEngine.ComputeEnabledActions(this.ActionPolicyOptions);
 
-    internal IReadOnlySet<string> EnabledActionSet
-    {
-        get
-        {
-            if (this.ActionPolicyVersion == 1)
-            {
-                HashSet<string> deniedActions = new(this.DeniedActions, StringComparer.Ordinal);
-                HashSet<string> deniedFamilies = new(this.DeniedActionFamilies, StringComparer.Ordinal);
-                HashSet<string> result = new(PublishedActions.Where(action => !deniedActions.Contains(action) && !deniedFamilies.Contains(ActionFamily(action))), StringComparer.Ordinal);
-                result.UnionWith(this.ExperimentalActions.Where(action => ExperimentalActionIds.Contains(action)
-                    && !deniedActions.Contains(action)
-                    && !deniedFamilies.Contains(ActionFamily(action))));
-                return result;
-            }
+    internal ActionPolicyOptions ActionPolicyOptions => new(
+        DeniedActions: this.DeniedActions,
+        DeniedActionFamilies: this.DeniedActionFamilies,
+        ExperimentalActions: this.ExperimentalActions);
 
-            // Existing configs keep their old fail-closed allowlist semantics
-            // until explicitly migrated to ActionPolicyVersion 1.
-            // Legacy profiles remain explicit and fail closed. They may also
-            // opt into a test-only experimental action; that action still
-            // never enters the version-1 default player-facing surface.
-            return new HashSet<string>((this.EnabledActions ?? Enumerable.Empty<string>()).Where(action => PublishedActions.Contains(action) || ExperimentalActionIds.Contains(action)), StringComparer.Ordinal);
-        }
-    }
-
-    internal bool UsesDefaultConsentPolicy => this.ActionPolicyVersion == 1;
-
-    internal bool HasValidActionPolicy
-    {
-        get
-        {
-            if (this.ActionPolicyVersion is not (0 or 1)) return false;
-            if (this.ActionPolicyVersion == 0 && (this.DeniedActions.Count > 0 || this.DeniedActionFamilies.Count > 0)) return false;
-            if (this.ActionPolicyVersion == 1 && this.EnabledActions is not null) return false;
-            return this.DeniedActions.All(action => PublishedActions.Contains(action) || ExperimentalActionIds.Contains(action))
-                && this.DeniedActionFamilies.All(PublishedFamilies.Contains)
-                && this.ExperimentalActions.All(ExperimentalActionIds.Contains);
-        }
-    }
-
-    // This is the Mod-side declaration of the same published primitive surface
-    // materialized by host/src/action-registry.ts. machine_collect_output and
-    // the non-registry tree-first-hit probe remain unavailable.
-    private static readonly IReadOnlySet<string> PublishedActions = new HashSet<string>(new[] { "move_to_tile", "inspect_world_map", "find_destination", "navigate_to_destination", "equip_tool", "travel", "enter_exit", "till_soil", "pickup_forage", "pickup_item", "water_crop", "plant_seed", "fertilize_tile", "machine_inspect", "machine_load", "machine_collect_output", "collect_animal_product", "feed_animal", "use_item", "harvest_crop", "place_wood_fence", "place_crab_pot", "bait_crab_pot", "chop_tree_source", "break_rock_source", "clear_hoedirt", "dig_artifact_spot", "refill_watering_can", "observe_scene" }, StringComparer.Ordinal);
-    private static readonly IReadOnlySet<string> PublishedFamilies = new HashSet<string>(new[]
-    {
-        "movement_navigation", "world_navigation", "world_perception", "body_tools", "transport_warps", "farming_crops", "resource_gathering", "inventory_items",
-        "crafting_cooking", "machines_processing", "animals_pets", "npc_social", "shops_economy",
-        "buildings_farm_management", "quests_progression", "story_world_scripts", "festivals_minigames", "calendar_day_progression", "expression",
-    }, StringComparer.Ordinal);
-    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "water_pet_bowl", "water_slime_hutch_trough", "express_emote", "face_direction", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "craft_item", "cook_recipe", "collect_crab_pot_output", "ship_item", "advance_day" }, StringComparer.Ordinal);
-
-    private static string ActionFamily(string action) => action switch
-    {
-        "move_to_tile" => "movement_navigation",
-        "inspect_world_map" or "find_destination" or "navigate_to_destination" => "world_navigation",
-        "observe_scene" => "world_perception",
-        "equip_tool" => "body_tools",
-        "travel" => "transport_warps",
-        "enter_exit" => "movement_navigation",
-        "till_soil" => "farming_crops",
-        "pickup_forage" => "resource_gathering",
-        "pickup_item" => "inventory_items",
-        "water_crop" => "farming_crops",
-        "plant_seed" => "farming_crops",
-        "fertilize_tile" => "farming_crops",
-        "harvest_crop" => "farming_crops",
-        "place_wood_fence" => "buildings_farm_management",
-        "place_crab_pot" => "buildings_farm_management",
-        "bait_crab_pot" => "buildings_farm_management",
-        "clear_debris" => "resource_gathering",
-        "machine_inspect" or "machine_load" or "machine_collect_output" => "machines_processing",
-        "npc_relationship" => "npc_social",
-        "interact_npc_with_item" => "npc_social",
-        "pet_animal" => "animals_pets",
-        "water_pet_bowl" => "animals_pets",
-        "water_slime_hutch_trough" => "animals_pets",
-        "collect_animal_product" => "animals_pets",
-        "feed_animal" => "animals_pets",
-        "use_item" => "inventory_items",
-        "tree_first_hit" => "resource_gathering",
-        "chop_tree_source" => "resource_gathering",
-        "break_rock_source" => "resource_gathering",
-        "clear_hoedirt" => "farming_crops",
-        "dig_artifact_spot" => "resource_gathering",
-        "refill_watering_can" => "farming_crops",
-        "express_emote" => "expression",
-        "face_direction" => "movement_navigation",
-        "chest_store" or "chest_retrieve" => "inventory_items",
-        "chop_stump" => "resource_gathering",
-        "plant_sapling" => "farming_crops",
-        "cut_weeds" => "resource_gathering",
-        "scythe_crop" => "farming_crops",
-        "craft_item" or "cook_recipe" => "crafting_cooking",
-        "collect_crab_pot_output" => "buildings_farm_management",
-        "ship_item" => "shops_economy",
-        _ => string.Empty,
-    };
+    internal bool HasValidActionPolicy => ActionPolicyEngine.ValidateActionPolicy(this.ActionPolicyOptions);
 
     internal bool HasValidLocalBridgeConfiguration => EnableLocalBridge
         && BridgeProtocol.IsOpaqueId(PipeName)

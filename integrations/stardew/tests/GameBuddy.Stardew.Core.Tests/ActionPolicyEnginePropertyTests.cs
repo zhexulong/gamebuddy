@@ -51,16 +51,16 @@ public sealed class ActionPolicyEnginePropertyTests
         PositiveInt familyIndex,
         bool denyAction,
         bool denyFamily,
-        bool useExperimentalPolicy)
+        bool exerciseExperimentalOptIn)
     {
         if (FarmhandActionCatalog.Registrations.Count == 0) return true.ToProperty();
 
         string action = FarmhandActionCatalog.Registrations[actionIndex.Get % FarmhandActionCatalog.Registrations.Count].ActionId;
         string family = FarmhandActionCatalog.Registrations[familyIndex.Get % FarmhandActionCatalog.Registrations.Count].FamilyId;
         var options = new ActionPolicyOptions(
-            useExperimentalPolicy ? 1 : 0,
-            denyAction ? new[] { action } : Array.Empty<string>(),
-            denyFamily ? new[] { family } : Array.Empty<string>()
+            DeniedActions: denyAction ? new[] { action } : Array.Empty<string>(),
+            DeniedActionFamilies: denyFamily ? new[] { family } : Array.Empty<string>(),
+            ExperimentalActions: exerciseExperimentalOptIn ? new[] { action } : Array.Empty<string>()
         );
 
         IReadOnlySet<string> enabled = ActionPolicyEngine.ComputeEnabledActions(options);
@@ -77,7 +77,6 @@ public sealed class ActionPolicyEnginePropertyTests
 
         string denied = PublishedActionIds[indexGenerator.Get % PublishedActionIds.Length];
         var options = new ActionPolicyOptions(
-            ActionPolicyVersion: 1,
             DeniedActions: new[] { denied }
         );
 
@@ -92,7 +91,6 @@ public sealed class ActionPolicyEnginePropertyTests
         string deniedFamily = families[indexGenerator.Get % families.Length];
 
         var options = new ActionPolicyOptions(
-            ActionPolicyVersion: 1,
             DeniedActionFamilies: new[] { deniedFamily }
         );
 
