@@ -1,6 +1,6 @@
 # GameBuddy Tavern release live-run charter (SFW, original)
 
-> **Purpose:** run the implemented Tavern release profile with a real participant after its automated release prerequisites have passed. This runbook validates an end-to-end product flow; it is not a model leaderboard, does not execute SillyTavern runtime behavior, and does not substitute for parser/fuzz, migration, Magic Context fork, Pi partition, Game Action, or target-game live gates.
+> **Purpose:** understand what the implemented Tavern release profile is supposed to do, and get its verdict. The verdict itself comes from one automated command (§2) — no operator record, no human observation requirement. This document is not a model leaderboard, does not execute SillyTavern runtime behavior, and does not substitute for parser/fuzz, migration, Magic Context fork, Pi partition, Game Action, or target-game live gates.
 >
 > **Chat mainline profile:** The active Chat mainline uses the distinct `chat-tavern-live` profile and must pass its repository-owned live orchestrator before the Chat mainline is called release-ready. That profile uses a GameBuddy-owned source-built disposable Chat artifact/runtime and does not depend on the full Windows production pointer, GitHub Actions release artifact, Windows reparse enforcement, guardian, or bundled-runtime gate. Passing it is a Chat/Tavern live claim only; the full Windows release gate remains separate. The profile must still execute real embedded provider turns and real mounted management UI operations with durable read-back; static profile declarations, fixtures, a single happy-path smoke, or retry-after-failure are not substitutes.
 >
@@ -19,28 +19,29 @@ authenticated-reconnect=TVL-05
 memory-management=TVL-09
 -->
 
-## 1. Preconditions — do not begin otherwise
+## 1. Preconditions — what the gate checks, and what you must not assume
 
-Mark the run **blocked** and record the failed prerequisite; do not compensate with manual UI actions if any is false.
+The gate performs 1–4 itself and reports their true outcome; you do not need to pre-check anything by hand. Do not compensate for a false prerequisite with manual UI actions — a `blocked` verdict means the run must not be claimed.
 
-1. Run `pnpm check:tavern-release-prerequisites`. It must exit zero with `verdict: "passed"`; a nonzero `blocked` result is evidence that this live run must not begin. In particular, `magic_context_source_contract_only` is a blocked prerequisite, not a manually waivable warning.
-2. The build has a versioned release profile (`selected_l3_v1`) whose `must` flows are known. The checker maps every current `must` flow to `TVL-00`–`TVL-09`; it deliberately excludes `later` and explicitly unsupported flows.
-3. The build has passed the automated contracts required by that profile. The prerequisite checker fails closed unless **each selected `must` flow** has all three: a declared Host route, a durable Host artifact/operation marker, and a matching marker in the compiled Host contract-test command. Manifest mapping, source markers, or static tests alone never satisfy this prerequisite. Required evidence is limited to safe source-level markers plus the compiled Host test command; it is not a live-pass substitute.
+1. The automated prerequisites pass. `pnpm check:tavern-release-prerequisites --profile chat-tavern-live` must exit zero with `verdict: "passed"`; the gate runs this itself. In particular, `magic_context_source_contract_only` is a blocked prerequisite, not a manually waivable warning.
+2. The build's versioned release profile is known. The `chat-tavern-live` profile deliberately does not run the Windows security prerequisites; they report `not_applicable` instead of passing, and it makes no `fullReleaseClaim`.
+3. The version-locked Magic Context stable-source lifecycle tests and the locked SillyTavern semantic-reference anchors pass for this exact vendor revision. Manifest mapping, source markers, or static tests alone never satisfy this prerequisite; it is not a live-pass substitute either.
    - stable-context source/marker/render/fail-closed contract;
    - Character/WorldBook safe-subset import and malicious-input tests;
    - artifact migration, atomic write, revision conflict and read-back tests;
    - opening/message-0/blank/resume tests;
    - Tavern message-command surface guard and browser isolation tests;
    - every enabled L3 flow's own automated contract.
+   > The per-`must`-flow mapping (each flow to `TVL-00`–`TVL-09`, with a declared Host route, a durable artifact/operation marker and a compiled contract-test marker) described in [design/09](../design/09_BDD_VALIDATION_PLAN.md) is **not yet implemented** in this prerequisite checker. Do not read this list as a claim that it is enforced: the checker currently establishes the stable-source and semantic-reference prerequisites only, and the flow-level checklist below is the operator-facing exploration, not an automatic gate input.
 4. A fresh GameBuddy-owned runtime root has been created outside the repository. Do not use system `pi`, `~/.pi`, pre-existing Pi sessions, user extensions, skills, prompts, configuration or credentials.
-5. The operator has an original, SFW fixture set with the locked fixture-manifest hash. Do not use community Character cards, copied benchmarks, private chat logs, or unreviewed WorldBooks.
-6. The current build, Magic Context vendor version, model/provider configuration, compatibility manifest and semantic-reference registry are recorded before launching the UI.
+5. If you intend to run the §3 manual exploration, use an original, SFW fixture set with the locked fixture-manifest hash. Do not use community Character cards, copied benchmarks, private chat logs, or unreviewed WorldBooks. The gate itself does not need this.
+6. The current build, Magic Context vendor version, model/provider configuration, compatibility manifest and semantic-reference registry are known before any run. The gate records the ones it can verify itself; it never asks you to transcribe them into a record.
 
 The regular current-Web-Chat research baseline remains [`dialogue-live-run-charter.md`](dialogue-live-run-charter.md). Do not claim that its `DLG-BASE-*` result is a Tavern release result.
 
 ## 2. Evidence hygiene
 
-Record only opaque IDs and non-contentful outcomes. Do **not** retain raw dialogue by default and never capture or display:
+Collect and keep only opaque IDs, hashes, counters and non-contentful outcomes. Do **not** retain raw dialogue by default and never capture or display:
 
 ```text
 system prompt / prompt wire / m[0] or m[1] text / Magic Context SQLite or blocks
@@ -48,38 +49,39 @@ thinking / tool trace or result / receipt payload / provider payload / credentia
 Pi JSONL or internal session path / bridge token / unconsented audio
 ```
 
-Use the following minimal record:
-
-```text
-run_id / controlled anonymous operator_id / started_at / build commit / release-profile hash
-Magic Context vendor version / provider+model configuration
-compatibility-manifest + semantic-reference-registry + fixture-manifest hashes
-opaque companion_id / continuity_id / chat_thread_id / surface_session_id
-step_id / pass | fail | blocked | inconclusive / artifact-or-readback evidence ID / controlled non-contentful reason category
-optional controlled stop/failure category only; no free-text qualitative note, personal data, or dialogue content
-```
+The release gate enforces this itself: its evidence is opaque by construction (lowercase-hex IDs and SHA-256 hashes only), and the report writer that persists its output rejects any content-bearing field. A price of that is that the gate cannot read a free-text note even if you write one — there is deliberately no field for it.
 
 A fluent model response is not evidence that persistence, source placement, privacy or surface isolation worked.
 
-### Versioned machine-readable operator record
+### The machine-readable live verdict
 
-After the automated prerequisite command passes, an operator may run the separate validator with `node tools/run-tavern-release-live-gate.mjs --record <privacy-safe-record.json>`. It does not drive the UI, collect telemetry, or create observations. It only validates a supplied record and returns `inconclusive` unless every required observation is directly recorded by the operator and prerequisites pass. For the Chat mainline profile, the live orchestrator is additionally required:
+There is **no operator record**. The gate never asks a human to observe a run, and no supplied document can stand in for run evidence. One command produces the verdict:
 
 ```bash
 node tools/run-tavern-release-live-gate.mjs --orchestrate --profile chat-tavern-live
 ```
 
-The orchestrator's real main/failure/recovery summaries and mounted management UI operation evidence are release-gate inputs, not product-path facts. Automation evidence may satisfy the operation-mapping portion when it came from the authenticated UI/API run, but it never substitutes for an independently required operator record.
+It runs the automated prerequisites itself, then drives the real `main`/`failure`/`recovery` narrative attempts through the production composition bootstrap. Its verdict is derived, never asserted:
 
-The input is a JSON object with `schema_version: 1`, opaque lowercase-hex metadata IDs (16–128 characters), SHA-256 hashes for the listed versioned artifacts, and an `observations` array. Each observation permits **only** `step_id`, `outcome`, `reason_category`, `operator_observed_at`, and non-empty opaque `evidence_ids`. The validator rejects unknown fields (including dialogue, prompts, paths, notes, payloads, or UI captures), duplicate steps, missing must-flow steps, invalid IDs/hashes, and a `pass` without `reason_category: "observed"`. `TVL-06` alone may be `not_applicable`, and only with `operation_not_declared`.
+- **`passed`** (exit 0) — the automated prerequisites genuinely pass, every planned run carries its own production artifact identity plus an observed real embedded provider turn, and the mounted `ComposedTavernProfile` operation-to-evidence mapping validates against the exact mounted profile.
+- **`blocked`** (exit 2) — an automated prerequisite is missing or failing. No narrative run is attempted; `blocked` is never papered over with attempts.
+- **`inconclusive`** (exit 2) — evidence is incomplete or contradictory: a planned run is missing or did not genuinely pass, or the operation evidence is absent or does not match the mounted profile.
 
-This is evidence-record validation, not a TVL execution harness. In the absence of an authentic operator record it returns `inconclusive`; it never represents UI-driven Tavern success.
+`--mounted-profile <profile.json>` and `--operation-evidence-mapping <mapping.json>` supply the mounted-profile evidence that the report cannot derive by itself; `--report <path>` writes a create-only content-free copy. The orchestrator's real run summaries and operation evidence are release-gate inputs, not product-path facts.
 
-## 3. Required flow
+The mapping is validated against the exact mounted profile: the identity must match either by the exact profile object or by the `profile_id` + canonical `profile_hash` pair, every mapped operation must be one the profile declares, and every evidence ID must be opaque. The one optional key is `evidence_kind`, which may be `"automation_evidence"` — the label `tools/record-tavern-ui-operation-evidence.mjs` stamps on the mapping it exports from the authenticated UI/API run — and nothing else. Any other evidence kind, and any key beyond that schema, fails closed, so the mapping can never carry a note, a caption, or a claim.
+
+### Not part of this gate
+
+Semantic quality and long-term memory consolidation are **audit** work, not gate criteria. They produce readable measurements and root-cause attribution via `chat_run_audit/v1` (and the run-to-run comparison tooling), and they do not block the Chat mainline release. The only correctness failure this gate is a boundary for is an explicit one such as cross-continuity Memory leakage; model fluency, persona fidelity, prose quality and needle-fact recall are measured there, not gated here.
+
+## 3. Manual exploration runbook (optional)
+
+This section is a **manual exploratory runbook** for a human driving the local authenticated loopback Tavern UI. It is not the release gate and it produces no release verdict: nothing here is required to run, and no human observation is required to release. The gate in §2 is the only pass/blocked/inconclusive authority. Use this section when you want to look at the product by hand.
 
 Use the local authenticated loopback Tavern UI only. The participant may stop at any time.
 
-| Step | Participant action | Required observable result | Evidence |
+| Step | Participant action | Expected observable result | Evidence if you keep any |
 |---|---|---|---|
 | `TVL-00` | Open the authenticated loopback Tavern UI and inspect the Companion Library and Recent/Manage Chats. | Only the release profile's Library and chat-management flows are enabled; later/unsupported flow controls are absent or unavailable. | release-profile/UI evidence ID |
 | `TVL-01` | Import the original SFW ST-compatible fixture. | Preview/report classifies all fields; unsupported active fields are reported and not executed. No running Companion changes. | import-report ID + candidate ID |
@@ -105,9 +107,10 @@ This is a surface-lifecycle check only. It does not satisfy a Farmhand, Game Act
 
 ## 5. Verdict
 
-- **pass** — every release-profile `must` step passes; the Chat mainline additionally has a first-attempt passed `chat-tavern-live` orchestrator result with main/failure/recovery and mounted management operation read-back; evidence record is complete; no unresolved safety, privacy, source/materialization, persistence, surface-isolation or causality failure remains.
-- **fail** — a required step produces an observable wrong behavior, including internal-data exposure, silent mutation, wrong-thread resume, unauthorized active import behavior, or a surface-boundary breach.
-- **blocked** — an automated prerequisite is missing or failing; do not run around it manually.
-- **inconclusive** — insufficient observation, provider/runtime interruption without contradictory outcome, or participant stop. Preserve it as inconclusive.
+The verdict is the gate's, not a reader's. `node tools/run-tavern-release-live-gate.mjs --orchestrate --profile chat-tavern-live` derives it from evidence and exits 0 only for `passed`:
 
-A participant refusal, silence, `turn_failed`, absence of required explicit presentation, Stop, or neutral error is a result to record—not a reason to bypass the product boundary. Never upgrade `blocked`, `inconclusive`, or a subjective positive impression to `pass`.
+- **`passed`** — the automated prerequisites genuinely pass, every planned `main`/`failure`/`recovery` run carries a production artifact identity and an observed real embedded provider turn, and the mounted operation evidence validates. The claims block stays honest: `fullReleaseClaim` and `requiredMustFlowsExecuted` are **false by construction in every profile** — this gate never mints a full-release claim, and a `passed` verdict for `chat-tavern-live` is a Chat/Tavern live claim only. This is still not a statement about semantic quality or memory consolidation; those are audit work, not gate criteria.
+- **`blocked`** — an automated prerequisite is missing or failing; do not run around it manually, and no narrative run is attempted in that state.
+- **`inconclusive`** — evidence is incomplete or contradictory: a planned run is missing, did not genuinely pass, or the mounted operation evidence is absent or does not match the mounted profile. Preserve it as inconclusive.
+
+A `fail` is not a verdict this command returns: an observable wrong behavior (internal-data exposure, silent mutation, wrong-thread resume, unauthorized active import behavior, a surface-boundary breach, or a cross-continuity Memory leak) surfaces as a `blocked`/`inconclusive` run with its reason code and, when found, must be recorded and fixed before the gate is re-run. Never upgrade `blocked`, `inconclusive`, or a subjective positive impression to `passed`, and never read `passed` as an endorsement of the prose. A participant refusal, silence, `turn_failed`, absence of required explicit presentation, Stop, or neutral error is a result to record — not a reason to bypass the product boundary.

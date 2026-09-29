@@ -11,13 +11,14 @@ param(
     # Resolve-LiveRunWindowMode below; no window-mode vocabulary is re-declared
     # here.
     #
-    # Default stays `visible` because this Preview launcher exists for
-    # human-in-the-loop, camera-based observation (see fixtures/stardew/RUNBOOK.md)
-    # and its active-stop-proof phase hands an operator-owned manual interaction
-    # window. The Mod collapses the vocabulary to two effective states, where
-    # `hidden`/`background` map to SW_HIDE -- an unattended-run choice an operator
-    # must opt into explicitly, never a default that hides the window they must watch.
-    [string]$WindowMode = "visible",
+    # Each role is configurable separately. The host role is the human's window
+    # and stays visible by default; the AI-client role is the silent farmhand
+    # and defaults to the non-activating `background` shape. `hidden`/`background`
+    # map to SW_HIDE -- an unattended-run choice; an operator can override each
+    # role independently without ever hiding the window they must watch by
+    # default.
+    [string]$HostWindowMode = "visible",
+    [string]$FarmhandWindowMode = "background",
     [switch]$RequireActiveStopProof
 )
 
@@ -237,10 +238,11 @@ function Get-PreviewFailureCode([string]$Path) {
 }
 
 if ($env:OS -ne "Windows_NT") { throw "windows_only" }
-# Validate the caller-chosen window mode through the shared single-authority
-# contract before any process is launched, so this launcher can never inject an
-# unknown window shape into either game process.
-Resolve-LiveRunWindowMode $WindowMode
+    # Caller-chosen per-role window modes are validated through the shared
+    # single-authority contract before any process is launched, so this launcher
+    # can never inject an unknown window shape into either game process.
+    Resolve-LiveRunWindowMode $HostWindowMode
+    Resolve-LiveRunWindowMode $FarmhandWindowMode
 Assert-AbsoluteDirectory $GamePath "game_path"
 # ModelProfileStore supplies the fixed Host-owned game default when its optional
 # preference file is absent. Require only an existing absolute Host-owned root:
@@ -308,12 +310,6 @@ $nativeServerReadyAtUnixMs = 0
 $ingressStages = @()
 
 try {
-    # This process environment carries the validated mode into both directly
-    # supervised SMAPI children below (host and AI client); both roles run the
-    # Mod, so both need the same participation in the run. It is set inside the
-    # try and cleared in the finally, exactly like the single-player launcher,
-    # so no preflight failure can leak it into the caller's later processes.
-    $env:GAMEBUDDY_WINDOW_MODE = $WindowMode
     Initialize-PrivateRunRoot $runRoot
     # This transaction-owned marker makes the Host's signed fixture readiness
     # prove the post-save-load game-thread locale. The startup preference above
@@ -335,6 +331,10 @@ try {
     # session exchange, or Preview state.
     $hostLaunchGeneration = [guid]::NewGuid().ToString("N")
     $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $hostLaunchGeneration
+    # The host role is the human's window; carry its validated mode into only
+    # this child, exactly like the launch-generation pattern below. Clear it
+    # before the AI launch so neither role inherits the other's shape.
+    $env:GAMEBUDDY_WINDOW_MODE = $HostWindowMode
     $hostProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $hostModsPath)) -WorkingDirectory $GamePath -PassThru
     $notBefore = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     Invoke-NodeQuiet @("tools/await-stardew-fixture-readiness.mjs", "--session-directory", $sessionDirectory, "--host-config", $hostConfig, "--timeout-ms", ($StartupTimeoutSeconds * 1000), "--not-before-unix-ms", $notBefore) "host_fixture_readiness_failed"
@@ -368,6 +368,9 @@ try {
     # generation is no longer present in the AI child environment.
     $aiLaunchGeneration = [guid]::NewGuid().ToString("N")
     $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $aiLaunchGeneration
+    # The AI-client role is the silent farmhand; refresh GAMEBUDDY_WINDOW_MODE
+    # with its own validated mode so the host child's value cannot cross roles.
+    $env:GAMEBUDDY_WINDOW_MODE = $FarmhandWindowMode
     $aiProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $aiModsPath)) -WorkingDirectory $GamePath -PassThru
     # The Mod creates its named-pipe listener during its normal SMAPI startup.
     # The first Preview process is the sole safe readiness probe: only a typed
@@ -513,10 +516,9 @@ try {
     } else {
         Remove-Item Env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION -ErrorAction SilentlyContinue
     }
-    # Restore the pre-run environment exactly: the NULL assignment removes the
-    # variable on Windows PowerShell 5.1 (same single-player clear), so the
-    # validated window mode cannot leak into any later process.
-    $env:GAMEBUDDY_WINDOW_MODE = $null
+    # Clear the per-role window mode exactly like the launch-generation clear
+    # above, so neither role's validated mode can leak into any later process.
+    Remove-Item Env:GAMEBUDDY_WINDOW_MODE -ErrorAction SilentlyContinue
     # Preview evidence is non-secret, content-free and hash-only. Preserve it
     # through teardown so the launcher can report the observed phase set;
     # remove it only with the private run root after that summary is captured.
