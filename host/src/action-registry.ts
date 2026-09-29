@@ -381,7 +381,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export const STARDEW_CANDIDATE_ACTION_IDS = Object.freeze([
+// Actions whose Host tool schema is derived from the Mod-owned descriptor rather
+// than a static Host adapter. Membership is about how the arguments are built,
+// not about lifecycle: a member may be Experimental (admitted through the
+// candidate carve-out) or already live_verified.
+export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "express_emote",
   "face_direction",
   "interact_npc_with_item",
@@ -389,10 +393,10 @@ export const STARDEW_CANDIDATE_ACTION_IDS = Object.freeze([
   "advance_day",
 ] as const);
 
-export type StardewCandidateActionId = (typeof STARDEW_CANDIDATE_ACTION_IDS)[number];
+export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
 
-export function isCandidateActionId(actionId: string): actionId is StardewCandidateActionId {
-  return (STARDEW_CANDIDATE_ACTION_IDS as readonly string[]).includes(actionId);
+export function isDescriptorDerivedActionId(actionId: string): actionId is StardewDescriptorDerivedActionId {
+  return (STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS as readonly string[]).includes(actionId);
 }
 
 export function getDescriptorArgument(
@@ -426,7 +430,7 @@ export function getArgumentEnum(
   return undefined;
 }
 
-export function isCandidateDescriptorComplete(
+export function isModDescriptorComplete(
   actionId: string,
   descriptor: ActionRegistration["descriptor"],
 ): boolean {
@@ -509,19 +513,20 @@ export function visibleActionsFromModCatalog(
 
   for (const registration of registrations) {
     const adapter = adapters.get(registration.actionId);
-    // Candidate actions use an alternate admission path: the Mod catalog may
-    // still carry an action as Experimental while its descriptor is complete
-    // and the live capability is advertised. Once an action passes its required
-    // live topology it moves to live_verified and takes the normal path above.
-    const isAdmittedCandidate =
-      isCandidateActionId(registration.actionId) &&
-      isCandidateDescriptorComplete(registration.actionId, registration.descriptor);
+    // Two admission paths. The ordinary one is lifecycle: `published` or
+    // `live_verified` means the action already proved itself, either with a live
+    // run (live_verified) or with the full publication process behind it. The
+    // other is the descriptor-derived carve-out, which lets a still-Experimental
+    // action out only once its Mod-owned descriptor is complete.
+    const isAdmittedDescriptorDerived =
+      isDescriptorDerivedActionId(registration.actionId) &&
+      isModDescriptorComplete(registration.actionId, registration.descriptor);
     if (
       adapter === undefined ||
       !adapter.supportedIdentityVersions.includes(registration.identityVersion) ||
       (registration.lifecycle !== "published" &&
         registration.lifecycle !== "live_verified" &&
-        !isAdmittedCandidate) ||
+        !isAdmittedDescriptorDerived) ||
       registration.kind !== "execution" ||
       !live.has(adapter.requiredCapability) ||
       deniedActions.has(registration.actionId) ||
@@ -530,9 +535,12 @@ export function visibleActionsFromModCatalog(
     ) {
       continue;
     }
+    // A descriptor-derived action is always subject to the completeness gate,
+    // whichever path admitted it: live_verified records that a run succeeded, it
+    // does not guarantee the Mod still sends a usable argument shape.
     if (
-      isCandidateActionId(registration.actionId) &&
-      !isCandidateDescriptorComplete(registration.actionId, registration.descriptor)
+      isDescriptorDerivedActionId(registration.actionId) &&
+      !isModDescriptorComplete(registration.actionId, registration.descriptor)
     ) {
       continue;
     }

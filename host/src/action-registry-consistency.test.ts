@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   STARDEW_ACTION_ADAPTERS,
   STARDEW_ACTION_TOOL_NAMES,
-  STARDEW_CANDIDATE_ACTION_IDS,
+  STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS,
 } from "./action-registry.js";
 
 /**
@@ -112,7 +112,7 @@ test("every surfaced artifact action has a Host tool name", () => {
 });
 
 test("every published-worthy experimental artifact action is a staged candidate", () => {
-  const candidates = new Set(STARDEW_CANDIDATE_ACTION_IDS as readonly string[]);
+  const candidates = new Set(STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS as readonly string[]);
   const missingCandidate = loadActionSurface()
     .filter(isPublishedWorthyExperimental)
     .filter((action) => !candidates.has(action.actionId))
@@ -121,7 +121,7 @@ test("every published-worthy experimental artifact action is a staged candidate"
 });
 
 test("every staged candidate action stays surfaceable through a Host tool name", () => {
-  const unsurfaceable = [...STARDEW_CANDIDATE_ACTION_IDS].filter(
+  const unsurfaceable = [...STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS].filter(
     (actionId) => !(actionId in STARDEW_ACTION_TOOL_NAMES),
   );
   assert.deepEqual(unsurfaceable, []);

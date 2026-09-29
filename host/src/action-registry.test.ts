@@ -184,6 +184,49 @@ test("incomplete candidate descriptors stay invisible", () => {
   assert.deepEqual(visibleActionsFromModCatalog(catalog, ["express_emote"]), []);
 });
 
+test("the descriptor completeness gate also holds at live_verified", () => {
+  // live_verified records that a run succeeded on the required topology; it does
+  // not guarantee the Mod still sends a usable argument shape. A descriptor-
+  // derived action must pass completeness on every admission path, so a live run
+  // can never make a malformed argument surface visible.
+  const withDescriptor = (descriptor: object) => [
+    {
+      actionId: "express_emote",
+      familyId: "expression",
+      identityVersion: 1,
+      lifecycle: "live_verified" as const,
+      kind: "execution" as const,
+      descriptor: Object.freeze(descriptor),
+    },
+  ];
+  const complete = {
+    arguments: Object.freeze([{ name: "emote", type: "string", enum: ["happy"] }]),
+    effect: "write",
+    postcondition: "emote_started",
+    nativeBinding: "Farmer.doEmote",
+  };
+  assert.deepEqual(
+    visibleActionsFromModCatalog(withDescriptor(complete), ["express_emote"]).map((e) => e.actionId),
+    ["express_emote"],
+  );
+
+  // Each of these drops one required fact, so all must stay invisible even though
+  // the lifecycle is live_verified.
+  const incompleteVariants = {
+    "no emote enum": { ...complete, arguments: Object.freeze([{ name: "emote", type: "string" }]) },
+    "no native binding": { ...complete, nativeBinding: undefined },
+    "no postcondition": { ...complete, postcondition: undefined },
+    "read effect": { ...complete, effect: "read" },
+  };
+  for (const [label, descriptor] of Object.entries(incompleteVariants)) {
+    assert.deepEqual(
+      visibleActionsFromModCatalog(withDescriptor(descriptor), ["express_emote"]),
+      [],
+      `expected live_verified ${label} to stay invisible`,
+    );
+  }
+});
+
 test("retired action identifiers require an explicit fail-closed migration", () => {
   assert.deepEqual(RETIRED_ACTION_POLICY_MIGRATIONS.collect_resource, [
     "chop_tree_source",

@@ -5,10 +5,10 @@ import {
   type ActionPolicy,
   getArgumentEnum,
   getDescriptorArgument,
-  isCandidateDescriptorComplete,
+  isModDescriptorComplete,
   STARDEW_ACTION_TOOL_NAMES,
   type StardewActionId,
-  type StardewCandidateActionId,
+  type StardewDescriptorDerivedActionId,
   searchActionsFromModCatalog,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
@@ -432,7 +432,7 @@ export function createStardewObservationTools(
  * Validates strictly with additionalProperties: false and enforces Mod-provided enums.
  */
 export function buildCandidateToolSchema(
-  actionId: StardewCandidateActionId,
+  actionId: StardewDescriptorDerivedActionId,
   descriptor: ActionRegistrationDescriptor,
 ): TObject {
   if (actionId === "express_emote") {
@@ -1309,7 +1309,7 @@ export function createStardewActionTools(
     );
     if (
       registration?.descriptor &&
-      isCandidateDescriptorComplete("express_emote", registration.descriptor)
+      isModDescriptorComplete("express_emote", registration.descriptor)
     ) {
       const schema = buildCandidateToolSchema(
         "express_emote",
@@ -1334,7 +1334,7 @@ export function createStardewActionTools(
     );
     if (
       registration?.descriptor &&
-      isCandidateDescriptorComplete("face_direction", registration.descriptor)
+      isModDescriptorComplete("face_direction", registration.descriptor)
     ) {
       const schema = buildCandidateToolSchema(
         "face_direction",
@@ -1359,7 +1359,7 @@ export function createStardewActionTools(
     );
     if (
       registration?.descriptor &&
-      isCandidateDescriptorComplete(
+      isModDescriptorComplete(
         "interact_npc_with_item",
         registration.descriptor,
       )
@@ -1393,7 +1393,7 @@ export function createStardewActionTools(
     );
     if (
       registration?.descriptor &&
-      isCandidateDescriptorComplete("pet_animal", registration.descriptor)
+      isModDescriptorComplete("pet_animal", registration.descriptor)
     ) {
       const schema = buildCandidateToolSchema("pet_animal", registration.descriptor);
       tools.push(
@@ -1419,7 +1419,7 @@ export function createStardewActionTools(
     );
     if (
       registration?.descriptor &&
-      isCandidateDescriptorComplete("advance_day", registration.descriptor)
+      isModDescriptorComplete("advance_day", registration.descriptor)
     ) {
       const schema = buildCandidateToolSchema("advance_day", registration.descriptor);
       tools.push(
