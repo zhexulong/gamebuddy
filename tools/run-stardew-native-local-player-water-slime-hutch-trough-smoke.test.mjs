@@ -17,8 +17,9 @@ const config = {
   CompanionId: "companion",
   PipeName: "pipe",
   BridgeToken: "token",
-  ActionPolicyVersion: 0,
-  EnabledActions: ["move_to_tile", "travel", "equip_tool", "water_slime_hutch_trough"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },
@@ -247,9 +248,11 @@ test("water-slime-hutch-trough runner rejects a scenario or action set it is not
     /native_local_water_slime_hutch_trough_scenario_invalid/,
   );
 
-  const wrongActions = { ...config, EnabledActions: ["move_to_tile", "travel", "equip_tool", "water_pet_bowl"] };
+  // Deny an action this run requires (the retired allowlist narrowed the same
+  // way by listing other actions instead).
+  const wrongActions = { ...config, DeniedActions: ["water_slime_hutch_trough"] };
   await assert.rejects(
     () => runWaterSlimeHutchTroughSmoke(client, [], wrongActions),
-    /native_local_water_slime_hutch_trough_action_set_invalid/,
+    /native_fixture_policy_denies_required/,
   );
 });

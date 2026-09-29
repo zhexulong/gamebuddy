@@ -27,8 +27,9 @@ const FIRST_APPROACH = { x: 61, y: 17 };
 
 function validConfig() {
   return {
-    ActionPolicyVersion: 0,
-    EnabledActions: ["move_to_tile", "travel", "equip_tool", "clear_debris"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
     NativeLocalPlayerFixture: {
       Enable: true,
       Bootstrap: { Enable: false },
@@ -186,6 +187,8 @@ test("clear-debris runner reports blocked when the postcondition target persists
 
 test("clear-debris runner rejects a non-frozen action policy before any request", async () => {
   const bad = validConfig();
-  bad.EnabledActions = ["move_to_tile", "travel", "equip_tool"];
-  await assert.rejects(runClearDebrisSmoke({}, [], bad), /native_local_clear_debris_action_policy_invalid/);
+    // Deny an action this run requires: under deny-by-exception that is the only
+    // way the config can narrow the surface, and the shared validator refuses it.
+    bad.DeniedActions = ["clear_debris"];
+    await assert.rejects(runClearDebrisSmoke({}, [], bad), /native_fixture_policy_denies_required/);
 });

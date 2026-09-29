@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -9,13 +9,14 @@ import {
   waitForFreshSnapshot,
   waitForStableRevision,
   waitForTerminal,
+  validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "water_pet_bowl";
 const SCENARIO = "native_water_pet_bowl_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "water_pet_bowl"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "equip_tool",
   "inspect_self",
@@ -51,7 +52,7 @@ export async function runWaterPetBowlSmoke(
   validateNativeLocalConfig(config);
   try {
     let snapshot = await observeActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
 
@@ -335,7 +336,7 @@ function isWateringCanLabel(label) {
 
 async function observeActionable(client) {
   const snapshot = await observeFresh(client, { actionable: true });
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   if (
     !Number.isInteger(snapshot.revision) ||
     typeof snapshot.location !== "string" ||
@@ -350,9 +351,10 @@ async function observeActionable(client) {
 
 function validateNativeLocalConfig(config) {
   if (config?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_required");
-  const actions = config?.EnabledActions;
-  if (!Array.isArray(actions) || actions.length !== EXPECTED_ACTIONS.length || !EXPECTED_ACTIONS.every((entry) => actions.includes(entry)))
-    throw new Error("native_local_water_pet_bowl_action_set_invalid");
+  // The retired `EnabledActions` allowlist is gone: the surface is derived from
+  // the Mod catalog with deny-by-exception, so the check that still means
+  // something is that this config does not deny an action the run needs.
+  validateNativeLocalFixturePolicy(config, { requiredActions: EXPECTED_ACTIONS });
   if (config?.NativeLocalPlayerFixture?.FixtureScenario !== SCENARIO)
     throw new Error("native_local_water_pet_bowl_scenario_invalid");
 }

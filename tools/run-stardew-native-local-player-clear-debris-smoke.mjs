@@ -7,6 +7,7 @@ import {
   readNativeClientConfig,
   summarizeReceipt as summarizeHarnessReceipt,
   summarizeSnapshot,
+  validateNativeLocalFixturePolicy,
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
@@ -167,12 +168,13 @@ function validateConfig(value) {
     value.Portfolio?.Enable === true ||
     value.HostAutomation?.Enable === true ||
     value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true ||
-    value.ActionPolicyVersion !== 0 ||
-    !same(value.EnabledActions, ["move_to_tile", "travel", "equip_tool", "clear_debris"])
+    value.FarmhandProvisioner?.Enable === true
   ) {
     throw new Error("native_local_clear_debris_action_policy_invalid");
   }
+  validateNativeLocalFixturePolicy(value, {
+    requiredActions: ["move_to_tile", "travel", "equip_tool", "clear_debris"],
+  });
 }
 
 function requireCapabilities(snapshot) {

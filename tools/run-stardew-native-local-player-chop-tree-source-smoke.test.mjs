@@ -23,8 +23,9 @@ function fixtureConfig(overrides = {}) {
     HostAutomation: { Enable: false },
     HostFarmhandProvisioning: { Enable: false },
     FarmhandProvisioner: { Enable: false },
-    ActionPolicyVersion: 0,
-    EnabledActions: ["move_to_tile", "travel", "equip_tool", "chop_tree_source"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
     ...overrides,
   };
 }
@@ -153,8 +154,8 @@ test("chop-tree-source runner passes after FarmHouse travel, axe equip, and term
 test("chop-tree-source runner rejects a non-isolated action policy", async () => {
   const client = createFake();
   await assert.rejects(
-    runChopTreeSourceSmoke(client, [], fixtureConfig({ EnabledActions: ["chop_tree_source"] })),
-    (error) => error?.message === "native_local_chop_tree_source_action_policy_invalid",
+    runChopTreeSourceSmoke(client, [], fixtureConfig({ DeniedActions: ["chop_tree_source"] })),
+    (error) => error?.message?.startsWith("native_fixture_policy_denies_required"),
   );
 });
 
