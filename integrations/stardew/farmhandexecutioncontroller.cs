@@ -2100,7 +2100,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeRockSourceTarget>();
-        return location.objects.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && pair.Value.QualifiedItemId == "(O)2" && pair.Value.IsBreakableStone() && pair.Value.MinutesUntilReady == 1)
+        return location.objects.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && NativeItemPredicates.IsOneHitBreakableStone(pair.Value))
             .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.MinutesUntilReady)).ToArray();
     }
 
