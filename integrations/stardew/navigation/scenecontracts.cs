@@ -117,7 +117,8 @@ internal sealed record SceneObservationInput(
     string CurrentRegion,
     int ActorTileX,
     int ActorTileY,
-    IReadOnlyList<SceneAffordanceSource> Candidates)
+    IReadOnlyList<SceneAffordanceSource> Candidates,
+    IReadOnlyList<SceneGroundTile>? GroundTiles = null)
 {
     internal bool IsValid => SceneObservationScope.IsBoundedText(this.CurrentRegion, 128)
         && this.Candidates is not null;
@@ -255,6 +256,83 @@ internal static class SceneAffordanceKindWire
     /// <summary>Per-kind ceiling for <see cref="IsDensityCapped"/> kinds.</summary>
     internal const int MaximumDenseKindAffordances = 3;
 }
+
+/// <summary>
+/// The ground a tile is walked on, read from the map's own Back-layer `Type`
+/// property.
+///
+/// <para>
+/// This is a real native signal, not an invented taxonomy: the engine reads the
+/// same property to pick the footstep sound (<c>GameLocation.cs:7560</c>,
+/// <c>FarmerSprite.cs:902</c>) and to weight pathfinding
+/// (<c>PathFindController.cs</c>: stone -7, wood -4, dirt -2, grass -1). The set
+/// below is exactly the four values those switches name, plus <see cref="Other"/>,
+/// which is what the engine's own <c>default</c> arms already do for anything
+/// else.
+/// </para>
+/// <para>
+/// This is deliberately NOT the same axis as a terrain feature: `TerrainFeatures`
+/// holds entity-like objects (HoeDirt, Grass clumps, Flooring) while `Type`
+/// describes the background surface. The two disagree on purpose (an indoor
+/// floor with a rug, tilled soil on grass), so they are published as separate
+/// facts rather than merged into one label.
+/// </para>
+/// </summary>
+internal enum SceneGroundKind
+{
+    Grass,
+    Dirt,
+    Stone,
+    Wood,
+    Other,
+}
+
+internal static class SceneGroundKindWire
+{
+    internal static SceneGroundKind FromBackType(string? backType) => backType switch
+    {
+        "Grass" => SceneGroundKind.Grass,
+        "Dirt" => SceneGroundKind.Dirt,
+        "Stone" => SceneGroundKind.Stone,
+        "Wood" => SceneGroundKind.Wood,
+        _ => SceneGroundKind.Other,
+    };
+
+    internal static string ToWireValue(SceneGroundKind kind) => kind switch
+    {
+        SceneGroundKind.Grass => "grass",
+        SceneGroundKind.Dirt => "dirt",
+        SceneGroundKind.Stone => "stone",
+        SceneGroundKind.Wood => "wood",
+        SceneGroundKind.Other => "other",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown ground kind."),
+    };
+
+    internal static bool IsDefined(SceneGroundKind kind) => kind is
+        SceneGroundKind.Grass
+        or SceneGroundKind.Dirt
+        or SceneGroundKind.Stone
+        or SceneGroundKind.Wood
+        or SceneGroundKind.Other;
+}
+
+/// <summary>
+/// One scanned tile's ground, as copied facts only: no map, layer or tile
+/// reference crosses this boundary.
+/// </summary>
+internal sealed record SceneGroundTile(int TileX, int TileY, SceneGroundKind Kind);
+
+/// <summary>
+/// Ground summary for one observation. The dominant kind is published with its
+/// tile count so the Agent can tell "I am standing in a meadow" without the
+/// payload restating every tile; only the deviations are listed by coordinate.
+/// </summary>
+internal sealed record SceneGroundSummary(
+    SceneGroundKind DominantKind,
+    int DominantTileCount,
+    int ScannedTileCount,
+    IReadOnlyList<SceneGroundTile> Exceptions,
+    int OmittedExceptionTileCount);
 
 internal static class SceneDirectionWire
 {

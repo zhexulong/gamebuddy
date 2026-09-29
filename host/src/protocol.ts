@@ -482,7 +482,8 @@ activeExecution?: ActiveExecution | null;
   /** Live cooking stations (vanilla kitchen action tile or a placed (BC)278 cookout kit) on the current map. */
   cookingStationTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
     stationKind: "kitchen" | "cookout_kit" }>[];
-  /** Available native minecart rides from a station on the current map (travel's minecart objective family). */
+   /** Available native minecart rides from a station on the current map, as
+    * advertised for the `ride_minecart` action. */
   minecartTargets?: readonly Readonly<{ targetId: string; networkId: string; destinationId: string;
     displayName: string; price: number; stationX: number; stationY: number; targetLocation: string;
     targetTileX: number; targetTileY: number }>[];
@@ -497,6 +498,7 @@ export type ExecutionRequest = Readonly<{
     | "navigate_to_destination"
     | "equip_tool"
     | "travel"
+    | "ride_minecart"
     | "enter_exit"
     | "till_soil"
     | "pickup_forage"
@@ -584,7 +586,38 @@ export type ObserveSceneResult = Readonly<{
   affordances: readonly ObserveSceneAffordance[];
   summary: string;
   partial: boolean;
-  truncatedReason: "maximum_affordances" | "payload_limit" | null;
+  truncatedReason: "maximum_affordances" | "payload_limit" | "ground_limit" | null;
+  /**
+   * Ground underfoot, read from the map's Back-layer `Type` property. Present only
+   * when the Mod scanned tiles; `null` means "not reported", not "no ground".
+   */
+  ground: ObserveSceneGround | null;
+}>;
+
+/** One tile that differs from the dominant ground kind. */
+export type ObserveSceneGroundTile = Readonly<{
+  tileX: number;
+  tileY: number;
+  kind: SceneGroundKind;
+}>;
+
+/**
+ * Back-layer surface of a tile. The engine reads the same property for footstep
+ * sounds and pathfinding weights, so this is a native fact rather than an
+ * inferred label. `other` is the engine's own fallback for unnamed surfaces.
+ */
+export type SceneGroundKind = "grass" | "dirt" | "stone" | "wood" | "other";
+
+/**
+ * Dominant ground plus only the tiles that deviate from it, so a uniform meadow
+ * costs one entry instead of restating every scanned tile.
+ */
+export type ObserveSceneGround = Readonly<{
+  dominantKind: SceneGroundKind;
+  dominantTileCount: number;
+  scannedTileCount: number;
+  exceptions: readonly ObserveSceneGroundTile[];
+  omittedExceptionTileCount: number;
 }>;
 
 type NavigationWorldMapEntry = Readonly<{
@@ -1340,7 +1373,30 @@ function isPositiveSafeInteger(value: unknown): value is number { return Number.
 
 const OBSERVE_SCENE_KINDS = new Set(["npc", "chest", "crop", "tree", "animal", "forage", "door", "machine", "water_source", "weed", "stone", "debris", "artifact_spot"]);
 const OBSERVE_SCENE_DIRECTIONS = new Set(["North", "South", "East", "West", "CurrentTile"]);
-const OBSERVE_SCENE_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit"]);
+const OBSERVE_SCENE_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit", "ground_limit"]);
+const SCENE_GROUND_KINDS = new Set(["grass", "dirt", "stone", "wood", "other"]);
+const MAXIMUM_SCENE_GROUND_EXCEPTIONS = 12;
+
+/**
+ * Validate the ground summary. `null` means the Mod did not scan tiles, which is
+ * different from "scanned and found nothing"; the counts must otherwise stay
+ * self-consistent so the Agent can trust `dominantTileCount`.
+ */
+function validateObserveSceneGround(value: unknown): boolean {
+  if (value === null) return true;
+  if (!isRecord(value) ||
+      !hasExactKeys(value, ["dominantKind", "dominantTileCount", "scannedTileCount", "exceptions", "omittedExceptionTileCount"])) return false;
+  if (typeof value.dominantKind !== "string" || !SCENE_GROUND_KINDS.has(value.dominantKind)) return false;
+  if (!Number.isSafeInteger(value.dominantTileCount) || (value.dominantTileCount as number) < 0) return false;
+  if (!Number.isSafeInteger(value.scannedTileCount) || (value.scannedTileCount as number) < 0) return false;
+  if ((value.dominantTileCount as number) > (value.scannedTileCount as number)) return false;
+  if (!Number.isSafeInteger(value.omittedExceptionTileCount) || (value.omittedExceptionTileCount as number) < 0) return false;
+  if (!Array.isArray(value.exceptions) || value.exceptions.length > MAXIMUM_SCENE_GROUND_EXCEPTIONS) return false;
+  return value.exceptions.every((tile) => isRecord(tile) &&
+    hasExactKeys(tile, ["tileX", "tileY", "kind"]) &&
+    Number.isSafeInteger(tile.tileX) && Number.isSafeInteger(tile.tileY) &&
+    typeof tile.kind === "string" && SCENE_GROUND_KINDS.has(tile.kind));
+}
 
 export function isValidObserveSceneRequest(value: unknown): value is ObserveSceneRequest {
   return isRecord(value) && validateObserveSceneRequest(value) === null;
@@ -1359,14 +1415,15 @@ function validateObserveSceneRequest(value: Record<string, unknown>): string | n
 }
 
 function validateObserveSceneResult(value: Record<string, unknown>): string | null {
-  if (!hasExactKeys(value, ["observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason"]) ||
+  if (!hasExactKeys(value, ["observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason", "ground"]) ||
       !isOpaqueId(value.observationId) ||
       !boundedSceneText(value.currentLocation, 128) || !boundedSceneText(value.currentRegion, 128) ||
       !boundedSceneText(value.summary, 512) || typeof value.partial !== "boolean" ||
       !Array.isArray(value.affordances) || value.affordances.length > 20 ||
       (value.partial
         ? typeof value.truncatedReason !== "string" || !OBSERVE_SCENE_TRUNCATION_REASONS.has(value.truncatedReason)
-        : value.truncatedReason !== null))
+        : value.truncatedReason !== null) ||
+      !validateObserveSceneGround(value.ground))
     return "invalid_observe_scene_result";
   const refs = new Set<string>();
   return value.affordances.every((affordance) => {
@@ -1489,6 +1546,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "navigate_to_destination" &&
     value.action !== "equip_tool" &&
     value.action !== "travel" &&
+    value.action !== "ride_minecart" &&
     value.action !== "enter_exit" &&
     value.action !== "till_soil" &&
     value.action !== "pickup_forage" &&
@@ -1561,13 +1619,16 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     
     if (!isToolSelector(value.args.tool)) return "invalid_tool_selector";
   } else if (value.action === "travel") {
-    // `expectedTargetId` is optional: omitted means the ordinary native warp at
-    // the source tile; present means one exact published minecart objective
-    // offered from that station tile.
-    if (!hasOptionalExpectedTargetIdArgs(value.args)) return "invalid_args";
+    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
+    
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_warp_source";
-    if ("expectedTargetId" in value.args)
-      return validateTravelMinecartTarget(value.args, snapshot);
+  } else if (value.action === "ride_minecart") {
+    // The station tile plus one exact published ride. Both x/y and the opaque
+    // selector are mandatory: unlike `travel`, there is no "plain" form, so a
+    // missing selector is a malformed request rather than an ordinary warp.
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_minecart_station";
+    return validateMinecartRideTarget(value.args, snapshot);
   } else if (value.action === "enter_exit") {
     if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
     
@@ -2488,6 +2549,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "navigate_to_destination" ||
       value.action === "equip_tool" ||
       value.action === "travel" ||
+      value.action === "ride_minecart" ||
       value.action === "enter_exit" ||
       value.action === "till_soil" ||
       value.action === "pickup_forage" ||
@@ -3844,13 +3906,12 @@ function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length <= 128);
 }
 
-/** `travel` args allow exactly {x, y} or {x, y, expectedTargetId}. */
-function hasOptionalExpectedTargetIdArgs(args: Record<string, unknown>): boolean {
+/** `ride_minecart` args are exactly {x, y, expectedTargetId} with an opaque `minecart_` selector. */
+function hasMinecartRideArgs(args: Record<string, unknown>): boolean {
   return (
-    hasExactKeys(args, ["x", "y"]) ||
-    (hasExactKeys(args, ["x", "y", "expectedTargetId"]) &&
-      typeof args.expectedTargetId === "string" &&
-      /^minecart_[a-f0-9]{16}$/u.test(args.expectedTargetId))
+    hasExactKeys(args, ["x", "y", "expectedTargetId"]) &&
+    typeof args.expectedTargetId === "string" &&
+    /^minecart_[a-f0-9]{16}$/u.test(args.expectedTargetId)
   );
 }
 
@@ -3859,12 +3920,13 @@ function hasOptionalExpectedTargetIdArgs(args: Record<string, unknown>): boolean
  * advertised from the same station tile: the companion may not invent a target,
  * and a stale target from a previous observation is refused.
  */
-function validateTravelMinecartTarget(args: Record<string, unknown>, snapshot: Snapshot): string | null {
+function validateMinecartRideTarget(args: Record<string, unknown>, snapshot: Snapshot): string | null {
+  if (!hasMinecartRideArgs(args)) return "invalid_args";
   const targets = snapshot.minecartTargets;
-  if (!Array.isArray(targets)) return "invalid_warp_source";
+  if (!Array.isArray(targets)) return "invalid_minecart_station";
   const match = targets.find((target) => target.targetId === args.expectedTargetId);
-  if (match === undefined) return "invalid_warp_source";
-  if (match.stationX !== args.x || match.stationY !== args.y) return "invalid_warp_source";
+  if (match === undefined) return "invalid_minecart_station";
+  if (match.stationX !== args.x || match.stationY !== args.y) return "invalid_minecart_station";
   return null;
 }
 const KNOWN_ACTION_DESCRIPTOR_KEYS = [

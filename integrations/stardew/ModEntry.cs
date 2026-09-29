@@ -6190,7 +6190,44 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Door, warp.TargetName, $"{warp.TargetName}:{warp.X}:{warp.Y}",
                     location.NameOrUniqueName, warp.X, warp.Y, "enter_exit", SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Door)));
         }
-        return new SceneObservationInput(location.NameOrUniqueName, (int)player.Tile.X, (int)player.Tile.Y, candidates);
+        return new SceneObservationInput(
+            location.NameOrUniqueName,
+            (int)player.Tile.X,
+            (int)player.Tile.Y,
+            candidates,
+            ReadGroundTiles(location, (int)player.Tile.X, (int)player.Tile.Y));
+    }
+
+    /// <summary>
+    /// Scan the actor's surroundings for the Back-layer `Type` property.
+    ///
+    /// <para>
+    /// This reads a native map property rather than inferring a surface from
+    /// objects: the engine uses the same value to choose footstep sounds
+    /// (<c>GameLocation.cs:7560</c>) and to weight pathfinding
+    /// (<c>PathFindController.cs</c>). Values outside the four the engine names
+    /// are classified as `other` rather than dropped, so the tile count still
+    /// adds up and the Agent can tell 'mostly unknown' from 'mostly grass'.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<SceneGroundTile> ReadGroundTiles(GameLocation location, int actorTileX, int actorTileY)
+    {
+        var tiles = new List<SceneGroundTile>();
+        int radius = SceneObservationProjection.DefaultRadius;
+        for (int y = actorTileY - radius; y <= actorTileY + radius; y++)
+        {
+            for (int x = actorTileX - radius; x <= actorTileX + radius; x++)
+            {
+                if (!location.isTileOnMap(new Vector2(x, y)))
+                    continue;
+                // Outside the map the property is absent; inside it, an absent
+                // property is a real answer (some interiors carry no Back Type),
+                // so only the on-map check decides whether to skip.
+                string? backType = location.doesTileHaveProperty(x, y, "Type", "Back");
+                tiles.Add(new SceneGroundTile(x, y, SceneGroundKindWire.FromBackType(backType)));
+            }
+        }
+        return tiles;
     }
 
     private bool TryGetAiState(out ScreenEmbodimentState state)

@@ -346,6 +346,7 @@ test("bridge message payloads fail closed", () => {
         summary: "1 actionable objects visible in SeedShop.",
         partial: false,
         truncatedReason: null,
+        ground: null,
       },
     },
     "receipt_01b",
@@ -1136,12 +1137,15 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     "invalid_warp_source",
   );
-  // `travel` may name one advertised minecart objective from the same station
-  // tile. An unknown ID, a stale ID from another snapshot, or a station/tile
-  // mismatch is refused; the named target must be present in this snapshot.
-  const travelCapability = { ...snapshot, capabilities: [...snapshot.capabilities, "travel"] };
+  // `ride_minecart` is its own action: the station tile AND one advertised
+  // objective are both mandatory, so a missing selector is malformed rather than
+  // an ordinary warp. An unknown ID, a stale ID from another snapshot, or a
+  // station/tile mismatch is refused; the named target must be present in this
+  // exact snapshot.
+  const minecartCapability = { ...snapshot, capabilities: [...snapshot.capabilities, "ride_minecart"] };
+  const rideMinecart = { ...valid, action: "ride_minecart" };
   const minecartSnapshot = {
-    ...travelCapability,
+    ...minecartCapability,
     minecartTargets: [
       {
         targetId: "minecart_0123456789abcdef",
@@ -1159,7 +1163,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   } as const;
   assert.equal(
     validateExecutionRequest(
-      { ...travel, args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
+      { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
       minecartSnapshot,
       now,
     ),
@@ -1167,31 +1171,43 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   );
   assert.equal(
     validateExecutionRequest(
-      { ...travel, args: { x: 10, y: 10, expectedTargetId: "minecart_deadbeefdeadbeef" } },
+      { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "minecart_deadbeefdeadbeef" } },
       minecartSnapshot,
       now,
     ),
-    "invalid_warp_source",
+    "invalid_minecart_station",
   );
   assert.equal(
     validateExecutionRequest(
-      { ...travel, args: { x: 11, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
+      { ...rideMinecart, args: { x: 11, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
       minecartSnapshot,
       now,
     ),
-    "invalid_warp_source",
+    "invalid_minecart_station",
   );
   assert.equal(
     validateExecutionRequest(
-      { ...travel, args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
-      travelCapability,
+      { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
+      minecartCapability,
       now,
     ),
-    "invalid_warp_source",
+    "invalid_minecart_station",
   );
   assert.equal(
     validateExecutionRequest(
-      { ...travel, args: { x: 10, y: 10, expectedTargetId: "not_a_minecart_id" } },
+      { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "not_a_minecart_id" } },
+      minecartSnapshot,
+      now,
+    ),
+    "invalid_args",
+  );
+  assert.equal(
+    validateExecutionRequest({ ...rideMinecart, args: { x: 10, y: 10 } }, minecartSnapshot, now),
+    "invalid_args",
+  );
+  assert.equal(
+    validateExecutionRequest(
+      { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef", extra: 1 } },
       minecartSnapshot,
       now,
     ),
@@ -2505,14 +2521,18 @@ test("observe_scene result admits tree and animal affordance kinds and still rej
         summary: "1 actionable objects visible in Farm.",
         partial: false,
         truncatedReason: null,
+        ground: null,
       },
       `observe_scene_${kind}_01`,
       now,
     );
-  assert.equal(diagnoseBridgeMessage(sceneFor("tree", "chop_tree_source"), scope, now), "accepted");
-  assert.equal(diagnoseBridgeMessage(sceneFor("animal", "collect_animal_product"), scope, now), "accepted");
-  assert.equal(diagnoseBridgeMessage(sceneFor("animal", null), scope, now), "accepted");
-  // A seed packet is dense too, but it has no registered action and stays unknown.
+  // diagnoseBridgeMessage returns null on acceptance; a non-null string names the rejection.
+  assert.equal(diagnoseBridgeMessage(sceneFor("tree", "chop_tree_source"), scope, now), null);
+  assert.equal(diagnoseBridgeMessage(sceneFor("animal", "collect_animal_product"), scope, now), null);
+  assert.equal(diagnoseBridgeMessage(sceneFor("animal", null), scope, now), null);
+  // A kind the Mod cannot emit must stay rejected even if it looks plausible.
+  // This assertion used `weed`, which is now a registered kind, so it had been
+  // masked by the stale `"accepted"` expectation above and never actually ran.
   const unregisteredDenseKind = newEnvelope(
     "observe_scene_result",
     scope,
@@ -2521,11 +2541,12 @@ test("observe_scene result admits tree and animal affordance kinds and still rej
       currentLocation: "Farm",
       currentRegion: "Farm",
       affordances: [
-        { ref: "sr1_dense0abcdefghij", kind: "weed", name: "Weeds", distance: 2, direction: "East", actionHint: null },
+        { ref: "sr1_dense0abcdefghij", kind: "seed_packet", name: "Seed Packet", distance: 2, direction: "East", actionHint: null },
       ],
       summary: "1 actionable objects visible in Farm.",
       partial: false,
       truncatedReason: null,
+        ground: null,
     },
     "observe_scene_weed_01",
     now,
@@ -2554,6 +2575,7 @@ test("observe_scene result admits water_source affordance kind and rejects unkno
       summary: "1 actionable objects visible in Farm.",
       partial: false,
       truncatedReason: null,
+        ground: null,
     },
     "observe_scene_water_01",
     now,
@@ -2580,11 +2602,130 @@ test("observe_scene result admits water_source affordance kind and rejects unkno
       summary: "1 actionable objects visible in Farm.",
       partial: false,
       truncatedReason: null,
+        ground: null,
     },
     "observe_scene_water_02",
     now,
   );
   assert.equal(diagnoseBridgeMessage(unknownKind, scope, now), "invalid_observe_scene_result");
+});
+
+test("observe_scene ground summary accepts real shapes and rejects impossible counts", () => {
+  // Ground is a separate axis from affordances: it says what the tile IS (read
+  // from the map's Back-layer `Type`), not what can be done there. The counts
+  // must stay self-consistent so the Agent can trust `dominantTileCount`, and
+  // the deviation list is bounded so one noisy region cannot inflate the payload.
+  const sceneWithGround = (ground: unknown) =>
+    newEnvelope(
+      "observe_scene_result",
+      scope,
+      {
+        observationId: "so1_GROUNDABCDEF01",
+        currentLocation: "Farm",
+        currentRegion: "Farm",
+        affordances: [],
+        summary: "Nothing actionable is visible in Farm.",
+        partial: false,
+        truncatedReason: null,
+        ground,
+      },
+      "observe_scene_ground_01",
+      now,
+    );
+
+  const uniform = { dominantKind: "grass", dominantTileCount: 49, scannedTileCount: 49, exceptions: [], omittedExceptionTileCount: 0 };
+  assert.equal(diagnoseBridgeMessage(sceneWithGround(uniform), scope, now), null);
+
+  const mixed = {
+    dominantKind: "grass",
+    dominantTileCount: 46,
+    scannedTileCount: 49,
+    exceptions: [
+      { tileX: 2, tileY: 2, kind: "dirt" },
+      { tileX: 3, tileY: 2, kind: "wood" },
+    ],
+    omittedExceptionTileCount: 1,
+  };
+  assert.equal(diagnoseBridgeMessage(sceneWithGround(mixed), scope, now), null);
+
+  // Absent ground is a real state: the Mod may not have scanned tiles.
+  assert.equal(diagnoseBridgeMessage(sceneWithGround(null), scope, now), null);
+
+  // Dominant cannot exceed what was scanned.
+  assert.equal(
+    diagnoseBridgeMessage(
+      sceneWithGround({ ...uniform, dominantTileCount: 50, scannedTileCount: 49 }),
+      scope,
+      now,
+    ),
+    "invalid_observe_scene_result",
+  );
+  // An unnamed surface must still use the engine's own fallback value, not a new label.
+  assert.equal(
+    diagnoseBridgeMessage(sceneWithGround({ ...uniform, dominantKind: "sand" }), scope, now),
+    "invalid_observe_scene_result",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      sceneWithGround({ ...uniform, exceptions: [{ tileX: 1, tileY: 1, kind: "sand" }] }),
+      scope,
+      now,
+    ),
+    "invalid_observe_scene_result",
+  );
+  // The deviation list is bounded.
+  assert.equal(
+    diagnoseBridgeMessage(
+      sceneWithGround({
+        ...uniform,
+        exceptions: Array.from({ length: 13 }, (_, index) => ({ tileX: index, tileY: 0, kind: "stone" })),
+      }),
+      scope,
+      now,
+    ),
+    "invalid_observe_scene_result",
+  );
+  // Unknown extra keys on the summary or on a tile fail closed.
+  assert.equal(
+    diagnoseBridgeMessage(sceneWithGround({ ...uniform, extra: 1 }), scope, now),
+    "invalid_observe_scene_result",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      sceneWithGround({
+        ...uniform,
+        dominantTileCount: 48,
+        scannedTileCount: 49,
+        exceptions: [{ tileX: 1, tileY: 1, kind: "stone", extra: 1 }],
+      }),
+      scope,
+      now,
+    ),
+    "invalid_observe_scene_result",
+  );
+});
+
+test("observe_scene ground_limit is an admitted truncation reason", () => {
+  const envelope = newEnvelope(
+    "observe_scene_result",
+    scope,
+    {
+      observationId: "so1_GROUNDLIMIT01",
+      currentLocation: "Farm",
+      currentRegion: "Farm",
+      affordances: [],
+      summary: "Nothing actionable is visible in Farm.",
+      partial: true,
+      truncatedReason: "ground_limit",
+      ground: { dominantKind: "grass", dominantTileCount: 1, scannedTileCount: 41, exceptions: [], omittedExceptionTileCount: 40 },
+    },
+    "observe_scene_ground_02",
+    now,
+  );
+  assert.equal(diagnoseBridgeMessage(envelope, scope, now), null);
+
+  const bakedIn = { ...envelope, payload: { ...envelope.payload, truncatedReason: "made_up" } };
+  assert.equal(diagnoseBridgeMessage(bakedIn, scope, now), "invalid_observe_scene_result");
 });
 
 test("snapshot admits villagerWhereabouts and rejects malformed rows", () => {
