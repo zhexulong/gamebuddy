@@ -73,6 +73,9 @@ const TARGET_FIELD = Object.freeze({
   cook_recipe: "CookingRecipeTargets",
   collect_crab_pot_output: "CrabPotCollectTargets",
   ship_item: "ShippingBinTargets",
+  // Added by the minecart lane after this table was written; the audit caught the
+  // omission rather than letting the action ship with an unverified discovery leg.
+  ride_minecart: "MinecartTargets",
 });
 
 /** Actions that carry a target but whose target is not a snapshot list. */
