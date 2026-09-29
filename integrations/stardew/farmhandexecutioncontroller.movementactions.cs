@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.GameData.Minecarts;
 using StardewValley.Tools;
 using StardewValley.Characters;
 using GameBuddy.Stardew.Core.Abstractions;
@@ -75,17 +76,90 @@ internal sealed partial class ExecutionManager
 
     /// <summary>
     /// Requests a native warp from a structured source warp in the current
-    /// location. The request is accepted before the Warped event; only that
-    /// event can produce the authoritative travel postcondition.
+    /// location, or a native minecart ride when <paramref name="expectedTargetId"/>
+    /// names a published minecart objective. The request is accepted before the
+    /// Warped event; only that event can produce the authoritative travel
+    /// postcondition.
     /// </summary>
-    public LocalExecutionReceipt RequestLocalTravel(string requestId, int sourceX, int sourceY, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalTravel(string requestId, int sourceX, int sourceY, long requestedDeadlineMs, string? expectedTargetId = null)
     {
+        if (!string.IsNullOrWhiteSpace(expectedTargetId))
+            return this.RequestLocalMinecartTravel(requestId, sourceX, sourceY, requestedDeadlineMs, expectedTargetId!);
         return this.RequestLocalDoorTransition(requestId, sourceX, sourceY, requestedDeadlineMs, false);
     }
 
     public LocalExecutionReceipt RequestLocalEnterExit(string requestId, int sourceX, int sourceY, long requestedDeadlineMs)
     {
         return this.RequestLocalDoorTransition(requestId, sourceX, sourceY, requestedDeadlineMs, true);
+    }
+
+    /// <summary>
+    /// Requests one native minecart ride named by an exact published objective.
+    /// Every fact is re-derived on the game thread from the live station tile and
+    /// the game's own `Data/Minecarts`; the client-supplied ID is only a selector.
+    /// The native ride is `GameLocation.MinecartWarp`, which ends in the same
+    /// `Warped` event the ordinary warp path uses, so the authoritative
+    /// postcondition stays the single travel lifecycle.
+    /// </summary>
+    private LocalExecutionReceipt RequestLocalMinecartTravel(
+        string requestId, int sourceX, int sourceY, long requestedDeadlineMs, string expectedTargetId)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
+            return existing;
+
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
+
+        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
+
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "minecart_station_out_of_range", $"source={sourceX},{sourceY}");
+
+        MinecartRideResolution resolution = ResolveMinecartRide(location, sourceX, sourceY, expectedTargetId);
+        if (!resolution.Accepted || resolution.Destination is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, $"source={sourceX},{sourceY};target={expectedTargetId}");
+
+        MinecartDestinationData destination = resolution.Destination;
+        int pricePaid = RideMinecart(destination, resolution.NetworkId, Game1.player);
+        if (pricePaid < 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "minecart_ticket_unaffordable", $"source={sourceX},{sourceY};target={expectedTargetId};price={destination.Price};money={Game1.player.Money}");
+
+        LocalTravelSpec specification = new(
+            executionId,
+            requestId,
+            "travel",
+            location.NameOrUniqueName,
+            sourceX,
+            sourceY,
+            destination.TargetLocation,
+            destination.TargetTile.X,
+            destination.TargetTile.Y,
+            this.revision,
+            requestedDeadlineMs,
+            resolution.NetworkId,
+            destination.Id);
+        this.activeTravel = specification;
+        LocalExecutionReceipt accepted = new(
+            executionId,
+            requestId,
+            ExecutionState.Accepted,
+            "accepted",
+            this.revision,
+            $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};{FormatMinecartEvidence(resolution.NetworkId, destination)};ticket_price={pricePaid}");
+        this.Remember(accepted);
+        this.AddTrace(accepted);
+        return accepted;
     }
 
     private LocalExecutionReceipt RequestLocalDoorTransition(string requestId, int sourceX, int sourceY, long requestedDeadlineMs, bool isDoor)
@@ -160,13 +234,19 @@ internal sealed partial class ExecutionManager
         string reasonCode = locationMatches && tileMatches
             ? specification.Action == "enter_exit" ? "enter_exit_completed" : "travel_completed"
             : specification.Action == "enter_exit" ? "enter_exit_postcondition_mismatch" : "travel_postcondition_mismatch";
+        // A minecart ride's native terminal is the same Warped postcondition, but
+        // the expected/actual pair alone cannot say which objective was ridden.
+        // The published identity is echoed so the receipt names the ride.
+        string minecartEvidence = specification.MinecartNetworkId is null || specification.MinecartDestinationId is null
+            ? string.Empty
+            : $";network={specification.MinecartNetworkId};destination={specification.MinecartDestinationId}";
         LocalExecutionReceipt receipt = new(
             specification.ExecutionId,
             specification.RequestId,
             state,
             reasonCode,
             this.revision,
-            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
+            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{minecartEvidence}");
         this.activeTravel = null;
         this.Remember(receipt);
         this.AddTrace(receipt);

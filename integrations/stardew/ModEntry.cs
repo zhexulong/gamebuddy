@@ -893,7 +893,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_minecart_travel_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -2657,6 +2657,87 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)station.Value.StandingTile.X, (int)station.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized cook-recipe precondition before bridge attachment: recipe={cookRecipeKey}; ingredient={cookIngredientId}; station={cookoutKitId}@{station.Value.KitTile.X},{station.Value.KitTile.Y}; standing={station.Value.StandingTile.X},{station.Value.StandingTile.Y}; production alone cooks and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_minecart_travel_v1")
+            {
+                // Pre-attachment fixture only: a minecart station the bridge can discover.
+                //
+                // The station tile property is map data, never code: the decompiled
+                // game only READS it (`GameLocation.performAction` case
+                // "MinecartTransport" at GameLocation.cs:9790, reached through
+                // `GameLocation.cs:14201` reading `Action` from the Buildings layer).
+                // The game's own unlock mechanic is the mail flag
+                // (`ccBoilerRoom` for the community-center Boiler Room, or the Joja
+                // equivalent), so the fixture establishes exactly that end state --
+                // the same shape as the island fixture setting `farmhouseRestored`.
+                //
+                // Every other fact is real: the network, its destinations and their
+                // conditions all come from the live `Data/Minecarts` the Mod reads, and
+                // the ride itself is the native `GameLocation.MinecartWarp`. The fixture
+                // never calls MinecartWarp, never picks a destination and emits no
+                // receipt -- production alone discovers, resolves and rides.
+                if (!player.mailReceived.Add("ccBoilerRoom"))
+                {
+                    // Add returns false when the flag was already present; the flag is
+                    // what matters, so re-read the native query below rather than the
+                    // return value.
+                }
+
+                bool alreadyUnlocked = GameStateQuery.CheckConditions("PLAYER_MAIL ccBoilerRoom", farm);
+                if (!alreadyUnlocked)
+                    throw new InvalidOperationException("fixture_native_minecart_network_unlock_failed");
+
+                xTile.Layers.Layer? buildingsLayer = farm.map.GetLayer("Buildings");
+                if (buildingsLayer is null)
+                    throw new InvalidOperationException("fixture_native_minecart_buildings_layer_missing");
+
+                Vector2? stationTile = null;
+                Vector2 stationStanding = Vector2.Zero;
+                int mapWidth = farm.map.Layers[0].LayerWidth;
+                int mapHeight = farm.map.Layers[0].LayerHeight;
+                for (int x = 1; x < mapWidth - 1 && stationTile is null; x++)
+                {
+                    for (int y = 1; y < mapHeight - 1 && stationTile is null; y++)
+                    {
+                        xTile.Tiles.Tile? candidate = buildingsLayer.Tiles[x, y];
+                        if (candidate is null) continue;
+                        Vector2 tile = new(x, y);
+                        // Buildings win over the map layer in `doesTileHaveProperty`, so
+                        // the station must not sit under a placed building.
+                        if (farm.buildings.Any(building => building.occupiesTile(tile, applyTilePropertyRadius: true)))
+                            continue;
+                        if (farm.objects.ContainsKey(tile) || farm.terrainFeatures.ContainsKey(tile))
+                            continue;
+                        Vector2[] neighbours = { new(x - 1, y), new(x + 1, y), new(x, y - 1), new(x, y + 1) };
+                        Vector2? standing = neighbours
+                            .Where(neighbour => farm.isTileOnMap(neighbour)
+                                && farm.isTilePassable(neighbour)
+                                && !farm.IsTileOccupiedBy(neighbour, CollisionMask.All, CollisionMask.None, useFarmerTile: false))
+                            .Cast<Vector2?>()
+                            .FirstOrDefault();
+                        if (standing is null) continue;
+                        stationTile = tile;
+                        stationStanding = standing.Value;
+                    }
+                }
+                if (stationTile is null)
+                    throw new InvalidOperationException("fixture_native_minecart_station_tile_missing");
+
+                // The native selector text, exactly the grammar `performAction` parses
+                // with `ArgUtility.Get(action, 1)` -- network "Default" is the vanilla
+                // four-destination network.
+                buildingsLayer.Tiles[(int)stationTile.Value.X, (int)stationTile.Value.Y]
+                    .Properties["Action"] = "MinecartTransport Default";
+                string? written = farm.doesTileHaveProperty(
+                    (int)stationTile.Value.X, (int)stationTile.Value.Y, "Action", "Buildings");
+                if (!string.Equals(written, "MinecartTransport Default", StringComparison.Ordinal))
+                    throw new InvalidOperationException("fixture_native_minecart_station_property_rejected");
+
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)stationStanding.X, (int)stationStanding.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized minecart-travel precondition before bridge attachment: network=Default; station={(int)stationTile.Value.X},{(int)stationTile.Value.Y}; standing={(int)stationStanding.X},{(int)stationStanding.Y}; unlocked=ccBoilerRoom; production alone discovers, resolves and rides.", LogLevel.Info);
                 return;
             }
 

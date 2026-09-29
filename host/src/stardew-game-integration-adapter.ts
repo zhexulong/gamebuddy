@@ -883,17 +883,34 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
 }
 
 function hasDoorTransitionCompletionEvidence(detail: string): boolean {
-  return exactEvidence(detail, ["expected", "actual"], (e) => {
-    const expected = parseWarpDestination(e.expected);
-    const actual = parseWarpDestination(e.actual);
-    return (
-      expected !== null &&
-      actual !== null &&
-      actual.location === expected.location &&
-      actual.x === expected.x &&
-      actual.y === expected.y
-    );
-  });
+  // An ordinary warp/enter_exit emits exactly {expected, actual}. A minecart
+  // travel ride ends in the same Warped postcondition but additionally names
+  // the ridden objective so the receipt is not just a bare coordinate pair.
+  // The minecart keys are optional as a pair; both must then be bounded opaque
+  // facts, and the warp postcondition below is still required.
+  const evidence = parseSemicolonEvidence(detail);
+  if (evidence === null) return false;
+  const keys = Object.keys(evidence);
+  const baseKeys = ["expected", "actual"];
+  const minecartKeys = ["network", "destination"];
+  const keysMatch =
+    (keys.length === baseKeys.length && baseKeys.every((key) => key in evidence)) ||
+    (keys.length === baseKeys.length + minecartKeys.length &&
+      [...baseKeys, ...minecartKeys].every((key) => key in evidence));
+  if (!keysMatch) return false;
+  if ("network" in evidence || "destination" in evidence) {
+    if (!hasBoundedNonemptyEvidenceValue(evidence.network)) return false;
+    if (!hasBoundedNonemptyEvidenceValue(evidence.destination)) return false;
+  }
+  const expected = parseWarpDestination(evidence.expected);
+  const actual = parseWarpDestination(evidence.actual);
+  return (
+    expected !== null &&
+    actual !== null &&
+    actual.location === expected.location &&
+    actual.x === expected.x &&
+    actual.y === expected.y
+  );
 }
 
 /**

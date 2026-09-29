@@ -38,7 +38,9 @@ internal sealed record LocalTravelSpec(
     int TargetX,
     int TargetY,
     long RouteRevision,
-    long DeadlineMs);
+    long DeadlineMs,
+    string? MinecartNetworkId = null,
+    string? MinecartDestinationId = null);
 
 internal sealed record LocalSoilTillingSpec(
     string ExecutionId,

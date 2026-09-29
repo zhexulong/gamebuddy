@@ -609,12 +609,20 @@ export function createStardewActionTools(
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.travel,
-        label: "Travel Through Stardew Warp",
+        label: "Travel Through Stardew Warp or Minecart",
         description:
-          "Use a live native warp at the supplied source tile. The Mod resolves the destination and only a Warped postcondition can report success.",
+          "Use a live native warp at the supplied source tile, or ride an advertised minecart objective from that station tile. The Mod resolves the destination and only a Warped postcondition can report success.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.Optional(
+            Type.String({
+              minLength: 1,
+              maxLength: 128,
+              description:
+                "A minecart targetId published in minecartTargets for this station tile. Omit for an ordinary warp.",
+            }),
+          ),
           requestId: Type.Optional(
             Type.String({ minLength: 1, maxLength: 128 }),
           ),
@@ -623,7 +631,10 @@ export function createStardewActionTools(
           ),
         }),
         action: "travel",
-        toArgs: (params) => ({ x: params.x, y: params.y }),
+        toArgs: (params) =>
+          params.expectedTargetId === undefined
+            ? { x: params.x, y: params.y }
+            : { x: params.x, y: params.y, expectedTargetId: params.expectedTargetId },
       }),
     );
   }
@@ -1551,7 +1562,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.chest_store,
         label: "Store Item in Chest",
         description:
-          "Move one carried inventory stack into a live adjacent chest. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the chestStoreTargets/slot facts of the MOST RECENT observe result (never invent or guess coordinates). No ItemGrabMenu is opened. Returns chest_stored with the exact stack conservation evidence.",
+          "Move one carried inventory stack into a live adjacent chest. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from one chestStoreTargets entry of the MOST RECENT observe result for the current location (never invent or guess coordinates). No ItemGrabMenu is opened. Returns chest_stored with the exact stack conservation evidence.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1740,7 +1751,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.craft_item,
         label: "Craft Item",
         description:
-          "Craft one learned recipe from the Farmhand's own inventory. expectedTargetId must be copied exactly from the recipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). An unknown or unlearned recipe fails closed. Items that do not fit are dropped on the ground rather than lost, and the receipt reports the exact conservation evidence. Returns crafted_item_created.",
+          "Craft one learned recipe from the Farmhand's own inventory. expectedTargetId must be copied exactly from the craftingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. An unknown or unlearned recipe fails closed. Items that do not fit are dropped on the ground rather than lost, and the receipt reports the exact conservation evidence. Returns crafted_item_created.",
         parameters: Type.Object({
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
           requestId: Type.Optional(
@@ -1763,7 +1774,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.cook_recipe,
         label: "Cook Recipe",
         description:
-          "Cook one learned cooking recipe at a live adjacent cooking station. expectedTargetId must be copied exactly from the recipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). The station adjacency is re-derived and re-checked Mod-side from the live world rather than trusted from the client. Items that do not fit are dropped on the ground rather than lost. Returns dish_cooked.",
+          "Cook one learned cooking recipe at a live adjacent cooking station. expectedTargetId must be copied exactly from the cookingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. The station adjacency is re-derived and re-checked Mod-side from the live world rather than trusted from the client. Items that do not fit are dropped on the ground rather than lost. Returns dish_cooked.",
         parameters: Type.Object({
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
           requestId: Type.Optional(

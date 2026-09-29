@@ -1744,7 +1744,32 @@
         },
         "craftingRecipeTargets": { "type": "array", "items": { "$ref": "#/$defs/recipeTarget" }, "maxItems": 64 },
         "cookingRecipeTargets": { "type": "array", "items": { "$ref": "#/$defs/recipeTarget" }, "maxItems": 64 },
-        "cookingStationTargets": { "type": "array", "items": { "$ref": "#/$defs/cookingStationTarget" }, "maxItems": 16 }
+        "cookingStationTargets": { "type": "array", "items": { "$ref": "#/$defs/cookingStationTarget" }, "maxItems": 16 },
+        "treeStumpTargets": { "type": "array", "items": { "$ref": "#/$defs/treeStumpTarget" }, "maxItems": 16 },
+        "treeSaplingTargets": { "type": "array", "items": { "$ref": "#/$defs/treeSaplingTarget" }, "maxItems": 64 },
+        "weedTargets": { "type": "array", "items": { "$ref": "#/$defs/weedTarget" }, "maxItems": 16 },
+        "scytheCropTargets": { "type": "array", "items": { "$ref": "#/$defs/scytheCropTarget" }, "maxItems": 16 },
+        "chestStoreTargets": { "type": "array", "items": { "$ref": "#/$defs/chestStoreTarget" }, "maxItems": 16 },
+        "chestRetrieveTargets": { "type": "array", "items": { "$ref": "#/$defs/chestRetrieveTarget" }, "maxItems": 16 },
+        "shippingBinTargets": { "type": "array", "items": { "$ref": "#/$defs/shippingBinTarget" }, "maxItems": 1 },
+        "minecartTargets": { "type": "array", "items": { "$ref": "#/$defs/minecartTarget" }, "maxItems": 24 }
+      }
+    },
+    "minecartTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "networkId", "destinationId", "displayName", "price", "stationX", "stationY", "targetLocation", "targetTileX", "targetTileY"],
+      "properties": {
+        "targetId": { "type": "string", "pattern": "^minecart_[a-f0-9]{16}$" },
+        "networkId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "destinationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "price": { "type": "integer", "minimum": 0 },
+        "stationX": { "$ref": "#/$defs/tile" },
+        "stationY": { "$ref": "#/$defs/tile" },
+        "targetLocation": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "targetTileX": { "$ref": "#/$defs/tile" },
+        "targetTileY": { "$ref": "#/$defs/tile" }
       }
     },
     "recipeTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "displayName", "ingredientsAvailable"], "properties": {
@@ -1837,6 +1862,99 @@
           "minLength": 1,
           "maxLength": 128
         }, "targetId": { "type": "string", "pattern": "^collect_crab_pot_[a-f0-9]{16}$" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)710" }, "outputQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "outputStack": { "type": "integer", "minimum": 1 } } },
+    "treeStumpTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId","location","x","y","treeType","health"],
+      "properties": {
+        "targetId": {"$ref":"#/$defs/opaqueId"},
+        "location": {"type":"string","minLength":1,"maxLength":256},
+        "x": {"$ref":"#/$defs/tile"},
+        "y": {"$ref":"#/$defs/tile"},
+        "treeType": {"type":"string","minLength":1,"maxLength":128},
+        "health": {"type":"number","minimum":0,"maximum":1000}
+      }
+    },
+    "treeSaplingTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId","slot","x","y","qualifiedItemId","displayName"],
+      "properties": {
+        "targetId": {"$ref":"#/$defs/opaqueId"},
+        "slot": {"type":"integer","minimum":0,"maximum":36},
+        "x": {"$ref":"#/$defs/tile"},
+        "y": {"$ref":"#/$defs/tile"},
+        "qualifiedItemId": {"type":"string","minLength":1,"maxLength":128},
+        "displayName": {"type":"string","minLength":1,"maxLength":128}
+      }
+    },
+    "weedTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId","location","x","y","health"],
+      "properties": {
+        "targetId": {"$ref":"#/$defs/opaqueId"},
+        "location": {"type":"string","minLength":1,"maxLength":256},
+        "x": {"$ref":"#/$defs/tile"},
+        "y": {"$ref":"#/$defs/tile"},
+        "health": {"type":"integer","minimum":0,"maximum":1000}
+      }
+    },
+    "scytheCropTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId","location","x","y","cropId","qualifiedHarvestItemId","displayName"],
+      "properties": {
+        "targetId": {"$ref":"#/$defs/opaqueId"},
+        "location": {"type":"string","minLength":1,"maxLength":256},
+        "x": {"$ref":"#/$defs/tile"},
+        "y": {"$ref":"#/$defs/tile"},
+        "cropId": {"type":"string","minLength":1,"maxLength":128},
+        "qualifiedHarvestItemId": {"type":"string","minLength":1,"maxLength":128},
+        "displayName": {"type":"string","minLength":1,"maxLength":128}
+      }
+    },
+    "chestStoreTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId","x","y","slot","qualifiedItemId","stack","displayName"],
+      "properties": {
+        "targetId": {"$ref":"#/$defs/opaqueId"},
+        "x": {"$ref":"#/$defs/tile"},
+        "y": {"$ref":"#/$defs/tile"},
+        "slot": {"type":"integer","minimum":0,"maximum":36},
+        "qualifiedItemId": {"type":"string","minLength":1,"maxLength":128},
+        "stack": {"type":"integer","minimum":1},
+        "displayName": {"type":"string","minLength":1,"maxLength":128}
+      }
+    },
+    "chestRetrieveTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId","x","y","qualifiedItemId","stack","displayName"],
+      "properties": {
+        "targetId": {"$ref":"#/$defs/opaqueId"},
+        "x": {"$ref":"#/$defs/tile"},
+        "y": {"$ref":"#/$defs/tile"},
+        "qualifiedItemId": {"type":"string","minLength":1,"maxLength":128},
+        "stack": {"type":"integer","minimum":1},
+        "displayName": {"type":"string","minLength":1,"maxLength":128}
+      }
+    },
+    "shippingBinTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId","x","y","slot","qualifiedItemId","stack","displayName"],
+      "properties": {
+        "targetId": {"$ref":"#/$defs/opaqueId"},
+        "x": {"$ref":"#/$defs/tile"},
+        "y": {"$ref":"#/$defs/tile"},
+        "slot": {"type":"integer","minimum":0,"maximum":36},
+        "qualifiedItemId": {"type":"string","minLength":1,"maxLength":128},
+        "stack": {"type":"integer","minimum":1},
+        "displayName": {"type":"string","minLength":1,"maxLength":128}
+      }
+    },
     "placeWoodFenceArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)322" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "placeCrabPotArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)710" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "baitCrabPotArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)685" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },

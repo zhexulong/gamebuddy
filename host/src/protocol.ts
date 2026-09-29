@@ -482,6 +482,10 @@ activeExecution?: ActiveExecution | null;
   /** Live cooking stations (vanilla kitchen action tile or a placed (BC)278 cookout kit) on the current map. */
   cookingStationTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
     stationKind: "kitchen" | "cookout_kit" }>[];
+  /** Available native minecart rides from a station on the current map (travel's minecart objective family). */
+  minecartTargets?: readonly Readonly<{ targetId: string; networkId: string; destinationId: string;
+    displayName: string; price: number; stationX: number; stationY: number; targetLocation: string;
+    targetTileX: number; targetTileY: number }>[];
 }>;
 
 /** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
@@ -1011,6 +1015,7 @@ const SNAPSHOT_KEYS = [
   "craftingRecipeTargets",
   "cookingRecipeTargets",
   "cookingStationTargets",
+  "minecartTargets",
 ] as const;
 
 
@@ -1556,9 +1561,13 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     
     if (!isToolSelector(value.args.tool)) return "invalid_tool_selector";
   } else if (value.action === "travel") {
-    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
-    
+    // `expectedTargetId` is optional: omitted means the ordinary native warp at
+    // the source tile; present means one exact published minecart objective
+    // offered from that station tile.
+    if (!hasOptionalExpectedTargetIdArgs(value.args)) return "invalid_args";
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_warp_source";
+    if ("expectedTargetId" in value.args)
+      return validateTravelMinecartTarget(value.args, snapshot);
   } else if (value.action === "enter_exit") {
     if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
     
@@ -2237,6 +2246,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.cookingStationTargets.every(isCookingStationTargetFact))
   )
     return "invalid_snapshot:cookingStationTargets";
+  if (
+    value.minecartTargets !== undefined &&
+    (!Array.isArray(value.minecartTargets) ||
+      value.minecartTargets.length > 24 ||
+      !value.minecartTargets.every(isMinecartTargetFact))
+  )
+    return "invalid_snapshot:minecartTargets";
   if (!isStringArray(value.capabilities)) return "invalid_snapshot:capabilities";
   if (!isNonNegativeSafeInteger(value.catalogRevision)) return "invalid_snapshot:catalogRevision";
   if (!isUniqueOpaqueIdArray(value.enabledActionIds)) return "invalid_snapshot:enabledActionIds";
@@ -2450,6 +2466,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.cookingStationTargets) &&
         value.cookingStationTargets.length <= 16 &&
         value.cookingStationTargets.every(isCookingStationTargetFact))) &&
+    (value.minecartTargets === undefined ||
+      (Array.isArray(value.minecartTargets) &&
+        value.minecartTargets.length <= 24 &&
+        value.minecartTargets.every(isMinecartTargetFact))) &&
     isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
     isUniqueOpaqueIdArray(value.enabledActionIds) &&
@@ -3690,6 +3710,37 @@ function isCookingStationTargetFact(value: unknown): boolean {
   );
 }
 
+function isMinecartTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "targetId",
+      "networkId",
+      "destinationId",
+      "displayName",
+      "price",
+      "stationX",
+      "stationY",
+      "targetLocation",
+      "targetTileX",
+      "targetTileY",
+    ]) &&
+    typeof value.targetId === "string" &&
+    /^minecart_[a-f0-9]{16}$/u.test(value.targetId) &&
+    isBoundedNonEmptyString(value.networkId, 128) &&
+    isBoundedNonEmptyString(value.destinationId, 128) &&
+    isBoundedNonEmptyString(value.displayName, 128) &&
+    typeof value.price === "number" &&
+    Number.isSafeInteger(value.price) &&
+    value.price >= 0 &&
+    isTileCoordinate(value.stationX) &&
+    isTileCoordinate(value.stationY) &&
+    isBoundedNonEmptyString(value.targetLocation, 256) &&
+    isTileCoordinate(value.targetTileX) &&
+    isTileCoordinate(value.targetTileY)
+  );
+}
+
 function isInventoryItemFact(value: unknown): boolean {  return (
     isRecord(value) &&
     hasExactKeys(value, ["slot", "qualifiedItemId", "stack","displayName"]) &&
@@ -3791,6 +3842,30 @@ function validToken(value: unknown): value is string {
 }
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length <= 128);
+}
+
+/** `travel` args allow exactly {x, y} or {x, y, expectedTargetId}. */
+function hasOptionalExpectedTargetIdArgs(args: Record<string, unknown>): boolean {
+  return (
+    hasExactKeys(args, ["x", "y"]) ||
+    (hasExactKeys(args, ["x", "y", "expectedTargetId"]) &&
+      typeof args.expectedTargetId === "string" &&
+      /^minecart_[a-f0-9]{16}$/u.test(args.expectedTargetId))
+  );
+}
+
+/**
+ * A named minecart ride must still be an objective this exact snapshot
+ * advertised from the same station tile: the companion may not invent a target,
+ * and a stale target from a previous observation is refused.
+ */
+function validateTravelMinecartTarget(args: Record<string, unknown>, snapshot: Snapshot): string | null {
+  const targets = snapshot.minecartTargets;
+  if (!Array.isArray(targets)) return "invalid_warp_source";
+  const match = targets.find((target) => target.targetId === args.expectedTargetId);
+  if (match === undefined) return "invalid_warp_source";
+  if (match.stationX !== args.x || match.stationY !== args.y) return "invalid_warp_source";
+  return null;
 }
 const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "arguments",

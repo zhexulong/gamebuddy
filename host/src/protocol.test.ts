@@ -1002,6 +1002,21 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
     ["craftingRecipeTargets", { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
     ["cookingRecipeTargets", { targetId: "Fried_Egg", displayName: "Fried Egg", ingredientsAvailable: false }],
     ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" }],
+    [
+      "minecartTargets",
+      {
+        targetId: "minecart_0123456789abcdef",
+        networkId: "Default",
+        destinationId: "BusStop",
+        displayName: "Bus Stop",
+        price: 0,
+        stationX: 10,
+        stationY: 10,
+        targetLocation: "BusStop",
+        targetTileX: 20,
+        targetTileY: 12,
+      },
+    ],
   ];
   for (const [field, target] of families) {
     assert.equal(
@@ -1120,6 +1135,67 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       now,
     ),
     "invalid_warp_source",
+  );
+  // `travel` may name one advertised minecart objective from the same station
+  // tile. An unknown ID, a stale ID from another snapshot, or a station/tile
+  // mismatch is refused; the named target must be present in this snapshot.
+  const travelCapability = { ...snapshot, capabilities: [...snapshot.capabilities, "travel"] };
+  const minecartSnapshot = {
+    ...travelCapability,
+    minecartTargets: [
+      {
+        targetId: "minecart_0123456789abcdef",
+        networkId: "Default",
+        destinationId: "BusStop",
+        displayName: "Bus Stop",
+        price: 0,
+        stationX: 10,
+        stationY: 10,
+        targetLocation: "BusStop",
+        targetTileX: 20,
+        targetTileY: 12,
+      },
+    ],
+  } as const;
+  assert.equal(
+    validateExecutionRequest(
+      { ...travel, args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
+      minecartSnapshot,
+      now,
+    ),
+    null,
+  );
+  assert.equal(
+    validateExecutionRequest(
+      { ...travel, args: { x: 10, y: 10, expectedTargetId: "minecart_deadbeefdeadbeef" } },
+      minecartSnapshot,
+      now,
+    ),
+    "invalid_warp_source",
+  );
+  assert.equal(
+    validateExecutionRequest(
+      { ...travel, args: { x: 11, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
+      minecartSnapshot,
+      now,
+    ),
+    "invalid_warp_source",
+  );
+  assert.equal(
+    validateExecutionRequest(
+      { ...travel, args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
+      travelCapability,
+      now,
+    ),
+    "invalid_warp_source",
+  );
+  assert.equal(
+    validateExecutionRequest(
+      { ...travel, args: { x: 10, y: 10, expectedTargetId: "not_a_minecart_id" } },
+      minecartSnapshot,
+      now,
+    ),
+    "invalid_args",
   );
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
@@ -2623,5 +2699,46 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
   assert.equal(
     diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, cookingStationTargets: Array.from({ length: 17 }, () => station) }, "station_many", now), scope, now),
     "invalid_snapshot:cookingStationTargets",
+  );
+  // Minecart objectives: one entry per (station tile, destination). The target
+  // ID pattern, every bounded fact, and the 24-entry bound all fail closed.
+  const ride = {
+    targetId: "minecart_0123456789abcdef",
+    networkId: "Default",
+    destinationId: "BusStop",
+    displayName: "Bus Stop",
+    price: 0,
+    stationX: 10,
+    stationY: 10,
+    targetLocation: "BusStop",
+    targetTileX: 20,
+    targetTileY: 12,
+  };
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, minecartTargets: [ride] }, "ride_ok", now), scope, now),
+    "accepted",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, minecartTargets: [{ ...ride, price: 100 }] }, "ride_price", now), scope, now),
+    "accepted",
+  );
+  for (const bad of [
+    { ...ride, extra: 1 },
+    { ...ride, targetId: "minecart_zzzz" },
+    { ...ride, targetId: "chest_0123456789abcdef" },
+    { ...ride, price: -1 },
+    { ...ride, price: 1.5 },
+    { ...ride, networkId: "" },
+    { ...ride, targetLocation: "" },
+    { ...ride, stationX: -1 },
+  ]) {
+    assert.equal(
+      diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, minecartTargets: [bad] }, "ride_bad", now), scope, now),
+      "invalid_snapshot:minecartTargets",
+    );
+  }
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, minecartTargets: Array.from({ length: 25 }, () => ride) }, "ride_many", now), scope, now),
+    "invalid_snapshot:minecartTargets",
   );
 });

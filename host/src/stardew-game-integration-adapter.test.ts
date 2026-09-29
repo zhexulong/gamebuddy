@@ -702,6 +702,43 @@ test("travel and enter_exit completion evidence require the exact warped destina
   );
 });
 
+test("a minecart travel receipt additionally names the ridden objective", () => {
+  // A minecart ride ends in the same Warped postcondition, but its evidence
+  // carries the published network/destination identity as well. Both optional
+  // keys must be present as a pair and bounded; the warp postcondition above
+  // still has to hold.
+  const valid =
+    "expected=BusStop:20,12;actual=BusStop:20,12;network=Default;destination=BusStop";
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("travel", {
+      state: "succeeded",
+      reasonCode: "travel_completed",
+      evidence: { detail: valid },
+    }),
+    true,
+  );
+  for (const malformed of [
+    // network without destination
+    "expected=BusStop:20,12;actual=BusStop:20,12;network=Default",
+    // destination without network
+    "expected=BusStop:20,12;actual=BusStop:20,12;destination=BusStop",
+    // empty network
+    "expected=BusStop:20,12;actual=BusStop:20,12;network=;destination=BusStop",
+    // a minecart ride still has to arrive at its declared destination
+    "expected=BusStop:20,12;actual=Town:20,12;network=Default;destination=BusStop",
+  ]) {
+    assert.equal(
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("travel", {
+        state: "succeeded",
+        reasonCode: "travel_completed",
+        evidence: { detail: malformed },
+      }),
+      false,
+      malformed,
+    );
+  }
+});
+
 test("pickup_forage completion evidence requires the contract tile, item, removal, and exact inventory delta", () => {
   const valid =
     "location=Forest;tile=12,9;item=(O)16;removed=true;inventory_before=0;inventory_after=1";

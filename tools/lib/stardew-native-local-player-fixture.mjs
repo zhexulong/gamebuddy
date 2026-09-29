@@ -346,6 +346,11 @@ export function fixtureActions(action) {
     return ["inspect_world_map", "find_destination", "navigate_to_destination"];
   if (action === "equip_tool") return ["equip_tool"];
   if (action === "travel") return ["move_to_tile", "travel"];
+  // Minecart travel is travel's objective family extension: the same `travel`
+  // capability and the same station/objective selection. The fixture only creates
+  // a station tile and the vanilla network unlock flag; production alone
+  // discovers the objective, resolves it and performs the native ride.
+  if (action === "travel_minecart") return ["move_to_tile", "travel"];
   // The fixture supplies one intact target-version ResourceClump and a basic
   // Pickaxe before attachment. Travel/movement/equipment and each hit remain
   // independently typed production actions.
@@ -515,6 +520,7 @@ export function fixtureScenario(actions, action) {
   // provision a kitchen instead of a placed chest.
   if (action === "fridge_store") return "native_fridge_store_v1";
   if (action === "fridge_retrieve") return "native_fridge_retrieve_v1";
+  if (action === "travel_minecart") return "native_minecart_travel_v1";
   if (action === "ship_item_island") return "native_ship_item_island_v1";
   // Lane G resource-depletion recovery chain: the same water_crop action set plus
   // refill_watering_can, but the fixture must supply an EMPTY can. Without this
