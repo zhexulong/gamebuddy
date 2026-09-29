@@ -688,7 +688,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.pickup_forage,
         label: "Pick Up Stardew Forage",
         description:
-          "Pick up a live native forage target. Only the authoritative native receipt and target disappearance can report completion.",
+          "Pick up a live native forage target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the forageTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the authoritative native receipt and target disappearance can report completion.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -728,7 +728,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.pickup_item,
         label: "Pick Up Stardew Item Drop",
         description:
-          "Approach a live native Debris target. Only the native magnetic-collection receipt and exact inventory evidence can report completion.",
+          "Approach a live native Debris target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the itemTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the native magnetic-collection receipt and exact inventory evidence can report completion.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -760,7 +760,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.refill_watering_can,
         label: "Refill Stardew Watering Can",
         description:
-          "Refill one selected, partially filled Watering Can from a live adjacent native water source.",
+          "Refill one selected, partially filled Watering Can from a live adjacent native water source. slot, x, y and expectedTargetId must be copied exactly from the refillWateringCanTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates).",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -789,7 +789,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.water_crop,
         label: "Water Stardew Crop",
         description:
-          "Water a live unwatered crop target. Only the authoritative native receipt can report completion.",
+          "Water a live unwatered crop target. x, y and expectedTargetId must be copied exactly from the cropTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the authoritative native receipt can report completion.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -816,7 +816,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.plant_seed,
         label: "Plant Stardew Seed",
         description:
-          "Plant a live ordinary seed into a live empty ground HoeDirt target. Native crop creation and the authoritative receipt determine completion.",
+          "Plant a live ordinary seed into a live empty ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the seedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native crop creation and the authoritative receipt determine completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -850,7 +850,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.place_wood_fence,
         label: "Place Stardew Wood Fence",
         description:
-          "Place only a qualified (O)322 Wood Fence on a fresh empty Farm tile; native Fence evidence determines completion.",
+          "Place only a qualified (O)322 Wood Fence on a fresh empty Farm tile. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the woodFenceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native Fence evidence determines completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -881,7 +881,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.place_crab_pot,
         label: "Place Stardew Crab Pot",
         description:
-          "Place only a qualified (O)710 Crab Pot on a fresh valid Farm water tile; native Crab Pot evidence determines completion.",
+          "Place only a qualified (O)710 Crab Pot on a fresh valid Farm water tile. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the crabPotTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native Crab Pot evidence determines completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -912,7 +912,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.bait_crab_pot,
         label: "Bait Stardew Crab Pot",
         description:
-          "Attach exactly one live owned (O)685 Bait to a fresh adjacent unbaited current-player-owned (O)710 Crab Pot. The native interaction and authoritative receipt determine completion.",
+          "Attach exactly one live owned (O)685 Bait to a fresh adjacent unbaited current-player-owned (O)710 Crab Pot. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the baitCrabPotTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The native interaction and authoritative receipt determine completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -943,7 +943,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.fertilize_tile,
         label: "Fertilize Stardew Soil",
         description:
-          "Apply one live owned fertilizer item to a live eligible ground HoeDirt target. Native placement and the authoritative receipt determine completion.",
+          "Apply one live owned fertilizer item to a live eligible ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the fertilizerTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native placement and the authoritative receipt determine completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1035,7 +1035,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.machine_collect_output,
         label: "Collect Coffee from Keg",
         description:
-          "Collect ready Coffee from the exact live Keg through the normal native machine interaction. A receipt proves native inventory delivery and cleared ready output.",
+          "Collect ready Coffee from the exact live Keg through the normal native machine interaction. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A receipt proves native inventory delivery and cleared ready output.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1062,7 +1062,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.collect_animal_product,
         label: "Collect Stardew Animal Product",
         description:
-          "Use the live compatible Farmhand-owned tool on a live ready animal-product target. Native animation and receipt determine completion.",
+          "Use the live compatible Farmhand-owned tool on a live ready animal-product target. slot, x, y and expectedTargetId must be copied exactly from the animalProductTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native animation and receipt determine completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1091,7 +1091,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.feed_animal,
         label: "Place Hay in Stardew Trough",
         description:
-          "Place one live owned Hay item in a live empty AnimalHouse trough. This does not claim an animal has eaten.",
+          "Place one live owned Hay item in a live empty AnimalHouse trough. slot, x, y and expectedTargetId must be copied exactly from the feedTroughTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). This does not claim an animal has eaten.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1120,7 +1120,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.use_item,
         label: "Use Stardew Food Item",
         description:
-          "Use a live ordinary edible Farmhand inventory item. Native eating animation and the authoritative receipt determine completion.",
+          "Use a live ordinary edible Farmhand inventory item. slot and expectedQualifiedItemId must be copied exactly from the foodTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native eating animation and the authoritative receipt determine completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           expectedQualifiedItemId: Type.String({
@@ -1148,7 +1148,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.harvest_crop,
         label: "Harvest Stardew Crop",
         description:
-          "Harvest a live ready ordinary crop. Only the native harvest receipt and inventory/regrow postcondition determine completion.",
+          "Harvest a live ready ordinary crop. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the harvestTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the native harvest receipt and inventory/regrow postcondition determine completion.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1180,7 +1180,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.chop_tree_source,
         label: "Chop Stardew Tree Source",
         description:
-          "Use one equipped Axe terminal strike on a live ordinary mature one-hit tree source. Only source transformation in the authoritative receipt determines completion.",
+          "Use one equipped Axe terminal strike on a live ordinary mature one-hit tree source. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only source transformation in the authoritative receipt determines completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1209,7 +1209,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.dig_artifact_spot,
         label: "Dig Stardew Artifact Spot",
         description:
-          "Use one equipped Basic Hoe on a live adjacent (O)590 artifact spot. Source removal and native HoeDirt creation are required; rewards are excluded.",
+          "Use one equipped Basic Hoe on a live adjacent (O)590 artifact spot. slot, x, y and expectedTargetId must be copied exactly from the artifactSpotTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Source removal and native HoeDirt creation are required; rewards are excluded.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1238,7 +1238,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.clear_hoedirt,
         label: "Clear Stardew HoeDirt",
         description:
-          "Use one equipped Basic Pickaxe hit on live adjacent empty ground HoeDirt. Crops, IndoorPots, drops, and pickup are excluded.",
+          "Use one equipped Basic Pickaxe hit on live adjacent empty ground HoeDirt. slot, x, y and expectedTargetId must be copied exactly from the clearHoeDirtTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Crops, IndoorPots, drops, and pickup are excluded.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1267,7 +1267,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.break_rock_source,
         label: "Break Stardew Rock Source",
         description:
-          "Use one equipped basic Pickaxe hit on a live one-hit ordinary stone source. Drops and pickup are separate actions.",
+          "Use one equipped basic Pickaxe hit on a live one-hit ordinary stone source. slot, x, y and expectedTargetId must be copied exactly from the rockSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Drops and pickup are separate actions.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
