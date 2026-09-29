@@ -524,19 +524,17 @@ function configureHost(value, scenario, targetSave, requireFixtureLiveLocale = u
   host.HostAutomation.FixtureScenario = scenario;
   host.HostAutomation.TimeoutSeconds = 300;
   host.HostAutomation.RequireFixtureLiveLocale = requiredFixtureLiveLocale;
-  host.ActionPolicyVersion = 0;
+  host.DeniedActions = [];
+  host.DeniedActionFamilies = [];
   host.ExperimentalActions = [];
-  host.EnabledActions = null;
   return host;
 }
 
 function configureAi(value, experimentalActions, bridgeOverride = undefined) {
   const ai = structuredClone(value);
-  ai.ActionPolicyVersion = 1;
   ai.DeniedActions = [];
   ai.DeniedActionFamilies = [];
   ai.ExperimentalActions = experimentalActions;
-  delete ai.EnabledActions;
   if (bridgeOverride !== undefined) {
     const bridge = assertFixtureBridgeOverride(bridgeOverride);
     ai.EnableLocalBridge = true;
@@ -652,10 +650,9 @@ function assertHostFixtureConfig(value, scenario, targetSave, requiredFixtureLiv
     value.HostAutomation.FixtureScenario !== scenario ||
     value.HostAutomation.TimeoutSeconds !== 300 ||
     value.HostAutomation.RequireFixtureLiveLocale !== requiredFixtureLiveLocale ||
-    value.ActionPolicyVersion !== 0 ||
-    !Array.isArray(value.ExperimentalActions) ||
-    value.ExperimentalActions.length !== 0 ||
-    value.EnabledActions !== null
+    !sameStrings(value.DeniedActions, []) ||
+    !sameStrings(value.DeniedActionFamilies, []) ||
+    !sameStrings(value.ExperimentalActions, [])
   ) {
     throw new Error("host_fixture_config_mismatch");
   }
@@ -664,11 +661,9 @@ function assertHostFixtureConfig(value, scenario, targetSave, requiredFixtureLiv
 function assertAiFixtureConfig(value, experimentalActions) {
   if (
     value?.FarmhandProvisioner?.Enable !== true ||
-    value.ActionPolicyVersion !== 1 ||
     !sameStrings(value.DeniedActions, []) ||
     !sameStrings(value.DeniedActionFamilies, []) ||
-    !sameStrings(value.ExperimentalActions, experimentalActions) ||
-    Object.hasOwn(value, "EnabledActions")
+    !sameStrings(value.ExperimentalActions, experimentalActions)
   ) {
     throw new Error("ai_fixture_config_mismatch");
   }
