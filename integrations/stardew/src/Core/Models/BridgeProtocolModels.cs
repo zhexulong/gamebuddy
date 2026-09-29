@@ -260,6 +260,33 @@ public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, 
 /// </summary>
 public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
 
+/// <summary>
+/// One available minecart ride from a station on the current map (travel's
+/// minecart objective family).
+///
+/// <para>
+/// Native 1.6 minecart travel is data-driven (`Data/Minecarts`): a station tile
+/// carries an `Action MinecartTransport &lt;networkId&gt;` map property, the
+/// network has an `UnlockCondition` game-state query, and each destination has
+/// its own `Condition`, optional `Price`, and target location/tile. The native
+/// player path opens `ShowMineCartMenu` (a menu), but the ride itself is the
+/// public, UI-free `GameLocation.MinecartWarp(destination)`. Publishing one
+/// entry per (station tile, destination) keeps the choice with the companion
+/// while the Mod only reads the game's own data.
+/// </para>
+/// </summary>
+public sealed record BridgeMinecartTarget(
+    string TargetId,
+    string NetworkId,
+    string DestinationId,
+    string DisplayName,
+    int Price,
+    int StationX,
+    int StationY,
+    string TargetLocation,
+    int TargetTileX,
+    int TargetTileY);
+
 public sealed record BridgePetBowlTarget(string TargetId, int X, int Y);
 
 public sealed record BridgeSlimeHutchTroughTarget(string TargetId, int X, int Y);
@@ -366,6 +393,7 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeRecipeTarget>? CraftingRecipeTargets,
     IReadOnlyList<BridgeRecipeTarget>? CookingRecipeTargets,
     IReadOnlyList<BridgeCookingStationTarget>? CookingStationTargets,
+    IReadOnlyList<BridgeMinecartTarget>? MinecartTargets,
     // Macro time context. Native behaviour is time-driven -- a Pet sleeps from
     // 20:00, villagers follow schedules, shops close, crops advance -- but the
     // snapshot previously published no time at all, so the companion could not

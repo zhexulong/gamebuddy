@@ -27,7 +27,8 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
                 request.RequestId,
                 (int)(request.Args.X ?? 0),
                 (int)(request.Args.Y ?? 0),
-                request.DeadlineMs),
+                request.DeadlineMs,
+                request.Args.ExpectedTargetId),
 
             "enter_exit" => this.executions.RequestLocalEnterExit(
                 request.RequestId,
