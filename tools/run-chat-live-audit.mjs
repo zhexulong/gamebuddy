@@ -38,6 +38,23 @@
  * a turn after the first has no pre-send evidence of its own; the harness
  * reports that run-level observability honestly through
  * `run.finished`'s `meta.providerObservability` instead of guessing.
+ *
+ * MAINTENANCE CONTRACT — read before changing this file:
+ *
+ * 1. Extend this harness; never fork a parallel Chat live runner. Chat
+ *    capability growth (new audit kinds, new probe steps, the release verdict)
+ *    layers onto this same file and its `.pi/workflows/chat-audit-*.js` probe
+ *    loop, so every run stays comparable with `tools/compare-chat-live-runs.mjs`.
+ * 2. A harness change is not done until it has produced a REAL run against the
+ *    real embedded provider and the mounted surface. Unit tests on this file
+ *    prove the harness, not the product.
+ * 3. After each real run, audit the trace with the `auditing-runs` skill and
+ *    dispatch a reviewer subagent over it (the same requirement is recorded in
+ *    tools/run-stardew-native-local-agent-ab-live.mjs). Findings feed the next
+ *    iteration of THIS file. A fluent reply is never evidence that persistence,
+ *    source placement, privacy or surface isolation worked.
+ * 4. Never upgrade `blocked`/`inconclusive` to `passed`, and never suppress an
+ *    audit signal to make a run look clean.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
