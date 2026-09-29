@@ -1162,6 +1162,42 @@ test("enforces the generic mounted-turn facade, coordinator, authority, store, a
       assert.ok(report.violations.some((item) => item.kind === "invalid_provider_start_implementation"));
     },
   );
+  // The voice surface legitimately added one optional trailing argument. Keep the
+  // widened shape pinned: the fourth argument must be threaded through the exact
+  // admission chain (not consumed before it), and any further widening fails.
+  await withFixture(
+    {
+      ...intended,
+      [providerStart]: [
+        'import { startMountedAttempt, consumeMountedAttemptInvocationAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
+        'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
+        'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
+        'import { runMountedProviderStartLedger, type NativeChatPreviewPublisher, type NativeChatSpeechSink } from "./p4-provider-start-execution.js";',
+        "export async function startMountedChatProvider(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, previewPublisher?: NativeChatPreviewPublisher, speechSink?: NativeChatSpeechSink) {",
+        "  return await startMountedAttempt(manifest, lease, invocation => consumeMountedAttemptInvocationAdmission(invocation, scope => runMountedProviderStartLedger(scope, previewPublisher, speechSink)));",
+        "}",
+      ].join("\n"),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.equal(report.verdict, "passed", JSON.stringify(report.violations));
+    },
+  );
+  await withFixture(
+    {
+      ...intended,
+      [providerStart]: intended[providerStart]
+        .replace("previewPublisher?: NativeChatPreviewPublisher", "previewPublisher?: NativeChatPreviewPublisher, speechSink?: unknown, extra?: unknown")
+        .replace(
+          "runMountedProviderStartLedger(scope, previewPublisher)",
+          "runMountedProviderStartLedger(scope, previewPublisher, speechSink)",
+        ),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.ok(report.violations.some((item) => item.kind === "invalid_provider_start_implementation"));
+    },
+  );
 });
 
 test("blocks non-coordinator semantic authority imports, the semantic backend, and legacy backend mint identifiers", async () => {
