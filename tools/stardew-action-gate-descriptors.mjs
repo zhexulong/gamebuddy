@@ -261,10 +261,10 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // remainder, then re-crafts the SAME recipe to a full success. Not a new action;
   // it grants no capability.
   craft_partial_recovery_chain: "run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs",
-  // travel's minecart objective family: the same `travel` capability and wire,
-  // resolved against a fixture-created station tile plus the vanilla
-  // `ccBoilerRoom` network unlock. Not a new action; it grants no capability.
-  travel_minecart: "run-stardew-native-local-player-travel-minecart-smoke.mjs",
+  // ride_minecart is its own registered action with its own shared-harness runner
+  // and native-local fixture scenario; it grants no capability the Mod catalog
+  // does not already define.
+  ride_minecart: "run-stardew-native-local-player-ride-minecart-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

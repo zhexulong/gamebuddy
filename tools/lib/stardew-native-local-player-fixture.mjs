@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
+import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
 
 const BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",
@@ -119,6 +120,7 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
       actions,
       options.binding,
       options.action,
+      await readExperimentalActionIds(options),
     );
     // Opt-in evidence-only probe block. It is written only when the caller
     // supplies it, so ordinary action runs keep an unchanged config shape.
@@ -175,7 +177,7 @@ async function bootstrapNativeLocalPlayerFixtureInternal(options) {
     await backupBodyProgramJournal(options, backup);
     await writeJson(
       context.configPath,
-      configureNativeLocalPlayerBootstrap(original, options.logicalSaveName, options.timeoutSeconds ?? 90, actions, options.action),
+      configureNativeLocalPlayerBootstrap(original, options.logicalSaveName, options.timeoutSeconds ?? 90, actions, options.action, await readExperimentalActionIds(options)),
     );
     await deployBundle(context);
     return Object.freeze({
@@ -219,7 +221,11 @@ export async function verifyNativeLocalPlayerFixture(options) {
     config.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (config.ActionPolicyVersion !== 0 || JSON.stringify(config.EnabledActions) !== JSON.stringify(actions))
+  if (
+    !Array.isArray(config.DeniedActions) ||
+    !Array.isArray(config.DeniedActionFamilies) ||
+    !Array.isArray(config.ExperimentalActions)
+  )
     throw new Error("native_local_fixture_action_policy_invalid");
   if (options.sleepModalProbe !== undefined) {
     const probe = config.SleepModalProbe;
@@ -346,11 +352,12 @@ export function fixtureActions(action) {
     return ["inspect_world_map", "find_destination", "navigate_to_destination"];
   if (action === "equip_tool") return ["equip_tool"];
   if (action === "travel") return ["move_to_tile", "travel"];
-  // Minecart travel is travel's objective family extension: the same `travel`
-  // capability and the same station/objective selection. The fixture only creates
-  // a station tile and the vanilla network unlock flag; production alone
-  // discovers the objective, resolves it and performs the native ride.
-  if (action === "travel_minecart") return ["move_to_tile", "travel"];
+  // ride_minecart is its own action, not a `travel` objective family: the wire
+  // carries the station tile AND the published ride selector, which the exact-shape
+  // argument admission cannot express as an optional key on `travel`. The fixture
+  // only creates a station tile and the vanilla network unlock flag; production
+  // alone discovers the objective, resolves it and performs the native ride.
+  if (action === "ride_minecart") return ["move_to_tile", "ride_minecart"];
   // The fixture supplies one intact target-version ResourceClump and a basic
   // Pickaxe before attachment. Travel/movement/equipment and each hit remain
   // independently typed production actions.
@@ -520,7 +527,7 @@ export function fixtureScenario(actions, action) {
   // provision a kitchen instead of a placed chest.
   if (action === "fridge_store") return "native_fridge_store_v1";
   if (action === "fridge_retrieve") return "native_fridge_retrieve_v1";
-  if (action === "travel_minecart") return "native_minecart_travel_v1";
+  if (action === "ride_minecart") return "native_ride_minecart_v1";
   if (action === "ship_item_island") return "native_ship_item_island_v1";
   // Lane G resource-depletion recovery chain: the same water_crop action set plus
   // refill_watering_can, but the fixture must supply an EMPTY can. Without this
@@ -548,7 +555,8 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("advance_day")) return "";
   // The pass-out lifecycle supplies only a low-stamina precondition; the native
   // gate starts the pass-out itself. This is keyed off the action name rather
-  // than a synthetic action so EnabledActions stays exactly the real surface.
+  // than a synthetic action so the fixture never has to widen the action set to
+  // express a scenario.
   if (action === "sleep_pass_out_lifecycle") return "native_pass_out_v1";
   // Ladder 1 walk→look→do must win over the plain navigation scenario: the
   // action set is exactly the three-node DAG plus read-only retrieval.
@@ -606,6 +614,33 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("collect_crab_pot_output")) return "native_crab_pot_collect_v1";
   return "";
 }
+// The Mod catalog is the authority for which registrations are still
+// experimental. Reading it here keeps the fixture's opt-in list from going
+// stale: a promoted action left in ExperimentalActions makes
+// ActionPolicyEngine.ValidateActionPolicy reject the whole config, so a stale
+// list silently blocks every run of that action. That is exactly what happened
+// when 17 actions were promoted at once.
+async function readExperimentalActionIds(options) {
+  if (options.experimentalActionIds !== undefined) return options.experimentalActionIds;
+  return readExperimentalStardewActionIds();
+}
+
+/**
+ * Write the deny-by-exception policy block a fixture run uses.
+ *
+ * Denying nothing and opting nothing in is the honest default: the Agent's
+ * surface is whatever the Mod catalog derives, and ExperimentalActions stays
+ * empty unless the action under test is itself still experimental (in which
+ * case naming it is what lets the run exercise it at all).
+ */
+function applyDerivedPolicy(result, actions, experimentalActionIds) {
+  const experimentalSet = new Set(experimentalActionIds);
+  result.DeniedActions = [];
+  result.DeniedActionFamilies = [];
+  result.ExperimentalActions = actions.filter((action) => experimentalSet.has(action));
+  return result;
+}
+
 function assertNativeLocalBinding(binding, observedSaveSlot) {
   if (
     !binding ||
@@ -639,7 +674,7 @@ function assertSourceTopologyIsolated(config) {
   )
     throw new Error("native_local_fixture_topology_not_isolated");
 }
-function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSeconds, actions, action) {
+function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSeconds, actions, action, experimentalActionIds) {
   assertFixtureLogicalName(logicalSaveName);
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
@@ -659,13 +694,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.HostAutomation = { ...(result.HostAutomation ?? {}), Enable: false };
   result.HostFarmhandProvisioning = { ...(result.HostFarmhandProvisioning ?? {}), Enable: false };
   result.FarmhandProvisioner = { ...(result.FarmhandProvisioner ?? {}), Enable: false };
-  result.ActionPolicyVersion = 0;
-  result.DeniedActions = [];
-  result.DeniedActionFamilies = [];
-  result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "water_pet_bowl", "water_slime_hutch_trough", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output", "advance_day"].includes(action),
-  );
-  result.EnabledActions = actions;
+  applyDerivedPolicy(result, actions, experimentalActionIds);
   // Same single language configuration point as the live runner: the
   // frontend-set language preference flows into the Mod config, so the
   // Mod-side companion presentation locale stays aligned with the Agent
@@ -674,7 +703,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.PresentationLocale = companionLocale;
   return result;
 }
-function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, actions, binding, action) {
+function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, actions, binding, action, experimentalActionIds) {
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
   assertNativeLocalBinding(binding, observedSaveSlot);
@@ -695,13 +724,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.HostAutomation = { ...(result.HostAutomation ?? {}), Enable: false };
   result.HostFarmhandProvisioning = { ...(result.HostFarmhandProvisioning ?? {}), Enable: false };
   result.FarmhandProvisioner = { ...(result.FarmhandProvisioner ?? {}), Enable: false };
-  result.ActionPolicyVersion = 0;
-  result.DeniedActions = [];
-  result.DeniedActionFamilies = [];
-  result.ExperimentalActions = actions.filter((action) =>
-    ["clear_debris", "npc_relationship", "interact_npc_with_item", "pet_animal", "water_pet_bowl", "water_slime_hutch_trough", "chest_store", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "ship_item", "craft_item", "cook_recipe", "collect_crab_pot_output", "advance_day"].includes(action),
-  );
-  result.EnabledActions = actions;
+  applyDerivedPolicy(result, actions, experimentalActionIds);
   // Same single language configuration point as the live runner: the
   // frontend-set language preference flows into the Mod config, so the
   // Mod-side companion presentation locale stays aligned with the Agent

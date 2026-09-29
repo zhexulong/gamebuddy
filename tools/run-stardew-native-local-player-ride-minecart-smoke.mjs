@@ -1,11 +1,16 @@
-// Stardew-local minecart travel smoke: travel's objective family extension.
+// Stardew-local ride_minecart smoke.
 //
 // The Mod discovers minecart objectives from the map's own `Action
-// MinecartTransport <networkId>` property plus the live `Data/Minecarts`, and
-// the accepted `travel` request carries one exact published `targetId`. This
-// runner drives that whole chain in one native-local session: walk to the
-// station tile, ride the advertised objective, then confirm the native Warped
-// postcondition landed the actor on the objective's own target tile.
+// MinecartTransport <networkId>` property plus the live `Data/Minecarts`, and the
+// accepted `ride_minecart` request carries the station tile plus one exact
+// published `targetId`. This runner drives that whole chain in one native-local
+// session: walk to the station tile, ride the advertised objective, then confirm
+// the ride's own terminal landed the actor on the objective's target tile.
+//
+// `ride_minecart` is a separate action rather than a `travel` objective family:
+// both the Mod's execution parser and the registry-owned execution acceptance are
+// exact-shape allow-lists with no optional argument, so `travel` stays {x, y} and
+// `ride_minecart` declares {x, y, expectedTargetId}.
 //
 // The fixture only creates a station tile and the vanilla `ccBoilerRoom` network
 // unlock, so a pass here is evidence about the production ride, not about a
@@ -14,7 +19,7 @@
 // `stardew-native-smoke-harness-v1.mjs`.
 
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -23,22 +28,27 @@ import {
   summarizeSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+// The native-local lane loads the compiled test artifact, exactly like the other
+// chain runners (and run-stardew-native-local-agent-ab-live.mjs). The immutable
+// production generation can predate the current protocol, which the Mod then
+// rejects as invalid_hello_ack.
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel"];
+const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "ride_minecart"];
 
-/** Execute the minecart travel contract against an already-connected bridge session. */
-export async function runTravelMinecartSmoke(
+/** Execute the ride_minecart contract against an already-connected bridge session. */
+export async function runRideMinecartSmoke(
   client,
   receipts,
   config,
-  { moveTimeoutMs = 55_000, travelTimeoutMs = 20_000 } = {},
+  { moveTimeoutMs = 55_000, rideTimeoutMs = 20_000 } = {},
 ) {
   const trace = [];
   const startedAt = Date.now();
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeMinecartActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, EXPECTED_CAPABILITIES);
     const ride = chooseSafeRide(snapshot);
     if (!adjacent(snapshot.tile, { x: ride.stationX, y: ride.stationY })) {
       const move = await execute(
@@ -60,9 +70,9 @@ export async function runTravelMinecartSmoke(
 
     // Rediscover the objective immediately before riding. The Mod re-derives the
     // whole ride from the live station tile and the game's own data, so a prior
-    // snapshot never authorizes travel.
+    // snapshot never authorizes a ride.
     snapshot = await observeMinecartActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, EXPECTED_CAPABILITIES);
     const freshRide = findDeclaredRide(snapshot, ride);
     if (!freshRide || !adjacent(snapshot.tile, { x: freshRide.stationX, y: freshRide.stationY }))
       throw new Error("fresh_minecart_station_unavailable");
@@ -70,19 +80,19 @@ export async function runTravelMinecartSmoke(
     const accepted = await execute(
       client,
       trace,
-      "travel_minecart",
-      "travel",
+      "ride_minecart",
+      "ride_minecart",
       { x: freshRide.stationX, y: freshRide.stationY, expectedTargetId: freshRide.targetId },
       snapshot,
     );
     if (accepted.state !== "accepted") throw new Error(`minecart_not_accepted:${accepted.reasonCode}`);
-    const terminal = await waitForTerminal(receipts, accepted, travelTimeoutMs);
-    if (terminal.state !== "succeeded" || terminal.reasonCode !== "travel_completed")
-      throw new Error(`minecart_travel_failed:${terminal.reasonCode}`);
+    const terminal = await waitForTerminal(receipts, accepted, rideTimeoutMs);
+    if (terminal.state !== "succeeded" || terminal.reasonCode !== "minecart_ride_completed")
+      throw new Error(`minecart_ride_failed:${terminal.reasonCode}`);
 
-    // The minecart ride reuses the single travel terminal, so the same exact
-    // `expected/actual` arrival check applies; the named objective must also be
-    // echoed back in the receipt.
+    // The ride's terminal is the Warped postcondition plus the objective it
+    // actually rode: `expected/actual` must agree, and the receipt must echo the
+    // published network/destination pair this run selected.
     const after = await observeMinecartActionable(client);
     const evidence = terminal.evidence?.detail ?? "";
     const objectiveNamed =
@@ -99,11 +109,11 @@ export async function runTravelMinecartSmoke(
     return {
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
-      reasonCode: passed ? "minecart_travel_completed" : "minecart_travel_postcondition_mismatch",
+      reasonCode: passed ? "minecart_ride_completed" : "minecart_ride_postcondition_mismatch",
       source: rideSummary(snapshot.location, freshRide),
       receipt: summarizeReceipt(terminal),
-      before: travelSummary(snapshot),
-      after: travelSummary(after),
+      before: rideSnapshotSummary(snapshot),
+      after: rideSnapshotSummary(after),
       objectiveNamed,
       trace,
       durationMs: Date.now() - startedAt,
@@ -122,9 +132,9 @@ export async function runTravelMinecartSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
-    const result = await runTravelMinecartSmoke(session.client, session.receipts, config);
+    const result = await runRideMinecartSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));
     if (result.state !== "passed") process.exitCode = 2;
   } finally {
@@ -222,7 +232,7 @@ function validateNativeLocalFixtureConfig(value) {
     throw new Error("native_local_fixture_topology_not_isolated");
 }
 
-function travelSummary(snapshot) {
+function rideSnapshotSummary(snapshot) {
   return {
     revision: snapshot.revision,
     location: snapshot.location,

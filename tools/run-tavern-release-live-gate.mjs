@@ -14,25 +14,14 @@ import { prepareReportTarget, writeReport } from "./run-tavern-narrative-gate.mj
 
 export { CHAT_TAVERN_LIVE_PROFILE, DEFAULT_TAVERN_RELEASE_PROFILE };
 
-const TAVERN_LIVE_RECORD_SCHEMA_VERSION = 1;
 const TAVERN_LIVE_GATE = "tavern_release_live_gate/v1";
+const ORCHESTRATOR_SCHEMA = "tavern_release_live_orchestrator/v1";
+const ORCHESTRATOR_USAGE =
+  "usage: node tools/run-tavern-release-live-gate.mjs --orchestrate [--profile <profile>] [--report <path>] [--mounted-profile <profile.json>] [--operation-evidence-mapping <mapping.json>]";
 
-const OUTCOMES = new Set(["pass", "fail", "blocked", "inconclusive", "not_applicable"]);
-const REASONS = new Set([
-  "observed",
-  "operation_not_declared",
-  "participant_stopped",
-  "runtime_interruption",
-  "prerequisite_blocked",
-  "privacy_exposure",
-  "wrong_behavior",
-  "insufficient_observation",
-]);
-// Hex-only tokens deliberately make this record incapable of carrying dialogue or labels.
+// Hex-only tokens deliberately make this evidence incapable of carrying dialogue or labels.
 const OPAQUE_ID = /^[a-f0-9]{16,128}$/;
 const HASH = /^[a-f0-9]{64}$/;
-const COMMIT = /^[a-f0-9]{7,64}$/;
-const ORCHESTRATOR_SCHEMA = "tavern_release_live_orchestrator/v1";
 const NARRATIVE_RUNNER = resolve(dirname(fileURLToPath(import.meta.url)), "run-tavern-narrative-gate.mjs");
 export const NARRATIVE_RUN_PLAN = Object.freeze(["main", "failure", "recovery"]);
 export const MOUNTED_PROFILE_MAPPING_BLOCKER = Object.freeze({
@@ -41,6 +30,24 @@ export const MOUNTED_PROFILE_MAPPING_BLOCKER = Object.freeze({
   detail: "mounted_composed_tavern_profile_operation_to_evidence_mapping_missing_or_invalid",
 });
 export const MOUNTED_PROFILE_OPERATION_EVIDENCE_SCHEMA_VERSION = 1;
+/**
+ * Release-scope claims this gate deliberately never mints. It drives one real
+ * Chat turn per planned run and maps mounted management operations; it executes
+ * no release-profile `must` flow and verifies no Windows production artifact,
+ * security or bundled-runtime prerequisite. A `passed` verdict is therefore a
+ * Chat/Tavern live claim only and must never widen into these claims.
+ */
+const RELEASE_SCOPE_CLAIMS = Object.freeze({ requiredMustFlowsExecuted: false, fullReleaseClaim: false });
+// A planned run is genuine live evidence only when the runner reported its own
+// pass together with the production artifact identity and every assertion that
+// pass is derived from. A bare `state: "passed"` is not evidence.
+const RUN_EVIDENCE_ASSERTIONS = Object.freeze([
+  "authenticatedReferenceChatApi",
+  "realDialogueTurnAttempted",
+  "providerRuntimeSessionBound",
+  "providerPreSendSerialized",
+  "realTurnOutcomeObserved",
+]);
 
 const COMPOSED_TAVERN_PROFILE_KEYS = Object.freeze([
   "profileId",
@@ -85,6 +92,10 @@ const PROFILE_ID_HASH_WITHOUT_TIER_MAPPING_KEYS = Object.freeze([
   "profile_hash",
   "operations",
 ]);
+// The only optional key the mapping may carry. `tools/record-tavern-ui-operation-evidence.mjs`
+// stamps it on the mapping it exports, and its value is fixed: it labels the
+// provenance of the evidence and never adds capability.
+const AUTOMATION_EVIDENCE_KIND = "automation_evidence";
 
 function check(condition, id, detail, checks) {
   if (!condition) checks.push({ id, status: "blocked", detail });
@@ -102,6 +113,10 @@ function exactKeys(value, expected) {
   if (!plainRecord(value)) return false;
   const keys = Reflect.ownKeys(value);
   return keys.length === expected.length && keys.every((key) => typeof key === "string" && expected.includes(key));
+}
+
+function omitEvidenceKind(mapping) {
+  return Object.fromEntries(Object.entries(mapping).filter(([key]) => key !== "evidence_kind"));
 }
 
 function canonicalProfileHash(profile) {
@@ -191,10 +206,10 @@ function validateMountedProfile(mountedProfile, checks) {
 }
 
 /**
- * The release record carries a redacted projection of the exact mounted profile
- * and an independently supplied operation-to-evidence map. Evidence is opaque
- * by construction: this contract never accepts operation labels, UI text, URLs,
- * prompts, or any other content as evidence.
+ * The mounted operation evidence carries a redacted projection of the exact
+ * mounted profile and an independently supplied operation-to-evidence map.
+ * Evidence is opaque by construction: this contract never accepts operation
+ * labels, UI text, URLs, prompts, or any other content as evidence.
  *
  * `operations` is a map whose keys are operation IDs and whose values are
  * non-empty arrays of opaque evidence IDs. A map entry is valid only when its
@@ -211,25 +226,38 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
   );
   if (!plainRecord(operationEvidenceMapping)) return { valid: false, checks, mappedOperationIds: [] };
 
+  const evidenceKindValid =
+    operationEvidenceMapping.evidence_kind === undefined ||
+    operationEvidenceMapping.evidence_kind === AUTOMATION_EVIDENCE_KIND;
   check(
-    operationEvidenceMapping.schema_version === MOUNTED_PROFILE_OPERATION_EVIDENCE_SCHEMA_VERSION,
+    evidenceKindValid,
+    "mounted_profile_operation_evidence_kind",
+    "mounted_composed_tavern_profile_operation_to_evidence_mapping_evidence_kind_invalid",
+    checks,
+  );
+  const mapping = evidenceKindValid ? omitEvidenceKind(operationEvidenceMapping) : operationEvidenceMapping;
+
+  check(
+    mapping.schema_version === MOUNTED_PROFILE_OPERATION_EVIDENCE_SCHEMA_VERSION,
     "mounted_profile_operation_evidence_schema",
     "mounted_composed_tavern_profile_operation_to_evidence_mapping_schema_invalid",
     checks,
   );
-  const exactIdentity = Object.hasOwn(operationEvidenceMapping, "profile");
-  const hashIdentity = Object.hasOwn(operationEvidenceMapping, "profile_hash");
-  const idIdentity = Object.hasOwn(operationEvidenceMapping, "profile_id");
+  const exactIdentity = Object.hasOwn(mapping, "profile");
+  const hashIdentity = Object.hasOwn(mapping, "profile_hash");
+  const idIdentity = Object.hasOwn(mapping, "profile_id");
+  // The identity is carried either by the exact profile object or by the
+  // canonical hash pair. `profile_id` is part of the hash pair, not a third
+  // alternative, so it may not stand alone.
   check(
-    (exactIdentity ? 1 : 0) + (hashIdentity ? 1 : 0) + (idIdentity ? 1 : 0) === 1,
+    (exactIdentity ? 1 : 0) + (hashIdentity ? 1 : 0) === 1 && !(idIdentity && !hashIdentity),
     "mounted_profile_operation_evidence_identity_shape",
     "mounted_composed_tavern_profile_operation_to_evidence_mapping_identity_invalid",
     checks,
   );
   if (exactIdentity) {
     check(
-      exactKeys(operationEvidenceMapping, PROFILE_IDENTITY_MAPPING_KEYS) &&
-        operationEvidenceMapping.profile === mountedProfile,
+      exactKeys(mapping, PROFILE_IDENTITY_MAPPING_KEYS) && mapping.profile === mountedProfile,
       "mounted_profile_operation_evidence_profile",
       "mounted_composed_tavern_profile_operation_to_evidence_mapping_profile_mismatch",
       checks,
@@ -237,23 +265,22 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
   } else if (hashIdentity) {
     check(
       (idIdentity &&
-        (exactKeys(operationEvidenceMapping, PROFILE_ID_HASH_MAPPING_KEYS) ||
-        exactKeys(operationEvidenceMapping, PROFILE_ID_HASH_WITHOUT_TIER_MAPPING_KEYS)) &&
-        typeof operationEvidenceMapping.profile_id === "string" &&
-        typeof operationEvidenceMapping.profile_hash === "string" &&
-        HASH.test(operationEvidenceMapping.profile_hash) &&
+        (exactKeys(mapping, PROFILE_ID_HASH_MAPPING_KEYS) ||
+          exactKeys(mapping, PROFILE_ID_HASH_WITHOUT_TIER_MAPPING_KEYS)) &&
+        typeof mapping.profile_id === "string" &&
+        typeof mapping.profile_hash === "string" &&
+        HASH.test(mapping.profile_hash) &&
         profileValid &&
-        operationEvidenceMapping.profile_id === mountedProfile?.profileId &&
-        (operationEvidenceMapping.release_tier === undefined ||
-          operationEvidenceMapping.release_tier === mountedProfile?.releaseTier) &&
-        operationEvidenceMapping.profile_hash === canonicalProfileHash(mountedProfile)),
+        mapping.profile_id === mountedProfile?.profileId &&
+        (mapping.release_tier === undefined || mapping.release_tier === mountedProfile?.releaseTier) &&
+        mapping.profile_hash === canonicalProfileHash(mountedProfile)),
       "mounted_profile_operation_evidence_profile",
       "mounted_composed_tavern_profile_operation_to_evidence_mapping_profile_mismatch",
       checks,
     );
   }
 
-  const operations = operationEvidenceMapping.operations;
+  const operations = mapping.operations;
   check(
     plainRecord(operations) &&
       Reflect.ownKeys(operations).every((key) => typeof key === "string") &&
@@ -282,198 +309,16 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
     );
   }
 
-  return { valid: profileValid && checks.length === 0, checks, mappedOperationIds };
-}
-
-/**
- * Validates a deliberately minimal, non-content Tavern operator observation record.
- * This checker cannot infer UI behavior. A valid mounted ComposedTavernProfile-derived,
- * independently supplied operation-to-evidence mapping removes only the mapping
- * blocker; it never turns static declarations into a release pass. Mapping
- * evidence may be automation evidence, but it is never accepted as the
- * operator observation record.
- */
-export async function runTavernReleaseLiveGate({
-  record,
-  profile = DEFAULT_TAVERN_RELEASE_PROFILE,
-  mountedProfile,
-  operationEvidenceMapping,
-  prerequisites = checkTavernReleasePrerequisites,
-} = {}) {
-  const checks = [];
-  const mappingBlocker = MOUNTED_PROFILE_MAPPING_BLOCKER;
-  const mapping = validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping });
-  if (!record || typeof record !== "object" || Array.isArray(record)) {
-    return {
-      gate: TAVERN_LIVE_GATE,
-      verdict: "inconclusive",
-       checks: [
-         { id: "operator_record", status: "blocked", detail: "operator_evidence_missing" },
-         ...mapping.checks,
-         ...(mapping.valid ? [] : [mappingBlocker]),
-       ],
-    };
-  }
-
-  check(
-    record.schema_version === TAVERN_LIVE_RECORD_SCHEMA_VERSION,
-    "record_schema",
-    "record_schema_version_invalid",
+  return {
+    valid: profileValid && checks.length === 0,
     checks,
-  );
-  const metadata = record.metadata;
-  const metadataFields = [
-    "run_id",
-    "operator_id",
-    "started_at",
-    "build_commit",
-    "release_profile_id",
-    "release_profile_hash",
-    "magic_context_vendor_hash",
-    "provider_configuration_id",
-    "compatibility_manifest_hash",
-    "semantic_reference_registry_hash",
-    "fixture_manifest_hash",
-    "companion_id",
-    "continuity_id",
-    "chat_thread_id",
-    "surface_session_id",
-  ];
-  check(
-    metadata && typeof metadata === "object" && !Array.isArray(metadata),
-    "record_metadata",
-    "record_metadata_missing",
-    checks,
-  );
-  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
-    check(
-      Object.keys(metadata).every((key) => metadataFields.includes(key)),
-      "record_metadata_shape",
-      "metadata_contains_unsupported_or_content_field",
-      checks,
-    );
-    for (const field of [
-      "run_id",
-      "operator_id",
-      "release_profile_id",
-      "provider_configuration_id",
-      "companion_id",
-      "continuity_id",
-      "chat_thread_id",
-      "surface_session_id",
-    ]) {
-      check(opaque(metadata[field]), `metadata_${field}`, `metadata_${field}_must_be_opaque_id`, checks);
-    }
-    check(
-      typeof metadata.started_at === "string" && !Number.isNaN(Date.parse(metadata.started_at)),
-      "metadata_started_at",
-      "metadata_started_at_invalid",
-      checks,
-    );
-    check(
-      typeof metadata.build_commit === "string" && COMMIT.test(metadata.build_commit),
-      "metadata_build_commit",
-      "metadata_build_commit_invalid",
-      checks,
-    );
-    for (const field of [
-      "release_profile_hash",
-      "magic_context_vendor_hash",
-      "compatibility_manifest_hash",
-      "semantic_reference_registry_hash",
-      "fixture_manifest_hash",
-    ]) {
-      check(
-        typeof metadata[field] === "string" && HASH.test(metadata[field]),
-        `metadata_${field}`,
-        `metadata_${field}_must_be_sha256`,
-        checks,
-      );
-    }
-  }
-
-  const observations = record.observations;
-  check(
-    Array.isArray(observations) && observations.length > 0,
-    "operator_observations",
-    "operator_observations_missing",
-    checks,
-  );
-  const seen = new Map();
-  if (Array.isArray(observations)) {
-    for (const observation of observations) {
-      const validShape =
-        observation &&
-        typeof observation === "object" &&
-        !Array.isArray(observation) &&
-        Object.keys(observation).every((key) =>
-          ["step_id", "outcome", "reason_category", "operator_observed_at", "evidence_ids"].includes(key),
-        );
-      check(validShape, "observation_shape", "observation_contains_unsupported_or_content_field", checks);
-      if (!validShape) continue;
-      check(opaque(observation.step_id), "observation_step", "observation_step_must_be_opaque_id", checks);
-      check(OUTCOMES.has(observation.outcome), "observation_outcome", "observation_outcome_invalid", checks);
-      check(
-        REASONS.has(observation.reason_category),
-        "observation_reason",
-        "observation_reason_category_invalid",
-        checks,
-      );
-      check(
-        typeof observation.operator_observed_at === "string" &&
-          !Number.isNaN(Date.parse(observation.operator_observed_at)),
-        "observation_timestamp",
-        "operator_observation_timestamp_invalid",
-        checks,
-      );
-      check(
-        Array.isArray(observation.evidence_ids) &&
-          observation.evidence_ids.length > 0 &&
-          observation.evidence_ids.every(opaque),
-        "observation_evidence",
-        "observation_evidence_must_be_nonempty_opaque_ids",
-        checks,
-      );
-      if (observation.outcome === "pass")
-        check(
-          observation.reason_category === "observed",
-          "pass_observation",
-          "pass_requires_direct_operator_observation",
-          checks,
-        );
-      if (observation.outcome === "not_applicable")
-        check(
-          observation.reason_category === "operation_not_declared",
-          "not_applicable_observation",
-          "not_applicable_requires_undeclared_operation",
-          checks,
-        );
-      if (seen.has(observation.step_id)) check(false, "observation_duplicate", "duplicate_step_observation", checks);
-      seen.set(observation.step_id, observation);
-    }
-  }
-  let prerequisiteReport;
-  try {
-    prerequisiteReport = await prerequisites({ profile });
-    check(
-      prerequisiteReport?.verdict === "passed",
-      "prerequisite_verdict",
-      "automated_prerequisite_not_passed",
-      checks,
-    );
-  } catch {
-    check(false, "prerequisite_verdict", "automated_prerequisite_unavailable", checks);
-  }
-
-   return {
-     gate: TAVERN_LIVE_GATE,
-     profile,
-     verdict: "inconclusive",
-     checks: [...checks, ...mapping.checks, ...(mapping.valid ? [] : [mappingBlocker])],
-     prerequisite: prerequisiteReport?.verdict ?? "unavailable",
-     mappedOperationIds: mapping.mappedOperationIds,
-     claims: { requiredMustFlowsExecuted: false, fullReleaseClaim: false },
-   };
+    // The keys of a caller-supplied mapping are untrusted until every one has
+    // passed membership validation. This report is written to disk and printed,
+    // and its content guard only screens eight fixed phrases, so an unvalidated
+    // key could smuggle arbitrary text into the evidence file. Project them only
+    // once the mapping is valid; otherwise report none.
+    mappedOperationIds: profileValid && checks.length === 0 ? mappedOperationIds : [],
+  };
 }
 
 function safeCode(value, fallback = "narrative_runner_internal_error") {
@@ -490,7 +335,9 @@ function contentFreeNarrativeSummary(role, value) {
     state,
     ...(typeof value.reasonCode === "string" ? { reasonCode: safeCode(value.reasonCode) } : {}),
   };
-  if (typeof value.runId === "string" && OPAQUE_ID.test(value.runId)) summary.runnerRunId = value.runId;
+  // Idempotent: an already-normalized run summary keeps its runner run ID.
+  const runId = typeof value.runId === "string" ? value.runId : value.runnerRunId;
+  if (typeof runId === "string" && OPAQUE_ID.test(runId)) summary.runnerRunId = runId;
   if (
     value.artifact &&
     typeof value.artifact === "object" &&
@@ -505,21 +352,26 @@ function contentFreeNarrativeSummary(role, value) {
     };
   }
   if (value.assertions && typeof value.assertions === "object" && !Array.isArray(value.assertions)) {
-    const assertionKeys = [
-      "authenticatedReferenceChatApi",
-      "realDialogueTurnAttempted",
-      "providerRuntimeSessionBound",
-      "providerPreSendSerialized",
-      "realTurnOutcomeObserved",
-    ];
     summary.assertions = Object.fromEntries(
-      assertionKeys.filter((key) => typeof value.assertions[key] === "boolean").map((key) => [key, value.assertions[key]]),
+      RUN_EVIDENCE_ASSERTIONS.filter((key) => typeof value.assertions[key] === "boolean").map((key) => [
+        key,
+        value.assertions[key],
+      ]),
     );
   }
   if (value.statuses && typeof value.statuses === "object" && !Array.isArray(value.statuses)) {
     if (typeof value.statuses.turn === "string") summary.turn = safeCode(value.statuses.turn, "unavailable");
   }
   return summary;
+}
+
+function genuineRunEvidence(summary) {
+  return (
+    summary?.state === "passed" &&
+    summary.artifact?.generation !== undefined &&
+    summary.artifact?.inventoryDigest !== undefined &&
+    RUN_EVIDENCE_ASSERTIONS.every((key) => summary.assertions?.[key] === true)
+  );
 }
 
 async function runNarrativeProcess({ role, reportPath, spawnProcess = spawn } = {}) {
@@ -577,11 +429,94 @@ function prerequisiteSummary(report) {
 }
 
 /**
- * Runs a small real-run evidence slice. The run labels describe attempts only;
- * they never assert that a failure occurred or that recovery resumed a thread.
+ * The single Chat/Tavern release verdict, derived from evidence and never
+ * asserted. A `passed` verdict requires all three of:
+ *
+ * - the automated prerequisites genuinely pass for this profile;
+ * - every planned real narrative run carries its own production artifact
+ *   identity and an observed real embedded provider turn;
+ * - the mounted ComposedTavernProfile operation-to-evidence mapping validates.
+ *
+ * No operator record participates. A caller-supplied record or observation list
+ * is ignored, and no field of this report can carry dialogue, prompts,
+ * credentials, UI text or paths: evidence is opaque by construction.
+ */
+export async function runTavernReleaseLiveGate({
+  profile = DEFAULT_TAVERN_RELEASE_PROFILE,
+  mountedProfile,
+  operationEvidenceMapping,
+  runs,
+  prerequisites = checkTavernReleasePrerequisites,
+} = {}) {
+  const checks = [];
+  const mapping = validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping });
+  if (!mapping.valid) checks.push(...mapping.checks, MOUNTED_PROFILE_MAPPING_BLOCKER);
+
+  let prerequisiteReport;
+  try {
+    prerequisiteReport = await prerequisites({ profile });
+  } catch {
+    prerequisiteReport = undefined;
+  }
+  const prerequisitesPassed = prerequisiteReport?.verdict === "passed";
+  if (!prerequisitesPassed) {
+    checks.push({
+      id: "prerequisite_verdict",
+      status: "blocked",
+      detail:
+        prerequisiteReport === undefined ? "automated_prerequisite_unavailable" : "automated_prerequisite_not_passed",
+    });
+  }
+
+  const runEvidence = NARRATIVE_RUN_PLAN.map((role) => {
+    const supplied = Array.isArray(runs) ? runs.find((run) => run?.role === role) : undefined;
+    return supplied === undefined
+      ? { role, state: "blocked", reasonCode: "narrative_run_not_executed" }
+      : contentFreeNarrativeSummary(role, supplied);
+  });
+  const runsComplete = runEvidence.every(genuineRunEvidence);
+  // When the prerequisites already fail, that blocker is the whole reason: no
+  // run was supposed to have been attempted, and reporting a run blocker would
+  // misattribute the cause.
+  if (prerequisitesPassed && !runsComplete) {
+    checks.push({ id: "narrative_runs", status: "blocked", detail: "narrative_run_evidence_incomplete" });
+  }
+
+  const verdict = !prerequisitesPassed ? "blocked" : runsComplete && mapping.valid ? "passed" : "inconclusive";
+
+  return {
+    gate: TAVERN_LIVE_GATE,
+    profile,
+    verdict,
+    ...(verdict === "passed"
+      ? {}
+      : {
+          reasonCode: !prerequisitesPassed
+            ? checks.find((check) => check.id === "prerequisite_verdict").detail
+            : !runsComplete
+              ? "narrative_run_evidence_incomplete"
+              : "mounted_profile_operation_evidence_unavailable",
+        }),
+    claims: RELEASE_SCOPE_CLAIMS,
+    checks,
+    prerequisite: prerequisiteReport?.verdict ?? "unavailable",
+    mappedOperationIds: mapping.mappedOperationIds,
+    runEvidence,
+    blockerIds: [...new Set(checks.map((check) => check.id))],
+  };
+}
+
+/**
+ * Drives the planned real-run evidence slice and delegates the verdict to the
+ * single release gate above. The run labels describe attempts only; they never
+ * assert that a failure occurred or that recovery resumed a thread. No narrative
+ * work runs once an automated prerequisite is failing: `blocked` is never
+ * papered over with attempts.
  */
 export async function runTavernReleaseLiveOrchestrator({
   profile = DEFAULT_TAVERN_RELEASE_PROFILE,
+  mountedProfile,
+  operationEvidenceMapping,
   prerequisites = checkTavernReleasePrerequisites,
   runNarrative = runNarrativeProcess,
   temporaryReportPath,
@@ -590,126 +525,118 @@ export async function runTavernReleaseLiveOrchestrator({
   try {
     prerequisiteReport = await prerequisites({ profile });
   } catch {
-    prerequisiteReport = { verdict: "blocked", checks: [{ id: "checker_execution", status: "blocked" }] };
+    prerequisiteReport = undefined;
   }
-  const prerequisite = prerequisiteSummary(prerequisiteReport);
-  const base = {
-    gate: ORCHESTRATOR_SCHEMA,
-    profile,
-    plannedRunKinds: [...NARRATIVE_RUN_PLAN],
-    claims: {
-      requiredMustFlowsExecuted: false,
-      fullReleaseClaim: false,
-    },
-    prerequisite,
-    releaseGate: {
-      verdict: "inconclusive",
-      blockerIds: ["operator_record", MOUNTED_PROFILE_MAPPING_BLOCKER.id],
-    },
-  };
-  if (prerequisite.verdict !== "passed") {
-    return { ...base, verdict: "blocked", runs: [], reasonCode: "automated_prerequisite_not_passed" };
-  }
+  const prerequisite =
+    prerequisiteReport === undefined
+      ? { verdict: "blocked", checks: [{ id: "checker_execution", status: "blocked" }] }
+      : prerequisiteSummary(prerequisiteReport);
 
+  const runs = [];
   let temporaryRoot;
   let reportRoot = temporaryReportPath;
-  if (reportRoot === undefined) {
-    temporaryRoot = await mkdtemp(join(tmpdir(), "gamebuddy-tavern-release-live-"));
-    reportRoot = (role) => join(temporaryRoot, `${role}.json`);
-  }
   try {
-    const runs = [];
-    for (const role of NARRATIVE_RUN_PLAN) {
-      try {
-        const value = await runNarrative({ role, profile, reportPath: reportRoot(role) });
-        runs.push(contentFreeNarrativeSummary(role, value));
-      } catch {
-        runs.push({ role, state: "blocked", reasonCode: "narrative_runner_internal_error" });
+    if (prerequisite.verdict === "passed") {
+      if (reportRoot === undefined) {
+        temporaryRoot = await mkdtemp(join(tmpdir(), "gamebuddy-tavern-release-live-"));
+        reportRoot = (role) => join(temporaryRoot, `${role}.json`);
+      }
+      for (const role of NARRATIVE_RUN_PLAN) {
+        try {
+          runs.push(contentFreeNarrativeSummary(role, await runNarrative({ role, profile, reportPath: reportRoot(role) })));
+        } catch {
+          runs.push({ role, state: "blocked", reasonCode: "narrative_runner_internal_error" });
+        }
       }
     }
-    return {
-      ...base,
-      verdict: "inconclusive",
-      runs,
-      reasonCode: "mounted_profile_operation_evidence_unavailable",
-    };
   } finally {
     if (temporaryRoot !== undefined) await rm(temporaryRoot, { recursive: true, force: true });
   }
+
+  const gate = await runTavernReleaseLiveGate({
+    profile,
+    mountedProfile,
+    operationEvidenceMapping,
+    runs,
+    // This invocation's prerequisite report is already authoritative. The gate
+    // must not re-execute it: the checker builds and runs real test suites.
+    prerequisites: async () => prerequisiteReport,
+  });
+
+  return {
+    gate: ORCHESTRATOR_SCHEMA,
+    profile,
+    plannedRunKinds: [...NARRATIVE_RUN_PLAN],
+    prerequisite,
+    runs,
+    mappedOperationIds: gate.mappedOperationIds,
+    verdict: gate.verdict,
+    blockerIds: gate.blockerIds,
+    ...(gate.reasonCode === undefined ? {} : { reasonCode: gate.reasonCode }),
+    claims: gate.claims,
+  };
 }
 
-function parseArguments(input) {
-  if (input[0] === "--record" && input[1]) {
-    let profile = DEFAULT_TAVERN_RELEASE_PROFILE;
-    const recordPath = input[1];
-    let mountedProfilePath;
-    let mappingPath;
-    for (let index = 2; index < input.length; index += 2) {
-      const flag = input[index];
-      const value = input[index + 1];
-      if (!["--profile", "--mounted-profile", "--operation-mapping"].includes(flag) || typeof value !== "string" || value.length === 0)
-        throw new Error("usage: node tools/run-tavern-release-live-gate.mjs --record <record.json> [--profile <profile>] [--mounted-profile <profile.json>] [--operation-mapping <mapping.json>]");
-      if (flag === "--profile") profile = value;
-      else if (flag === "--mounted-profile") mountedProfilePath = resolve(value);
-      else mappingPath = resolve(value);
+export function parseArguments(input) {
+  if (input[0] !== "--orchestrate") throw new Error(ORCHESTRATOR_USAGE);
+  let profile = DEFAULT_TAVERN_RELEASE_PROFILE;
+  let reportPath;
+  let mountedProfilePath;
+  let operationEvidenceMappingPath;
+  const seen = new Set(["--orchestrate"]);
+  for (let index = 1; index < input.length; index += 2) {
+    const flag = input[index];
+    const value = input[index + 1];
+    if (
+      !["--profile", "--report", "--mounted-profile", "--operation-evidence-mapping"].includes(flag) ||
+      typeof value !== "string" ||
+      value.length === 0
+    ) {
+      throw new Error(ORCHESTRATOR_USAGE);
     }
-    return Object.freeze({ mode: "record", path: recordPath, profile, mountedProfilePath, mappingPath });
+    if (seen.has(flag)) throw new Error(`duplicate_${flag.slice(2).replaceAll("-", "_")}`);
+    seen.add(flag);
+    if (flag === "--profile") profile = value;
+    else if (flag === "--report") reportPath = resolve(value);
+    else if (flag === "--mounted-profile") mountedProfilePath = resolve(value);
+    else operationEvidenceMappingPath = resolve(value);
   }
-  if (input[0] === "--orchestrate") {
-    let profile = DEFAULT_TAVERN_RELEASE_PROFILE;
-    let profileProvided = false;
-    let reportPath;
-    for (let index = 1; index < input.length; index += 2) {
-      const flag = input[index];
-      const value = input[index + 1];
-      if ((flag !== "--profile" && flag !== "--report") || typeof value !== "string" || value.length === 0) {
-        throw new Error(
-          "usage: node tools/run-tavern-release-live-gate.mjs --record <privacy-safe-record.json> | --orchestrate [--profile <profile>] [--report <path>]",
-        );
-      }
-      if (flag === "--profile") {
-        if (profileProvided) throw new Error("duplicate_profile");
-        profileProvided = true;
-        profile = value;
-      } else {
-        if (reportPath !== undefined) throw new Error("duplicate_report");
-        reportPath = resolve(value);
-      }
-    }
-    return Object.freeze({ mode: "orchestrate", profile, reportPath });
-  }
-  throw new Error(
-    "usage: node tools/run-tavern-release-live-gate.mjs --record <privacy-safe-record.json> | --orchestrate [--profile <profile>] [--report <path>]",
-  );
+  return Object.freeze({ profile, reportPath, mountedProfilePath, operationEvidenceMappingPath });
+}
+
+async function readOptionalJson(path) {
+  return path === undefined ? undefined : JSON.parse(await readFile(path, "utf8"));
 }
 
 async function main() {
   const arguments_ = parseArguments(process.argv.slice(2));
-  if (arguments_.mode === "record") {
-    const record = JSON.parse(await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", arguments_.path), "utf8"));
-    const mountedProfile = arguments_.mountedProfilePath === undefined ? undefined : JSON.parse(await readFile(arguments_.mountedProfilePath, "utf8"));
-    const operationEvidenceMapping = arguments_.mappingPath === undefined ? undefined : JSON.parse(await readFile(arguments_.mappingPath, "utf8"));
-    const report = await runTavernReleaseLiveGate({ record, profile: arguments_.profile, mountedProfile, operationEvidenceMapping });
-    console.log(JSON.stringify(report, null, 2));
-    if (report.verdict !== "passed") process.exitCode = 2;
-    return;
-  }
-
   const reportTarget = await prepareReportTarget(arguments_.reportPath);
-  const report = await runTavernReleaseLiveOrchestrator({ profile: arguments_.profile });
+  const mountedProfile = await readOptionalJson(arguments_.mountedProfilePath);
+  const operationEvidenceMapping = await readOptionalJson(arguments_.operationEvidenceMappingPath);
+  const report = await runTavernReleaseLiveOrchestrator({
+    profile: arguments_.profile,
+    mountedProfile,
+    operationEvidenceMapping,
+  });
   await writeReport(reportTarget, report);
   console.log(JSON.stringify(report, null, 2));
-  process.exitCode = 2;
+  if (report.verdict !== "passed") process.exitCode = 2;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
+    // A parse or read failure message can echo file content or an absolute
+    // path, so only a bounded reason code ever reaches the console.
     console.log(
       JSON.stringify(
         {
           gate: TAVERN_LIVE_GATE,
           verdict: "inconclusive",
-          checks: [{ id: "runner_execution", status: "blocked", detail: error.message }],
+          reasonCode: safeCode(
+            error instanceof Error ? error.message : error,
+            "tavern_release_live_gate_runner_failed",
+          ),
+          checks: [{ id: "runner_execution", status: "blocked", detail: "tavern_release_live_gate_runner_failed" }],
         },
         null,
         2,

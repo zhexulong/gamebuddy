@@ -121,3 +121,40 @@ export async function readAllPublishedExecutionStardewActionIds(options) {
   const gated = await readPublishedStardewActionIds(options);
   return Object.freeze([...gated, ...GATE_EXEMPT_PUBLISHED_ACTIONS.map((entry) => entry.actionId)]);
 }
+
+/**
+ * The Mod registrations whose lifecycle is exactly `Experimental`.
+ *
+ * This is the only thing a fixture may name in `ExperimentalActions`: a policy
+ * that lists a registration the catalog already promoted is rejected by
+ * `ActionPolicyEngine.ValidateActionPolicy`, which fails the whole Mod config.
+ * Reading the catalog keeps the list from going stale the way the hand-written
+ * one did (all 17 of its entries had been promoted before anyone noticed).
+ */
+export async function readExperimentalStardewActionIds({
+  registrationsPath = resolve(
+    root,
+    "integrations",
+    "stardew",
+    "src",
+    "Core",
+    "Policy",
+    "FarmhandActionDefinitions.cs",
+  ),
+} = {}) {
+  const source = await readFile(registrationsPath, "utf8");
+  const body = source.match(
+    /\bRegistrations\b\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/,
+  )?.[1];
+  if (!body) fail("missing_mod_registrations");
+
+  const ids = [];
+  for (const entry of body.split(/(?=\b(?:E|R|Registration)\()/)) {
+    const match = entry.match(/\b(?:E|Registration)\(\s*"([a-z][a-z0-9_]{1,127})"/);
+    if (!match) continue;
+    if (!entry.includes("FarmhandActionLifecycle.Experimental")) continue;
+    ids.push(match[1]);
+  }
+  if (ids.length === 0 || new Set(ids).size !== ids.length) fail("invalid_experimental_set");
+  return Object.freeze(ids);
+}

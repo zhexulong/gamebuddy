@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runTravelMinecartSmoke } from "./run-stardew-native-local-player-travel-minecart-smoke.mjs";
+import { runRideMinecartSmoke } from "./run-stardew-native-local-player-ride-minecart-smoke.mjs";
 
-const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel"];
+const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "ride_minecart"];
 
 function fixtureConfig(overrides = {}) {
   return {
@@ -37,10 +37,10 @@ function createFake({
   location: initialLocation = "Farm",
   minecartTargets = [RIDE],
   capabilities = CAPABILITIES,
-  travelState = "succeeded",
-  travelReason = "travel_completed",
-  travelEvidence = "expected=BusStop:20,12;actual=BusStop:20,12;network=Default;destination=BusStop",
-  travelTarget = { location: "BusStop", tile: { x: 20, y: 12 } },
+  rideState = "succeeded",
+  rideReason = "minecart_ride_completed",
+  rideEvidence = "expected=BusStop:20,12;actual=BusStop:20,12;network=Default;destination=BusStop",
+  rideTarget = { location: "BusStop", tile: { x: 20, y: 12 } },
   reuseStationCheck = false,
 } = {}) {
   const listeners = new Set();
@@ -68,13 +68,13 @@ function createFake({
         publish({ ...receipt, state: "succeeded", reasonCode: "target_reached", revision });
         return receipt;
       }
-      if (action === "travel") {
+      if (action === "ride_minecart") {
         revision += 1;
         const receipt = { requestId, executionId, state: "accepted", reasonCode: "accepted", revision };
         publish(receipt);
-        if (travelState === "succeeded") {
-          location = travelTarget.location;
-          tile = { ...travelTarget.tile };
+        if (rideState === "succeeded") {
+          location = rideTarget.location;
+          tile = { ...rideTarget.tile };
         }
         if (reuseStationCheck) {
           // The Mod re-derives everything from the live world, so a forged or
@@ -83,10 +83,10 @@ function createFake({
           return receipt;
         }        publish({
           ...receipt,
-          state: travelState,
-          reasonCode: travelReason,
+          state: rideState,
+          reasonCode: rideReason,
           revision,
-          evidence: { detail: travelEvidence },
+          evidence: { detail: rideEvidence },
         });
         return receipt;
       }
@@ -110,16 +110,16 @@ function withReceipts(client) {
 
 test("minecart runner passes when already adjacent to the station", async () => {
   const client = createFake();
-  const result = await runTravelMinecartSmoke(client, withReceipts(client), fixtureConfig());
+  const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
   assert.equal(result.state, "passed");
-  assert.equal(result.reasonCode, "minecart_travel_completed");
-  assert.equal(result.receipt.reasonCode, "travel_completed");
+  assert.equal(result.reasonCode, "minecart_ride_completed");
+  assert.equal(result.receipt.reasonCode, "minecart_ride_completed");
   assert.equal(result.objectiveNamed, true);
   assert.equal(result.after.location, "BusStop");
   assert.deepEqual(result.after.tile, { x: 20, y: 12 });
   assert.deepEqual(
     result.trace.map((entry) => entry.action),
-    ["travel"],
+    ["ride_minecart"],
   );
   assert.deepEqual(result.trace[0].args, {
     x: 10,
@@ -130,57 +130,68 @@ test("minecart runner passes when already adjacent to the station", async () => 
 
 test("minecart runner moves to the station before riding", async () => {
   const client = createFake({ tile: { x: 3, y: 3 } });
-  const result = await runTravelMinecartSmoke(client, withReceipts(client), fixtureConfig());
+  const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
   assert.equal(result.state, "passed");
   assert.deepEqual(
     result.trace.map((entry) => entry.action),
-    ["move_to_tile", "travel"],
+    ["move_to_tile", "ride_minecart"],
   );
 });
 
 test("minecart runner blocks when the ride does not arrive at the objective tile", async () => {
-  const client = createFake({ travelTarget: { location: "BusStop", tile: { x: 20, y: 13 } } });
-  const result = await runTravelMinecartSmoke(client, withReceipts(client), fixtureConfig());
+  const client = createFake({ rideTarget: { location: "BusStop", tile: { x: 20, y: 13 } } });
+  const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "minecart_travel_postcondition_mismatch");
+  assert.equal(result.reasonCode, "minecart_ride_postcondition_mismatch");
 });
 
 test("minecart runner blocks when the receipt does not name the objective", async () => {
   const client = createFake({
-    travelEvidence: "expected=BusStop:20,12;actual=BusStop:20,12",
+    rideEvidence: "expected=BusStop:20,12;actual=BusStop:20,12",
   });
-  const result = await runTravelMinecartSmoke(client, withReceipts(client), fixtureConfig());
+  const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "minecart_travel_postcondition_mismatch");
+  assert.equal(result.reasonCode, "minecart_ride_postcondition_mismatch");
   assert.equal(result.objectiveNamed, false);
 });
 
 test("minecart runner blocks when the Mod refuses a stale objective", async () => {
   const client = createFake({ reuseStationCheck: true });
-  const result = await runTravelMinecartSmoke(client, withReceipts(client), fixtureConfig());
+  const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "minecart_travel_failed:minecart_target_changed");
+  assert.equal(result.reasonCode, "minecart_ride_failed:minecart_target_changed");
 });
 
 test("minecart runner blocks when no objective is advertised", async () => {
   const client = createFake({ minecartTargets: [] });
-  const result = await runTravelMinecartSmoke(client, withReceipts(client), fixtureConfig());
+  const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
   assert.equal(result.state, "blocked");
   assert.equal(result.reasonCode, "no_safe_live_minecart_objective");
 });
 
-test("minecart runner blocks on a non-isolated capability surface", async () => {
+test("minecart runner blocks when a required capability is missing", async () => {
+  // The Mod's surface is deny-by-exception, so the runner asserts the required
+  // subset. A surface that has dropped the action under test must still fail.
   const client = createFake({ capabilities: ["cancel_active_execution", "inspect_self", "move_to_tile"] });
-  const result = await runTravelMinecartSmoke(client, withReceipts(client), fixtureConfig());
+  const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "native_capability_surface_mismatch");
+  assert.equal(result.reasonCode, "native_required_capability_missing:ride_minecart");
   assert.equal(result.trace.length, 0);
+});
+
+test("minecart runner accepts a larger advertised surface than the fixture needs", async () => {
+  const client = createFake({
+    capabilities: [...CAPABILITIES, "craft_item", "advance_day"],
+  });
+  const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
+  assert.equal(result.state, "passed");
+  assert.equal(result.reasonCode, "minecart_ride_completed");
 });
 
 test("minecart runner rejects a non-isolated topology", async () => {
   const client = createFake();
   await assert.rejects(
-    runTravelMinecartSmoke(client, [], fixtureConfig({ Portfolio: { Enable: true } })),
+    runRideMinecartSmoke(client, [], fixtureConfig({ Portfolio: { Enable: true } })),
     (error) => error?.message === "native_local_fixture_topology_not_isolated",
   );
 });

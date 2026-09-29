@@ -36,9 +36,10 @@ function assertProfile(profile) {
 /**
  * Convert independently captured, content-free UI operation outcomes into the
  * release gate's operation mapping. This tool never records titles, memory
- * content, prompts, URLs, cookies, or operator identity. It also deliberately
- * does not create an operator record: automation evidence cannot substitute
- * for direct operator observation.
+ * content, prompts, URLs, cookies, or operator identity. It also creates no
+ * operator record, because the gate does not require one: the mapping it emits
+ * is the gate's operation evidence, and the gate's verdict comes from the
+ * authenticated live run itself.
  *
  * Input shape:
  * { profile: <ComposedTavernProfile>, operations: [{ operationId, outcome, projectionRevision? }] }

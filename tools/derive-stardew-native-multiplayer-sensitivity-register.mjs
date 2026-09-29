@@ -116,6 +116,17 @@ const TABLE = {
   // behaviour could differ, so no native seam exists to classify.
   move_to_tile: ["mod_owned", "StardewBodyController"],
   travel: ["mod_owned", "StardewBodyController"],
+  // The minecart ride's native seam is `GameLocation.MinecartWarp`, which is a
+  // thin wrapper over the same `Game1.warpFarmer` machinery `enter_exit` uses:
+  // it reads no multiplayer token, and the destination's TargetLocation/
+  // TargetTile come from the game's own Data/Minecarts, so the ride and its
+  // landing tile are identical in both world modes.
+  ride_minecart: [
+    "StardewValley/GameLocation.cs",
+    "public void MinecartWarp(MinecartDestinationData destination)",
+    "mp-insensitive",
+    "MinecartWarp only calls Game1.player.Halt(), sets freezePause, and calls Game1.warpFarmer(name, x, y, direction); the destination and its target tile come from the game's own Data/Minecarts and the warp machinery is the one enter_exit already classifies as mode-neutral",
+  ],
   navigate_to_destination: ["mod_owned", "StardewBodyController"],
   face_direction: ["mod_owned", "StardewBodyController"],
   express_emote: ["mod_owned", "Farmer.doEmote"],

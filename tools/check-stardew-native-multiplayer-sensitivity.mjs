@@ -109,6 +109,11 @@ const NATIVE_AUTO_COLLECT_MARKER = /native_auto_collect=true/;
  */
 const MOD_WRAPPER_TO_SEAM = Object.freeze([
   ["PlaceQualifiedWoodFenceNative", "placementAction"],
+  // `RequestLocalMinecartRide` delegates the native ride to `RideMinecart`, whose
+  // only native call is `GameLocation.MinecartWarp`. The wrapper exists because it
+  // also applies the ticket price transaction the native menu path documents, so
+  // the handler body alone never names the seam.
+  ["RideMinecart", "MinecartWarp"],
   // `RequestLocalAdvanceDay` hands the night to `SleepAndAdvanceDayLifecycle`,
   // which answers the game-owned Sleep question (`GameLocation.answerDialogue`)
   // exactly as the native input paths do. `answerDialogue` itself reads no
