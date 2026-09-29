@@ -16,8 +16,9 @@ function fixtureConfig(overrides = {}) {
     HostAutomation: { Enable: false },
     HostFarmhandProvisioning: { Enable: false },
     FarmhandProvisioner: { Enable: false },
-    ActionPolicyVersion: 0,
-    EnabledActions: ["move_to_tile", "travel", "equip_tool", "till_soil"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
     ...overrides,
   };
 }
@@ -48,7 +49,7 @@ function createFake() {
       const executionId = `execution-${action}`;
       if (action === "equip_tool") {
         revision += 1;
-        return { requestId, executionId, state: "succeeded", reasonCode: "tool_selected", revision };
+        return { requestId, executionId, state: "succeeded", reasonCode: "tool_equipped", revision };
       }
       if (action === "till_soil") {
         revision += 1;
@@ -96,7 +97,7 @@ test("till-soil runner passes with a reachable bare soil tile", async () => {
 test("till-soil runner rejects a non-isolated action policy", async () => {
   const client = createFake();
   await assert.rejects(
-    runTillSoilSmoke(client, [], fixtureConfig({ EnabledActions: ["till_soil"] })),
-    (error) => error?.message === "native_local_till_soil_action_policy_invalid",
+    runTillSoilSmoke(client, [], fixtureConfig({ DeniedActions: ["till_soil"] })),
+    (error) => error?.message?.startsWith("native_fixture_policy_denies_required"),
   );
 });
