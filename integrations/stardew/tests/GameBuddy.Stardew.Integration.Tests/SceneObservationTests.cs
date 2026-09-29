@@ -248,6 +248,81 @@ public sealed class SceneObservationTests
     private static SceneObservationContext Context(long observationSequence) =>
         new("runtime_01", Scope, "Farm", 0, observationSequence);
 
+    // The 20-item and 2048-byte ceilings were introduced together with no
+    // derivation (ee08a2b). Measured against real scanner output, the byte
+    // ceiling binds at ~13-16 items, so the advertised 20-item budget is
+    // unreachable: the Agent never sees the last third of the intended budget,
+    // and `truncatedReason` can essentially only ever be `payload_limit`. These
+    // tests pin the actual relationship so the two ceilings cannot silently
+    // drift apart again, and so re-deriving one requires re-deriving the other.
+    [Fact]
+    public void Observe_RealisticScenePublishesMoreThanHalfTheAdvertisedItemBudget()
+    {
+        var store = new SceneObservationStore();
+        SceneObservationContext context = Context(observationSequence: 9);
+        var projection = new SceneObservationProjection(store);
+
+        // A busy farm with every kind present at, or below, its per-kind density
+        // cap, so the shared ceilings are the only thing that can truncate.
+        SceneAffordanceKind[] kinds =
+        {
+            SceneAffordanceKind.Tree, SceneAffordanceKind.Tree, SceneAffordanceKind.Tree,
+            SceneAffordanceKind.Weed, SceneAffordanceKind.Weed, SceneAffordanceKind.Weed,
+            SceneAffordanceKind.Stone, SceneAffordanceKind.Stone, SceneAffordanceKind.Stone,
+            SceneAffordanceKind.Animal, SceneAffordanceKind.Animal, SceneAffordanceKind.Animal,
+            SceneAffordanceKind.Crop, SceneAffordanceKind.Crop, SceneAffordanceKind.Crop,
+            SceneAffordanceKind.Crop, SceneAffordanceKind.Chest, SceneAffordanceKind.Chest,
+            SceneAffordanceKind.Machine, SceneAffordanceKind.Machine, SceneAffordanceKind.Machine,
+            SceneAffordanceKind.Forage, SceneAffordanceKind.Forage, SceneAffordanceKind.Forage,
+            SceneAffordanceKind.Debris, SceneAffordanceKind.Npc, SceneAffordanceKind.Npc,
+            SceneAffordanceKind.WaterSource, SceneAffordanceKind.Door, SceneAffordanceKind.Door,
+        };
+        SceneAffordanceSource[] candidates = kinds
+            .Select((kind, index) => Candidate(kind, kind.ToString(), $"{kind.ToString().ToLowerInvariant()}_{index:00}", 10 + (index % 5), 10 + (index % 9)))
+            .ToArray();
+
+        SceneObservationProjectionResult result = projection.Observe(
+            context,
+            new SceneObservationInput("Farm", 10, 10, candidates));
+
+        result.IsValid.Should().BeTrue();
+        result.PayloadUtf8Bytes.Should().BeLessOrEqualTo(SceneObservationProjection.MaximumPayloadUtf8Bytes);
+        // Documents the real bound rather than the nominal one. If the byte
+        // ceiling is ever re-derived, this number moves with it deliberately.
+        result.Affordances.Should().HaveCountGreaterThanOrEqualTo(12,
+            "a realistic bounded scene must not lose most of the advertised item budget to the byte ceiling");
+    }
+
+    [Fact]
+    public void Observe_ByteCeilingBindsBeforeTheItemCeiling()
+    {
+        var store = new SceneObservationStore();
+        SceneObservationContext context = Context(observationSequence: 10);
+        var projection = new SceneObservationProjection(store);
+
+        // Realistic names and hints, not padded ones: the point is to show the
+        // real cost, so a pathological input would prove the wrong thing.
+        SceneAffordanceSource[] candidates = Enumerable.Range(0, SceneObservationProjection.MaximumAffordances)
+            .Select(index => new SceneAffordanceSource(
+                SceneAffordanceKind.Forage,
+                "Wild Horseradish",
+                $"forage_{index:00}",
+                "Farm",
+                10,
+                10 + index,
+                "pickup_forage"))
+            .ToArray();
+
+        SceneObservationProjectionResult result = projection.Observe(
+            context,
+            new SceneObservationInput("Farm", 10, 10, candidates));
+
+        result.IsPartial.Should().BeTrue();
+        result.TruncatedReason.Should().Be("payload_limit");
+        result.Affordances.Should().HaveCountLessThan(SceneObservationProjection.MaximumAffordances,
+            "the byte ceiling, not the item ceiling, is what actually bounds real output");
+    }
+
     private static SceneAffordanceSource Candidate(
         SceneAffordanceKind kind,
         string name,
