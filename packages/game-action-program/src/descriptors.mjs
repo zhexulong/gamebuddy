@@ -7,7 +7,10 @@ const RESOURCE_TEMPLATE_KEYS = new Set(["claims"]);
 const RESOURCE_CLAIM_KEYS = new Set(["key", "value"]);
 const POSTCONDITION_KEYS = new Set(["name"]);
 const VALUE_TYPES = new Set(["string", "integer", "boolean", "object", "destination_selector", "destination_arrival"]);
-const LIFECYCLES = new Set(["published", "experimental"]);
+// Three-rung ladder shared with the Mod authority: experimental -> live_verified
+// -> published. `live_verified` records that the action already passed a real run
+// on its required topology; omitting it here rejects the Mod's own projection.
+const LIFECYCLES = new Set(["published", "live_verified", "experimental"]);
 const KINDS = new Set(["execution", "read_only"]);
 const EFFECTS = new Set(["read", "write"]);
 const RESOURCE_TEMPLATE_VALUES = new Set(["ScopePlayer"]);
