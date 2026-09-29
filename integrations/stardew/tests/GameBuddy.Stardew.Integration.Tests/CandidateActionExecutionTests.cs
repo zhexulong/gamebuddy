@@ -15,11 +15,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class CandidateActionExecutionTests
 {
     [Fact]
-    public void Catalog_RegistersExpressEmote_AsExperimentalWithCorrectDescriptor()
+    public void Catalog_RegistersExpressEmote_AsLiveVerifiedWithCorrectDescriptor()
     {
         var reg = FarmhandActionCatalog.Registrations.Single(r => r.ActionId == "express_emote");
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Expression);
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Descriptor.Should().NotBeNull();
         reg.Descriptor!.Postcondition.Should().Be("emote_started");
         reg.Descriptor.NativeBinding.Should().Be("Farmer.doEmote");
@@ -30,11 +30,11 @@ public sealed class CandidateActionExecutionTests
     }
 
     [Fact]
-    public void Catalog_RegistersFaceDirection_AsExperimentalWithCorrectDescriptor()
+    public void Catalog_RegistersFaceDirection_AsLiveVerifiedWithCorrectDescriptor()
     {
         var reg = FarmhandActionCatalog.Registrations.Single(r => r.ActionId == "face_direction");
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Movement);
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Descriptor.Should().NotBeNull();
         reg.Descriptor!.Postcondition.Should().Be("actor_facing_matches");
         reg.Descriptor.NativeBinding.Should().Be("Farmer.faceDirection");

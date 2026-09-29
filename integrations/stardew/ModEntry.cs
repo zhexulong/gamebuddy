@@ -248,7 +248,7 @@ public sealed partial class ModEntry : Mod
         if (!this.config.HasValidActionPolicy)
         {
             this.provisioningConfigurationRejected = true;
-            this.Monitor.Log("GameBuddy rejected Stardew Game Action policy: use ActionPolicyVersion 1 with known DeniedActions/DeniedActionFamilies, or an explicit legacy EnabledActions configuration.", LogLevel.Error);
+            this.Monitor.Log("GameBuddy rejected Stardew Game Action policy: DeniedActions/DeniedActionFamilies must name registrations the Mod catalog defines, and ExperimentalActions may only name registrations whose lifecycle is experimental.", LogLevel.Error);
             return;
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
@@ -792,11 +792,12 @@ public sealed partial class ModEntry : Mod
             // fixture bootstrap handoff so presentation locale stays aligned
             // with the Agent session locale after the save is recorded.
             PresentationLocale = this.config.PresentationLocale,
-            ActionPolicyVersion = 0,
-            DeniedActions = new List<string>(),
-            DeniedActionFamilies = new List<string>(),
-            ExperimentalActions = new List<string>(),
-            EnabledActions = this.config.EnabledActions,
+            // Carry the live deny-by-exception policy across the fixture
+            // bootstrap handoff. The policy is now derived from the Mod's own
+            // registration catalog, so there is no allowlist to preserve.
+            DeniedActions = new List<string>(this.config.DeniedActions),
+            DeniedActionFamilies = new List<string>(this.config.DeniedActionFamilies),
+            ExperimentalActions = new List<string>(this.config.ExperimentalActions),
         };
         this.Helper.WriteConfig(this.config);
         this.nativeLocalPlayerFixtureBootstrapTerminal = true;
