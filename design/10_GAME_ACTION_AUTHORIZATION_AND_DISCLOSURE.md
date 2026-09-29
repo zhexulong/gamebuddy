@@ -320,23 +320,29 @@ Agent
 
 ### 6.1 Registry 元数据
 
-每个已发布 action 至少包含：
+> **2026-09-29 收窄：** 旧的 13 字段 `PublishedAction` 类型已被废弃。它要求 hand-typed 登记
+> 一份代码本来就有的事实，而事实一旦被抄进登记表就必然与代码漂移（`ModConfig` 的硬编码
+> 名单已经证明过这一点）。`contextTags` 与 `lifecycle: "instant" | "async"` 全仓不存在，
+> 属于无效字段。
+
+**Registry 是派生投影，不是手写登记表。** 每个已发布 action 的绝大部分字段来自代码本身：
+
+| 元数据 | 来源（可派生） |
+|---|---|
+| `actionId` / `familyId` / `identityVersion` | `FarmhandActionCatalog.Registrations`（C# 单一权威） |
+| `status` (`published`/`live_verified`/`experimental`/`diagnostic`/`retired`) | 同一个 registration 的 `lifecycle` |
+| `description` / `targetKinds` / `requiredModCapability` | `host/src/action-registry.ts` 的 `actionAdapter(...)` |
+| `schemaVersion` | registration 的 `identityVersion` |
+| `supportsCancellation` | handler 是否登记 active slot —— 同步终态动作（如 `express_emote`）从不 `Accepted`，无可取消窗口；只有登记了 active slot 的 handler 才可能被 `Cancel()` 命中 |
+| `bddScenarioIds` | `design/09` 中带 `@published` 标签的 per-action Gherkin 场景（Markdown 即事实源，可被工具解析校验，不手抄） |
+
+**唯一不能从代码推出的字段**（发布历史，登记在极小的发布登记表）：
 
 ```ts
-type PublishedAction = Readonly<{
-  actionId: string;
-  familyId: string;
-  schemaVersion: number;
-  description: string;
-  targetKinds: readonly string[];
-  requiredModCapability: string;
-  contextTags: readonly string[];
-  lifecycle: "instant" | "async";
-  supportsCancellation: boolean;
-  status: "published" | "live_verified" | "experimental" | "diagnostic" | "retired";
-  introducedInProductVersion: string;
-  gameVersionRange: readonly string[];
-  bddScenarioIds: readonly string[];
+type PublishedActionReleaseMeta = Readonly<{
+  actionId: string;          // 与 catalog 相同的标识，仅用于连接
+  introducedInProductVersion: string;   // 从哪个产品版本开始存在
+  gameVersion: string;       // 支持的目标游戏版本（全局事实，非 per-action 范围）
 }>;
 ```
 
@@ -346,12 +352,12 @@ Registry 不保存动态目标，也不取代 Mod 的实时 snapshot。它只说
 
 action 进入 `published` 前必须满足：
 
-1. 它已经处于 `live_verified`（即已完成它 `requiredLiveTopology` 所要求的 live run，见 §3.1.1）；
+1. 它已经处于 `live_verified`（即已完成它 `requiredLiveTopology` 所要求的 live run，见 §3.1.1）；**正式 topology（`native_ai_farmhand_multiplayer`）的 run 是 `published` 的门，不是 `live_verified` 的门** —— native-local topology 的通过只给 `live_verified`；
 2. 一次独立 reviewer 审查已经通过，且审查所针对的就是第 1 条的那次 live 证据；
-3. 前置、后置、失败、部分成功、取消、deadline、watchdog 和重放语义已定义；
+3. 前置、后置、失败、部分成功、取消、deadline、watchdog 和重放语义已定义 —— 语义来自 handler 形状（active slot → 可取消）与执行管线测试，不要求单独的登记；
 4. receipt/evidence 可验证并不会以模型文本替代；
 5. 对存档、多人同步、生命周期和玩家停止有测试；
-6. action-level BDD、回放 fixture、文档、许可证和版本迁移已登记；
+6. action-level BDD 场景存在且可被工具解析（`design/09` 的 `@published` Gherkin，见 §6.1 表），回放 fixture、文档、许可证和版本迁移的登记职责归发布登记表；
 7. Host、Agent tool surface 和知识包的适用性过滤已覆盖。
 
 第 2 条不可由机械门代替。机械检查只能验证静态一致性；live run 的价值恰在于发现静态断言覆盖不到的问题，所以发布要求一次真正的独立审查。
