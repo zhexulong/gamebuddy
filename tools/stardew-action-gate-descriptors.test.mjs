@@ -111,6 +111,23 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     interact_npc_with_item: "run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
     advance_day: "run-stardew-native-local-player-advance-day-smoke.mjs",
     face_direction: "run-stardew-native-local-player-expression-smoke.mjs",
+    // Promoted to live_verified in the same ladder: every remaining experimental
+    // action has now passed its own native-local run, so each names the
+    // shared-harness route that produced it.
+    clear_debris: "run-stardew-native-local-player-clear-debris-smoke.mjs",
+    npc_relationship: "run-stardew-native-local-player-npc-relationship-smoke.mjs",
+    water_pet_bowl: "run-stardew-native-local-player-water-pet-bowl-smoke.mjs",
+    water_slime_hutch_trough: "run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
+    chest_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
+    chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+    chop_stump: "run-stardew-native-local-player-chop-stump-smoke.mjs",
+    plant_sapling: "run-stardew-native-local-player-plant-sapling-smoke.mjs",
+    cut_weeds: "run-stardew-native-local-player-cut-weeds-smoke.mjs",
+    scythe_crop: "run-stardew-native-local-player-scythe-crop-smoke.mjs",
+    craft_item: "run-stardew-native-local-player-craft-item-smoke.mjs",
+    cook_recipe: "run-stardew-native-local-player-cook-recipe-smoke.mjs",
+    collect_crab_pot_output: "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
+    ship_item: "run-stardew-native-local-player-ship-item-smoke.mjs",
   });
   // Obsolete parallel-route runner IDs that must never be re-selected.
   const forbiddenRouteIds = Object.freeze([
@@ -191,6 +208,20 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "face_direction",
       "pet_animal",
       "interact_npc_with_item",
+      "clear_debris",
+      "npc_relationship",
+      "water_pet_bowl",
+      "water_slime_hutch_trough",
+      "chest_store",
+      "chest_retrieve",
+      "chop_stump",
+      "plant_sapling",
+      "cut_weeds",
+      "scythe_crop",
+      "craft_item",
+      "cook_recipe",
+      "collect_crab_pot_output",
+      "ship_item",
     ],
   );
   assert.deepEqual(
