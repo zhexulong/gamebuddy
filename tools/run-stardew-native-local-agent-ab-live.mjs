@@ -23,7 +23,7 @@ import { resolveRuntimePaths } from "../host/dist-test/runtime-identity.js";
 import { bindWindowsStaleLockReclaimer } from "../host/dist-test/path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../host/dist-test/windows-stale-lock-reclaimer/index.js";
 
-const configPath = process.env.GAMEBUDDY_STARDew_CONFIG ?? "D:/Steam/steamapps/common/Stardew Valley/Mods/GameBuddy.Stardew/config.json";
+const configPath = process.env.GAMEBUDDY_STARDEW_CONFIG ?? "D:/Steam/steamapps/common/Stardew Valley/Mods/GameBuddy.Stardew/config.json";
 // Single language configuration point: this env mirrors the frontend-set
 // language preference (Tavern settings/language). Everything that needs a
 // locale — Agent session language, materializer companionLocale, fixture
