@@ -4,7 +4,7 @@ import { Value } from "typebox/value";
 
 import {
   DEFAULT_ACTION_POLICY,
-  isCandidateDescriptorComplete,
+  isModDescriptorComplete,
   STARDEW_ACTION_TOOL_NAMES,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
@@ -244,11 +244,11 @@ test("candidate action schemas are derived dynamically from Mod descriptor enums
 });
 
 test("pet_animal descriptor completeness requires the identity-locked three-argument shape", () => {
-  assert.equal(isCandidateDescriptorComplete("pet_animal", VALID_PET_ANIMAL_DESCRIPTOR), true);
+  assert.equal(isModDescriptorComplete("pet_animal", VALID_PET_ANIMAL_DESCRIPTOR), true);
   // Coordinates alone are not enough: without expectedTargetId the target is
   // not identity-bound and the descriptor must be rejected.
   assert.equal(
-    isCandidateDescriptorComplete("pet_animal", {
+    isModDescriptorComplete("pet_animal", {
       ...VALID_PET_ANIMAL_DESCRIPTOR,
       arguments: [
         { name: "x", type: "integer" },
@@ -259,7 +259,7 @@ test("pet_animal descriptor completeness requires the identity-locked three-argu
   );
   // A read-only effect would not be a mutation and is rejected.
   assert.equal(
-    isCandidateDescriptorComplete("pet_animal", {
+    isModDescriptorComplete("pet_animal", {
       ...VALID_PET_ANIMAL_DESCRIPTOR,
       effect: "read",
     }),
@@ -495,12 +495,12 @@ test("candidate actions marked 'published' but lacking complete descriptor are e
   const visible = visibleActionsFromModCatalog(catalog, ["express_emote"], DEFAULT_ACTION_POLICY);
   assert.equal(visible.length, 0, "Incomplete candidate descriptors must be excluded from visible actions");
 
-  assert.equal(isCandidateDescriptorComplete("express_emote", undefined), false);
-  assert.equal(isCandidateDescriptorComplete("express_emote", missingEnum.descriptor), false);
-  assert.equal(isCandidateDescriptorComplete("express_emote", emptyEnum.descriptor), false);
-  assert.equal(isCandidateDescriptorComplete("express_emote", missingNative.descriptor), false);
-  assert.equal(isCandidateDescriptorComplete("express_emote", VALID_EXPRESS_EMOTE_DESCRIPTOR), true);
-  assert.equal(isCandidateDescriptorComplete("face_direction", VALID_FACE_DIRECTION_DESCRIPTOR), true);
+  assert.equal(isModDescriptorComplete("express_emote", undefined), false);
+  assert.equal(isModDescriptorComplete("express_emote", missingEnum.descriptor), false);
+  assert.equal(isModDescriptorComplete("express_emote", emptyEnum.descriptor), false);
+  assert.equal(isModDescriptorComplete("express_emote", missingNative.descriptor), false);
+  assert.equal(isModDescriptorComplete("express_emote", VALID_EXPRESS_EMOTE_DESCRIPTOR), true);
+  assert.equal(isModDescriptorComplete("face_direction", VALID_FACE_DIRECTION_DESCRIPTOR), true);
 });
 
 test("descriptor with unknown keys is rejected by isValidActionDescriptor", () => {
@@ -509,7 +509,7 @@ test("descriptor with unknown keys is rejected by isValidActionDescriptor", () =
     unknownField: "malicious_payload",
   };
   assert.equal(isValidActionDescriptor(unknownKeyDescriptor), false);
-  assert.equal(isCandidateDescriptorComplete("express_emote", unknownKeyDescriptor as never), false);
+  assert.equal(isModDescriptorComplete("express_emote", unknownKeyDescriptor as never), false);
 });
 
 test("when published, complete descriptor and capability are present, candidate tools ARE mounted", () => {
