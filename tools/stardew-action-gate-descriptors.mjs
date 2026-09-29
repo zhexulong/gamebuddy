@@ -174,6 +174,36 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // the shared-world rung: startSleep forks on Game1.IsMultiplayer, so a
   // single-player pass cannot stand in for the co-op ready barrier.
   gate("advance_day", 1, "run-stardew-native-local-player-advance-day-smoke.mjs", "day_advanced"),
+  // Promoted to live_verified (Group B). Each entry records the action's own
+  // target-version live run terminal: these runners produced a native receipt
+  // and an action-specific postcondition, without an independent publication
+  // review yet (design/10 3.1.1).
+  gate("clear_debris", 1, "run-stardew-native-local-player-clear-debris-smoke.mjs", "debris_cleared", "native_clear_debris_resource_clump_v1"),
+  gate("npc_relationship", 1, "run-stardew-native-local-player-npc-relationship-smoke.mjs", "npc_relationship_inspected", "native_npc_relationship_v1"),
+  gate("water_pet_bowl", 1, "run-stardew-native-local-player-water-pet-bowl-smoke.mjs", "pet_bowl_watered", "native_water_pet_bowl_v1"),
+  gate(
+    "water_slime_hutch_trough",
+    1,
+    "run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
+    "slime_hutch_trough_watered",
+    "native_water_slime_hutch_trough_v1",
+  ),
+  gate("chest_store", 1, "run-stardew-native-local-player-chest-store-smoke.mjs", "chest_stored", "native_chest_store_v1"),
+  gate("chest_retrieve", 1, "run-stardew-native-local-player-chest-retrieve-smoke.mjs", "chest_retrieved", "native_chest_retrieve_v1"),
+  gate("chop_stump", 1, "run-stardew-native-local-player-chop-stump-smoke.mjs", "stump_cleared", "native_chop_stump_v1"),
+  gate("plant_sapling", 1, "run-stardew-native-local-player-plant-sapling-smoke.mjs", "sapling_planted", "native_plant_sapling_v1"),
+  gate("cut_weeds", 1, "run-stardew-native-local-player-cut-weeds-smoke.mjs", "weeds_cut", "native_cut_weeds_v1"),
+  gate("scythe_crop", 1, "run-stardew-native-local-player-scythe-crop-smoke.mjs", "scythe_crops_harvested", "native_scythe_crop_v1"),
+  gate("craft_item", 1, "run-stardew-native-local-player-craft-item-smoke.mjs", "crafted_item_created", "native_craft_item_v1"),
+  gate("cook_recipe", 1, "run-stardew-native-local-player-cook-recipe-smoke.mjs", "dish_cooked", "native_cook_recipe_v1"),
+  gate(
+    "collect_crab_pot_output",
+    1,
+    "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
+    "crab_pot_output_collected",
+    "native_crab_pot_collect_v1",
+  ),
+  gate("ship_item", 1, "run-stardew-native-local-player-ship-item-smoke.mjs", "item_shipped", "native_ship_item_v1"),
 ]);
 
 /**
@@ -187,40 +217,21 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
  * native-local smoke runner appear here.
  */
 export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
-  clear_debris: "run-stardew-native-local-player-clear-debris-smoke.mjs",
-  npc_relationship: "run-stardew-native-local-player-npc-relationship-smoke.mjs",
-  // Same native WateringCan.DoFunction seam as water_crop, but a distinct action:
-  // `PetBowl.watered` is not a crop postcondition, so water_crop's `crop_watered`
-  // receipt would be false for a bowl.
-  water_pet_bowl: "run-stardew-native-local-player-water-pet-bowl-smoke.mjs",
-  // Same native WateringCan.DoFunction seam again, but the trough is a
-  // `waterSpots[]` postcondition inside a Slime Hutch interior, so it is its own
-  // action rather than a water_crop target extension.
-  water_slime_hutch_trough: "run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
-  chest_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
-  // express_emote / face_direction are no longer experimental: a real
-  // target-version live run produced emote_started (nativeDispatched=true) and
-  // actor_facing_matches, so they are live_verified and now appear in
-  // STARDEW_PUBLISHED_ACTION_GATES with their runner.
-  chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+  // Promoted actions (clear_debris, npc_relationship, water_pet_bowl,
+  // water_slime_hutch_trough, chest_store, chest_retrieve, chop_stump,
+  // plant_sapling, cut_weeds, scythe_crop, craft_item, cook_recipe,
+  // collect_crab_pot_output, ship_item) are live_verified and now appear in
+  // STARDEW_PUBLISHED_ACTION_GATES with their runner and terminal.
   // Same container store/take capability over the built-in kitchen fridge. The
   // fridge IS a Chest and advertises through the same chest targets, so the
   // runner is identical; only the fixture scenario (kitchen instead of a placed
   // chest) and the resulting evidence identity differ.
   fridge_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
   fridge_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
-  chop_stump: "run-stardew-native-local-player-chop-stump-smoke.mjs",
-  plant_sapling: "run-stardew-native-local-player-plant-sapling-smoke.mjs",
-  cut_weeds: "run-stardew-native-local-player-cut-weeds-smoke.mjs",
-  scythe_crop: "run-stardew-native-local-player-scythe-crop-smoke.mjs",
-  ship_item: "run-stardew-native-local-player-ship-item-smoke.mjs",
   // Same ship_item capability over IslandWest's island bin. The runner is
   // identical because the action advertises through the same shippingBinTargets
   // channel; only the fixture scenario (island house upgraded) differs.
   ship_item_island: "run-stardew-native-local-player-ship-item-smoke.mjs",
-  craft_item: "run-stardew-native-local-player-craft-item-smoke.mjs",
-  cook_recipe: "run-stardew-native-local-player-cook-recipe-smoke.mjs",
-  collect_crab_pot_output: "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
   // Lane G recovery-chain harness: drives breakpoint rejected -> equip recovery
   // -> retry succeeded within one native-local session over the till_soil
   // fixture. Not a new action; it grants no capability.

@@ -23,14 +23,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class ContainerActionTests
 {
     [Fact]
-    public void Catalog_ChestStore_RegisteredAsExperimentalMachinesAnimalsWithSlotItemTarget()
+    public void Catalog_ChestStore_RegisteredAsLiveVerifiedMachinesAnimalsWithSlotItemTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "chest_store");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("inventory_items");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         reg.Descriptor.Should().NotBeNull();
@@ -40,14 +40,14 @@ public sealed class ContainerActionTests
     }
 
     [Fact]
-    public void Catalog_ChestRetrieve_RegisteredAsExperimentalMachinesAnimalsWithSlotItemTarget()
+    public void Catalog_ChestRetrieve_RegisteredAsLiveVerifiedMachinesAnimalsWithSlotItemTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "chest_retrieve");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("inventory_items");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         reg.Descriptor.Should().NotBeNull();

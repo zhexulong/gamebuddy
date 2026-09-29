@@ -1435,6 +1435,412 @@ export function createStardewActionTools(
       );
     }
   }
+  if (isVisible("clear_debris")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.clear_debris,
+        label: "Clear Stardew Debris",
+        description:
+          "Clear one live adjacent ResourceClump with the equipped Axe or Pickaxe. slot, x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A clump that needs several hits returns partially_succeeded/debris_hit per hit until the final hit returns succeeded/debris_cleared; drops and pickup are separate actions.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "clear_debris",
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("npc_relationship")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.npc_relationship,
+        label: "Inspect NPC Relationship",
+        description:
+          "Read the live relationship facts of one adjacent villager. x, y and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). This never changes friendship, gifts or dialogue; it returns npc_relationship_inspected.",
+        parameters: Type.Object({
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "npc_relationship",
+        toArgs: (params) => ({
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("water_pet_bowl")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.water_pet_bowl,
+        label: "Water the Pet Bowl",
+        description:
+          "Water the current location's completed, unwatered native Pet Bowl with the equipped Watering Can. x, y and expectedTargetId must be copied exactly from the petBowlTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Returns pet_bowl_watered with the exact water and stamina delta.",
+        parameters: Type.Object({
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "water_pet_bowl",
+        toArgs: (params) => ({
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("water_slime_hutch_trough")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.water_slime_hutch_trough,
+        label: "Water a Slime Hutch Trough",
+        description:
+          "Water one unwatered trough tile inside the current Slime Hutch with the equipped Watering Can. x, y and expectedTargetId must be copied exactly from the slimeHutchTroughTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Farmhand must already be inside the hutch. Returns slime_hutch_trough_watered.",
+        parameters: Type.Object({
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "water_slime_hutch_trough",
+        toArgs: (params) => ({
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("chest_store")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.chest_store,
+        label: "Store Item in Chest",
+        description:
+          "Move one carried inventory stack into a live adjacent chest. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the chestStoreTargets/slot facts of the MOST RECENT observe result (never invent or guess coordinates). No ItemGrabMenu is opened. Returns chest_stored with the exact stack conservation evidence.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedQualifiedItemId: Type.String({
+            minLength: 1,
+            maxLength: 128,
+          }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "chest_store",
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedQualifiedItemId: params.expectedQualifiedItemId,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("chest_retrieve")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.chest_retrieve,
+        label: "Take Item From Chest",
+        description:
+          "Move one observed chest slot's item into the Farmhand inventory. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the chestRetrieveTargets entries of the MOST RECENT observe result (never invent or guess coordinates). expectedQualifiedItemId pins the observed slot item so a changed slot is rejected rather than taken. No ItemGrabMenu is opened. Returns chest_retrieved.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedQualifiedItemId: Type.String({
+            minLength: 1,
+            maxLength: 128,
+          }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "chest_retrieve",
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedQualifiedItemId: params.expectedQualifiedItemId,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("chop_stump")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.chop_stump,
+        label: "Chop Tree Stump",
+        description:
+          "Chop one live ordinary tree that is already a stump with the equipped Axe. slot, x, y and expectedTargetId must be copied exactly from the treeStumpTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native axe until the stump is cleared. Returns stump_cleared. A mature standing tree is chop_tree_source, not this action.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "chop_stump",
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("plant_sapling")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.plant_sapling,
+        label: "Plant Tree Sapling",
+        description:
+          "Plant one observed tree sapling on a live lawful tile through the native wild-tree-seed placement path. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the treeSaplingTargets entries of the MOST RECENT observe result (never invent or guess coordinates). Returns sapling_planted with the seed consumed exactly once.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedQualifiedItemId: Type.String({
+            minLength: 1,
+            maxLength: 128,
+          }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "plant_sapling",
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedQualifiedItemId: params.expectedQualifiedItemId,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("cut_weeds")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.cut_weeds,
+        label: "Cut Weeds",
+        description:
+          "Cut one live adjacent Weed with the equipped scythe. slot, x, y and expectedTargetId must be copied exactly from the weedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native scythe until the weed is removed; the family is free, so the stamina cost is an explicit zero. Returns weeds_cut. Standing crops are scythe_crop, not this action.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "cut_weeds",
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("scythe_crop")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.scythe_crop,
+        label: "Scythe Crop",
+        description:
+          "Scythe one live ready Scythe-method crop. slot, x, y and expectedTargetId must be copied exactly from the scytheCropTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The native scythe harvest removes the crop and leaves the produce on the ground; the produce is not added to the inventory by this action, so expect ground debris rather than an inventory increase. Returns scythe_crops_harvested.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "scythe_crop",
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("craft_item")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.craft_item,
+        label: "Craft Item",
+        description:
+          "Craft one learned recipe from the Farmhand's own inventory. expectedTargetId must be copied exactly from the recipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). An unknown or unlearned recipe fails closed. Items that do not fit are dropped on the ground rather than lost, and the receipt reports the exact conservation evidence. Returns crafted_item_created.",
+        parameters: Type.Object({
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "craft_item",
+        toArgs: (params) => ({
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("cook_recipe")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.cook_recipe,
+        label: "Cook Recipe",
+        description:
+          "Cook one learned cooking recipe at a live adjacent cooking station. expectedTargetId must be copied exactly from the recipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). The station adjacency is re-derived and re-checked Mod-side from the live world rather than trusted from the client. Items that do not fit are dropped on the ground rather than lost. Returns dish_cooked.",
+        parameters: Type.Object({
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "cook_recipe",
+        toArgs: (params) => ({
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("collect_crab_pot_output")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.collect_crab_pot_output,
+        label: "Collect Crab Pot Output",
+        description:
+          "Collect the ready output of one live adjacent baited Crab Pot. x, y and expectedTargetId must be copied exactly from the crabPotCollectTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod re-checks that the pot is really harvest-ready and visually ready before calling the native interaction, so an immature or unbaited pot is rejected rather than torn down. Returns crab_pot_output_collected.",
+        parameters: Type.Object({
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "collect_crab_pot_output",
+        toArgs: (params) => ({
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  if (isVisible("ship_item")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.ship_item,
+        label: "Ship Item",
+        description:
+          "Move one shippable carried stack into the Farmhand's own live shipping bin. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the shippingBinTargets entries of the MOST RECENT observe result (never invent or guess coordinates). Non-shippable items such as tools are rejected before any native settlement. In a shared world the destination bin depends on the world's separate-wallets setting. Returns item_shipped.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedQualifiedItemId: Type.String({
+            minLength: 1,
+            maxLength: 128,
+          }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "ship_item",
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedQualifiedItemId: params.expectedQualifiedItemId,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
   return tools;
 }
 async function executeGameAction(

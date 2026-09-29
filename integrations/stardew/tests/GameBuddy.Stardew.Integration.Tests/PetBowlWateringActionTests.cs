@@ -27,14 +27,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class PetBowlWateringActionTests
 {
     [Fact]
-    public void Catalog_WaterPetBowl_RegisteredAsExperimentalAnimalsPetsWithTarget()
+    public void Catalog_WaterPetBowl_RegisteredAsLiveVerifiedAnimalsPetsWithTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "water_pet_bowl");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("animals_pets");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         reg.Descriptor.Should().NotBeNull();

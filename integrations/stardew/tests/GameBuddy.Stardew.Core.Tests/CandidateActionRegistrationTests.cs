@@ -90,7 +90,14 @@ public sealed class CandidateActionRegistrationTests
 
             registration.FamilyId.Should().Be(shape.Family);
             registration.IdentityVersion.Should().Be(1);
-            registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+            // These loop-closure actions have each passed their own target-version
+            // live run, so they sit on the live_verified rung (design/10 3.1.1).
+            // The shape assertions below are the point of this test; the rung is
+            // asserted as "at least live_verified" so a later publication review
+            // does not invalidate a structural test.
+            registration.Lifecycle.Should().BeOneOf(
+                FarmhandActionLifecycle.LiveVerified,
+                FarmhandActionLifecycle.Published);
             registration.Kind.Should().Be(FarmhandOperationKind.Execution);
             registration.HandlerGroup.Should().Be(shape.Group);
             registration.Descriptor.Should().NotBeNull();

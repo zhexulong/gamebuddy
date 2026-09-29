@@ -53,14 +53,14 @@ public sealed class CookRecipeActionTests
     }
 
     [Fact]
-    public void Catalog_CookRecipe_RegisteredAsExperimentalCraftingCookingWithRecipeTarget()
+    public void Catalog_CookRecipe_RegisteredAsLiveVerifiedCraftingCookingWithRecipeTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "cook_recipe");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("crafting_cooking");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         reg.Descriptor.Should().NotBeNull();
