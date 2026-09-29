@@ -30,7 +30,7 @@ public sealed class CandidateActionRegistrationTests
         arg.Type.Should().Be("string");
         arg.Enum.Should().NotBeNull();
         arg.Enum.Should().Equal(FarmhandActionCatalog.EmoteEnum);
-        arg.Enum.Should().HaveCount(22);
+        arg.Enum.Should().HaveCount(21);
         arg.Enum.Should().Contain(new[] { "happy", "sad", "heart", "exclamation", "note", "sleep", "question" });
 
         desc.OutputFacts.Should().BeEmpty();
