@@ -518,9 +518,18 @@ const OVER_RESTRICTED = actions
 
 // Derived, never hand-typed: admission now admits a shared world, but an mp-semantic
 // native seam means the outcome can still differ there, and no shared-world live
-// evidence exists yet. When one lands, the pin goes stale and the gate rejects it.
+// evidence exists yet. A `live_verified` lifecycle IS that evidence (design/10
+// 3.1.1: reaching live_verified requires the requiredLiveTopology run to have
+// passed), and a published action has completed the whole ladder, so neither can
+// be unverified; only experimental actions remain pinned. When the last one
+// lands, the pin goes stale and the gate rejects it.
 const UNVERIFIED_SCOPE = actions
-  .filter((a) => a.admission.verdict === "admits_multiplayer" && a.requiredLiveTopology === "shared_world_multiplayer")
+  .filter(
+    (a) =>
+      a.admission.verdict === "admits_multiplayer" &&
+      a.requiredLiveTopology === "shared_world_multiplayer" &&
+      !(a.lifecycle === "live_verified" || a.lifecycle === "published"),
+  )
   .map((a) => a.actionId);
 
 const register = {

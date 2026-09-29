@@ -112,7 +112,7 @@ public sealed class CandidateActionRegistrationTests
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("npc_social");
         reg.IdentityVersion.Should().Be(1);
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
 
@@ -130,21 +130,23 @@ public sealed class CandidateActionRegistrationTests
     }
 
     [Fact]
-    public void InteractNpcWithItem_IsExcludedFromDefaultPolicySurfaceAndIncludedWhenOptedIn()
+    public void InteractNpcWithItem_IsIncludedInDefaultPolicySurfaceAndRejectsExperimentalOptIn()
     {
+        // interact_npc_with_item reached live_verified on its required topology
+        // (single-player native-local: quest_item_delivered, live run 2026-09-24).
+        // live_verified is default-consent, so it is visible without any opt-in --
+        // and listing it as ExperimentalActions is now rejected, exactly like
+        // express_emote / face_direction before it.
         var defaultOptions = new ActionPolicyOptions();
         ActionPolicyEngine.ValidateActionPolicy(defaultOptions).Should().BeTrue();
         FarmhandCapabilitySet defaults =
             FarmhandCapabilitySet.FromPolicyEnabledOperations(ActionPolicyEngine.ComputeEnabledActions(defaultOptions));
-        defaults.AllowsExecutionAction("interact_npc_with_item").Should().BeFalse();
+        defaults.AllowsExecutionAction("interact_npc_with_item").Should().BeTrue();
 
-        var experimentalOptions = new ActionPolicyOptions(
+        var rejectedOptIn = new ActionPolicyOptions(
             ExperimentalActions: new[] { "interact_npc_with_item" }
         );
-        ActionPolicyEngine.ValidateActionPolicy(experimentalOptions).Should().BeTrue();
-        FarmhandCapabilitySet optedIn =
-            FarmhandCapabilitySet.FromPolicyEnabledOperations(ActionPolicyEngine.ComputeEnabledActions(experimentalOptions));
-        optedIn.AllowsExecutionAction("interact_npc_with_item").Should().BeTrue();
+        ActionPolicyEngine.ValidateActionPolicy(rejectedOptIn).Should().BeFalse();
     }
 
     [Fact]
