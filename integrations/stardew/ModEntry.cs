@@ -893,7 +893,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_minecart_travel_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1632,48 +1632,68 @@ public sealed partial class ModEntry : Mod
                     throw new InvalidOperationException("fixture_native_local_artifact_spot_hoe_missing_or_ambiguous");
 
                 // SetupBigFarm may restore zero, one, or many artifact spots.
-                // Never remove or pre-consume an existing source: sort every Farm
-                // source by coordinate and select the first one satisfying the
-                // exact native precondition. Invalid or unreachable sources do
-                // not get repaired; a valid later source may still be selected.
+                // Never remove or pre-consume an existing source: order every Farm
+                // source so a reachable one is selected. Invalid or unreachable
+                // sources do not get repaired; a valid later source may still be
+                // selected.
+                //
+                // Selection prefers `(O)SeedSpot` on purpose. The engine spawns both
+                // ids through one `t is Hoe` branch (`Object.cs:1310`) and picks
+                // between them at random at every site (`GameLocation.cs:15233` at
+                // 1/6, `Mountain.cs:272` at 0.15). A fixture that took the first
+                // source by coordinate would almost always land on `(O)590` and
+                // therefore keep passing even if the predicate regressed to a
+                // single id, which is exactly the defect this fixture covers.
                 KeyValuePair<Vector2, StardewValley.Object>[] existingArtifactSpots = farm.objects.Pairs
-                    .Where(pair => pair.Value.QualifiedItemId == "(O)590")
-                    .OrderBy(pair => pair.Key.X)
+                    .Where(pair => NativeItemPredicates.IsArtifactSpot(pair.Value))
+                    .OrderByDescending(pair => pair.Value.QualifiedItemId == "(O)SeedSpot")
+                    .ThenBy(pair => pair.Key.X)
                     .ThenBy(pair => pair.Key.Y)
                     .ToArray();
                 Vector2 artifactTile;
                 Vector2 standingTile;
-                if (existingArtifactSpots.Length == 0)
+                // Prefer an existing `(O)SeedSpot` when the save has one. Otherwise
+                // place one alongside the existing sources rather than reusing a
+                // `(O)590`: the variant is what this fixture must exercise.
+                KeyValuePair<Vector2, StardewValley.Object>? preferredSeedSpot = existingArtifactSpots
+                    .Where(pair => pair.Value.QualifiedItemId == "(O)SeedSpot")
+                    .Select(pair => FindNativeLocalArtifactSpotStandingTile(farm, pair.Key) is Vector2 approach
+                        ? (KeyValuePair<Vector2, StardewValley.Object>?)pair
+                        : null)
+                    .FirstOrDefault(candidate => candidate is not null);
+                if (preferredSeedSpot is { } seedSpot)
+                {
+                    artifactTile = seedSpot.Key;
+                    standingTile = FindNativeLocalArtifactSpotStandingTile(farm, artifactTile)
+                        ?? throw new InvalidOperationException("fixture_native_local_artifact_spot_approach_missing");
+                }
+                else
                 {
                     Vector2? placedTile = FindNativeLocalFarmFixtureTile(farm, new Vector2(64f, 15f), 12, requireEmptyObjectTile: true,
                         extraPredicate: candidate => !farm.terrainFeatures.ContainsKey(candidate));
                     if (placedTile is null)
                         throw new InvalidOperationException("fixture_native_local_artifact_spot_placement_missing");
                     artifactTile = placedTile.Value;
-                    StardewValley.Object artifact = ItemRegistry.Create<StardewValley.Object>("(O)590", 1);
-                    if (!farm.dropObject(artifact, artifactTile * 64f, Game1.viewport, initialPlacement: false)
-                        || !farm.objects.TryGetValue(artifactTile, out StardewValley.Object? placed)
-                        || !ReferenceEquals(artifact, placed) || placed.QualifiedItemId != "(O)590")
+                    // Place the variant the engine itself spawns alongside (O)590.
+                    // Use the engine's own construction path: every artefact-spot
+                    // spawn site does `objects.Add(tile, ItemRegistry.Create<Object>(
+                    // "(O)SeedSpot"))` (GameLocation.cs:15233, Mountain.cs:272), never
+                    // `dropObject`, because this object is not a player-placeable one.
+                    // A fixture that always places (O)590 would keep passing even if
+                    // the predicate regressed to a single id, which is the defect
+                    // this fixture exists to cover.
+                    StardewValley.Object artifact = ItemRegistry.Create<StardewValley.Object>("(O)SeedSpot", 1);
+                    farm.objects.Add(artifactTile, artifact);
+                    if (!farm.objects.TryGetValue(artifactTile, out StardewValley.Object? placed)
+                        || !ReferenceEquals(artifact, placed) || !NativeItemPredicates.IsArtifactSpot(placed))
                         throw new InvalidOperationException("fixture_native_local_artifact_spot_placement_validation_failed");
                     standingTile = FindNativeLocalArtifactSpotStandingTile(farm, artifactTile)
                         ?? throw new InvalidOperationException("fixture_native_local_artifact_spot_approach_missing");
                 }
-                else
-                {
-                    (Vector2 Tile, Vector2 StandingTile)? selected = existingArtifactSpots
-                        .Select(pair => FindNativeLocalArtifactSpotStandingTile(farm, pair.Key) is Vector2 approach
-                            ? (Tile: pair.Key, StandingTile: approach)
-                            : ((Vector2 Tile, Vector2 StandingTile)?)null)
-                        .FirstOrDefault(candidate => candidate is not null);
-                    if (selected is null)
-                        throw new InvalidOperationException("fixture_native_local_artifact_spot_existing_sources_unapproachable");
-                    artifactTile = selected.Value.Tile;
-                    standingTile = selected.Value.StandingTile;
-                }
-                int artifactSourceCount = farm.objects.Pairs.Count(pair => pair.Value.QualifiedItemId == "(O)590");
+                int artifactSourceCount = farm.objects.Pairs.Count(pair => NativeItemPredicates.IsArtifactSpot(pair.Value));
                 if (artifactSourceCount < 1
                     || !farm.objects.TryGetValue(artifactTile, out StardewValley.Object? intactArtifact)
-                    || intactArtifact.QualifiedItemId != "(O)590"
+                    || !NativeItemPredicates.IsArtifactSpot(intactArtifact)
                     || !farm.isTileOnMap(artifactTile)
                     || farm.terrainFeatures.ContainsKey(artifactTile)
                     || farm.GetHoeDirtAtTile(artifactTile) is not null
@@ -2660,7 +2680,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 return;
             }
 
-            if (fixture.FixtureScenario == "native_minecart_travel_v1")
+            if (fixture.FixtureScenario == "native_ride_minecart_v1")
             {
                 // Pre-attachment fixture only: a minecart station the bridge can discover.
                 //
@@ -2678,15 +2698,30 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 // the ride itself is the native `GameLocation.MinecartWarp`. The fixture
                 // never calls MinecartWarp, never picks a destination and emits no
                 // receipt -- production alone discovers, resolves and rides.
-                if (!player.mailReceived.Add("ccBoilerRoom"))
+                // The network's real unlock condition is the game's own data, so the
+                // fixture evaluates THAT instead of inventing a query string. The
+                // community-center Boiler Room is the vanilla unlock
+                // (`ccBoilerRoom` on the MasterPlayer, which the game checks with
+                // PLAYER_HAS_MAIL ... received); the Joja route sets the same flag.
+                IReadOnlyDictionary<string, StardewValley.GameData.Minecarts.MinecartNetworkData>? networks = null;
+                try
                 {
-                    // Add returns false when the flag was already present; the flag is
-                    // what matters, so re-read the native query below rather than the
-                    // return value.
+                    networks = DataLoader.Minecarts(Game1.content);
                 }
+                catch
+                {
+                    networks = null;
+                }
+                if (networks is null || !networks.TryGetValue("Default", out StardewValley.GameData.Minecarts.MinecartNetworkData? defaultNetwork))
+                    throw new InvalidOperationException("fixture_native_minecart_network_data_missing");
 
-                bool alreadyUnlocked = GameStateQuery.CheckConditions("PLAYER_MAIL ccBoilerRoom", farm);
-                if (!alreadyUnlocked)
+                player.mailReceived.Add("ccBoilerRoom");
+                if (Game1.MasterPlayer is not null)
+                    Game1.MasterPlayer.mailReceived.Add("ccBoilerRoom");
+
+                bool networkUnlocked = string.IsNullOrWhiteSpace(defaultNetwork.UnlockCondition)
+                    || GameStateQuery.CheckConditions(defaultNetwork.UnlockCondition, farm);
+                if (!networkUnlocked)
                     throw new InvalidOperationException("fixture_native_minecart_network_unlock_failed");
 
                 xTile.Layers.Layer? buildingsLayer = farm.map.GetLayer("Buildings");
@@ -2737,7 +2772,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
 
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)stationStanding.X, (int)stationStanding.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
-                this.Monitor.Log($"GameBuddy native-local-player initialized minecart-travel precondition before bridge attachment: network=Default; station={(int)stationTile.Value.X},{(int)stationTile.Value.Y}; standing={(int)stationStanding.X},{(int)stationStanding.Y}; unlocked=ccBoilerRoom; production alone discovers, resolves and rides.", LogLevel.Info);
+                this.Monitor.Log($"GameBuddy native-local-player initialized ride-minecart precondition before bridge attachment: network=Default; station={(int)stationTile.Value.X},{(int)stationTile.Value.Y}; standing={(int)stationStanding.X},{(int)stationStanding.Y}; unlocked=ccBoilerRoom; production alone discovers, resolves and rides.", LogLevel.Info);
                 return;
             }
 
@@ -3166,7 +3201,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             || farm.terrainFeatures.ContainsKey(artifactTile)
             || farm.GetHoeDirtAtTile(artifactTile) is not null
             || !farm.objects.TryGetValue(artifactTile, out StardewValley.Object? artifact)
-            || artifact.QualifiedItemId != "(O)590"
+            || !NativeItemPredicates.IsArtifactSpot(artifact)
             || artifact is StardewValley.Objects.IndoorPot)
             return null;
         return new[]
@@ -5193,9 +5228,9 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         {
             if (e.NewLocation is Farm farm
                 && string.Equals(farm.NameOrUniqueName, artifactPending.FarmName, StringComparison.Ordinal)
-                && farm.objects.Pairs.Any(pair => pair.Value.QualifiedItemId == "(O)590")
+                && farm.objects.Pairs.Any(pair => NativeItemPredicates.IsArtifactSpot(pair.Value))
                 && farm.objects.TryGetValue(artifactPending.ArtifactTile, out StardewValley.Object? artifact)
-                && artifact.QualifiedItemId == "(O)590"
+                && NativeItemPredicates.IsArtifactSpot(artifact)
                 && farm.isTileOnMap(artifactPending.ArtifactTile)
                 && farm.terrainFeatures.ContainsKey(artifactPending.ArtifactTile) == false
                 && farm.GetHoeDirtAtTile(artifactPending.ArtifactTile) is null
@@ -5209,7 +5244,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 e.Player.Position = artifactPending.StandingTile * Game1.tileSize;
                 this.nativeLocalDigArtifactSpotFixturePending = null;
                 this.nativeLocalPlayerFixtureInitialized = true;
-                this.Monitor.Log($"GameBuddy native-local-player initialized dig-artifact-spot precondition before bridge attachment: item=(O)590; tile={(int)artifactPending.ArtifactTile.X},{(int)artifactPending.ArtifactTile.Y}; standing_tile={(int)artifactPending.StandingTile.X},{(int)artifactPending.StandingTile.Y}; production alone performs the native hoe interaction and emits source-only receipt.", LogLevel.Info);
+                this.Monitor.Log($"GameBuddy native-local-player initialized dig-artifact-spot precondition before bridge attachment: item={artifact.QualifiedItemId}; tile={(int)artifactPending.ArtifactTile.X},{(int)artifactPending.ArtifactTile.Y}; standing_tile={(int)artifactPending.StandingTile.X},{(int)artifactPending.StandingTile.Y}; production alone performs the native hoe interaction and emits source-only receipt.", LogLevel.Info);
                 return;
             }
             Farm? diagnosticFarm = e.NewLocation as Farm;

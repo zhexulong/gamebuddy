@@ -18,8 +18,11 @@ const BREAK_EVIDENCE =
 
 function fixtureConfig(overrides = {}) {
   return {
-    ActionPolicyVersion: 0,
-    EnabledActions: ["move_to_tile", "travel", "equip_tool", "break_rock_source"],
+    // The fixture writes a deny-by-exception policy; `ActionPolicyVersion` and
+    // `EnabledActions` no longer exist in the config contract.
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
     NativeLocalPlayerFixture: {
       Enable: true,
       Bootstrap: { Enable: false },
@@ -73,7 +76,7 @@ function createFake({ capabilities = CAPABILITIES, removeRock = true } = {}) {
           requestId,
           executionId,
           state: "succeeded",
-          reasonCode: "tool_selected",
+          reasonCode: "tool_equipped",
           revision,
         };
       }
@@ -114,7 +117,9 @@ test("break-rock runner passes with exact terminal identity and full postconditi
   assert.equal(result.receipt.reasonCode, "rock_source_broken");
   assert.equal(result.target.targetId, "rock-target");
   assert.equal(result.evidence.removed, "true");
-  assert.deepEqual(result.after.tile, { x: 3, y: 3 });
+  // `summarize` publishes revision/actionable/capabilityCount/hasLocation/hasTile
+  // plus the rock-source count; it deliberately does not publish the raw tile.
+  assert.equal(result.after.hasTile, true);
   assert.equal(result.after.rockSourceTargets, 0);
   assert.deepEqual(
     result.trace.map((entry) => entry.phase),
@@ -122,7 +127,7 @@ test("break-rock runner passes with exact terminal identity and full postconditi
   );
 });
 
-test("break-rock runner blocks on a non-isolated capability surface", async () => {
+test("break-rock runner blocks when a required capability is absent", async () => {
   const client = createFake({
     capabilities: ["cancel_active_execution", "inspect_self", "move_to_tile", "travel"],
   });
@@ -132,7 +137,10 @@ test("break-rock runner blocks on a non-isolated capability surface", async () =
   });
   const result = await runBreakRockSourceSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "native_capability_surface_mismatch");
+  // The fixture runs deny-by-exception, so the live surface is the whole derived
+  // published base and an equality check would fail for a reason the action cannot
+  // fix. The honest check is that the required capability is present.
+  assert.equal(result.reasonCode, "native_required_capability_missing:break_rock_source");
   assert.equal(result.trace.length, 0);
 });
 
