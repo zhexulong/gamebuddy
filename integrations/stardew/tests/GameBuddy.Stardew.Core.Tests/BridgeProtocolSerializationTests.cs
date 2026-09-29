@@ -519,6 +519,7 @@ public sealed class BridgeProtocolSerializationTests
             CraftingRecipeTargets: null,
             CookingRecipeTargets: null,
             CookingStationTargets: null,
+            MinecartTargets: null,
             // A real 6:00am spring day-1 clock, matching the Host test fixtures, so
             // the wire-parity fixture carries a plausible non-zero time rather than
             // the world-not-ready zeroes.
@@ -790,7 +791,7 @@ public sealed class BridgeProtocolSerializationTests
         using (JsonDocument document = JsonDocument.Parse(json))
         {
             document.RootElement.GetProperty("payload").EnumerateObject().Select(property => property.Name)
-                .Should().BeEquivalentTo("observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason");
+                .Should().BeEquivalentTo("observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason", "ground");
             document.RootElement.GetProperty("payload").GetProperty("affordances")[0].EnumerateObject().Select(property => property.Name)
                 .Should().BeEquivalentTo("ref", "kind", "name", "distance", "direction", "actionHint");
             document.RootElement.GetProperty("payload").GetProperty("affordances")[0].GetProperty("actionHint").ValueKind.Should().Be(JsonValueKind.Null);

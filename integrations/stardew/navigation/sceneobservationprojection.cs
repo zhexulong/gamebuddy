@@ -24,6 +24,15 @@ internal sealed class SceneObservationProjection
     internal const int MaximumAffordances = 20;
 
     /// <summary>
+    /// Per-observation ceiling on ground EXCEPTION tiles. The dominant kind is
+    /// one line, so a meadow costs a line rather than fifty; this bounds only the
+    /// deviations from it. Ground tiles never consume an affordance slot: they
+    /// are a different axis of fact (what the tile is) from an affordance (what
+    /// can be done there), so a dense resource view must not hide the ground.
+    /// </summary>
+    internal const int MaximumGroundExceptions = 12;
+
+    /// <summary>
     /// Byte ceiling. This is a context-safety bound, not a product quota, so it
     /// must ADMIT the item ceiling on real input with headroom, and only act as a
     /// net for legal-but-never-produced padding.
@@ -139,23 +148,94 @@ internal sealed class SceneObservationProjection
                 candidate.Source.ActionHint));
         }
 
+        // Ground is a separate axis from affordances, so it is summarised once
+        // here and carried alongside them rather than competing for the 20
+        // affordance slots. Truncating ground never truncates an affordance.
+        SceneGroundProjection? ground = BuildGround(input.GroundTiles);
+        bool groundLimited = ground is not null && ground.OmittedExceptionTileCount > 0;
+
         SceneObservationProjectionResult result = BuildResult(
             context,
             affordances,
-            partial,
-            partial ? "maximum_affordances" : null);
+            partial || groundLimited,
+            partial ? "maximum_affordances" : groundLimited ? "ground_limit" : null,
+            ground);
         if (result.PayloadUtf8Bytes <= SceneObservationProjection.MaximumPayloadUtf8Bytes)
             return result;
 
-        while (affordances.Count > 0)
+        // Byte overflow drops ground detail before it drops affordances: an
+        // affordance names an action the Agent can take, a ground exception only
+        // refines where it is standing.
+        while (ground is not null && ground.Exceptions.Count > 0)
         {
-            affordances.RemoveAt(affordances.Count - 1);
-            result = BuildResult(context, affordances, partial: true, truncatedReason: "payload_limit");
+            ground = ground with
+            {
+                Exceptions = ground.Exceptions.Take(ground.Exceptions.Count - 1).ToArray(),
+                OmittedExceptionTileCount = ground.OmittedExceptionTileCount + 1,
+            };
+            result = BuildResult(context, affordances, partial: true, truncatedReason: "payload_limit", ground);
             if (result.PayloadUtf8Bytes <= SceneObservationProjection.MaximumPayloadUtf8Bytes)
                 return result;
         }
 
-        return BuildResult(context, Array.Empty<SceneAffordanceProjection>(), partial: true, truncatedReason: "payload_limit");
+        while (affordances.Count > 0)
+        {
+            affordances.RemoveAt(affordances.Count - 1);
+            result = BuildResult(context, affordances, partial: true, truncatedReason: "payload_limit", ground);
+            if (result.PayloadUtf8Bytes <= SceneObservationProjection.MaximumPayloadUtf8Bytes)
+                return result;
+        }
+
+        return BuildResult(context, Array.Empty<SceneAffordanceProjection>(), partial: true, truncatedReason: "payload_limit", ground);
+    }
+
+    /// <summary>
+    /// Reduce scanned ground tiles to one dominant kind plus bounded deviations.
+    /// The dominant kind is the most frequent one other than <see cref="SceneGroundKind.Other"/>,
+    /// because "Mostly: unknown" is less useful than naming the surface actually
+    /// underfoot; ties break on the enum order so the result is deterministic.
+    /// </summary>
+    private static SceneGroundProjection? BuildGround(IReadOnlyList<SceneGroundTile>? tiles)
+    {
+        if (tiles is null || tiles.Count == 0)
+            return null;
+
+        var counts = new Dictionary<SceneGroundKind, int>();
+        foreach (SceneGroundTile tile in tiles)
+        {
+            if (!SceneGroundKindWire.IsDefined(tile.Kind))
+                continue;
+            counts.TryGetValue(tile.Kind, out int seen);
+            counts[tile.Kind] = seen + 1;
+        }
+        if (counts.Count == 0)
+            return null;
+
+        SceneGroundKind dominant = counts
+            .Where(pair => pair.Key != SceneGroundKind.Other)
+            .Where(pair => pair.Key != SceneGroundKind.Other)
+            .OrderByDescending(pair => pair.Value)
+            .ThenBy(pair => pair.Key)
+            .Select(pair => pair.Key)
+            .DefaultIfEmpty(SceneGroundKind.Other)
+            .First();
+
+        // Deterministic order so the Agent sees the same exceptions every time:
+        // row-major over the scan, not hash order.
+        SceneGroundTile[] exceptions = tiles
+            .Where(tile => tile.Kind != dominant)
+            .OrderBy(tile => tile.TileY)
+            .ThenBy(tile => tile.TileX)
+            .ToArray();
+
+        return new SceneGroundProjection(
+            SceneGroundKindWire.ToWireValue(dominant),
+            counts[dominant],
+            tiles.Count,
+            exceptions.Take(MaximumGroundExceptions)
+                .Select(tile => new SceneGroundProjectionTile(tile.TileX, tile.TileY, SceneGroundKindWire.ToWireValue(tile.Kind)))
+                .ToArray(),
+            Math.Max(0, exceptions.Length - MaximumGroundExceptions));
     }
 
     private static RankedCandidate? ToRankedCandidate(
@@ -181,7 +261,8 @@ internal sealed class SceneObservationProjection
         SceneObservationContext context,
         IReadOnlyList<SceneAffordanceProjection> affordances,
         bool partial,
-        string? truncatedReason)
+        string? truncatedReason,
+        SceneGroundProjection? ground = null)
     {
         string summary = affordances.Count == 0
             ? $"Nothing actionable is visible in {context.LocationName}."
@@ -195,7 +276,8 @@ internal sealed class SceneObservationProjection
             partial,
             truncatedReason,
             context,
-            0);
+            0,
+            ground);
         return result with { PayloadUtf8Bytes = MeasurePayload(result) };
     }
 
@@ -209,7 +291,8 @@ internal sealed class SceneObservationProjection
             false,
             reason,
             context,
-            0);
+            0,
+            null);
 
     private static int MeasurePayload(SceneObservationProjectionResult result)
     {
@@ -226,7 +309,17 @@ internal sealed class SceneObservationProjection
                 affordance.ActionHint)).ToArray(),
             result.Summary,
             result.IsPartial,
-            result.TruncatedReason);
+            result.TruncatedReason,
+            result.Ground is null
+                ? null
+                : new ObserveSceneGroundPayload(
+                    result.Ground.DominantKind,
+                    result.Ground.DominantTileCount,
+                    result.Ground.ScannedTileCount,
+                    result.Ground.Exceptions
+                        .Select(tile => new ObserveSceneGroundTilePayload(tile.TileX, tile.TileY, tile.Kind))
+                        .ToArray(),
+                    result.Ground.OmittedExceptionTileCount));
         return Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(payload, BridgeProtocol.JsonOptions));
     }
 
@@ -251,8 +344,22 @@ internal sealed record SceneObservationProjectionResult(
     bool IsPartial,
     string? TruncatedReason,
     SceneObservationContext Observation,
-    int PayloadUtf8Bytes)
+    int PayloadUtf8Bytes,
+    SceneGroundProjection? Ground = null)
 {
     internal bool IsValid => string.IsNullOrEmpty(this.TruncatedReason)
-        || this.TruncatedReason is "maximum_affordances" or "payload_limit";
+        || this.TruncatedReason is "maximum_affordances" or "payload_limit" or "ground_limit";
 }
+
+/// <summary>
+/// Wire-shaped ground summary: the dominant back-layer `Type` plus only the
+/// tiles that differ from it. A uniform region costs one entry.
+/// </summary>
+internal sealed record SceneGroundProjection(
+    string DominantKind,
+    int DominantTileCount,
+    int ScannedTileCount,
+    IReadOnlyList<SceneGroundProjectionTile> Exceptions,
+    int OmittedExceptionTileCount);
+
+internal sealed record SceneGroundProjectionTile(int TileX, int TileY, string Kind);

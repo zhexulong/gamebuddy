@@ -536,6 +536,32 @@
         }
       }
     },
+    "observeSceneGround": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dominantKind", "dominantTileCount", "scannedTileCount", "exceptions", "omittedExceptionTileCount"],
+      "properties": {
+        "dominantKind": { "enum": ["grass", "dirt", "stone", "wood", "other"] },
+        "dominantTileCount": { "type": "integer", "minimum": 0 },
+        "scannedTileCount": { "type": "integer", "minimum": 0 },
+        "exceptions": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "$ref": "#/$defs/observeSceneGroundTile" }
+        },
+        "omittedExceptionTileCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "observeSceneGroundTile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tileX", "tileY", "kind"],
+      "properties": {
+        "tileX": { "type": "integer" },
+        "tileY": { "type": "integer" },
+        "kind": { "enum": ["grass", "dirt", "stone", "wood", "other"] }
+      }
+    },
     "observeSceneAffordance": {
       "type": "object",
       "additionalProperties": false,
@@ -572,7 +598,7 @@
     "observeSceneResult": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason"],
+      "required": ["observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason", "ground"],
       "properties": {
         "observationId": {
           "type": "string",
@@ -604,7 +630,13 @@
         },
         "truncatedReason": {
           "anyOf": [
-            { "enum": ["maximum_affordances", "payload_limit"] },
+            { "enum": ["maximum_affordances", "payload_limit", "ground_limit"] },
+            { "type": "null" }
+          ]
+        },
+        "ground": {
+          "anyOf": [
+            { "$ref": "#/$defs/observeSceneGround" },
             { "type": "null" }
           ]
         }
@@ -2118,6 +2150,7 @@
         { "if": { "required": ["action"], "properties": { "action": { "const": "dig_artifact_spot" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/digArtifactSpotArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "chop_tree_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/treeChopSourceArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["move_to_tile", "travel", "enter_exit", "till_soil"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "ride_minecart" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "navigate_to_destination" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/navigationDestinationArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "equip_tool" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/toolArgs" } } } },
          { "if": { "required": ["action"], "properties": { "action": { "const": "pickup_forage" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/pickupForageArgs" } } } },
@@ -2152,6 +2185,7 @@
             "navigate_to_destination",
             "equip_tool",
             "travel",
+            "ride_minecart",
             "enter_exit",
             "till_soil",
             "pickup_forage",
