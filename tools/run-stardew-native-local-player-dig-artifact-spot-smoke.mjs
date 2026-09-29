@@ -1,16 +1,26 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
+  validateNativeLocalFixturePolicy,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_dig_artifact_spot_v1";
 const _EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"];
+/**
+ * The diggable artifact spots the target version actually spawns. `Object.cs:1310`
+ * routes both ids through the same `t is Hoe` dig branch, and every spawn site
+ * picks between them at random (`GameLocation.cs:15233` at 1/6, `Mountain.cs:272`
+ * at 0.15), so a runner that only accepts `(O)590` silently never covers the
+ * variant the variant-aware predicate exists for.
+ */
+const ARTIFACT_SPOT_ITEM_IDS = ["(O)590", "(O)SeedSpot"];
+const isArtifactSpotId = (qualifiedItemId) => ARTIFACT_SPOT_ITEM_IDS.includes(qualifiedItemId);
 const EXPECTED_CAPABILITIES = [
   "cancel_active_execution",
   "dig_artifact_spot",
@@ -34,7 +44,7 @@ export async function runDigArtifactSpotSmoke(
   validateConfig(config);
   try {
     const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, EXPECTED_CAPABILITIES);
     const initialSourceCount = before.artifactSpotFarmSourceCount;
     if (!Number.isInteger(initialSourceCount) || initialSourceCount < 1)
       throw new Error(`dig_artifact_spot_initial_farm_source_count:${initialSourceCount}`);
@@ -52,7 +62,7 @@ export async function runDigArtifactSpotSmoke(
         entry?.targetId === target.targetId &&
         entry.x === target.x &&
         entry.y === target.y &&
-        entry.qualifiedItemId === "(O)590",
+        entry.qualifiedItemId === target.qualifiedItemId,
     );
     if (!freshTarget) throw new Error("dig_artifact_spot_target_changed_after_equip");
     const accepted = await execute(
@@ -100,7 +110,7 @@ export async function runDigArtifactSpotSmoke(
         DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON &&
       parseFiniteDecimal(evidence.stamina_delta) <= 0 &&
       parseFiniteDecimal(evidence.expected_stamina_cost) >= 0 &&
-      evidence.qualified_item_id === "(O)590" &&
+      evidence.qualified_item_id === target.qualifiedItemId &&
       evidence.source_present_before === "true" &&
       evidence.source_present_after === "false" &&
       evidence.hoedirt_present_before === "false" &&
@@ -165,11 +175,14 @@ function validateConfig(value) {
   if (
     fixture?.Enable !== true ||
     fixture?.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO ||
-    value.ActionPolicyVersion !== 0 ||
-    !same(value.EnabledActions, ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"])
+    fixture.FixtureScenario !== SCENARIO
   )
     throw new Error("native_local_dig_artifact_spot_fixture_config_invalid");
+  // The fixture writes a deny-by-exception policy (`DeniedActions` /
+  // `ExperimentalActions`). The older `ActionPolicyVersion` + `EnabledActions`
+  // shape no longer exists, so asserting it here made this runner reject every
+  // real fixture config — which is exactly how it failed in live.
+  validateNativeLocalFixturePolicy(value, { requiredActions: _EXPECTED_ACTIONS });
   if (
     value.Portfolio?.Enable === true ||
     value.HostAutomation?.Enable === true ||
@@ -186,7 +199,7 @@ function chooseTarget(snapshot) {
         entry.location === "Farm" &&
         Number.isInteger(entry.x) &&
         Number.isInteger(entry.y) &&
-        entry.qualifiedItemId === "(O)590",
+        isArtifactSpotId(entry.qualifiedItemId),
     )
     .sort((left, right) => left.x - right.x || left.y - right.y || left.targetId.localeCompare(right.targetId));
   if (targets.length === 0) throw new Error("no_live_artifact_spot_target");
