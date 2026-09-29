@@ -42,7 +42,7 @@ public static class FarmhandActionCatalog
     {
         "happy", "sad", "heart", "exclamation", "note", "sleep", "game", "question",
         "x", "pause", "blush", "angry", "yes", "no", "sick", "laugh", "surprised",
-        "hi", "taunt", "uh", "music", "jar"
+        "hi", "taunt", "uh", "music"
     });
 
     public static readonly IReadOnlyList<string> DirectionEnum = Array.AsReadOnly(new[]

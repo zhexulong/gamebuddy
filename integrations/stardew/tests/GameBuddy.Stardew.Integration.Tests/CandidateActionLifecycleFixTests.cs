@@ -252,20 +252,23 @@ public sealed class CandidateActionLifecycleFixTests
 
         long deadlineMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000;
         var request = CreateExecEnvelope(scope, "req_emote_jar", "idemp_emote_jar", "express_emote", new BridgeExecutionArgs { Emote = "jar" }, deadlineMs);
-        session.TryExecute(1, request, out BridgeEnvelope<BridgeReceipt>? response, out string reason).Should().BeTrue(reason);
-        response.Should().NotBeNull();
-        // "jar" no longer exists in the Mod dispatch map, so the request rejects
-        // with invalid_emote before any native doEmote call: the -1 emote index
-        // can never be exposed to the game assembly.
-        response!.Payload.State.Should().Be("rejected");
-        response.Payload.ReasonCode.Should().Be("invalid_emote");
-        response.Payload.ExecutionId.Should().NotBeNullOrEmpty();
 
-        // The rejection is the durable terminal for the admitted tuple.
-        executions.TryGetDurableAdmission(request.Payload.RequestId, request.Payload.IdempotencyKey, out FarmhandExecutionJournalRecord? record, out _).Should().BeTrue();
-        record!.Receipt.Should().NotBeNull();
-        record.Receipt!.State.Should().Be(ExecutionState.Rejected);
-        record.Receipt.ReasonCode.Should().Be("invalid_emote");
+        // "jar" is a native Farmer.EMOTES entry with is_hidden: true and
+        // emoteIconIndex -1 (a fishing-cast animation, not a balloon), so the
+        // game itself refuses to advertise it. It is absent from EmoteEnum, so
+        // the wire validator refuses the request before it can be admitted and
+        // the -1 index can never reach the game assembly. The bridge reports the
+        // envelope as invalid rather than admitting then rejecting it, because
+        // the argument never becomes a legal execution request at all.
+        FarmhandActionCatalog.EmoteEnum.Should().NotContain("jar");
+        session.TryExecute(1, request, out BridgeEnvelope<BridgeReceipt>? response, out string reason).Should().BeFalse(reason);
+        reason.Should().Be("invalid_execution_request");
+        response.Should().BeNull();
+
+        // Nothing was admitted, so there is no durable ledger entry to leak a
+        // half-open execution for a request the wire never accepted.
+        executions.TryGetDurableAdmission(request.Payload.RequestId, request.Payload.IdempotencyKey, out FarmhandExecutionJournalRecord? record, out _).Should().BeFalse();
+        record.Should().BeNull();
     }
 
     private static void WireFarmerIdentity(Farmer farmer, long uniqueMultiplayerId)
