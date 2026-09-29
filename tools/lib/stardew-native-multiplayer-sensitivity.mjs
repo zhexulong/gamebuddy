@@ -359,7 +359,11 @@ function validateAction(action, sources, index, scopeAcksByAction) {
         detail: `Admission rejects multiplayer (${admission.reasonCode}) although a native seam reads outcome-affecting multiplayer state, so the native path does support a shared world.`,
       }),
     );
-  if (admission.verdict === "admits_multiplayer" && derivedSensitivity === "mp-semantic")
+  // A `live_verified` lifecycle IS the shared-world evidence (design/10 3.1.1:
+  // reaching live_verified requires the requiredLiveTopology run to have passed),
+  // and a published action has completed the whole ladder; only experimental
+  // actions can still be unverified.
+  if (admission.verdict === "admits_multiplayer" && derivedSensitivity === "mp-semantic" && action.lifecycle === "experimental")
     defects.push(
       Object.freeze({
         actionId,

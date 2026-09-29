@@ -38,14 +38,14 @@ public sealed class NpcGiftActionTests
     }
 
     [Fact]
-    public void Catalog_InteractNpcWithItem_RegisteredAsExperimentalNpcSocial()
+    public void Catalog_InteractNpcWithItem_RegisteredAsLiveVerifiedNpcSocial()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "interact_npc_with_item");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("npc_social");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         reg.Descriptor.Should().NotBeNull();

@@ -197,8 +197,24 @@ test("derives over_restriction when admission rejects a shared world without nat
 });
 
 test("derives unverified_scope when admission admits a shared world with an mp-semantic seam", () => {
-  const report = validateMultiplayerSensitivityRegister(register([action()]), SOURCE);
+  const report = validateMultiplayerSensitivityRegister(
+    register([action({ lifecycle: "experimental" })]),
+    SOURCE,
+  );
   assert.equal(report.unverifiedScope.length, 1);
+});
+
+test("live_verified is the shared-world evidence, so an mp-semantic live_verified action is not unverified", () => {
+  // design/10 3.1.1: reaching live_verified requires the requiredLiveTopology
+  // run to have passed, so the lifecycle itself is the evidence. A
+  // live_verified mp-semantic action must not still pin an unverified_scope
+  // gap that its promotion already closed.
+  const report = validateMultiplayerSensitivityRegister(
+    register([action({ lifecycle: "live_verified" })]),
+    SOURCE,
+  );
+  assert.equal(report.unverifiedScope.length, 0);
+  assert.equal(report.defects.length, 0);
 });
 
 test("treats a read-only action as having no admission to be restrictive", () => {
@@ -304,12 +320,7 @@ test("the committed register derives cleanly against the exact decompiled source
   // hide here. Update this list deliberately when a shared-world action lands.
   assert.deepEqual(
     report.acknowledged.map((ack) => `${ack.defect}:${ack.actionId}`).sort(),
-    [
-      "unverified_scope:advance_day",
-      "unverified_scope:chest_retrieve",
-      "unverified_scope:pet_animal",
-      "unverified_scope:ship_item",
-    ],
+    ["unverified_scope:chest_retrieve", "unverified_scope:ship_item"],
   );
   for (const ack of report.acknowledged) {
     assert.ok(ack.reason && ack.reason.length > 0, `${ack.actionId} pin must carry a reason`);

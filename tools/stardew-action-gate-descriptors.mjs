@@ -150,6 +150,30 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "actor_facing_matches",
     "native_express_emote_v1",
   ),
+  // Promoted to live_verified: a real target-version live run produced a native
+  // receipt and action-specific postcondition, but no independent publication
+  // review has happened yet (design/10 3.1.1).
+  //
+  // `pet_animal` earns the shared-world rung: the +12 friendship is gated on the
+  // single per-pet `grantedFriendshipForPet` flag, so a second farmer's pet in the
+  // same day grants 0. Verified in the real Host-LAN + AI-Farmhand topology
+  // (pet_completed, friendship 0->12, day_recorded, friendship_callback).
+  gate("pet_animal", 1, "run-stardew-native-local-player-pet-animal-smoke.mjs", "pet_completed", "native_pet_animal_v1"),
+  // Two native branches, so the descriptor names the one the live run proved:
+  // the quest-delivery branch is checked first and short-circuits the gift path.
+  gate(
+    "interact_npc_with_item",
+    1,
+    "run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
+    "quest_item_delivered",
+    "native_interact_npc_with_item_v1",
+  ),
+  // The cross-day lifecycle. Its fixture scenario is the ordinary move-only
+  // world: the action owns its own route to the actor's bed and its own native
+  // sleep-answer/observation, so there is no precondition to provision. It earns
+  // the shared-world rung: startSleep forks on Game1.IsMultiplayer, so a
+  // single-player pass cannot stand in for the co-op ready barrier.
+  gate("advance_day", 1, "run-stardew-native-local-player-advance-day-smoke.mjs", "day_advanced"),
 ]);
 
 /**
@@ -165,7 +189,6 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
 export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   clear_debris: "run-stardew-native-local-player-clear-debris-smoke.mjs",
   npc_relationship: "run-stardew-native-local-player-npc-relationship-smoke.mjs",
-  pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
   // Same native WateringCan.DoFunction seam as water_crop, but a distinct action:
   // `PetBowl.watered` is not a crop postcondition, so water_crop's `crop_watered`
   // receipt would be false for a bowl.
@@ -195,14 +218,9 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // identical because the action advertises through the same shippingBinTargets
   // channel; only the fixture scenario (island house upgraded) differs.
   ship_item_island: "run-stardew-native-local-player-ship-item-smoke.mjs",
-  interact_npc_with_item: "run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
   craft_item: "run-stardew-native-local-player-craft-item-smoke.mjs",
   cook_recipe: "run-stardew-native-local-player-cook-recipe-smoke.mjs",
   collect_crab_pot_output: "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
-  // The M2 cross-day lifecycle. Its fixture scenario is the ordinary move-only
-  // world: the action owns its own route to the actor's bed and its own native
-  // sleep-answer/observation, so there is no precondition to provision.
-  advance_day: "run-stardew-native-local-player-advance-day-smoke.mjs",
   // Lane G recovery-chain harness: drives breakpoint rejected -> equip recovery
   // -> retry succeeded within one native-local session over the till_soil
   // fixture. Not a new action; it grants no capability.
