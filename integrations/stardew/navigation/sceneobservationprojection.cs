@@ -13,8 +13,54 @@ internal sealed class SceneObservationProjection
 {
     internal const int DefaultRadius = 15;
     internal const int MaximumRadius = 30;
+
+    /// <summary>
+    /// Item ceiling. This is the bound that expresses the product policy: a
+    /// 7x7-to-30-radius view can hold many trees, weeds, stones and animals, so
+    /// those four kinds are capped at three each (12 slots) and the remaining
+    /// nine sparse kinds get one slot apiece, which is what makes 20 a natural
+    /// ceiling rather than a round number.
+    /// </summary>
     internal const int MaximumAffordances = 20;
-    internal const int MaximumPayloadUtf8Bytes = 2048;
+
+    /// <summary>
+    /// Byte ceiling. This is a context-safety bound, not a product quota, so it
+    /// must ADMIT the item ceiling on real input with headroom, and only act as a
+    /// net for legal-but-never-produced padding.
+    ///
+    /// <para>
+    /// Derivation (measured, not assumed). The worst LEGAL realistic fill is
+    /// twenty artifact spots, because an artifact spot is the most expensive kind
+    /// the scanner emits (its action hint is the long `dig_artifact_spot`) and it
+    /// is not density capped:
+    /// </para>
+    /// <list type="number">
+    /// <item>envelope with zero affordances: 194 B</item>
+    /// <item>one artifact spot at the longest legal distance/direction pair:
+    /// 142 B (the previous estimate of 149 B paired distance 15 with
+    /// `CurrentTile`, which cannot co-occur - CurrentTile means distance 0)
+    /// <item>twenty of them: 3054 B</item>
+    /// <item>headroom for growth (localized or modded item names, new kinds):
+    /// 4096 leaves 34%, whereas 3072 would leave 0.6% and therefore breaks the
+    /// first time a content mod ships a longer name</item>
+    /// <item>the transport frame allows 32 KiB
+    /// (BridgeProtocol.MaximumMessageBytes, itself derived from the hello_ack
+    /// action catalog against the 64 KiB pipe buffer), so 4096 keeps 8x framing
+    /// headroom and cannot become the binding limit</item>
+    /// <item>the sibling read-only projection `inspect_world_map` uses the same
+    /// item ceiling and a 4096-byte result bound, so the two agree instead of
+    /// drifting</item>
+    /// </list>
+    /// <para>
+    /// Contract-maximum padding (a 128-char name plus a 160-char hint, the
+    /// largest either field may be) still truncates here, which is intended:
+    /// the ceiling exists to stop pathological payloads, not to shrink real
+    /// ones. At 4096 the item ceiling binds first on real input, so
+    /// `truncatedReason` is `maximum_affordances` for real scenes and
+    /// `payload_limit` only for padded ones.
+    /// </para>
+    /// </summary>
+    internal const int MaximumPayloadUtf8Bytes = 4096;
 
     private readonly SceneObservationStore references;
 
