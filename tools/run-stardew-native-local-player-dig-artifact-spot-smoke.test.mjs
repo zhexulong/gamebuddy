@@ -17,8 +17,12 @@ const config = {
   CompanionId: "companion",
   PipeName: "pipe",
   BridgeToken: "token",
-  ActionPolicyVersion: 0,
-  EnabledActions: ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"],
+  // The fixture writes a deny-by-exception policy; `ActionPolicyVersion` and
+  // `EnabledActions` no longer exist, and asserting them made this runner reject
+  // every real fixture config.
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },
@@ -107,8 +111,15 @@ test("dig-artifact-spot runner uses shared dispatch and exact terminal receipt",
   const result = await runDigArtifactSpotSmoke(client, [], config);
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "artifact_spot_dug");
+  // `summarizeReceipt` publishes only state/reasonCode/revision/hasEvidence, so the
+  // execution identity is deliberately not part of the action result. Asserting it
+  // here could never pass; the per-phase identity lives in the runner's own trace.
   assert.equal(result.receipt.reasonCode, "artifact_spot_dug");
-  assert.equal(result.receipt.executionId, "dig-execution");
+  assert.equal(result.receipt.hasEvidence, true);
+  assert.deepEqual(
+    result.trace.map((entry) => entry.phase),
+    ["equip_hoe", "dig_artifact_spot"],
+  );
   assert.deepEqual(result.target, ARTIFACT_TARGET);
   assert.equal(result.after.artifactSpotFarmSourceCount, 1);
   assert.deepEqual(calls, ["equip_tool", "dig_artifact_spot"]);
@@ -175,9 +186,10 @@ test("dig-artifact-spot runner fails closed on stamina evidence mismatch", async
           state: "succeeded",
           reasonCode: "artifact_spot_dug",
           revision: 7,
-          // stamina_delta -2 does not match expected_stamina_cost 1 within the epsilon.
+          // The delta does not match the expected cost.
           evidence: terminalEvidence({
-            detail: terminalEvidence().detail.replace("stamina_delta=-1", "stamina_delta=-2"),
+            detail:
+              "location=Farm;target=artifact_0000000000000001;result_target=artifact_0000000000000001;tile=3,3;tool=hoe;slot=0;stamina_before=268;stamina_after=200;stamina_delta=-68;expected_stamina_cost=1;qualified_item_id=(O)590;source_present_before=true;source_present_after=false;hoedirt_present_before=false;hoedirt_present_after=true;source_removed=true",
           }),
         };
       }
@@ -186,6 +198,117 @@ test("dig-artifact-spot runner fails closed on stamina evidence mismatch", async
   };
 
   const result = await runDigArtifactSpotSmoke(client, [], config);
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "dig_artifact_spot_postcondition_mismatch");
+});
+
+// The engine spawns `(O)590` and `(O)SeedSpot` through one `t is Hoe` dig branch
+// (Object.cs:1310), and every spawn site picks between them at random
+// (GameLocation.cs:15233 at 1/6). A runner that accepted only `(O)590` would keep
+// passing even if the Mod regressed to a single-id predicate, so this case drives
+// the variant end to end and asserts the receipt reports the id that was dug.
+test("dig-artifact-spot runner completes for the (O)SeedSpot variant", async () => {
+  const seedSpotTarget = { ...ARTIFACT_TARGET, targetId: "artifact_seedspot0000001", qualifiedItemId: "(O)SeedSpot" };
+  let snapshot = baseSnapshot(5, { artifactSpotTargets: [seedSpotTarget] });
+  let digArgs = null;
+  const client = {
+    state: { snapshot },
+    observe: async () => snapshot,
+    execute: async (request) => {
+      if (request.action === "equip_tool") {
+        snapshot = baseSnapshot(6, { artifactSpotTargets: [seedSpotTarget] });
+        client.state.snapshot = snapshot;
+        return {
+          requestId: request.requestId,
+          executionId: "equip-execution-seed",
+          state: "succeeded",
+          reasonCode: "tool_equipped",
+          revision: 6,
+          evidence: { detail: "tool=hoe;before=Axe;expected=(T)Hoe;after=(T)Hoe" },
+        };
+      }
+      if (request.action === "dig_artifact_spot") {
+        digArgs = request.args;
+        snapshot = baseSnapshot(7, {
+          artifactSpotTargets: [],
+          artifactSpotResultTargets: [
+            { targetId: seedSpotTarget.targetId, location: "Farm", x: 3, y: 3, crop: false, ground: true },
+          ],
+          artifactSpotFarmSourceCount: 1,
+        });
+        client.state.snapshot = snapshot;
+        return {
+          requestId: request.requestId,
+          executionId: "dig-execution-seed",
+          state: "succeeded",
+          reasonCode: "artifact_spot_dug",
+          revision: 7,
+          evidence: terminalEvidence({
+            detail:
+              "location=Farm;target=artifact_seedspot0000001;result_target=artifact_seedspot0000001;tile=3,3;tool=hoe;slot=0;stamina_before=268;stamina_after=267;stamina_delta=-1;expected_stamina_cost=1;qualified_item_id=(O)SeedSpot;source_present_before=true;source_present_after=false;hoedirt_present_before=false;hoedirt_present_after=true;source_removed=true",
+          }),
+        };
+      }
+      throw new Error(`unexpected_action:${request.action}`);
+    },
+  };
+
+  const result = await runDigArtifactSpotSmoke(client, [], config);
+
+  assert.equal(result.state, "passed");
+  assert.equal(result.reasonCode, "artifact_spot_dug");
+  assert.equal(result.target.qualifiedItemId, "(O)SeedSpot");
+  assert.equal(digArgs?.expectedTargetId, seedSpotTarget.targetId);
+  assert.equal(result.evidence.qualified_item_id, "(O)SeedSpot");
+});
+
+// A receipt naming a different id than the requested target must not pass: the id is
+// the evidence that the variant-aware predicate resolved the live object rather than
+// a neighbouring id that happens to be diggable too.
+test("dig-artifact-spot runner fails closed when the receipt reports another id", async () => {
+  const seedSpotTarget = { ...ARTIFACT_TARGET, targetId: "artifact_seedspot0000002", qualifiedItemId: "(O)SeedSpot" };
+  let snapshot = baseSnapshot(5, { artifactSpotTargets: [seedSpotTarget] });
+  const client = {
+    state: { snapshot },
+    observe: async () => snapshot,
+    execute: async (request) => {
+      if (request.action === "equip_tool") {
+        snapshot = baseSnapshot(6, { artifactSpotTargets: [seedSpotTarget] });
+        client.state.snapshot = snapshot;
+        return {
+          requestId: request.requestId,
+          executionId: "equip-execution-mismatch",
+          state: "succeeded",
+          reasonCode: "tool_equipped",
+          revision: 6,
+          evidence: { detail: "tool=hoe;before=Axe;expected=(T)Hoe;after=(T)Hoe" },
+        };
+      }
+      if (request.action === "dig_artifact_spot") {
+        snapshot = baseSnapshot(7, {
+          artifactSpotTargets: [],
+          artifactSpotResultTargets: [
+            { targetId: seedSpotTarget.targetId, location: "Farm", x: 3, y: 3, crop: false, ground: true },
+          ],
+          artifactSpotFarmSourceCount: 1,
+        });
+        client.state.snapshot = snapshot;
+        return {
+          requestId: request.requestId,
+          executionId: "dig-execution-mismatch",
+          state: "succeeded",
+          reasonCode: "artifact_spot_dug",
+          revision: 7,
+          // Reports `(O)590` while the requested target was `(O)SeedSpot`.
+          evidence: terminalEvidence(),
+        };
+      }
+      throw new Error(`unexpected_action:${request.action}`);
+    },
+  };
+
+  const result = await runDigArtifactSpotSmoke(client, [], config);
+
   assert.equal(result.state, "blocked");
   assert.equal(result.reasonCode, "dig_artifact_spot_postcondition_mismatch");
 });

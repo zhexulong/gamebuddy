@@ -5,7 +5,7 @@
 // postcondition validation) stays in this runner.
 
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -15,6 +15,7 @@ import {
   waitForActionable,
   waitForFreshSnapshot,
   waitForTerminal,
+  validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_break_rock_source_v1";
@@ -46,7 +47,7 @@ export async function runBreakRockSourceSmoke(
   validateConfig(config);
   try {
     let snapshot = await waitForActionable(client, await observeFresh(client), actionableTimeoutMs);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, EXPECTED_CAPABILITIES);
     if (snapshot.location !== "FarmHouse") throw new Error("break_rock_source_route_must_start_at_farmhouse");
 
     snapshot = await travelToFarm(
@@ -71,11 +72,14 @@ export async function runBreakRockSourceSmoke(
     snapshot = await waitForActionable(client, snapshot, actionableTimeoutMs);
 
     const target = chooseRock(snapshot);
-    const pickaxe = choosePickaxe(snapshot);
-    const equipped = await execute(client, trace, "equip_pickaxe", "equip_tool", { slot: pickaxe.slot }, snapshot);
-    if (equipped.state !== "succeeded" || equipped.reasonCode !== "tool_selected") {
+    // `equip_tool` takes a semantic tool selector; the Mod resolves the private
+    // inventory slot, so sending one is now a malformed request.
+    const equipped = await execute(client, trace, "equip_pickaxe", "equip_tool", { tool: "pickaxe" }, snapshot);
+    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")) {
       throw new Error(`pickaxe_equip_failed:${equipped.reasonCode}`);
     }
+    // `break_rock_source` itself still addresses the tool by owned slot.
+    const pickaxe = choosePickaxe(snapshot);
 
     snapshot = await waitForActionable(client, await observeFresh(client), actionableTimeoutMs);
     const freshTarget = findSameRock(snapshot, target);
@@ -163,12 +167,15 @@ function validateConfig(value) {
     value.Portfolio?.Enable === true ||
     value.HostAutomation?.Enable === true ||
     value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true ||
-    value.ActionPolicyVersion !== 0 ||
-    !same(value.EnabledActions, EXPECTED_ACTIONS)
+    value.FarmhandProvisioner?.Enable === true
   ) {
     throw new Error("native_local_break_rock_source_action_policy_invalid");
   }
+  // The fixture writes a deny-by-exception policy (`DeniedActions` /
+  // `ExperimentalActions`); the older `ActionPolicyVersion` + `EnabledActions`
+  // shape no longer exists, so asserting it here rejected every real fixture
+  // config. The required actions must simply not be denied.
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 
 async function execute(client, trace, phase, action, args, snapshot) {
@@ -225,7 +232,12 @@ async function moveToReachableRock(
   stabilizeTimeoutMs,
   moveTimeoutMs,
 ) {
-  if (rockCandidates(snapshot).length === 1) return snapshot;
+  // "Exactly one candidate" is NOT the same as "already adjacent": discovery scans
+  // a much wider radius than break_rock_source's Chebyshev <= 1 admission, so a
+  // single discovered rock can still be several tiles away and the action would
+  // return target_out_of_range. Approaching is required whenever the candidate is
+  // not adjacent, which is exactly the defect a wider discovery radius introduced.
+  if (allRocksAdjacent(snapshot)) return snapshot;
   for (let radius = 1; radius <= 12; radius++) {
     const waypoints = [];
     for (let dx = -radius; dx <= radius; dx++) {
@@ -247,13 +259,13 @@ async function moveToReachableRock(
           stabilizeTimeoutMs,
           moveTimeoutMs,
         );
-        if (rockCandidates(moved).length === 1) return moved;
+        if (allRocksAdjacent(moved)) return moved;
         snapshot = moved;
       } catch (error) {
         const reason = String(error instanceof Error ? error.message : error);
         if (!reason.endsWith("_not_accepted:no_native_path") && !reason.endsWith("_failed:no_native_path")) throw error;
         snapshot = await waitForActionable(client, await observeFresh(client), actionableTimeoutMs);
-        if (rockCandidates(snapshot).length === 1) return snapshot;
+        if (allRocksAdjacent(snapshot)) return snapshot;
       }
     }
   }
@@ -282,6 +294,12 @@ function recordTerminalReceipt(trace, phase, action, args, receipt) {
 
 function rockCandidates(snapshot) {
   return (snapshot.rockSourceTargets ?? []).filter(validRock);
+}
+
+/** Every discovered rock must be reachable in one step for the action to admit it. */
+function allRocksAdjacent(snapshot) {
+  const rocks = rockCandidates(snapshot);
+  return rocks.length === 1 && rocks.every((rock) => adjacent(snapshot.tile, rock));
 }
 
 function chooseRock(snapshot) {
