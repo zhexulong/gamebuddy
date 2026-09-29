@@ -31,14 +31,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class ShipItemActionTests
 {
     [Fact]
-    public void Catalog_ShipItem_RegisteredAsExperimentalShopsEconomyWithSlotItemTarget()
+    public void Catalog_ShipItem_RegisteredAsLiveVerifiedShopsEconomyWithSlotItemTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "ship_item");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("shops_economy");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         reg.Descriptor.Should().NotBeNull();

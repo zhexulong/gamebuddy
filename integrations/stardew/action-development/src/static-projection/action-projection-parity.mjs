@@ -175,8 +175,15 @@ function identifierOf(value, code) {
 }
 
 function idList(value, key, code, max) {
+  // An empty list is legal here: the partition must be able to express "no
+  // action currently sits on this rung". Every experimental action reaching a
+  // visible lifecycle is a normal end state, not a malformed snapshot, and
+  // rejecting it would make the last promotion impossible to record.
+  // Emptiness is still verified against the surface: the partition guard below
+  // requires the three lists to cover exactly the surface actions, so a
+  // spuriously emptied list fails as a partition mismatch rather than silently.
   const list = dataDescriptor(value, key, code).value;
-  if (!isArray(list, code) || list.length === 0 || list.length > max) fail(code);
+  if (!isArray(list, code) || list.length > max) fail(code);
   const seen = new Set();
   for (let index = 0; index < list.length; index += 1) {
     const id = identifierOf(dataDescriptor(list, String(index), code).value, code);

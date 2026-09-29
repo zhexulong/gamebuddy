@@ -45,14 +45,14 @@ public sealed class CrabPotCollectActionTests
     }
 
     [Fact]
-    public void Catalog_CollectCrabPotOutput_RegisteredAsExperimentalBuildingsFarmManagement()
+    public void Catalog_CollectCrabPotOutput_RegisteredAsLiveVerifiedBuildingsFarmManagement()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "collect_crab_pot_output");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("buildings_farm_management");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         reg.Descriptor.Should().NotBeNull();

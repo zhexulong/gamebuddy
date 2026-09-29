@@ -567,37 +567,55 @@ const register = {
           },
         ]
       : []),
-    {
-      defect: "unverified_scope",
-      actions: UNVERIFIED_SCOPE,
-      reason:
-        "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction " +
-        "outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement " +
-        "container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin " +
-        "differs between single-player and a shared world. For `chest_retrieve` the container is resolved by " +
-        "`Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a " +
-        "MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves " +
-        "`Game1.player.UniqueMultiplayerID`. For `pet_animal` the +12 friendship is gated on the single per-pet " +
-        "`grantedFriendshipForPet` flag rather than the acting farmer's `lastPetDay` entry, so a second farmer's pet in the same " +
-        "day grants 0 friendship while the Mod receipt asserts before+12. No shared-world live evidence exists yet for any of them.",
-      owner: "stardew-integration",
-    },
-    // Mechanism pins name mechanisms, not actions. The Mod deliberately does not own
-    // the shared-world sleep path (gameplay-capability-expansion.md 3.2 forbids
-    // Mod-initiated doSleep/doPassOut/auto-return; the shared-world ready
-    // coordination is the players'), and the only claimed capability is
-    // `single_player_sleep_and_advance_day`, which by name covers the single-player
-    // lifecycle only. So no shared-world claim is being made here. If such a claim is
-    // ever made, this pin must be removed and real shared-world evidence produced.
+    // The pin is emitted only while at least one mp-semantic action is still
+    // unproven. Once every mp-semantic action has reached live_verified (its
+    // required shared-world run IS the evidence), the pin is removed rather
+    // than kept as an empty acknowledgement: an empty `actions` array is a
+    // stale pin, and the gate rejects it.
+    ...(UNVERIFIED_SCOPE.length > 0
+      ? [
+          {
+            defect: "unverified_scope",
+            actions: UNVERIFIED_SCOPE,
+            reason:
+              "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction " +
+              "outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement " +
+              "container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin " +
+              "differs between single-player and a shared world. For `chest_retrieve` the container is resolved by " +
+              "`Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a " +
+              "MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves " +
+              "`Game1.player.UniqueMultiplayerID`. For `pet_animal` the +12 friendship is gated on the single per-pet " +
+              "`grantedFriendshipForPet` flag rather than the acting farmer's `lastPetDay` entry, so a second farmer's pet in the same " +
+              "day grants 0 friendship while the Mod receipt asserts before+12. These actions are pinned here only until their own " +
+              "shared-world live run lands; that run is the evidence, so reaching `live_verified` retires the pin.",
+            owner: "stardew-integration",
+          },
+        ]
+      : []),
+    // Mechanism pins name mechanisms, not actions. The `sleep` mechanism still
+    // forks on world mode, but its shared-world branch is now exercised: the
+    // `advance_day` action (mp-semantic, live_verified) drives the native
+    // `answerDialogue(Response)` -> `startSleep()` path and lets the native
+    // `ReadyCheckDialog('sleep')` barrier declare only the Farmhand's own local
+    // ready while it waits for every required player. A two-process Host-LAN +
+    // AI-Farmhand run reached `day_advanced` with ready 2/2.
+    //
+    // What the pin still withholds is any claim the Mod pushes the day itself:
+    // gameplay-capability-expansion.md 3.2 still forbids Mod-initiated
+    // `doSleep`/`doPassOut`/auto-return and any call that marks ANOTHER player
+    // ready. The pin therefore records the residual, genuinely unowned fork
+    // (a barrier that never completes must be reported, never forced) rather
+    // than pretending no shared-world evidence exists.
     {
       defect: "unverified_mechanism_scope",
       mechanisms: ["sleep"],
       reason:
-        "The sleep mechanism forks on world mode and therefore needs shared-world evidence, but the Mod does not own that path: " +
-        "gameplay-capability-expansion.md 3.2 forbids Mod-initiated doSleep/doPassOut/auto-return, and shared-world ready " +
-        "coordination belongs to the players. The only claimed capability is `single_player_sleep_and_advance_day`, which by name " +
-        "covers the single-player lifecycle only, so no shared-world claim is being made. Pin is scoped to that capability; if a " +
-        "shared-world sleep capability is ever claimed, this pin must be removed and real shared-world evidence produced.",
+        "The sleep mechanism forks on world mode. Its shared-world branch is covered by the live_verified `advance_day` run above " +
+        "(native answerDialogue -> startSleep -> ReadyCheckDialog('sleep'), ready 2/2, day_advanced), so no shared-world evidence is " +
+        "missing. What remains unowned by the Mod, and must stay that way, is forcing the transition: gameplay-capability-expansion.md " +
+        "3.2 forbids Mod-initiated doSleep/doPassOut/auto-return, and the Farmhand may only declare its OWN local ready. A ready barrier " +
+        "that never completes is reported as requires_other_player rather than forced. If a future capability claims Mod-initiated sleep " +
+        "or cross-player ready, this pin must be removed and fresh shared-world evidence produced for that stronger claim.",
       owner: "stardew-integration",
     },
   ],

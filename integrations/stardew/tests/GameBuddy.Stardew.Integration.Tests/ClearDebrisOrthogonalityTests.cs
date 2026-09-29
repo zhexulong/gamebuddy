@@ -23,14 +23,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class ClearDebrisOrthogonalityTests
 {
     [Fact]
-    public void Catalog_ClearDebris_RegisteredAsExperimentalResourceToolsWithSlotTarget()
+    public void Catalog_ClearDebris_RegisteredAsLiveVerifiedResourceToolsWithSlotTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "clear_debris");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("resource_gathering");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
 

@@ -205,6 +205,90 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Walk the Farmhand to its own bed, let the native sleep path run, declare local sleep-ready through that same native path, and observe the native save/new-day pipeline. In a shared world the night completes only when every required player is ready, so a barrier that never completes is reported honestly rather than forced.",
     ["own_bed", "day_lifecycle"],
   ),
+  actionAdapter(
+    "clear_debris",
+    "Clear a debris clump",
+    "Use the equipped Axe or Pickaxe on a live adjacent ResourceClump; each hit returns its own receipt and only clump removal completes the action.",
+    ["debris", "tool"],
+  ),
+  actionAdapter(
+    "npc_relationship",
+    "Inspect an NPC relationship",
+    "Read one adjacent villager's live relationship facts without changing them.",
+    ["npc"],
+  ),
+  actionAdapter(
+    "water_pet_bowl",
+    "Water the pet bowl",
+    "Use the native Watering Can on the current location's completed, unwatered native Pet Bowl.",
+    ["pet_bowl", "watering_can"],
+  ),
+  actionAdapter(
+    "water_slime_hutch_trough",
+    "Water a Slime Hutch trough",
+    "Use the native Watering Can on an unwatered trough tile inside the current Slime Hutch.",
+    ["slime_hutch_trough", "watering_can"],
+  ),
+  actionAdapter(
+    "chest_store",
+    "Store an item in a chest",
+    "Move one carried inventory stack into a live adjacent chest through the native container path, with no ItemGrabMenu opened.",
+    ["chest", "inventory_slot"],
+  ),
+  actionAdapter(
+    "chest_retrieve",
+    "Take an item from a chest",
+    "Move one observed chest slot's item into the Farmhand inventory through the native container path, bound to the observed qualified item id.",
+    ["chest", "inventory"],
+  ),
+  actionAdapter(
+    "chop_stump",
+    "Chop a tree stump",
+    "Use the equipped Axe on a live ordinary mature tree that is already a stump until the native stump removal completes.",
+    ["tree_stump", "tool"],
+  ),
+  actionAdapter(
+    "plant_sapling",
+    "Plant a tree sapling",
+    "Use the native wild-tree-seed placement path to plant one observed tree sapling on a live lawful tile.",
+    ["farm_tile", "inventory_slot"],
+  ),
+  actionAdapter(
+    "cut_weeds",
+    "Cut a weed",
+    "Use the equipped scythe on a live adjacent Weed through its native tool action until the weed is removed.",
+    ["weed", "tool"],
+  ),
+  actionAdapter(
+    "scythe_crop",
+    "Scythe a crop",
+    "Use the equipped scythe on a live ready Scythe-method crop; the native harvest leaves the crop removed and the produce on the ground.",
+    ["crop", "tool"],
+  ),
+  actionAdapter(
+    "craft_item",
+    "Craft an item",
+    "Craft one learned recipe from the Farmhand's own inventory through the native recipe path, with honest item conservation evidence.",
+    ["recipe", "crafting"],
+  ),
+  actionAdapter(
+    "cook_recipe",
+    "Cook a recipe",
+    "Cook one learned cooking recipe at a live adjacent cooking station through the native recipe path, with honest item conservation evidence.",
+    ["recipe", "cooking"],
+  ),
+  actionAdapter(
+    "collect_crab_pot_output",
+    "Collect crab pot output",
+    "Collect the ready output of one live adjacent baited Crab Pot through its native interaction.",
+    ["crab_pot"],
+  ),
+  actionAdapter(
+    "ship_item",
+    "Ship an item",
+    "Move one shippable carried inventory stack into the current player's live shipping bin through the native shipping settlement.",
+    ["shipping_bin", "inventory_slot"],
+  ),
 ]) satisfies readonly StardewActionAdapter[];
 
 export type StardewActionId =
@@ -266,6 +350,20 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   interact_npc_with_item: "stardew_interact_npc_with_item",
   pet_animal: "stardew_pet_animal",
   advance_day: "stardew_advance_day",
+  clear_debris: "stardew_clear_debris",
+  npc_relationship: "stardew_npc_relationship",
+  water_pet_bowl: "stardew_water_pet_bowl",
+  water_slime_hutch_trough: "stardew_water_slime_hutch_trough",
+  chest_store: "stardew_chest_store",
+  chest_retrieve: "stardew_chest_retrieve",
+  chop_stump: "stardew_chop_stump",
+  plant_sapling: "stardew_plant_sapling",
+  cut_weeds: "stardew_cut_weeds",
+  scythe_crop: "stardew_scythe_crop",
+  craft_item: "stardew_craft_item",
+  cook_recipe: "stardew_cook_recipe",
+  collect_crab_pot_output: "stardew_collect_crab_pot_output",
+  ship_item: "stardew_ship_item",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
 /**

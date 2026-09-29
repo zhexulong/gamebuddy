@@ -1140,12 +1140,12 @@
       {
         "actionId": "clear_debris",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "clear_debris",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1180,12 +1180,12 @@
       {
         "actionId": "npc_relationship",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "npc_relationship",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1217,12 +1217,12 @@
       {
         "actionId": "pet_animal",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "pet_animal",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1254,12 +1254,12 @@
       {
         "actionId": "water_pet_bowl",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "water_pet_bowl",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1291,12 +1291,12 @@
       {
         "actionId": "water_slime_hutch_trough",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "water_slime_hutch_trough",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1328,12 +1328,12 @@
       {
         "actionId": "interact_npc_with_item",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "interact_npc_with_item",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1433,12 +1433,12 @@
       {
         "actionId": "chest_store",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "chest_store",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1476,12 +1476,12 @@
       {
         "actionId": "chest_retrieve",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "chest_retrieve",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1519,12 +1519,12 @@
       {
         "actionId": "chop_stump",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "chop_stump",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1559,12 +1559,12 @@
       {
         "actionId": "plant_sapling",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "plant_sapling",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1602,12 +1602,12 @@
       {
         "actionId": "cut_weeds",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "cut_weeds",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1642,12 +1642,12 @@
       {
         "actionId": "scythe_crop",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "scythe_crop",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1682,12 +1682,12 @@
       {
         "actionId": "craft_item",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "craft_item",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "expectedTargetId": {
@@ -1713,12 +1713,12 @@
       {
         "actionId": "cook_recipe",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "cook_recipe",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "expectedTargetId": {
@@ -1744,12 +1744,12 @@
       {
         "actionId": "collect_crab_pot_output",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "collect_crab_pot_output",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1781,12 +1781,12 @@
       {
         "actionId": "ship_item",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "ship_item",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1824,12 +1824,12 @@
       {
         "actionId": "advance_day",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "advance_day",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {},
           "outputFacts": {},
@@ -1876,8 +1876,25 @@
       "dig_artifact_spot",
       "refill_watering_can",
       "navigate_to_destination",
+      "clear_debris",
+      "npc_relationship",
+      "pet_animal",
+      "water_pet_bowl",
+      "water_slime_hutch_trough",
+      "interact_npc_with_item",
       "express_emote",
-      "face_direction"
+      "face_direction",
+      "chest_store",
+      "chest_retrieve",
+      "chop_stump",
+      "plant_sapling",
+      "cut_weeds",
+      "scythe_crop",
+      "craft_item",
+      "cook_recipe",
+      "collect_crab_pot_output",
+      "ship_item",
+      "advance_day"
     ],
     "executableActionIds": [
       "move_to_tile",
@@ -1906,21 +1923,14 @@
       "dig_artifact_spot",
       "refill_watering_can",
       "navigate_to_destination",
-      "express_emote",
-      "face_direction"
-    ],
-    "readOnlyActionIds": [
-      "inspect_world_map",
-      "find_destination",
-      "observe_scene"
-    ],
-    "experimentalActionIds": [
       "clear_debris",
       "npc_relationship",
       "pet_animal",
       "water_pet_bowl",
       "water_slime_hutch_trough",
       "interact_npc_with_item",
+      "express_emote",
+      "face_direction",
       "chest_store",
       "chest_retrieve",
       "chop_stump",
@@ -1933,6 +1943,12 @@
       "ship_item",
       "advance_day"
     ],
+    "readOnlyActionIds": [
+      "inspect_world_map",
+      "find_destination",
+      "observe_scene"
+    ],
+    "experimentalActionIds": [],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
       "snapshotCapabilitiesFromCapabilitySet": true,
@@ -1944,9 +1960,17 @@
       "advance_day",
       "bait_crab_pot",
       "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
       "chop_tree_source",
+      "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
@@ -1961,25 +1985,39 @@
       "machine_load",
       "move_to_tile",
       "navigate_to_destination",
+      "npc_relationship",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
       "place_wood_fence",
+      "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "scythe_crop",
+      "ship_item",
       "till_soil",
       "travel",
       "use_item",
-      "water_crop"
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
     ],
     "toolActionIds": [
       "advance_day",
       "bait_crab_pot",
       "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
       "chop_tree_source",
+      "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
@@ -1994,25 +2032,39 @@
       "machine_load",
       "move_to_tile",
       "navigate_to_destination",
+      "npc_relationship",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
       "place_wood_fence",
+      "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "scythe_crop",
+      "ship_item",
       "till_soil",
       "travel",
       "use_item",
-      "water_crop"
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
     ],
     "toolRouteActionIds": [
       "advance_day",
       "bait_crab_pot",
       "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
       "chop_tree_source",
+      "clear_debris",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_weeds",
       "dig_artifact_spot",
       "enter_exit",
       "equip_tool",
@@ -2027,17 +2079,23 @@
       "machine_load",
       "move_to_tile",
       "navigate_to_destination",
+      "npc_relationship",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
       "place_wood_fence",
+      "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "scythe_crop",
+      "ship_item",
       "till_soil",
       "travel",
       "use_item",
-      "water_crop"
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
     ],
     "requestValidatorActionIds": [
       "advance_day",
@@ -2531,6 +2589,91 @@
         "actionId": "face_direction",
         "runner": "run-stardew-native-local-player-expression-smoke.mjs",
         "fixtureScenario": "native_express_emote_v1"
+      },
+      {
+        "actionId": "pet_animal",
+        "runner": "run-stardew-native-local-player-pet-animal-smoke.mjs",
+        "fixtureScenario": "native_pet_animal_v1"
+      },
+      {
+        "actionId": "interact_npc_with_item",
+        "runner": "run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
+        "fixtureScenario": "native_interact_npc_with_item_v1"
+      },
+      {
+        "actionId": "advance_day",
+        "runner": "run-stardew-native-local-player-advance-day-smoke.mjs",
+        "fixtureScenario": null
+      },
+      {
+        "actionId": "clear_debris",
+        "runner": "run-stardew-native-local-player-clear-debris-smoke.mjs",
+        "fixtureScenario": "native_clear_debris_resource_clump_v1"
+      },
+      {
+        "actionId": "npc_relationship",
+        "runner": "run-stardew-native-local-player-npc-relationship-smoke.mjs",
+        "fixtureScenario": "native_npc_relationship_v1"
+      },
+      {
+        "actionId": "water_pet_bowl",
+        "runner": "run-stardew-native-local-player-water-pet-bowl-smoke.mjs",
+        "fixtureScenario": "native_water_pet_bowl_v1"
+      },
+      {
+        "actionId": "water_slime_hutch_trough",
+        "runner": "run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
+        "fixtureScenario": "native_water_slime_hutch_trough_v1"
+      },
+      {
+        "actionId": "chest_store",
+        "runner": "run-stardew-native-local-player-chest-store-smoke.mjs",
+        "fixtureScenario": "native_chest_store_v1"
+      },
+      {
+        "actionId": "chest_retrieve",
+        "runner": "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+        "fixtureScenario": "native_chest_retrieve_v1"
+      },
+      {
+        "actionId": "chop_stump",
+        "runner": "run-stardew-native-local-player-chop-stump-smoke.mjs",
+        "fixtureScenario": "native_chop_stump_v1"
+      },
+      {
+        "actionId": "plant_sapling",
+        "runner": "run-stardew-native-local-player-plant-sapling-smoke.mjs",
+        "fixtureScenario": "native_plant_sapling_v1"
+      },
+      {
+        "actionId": "cut_weeds",
+        "runner": "run-stardew-native-local-player-cut-weeds-smoke.mjs",
+        "fixtureScenario": "native_cut_weeds_v1"
+      },
+      {
+        "actionId": "scythe_crop",
+        "runner": "run-stardew-native-local-player-scythe-crop-smoke.mjs",
+        "fixtureScenario": "native_scythe_crop_v1"
+      },
+      {
+        "actionId": "craft_item",
+        "runner": "run-stardew-native-local-player-craft-item-smoke.mjs",
+        "fixtureScenario": "native_craft_item_v1"
+      },
+      {
+        "actionId": "cook_recipe",
+        "runner": "run-stardew-native-local-player-cook-recipe-smoke.mjs",
+        "fixtureScenario": "native_cook_recipe_v1"
+      },
+      {
+        "actionId": "collect_crab_pot_output",
+        "runner": "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
+        "fixtureScenario": "native_crab_pot_collect_v1"
+      },
+      {
+        "actionId": "ship_item",
+        "runner": "run-stardew-native-local-player-ship-item-smoke.mjs",
+        "fixtureScenario": "native_ship_item_v1"
       }
     ],
     "sharedHarnessImport": "from \"./lib/stardew-native-smoke-harness-v1.mjs\"",

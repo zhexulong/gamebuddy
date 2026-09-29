@@ -23,14 +23,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class SaplingPlantTests
 {
     [Fact]
-    public void Catalog_PlantSapling_RegisteredAsExperimentalFarmingWithSlotItemTarget()
+    public void Catalog_PlantSapling_RegisteredAsLiveVerifiedFarmingWithSlotItemTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "plant_sapling");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("farming_crops");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Farming);
         reg.Descriptor.Should().NotBeNull();

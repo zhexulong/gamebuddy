@@ -24,14 +24,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class ScytheActionTests
 {
     [Fact]
-    public void Catalog_CutWeeds_RegisteredAsExperimentalResourceToolsWithSlotTarget()
+    public void Catalog_CutWeeds_RegisteredAsLiveVerifiedResourceToolsWithSlotTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "cut_weeds");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("resource_gathering");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
         reg.Descriptor.Should().NotBeNull();
@@ -40,14 +40,14 @@ public sealed class ScytheActionTests
     }
 
     [Fact]
-    public void Catalog_ScytheCrop_RegisteredAsExperimentalFarmingWithSlotTarget()
+    public void Catalog_ScytheCrop_RegisteredAsLiveVerifiedFarmingWithSlotTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "scythe_crop");
 
         reg.Should().NotBeNull();
         reg!.FamilyId.Should().Be("farming_crops");
-        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        reg.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         reg.Kind.Should().Be(FarmhandOperationKind.Execution);
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Farming);
         reg.Descriptor.Should().NotBeNull();
