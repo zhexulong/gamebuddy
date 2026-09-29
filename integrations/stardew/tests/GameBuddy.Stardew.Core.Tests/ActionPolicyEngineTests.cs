@@ -9,7 +9,7 @@ public sealed class ActionPolicyEngineTests
     [Fact]
     public void ComputeEnabledActions_DefaultPolicy_ReturnsAllPublishedActions()
     {
-        var options = new ActionPolicyOptions(ActionPolicyVersion: 1);
+        var options = new ActionPolicyOptions();
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
 
         // Published actions should be present, experimental actions should NOT be present by default
@@ -24,7 +24,7 @@ public sealed class ActionPolicyEngineTests
     [Fact]
     public void ComputeEnabledActions_DefaultPolicy_DoesNotPublishRetiredSopPipeline()
     {
-        var enabled = ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions(ActionPolicyVersion: 1));
+        var enabled = ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions());
 
         enabled.Should().NotContain("sop_composite_pipeline");
         FarmhandActionCatalog.Registrations.Select(registration => registration.ActionId).Should().NotContain("sop_composite_pipeline");
@@ -34,7 +34,6 @@ public sealed class ActionPolicyEngineTests
     public void ComputeEnabledActions_WithDeniedActions_ExcludesExplicitActions()
     {
         var options = new ActionPolicyOptions(
-            ActionPolicyVersion: 1,
             DeniedActions: new[] { "till_soil", "plant_seed" }
         );
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
@@ -48,7 +47,6 @@ public sealed class ActionPolicyEngineTests
     public void ComputeEnabledActions_WithDeniedFamily_ExcludesAllActionsInFamily()
     {
         var options = new ActionPolicyOptions(
-            ActionPolicyVersion: 1,
             DeniedActionFamilies: new[] { "farming_crops" }
         );
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
@@ -65,7 +63,6 @@ public sealed class ActionPolicyEngineTests
     public void ComputeEnabledActions_WithExperimentalActions_IncludesOptedInExperimentalActions()
     {
         var options = new ActionPolicyOptions(
-            ActionPolicyVersion: 1,
             ExperimentalActions: new[] { "pet_animal" }
         );
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
@@ -78,7 +75,6 @@ public sealed class ActionPolicyEngineTests
     public void ValidateActionPolicy_ValidOptions_ReturnsTrue()
     {
         var options = new ActionPolicyOptions(
-            ActionPolicyVersion: 1,
             DeniedActions: new[] { "till_soil" },
             DeniedActionFamilies: new[] { "farming_crops" },
             ExperimentalActions: new[] { "pet_animal" }
@@ -90,7 +86,6 @@ public sealed class ActionPolicyEngineTests
     public void ValidateActionPolicy_InvalidActionId_ReturnsFalse()
     {
         var options = new ActionPolicyOptions(
-            ActionPolicyVersion: 1,
             DeniedActions: new[] { "non_existent_action" }
         );
         ActionPolicyEngine.ValidateActionPolicy(options).Should().BeFalse();

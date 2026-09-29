@@ -114,16 +114,14 @@ public sealed class DestinationSearchTests
     };
 
     [Fact]
-    public void LegacyExplicitPolicy_PreservesTheExactPublishedNavigationSurface()
+    public void DefaultPolicy_ContainsThePublishedNavigationSurface()
     {
-        var config = new ModConfig
-        {
-            ActionPolicyVersion = 0,
-            EnabledActions = NavigationActions.ToList(),
-        };
+        // There is no allowlist any more: the visible set is derived from the Mod
+        // registration catalog, so these actions are on unless a deny removes them.
+        var config = new ModConfig();
 
         config.HasValidActionPolicy.Should().BeTrue();
-        config.EnabledActionSet.Should().BeEquivalentTo(NavigationActions);
+        config.EnabledActionSet.Should().Contain(NavigationActions);
     }
 
     [Fact]
@@ -131,7 +129,6 @@ public sealed class DestinationSearchTests
     {
         var config = new ModConfig
         {
-            ActionPolicyVersion = 1,
             DeniedActionFamilies = new List<string> { "world_navigation" },
         };
 
