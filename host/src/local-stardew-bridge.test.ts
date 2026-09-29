@@ -95,7 +95,7 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
           requestType = request.type;
           socket.write(frame({ ...request, messageId: "scene_result", type: "observe_scene_result", payload: {
            observationId: "observation_01", currentLocation: "Farm", currentRegion: "outdoor", affordances: [{ ref: "sr1_AAAAAAAAAAAAAAAA", kind: "chest", name: "Chest", distance: 1, direction: "East", actionHint: null }],
-             summary: "A chest is nearby.", partial: false, truncatedReason: null,
+             summary: "A chest is nearby.", partial: false, truncatedReason: null, ground: null,
           }}));
         }
       }

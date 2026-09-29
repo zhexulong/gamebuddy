@@ -1259,7 +1259,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     private static bool TryReadObserveSceneResult(JsonElement payload, out ObserveSceneResultPayload? result)
     {
         result = null;
-        if (!HasExactProperties(payload, "observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason")
+        if (!HasExactProperties(payload, "observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason", "ground")
             || !ReadOpaqueString(payload.GetProperty("observationId"), out string? observationId)
             || !IsValidObservationId(observationId)
             || !ReadSceneText(payload.GetProperty("currentLocation"), 128, out string? currentLocation)
@@ -1270,6 +1270,9 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             || !TryReadSceneBoolean(payload.GetProperty("partial"), out bool partial))
             return false;
 
+        if (!TryReadObserveSceneGround(payload.GetProperty("ground"), out ObserveSceneGroundPayload? ground))
+            return false;
+
         JsonElement truncatedReason = payload.GetProperty("truncatedReason");
         string? parsedTruncatedReason = null;
         if (!partial)
@@ -1278,7 +1281,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 return false;
         }
         else if (truncatedReason.ValueKind != JsonValueKind.String
-            || truncatedReason.GetString() is not ("maximum_affordances" or "payload_limit"))
+            || truncatedReason.GetString() is not ("maximum_affordances" or "payload_limit" or "ground_limit"))
         {
             return false;
         }
@@ -1305,7 +1308,50 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             Array.AsReadOnly(affordances.ToArray()),
             summary!,
             partial,
-            parsedTruncatedReason);
+            parsedTruncatedReason,
+            ground);
+        return true;
+    }
+
+    private static bool TryReadObserveSceneGround(JsonElement value, out ObserveSceneGroundPayload? ground)
+    {
+        ground = null;
+        if (value.ValueKind == JsonValueKind.Null)
+            return true;
+        if (value.ValueKind != JsonValueKind.Object
+            || !HasExactProperties(value, "dominantKind", "dominantTileCount", "scannedTileCount", "exceptions", "omittedExceptionTileCount")
+            || !ReadSceneText(value.GetProperty("dominantKind"), 16, out string? dominantKind)
+            || dominantKind is not ("grass" or "dirt" or "stone" or "wood" or "other")
+            || !value.GetProperty("dominantTileCount").TryGetInt32(out int dominantTileCount)
+            || dominantTileCount < 0
+            || !value.GetProperty("scannedTileCount").TryGetInt32(out int scannedTileCount)
+            || scannedTileCount < 0
+            || dominantTileCount > scannedTileCount
+            || !value.GetProperty("omittedExceptionTileCount").TryGetInt32(out int omittedExceptionTileCount)
+            || omittedExceptionTileCount < 0
+            || value.GetProperty("exceptions").ValueKind != JsonValueKind.Array
+            || value.GetProperty("exceptions").GetArrayLength() > 12)
+            return false;
+
+        List<ObserveSceneGroundTilePayload> exceptions = new();
+        foreach (JsonElement exception in value.GetProperty("exceptions").EnumerateArray())
+        {
+            if (exception.ValueKind != JsonValueKind.Object
+                || !HasExactProperties(exception, "tileX", "tileY", "kind")
+                || !exception.GetProperty("tileX").TryGetInt32(out int tileX)
+                || !exception.GetProperty("tileY").TryGetInt32(out int tileY)
+                || !ReadSceneText(exception.GetProperty("kind"), 16, out string? exceptionKind)
+                || exceptionKind is not ("grass" or "dirt" or "stone" or "wood" or "other"))
+                return false;
+            exceptions.Add(new ObserveSceneGroundTilePayload(tileX, tileY, exceptionKind));
+        }
+
+        ground = new ObserveSceneGroundPayload(
+            dominantKind,
+            dominantTileCount,
+            scannedTileCount,
+            Array.AsReadOnly(exceptions.ToArray()),
+            omittedExceptionTileCount);
         return true;
     }
 
@@ -1409,7 +1455,18 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && result.Affordances is { Count: <= 20 }
         && result.Affordances.DistinctBy(affordance => affordance.Ref, StringComparer.Ordinal).Count() == result.Affordances.Count
         && result.Affordances.All(IsValidObserveSceneAffordance)
-        && (!result.Partial ? result.TruncatedReason is null : result.TruncatedReason is "maximum_affordances" or "payload_limit");
+        && IsValidObserveSceneGround(result.Ground)
+        && (!result.Partial ? result.TruncatedReason is null : result.TruncatedReason is "maximum_affordances" or "payload_limit" or "ground_limit");
+
+    private static bool IsValidObserveSceneGround(ObserveSceneGroundPayload? ground) => ground is null
+        || (ground.DominantKind is "grass" or "dirt" or "stone" or "wood" or "other"
+            && ground.DominantTileCount >= 0
+            && ground.ScannedTileCount >= 0
+            && ground.DominantTileCount <= ground.ScannedTileCount
+            && ground.OmittedExceptionTileCount >= 0
+            && ground.Exceptions is { Count: <= 12 }
+            && ground.Exceptions.All(tile => tile is not null
+                && tile.Kind is "grass" or "dirt" or "stone" or "wood" or "other"));
 
     private static bool IsValidObserveSceneAffordance(ObserveSceneAffordancePayload? affordance) => affordance is not null
         && IsValidSceneReference(affordance.Ref)
@@ -1756,6 +1813,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     public static string[]? ExecutionArgumentProperties(string? action) => action switch
     {
             "move_to_tile" or "enter_exit" or "travel" or "till_soil" => new[] { "x", "y" },
+            // ride_minecart is its own action rather than a `travel` objective
+            // family: every declared argument is mandatory here, and its x,y is
+            // the station tile while expectedTargetId selects one advertised
+            // (station, destination) ride.
+            "ride_minecart" => new[] { "x", "y", "expectedTargetId" },
             "equip_tool" => new[] { "tool" },
         "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },

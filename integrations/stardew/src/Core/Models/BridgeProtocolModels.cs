@@ -520,8 +520,24 @@ public sealed record ObserveSceneResultPayload(
     IReadOnlyList<ObserveSceneAffordancePayload> Affordances,
     string Summary,
     bool Partial,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? TruncatedReason
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? TruncatedReason,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] ObserveSceneGroundPayload? Ground = null
 );
+
+/// <summary>
+/// Ground summary for one observation, read from the map's Back-layer `Type`
+/// property (the same signal the engine uses for footstep sounds and pathfinding
+/// weights). Reported as a dominant kind plus the tiles that differ, so a
+/// uniform meadow costs one entry instead of fifty.
+/// </summary>
+public sealed record ObserveSceneGroundPayload(
+    string DominantKind,
+    int DominantTileCount,
+    int ScannedTileCount,
+    IReadOnlyList<ObserveSceneGroundTilePayload> Exceptions,
+    int OmittedExceptionTileCount);
+
+public sealed record ObserveSceneGroundTilePayload(int TileX, int TileY, string Kind);
 
 /// <summary>A read-only Navigation request for map inspection or destination search.</summary>
 public sealed record BridgeNavigationReadRequest(string Operation, BridgeNavigationReadArgs Args);
