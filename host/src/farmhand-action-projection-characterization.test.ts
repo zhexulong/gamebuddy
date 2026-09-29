@@ -21,6 +21,17 @@ const scope: Scope = {
 
 // Static characterization only. This fixture intentionally is not returned by
 // TEST_MOD_REGISTRATIONS and therefore cannot grant capability membership.
+//
+// It records the contract as RATIFIED (before publication), which is why it
+// still says `lifecycle: "ratified"`, `publicationStatus: "live-ineligible"` and
+// `agentVisible: false`. Those are historical ratification facts, not the live
+// state: observe_scene has since been published as an Agent-facing read-only
+// capability. The budget numbers below are the ratified-at-the-time values for
+// the same reason, and they have since been re-derived (the byte ceiling is now
+// 4096, derived from the item ceiling and measured worst-case cost; see
+// SceneObservationProjection.MaximumPayloadUtf8Bytes in the Mod, which is the
+// only source of truth for the live values). Do NOT treat this fixture as the
+// current budget authority, and do not expect it to match the Mod forever.
 const OBSERVE_SCENE_RATIFIED_CHARACTERIZATION = Object.freeze({
   actionId: "observe_scene",
   familyId: "world_perception",
@@ -59,8 +70,13 @@ test("observe_scene ratified characterization does not enter the Mod membership 
     "partial",
     "truncatedReason",
   ]);
-  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxAffordances, 20);
-  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxUtf8Bytes, 2048);
+    assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxAffordances, 20);
+    // The ratified-at-the-time byte ceiling. It is deliberately NOT updated when
+    // the live ceiling changes (it is now 4096; see
+    // SceneObservationProjection.MaximumPayloadUtf8Bytes): this fixture records
+    // what was ratified, and the Mod constant is the live authority. Pinning the
+    // historical value here is what keeps the two roles from being confused.
+    assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxUtf8Bytes, 2048);
   assert.equal(TEST_MOD_REGISTRATIONS.some(({ actionId }) => actionId === "observe_scene"), false);
 });
 

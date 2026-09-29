@@ -55,8 +55,13 @@ public sealed class SceneObservationTests
             "Farm",
             1,
             1,
+            // All 22 candidates sit inside the default radius, so the radius is
+            // not what drops them and the recorded reason reflects the shared
+            // ceilings. (Spreading them along one column would have put most of
+            // them outside radius 15, which silently made the radius the binding
+            // constraint and left this test passing for the wrong reason.)
             Enumerable.Range(0, SceneObservationProjection.MaximumAffordances + 2)
-                .Select(index => Candidate(SceneAffordanceKind.Forage, $"Forage {index:00}", $"forage_{index:00}", 1, 1 + index))
+                .Select(index => Candidate(SceneAffordanceKind.Forage, $"Forage {index:00}", $"forage_{index:00}", 1 + (index % 3), 1 + (index / 3)))
                 .ToArray());
 
         SceneObservationProjectionResult result = projection.Observe(context, input);
@@ -248,37 +253,37 @@ public sealed class SceneObservationTests
     private static SceneObservationContext Context(long observationSequence) =>
         new("runtime_01", Scope, "Farm", 0, observationSequence);
 
-    // The 20-item and 2048-byte ceilings were introduced together with no
-    // derivation (ee08a2b). Measured against real scanner output, the byte
-    // ceiling binds at ~13-16 items, so the advertised 20-item budget is
-    // unreachable: the Agent never sees the last third of the intended budget,
-    // and `truncatedReason` can essentially only ever be `payload_limit`. These
-    // tests pin the actual relationship so the two ceilings cannot silently
-    // drift apart again, and so re-deriving one requires re-deriving the other.
+    // The 20-item and byte ceilings were introduced together in ee08a2b with no
+    // derivation. Measured against real scanner output, the original 2048 bound
+    // the payload at ~13-16 items, so the advertised 20-item budget was
+    // unreachable and `truncatedReason` could in practice only ever be
+    // `payload_limit`. The byte ceiling is now derived from the item ceiling
+    // (see SceneObservationProjection.MaximumPayloadUtf8Bytes) and these tests
+    // pin the boundary the derivation rests on, so the two cannot drift apart.
+    //
+    // The input must use the values the scanner actually emits. An artifact spot
+    // is the most expensive realistic kind (its action hint is the long
+    // `dig_artifact_spot`) and it is NOT density capped, so twenty of them is a
+    // legal worst case costing ~3054 B. Building these through the shared
+    // `Candidate` helper would prove the wrong thing: that helper stamps the
+    // generic hint "available" (9 chars) instead of the real one.
     [Fact]
-    public void Observe_RealisticScenePublishesMoreThanHalfTheAdvertisedItemBudget()
+    public void Observe_MostExpensiveRealItemAtTheItemCeilingKeepsHeadroom()
     {
         var store = new SceneObservationStore();
         SceneObservationContext context = Context(observationSequence: 9);
         var projection = new SceneObservationProjection(store);
 
-        // A busy farm with every kind present at, or below, its per-kind density
-        // cap, so the shared ceilings are the only thing that can truncate.
-        SceneAffordanceKind[] kinds =
-        {
-            SceneAffordanceKind.Tree, SceneAffordanceKind.Tree, SceneAffordanceKind.Tree,
-            SceneAffordanceKind.Weed, SceneAffordanceKind.Weed, SceneAffordanceKind.Weed,
-            SceneAffordanceKind.Stone, SceneAffordanceKind.Stone, SceneAffordanceKind.Stone,
-            SceneAffordanceKind.Animal, SceneAffordanceKind.Animal, SceneAffordanceKind.Animal,
-            SceneAffordanceKind.Crop, SceneAffordanceKind.Crop, SceneAffordanceKind.Crop,
-            SceneAffordanceKind.Crop, SceneAffordanceKind.Chest, SceneAffordanceKind.Chest,
-            SceneAffordanceKind.Machine, SceneAffordanceKind.Machine, SceneAffordanceKind.Machine,
-            SceneAffordanceKind.Forage, SceneAffordanceKind.Forage, SceneAffordanceKind.Forage,
-            SceneAffordanceKind.Debris, SceneAffordanceKind.Npc, SceneAffordanceKind.Npc,
-            SceneAffordanceKind.WaterSource, SceneAffordanceKind.Door, SceneAffordanceKind.Door,
-        };
-        SceneAffordanceSource[] candidates = kinds
-            .Select((kind, index) => Candidate(kind, kind.ToString(), $"{kind.ToString().ToLowerInvariant()}_{index:00}", 10 + (index % 5), 10 + (index % 9)))
+        SceneAffordanceSource[] candidates = Enumerable
+            .Range(0, SceneObservationProjection.MaximumAffordances)
+            .Select(index => new SceneAffordanceSource(
+                SceneAffordanceKind.ArtifactSpot,
+                "Artifact Spot",
+                "(O)590",
+                "Farm",
+                10 - (index % 3),
+                8 + (index / 3),
+                "dig_artifact_spot"))
             .ToArray();
 
         SceneObservationProjectionResult result = projection.Observe(
@@ -286,30 +291,41 @@ public sealed class SceneObservationTests
             new SceneObservationInput("Farm", 10, 10, candidates));
 
         result.IsValid.Should().BeTrue();
-        result.PayloadUtf8Bytes.Should().BeLessOrEqualTo(SceneObservationProjection.MaximumPayloadUtf8Bytes);
-        // Documents the real bound rather than the nominal one. If the byte
-        // ceiling is ever re-derived, this number moves with it deliberately.
-        result.Affordances.Should().HaveCountGreaterThanOrEqualTo(12,
-            "a realistic bounded scene must not lose most of the advertised item budget to the byte ceiling");
+        // This is the exact relationship the ceiling is derived from: the most
+        // expensive realistic fill must reach the full item budget, or the byte
+        // ceiling has silently become the product policy.
+        result.Affordances.Should().HaveCount(SceneObservationProjection.MaximumAffordances,
+            "the byte ceiling must admit the most expensive realistic fill at the item ceiling");
+        result.IsPartial.Should().BeFalse(
+            "a real scene that fits both ceilings is not truncated");
+        // Headroom, not just a bare fit: a ceiling that merely equals the current
+        // worst case (3072 against 3054) breaks the first time a content mod or
+        // localisation ships a longer name. Require room for the item budget to
+        // grow into the bound.
+        result.PayloadUtf8Bytes.Should().BeLessThan(
+            (int)(SceneObservationProjection.MaximumPayloadUtf8Bytes * 0.8),
+            "the byte ceiling must keep real headroom above the worst legal fill");
     }
 
     [Fact]
-    public void Observe_ByteCeilingBindsBeforeTheItemCeiling()
+    public void Observe_ItemCeilingBindsBeforeTheByteCeilingOnRealInput()
     {
         var store = new SceneObservationStore();
         SceneObservationContext context = Context(observationSequence: 10);
         var projection = new SceneObservationProjection(store);
 
-        // Realistic names and hints, not padded ones: the point is to show the
-        // real cost, so a pathological input would prove the wrong thing.
-        SceneAffordanceSource[] candidates = Enumerable.Range(0, SceneObservationProjection.MaximumAffordances)
+        // More real-shaped candidates than either ceiling admits. Every candidate
+        // sits well inside the default radius, so the radius is never the reason
+        // for a drop and the recorded reason reflects which ceiling actually
+        // bound.
+        SceneAffordanceSource[] candidates = Enumerable.Range(0, 32)
             .Select(index => new SceneAffordanceSource(
                 SceneAffordanceKind.Forage,
                 "Wild Horseradish",
                 $"forage_{index:00}",
                 "Farm",
-                10,
-                10 + index,
+                10 - (index % 3),
+                8 + (index / 3),
                 "pickup_forage"))
             .ToArray();
 
@@ -318,9 +334,11 @@ public sealed class SceneObservationTests
             new SceneObservationInput("Farm", 10, 10, candidates));
 
         result.IsPartial.Should().BeTrue();
-        result.TruncatedReason.Should().Be("payload_limit");
-        result.Affordances.Should().HaveCountLessThan(SceneObservationProjection.MaximumAffordances,
-            "the byte ceiling, not the item ceiling, is what actually bounds real output");
+        result.Affordances.Should().HaveCount(SceneObservationProjection.MaximumAffordances);
+        // Real forage items are cheap enough that the ITEM ceiling is what stops
+        // a real scene. If this ever reports payload_limit instead, the byte
+        // ceiling has regressed below real cost.
+        result.TruncatedReason.Should().Be("maximum_affordances");
     }
 
     private static SceneAffordanceSource Candidate(

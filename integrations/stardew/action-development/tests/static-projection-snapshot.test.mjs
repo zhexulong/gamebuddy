@@ -53,6 +53,12 @@ function cloneSnapshot() {
 
 // Inline only: ratification is characterized without adding observe_scene to
 // the generated surface or to any Mod capability fixture.
+//
+// The lifecycle/budget values below are the ratified-at-the-time records. They
+// are NOT the live authority: observe_scene has since been published, and the
+// byte ceiling has been re-derived from the item ceiling (see
+// SceneObservationProjection.MaximumPayloadUtf8Bytes in the Mod). Keep this
+// fixture as a ratification record rather than a budget source.
 const observeSceneRatified = Object.freeze({
   actionId: "observe_scene",
   familyId: "world_perception",
