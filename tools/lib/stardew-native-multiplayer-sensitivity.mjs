@@ -232,7 +232,12 @@ export function deriveNativeSeamEvidence(seams, sources) {
 function validateAction(action, sources, index, scopeAcksByAction) {
   const where = `actions[${index}]`;
   const actionId = text(action.actionId, `${where}.actionId`);
-  if (!["published", "experimental"].includes(action.lifecycle))
+  // The full ladder from design/10 section 3.1.1: experimental -> live_verified ->
+  // published. `live_verified` is a real resting state (a live run passed, no
+  // independent review yet), so it must be admitted here rather than rejected as
+  // an unknown lifecycle -- the gate's job is multiplayer scope, not publication
+  // ranking.
+  if (!["published", "live_verified", "experimental"].includes(action.lifecycle))
     fail("mp_sensitivity_register_invalid", `Invalid lifecycle for ${actionId}.`, { actionId, lifecycle: action.lifecycle });
 
   if (!Array.isArray(action.seams) || action.seams.length === 0)
