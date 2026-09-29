@@ -340,6 +340,41 @@ const TABLE = {
     "mp-observational",
     "IsLocalPlayer only gates pickup sound/animation",
   ],
+  // The built-in Pet Bowl is a Building, not a location object, so the watering
+  // write lands in `PetBowl.performToolAction` reached through
+  // `WateringCan.DoFunction` -> `location.performToolAction`. The handler calls the
+  // same `WateringCan.DoFunction` entry `water_crop` does; the bowl's `watered`
+  // NetBool is set identically in both world modes, and the only multiplayer read
+  // on the path is the already-classified broadcastSprites collateral.
+  water_pet_bowl: [
+    "StardewValley.Tools/WateringCan.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/WateringCan.cs", "DoFunction")} mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the bowl's watered write reached through PetBowl.performToolAction is mode-independent`,
+  ],
+  // The Slime Hutch trough override; same watering ingress and same mode-neutral
+  // trough write.
+  water_slime_hutch_trough: [
+    "StardewValley.Tools/WateringCan.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/WateringCan.cs", "DoFunction")} mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the trough write reached through SlimeHutch.performToolAction is mode-independent`,
+  ],
+  // The cross-day lifecycle. The Mod answers the game-owned Sleep question
+  // (`GameLocation.answerDialogue`) exactly as the native input paths do; the
+  // outcome fork lives one step further in `startSleep`: single-player calls
+  // `doSleep()` directly, while a shared world sets the local native ready flag and
+  // installs a ReadyCheckDialog whose confirm callback is the only path to
+  // `doSleep()`. The day therefore advances on a different trigger.
+  advance_day: [
+    "StardewValley/GameLocation.cs",
+    "private void startSleep()",
+    "mp-semantic",
+    "Single player calls doSleep() directly, but a shared world instead sets Game1.netReady.SetLocalReady(\"sleep\") " +
+      "and installs a ReadyCheckDialog whose confirm callback is the only path to doSleep(); the day advances on a " +
+      "different trigger, after the barrier every required player satisfies. A Farmhand client cannot roll the date itself " +
+      "(dayOfMonth/stats.DaysPlayed advance only when Game1.IsMasterGame), so a single-player pass cannot stand in for it.",
+  ],
 };
 
 const MP_REJECT_PATTERN =
@@ -426,7 +461,15 @@ for (const entry of surface.actions) {
       ? { verdict: "rejects_multiplayer", reasonCode: "native_local_player_required" }
       : { verdict: "admits_multiplayer" };
   const seam = TABLE[actionId];
-  if (seam === null) throw new Error(`action needs an explicit seam entry: ${actionId}`);
+  // Must be an explicit entry. `undefined` (missing key) and `null` (an explicit
+  // "no seam" opt-out) both fail closed: a registered action with no declared seam
+  // would otherwise be classified `mp-insensitive`/`single_player_native_companion`
+  // by default, which is exactly the silently-unchecked state this gate exists to
+  // prevent. Measured: `TABLE[actionId]` returned `undefined` for the three actions
+  // added after the table was last touched, the `=== null` guard was vacuous, and
+  // the script died later at `seam[0]` instead of naming the missing entry.
+  if (seam === null || seam === undefined)
+    throw new Error(`action needs an explicit seam entry: ${actionId}`);
 
   // A seam entry is either one tuple or a list of tuples.
   const seamList = seam[0] === "mod_owned" || typeof seam[0] === "string" ? [seam] : seam;

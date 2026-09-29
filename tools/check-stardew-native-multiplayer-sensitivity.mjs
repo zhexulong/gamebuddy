@@ -107,7 +107,16 @@ const NATIVE_AUTO_COLLECT_MARKER = /native_auto_collect=true/;
  * handler can re-check the finite `(O)322` source before the closed `IsFenceItem`
  * branch runs — the seam is still reached, just through a named helper.
  */
-const MOD_WRAPPER_TO_SEAM = Object.freeze([["PlaceQualifiedWoodFenceNative", "placementAction"]]);
+const MOD_WRAPPER_TO_SEAM = Object.freeze([
+  ["PlaceQualifiedWoodFenceNative", "placementAction"],
+  // `RequestLocalAdvanceDay` hands the night to `SleepAndAdvanceDayLifecycle`,
+  // which answers the game-owned Sleep question (`GameLocation.answerDialogue`)
+  // exactly as the native input paths do. `answerDialogue` itself reads no
+  // multiplayer token; the outcome fork is one step further in `startSleep`, so
+  // that is the seam the register cites and the wrapper reaches it on the
+  // handler's behalf.
+  ["SleepAndAdvanceDayLifecycle.TryStart", "startSleep"],
+]);
 
 /**
  * Lifecycle entry points that reach a tool's native seam on a later frame.

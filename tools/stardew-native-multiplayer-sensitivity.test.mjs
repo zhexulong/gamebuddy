@@ -280,7 +280,23 @@ test("the committed register derives cleanly against the exact decompiled source
     }
   }
   const report = validateMultiplayerSensitivityRegister(JSON.parse(registerText), sources);
-  assert.equal(report.actionCount, 45);
+  // The expected count is derived from the Mod catalog, never hardcoded: a
+  // hardcoded number is what let three actions (`water_pet_bowl`,
+  // `water_slime_hutch_trough`, `advance_day`) sit outside the register while the
+  // suite stayed green. The comparison is set equality, so a registered action the
+  // catalog does not declare fails too.
+  const catalogText = await readFile(
+    "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
+    "utf8",
+  );
+  const catalogBody = catalogText.match(/Registrations\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)[1];
+  const catalogIds = [...catalogBody.matchAll(/\b(E|R)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[2]).sort();
+  const registeredIds = JSON.parse(registerText).actions.map((a) => a.actionId).sort();
+  assert.deepEqual(
+    registeredIds,
+    catalogIds,
+    "the sensitivity register must cover exactly the Mod catalog: a missing entry means the action was never scope-classified",
+  );
   assert.deepEqual(report.defects, []);
   // Every pin must be a real, still-derived defect carrying a reason and an owner:
   // a pin is an acknowledged gap, never a silent suppression. The list is asserted
@@ -288,7 +304,12 @@ test("the committed register derives cleanly against the exact decompiled source
   // hide here. Update this list deliberately when a shared-world action lands.
   assert.deepEqual(
     report.acknowledged.map((ack) => `${ack.defect}:${ack.actionId}`).sort(),
-    ["unverified_scope:chest_retrieve", "unverified_scope:pet_animal", "unverified_scope:ship_item"],
+    [
+      "unverified_scope:advance_day",
+      "unverified_scope:chest_retrieve",
+      "unverified_scope:pet_animal",
+      "unverified_scope:ship_item",
+    ],
   );
   for (const ack of report.acknowledged) {
     assert.ok(ack.reason && ack.reason.length > 0, `${ack.actionId} pin must carry a reason`);
