@@ -118,6 +118,48 @@ tmp_*
 *.stackdump
 /tools/.tmp-*
 
+# Root-level one-off investigation/diagnostic scripts left by past agent sessions.
+# All 76 existing root *.mjs were verified untracked and unreferenced debug
+# remnants (git ls-files --others + rg across tools/host/integrations/desktop).
+# Root is not the repository script home (tools/ and host/scripts/ are); keep
+# these patterns root-anchored so tools/*.mjs and host/*.mjs stay tracked.
+/build-*-submit.mjs
+/check-*.mjs
+/clear-*.mjs
+/diag-*.mjs
+/diff-bridgesession.mjs
+/diff-models.mjs
+/dump-gate-configs.mjs
+/entry-gate-3.mjs
+/find-*.mjs
+/fix-*.mjs
+/full-restart.mjs
+/git-*.mjs
+/ident-rehearsal.mjs
+/inspect-coord.mjs
+/list-procs.mjs
+/list-root.mjs
+/map-flow.mjs
+/ns-check.mjs
+/ns2.mjs
+/obs-wrapper-note.mjs
+/probe-*.mjs
+/provision-fresh.mjs
+/read-*.mjs
+/rebuild*.mjs
+/redeploy*.mjs
+/restart-ai.mjs
+/rm-probe.mjs
+/run-existing-tests.mjs
+/run-fail3.mjs
+/run-gate-fast.mjs
+/run-probe.mjs
+/run-publication-test.mjs
+/settle-detail.mjs
+/show-headless-test.mjs
+/task6-run.mjs
+/verify-*.mjs
+
 # Playwright generated artifacts
 dialogue-web/test-results/
 dialogue-web/playwright-report/
