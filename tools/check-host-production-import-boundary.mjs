@@ -616,15 +616,15 @@ function isExactProviderStartImplementation(source) {
     implementation.name?.text !== "startMountedChatProvider" ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-    (implementation.parameters.length !== 2 && implementation.parameters.length !== 3) ||
+    (implementation.parameters.length < 2 || implementation.parameters.length > 4) ||
     implementation.parameters.some(
       (parameter, index) =>
         parameter.name.kind !== ts.SyntaxKind.Identifier ||
-        parameter.name.getText(file) !== ["manifest", "lease", "previewPublisher"][index] ||
+        parameter.name.getText(file) !== ["manifest", "lease", "previewPublisher", "speechSink"][index] ||
         parameter.initializer !== undefined ||
         parameter.dotDotDotToken !== undefined ||
         (index < 2 && parameter.questionToken !== undefined) ||
-        (index === 2 && parameter.questionToken === undefined) ||
+        (index >= 2 && parameter.questionToken === undefined) ||
         (parameter.modifiers?.length ?? 0) !== 0,
     ) ||
     implementation.body === undefined ||
@@ -679,11 +679,14 @@ function isExactProviderStartImplementation(source) {
     ts.isCallExpression(scopeCallback.body) &&
     ts.isIdentifier(scopeCallback.body.expression) &&
     scopeCallback.body.expression.text === "runMountedProviderStartLedger" &&
-    scopeCallback.body.arguments.length === (implementation.parameters.length === 3 ? 2 : 1) &&
+    scopeCallback.body.arguments.length === implementation.parameters.length - 1 &&
     ts.isIdentifier(scopeCallback.body.arguments[0]) &&
     scopeCallback.body.arguments[0].text === scope &&
-    (implementation.parameters.length !== 3 ||
-      (ts.isIdentifier(scopeCallback.body.arguments[1]) && scopeCallback.body.arguments[1].text === "previewPublisher"))
+    implementation.parameters.slice(2).every(
+      (parameter, offset) =>
+        ts.isIdentifier(scopeCallback.body.arguments[offset + 1]) &&
+        scopeCallback.body.arguments[offset + 1].text === parameter.name.getText(file),
+    )
   );
 }
 
