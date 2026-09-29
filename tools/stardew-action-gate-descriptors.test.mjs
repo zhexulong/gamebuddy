@@ -103,6 +103,13 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     // face_direction share one runner because one fixture turn proves both
     // actor-expression mutations in the same revision chain.
     express_emote: "run-stardew-native-local-player-expression-smoke.mjs",
+    // Promoted to live_verified: a real shared-world run proved each one on its
+    // required topology (pet_animal: Host LAN + AI Farmhand, pet_completed;
+    // interact_npc_with_item: native-local quest_item_delivered; advance_day:
+    // co-op day_advanced, ready 2/2).
+    pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
+    interact_npc_with_item: "run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
+    advance_day: "run-stardew-native-local-player-advance-day-smoke.mjs",
     face_direction: "run-stardew-native-local-player-expression-smoke.mjs",
   });
   // Obsolete parallel-route runner IDs that must never be re-selected.
@@ -182,10 +189,12 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "bait_crab_pot",
       "express_emote",
       "face_direction",
+      "pet_animal",
+      "interact_npc_with_item",
     ],
   );
   assert.deepEqual(
     STARDEW_PUBLISHED_ACTION_GATES.filter((gate) => gate.fixtureScenario === null).map((gate) => gate.actionId),
-    ["move_to_tile", "equip_tool", "travel", "enter_exit"],
+    ["move_to_tile", "equip_tool", "travel", "enter_exit", "advance_day"],
   );
 });

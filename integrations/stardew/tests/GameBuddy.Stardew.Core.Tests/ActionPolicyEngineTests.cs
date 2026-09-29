@@ -18,7 +18,9 @@ public sealed class ActionPolicyEngineTests
         enabled.Should().Contain("plant_seed");
         enabled.Should().NotContain("sop_composite_pipeline"); // Retired generic composition runtime
         enabled.Should().NotContain("clear_debris"); // Experimental
-        enabled.Should().NotContain("pet_animal");   // Experimental
+        // pet_animal is live_verified on the shared-world topology (design/10 3.1.1:
+        // live run on required topology IS the visibility gate), so it is default-consent.
+        enabled.Should().Contain("pet_animal");
     }
 
     [Fact]
@@ -63,12 +65,12 @@ public sealed class ActionPolicyEngineTests
     public void ComputeEnabledActions_WithExperimentalActions_IncludesOptedInExperimentalActions()
     {
         var options = new ActionPolicyOptions(
-            ExperimentalActions: new[] { "pet_animal" }
+            ExperimentalActions: new[] { "clear_debris" }
         );
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
 
-        enabled.Should().Contain("pet_animal");
-        enabled.Should().NotContain("clear_debris"); // Not opted in
+        enabled.Should().Contain("clear_debris");
+        enabled.Should().NotContain("cut_weeds"); // Not opted in
     }
 
     [Fact]
@@ -77,7 +79,7 @@ public sealed class ActionPolicyEngineTests
         var options = new ActionPolicyOptions(
             DeniedActions: new[] { "till_soil" },
             DeniedActionFamilies: new[] { "farming_crops" },
-            ExperimentalActions: new[] { "pet_animal" }
+            ExperimentalActions: new[] { "clear_debris" }
         );
         ActionPolicyEngine.ValidateActionPolicy(options).Should().BeTrue();
     }
