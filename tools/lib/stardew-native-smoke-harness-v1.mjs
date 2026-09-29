@@ -130,20 +130,24 @@ export function assertExactCapabilities(snapshot, expectedCapabilities) {
  * in the live surface. This is the required-subset capability mode; it is
  * deliberately not `assertExactCapabilities`.
  *
- * A shared world runs the Mod's version-1 default consent policy, where the
- * Agent-visible surface is every published action plus the experimental actions
- * that profile opted into (`ModConfig.EnabledActionSet`). That surface is
- * legitimately larger than the one action under test and the runner cannot
- * narrow it, so an equality assertion would fail for a reason the action itself
- * cannot fix. Subset is the honest check there: it still proves the action
- * under test and every precondition it depends on are actually advertised and
- * executable by this exact live publication, and it fails closed on a missing
- * entry, an empty requirement list, or a malformed surface. Ordering and
- * duplicates in the required list carry no meaning.
+ * A shared world runs the Mod's default consent policy: deny-by-exception, so
+ * the Agent-visible surface is every registration whose lifecycle is published
+ * or live-verified, minus anything the player denied, plus the experimental
+ * actions this profile opted into. That surface is legitimately larger than the
+ * one action under test and the runner cannot narrow it, so an equality
+ * assertion would fail for a reason the action itself cannot fix. Subset is the
+ * honest check there: it still proves the action under test and every
+ * precondition it depends on are actually advertised and executable by this
+ * exact live publication, and it fails closed on a missing entry, an empty
+ * requirement list, or a malformed surface. Ordering and duplicates in the
+ * required list carry no meaning.
  *
- * The single-player native-local runners keep the stricter
- * `assertExactCapabilities` contract, which additionally proves their isolated
- * fixture surface leaked no other action.
+ * "The fixture leaked another action" is NOT provable here and never was a
+ * real contract: under deny-by-exception the whole published底座 is
+ * legitimately advertised. Isolation of the policy itself (no unopted
+ * experimental action, no denied action, no denied family) is proven once, in
+ * `stardew-policy-isolation.test.mjs`, instead of being asserted 39 times with
+ * a hand-written list that broke every time an action changed lifecycle.
  */
 export function assertRequiredCapabilities(snapshot, requiredCapabilities) {
   validateSnapshot(snapshot);
@@ -158,6 +162,53 @@ export function assertRequiredCapabilities(snapshot, requiredCapabilities) {
   const missing = [...new Set(requiredCapabilities)].filter((capability) => !advertised.has(capability)).sort();
   if (missing.length > 0) throw new NativeSmokeHarnessError(`native_required_capability_missing:${missing.join(",")}`);
   return snapshot;
+}
+
+/**
+ * Validate the Mod policy block of a smoke client config.
+ *
+ * This is the one place a runner checks policy shape. It replaces the inline
+ * `config.ActionPolicyVersion !== 0 || config.EnabledActions !== ...` clauses
+ * that every runner used to carry: those fields no longer exist, because the
+ * Agent surface is derived from the Mod catalog with deny-by-exception rather
+ * than selected by a hand-written allowlist.
+ *
+ * What it still enforces, and why each part matters:
+ *   - `DeniedActions`/`DeniedActionFamilies` must be arrays (a fixture that
+ *     cannot express what it denies cannot be checked at all);
+ *   - no action or family the runner requires may be denied by this same
+ *     config, which would make the run fail for a policy reason the action
+ *     itself cannot fix;
+ *   - `ExperimentalActions` may only name actions the caller declares
+ *     experimental, so the test-only opt-in cannot silently grant itself a
+ *     capability the catalog does not classify that way.
+ *
+ * It deliberately does NOT assert an exact visible surface. Under
+ * deny-by-exception the published底座 is legitimately advertised and a runner
+ * cannot narrow it; the isolation proof lives in stardew-policy-isolation.
+ */
+export function validateNativeLocalFixturePolicy(
+  config,
+  { requiredActions = [], experimentalActions } = {},
+) {
+  const denied = config?.DeniedActions;
+  const deniedFamilies = config?.DeniedActionFamilies;
+  if (!Array.isArray(denied) || !Array.isArray(deniedFamilies))
+    throw new NativeSmokeHarnessError("native_fixture_policy_invalid");
+  const deniedSet = new Set(denied);
+  const blocking = requiredActions.filter((action) => deniedSet.has(action));
+  if (blocking.length > 0) throw new NativeSmokeHarnessError(`native_fixture_policy_denies_required:${blocking.join(",")}`);
+  const optedIn = config?.ExperimentalActions;
+  if (!Array.isArray(optedIn)) throw new NativeSmokeHarnessError("native_fixture_policy_invalid");
+  // Only enforced when the caller declares which actions may legitimately be
+  // opted in. A fixture whose action under test is still experimental must name
+  // it, so a blanket "no opt-ins allowed" rule would be wrong.
+  if (Array.isArray(experimentalActions)) {
+    const allowed = new Set(experimentalActions);
+    const illegal = optedIn.filter((action) => !allowed.has(action));
+    if (illegal.length > 0) throw new NativeSmokeHarnessError(`native_fixture_policy_illegal_opt_in:${illegal.join(",")}`);
+  }
+  return config;
 }
 
 /**

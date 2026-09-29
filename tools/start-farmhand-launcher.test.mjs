@@ -38,8 +38,12 @@ test("launcher rejects caller bridge credentials and requires an existing Host-o
   assert.match(launcher, /Remove-Item Env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION/);
 });
 
-test("launcher validates window mode through the shared contract and injects it into both SMAPI children", () => {
-  assert.match(launcher, /\[string\]\$WindowMode = "visible"/);
+test("launcher validates per-role window modes through the shared contract and injects each one into its own SMAPI child", () => {
+  assert.match(launcher, /\[string\]\$HostWindowMode = "visible"/);
+  assert.match(launcher, /\[string\]\$FarmhandWindowMode = "background"/);
+  // The host role (the human's window) must never default to an invisible shape.
+  assert.doesNotMatch(launcher, /\[string\]\$HostWindowMode = "hidden"/);
+  assert.doesNotMatch(launcher, /\[string\]\$HostWindowMode = "background"/);
   assert.match(launcher, /function Resolve-LiveRunWindowMode/);
   assert.match(launcher, /stardew-live-run\.mjs --print-map/);
   assert.match(launcher, /invalid_live_run_window_mode:\$Value/);
@@ -49,16 +53,31 @@ test("launcher validates window mode through the shared contract and injects it 
   assert.doesNotMatch(launcher, /ValidateSet\(.*visible.*foreground.*minimized.*hidden.*background\)/);
   assert.doesNotMatch(launcher, /-WindowStyle/);
   assert.match(launcher, /\$Value -cnotin \$windowModeNames/);
-  // The validated mode is set once, before both SMAPI children start, and both
-  // roles run the Mod so both must inherit the same silent non-activating shape.
-  const envSet = launcher.indexOf("$env:GAMEBUDDY_WINDOW_MODE = $WindowMode");
-  const resolve = launcher.indexOf("Resolve-LiveRunWindowMode $WindowMode");
+  // Both roles are validated up front, fail-closed, before any process launch.
+  const resolveHost = launcher.indexOf("Resolve-LiveRunWindowMode $HostWindowMode");
+  const resolveFarmhand = launcher.indexOf("Resolve-LiveRunWindowMode $FarmhandWindowMode");
+  const hostSet = launcher.indexOf("$env:GAMEBUDDY_WINDOW_MODE = $HostWindowMode");
+  const farmhandSet = launcher.indexOf("$env:GAMEBUDDY_WINDOW_MODE = $FarmhandWindowMode");
   const hostStart = launcher.indexOf("$hostProcess = Start-Process");
+  const aiSet = launcher.indexOf("$env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $aiLaunchGeneration");
   const aiStart = launcher.indexOf("$aiProcess = Start-Process");
-  assert.ok(resolve >= 0 && resolve < envSet && envSet < hostStart && hostStart < aiStart);
-  // The finally block restores the exact pre-run environment afterwards, the
-  // same NULL-assignment clear the single-player launcher uses.
-  assert.match(launcher, /\$env:GAMEBUDDY_WINDOW_MODE = \$null/);
+  // Validation precedes the env write; the host env write precedes the host
+  // child; the farmhand env write is refreshed before the AI child so the host
+  // value can never cross roles.
+  assert.ok(
+    resolveHost >= 0 &&
+      resolveFarmhand >= 0 &&
+      resolveHost < resolveFarmhand &&
+      resolveHost < hostSet &&
+      hostSet < hostStart &&
+      hostStart < aiSet &&
+      hostSet < farmhandSet &&
+      farmhandSet < aiStart,
+  );
+  // The finally block clears the per-role window mode exactly like the
+  // launch-generation clear, so neither role's validated mode leaks into a
+  // later process.
+  assert.match(launcher, /Remove-Item Env:GAMEBUDDY_WINDOW_MODE -ErrorAction SilentlyContinue/);
 });
 
 test("launcher preserves the configured formal fixture and clears only known generated session exchange", () => {
