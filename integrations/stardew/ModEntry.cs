@@ -6065,7 +6065,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 isForage: item.isForage(),
                 hasMachineData: item.GetMachineData() is not null,
                 isChest: item is StardewValley.Objects.Chest,
-                isArtifactSpot: item.QualifiedItemId == "(O)590",
+                isArtifactSpot: NativeItemPredicates.IsArtifactSpot(item),
                 isWeeds: item.IsWeeds(),
                 isBreakableStone: item.QualifiedItemId == "(O)2" && item.IsBreakableStone());
             if (kind is null)

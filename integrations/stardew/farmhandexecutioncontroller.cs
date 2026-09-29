@@ -1899,9 +1899,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .Take(8).Select(pair => new BridgeClearHoeDirtTarget(BuildClearHoeDirtTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, Crop: false, Ground: true)).ToArray();
     }
 
-    private static string BuildArtifactSpotTargetId(GameLocation location, int x, int y)
+    private static string BuildArtifactSpotTargetId(GameLocation location, int x, int y, string qualifiedItemId)
     {
-        string raw = $"{location.NameOrUniqueName}:{x},{y}:(O)590";
+        // The identity carries the concrete id so `(O)590` and `(O)SeedSpot` at
+        // the same tile are distinct targets; the raw id already varies, so a
+        // shared prefix would alias them.
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"artifact_spot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
@@ -1914,7 +1917,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private static int CountArtifactSpotFarmSources()
     {
         GameLocation farm = Game1.getFarm();
-        return farm.objects.Pairs.Count(pair => pair.Value.QualifiedItemId == "(O)590");
+        return farm.objects.Pairs.Count(pair => NativeItemPredicates.IsArtifactSpot(pair.Value));
     }
 
     private static IReadOnlyList<BridgeArtifactSpotTarget> DiscoverArtifactSpotTargets(Farmer player)
@@ -1924,7 +1927,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return location.objects.Pairs
             .Where(pair => (int)pair.Key.X is >= 0 and <= 1000 && (int)pair.Key.Y is >= 0 and <= 1000
                 && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)
-                && pair.Value.QualifiedItemId == "(O)590"
+                && NativeItemPredicates.IsArtifactSpot(pair.Value)
                 // Artifact spots themselves are object-occupied source tiles;
                 // the legal native interaction position is an adjacent
                 // passable standing tile (checked below), not a passability
@@ -1947,7 +1950,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .OrderBy(pair => pair.Key.X)
             .ThenBy(pair => pair.Key.Y)
             .Take(8)
-            .Select(pair => new BridgeArtifactSpotTarget(BuildArtifactSpotTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, "(O)590", RequireDisplayName("(O)590")))
+            .Select(pair => new BridgeArtifactSpotTarget(BuildArtifactSpotTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId)))
             .ToArray();
     }
 
