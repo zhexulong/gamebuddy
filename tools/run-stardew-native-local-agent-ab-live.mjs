@@ -1,3 +1,25 @@
+/**
+ * Stardew Game live-run ladder (the single Game live-run file; LADDER=0..N).
+ *
+ * MAINTENANCE CONTRACT — read before changing this file:
+ *
+ * 1. Extend this file; never fork a parallel live runner. Each new capability
+ *    is a new ladder rung (LADDER=N) layered on the rungs below it, exactly as
+ *    ladder 0 -> 4 accreted. A second "improved" runner splits the evidence
+ *    history and makes run-to-run comparison meaningless.
+ * 2. A change to a rung is not done until it has produced a REAL run. Offline
+ *    unit tests on this harness prove the harness, not the game; only a genuine
+ *    Stardew/SMAPI/Mod/Agent run closes a rung.
+ * 3. After each real run, audit the trace with the `auditing-runs` skill and
+ *    dispatch a reviewer subagent over it (see the same requirement recorded in
+ *    tools/run-chat-live-audit.mjs). Findings feed the next iteration of THIS
+ *    file. Fix the system, not the symptom: attribute a failure to the
+ *    observation/contract/native-state/orchestration component that caused it
+ *    (`tools/lib/system-findings.mjs`) rather than prompting the model harder.
+ * 4. Keep run-to-run comparability: `tools/compare-live-run-findings.mjs`
+ *    treats a new finding, a lost receipt or a worse interaction score as a
+ *    regression. Do not silence a finding to make a rung pass.
+ */
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
