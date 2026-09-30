@@ -1,7 +1,7 @@
 {
   "schema": "chat_memory_probe_manifest/v1",
   "manifestId": "man-embodied-preference-01",
-  "manifestDigest": "16c80ee86e39611f48d01f0125a28c0a4e50478bc797d8b981577a7652414885",
+  "manifestDigest": "3a440008db526c42badd25e8bd91892da26d38a8e4794919f0fc7773c0a81fe9",
   "continuityTopology": "single",
   "probes": [
     {
@@ -43,7 +43,7 @@
         {
           "kind": "probe",
           "role": "player",
-          "text": "It is going to rain tomorrow. What should happen with the greenhouse strawberries?",
+          "text": "It is going to rain tomorrow. What should happen with the crop in the greenhouse?",
           "requiredKeywords": [
             "strawberr",
             "wine"
