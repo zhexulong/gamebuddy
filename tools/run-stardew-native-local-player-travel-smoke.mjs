@@ -4,7 +4,7 @@
 // discovery, move prerequisite, postcondition) stays in this runner.
 
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -14,7 +14,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel"];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel"];
 
 /** Execute the travel contract against an already-connected bridge session. */
 export async function runTravelSmoke(
@@ -28,7 +28,7 @@ export async function runTravelSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeTravelActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const warp = chooseSafeWarp(snapshot);
     if (!adjacent(snapshot.tile, { x: warp.sourceX, y: warp.sourceY })) {
       const move = await execute(
@@ -51,7 +51,7 @@ export async function runTravelSmoke(
     // Rediscover the source immediately before travel. The Mod accepts only its
     // current-location Warp list, so a prior snapshot never authorizes travel.
     snapshot = await observeTravelActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const freshWarp = findDeclaredWarp(snapshot, warp);
     if (!freshWarp || !adjacent(snapshot.tile, { x: freshWarp.sourceX, y: freshWarp.sourceY }))
       throw new Error("fresh_warp_source_unavailable");

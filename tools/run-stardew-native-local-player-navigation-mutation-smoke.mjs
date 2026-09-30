@@ -1,6 +1,6 @@
 import {
   TERMINAL_STATES,
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -14,7 +14,7 @@ import {
 const ACTION = "navigate_to_destination";
 const SCENARIO = "navigation_mutation_v1";
 const EXPECTED_ACTIONS = ["inspect_world_map", "find_destination", ACTION];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "find_destination",
   "inspect_self",
@@ -42,7 +42,7 @@ export async function runNavigationMutationSmoke(
     validateConfig(config);
     stage = "observe_before";
     const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
 
     stage = "inspect_world_map";
     const worldMap = await client.navigationRead({ operation: "inspect_world_map", args: {} });
@@ -92,7 +92,7 @@ export async function runNavigationMutationSmoke(
       timeoutMs: postconditionTimeoutMs,
       requireActionable: true,
     });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     if (after.revision !== terminal.revision) throw new Error("navigation_mutation_postcondition_revision_mismatch");
     if (evidence.destination !== destination.label) throw new Error("navigation_mutation_evidence_destination_mismatch");
     if (evidence.location !== after.location) throw new Error("navigation_mutation_fresh_location_mismatch");

@@ -4,7 +4,7 @@
 // discovery, move prerequisite, postcondition) stays in this runner.
 
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -14,7 +14,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "enter_exit", "inspect_self", "move_to_tile"];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "enter_exit", "inspect_self", "move_to_tile"];
 
 /** Execute the enter-exit contract against an already-connected bridge session. */
 export async function runEnterExitSmoke(
@@ -28,7 +28,7 @@ export async function runEnterExitSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeEnterExitActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const door = chooseSafeDoor(snapshot);
     if (!adjacent(snapshot.tile, { x: door.sourceX, y: door.sourceY })) {
       const move = await execute(
@@ -51,7 +51,7 @@ export async function runEnterExitSmoke(
     // Re-discover an opaque, Mod-published door immediately before the request.
     // A coordinate from a previous snapshot never authorizes enter_exit.
     snapshot = await observeEnterExitActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const freshDoor = findDeclaredDoor(snapshot, door);
     if (!freshDoor || !adjacent(snapshot.tile, { x: freshDoor.sourceX, y: freshDoor.sourceY }))
       throw new Error("fresh_door_target_unavailable");

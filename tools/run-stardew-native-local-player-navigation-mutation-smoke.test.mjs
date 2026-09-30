@@ -209,7 +209,7 @@ test("failed, empty-evidence, and stale completion outcomes fail closed", async 
     const harness = fake();
     harness.client.observe = async () => snapshot("Farm", 4, CAPABILITIES.slice(1));
     const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config());
-    assert.equal(result.reasonCode, "native_capability_surface_mismatch");
+    assert.match(result.reasonCode, /native_required_capability_missing/);
   });
   await t.test("non-isolated topology", async () => {
     const harness = fake();

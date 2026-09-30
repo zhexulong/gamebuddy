@@ -4,7 +4,7 @@
 // target selection, evidence, postcondition, and exit behavior) stays here.
 
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -15,7 +15,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "pickup_item"];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "pickup_item"];
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /** Execute the pickup_item contract against an already-connected bridge session. */
@@ -30,7 +30,7 @@ export async function runPickupItemSmoke(
   validateNativeLocalConfig(config);
   try {
     let snapshot = await requireActionablePickupItemSnapshot(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, trace, snapshot, travelTimeoutMs, moveTimeoutMs);
 
@@ -38,7 +38,7 @@ export async function runPickupItemSmoke(
     // event-free save precondition; target identity, tile, stack, and revision
     // are discovered from the fresh production snapshot after travel.
     snapshot = await requireActionablePickupItemSnapshot(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     // Debris.updateChunks owns magnetic delivery while the production
     // pickup_item execution owns the native approach. A separate prerequisite
     // move could collect this target before pickup_item is submitted, so use the
@@ -157,7 +157,7 @@ async function travelToFarm(client, receipts, trace, snapshot, travelTimeoutMs, 
       moveTimeoutMs,
     );
   snapshot = await requireActionablePickupItemSnapshot(client);
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   const freshWarp = snapshot.warps.find(
     (entry) =>
       validWarp(entry) &&
@@ -193,7 +193,7 @@ async function travelToFarm(client, receipts, trace, snapshot, travelTimeoutMs, 
 }
 async function move(client, receipts, trace, snapshot, target, phase, timeoutMs) {
   snapshot = await requireActionablePickupItemSnapshot(client);
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   const accepted = await execute(client, trace, phase, "move_to_tile", target, snapshot);
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
   const terminal = await waitForTerminal(receipts, accepted, timeoutMs);

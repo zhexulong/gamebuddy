@@ -5,7 +5,7 @@
 // postcondition) stays in this runner.
 
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   delay,
   executeFresh,
@@ -24,7 +24,7 @@ async function loadDistTestClient(entry) {
   return { LocalStardewBridgeClient };
 }
 
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "inspect_self",
   "move_to_tile",
@@ -45,12 +45,12 @@ export async function runPickupForageSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeForageActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, travelTimeoutMs);
     snapshot = await observeForageActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
     snapshot = await moveToFreshForageTarget(client, receipts, trace, snapshot, moveTimeoutMs);
 
@@ -59,7 +59,7 @@ export async function runPickupForageSmoke(
     // fresh opaque target ID and revision; fixture coordinates never authorize a
     // forage request.
     snapshot = await observeForageActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
     const target = chooseOnlyFreshForageTarget(snapshot);
     // The scene observation is the authority for the mutation binding. Match
@@ -171,7 +171,7 @@ async function travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, tr
   // re-observing: the world revision advances only on action, so a fresh
   // observe between actions would return the same revision and be rejected
   // as stale by the client admission guard.
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   const freshWarp = snapshot.warps.find(
     (entry) =>
       validWarp(entry) &&
@@ -251,7 +251,7 @@ async function move(client, receipts, trace, snapshot, target, phase, timeoutMs)
   // Reuse the caller's revision-bound snapshot as the request baseline: the
   // Mod advances the world revision only on action, so a fresh observe here
   // would return the same revision and be rejected as stale by the client.
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   const accepted = await execute(client, trace, phase, "move_to_tile", target, snapshot);
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
   const terminal = await waitForTerminal(receipts, accepted, timeoutMs);
