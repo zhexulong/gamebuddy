@@ -56,6 +56,7 @@ test("Game Snapshot crosses the boundary only as a bounded frozen advisory proje
     location: "Farm",
     tile: { x: 5, y: 10 },
     stamina: 80,
+    exhausted: false,
     health: 100,
     actionable: true,
     capabilities: ["CAPABILITY_SECRET"],

@@ -84,7 +84,7 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
             runtimeRole: "native_local_fixture", launchGeneration: null,
           }}));
           socket.write(frame({ ...request, messageId: "scene_snapshot", type: "snapshot", correlationId: "scene_snapshot", payload: {
-            revision: 1, location: "Farm", tile: { x: 1, y: 1 }, stamina: 100, health: 100, actionable: true,
+            revision: 1, location: "Farm", tile: { x: 1, y: 1 }, stamina: 100, exhausted: false, health: 100, actionable: true,
             capabilities: ["observe_scene"], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", activeExecution: null,
             timeOfDay: 600,
             dayOfMonth: 1,
@@ -163,6 +163,7 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
             location: "Farm",
             tile: { x: 5, y: 8 },
             stamina: 250,
+            exhausted: false,
             health: 100,
             actionable: true,
             capabilities: ["inspect_self"],
@@ -188,6 +189,7 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
             location: "Farm",
             tile: { x: 4, y: 8 },
             stamina: 250,
+            exhausted: false,
             health: 100,
             actionable: true,
             capabilities: ["inspect_self"],
@@ -298,6 +300,7 @@ test("local Stardew bridge advances the admitted snapshot revision on an unsolic
               location: revision === 9 ? "BusStop" : "Farm",
               tile: revision === 9 ? { x: 11, y: 23 } : { x: 64, y: 15 },
               stamina: 250,
+              exhausted: false,
               health: 100,
               actionable: true,
               capabilities: ["inspect_self"],
@@ -424,6 +427,7 @@ test("local Stardew bridge admits a repeat solicited snapshot at the same revisi
                 location: "Farm",
                 tile: observes === 1 ? { x: 0, y: 0 } : { x: 5, y: 9 },
                 stamina: 100,
+                exhausted: false,
                 health: 100,
                 actionable: true,
                 capabilities: [],
@@ -516,6 +520,7 @@ test("local Stardew bridge refuses a solicited snapshot whose catalogRevision wa
                 location: "Farm",
                 tile: { x: 0, y: 0 },
                 stamina: 100,
+                exhausted: false,
                 health: 100,
                 actionable: true,
                 capabilities: [],
@@ -614,6 +619,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
                   location: "Farm",
                   tile: { x: 5, y: 8 },
                   stamina: 250,
+                  exhausted: false,
                   health: 100,
                   actionable: true,
                   capabilities: ["inspect_self"],
@@ -691,6 +697,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
           location: "Farm",
           tile: { x: 1, y: 1 },
           stamina: 1,
+          exhausted: false,
           health: 1,
           actionable: true,
           capabilities: ["inspect_self"],
@@ -805,6 +812,7 @@ test("local Stardew bridge forwards a validated player_input semantic event", as
                     location: "Farm",
                     tile: { x: 4, y: 8 },
                     stamina: 250,
+                    exhausted: false,
                     health: 100,
                     actionable: true,
                     capabilities: [],
@@ -1178,6 +1186,7 @@ test("local Stardew bridge authenticates and observes Mod-declared capabilities"
                   location: "Farm",
                   tile: { x: 4, y: 8 },
                   stamina: 250,
+                  exhausted: false,
                   health: 100,
                   actionable: true,
                   capabilities: ["move_to_tile"],
@@ -1367,7 +1376,7 @@ test("navigationRead dispatches an exact-correlated request without mutating bri
 
 test("navigationRead rejects a wrong correlated response type without admitting its state", async () => {
   await withNavigationBridge("wrong_type", (socket, request) => {
-    socket.write(frame({ ...request, messageId: "nav_wrong_snapshot", type: "snapshot", payload: { revision: 99, location: "Farm", tile: { x: 1, y: 1 }, stamina: 1, health: 1, actionable: true, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", timeOfDay: 600, dayOfMonth: 1, seasonIndex: 0, year: 1, activeExecution: null } }));
+    socket.write(frame({ ...request, messageId: "nav_wrong_snapshot", type: "snapshot", payload: { revision: 99, location: "Farm", tile: { x: 1, y: 1 }, stamina: 1, exhausted: false, health: 1, actionable: true, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", timeOfDay: 600, dayOfMonth: 1, seasonIndex: 0, year: 1, activeExecution: null } }));
   }, async (client) => {
     await assert.rejects(client.navigationRead({ operation: "inspect_world_map", args: {} }), /unexpected_navigation_read_response/);
     assert.equal(client.state.snapshot, null);
@@ -1791,6 +1800,7 @@ test("a pending observe rejects through the normal close path when a fact listen
                 location: "Farm",
                 tile: { x: 0, y: 0 },
                 stamina: 100,
+                exhausted: false,
                 health: 100,
                 actionable: true,
                 capabilities: [],

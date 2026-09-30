@@ -1522,6 +1522,7 @@
         "location",
         "tile",
         "stamina",
+        "exhausted",
         "health",
         "actionable",
         "capabilities",

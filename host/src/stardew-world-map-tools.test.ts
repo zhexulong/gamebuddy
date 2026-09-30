@@ -33,6 +33,7 @@ function integration(overrides: Partial<StardewBridgeConnection["state"]> = {}):
         location: "Farm",
         tile: { x: 1, y: 1 },
         stamina: 100,
+        exhausted: false,
         health: 100,
         actionable: true,
         capabilities: ["inspect_world_map", "find_destination"],

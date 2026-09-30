@@ -259,6 +259,7 @@ function snapshotPayload(revision: number) {
     location: "Farm",
     tile: { x: 5, y: 8 },
     stamina: 250,
+    exhausted: false,
     health: 100,
 actionable: true,
 capabilities: ["inspect_self"],

@@ -1354,6 +1354,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             player.currentLocation?.NameOrUniqueName ?? "unknown",
             new BridgeTile(player.Tile.X, player.Tile.Y),
             player.Stamina,
+            player.exhausted.Value,
             player.health,
             DescribeTool(player.CurrentTool),
             player.Items.Count,
@@ -1430,7 +1431,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         IReadOnlyList<string> advertisedCapabilities = capabilityPublication.CapabilitySet.AdvertisedCapabilityIds;
         return new BridgeSnapshot(
-        Revision: this.revision, Location: "unknown", Tile: new BridgeTile(0f, 0f), Stamina: 0f, Health: 0,
+        Revision: this.revision, Location: "unknown", Tile: new BridgeTile(0f, 0f), Stamina: 0f, Exhausted: false, Health: 0,
         CurrentTool: null, InventorySlots: 0, Actionable: false, Capabilities: advertisedCapabilities,
         CatalogRevision: FarmhandActionSurfacePublication.CatalogRevision, EnabledActionIds: capabilityPublication.EnabledActionIds,
         ActiveExecution: null,
