@@ -28,7 +28,7 @@
 //
 // Authority direction is one-way: the C# enum decides, every other layer must
 // equal it. A layer that is a superset is a bug, not forward compatibility.
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -146,6 +146,24 @@ function csharpStringPattern(source, marker) {
   return new Set([...line.matchAll(/"([^"]+)"/g)].map((m) => m[1]));
 }
 
+/**
+ * Every native-local runner, as `[name, source]`. These are consumers rather than
+ * declarations, so they live outside the layer chain but still have to agree with
+ * the producer: a runner that enumerates a subset of the truncation reasons
+ * rejects valid observations that every wire layer accepted.
+ */
+function runnerSources(root = DEFAULT_ROOT) {
+  const directory = path.join(root, "tools");
+  // An isolated audit sandbox copies only the layer files, so a missing tools
+  // directory means "no consumers to check here", not "no consumers exist".
+  // The real root always has one; `report.runnerCount` makes that observable so
+  // a sandbox-shaped root cannot silently skip this layer.
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory)
+    .filter((name) => name.startsWith("run-stardew-") && name.endsWith("-smoke.mjs"))
+    .map((name) => [name, readFileSync(path.join(directory, name), "utf8")]);
+}
+
 export function auditSceneKindProjection({ root = DEFAULT_ROOT } = {}) {
   const contracts = read(CONTRACTS, root);
   const members = enumMembers(contracts);
@@ -243,11 +261,13 @@ export function auditSceneKindProjection({ root = DEFAULT_ROOT } = {}) {
     }
   }
 
-  const ground = auditGroundProjection({ contracts, projection: read(PROJECTION, root), bridge, host, schema });
+  const runnerList = runnerSources(root);
+  const ground = auditGroundProjection({ contracts, projection: read(PROJECTION, root), bridge, host, schema, root, runners: runnerList });
   findings.push(...ground.findings);
 
   return {
     kindCount: members.length,
+    runnerCount: runnerList.length,
     perKind: perKind.sort((a, b) => a.member.localeCompare(b.member)),
     groundKinds: ground.perKind,
     findings: findings.sort((a, b) => `${a.kind}${a.hop}`.localeCompare(`${b.kind}${b.hop}`)),
@@ -261,7 +281,7 @@ export function auditSceneKindProjection({ root = DEFAULT_ROOT } = {}) {
 // the Host union and the envelope schema. A kind-only audit reports "ok" while any
 // of these disagree, and the failure then appears only when a real observation is
 // serialized -- the same shape as the water_source defect this file documents.
-function auditGroundProjection({ contracts, projection, bridge, host, schema }) {
+function auditGroundProjection({ contracts, projection, bridge, host, schema, root = DEFAULT_ROOT, runners = null }) {
   const findings = [];
   const perKind = [];
 
@@ -351,6 +371,24 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema }) 
   for (const reason of REASONS) {
     if (!schemaReasons.has(reason))
       findings.push({ kind: "ground", hop: "envelope schema truncatedReason", detail: `schema does not accept ${reason}` });
+  }
+
+  // The ninth layer is not a declaration but a consumer: the native-local runners
+  // validate `observe_scene` results they receive. Two of them listed only the
+  // first two reasons, so a valid mixed-ground observation was rejected by the
+  // runner even though every wire layer accepted it. A runner may reference the
+  // reasons, but must not enumerate a subset that omits a producer value.
+  for (const [name, source] of runners ?? runnerSources(root)) {
+    const referenced = REASONS.filter((reason) => source.includes(`"${reason}"`));
+    if (referenced.length === 0) continue;
+    for (const reason of REASONS) {
+      if (!referenced.includes(reason))
+        findings.push({
+          kind: "ground",
+          hop: `runner ${name}`,
+          detail: `runner enumerates truncation reasons but omits ${reason}`,
+        });
+    }
   }
 
   return { perKind: perKind.sort((a, b) => a.member.localeCompare(b.member)), findings };
