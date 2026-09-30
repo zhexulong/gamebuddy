@@ -136,6 +136,8 @@
     "test:stardew-action-candidates": "node --test integrations/stardew/action-development/tests/stardew-action-candidates.test.mjs",
     "audit:stardew-discovery-channels": "node tools/audit-stardew-discovery-channels.mjs",
     "test:stardew-discovery-channels": "node --test tools/audit-stardew-discovery-channels.test.mjs",
+    "audit:stardew-native-local-runner-contract": "node tools/audit-stardew-native-local-runner-contract.mjs",
+    "test:stardew-native-local-runner-contract": "node --test tools/audit-stardew-native-local-runner-contract.test.mjs",
     "audit:stardew-scene-kind-projection": "node tools/audit-stardew-scene-kind-projection.mjs",
     "test:stardew-scene-kind-projection": "node --test tools/audit-stardew-scene-kind-projection.test.mjs",
     "audit:stardew-action-seam-terminals": "node integrations/stardew/action-development/src/analysis/stardew-action-seam-terminals-audit.mjs",

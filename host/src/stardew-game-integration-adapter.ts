@@ -622,7 +622,11 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
     slot >= 0 &&
     slot <= 36 &&
     hasStaminaConservationEvidence(evidence) &&
-    evidence.qualified_item_id === "(O)590" &&
+    // Mirror the Mod's native predicate exactly: the diggable category is the two
+    // ids `Object.cs:1310` routes through the single `t is Hoe` branch, not any id.
+    // Accepting every id here would also admit a non-diggable item such as
+    // `(O)388` (Wood).
+    (evidence.qualified_item_id === "(O)590" || evidence.qualified_item_id === "(O)SeedSpot") &&
     evidence.source_present_before === "true" &&
     evidence.source_present_after === "false" &&
     evidence.hoedirt_present_before === "false" &&

@@ -307,13 +307,19 @@ activeExecution?: ActiveExecution | null;
     crop: false;
     ground: true;
   }>[];
-  /** Adjacent intact `(O)590` artifact spots for one native Basic Hoe use. */
+  /**
+   * Adjacent intact diggable artifact spots for one native Basic Hoe use. The id
+   * stays an opaque bounded token: `(O)590` and `(O)SeedSpot` reach the identical
+   * `t is Hoe` branch (`Object.cs:1310`) and every spawn site picks between them
+   * (`GameLocation.cs:15233`, `Mountain.cs:272`), so the native predicate is the
+   * authority rather than any one id.
+   */
   artifactSpotTargets?: readonly Readonly<{
     targetId: string;
     location: string;
     x: number;
     y: number;
-    qualifiedItemId: "(O)590";
+    qualifiedItemId: string;
     displayName: string;
   }>[];
   /** Same-location plain ground HoeDirt created by dig_artifact_spot, published only after that action. */

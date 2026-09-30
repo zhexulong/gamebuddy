@@ -166,7 +166,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
   actionAdapter(
     "dig_artifact_spot",
     "Dig an artifact spot",
-    "Use one equipped Basic Hoe on a fresh adjacent (O)590 artifact spot; source removal and native HoeDirt creation are the completion boundary.",
+    "Use one equipped Basic Hoe on a fresh adjacent diggable artifact spot; source removal and native HoeDirt creation are the completion boundary.",
     ["artifact_spot", "tool"],
   ),
   actionAdapter(
