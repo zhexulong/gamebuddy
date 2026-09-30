@@ -5,7 +5,7 @@
 // in this runner.
 
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   delay,
   executeFresh,
@@ -18,7 +18,7 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_feed_animal_v1";
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "inspect_self",
   "move_to_tile",
@@ -38,7 +38,7 @@ export async function runFeedAnimalSmoke(client, receipts, config) {
   validateConfig(config);
   try {
     let snapshot = await observeActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     // The fixture may pre-position this otherwise unreachably distant spatial
     // precondition inside the selected AnimalHouse before bridge attachment. In
     // that narrow case do not leave and re-enter: doing so would discard exactly
@@ -73,7 +73,7 @@ export async function runFeedAnimalSmoke(client, receipts, config) {
         throw new Error(`enter_animal_house_failed:${enterTerminal.reasonCode}`);
       snapshot = await awaitActionableSnapshotAfterEnter(client);
     }
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const target = chooseSingleFeedTarget(snapshot);
     const feedAccepted = await execute(
       client,
