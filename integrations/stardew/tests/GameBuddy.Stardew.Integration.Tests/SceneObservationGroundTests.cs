@@ -226,6 +226,53 @@ public sealed class SceneObservationGroundTests
         result.TruncatedReason.Should().NotBe("ground_limit");
     }
 
+    /// <summary>
+    /// The projection can produce ground and the payload can still drop it: both
+    /// outbound construction sites did exactly that, so the Agent received an
+    /// observation with no surface facts while every projection test stayed green.
+    /// Pin the mapping itself.
+    /// </summary>
+    [Fact]
+    public void WirePayload_CarriesGroundFromTheProjection()
+    {
+        var projection = new SceneObservationProjection(new SceneObservationStore());
+        var ground = new List<SceneGroundTile>
+        {
+            new(0, 0, SceneGroundKind.Grass),
+            new(1, 0, SceneGroundKind.Grass),
+            new(2, 0, SceneGroundKind.Stone),
+        };
+        SceneObservationInput input = new("Farm", 0, 0, Array.Empty<SceneAffordanceSource>(), ground);
+
+        SceneObservationProjectionResult result = projection.Observe(Context(1), input);
+        result.Ground.Should().NotBeNull("the projection scanned ground");
+
+        ObserveSceneResultPayload payload = BridgeSession.BuildObserveScenePayload(result);
+
+        payload.Ground.Should().NotBeNull("the wire payload must carry the ground the projection produced");
+        payload.Ground!.DominantKind.Should().Be(result.Ground!.DominantKind);
+        payload.Ground.DominantTileCount.Should().Be(result.Ground.DominantTileCount);
+        payload.Ground.ScannedTileCount.Should().Be(result.Ground.ScannedTileCount);
+        payload.Ground.OmittedExceptionTileCount.Should().Be(result.Ground.OmittedExceptionTileCount);
+        payload.Ground.Exceptions.Should().HaveCount(result.Ground.Exceptions.Count);
+    }
+
+    /// <summary>
+    /// A caller that scanned no ground must put `null` on the wire rather than an
+    /// empty summary: the Agent must be able to tell "not reported" from "no ground".
+    /// </summary>
+    [Fact]
+    public void WirePayload_WithoutGroundScan_CarriesNull()
+    {
+        var projection = new SceneObservationProjection(new SceneObservationStore());
+        SceneObservationInput input = new("Farm", 1, 1, Array.Empty<SceneAffordanceSource>());
+
+        SceneObservationProjectionResult result = projection.Observe(Context(1), input);
+        ObserveSceneResultPayload payload = BridgeSession.BuildObserveScenePayload(result);
+
+        payload.Ground.Should().BeNull();
+    }
+
     private static SceneObservationContext Context(long observationSequence) =>
         new("runtime_01", Scope, "Farm", 0, observationSequence);
 }
