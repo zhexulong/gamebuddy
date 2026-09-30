@@ -1,0 +1,31 @@
+{
+  "profileId": "gamebuddy.tavern-management.chat-list-title",
+  "releaseTier": "tavern_management",
+  "routeIds": [
+    "bootstrap",
+    "state.read",
+    "draft.read",
+    "draft.save",
+    "draft.discard",
+    "chat.list",
+    "chat.rename",
+    "memory.read",
+    "memory.mutate",
+    "world-info.read",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+    "settings.voice.devices"
+  ],
+  "operationIds": [
+    "draft.save",
+    "draft.discard",
+    "chat.rename",
+    "memory.mutate",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+    "settings.voice.devices"
+  ],
+  "navigationItemIds": ["chat", "memory"]
+}
