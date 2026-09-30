@@ -66,15 +66,19 @@ test("三档计数之和等于未匹配候选总数", async () => {
     counts.tierA_catalogIntentExists + counts.tierB_noCatalogIntent + counts.tierC_nonGameplayWrites,
     counts.unmatchedCandidateUnits,
   );
-  assert.equal(counts.unmatchedCandidateUnits, 64);
-  // P1 修正(手持物消耗不算多持有)+ leftClick 族加入后
-  assert.equal(counts.tierA_catalogIntentExists, 22);
+  assert.equal(counts.unmatchedCandidateUnits, 67);
+  // 2026-09-30 switch_section 作用域修正（见 action-inventory-method.md §三）：
+  // case 是兄弟作用域，不再被外层 if 吞掉。原先被 `if (who.IsLocalPlayer)` 吞掉的
+  // GameLocation.performAction 的 case 桶恢复为 113 个独立分支，其中 14 个通过九谓词；
+  // Event.checkAction / MineShaft.checkAction 的 case 桶各恢复 1 个候选。
+  // → 未匹配候选 64 → 67：+Event.checkAction（A 档 22→23，festivalScore 匹配
+  //   select_event_choice_variant）+ performAction@GameLocation + MineShaft.checkAction（B 档 26→28）
+  assert.equal(counts.tierA_catalogIntentExists, 23);
   // 字段分类修正:Shears.DoFunction 已登记为 collect_animal_product 的第二个 seam(handler 本就覆盖 MilkPail/Shears),
   // kickProgress/localKickStartTile(Chest 踢动画)、lastTentTouchedByPlayer(Tent 交互辅助静态)、
   // HitTimerInstance.Milliseconds(Chest 命中计时)、boulderKnockTimer/boulderKnocksLeft/
   // doneHittingBoulderWithToolTimer(IslandNorth 岩缝敲击计时)从 gameplay 移至非 gameplay
-  // -> 未匹配候选从 65 降到 64,B 档从 28 降到 26
-  assert.equal(counts.tierB_noCatalogIntent, 26);
+  assert.equal(counts.tierB_noCatalogIntent, 28);
   assert.equal(counts.tierC_nonGameplayWrites, 16);
 });
 

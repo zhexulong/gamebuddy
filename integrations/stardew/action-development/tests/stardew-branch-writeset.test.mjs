@@ -240,6 +240,47 @@ test("WateringCan.DoFunction 切出 refill 与 apply 两个极大分支区域", 
   );
 });
 
+// ---- switch_section 作用域修正（2026-09-30）--------------------------------
+// 缺陷：maximalRegions 把任意真包含的 case 也吞掉——外层 `if (who.IsLocalPlayer)`
+// 吞掉了整段 switch，`GameLocation.performAction`（127 selector）保留 0 个 case。
+// 修正：case 是兄弟作用域，只有 case ⊂ case 才被吞；case ⊂ if/else 不吞。
+
+test("switch case 不被外层 if 吞掉（GameLocation.performAction 恢复 case 桶）", async () => {
+  const methods = await extractBranches({
+    sourceRoot: SOURCE_ROOT,
+    relPath: "StardewValley/GameLocation.cs",
+    memberName: "performAction",
+    parser,
+  });
+  // 基类实现（L8695，`if (who.IsLocalPlayer)` 包着 127 selector 的 switch）
+  const base = methods.find((m) => m.maximalRegions >= 100 && m.branches.some((b) => b.kind === "case"));
+  assert.ok(base, "基类实现应保留大量 case 极大区域");
+  assert.ok(base.maximalRegions >= 124, `实测 ${base.maximalRegions}`);
+  const caseBuckets = base.branches.filter((b) => b.kind === "case");
+  assert.ok(caseBuckets.length >= 100, `case 桶应 >=100，实测 ${caseBuckets.length}`);
+  const minecart = caseBuckets.find((b) => /MinecartTransport/.test(b.condition));
+  assert.ok(minecart, "MinecartTransport 应是一个独立 case 桶（外层 if 不再吞它）");
+  assert.equal(minecart.candidate, false, "MinecartTransport 只调 ShowMineCartMenu：无终态写入、无 DELEGATE，被 P4 拒");
+  assert.ok(minecart.rejectedBy.includes("P4"), "菜单转发选择器应被 P4 拒而不是被吞（这正是 selector 层需要单独分析器的原因）");
+  // 外层条件仍以条件文本可见：condition 就是 case 标签，行号可查
+  assert.ok(caseBuckets.every((b) => b.line > 8695), "所有 case 桶的行号都应在 switch 内部");
+});
+
+test("case ⊂ case 仍被吞（Object.checkForAction 的内层 switch 不独立）", async () => {
+  const methods = await extractBranches({
+    sourceRoot: SOURCE_ROOT,
+    relPath: "StardewValley/Object.cs",
+    memberName: "checkForAction",
+    parser,
+  });
+  const m = methods[0];
+  const caseBuckets = m.branches.filter((b) => b.kind === "case");
+  // 24 个字符串 selector，18 个保留为极大区域：6 个位于内层 switch（case ⊂ case）
+  // （如 `case "Chest":` 内的 `case 5: case 6:` 多选框位）——它们属于外层 case 的实现细节。
+  assert.ok(caseBuckets.length >= 18 && caseBuckets.length < 24, `18<= ${caseBuckets.length} < 24`);
+  assert.ok(m.nestedRegions >= 11, `内层 case 计入 nestedRegions，实测 ${m.nestedRegions}`);
+});
+
 // ---- 产物自我约束 ---------------------------------------------------------
 
 test("提取产物声明它不做什么", async () => {
