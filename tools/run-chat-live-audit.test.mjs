@@ -367,7 +367,17 @@ test("a failed probe gate short-circuits to a gap and never scores keywords", ()
   // Only a passed gate scores, and then the keyword outcome decides.
   assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: wouldHit }), { event: "needle.hit" });
   assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: false, forbiddenCount: 0 } }), { event: "needle.miss" });
-  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: wouldConfuse }), { event: "distractor.confused" });
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: wouldConfuse }), {
+    event: "distractor.confused",
+    reason: "needle_only",
+  });
+  // The two causes of `distractor.confused` must stay distinguishable: only the
+  // `recall_failed` cause is a memory failure, and a correct reply that denies
+  // the distractor recalls the needle while still mentioning a forbidden word.
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: false, forbiddenCount: 1 } }), {
+    event: "distractor.confused",
+    reason: "recall_failed",
+  });
   // A passed gate with no keyword evidence is a gap, not a silent miss.
   assert.deepEqual(probeVerdict({ gate: { ok: true } }), { event: "observability_gap", reason: "probe_keywords_missing" });
 });
@@ -712,7 +722,7 @@ test("audit harness stays on the composition bootstrap and authenticated Chat AP
   assert.match(source, /launchDesktopCompositionGateChild\(/);
   assert.match(source, /surface: AUDIT_SURFACE/);
   assert.match(source, /const AUDIT_SURFACE = "chat-only";/);
-  assert.match(source, /outputRoot: join\(HOST_ROOT, "dist"\)/);
+  assert.match(source, /outputRoot: AUDIT_OUTPUT_ROOT/);
   assert.match(source, /\/api\/tavern\/v1\/bootstrap/);
   assert.match(source, /\/api\/tavern\/v1\/messages/);
   assert.match(source, /\/api\/tavern\/v1\/events\?apiVersion=1/);
