@@ -65,6 +65,11 @@ const OPERATION_ROUTE_IDS = Object.freeze({
   "chat.submission_status": "chat.submission_status",
   "memory.mutate": "memory.mutate",
   "world-info.bind": "world-info.bind",
+  // Declared by the mounted tavern management profile
+  // (host/src/composition/desktop-presentation-admission-owner.ts).
+  "settings.voice.read": "settings.voice.read",
+  "settings.voice.consent": "settings.voice.consent",
+  "settings.voice.devices": "settings.voice.devices",
 });
 const CONTRACT_ROUTE_IDS = new Set([
   "bootstrap",
@@ -81,6 +86,12 @@ const CONTRACT_ROUTE_IDS = new Set([
   "memory.mutate",
   "world-info.read",
   "world-info.bind",
+  // The voice settings surface is part of the mounted tavern management
+  // profile (host/src/tavern/browser-contract/index.ts). Without them here the
+  // gate rejected the real production profile it is meant to validate.
+  "settings.voice.read",
+  "settings.voice.consent",
+  "settings.voice.devices",
   "events",
 ]);
 const CONTRACT_NAVIGATION_ITEM_IDS = new Set(["chat", "memory"]);

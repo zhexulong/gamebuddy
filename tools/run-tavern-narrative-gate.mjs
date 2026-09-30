@@ -24,6 +24,14 @@ import { fileURLToPath } from "node:url";
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
+// The audited generation root. Production consumes the canonical `host/dist`
+// pointer; local iteration may point this at a disposable generation built by
+// host/scripts/build-desktop-launcher-test-generation.mjs, so a source change
+// can be exercised before the protected Windows release CI republishes. The
+// default is unchanged and this only ever *reads* the pointer it is given.
+const OUTPUT_ROOT = process.env.GAMEBUDDY_TAVERN_GATE_OUTPUT_ROOT
+  ? resolve(process.env.GAMEBUDDY_TAVERN_GATE_OUTPUT_ROOT)
+  : join(HOST_ROOT, "dist");
 const RUNNER_SCHEMA = "gamebuddy-tavern-narrative-gate/v1";
 const RUNNER_ID = "tavern-narrative-gate";
 const START_TIMEOUT_MS = 60_000;
@@ -356,7 +364,7 @@ export async function sendTurn(origin, client) {
 
 async function productionArtifactIdentity() {
   try {
-    const pointer = JSON.parse(await readFile(join(HOST_ROOT, "dist", "current.json"), "utf8"));
+    const pointer = JSON.parse(await readFile(join(OUTPUT_ROOT, "current.json"), "utf8"));
     if (
       typeof pointer.generation !== "string" ||
       !/^[A-Za-z0-9_-]{1,160}$/.test(pointer.generation) ||
@@ -416,7 +424,7 @@ export async function main(argv = process.argv.slice(2)) {
       "utf8",
     );
     launch = await launchDesktopCompositionGateChild({
-      outputRoot: join(HOST_ROOT, "dist"),
+      outputRoot: OUTPUT_ROOT,
       root,
       surface: "chat-only",
       nonceSha256,
