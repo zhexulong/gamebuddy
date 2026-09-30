@@ -17,6 +17,12 @@ internal sealed class LocalPipeBridge : IDisposable
     private readonly CancellationTokenSource cancellation = new();
     private readonly ConcurrentQueue<PipeInbound> inbound = new();
     private readonly ConcurrentQueue<PipeOutbound> outbound = new();
+    // The game main thread admits outbound frames while the bridge worker
+    // discards a dead connection's frames and dequeues one frame per delivery.
+    // All three mutate outboundCount as the admitted count, so one gate must
+    // serialize them: without it the count and the queue length diverge and a
+    // drain can retire a frame the game thread admitted after the drain began.
+    private readonly object outboundGate = new();
     private readonly SemaphoreSlim outboundSignal = new(0);
     private readonly Task worker;
     private int inboundCount;
@@ -71,17 +77,24 @@ internal sealed class LocalPipeBridge : IDisposable
             completion.Resolve(false);
             return false;
         }
-        if (Interlocked.Increment(ref this.outboundCount) > MaximumQueuedMessages)
+        bool admitted;
+        lock (this.outboundGate)
         {
-            Interlocked.Decrement(ref this.outboundCount);
+            admitted = ++this.outboundCount <= MaximumQueuedMessages;
+            if (admitted)
+                this.outbound.Enqueue(new PipeOutbound(generation, json, completion));
+            else
+                this.outboundCount--;
+        }
+        if (!admitted)
+        {
             completion.Resolve(false);
             return false;
         }
-        this.outbound.Enqueue(new PipeOutbound(generation, json, completion));
         try { this.outboundSignal.Release(); }
         catch (ObjectDisposedException)
         {
-            Interlocked.Decrement(ref this.outboundCount);
+            lock (this.outboundGate) this.outboundCount--;
             completion.Resolve(false);
             return false;
         }
@@ -169,9 +182,16 @@ internal sealed class LocalPipeBridge : IDisposable
         while (!cancellationToken.IsCancellationRequested)
         {
             await this.outboundSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
-            if (!this.outbound.TryDequeue(out PipeOutbound? message))
-                continue;
-            Interlocked.Decrement(ref this.outboundCount);
+            PipeOutbound? message;
+            lock (this.outboundGate)
+            {
+                // The dequeue and its paired count decrement must take the gate
+                // together, so the admitted count never describes a queue that
+                // a concurrent admit or drain has already changed.
+                if (!this.outbound.TryDequeue(out message))
+                    continue;
+                this.outboundCount--;
+            }
             if (message.Generation != generation || generation != Interlocked.Read(ref this.connectedGeneration))
             {
                 message.Completion?.Resolve(false);
@@ -197,16 +217,37 @@ internal sealed class LocalPipeBridge : IDisposable
         // completion false so a control reservation can be retried safely.
         Interlocked.CompareExchange(ref this.connectedGeneration, 0, generation);
         List<PipeOutbound> retained = new();
-        while (this.outbound.TryDequeue(out PipeOutbound? message))
+        List<PipeOutboundCompletion> discarded = new();
+        lock (this.outboundGate)
         {
-            Interlocked.Decrement(ref this.outboundCount);
-            if (message.Generation == generation)
-                message.Completion?.Resolve(false);
-            else
-                retained.Add(message);
+            // Take exactly the frames that were admitted when the drain began,
+            // so a frame the game thread admits while this runs keeps its queue
+            // position behind every retained frame instead of being retired by
+            // this connection's drain. Only the discarded frames leave, so the
+            // admitted count drops by exactly that many.
+            int pending = this.outbound.Count;
+            int discardedCount = 0;
+            while (pending-- > 0 && this.outbound.TryDequeue(out PipeOutbound? message))
+            {
+                if (message.Generation == generation)
+                {
+                    discardedCount++;
+                    if (message.Completion is not null)
+                        discarded.Add(message.Completion);
+                }
+                else
+                {
+                    retained.Add(message);
+                }
+            }
+            foreach (PipeOutbound message in retained)
+                this.outbound.Enqueue(message);
+            this.outboundCount -= discardedCount;
         }
-        foreach (PipeOutbound message in retained)
-            this.outbound.Enqueue(message);
+        // Resolve outside the gate: a completion's continuation must never run
+        // - and thereby admit or drain - while this thread holds the gate.
+        foreach (PipeOutboundCompletion completion in discarded)
+            completion.Resolve(false);
     }
 
     private static async Task<string> ReadFrameAsync(Stream stream, CancellationToken cancellationToken)
@@ -251,11 +292,18 @@ internal sealed class LocalPipeBridge : IDisposable
     public void Dispose()
     {
         this.cancellation.Cancel();
-        while (this.outbound.TryDequeue(out PipeOutbound? message))
+        List<PipeOutboundCompletion> discarded = new();
+        lock (this.outboundGate)
         {
-            Interlocked.Decrement(ref this.outboundCount);
-            message.Completion?.Resolve(false);
+            while (this.outbound.TryDequeue(out PipeOutbound? message))
+            {
+                this.outboundCount--;
+                if (message.Completion is not null)
+                    discarded.Add(message.Completion);
+            }
         }
+        foreach (PipeOutboundCompletion completion in discarded)
+            completion.Resolve(false);
         this.outboundSignal.Release();
         try { this.worker.Wait(TimeSpan.FromSeconds(1)); } catch { }
         this.outboundSignal.Dispose();
