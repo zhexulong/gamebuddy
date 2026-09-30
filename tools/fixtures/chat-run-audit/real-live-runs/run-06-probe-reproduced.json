@@ -1,0 +1,6527 @@
+{
+  "schema": "chat_run_audit/v1",
+  "runId": "c83a8fc47d12c1c628c26e56",
+  "startedAt": "2026-09-30T06:48:07.216Z",
+  "completedAt": "2026-09-30T06:51:25.243Z",
+  "surface": "chat-only",
+  "artifact": {
+    "generation": "g-munq0j7o-40028-9a25a55973254a8c901584a34c92ee1e",
+    "inventoryDigest": "6db15ad68bc3649fecdfbf86d2a9cf414787c67432cd5a6ef11039169d0d4b01"
+  },
+  "provider": {
+    "embedded": true,
+    "observed": true
+  },
+  "originMs": 0,
+  "events": [
+    {
+      "at": 46680,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.started",
+      "meta": {
+        "status": "ready"
+      }
+    },
+    {
+      "at": 46689,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 46731,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted",
+      "meta": {
+        "disposition": "accepted"
+      }
+    },
+    {
+      "at": 46733,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 47160,
+      "kind": "provider",
+      "actor": "host",
+      "code": "request.sent"
+    },
+    {
+      "at": 72039,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72041,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72323,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72325,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72325,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72325,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72325,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72325,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72326,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72329,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72332,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72362,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 72368,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 72368,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 72368,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 72368,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed",
+      "meta": {
+        "count": 1
+      }
+    },
+    {
+      "at": 72434,
+      "kind": "presentation",
+      "actor": "harness",
+      "code": "admitted",
+      "meta": {
+        "status": "admission_ok"
+      }
+    },
+    {
+      "at": 72441,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 72468,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted",
+      "meta": {
+        "disposition": "accepted"
+      }
+    },
+    {
+      "at": 72468,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87021,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87021,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87021,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87021,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87022,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87024,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87025,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87277,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87278,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87279,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87279,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87279,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87279,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87279,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87280,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87309,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 87313,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 87313,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 87313,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 87313,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed",
+      "meta": {
+        "count": 1
+      }
+    },
+    {
+      "at": 87374,
+      "kind": "presentation",
+      "actor": "harness",
+      "code": "admitted",
+      "meta": {
+        "status": "admission_ok"
+      }
+    },
+    {
+      "at": 87380,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 87408,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted",
+      "meta": {
+        "disposition": "accepted"
+      }
+    },
+    {
+      "at": 87408,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111349,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111349,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111349,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111352,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111605,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111606,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111607,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 111609,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112010,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112010,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112010,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112012,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112012,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112012,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112012,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112012,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112012,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112012,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112012,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112013,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112014,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112016,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112017,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112044,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 112049,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 112049,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 112049,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 112049,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed",
+      "meta": {
+        "count": 1
+      }
+    },
+    {
+      "at": 112103,
+      "kind": "presentation",
+      "actor": "harness",
+      "code": "admitted",
+      "meta": {
+        "status": "admission_ok"
+      }
+    },
+    {
+      "at": 112110,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 112135,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted",
+      "meta": {
+        "disposition": "accepted"
+      }
+    },
+    {
+      "at": 112135,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114573,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114573,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114573,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114573,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114573,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114573,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114576,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114577,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114577,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114577,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114577,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114577,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114577,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114650,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114650,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114650,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114650,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114746,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114746,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114746,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114746,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114747,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114775,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114775,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114775,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114775,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114876,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114877,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114894,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114894,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114894,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114894,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114912,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114912,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114912,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 114912,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115099,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115099,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115099,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115099,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115099,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115102,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115102,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115102,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115102,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115102,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115103,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115103,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115114,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115114,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115114,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115114,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115115,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115115,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115115,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115115,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115115,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115115,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115115,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115115,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115115,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115123,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115123,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115138,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115154,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115154,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115154,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115304,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115305,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115339,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115339,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115339,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115339,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115339,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115340,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115340,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115350,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115378,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115378,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115406,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115406,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115406,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115406,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115406,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115406,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115413,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115432,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115540,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115540,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115541,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115545,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115555,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115555,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115566,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115578,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115588,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115588,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115588,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115656,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115657,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115657,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115657,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115657,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115657,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115657,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115657,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115657,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115657,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115703,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115708,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115708,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115741,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115742,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115742,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115766,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 115772,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 115772,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 115772,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 115772,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed",
+      "meta": {
+        "count": 1
+      }
+    },
+    {
+      "at": 115836,
+      "kind": "presentation",
+      "actor": "harness",
+      "code": "admitted",
+      "meta": {
+        "status": "admission_ok"
+      }
+    },
+    {
+      "at": 115841,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 115862,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted",
+      "meta": {
+        "disposition": "accepted"
+      }
+    },
+    {
+      "at": 115862,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150523,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150525,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150528,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150717,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150719,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 150723,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151128,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151129,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151131,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151132,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151306,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151307,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151307,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151307,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151307,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151307,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151307,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151307,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151307,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151307,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151308,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151310,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151313,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151342,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 151347,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 151347,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 151347,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 151347,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed",
+      "meta": {
+        "count": 1
+      }
+    },
+    {
+      "at": 151399,
+      "kind": "presentation",
+      "actor": "harness",
+      "code": "admitted",
+      "meta": {
+        "status": "admission_ok"
+      }
+    },
+    {
+      "at": 151404,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 151426,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted",
+      "meta": {
+        "disposition": "accepted"
+      }
+    },
+    {
+      "at": 151426,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 157868,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 157868,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 157868,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 157868,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 157868,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 157868,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 157868,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 157868,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158062,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158062,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158063,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158063,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158063,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158063,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158063,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158063,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158272,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158272,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158273,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158273,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158273,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158273,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158273,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158273,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158317,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158317,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158722,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158775,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158775,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158775,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158775,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 158776,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159080,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159080,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159080,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159080,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159125,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159380,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159738,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159739,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159940,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 159941,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160141,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160141,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160141,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160141,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160142,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160244,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160244,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160245,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160344,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160344,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160344,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160344,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160344,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160344,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160447,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160447,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160447,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160546,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160546,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160546,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160546,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160546,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160546,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160649,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160649,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160649,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160649,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160649,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160649,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160748,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160748,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160748,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160748,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160950,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160950,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160951,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160951,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160951,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160951,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160951,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160951,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160951,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160951,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 160951,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161065,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161065,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161065,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161065,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161065,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161065,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161152,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161152,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161356,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161378,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 161383,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 161383,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 161383,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 161383,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed",
+      "meta": {
+        "count": 1
+      }
+    },
+    {
+      "at": 161445,
+      "kind": "presentation",
+      "actor": "harness",
+      "code": "admitted",
+      "meta": {
+        "status": "admission_ok"
+      }
+    },
+    {
+      "at": 161450,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 161480,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.submitted",
+      "meta": {
+        "disposition": "accepted"
+      }
+    },
+    {
+      "at": 161481,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195931,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 195933,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196334,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196335,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196335,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196335,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196336,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 196338,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197784,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197786,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197793,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197819,
+      "kind": "sse",
+      "actor": "host",
+      "code": "frame.received"
+    },
+    {
+      "at": 197825,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 197825,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "turn.terminal",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 197825,
+      "kind": "provider",
+      "actor": "host",
+      "code": "settled",
+      "meta": {
+        "state": "completed"
+      }
+    },
+    {
+      "at": 197825,
+      "kind": "presentation",
+      "actor": "host",
+      "code": "committed",
+      "meta": {
+        "count": 1
+      }
+    },
+    {
+      "at": 197884,
+      "kind": "presentation",
+      "actor": "harness",
+      "code": "admitted",
+      "meta": {
+        "status": "admission_ok"
+      }
+    },
+    {
+      "at": 197892,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 197898,
+      "kind": "probe",
+      "actor": "harness",
+      "code": "distractor.confused",
+      "meta": {
+        "probeId": "p-turn-short",
+        "manifestDigest": "4d1b292693040fa2d86efb0a023433b73d20a31a17aa46b489735f2e4e370349",
+        "distance": "turn",
+        "dimension": "retention"
+      }
+    },
+    {
+      "at": 197899,
+      "kind": "recovery",
+      "actor": "harness",
+      "code": "reload.started",
+      "meta": {
+        "status": "surface_reloaded"
+      }
+    },
+    {
+      "at": 197904,
+      "kind": "http",
+      "actor": "harness",
+      "code": "state.read"
+    },
+    {
+      "at": 197905,
+      "kind": "recovery",
+      "actor": "harness",
+      "code": "reload.settled",
+      "meta": {
+        "status": "consistent",
+        "generation": 1
+      }
+    },
+    {
+      "at": 198027,
+      "kind": "lifecycle",
+      "actor": "harness",
+      "code": "run.finished",
+      "meta": {
+        "status": "collected",
+        "providerObservability": "observed"
+      }
+    }
+  ]
+}
