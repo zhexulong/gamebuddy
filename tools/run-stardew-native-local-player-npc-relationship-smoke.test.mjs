@@ -166,11 +166,14 @@ test("npc-relationship runner fails closed on a capability superset", async () =
   });
   client.observe = async () => ({
     ...(await createFake().observe()),
-    capabilities: [...CAPABILITIES, "fetch_inventory"],
+    // A superset is legitimate now (the fixture denies nothing, so a live run
+    // advertises the whole derived base). What must still fail closed is losing
+    // a capability this run needs.
+    capabilities: CAPABILITIES.filter((capability) => capability !== "npc_relationship"),
   });
   const result = await runNpcRelationshipSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "blocked");
-  assert.match(result.reasonCode, /native_capability_surface_mismatch/);
+  assert.match(result.reasonCode, /native_required_capability_missing/);
 });
 
 test("npc-relationship runner rejects a non-isolated action policy", async () => {
