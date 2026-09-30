@@ -23,8 +23,9 @@ const target = {
 };
 
 const config = {
-  ActionPolicyVersion: 0,
-  EnabledActions: ["move_to_tile", "machine_inspect", "machine_load"],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },

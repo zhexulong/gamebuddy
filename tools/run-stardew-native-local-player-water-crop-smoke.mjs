@@ -5,6 +5,7 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
+  validateNativeLocalFixturePolicy,
   summarizeSnapshot,
   waitForActionable,
   waitForFreshSnapshot,
@@ -384,11 +385,10 @@ function validateNativeLocalConfig(value) {
   )
     throw new Error("native_local_fixture_topology_not_isolated");
   if (
-    value.ActionPolicyVersion !== 0 ||
-    JSON.stringify(value.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS) ||
     (value.ExperimentalActions?.length ?? 0) !== 0
   )
     throw new Error("native_local_water_crop_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
   if (
     ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"].some(
       (key) => typeof value[key] !== "string" || value[key].length === 0,

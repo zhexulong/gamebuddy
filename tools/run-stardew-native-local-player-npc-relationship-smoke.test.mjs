@@ -30,8 +30,9 @@ function fixtureConfig(overrides = {}) {
     HostAutomation: { Enable: false },
     HostFarmhandProvisioning: { Enable: false },
     FarmhandProvisioner: { Enable: false },
-    ActionPolicyVersion: 0,
-    EnabledActions: ["move_to_tile", "travel", "npc_relationship"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
     ExperimentalActions: ["npc_relationship"],
     SaveId: "save",
     WorldId: "world",
@@ -175,7 +176,7 @@ test("npc-relationship runner fails closed on a capability superset", async () =
 test("npc-relationship runner rejects a non-isolated action policy", async () => {
   const client = createFake();
   await assert.rejects(
-    runNpcRelationshipSmoke(client, [], fixtureConfig({ EnabledActions: ["move_to_tile"] })),
-    (error) => error?.message === "native_local_npc_relationship_action_policy_invalid",
+    runNpcRelationshipSmoke(client, [], fixtureConfig({ DeniedActions: ["move_to_tile"] })),
+    (error) => error?.message?.startsWith("native_fixture_policy_denies_required"),
   );
 });

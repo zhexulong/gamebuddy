@@ -16,8 +16,9 @@ const config = {
   CompanionId: "companion",
   PipeName: "pipe",
   BridgeToken: "token",
-  ActionPolicyVersion: 0,
-  EnabledActions: ["move_to_tile", "travel", "equip_tool", "water_crop"],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },

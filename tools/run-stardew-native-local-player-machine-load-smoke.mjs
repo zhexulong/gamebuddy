@@ -5,6 +5,7 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
+  validateNativeLocalFixturePolicy,
   summarizeSnapshot,
   waitForFreshSnapshot,
   waitForTerminal,
@@ -122,11 +123,10 @@ function validateConfig(value) {
   if (
     fixture?.Enable !== true ||
     fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO ||
-    value.ActionPolicyVersion !== 0 ||
-    !same(value.EnabledActions, EXPECTED_ACTIONS)
+    fixture.FixtureScenario !== SCENARIO
   )
     throw new Error("native_local_machine_load_fixture_config_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
   if (
     value.Portfolio?.Enable === true ||
     value.HostAutomation?.Enable === true ||

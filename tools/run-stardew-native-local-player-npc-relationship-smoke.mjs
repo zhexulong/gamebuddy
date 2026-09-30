@@ -6,6 +6,7 @@ import {
   readNativeClientConfig,
   summarizeReceipt,
   waitForActionable,
+  validateNativeLocalFixturePolicy,
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
@@ -414,11 +415,10 @@ function validateNativeLocalConfig(value) {
   )
     throw new Error("native_local_fixture_topology_not_isolated");
   if (
-    value.ActionPolicyVersion !== 0 ||
-    JSON.stringify(value.EnabledActions) !== JSON.stringify(["move_to_tile", "travel", "npc_relationship"]) ||
     JSON.stringify(value.ExperimentalActions) !== JSON.stringify(["npc_relationship"])
   )
     throw new Error("native_local_npc_relationship_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: ["move_to_tile", "travel", "npc_relationship"] });
   if (
     ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"].some(
       (key) => typeof value[key] !== "string" || value[key].length === 0,

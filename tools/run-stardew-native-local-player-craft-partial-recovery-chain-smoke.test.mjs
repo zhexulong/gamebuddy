@@ -60,8 +60,9 @@ const config = {
   CompanionId: "companion",
   PipeName: "pipe",
   BridgeToken: "token",
-  ActionPolicyVersion: 0,
-  EnabledActions: ["move_to_tile", "travel", "craft_item", "chest_store"],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },
@@ -399,10 +400,10 @@ test("craft partial chain refuses a scenario it is not authorized for", async ()
     /native_local_fixture_config_invalid/,
   );
 
-  const wrongActions = { ...config, EnabledActions: ["move_to_tile", "travel", "craft_item"] };
+  const wrongActions = { ...config, DeniedActions: ["craft_item"] };
   await assert.rejects(
     () => runCraftPartialRecoveryChainSmoke(client, [], wrongActions),
-    /native_local_craft_partial_action_policy_invalid/,
+    /native_fixture_policy_denies_required/,
   );
 });
 

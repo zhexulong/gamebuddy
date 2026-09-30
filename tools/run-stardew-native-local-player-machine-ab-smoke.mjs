@@ -22,6 +22,7 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
+  validateNativeLocalFixturePolicy,
   summarizeSnapshot,
   waitForFreshSnapshot,
   waitForActionable,
@@ -256,8 +257,7 @@ function validateNativeLocalFixtureConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (value.ActionPolicyVersion !== 0 || !same(value.EnabledActions, EXPECTED_ACTIONS))
-    throw new Error("native_local_machine_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 
 async function requireActionableMachineSnapshot(client) {

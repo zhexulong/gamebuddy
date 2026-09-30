@@ -45,8 +45,9 @@ const config = {
   CompanionId: "companion",
   PipeName: "pipe",
   BridgeToken: "token",
-  ActionPolicyVersion: 0,
-  EnabledActions: ["move_to_tile", "travel", "equip_tool", "till_soil", "use_item"],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },
@@ -286,10 +287,10 @@ test("stamina chain refuses a scenario it is not authorized for", async () => {
     /native_local_fixture_config_invalid/,
   );
 
-  const wrongActions = { ...config, EnabledActions: ["move_to_tile", "travel", "equip_tool", "till_soil"] };
+  const wrongActions = { ...config, DeniedActions: ["till_soil"] };
   await assert.rejects(
     () => runStaminaRecoveryChainSmoke(client, [], wrongActions),
-    /native_local_stamina_action_policy_invalid/,
+    /native_fixture_policy_denies_required/,
   );
 });
 

@@ -10,8 +10,9 @@ const COLLECT_EVIDENCE =
 function fixtureConfig(overrides = {}) {
   return {
     NativeLocalPlayerFixture: { Enable: true, FixtureScenario: "native_machine_coffee_load_v1" },
-    ActionPolicyVersion: 0,
-    EnabledActions: ["machine_load", "machine_collect_output"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
     ...overrides,
   };
 }
