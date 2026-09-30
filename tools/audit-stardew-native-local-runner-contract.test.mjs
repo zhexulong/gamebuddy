@@ -1,108 +1,133 @@
 // Regression gate for the native-local runner contract audit.
 //
-// The audit exists because a runner can be structurally incapable of passing
-// live while its own unit test stays green: the test builds a config in the same
+// The audit exists because a runner can be structurally incapable of passing live
+// while its own unit test stays green: the test builds a config in the same
 // retired shape the runner expects, so the two agree with each other and disagree
 // with the live fixture. Nothing in the repo ran those tests, which is how the
-// class rotted unnoticed. Every case below mutates the audit's own inputs and
-// asserts the exact finding it must produce.
+// class rotted unnoticed.
+//
+// Every case runs against a COPY of the tools tree. An earlier version of this
+// file mutated the shared runners in place, which raced the lane that is migrating
+// them: a restore could overwrite work that landed between the write and the
+// restore. Copying removes that hazard entirely and is also why the audit takes an
+// injectable toolsRoot.
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { auditRunnerContracts } from "./audit-stardew-native-local-runner-contract.mjs";
 
-/**
- * Re-import the audit with a cache-busting query so a mutated pin list is read
- * from disk. A plain import would keep the list frozen at first load, and the two
- * stale-pin cases would silently test nothing.
- */
-const freshAudit = async () =>
-  (await import(`./audit-stardew-native-local-runner-contract.mjs?t=${Date.now()}${Math.random()}`)).auditRunnerContracts;
-
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-// Use an UNPINNED runner: a pinned one is exempt by design, so mutating it would
-// not distinguish "the audit works" from "the entry was still listed".
-const RUNNER_ID = "dig-artifact-spot";
-const RUNNER = path.join(ROOT, `tools/run-stardew-native-local-player-${RUNNER_ID}-smoke.mjs`);
-const original = readFileSync(RUNNER, "utf8");
-const restore = () => writeFileSync(RUNNER, original);
+const FIXTURE = path.join(ROOT, "tools/lib/stardew-native-local-player-fixture.mjs");
 
-after(restore);
+const workspaces = [];
+after(() => {
+  for (const dir of workspaces) rmSync(dir, { recursive: true, force: true });
+});
 
-test("current runners are either conforming or explicitly pinned as debt", () => {
+/** Copy the tools tree so mutations cannot touch the shared working files. */
+function sandbox() {
+  const dir = mkdtempSync(path.join(tmpdir(), "runner-contract-"));
+  workspaces.push(dir);
+  cpSync(path.join(ROOT, "tools"), path.join(dir, "tools"), { recursive: true });
+  const fixtureCopy = path.join(dir, "tools/lib/stardew-native-local-player-fixture.mjs");
+  return {
+    toolsRoot: path.join(dir, "tools"),
+    fixturePath: fixtureCopy,
+    audit: () => auditRunnerContracts({ toolsRoot: path.join(dir, "tools"), fixturePath: fixtureCopy }),
+    runnerPath: (id) => path.join(dir, `tools/run-stardew-native-local-player-${id}-smoke.mjs`),
+  };
+}
+
+// The baseline-conforming set is the reference shape; use one that is unpinned in
+// neither direction so "the audit works" is distinguishable from "the change was
+// exempt".
+const CONFORMING_RUNNER = "dig-artifact-spot";
+const DEBT_RUNNER = "till-soil";
+
+test("the current runner set has no regression and no new retired-shape runner", () => {
   const report = auditRunnerContracts();
-  assert.deepEqual(report.findings, [], "no unpinned runner may read the retired policy shape or assert an equality capability set");
+  assert.deepEqual(report.findings, [], "no runner may regress out of the baseline-conforming set");
   assert.ok(report.runnerCount >= 50, `expected the full runner set, saw ${report.runnerCount}`);
   assert.ok(report.conformingCount > 0, "at least some runners must already conform");
 });
 
-test("a runner that reads the retired policy shape is reported", () => {
-  // Match on the call, not on a specific expected-constant name: the runners were
-  // written by several lanes and do not agree on that name.
+test("regressing a baseline-conforming runner back to the retired shape is a finding", () => {
+  const box = sandbox();
+  const original = readFileSync(box.runnerPath(CONFORMING_RUNNER), "utf8");
   const mutated = original.replace(
     /validateNativeLocalFixturePolicy\(value, \{[^}]*\}\);/,
     "if (value.ActionPolicyVersion !== 0) throw new Error('native_local_action_policy_invalid');",
   );
   assert.notEqual(mutated, original, "mutation must actually change the source");
-  writeFileSync(RUNNER, mutated);
+  writeFileSync(box.runnerPath(CONFORMING_RUNNER), mutated);
 
-  const report = auditRunnerContracts();
-  const named = report.findings.filter((f) => f.kind === "unregistered_debt" && f.runner === RUNNER_ID);
-  assert.equal(named.length, 1, "audit must name the runner that reads the retired shape");
-  assert.match(named[0].detail, /retired ActionPolicyVersion\/EnabledActions shape/);
-
-  restore();
+  const findings = box.audit().findings;
+  const named = findings.filter((f) => f.kind === "conforming_regression" && f.runner === CONFORMING_RUNNER);
+  assert.equal(named.length, 1, "audit must report the regression");
+  assert.match(named[0].detail, /retired-policy-shape/);
 });
 
-test("a runner that asserts an equal capability set is reported", () => {
+test("regressing a baseline-conforming runner to an equality capability set is a finding", () => {
+  const box = sandbox();
+  const original = readFileSync(box.runnerPath(CONFORMING_RUNNER), "utf8");
   const mutated = original.replace(
     /(assertRequiredCapabilities\([^;]*\);)/,
     "$1\n    assertExactCapabilities(before, EXPECTED_CAPABILITIES);",
   );
   assert.notEqual(mutated, original, "mutation must actually change the source");
-  writeFileSync(RUNNER, mutated);
+  writeFileSync(box.runnerPath(CONFORMING_RUNNER), mutated);
 
-  const report = auditRunnerContracts();
-  const named = report.findings.filter((f) => f.kind === "unregistered_debt" && f.runner === RUNNER_ID);
+  const named = box.audit().findings.filter((f) => f.kind === "conforming_regression" && f.runner === CONFORMING_RUNNER);
   assert.equal(named.length, 1);
-  assert.match(named[0].detail, /equal capability set/);
-
-  restore();
+  assert.match(named[0].detail, /exact-capability-set/);
 });
 
-test("a conforming runner still listed as debt is reported as a stale pin", async () => {
-  // Stale-pin detection is what lets the debt list only shrink: fixing a runner
-  // without removing its entry must be an error, not a silent no-op.
-  const auditPath = path.join(ROOT, "tools/audit-stardew-native-local-runner-contract.mjs");
-  const auditOriginal = readFileSync(auditPath, "utf8");
-  try {
-    const mutated = auditOriginal.replace('  "advance-day",\n', `  "advance-day",\n  "${RUNNER_ID}",\n`);
-    assert.notEqual(mutated, auditOriginal, "mutation must add a pin");
-    writeFileSync(auditPath, mutated);
+test("a NEW runner written in the retired shape is a finding even though it is not in the baseline", () => {
+  const box = sandbox();
+  // Copy a debt runner's content into a name the baseline has never seen.
+  const source = readFileSync(box.runnerPath(DEBT_RUNNER), "utf8");
+  const newId = "brand-new-action";
+  writeFileSync(box.runnerPath(newId), source);
 
-    const report = (await freshAudit())();
-    const stale = report.findings.filter((f) => f.kind === "stale_pin" && f.runner === RUNNER_ID);
-    assert.equal(stale.length, 1, "audit must report a conforming runner still listed as debt");
-  } finally {
-    writeFileSync(auditPath, auditOriginal);
-  }
+  const named = box.audit().findings.filter((f) => f.kind === "new_runner_on_retired_contract" && f.runner === newId);
+  assert.equal(named.length, 1, "a new runner must conform; the baseline cannot excuse it");
 });
 
-test("a listed runner that no longer exists is reported as a stale pin", async () => {
-  const auditPath = path.join(ROOT, "tools/audit-stardew-native-local-runner-contract.mjs");
-  const auditOriginal = readFileSync(auditPath, "utf8");
-  try {
-    const mutated = auditOriginal.replace('  "advance-day",\n', '  "advance-day",\n  "no-such-runner",\n');
-    assert.notEqual(mutated, auditOriginal, "mutation must add a pin");
-    writeFileSync(auditPath, mutated);
+test("a NEW runner that conforms is accepted", () => {
+  const box = sandbox();
+  const conforming = readFileSync(box.runnerPath(CONFORMING_RUNNER), "utf8");
+  const newId = "brand-new-conforming-action";
+  writeFileSync(box.runnerPath(newId), conforming);
 
-    const report = (await freshAudit())();
-    const stale = report.findings.filter((f) => f.kind === "stale_pin" && f.runner === "no-such-runner");
-    assert.equal(stale.length, 1);
-  } finally {
-    writeFileSync(auditPath, auditOriginal);
-  }
+  const report = box.audit();
+  assert.equal(report.newRunnerCount, 1, "the new runner must be detected as new");
+  assert.deepEqual(report.findings, [], "a conforming new runner is not a finding");
+});
+
+test("migrating a debt runner can never be a finding", () => {
+  const box = sandbox();
+  // Replace a debt runner's body with a conforming one's, which is what the
+  // migration does. This must stay green, otherwise the gate fights the lane that
+  // is improving things.
+  const conforming = readFileSync(box.runnerPath(CONFORMING_RUNNER), "utf8");
+  writeFileSync(box.runnerPath(DEBT_RUNNER), conforming);
+
+  assert.deepEqual(box.audit().findings, [], "migration must never be reported as a finding");
+});
+
+test("a fixture that stops writing the deny-by-exception policy is a finding", () => {
+  const box = sandbox();
+  const original = readFileSync(FIXTURE, "utf8");
+  const mutated = original.replace("  result.DeniedActions = [];", "  result.EnabledActions = [];");
+  assert.notEqual(mutated, original, "mutation must change the fixture's output shape");
+  writeFileSync(box.fixturePath, mutated);
+
+  assert.ok(
+    box.audit().findings.some((f) => f.kind === "contract"),
+    "audit must notice the fixture no longer writes what it assumes",
+  );
 });
