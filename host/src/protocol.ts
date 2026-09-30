@@ -706,6 +706,12 @@ export type ExecutionReceipt = Readonly<{
    * identity or refs inside it.
    */
   piggybackedScene?: ObserveSceneResult | null;
+  /**
+   * Raw native HUD notice text the game itself emitted inside the action's
+   * synchronous window (for example "Out of season."). Host forwards it
+   * verbatim: it never interprets a notice into a reason or an intent.
+   */
+  nativeNotices?: readonly string[] | null;
 }>;
 
 export interface WorldFactPayload {
@@ -880,6 +886,9 @@ type BodyProgramNode = Readonly<{
 }>;
 /** Frozen maximum Body Program node count, shared with C# BodyProgramValidation.MaximumNodes. */
 const MAX_BODY_PROGRAM_NODES = 16;
+/** Frozen native-notice bounds, shared with the C# NativeNoticeObserver. */
+const MAX_NATIVE_NOTICES = 8;
+const MAX_NATIVE_NOTICE_CHARS = 512;
 /** Frozen per-node binding-map bound, aligned with the existing C# Core verifier bound of 4. */
 export const MAX_BODY_PROGRAM_BINDINGS_PER_NODE = 4;
 export type BodyProgramCandidateRequest = Readonly<{ programId: string; nodes: readonly BodyProgramNode[] }>;
@@ -2611,6 +2620,7 @@ function validateReceipt(value: Record<string, unknown>): string | null {
   const allowedKeys = ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"];
   if ("observation" in value) allowedKeys.push("observation");
   if ("piggybackedScene" in value) allowedKeys.push("piggybackedScene");
+  if ("nativeNotices" in value) allowedKeys.push("nativeNotices");
   return hasExactKeys(value, allowedKeys) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
@@ -2622,9 +2632,29 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     Number.isSafeInteger(value.revision) &&
     (value.evidence === null || isRecord(value.evidence)) &&
     (!("observation" in value) || value.observation === null || validateLocalObservation(value.observation) === null) &&
-    (!("piggybackedScene" in value) || value.piggybackedScene === null || validateObserveSceneResult(value.piggybackedScene as Record<string, unknown>) === null)
+    (!("piggybackedScene" in value) || value.piggybackedScene === null || validateObserveSceneResult(value.piggybackedScene as Record<string, unknown>) === null) &&
+    (!("nativeNotices" in value) || value.nativeNotices === null || isNativeNotices(value.nativeNotices))
     ? null
     : "invalid_receipt";
+}
+
+/**
+ * Raw native notice text is forwarded verbatim, so only the transport shape is
+ * bounded: at most 8 short strings, each non-empty and single-line.
+ */
+function isNativeNotices(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.length >= 1 &&
+    value.length <= MAX_NATIVE_NOTICES &&
+    value.every(
+      (item) =>
+        typeof item === "string" &&
+        item.length >= 1 &&
+        item.length <= MAX_NATIVE_NOTICE_CHARS &&
+        item.trim().length > 0,
+    )
+  );
 }
 
 export function validateLocalObservation(value: unknown): string | null {

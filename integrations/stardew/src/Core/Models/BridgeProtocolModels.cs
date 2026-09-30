@@ -78,7 +78,8 @@ public sealed record LocalExecutionReceipt(
     string? Evidence,
     string? ActionId = null,
     BridgeLocalObservation? Observation = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? NativeNotices = null
 );
 
 public sealed record BridgeScope(string IntegrationId, string SaveId, string WorldId, string PlayerId, string CompanionId)
@@ -428,7 +429,11 @@ public sealed record BridgeReceipt(
     long Revision,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeLocalObservation? Observation = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null,
+    // Raw native HUD notice text observed inside the action's synchronous
+    // window. Ephemeral wire-only evidence: the Mod never interprets it and no
+    // durable journal record retains it.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? NativeNotices = null
 );
 
 public sealed record BridgeError(string ReasonCode);

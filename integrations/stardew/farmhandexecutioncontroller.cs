@@ -3522,6 +3522,32 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.receiptsByRequestId[receipt.RequestId] = receipt;
     }
 
+    /// <summary>
+    /// Folds the native notices observed during a dispatch into that request's
+    /// stored receipt, through <see cref="Remember"/> so this class stays the only
+    /// writer of the receipt map. Returns the receipt the caller should publish.
+    ///
+    /// A receipt that is absent, or that already settled with notices, keeps
+    /// whatever it has: notices are evidence about one synchronous window, and a
+    /// replay must never rewrite a settled receipt's meaning.
+    /// </summary>
+    internal LocalExecutionReceipt AttachNativeNotices(
+        LocalExecutionReceipt receipt,
+        IReadOnlyList<string> nativeNotices)
+    {
+        // Notices annotate the receipt the dispatch just produced; they are not an
+        // outcome of their own. A receipt that cannot be matched (or that already
+        // carries notices, as a replay does) is returned untouched rather than
+        // replaced, so this can never manufacture a terminal state.
+        if (!this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? stored)
+            || stored.NativeNotices is not null)
+            return receipt;
+
+        LocalExecutionReceipt annotated = receipt with { NativeNotices = nativeNotices };
+        this.Remember(annotated);
+        return annotated;
+    }
+
     private void AddTrace(LocalExecutionReceipt receipt)
     {
         if (receipt.ActionId is null && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? persistedReceipt))

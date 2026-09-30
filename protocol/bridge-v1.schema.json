@@ -2344,6 +2344,13 @@
         },
         "piggybackedScene": {
           "$ref": "#/$defs/observeSceneResult"
+        },
+        "nativeNotices": {
+          "$comment": "Raw native HUD notice text observed in the action's synchronous window. Bounded transport shape only; Host forwards it verbatim and never interprets a notice.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
         }
       }
     },

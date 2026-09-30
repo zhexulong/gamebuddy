@@ -7,6 +7,7 @@ using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
 using GameBuddy.Stardew.Core.Routing;
 using GameBuddy.Stardew.Navigation;
+using GameBuddy.Stardew.Sensory;
 using Microsoft.Xna.Framework;
 
 namespace GameBuddy.Stardew;
@@ -626,10 +627,24 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
         // Bind immutable request/action lineage before routing because a handler
         // may synchronously publish its first receipt.
         RememberIdempotency(request.IdempotencyKey, fingerprint, request.RequestId, request.Action);
+        // Sample the native notice list across the dispatch. Anything the game posts
+        // while a handler runs is the game's own account of what it just refused or
+        // did ("Out of season.", "Inventory Full"), and this is the one synchronous
+        // window that wraps every handler. The request is already authenticated and
+        // owner-thread gated above, so this reads Game1 state where it is legal.
+        IReadOnlyList<string> noticesBefore = NativeNoticeObserver.Capture();
         if (!this.actionRouter.TryRoute(request, this.executions, executionId, out LocalExecutionReceipt receipt, out reasonCode))
         {
             ForgetIdempotency(request.IdempotencyKey);
             return false;
+        }
+        string[] nativeNotices = NativeNoticeObserver.Delta(noticesBefore);
+        if (nativeNotices.Length > 0)
+        {
+            // The handler already stored its receipt, and that stored record is the
+            // replay authority, so the notices are folded into it rather than only
+            // into this response: a replay must return the identical receipt.
+            receipt = this.executions.AttachNativeNotices(receipt, nativeNotices);
         }
         if (this.executions.HasDurabilityFailure(request.RequestId))
         {
@@ -1329,20 +1344,39 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
         IdempotentExecution? binding = this.idempotency.Values.FirstOrDefault(candidate =>
             string.Equals(candidate.RequestId, receipt.RequestId, StringComparison.Ordinal));
         string? resolvedActionId = actionId ?? receipt.ActionId ?? binding?.ActionId;
+        if (!BridgeProtocol.IsOpaqueId(resolvedActionId))
+            return false;
+        return TryProjectReceipt(receipt, resolvedActionId!, out bridgeReceipt);
+    }
+
+    /// <summary>
+    /// One-to-one projection of a stored receipt onto its wire form.
+    ///
+    /// Every field of <see cref="LocalExecutionReceipt"/> that the wire carries must
+    /// be named here. This is a hand-written field list, so a field added to the
+    /// ledger model is not published until it is added below -- the scene ground
+    /// summary and the native notices were both silently dropped this way. Kept
+    /// pure and internal so that omission is testable directly.
+    /// </summary>
+    internal static bool TryProjectReceipt(LocalExecutionReceipt receipt, string resolvedActionId, out BridgeReceipt bridgeReceipt)
+    {
+        bridgeReceipt = default!;
         if (!BridgeProtocol.IsOpaqueId(resolvedActionId)
             || !BridgeProtocol.IsOpaqueId(receipt.ExecutionId)
             || !BridgeProtocol.IsOpaqueId(receipt.RequestId))
             return false;
+
         bridgeReceipt = new BridgeReceipt(
             receipt.ExecutionId,
             receipt.RequestId,
-            resolvedActionId!,
+            resolvedActionId,
             receipt.State.ToWireValue(),
             receipt.ReasonCode,
             receipt.Revision,
             receipt.Evidence is null ? null : new Dictionary<string, string> { ["detail"] = receipt.Evidence },
             receipt.Observation,
-            receipt.PiggybackedScene);
+            receipt.PiggybackedScene,
+            receipt.NativeNotices);
         return true;
     }
 

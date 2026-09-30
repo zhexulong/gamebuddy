@@ -48,6 +48,12 @@ export type IntegrationExecutionReceipt = Readonly<{
   reasonCode: string;
   revision: number | null;
   evidence: Readonly<Record<string, unknown>> | null;
+  /**
+   * Raw native HUD notice text observed in the action's synchronous window -- the
+   * game's own account of a refusal ("Out of season.", "Inventory Full"). Absent
+   * when the dispatch captured none, never an empty array.
+   */
+  nativeNotices?: readonly string[];
 }>;
 
 /** The minimum state view needed by Host lifecycle and budget code. */
