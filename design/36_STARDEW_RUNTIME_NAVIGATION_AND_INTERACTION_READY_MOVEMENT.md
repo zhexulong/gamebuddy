@@ -189,6 +189,32 @@ type NavigateToDestinationTerminal =
 
 标准 action lifecycle 继续拥有 requestId、idempotency、expected revision、deadline、executionId、receipts、evidence 与 cancel。只有同一 execution 的 `succeeded` terminal、non-empty Navigation evidence 与 fresh same-canonical-destination postcondition 共同成立时，才可投影完成。`already_at_destination` 也必须经过 fresh admission/reread 并产生自己的成功 receipt/evidence。
 
+### 3.4 移动阻塞契约（L1/L2/L3，2026-09-30 owner 裁决）
+
+> 完整源证据与推导见 [`domains/stardew/blocker-and-navigation-diagnostics.md`](domains/stardew/blocker-and-navigation-diagnostics.md)。本节只记录**约束**，不重复证据。
+
+**原则：移动阻塞是 action 自己的责任，不是 Agent 的诊断输入。**
+
+```text
+L1 几何   no_native_path        目标格自身不可站 → 改问「哪里算到达」（谓词目标）
+L2 时序   native_path_ended     5 秒零位移超时（不是堵死）→ 停滞→重新规划→有界重试
+L3 真不可达                     世界事实 → 唯一允许 surface 的一类
+```
+
+**冻结约束**：
+
+1. **`move_to_tile` / `enter_exit` / `travel` / `ride_minecart` / `navigate_to_destination` 的 native 寻路不得使用精确坐标目标**（`isAtEndPoint`，`PathFindController.cs:85-92`），而应使用原生已存在的 `isAtEnd` 谓词构造器（`PathFindController.cs:110`，先例：`FarmAnimal.grassEndPointFunction`，`FarmAnimal.cs:1350/1390`）。这样目标格可达时行为不变，不可达时**停到最近合法格**（含原格：起点无条件入队且第一个过谓词，`PathFindController.cs:194-203`）。
+2. **每个 action 声明自己的目标几何**，而不是所有 action 都用邻接。已核实四种：Chebyshev-1 邻接（工具/容器/机器/动物族）、站在格上（warp/矿车站台/门）、包围盒（`ship_item` 的 2×2 footprint）、无位置要求（`craft_item`/`cook_recipe`/`advance_day`/表情/朝向/`use_item`）。
+3. **谓词与到达判定必须用同一个邻接定义**。现状不一致且**是一个具体 bug**：`StardewBodyController.cs:218-223` 的 `IsCardinalAdjacent` 是 Manhattan-1（`deltaX + deltaY == 1`，**不含对角**），而工具族要求 Chebyshev-1（含对角）。后果：谓词方案下 A\* 停在斜角邻格时，`exactArrival` 假、`adjacentArrival` 也假 → **报 `native_path_ended` 失败**，尽管路径已正常走完。因此第 1 条与第 3 条是**同一项改动**，不得分期。
+4. **L2 允许「停滞 → 从当前位置重新规划 → 在 action deadline 内有界重试」**。这不是 ADR-006 禁止的盲重试：ADR-006 的禁令对象是 Agent-authored `ActionProgram` 的自动 retry node（`adr/006-verified-body-programs.md:49`），且该 ADR 明确 `StardewBodyController` 是独立的本地 movement/path driver（`:45`）。
+5. **L1/L2 的 reasonCode 保持不变**（`no_native_path` / `native_path_ended`），但**只作为 Mod 内部诊断**，不作为 Agent 行动依据。
+6. **两套通行语义不得合并**：规划语义用 `isCollidingPosition(..., pathfinding: true)`（与 A\* 逐位一致，**忽略角色**）；运行时语义用 `IsTileOccupiedBy(..., Characters|Farmers)`。同一个瓦片在两语义下可以给出相反答案，而这正是要表达的信息。**禁止**把后者当作「保守的」前者——那会让 Agent 避开规划器认为可走的格子。
+7. **交通缺口不得固化为分类**：`requires_transport_not_available` 描述的是 action 面缺口（会随实现消失），owner 已否决。正确做法是把交通补成真 action（`ride_minecart` 为首个）；`unreachable` 应只表示世界层面不可达。
+
+**静态已定**（不需实测，见 `blocker-and-navigation-diagnostics.md` §9）：单节点路径（`g=0`）会正确汇合为 `Succeeded`——`reconstructPath` 对 parent 为 null 的起点产出单元素栈，`moveCharacter` 立即 Pop 并 Halt，Mod 的 `exactArrival` 为真。
+
+**待实测**（写入代码前必需）：A\* 在目标格不可达时确实停到最近合法格，并同时验证**对角停靠**（即第 3 条修正是否真的生效）。
+
 ## 4. `DerivedDestinationSet`：唯一 destination authority
 
 Mod 在 game thread 从 current target content/world 派生 immutable generation snapshot：
