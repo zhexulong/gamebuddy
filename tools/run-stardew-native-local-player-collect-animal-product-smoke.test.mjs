@@ -18,8 +18,9 @@ const config = {
     Bootstrap: { Enable: false },
     FixtureScenario: "native_collect_animal_product_v1",
   },
-  ActionPolicyVersion: 0,
-  EnabledActions: ["collect_animal_product"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
   SaveId: "save",
   WorldId: "world",
   PlayerId: "player",
@@ -83,7 +84,7 @@ test("collect-animal-product runner uses shared dispatch, exact terminal correla
   });
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "animal_product_collected");
-  assert.equal(result.receipt.executionId, "execution-1");
+  assert.equal(result.executionId, "execution-1");
   assert.equal(result.inventory.before, 0);
   assert.equal(result.inventory.after, 1);
   assert.equal(result.after.animalProductTargets, 0);

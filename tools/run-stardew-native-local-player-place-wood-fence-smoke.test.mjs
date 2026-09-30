@@ -115,7 +115,7 @@ test("wood-fence runner passes only on the exact request/execution pair and a fr
   const result = await runPlaceWoodFenceSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "wood_fence_placed");
-  assert.equal(result.receipt.executionId, "fence-execution");
+  assert.equal(result.executionId, "fence-execution");
   assert.equal(result.after.revision, 8);
   const terminalLike = receipts.filter(
     (receipt) => receipt.executionId === "fence-execution" && receipt.state === "succeeded",

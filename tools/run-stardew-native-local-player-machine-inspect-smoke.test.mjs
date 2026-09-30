@@ -27,8 +27,9 @@ function fixtureConfig(overrides = {}) {
     HostAutomation: { Enable: false },
     HostFarmhandProvisioning: { Enable: false },
     FarmhandProvisioner: { Enable: false },
-    ActionPolicyVersion: 0,
-    EnabledActions: ["move_to_tile", "machine_inspect"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
     ...overrides,
   };
 }
@@ -113,7 +114,9 @@ test("machine-inspect runner fails closed on an ambiguous target set", async () 
 test("machine-inspect runner rejects a non-isolated fixture policy", async () => {
   const client = createFake([INSPECT_TARGET]);
   await assert.rejects(
-    runMachineInspectSmoke(client, [], fixtureConfig({ EnabledActions: ["move_to_tile"] })),
-    (error) => error?.message === "native_local_machine_action_policy_invalid",
+      runMachineInspectSmoke(client, [], fixtureConfig({ DeniedActions: ["machine_inspect"] })),
+      // Denying an action the run needs is the deny-by-exception equivalent of
+      // the retired allowlist narrowing, and the shared validator refuses it.
+      (error) => error?.message?.startsWith("native_fixture_policy_denies_required"),
   );
 });

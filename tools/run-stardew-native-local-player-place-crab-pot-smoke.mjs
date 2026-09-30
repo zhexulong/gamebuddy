@@ -5,6 +5,7 @@ import {
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
+  validateNativeLocalFixturePolicy,
   waitForFreshSnapshot,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
@@ -99,6 +100,9 @@ export async function runPlaceCrabPotSmoke(client, config, { postconditionTimeou
     action: ACTION,
     target,
     receipt: summarizeReceipt(receipt),
+    // The receipt summary carries no identity by design (4a52188).
+    executionId: receipt.executionId,
+    requestId: receipt.requestId,
     evidence,
     result: result ?? null,
     evidenceMatches,
@@ -129,8 +133,9 @@ if (import.meta.main) {
 }
 
 function validateConfig(config) {
-  if (JSON.stringify(config.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS))
-    throw new Error("production_capability_profile_invalid");
+  // The retired `EnabledActions` allowlist is gone; what still matters is that
+  // this config does not deny an action the run needs.
+  validateNativeLocalFixturePolicy(config, { requiredActions: EXPECTED_ACTIONS });
 }
 
 function parseEvidence(detail) {

@@ -15,7 +15,9 @@ const target = {
 };
 
 const config = {
-  EnabledActions: ["move_to_tile", "travel", "place_crab_pot"],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   SaveId: "save",
   WorldId: "world",
   PlayerId: "player",
@@ -97,8 +99,8 @@ test("place-crab-pot runner uses shared dispatch and fresh result reread", async
   const result = await runPlaceCrabPotSmoke(client, config);
   assert.equal(result.state, "passed");
   assert.equal(result.receipt.reasonCode, "crab_pot_placed");
-  assert.equal(result.receipt.executionId, "crab-execution");
-  assert.equal(result.receipt.requestId, dispatched.requestId);
+  assert.equal(result.executionId, "crab-execution");
+  assert.equal(result.requestId, dispatched.requestId);
   assert.equal(result.result.targetId, "crab-target");
   assert.equal(result.result.offsetX, 1.5);
   assert.equal(base.readsDone, 2);
@@ -113,14 +115,16 @@ test("place-crab-pot runner fails closed on capability profile and target misses
       throw new Error("must not dispatch");
     },
   };
-  await assert.rejects(
-    runPlaceCrabPotSmoke(client, { ...config, EnabledActions: ["move_to_tile"] }),
-    /production_capability_profile_invalid/,
-  );
-  await assert.rejects(
-    runPlaceCrabPotSmoke(client, { ...config, EnabledActions: ["move_to_tile", "travel", "place_crab_pot", "extra"] }),
-    /production_capability_profile_invalid/,
-  );
+await assert.rejects(
+  // Denying an action the run needs is the deny-by-exception equivalent of the
+  // retired allowlist narrowing, and the shared validator refuses it.
+  runPlaceCrabPotSmoke(client, { ...config, DeniedActions: ["place_crab_pot"] }),
+  /native_fixture_policy_denies_required/,
+);
+await assert.rejects(
+  runPlaceCrabPotSmoke(client, { ...config, DeniedActions: ["move_to_tile", "place_crab_pot"] }),
+  /native_fixture_policy_denies_required/,
+);
   const missingCapability = { ...before, capabilities: ["cancel_active_execution", "move_to_tile", "travel"] };
   const client2 = {
     state: { snapshot: missingCapability },

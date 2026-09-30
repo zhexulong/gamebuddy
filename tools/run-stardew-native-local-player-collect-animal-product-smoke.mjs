@@ -5,6 +5,7 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
+  validateNativeLocalFixturePolicy,
   summarizeSnapshot,
   waitForFreshSnapshot,
   waitForTerminal,
@@ -66,8 +67,11 @@ export async function runCollectAnimalProductSmoke(
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
       reasonCode: passed ? "animal_product_collected" : "collect_animal_product_postcondition_mismatch",
-      target,
-      receipt: summarizeReceipt(receipt),
+    target,
+    receipt: summarizeReceipt(receipt),
+    // The receipt summary carries no identity by design (4a52188), so the
+    // execution correlation is exposed here from the raw receipt.
+    executionId: receipt.executionId,
       evidence,
       inventory: {
         qualifiedItemId: target.qualifiedProduceItemId,
@@ -108,9 +112,7 @@ function validateConfig(value) {
   if (
     fixture?.Enable !== true ||
     fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO ||
-    value.ActionPolicyVersion !== 0 ||
-    !same(value.EnabledActions, ["collect_animal_product"])
+    fixture.FixtureScenario !== SCENARIO
   )
     throw new Error("native_local_collect_animal_product_fixture_config_invalid");
   if (

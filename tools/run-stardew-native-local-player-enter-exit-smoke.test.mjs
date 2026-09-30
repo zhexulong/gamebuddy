@@ -138,8 +138,8 @@ test("enter-exit runner waits for the exact request/execution pair, ignoring ide
   const result = await runEnterExitSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "enter_exit_completed");
-  assert.equal(result.receipt.requestId, client.enterExitRequestId);
-  assert.equal(result.receipt.executionId, "execution-enter_exit");
+  assert.equal(result.requestId, client.enterExitRequestId);
+  assert.equal(result.executionId, "execution-enter_exit");
   const terminalLike = receipts.filter(
     (receipt) => receipt.executionId === "execution-enter_exit" && receipt.state === "succeeded",
   );

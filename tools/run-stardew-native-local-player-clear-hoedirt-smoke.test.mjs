@@ -26,8 +26,9 @@ const config = {
     Bootstrap: { Enable: false },
     FixtureScenario: "native_clear_hoedirt_v1",
   },
-  ActionPolicyVersion: 0,
-  EnabledActions: ["move_to_tile", "travel", "equip_tool", "clear_hoedirt"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
   SaveId: "save",
   WorldId: "world",
   PlayerId: "player",
@@ -106,7 +107,9 @@ test("clear-hoedirt runner passes with one live hoe-dirt target and a pickaxe", 
   assert.equal(result.reasonCode, "hoedirt_cleared");
   assert.equal(result.topology, "native_local_player_fixture");
   assert.deepEqual(result.target, target);
-  assert.equal(result.receipt.executionId, "execution-clear_hoedirt");
+  // The receipt summary carries no identity by design, so the correlation is
+  // asserted on the runner's dedicated field instead.
+  assert.equal(result.executionId, "execution-clear_hoedirt");
   assert.equal(result.evidence.target, "hoedirt_target_01");
   assert.equal(result.evidence.tile, "53,54");
   assert.equal(result.evidence.tool, "pickaxe");
@@ -133,8 +136,8 @@ test("clear-hoedirt runner blocks on mismatched native evidence", async () => {
 test("clear-hoedirt runner rejects a non-isolated action policy", async () => {
   const client = createFake();
   await assert.rejects(
-    runClearHoeDirtSmoke(client, [], { ...config, EnabledActions: ["clear_hoedirt"] }),
-    (error) => error?.message === "native_local_clear_hoedirt_fixture_config_invalid",
+      runClearHoeDirtSmoke(client, [], { ...config, DeniedActions: ["clear_hoedirt"] }),
+      (error) => error?.message?.startsWith("native_fixture_policy_denies_required"),
   );
 });
 
