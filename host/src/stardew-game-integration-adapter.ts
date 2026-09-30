@@ -292,6 +292,11 @@ function hasStardewCompletionEvidence(
         receipt.reasonCode === "travel_completed" &&
         hasDoorTransitionCompletionEvidence(detail)
       );
+    case "ride_minecart":
+      return (
+        receipt.reasonCode === "minecart_ride_completed" &&
+        hasMinecartRideCompletionEvidence(detail)
+      );
     case "enter_exit":
       return (
         receipt.reasonCode === "enter_exit_completed" &&
@@ -887,25 +892,32 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
 }
 
 function hasDoorTransitionCompletionEvidence(detail: string): boolean {
-  // An ordinary warp/enter_exit emits exactly {expected, actual}. A minecart
-  // travel ride ends in the same Warped postcondition but additionally names
-  // the ridden objective so the receipt is not just a bare coordinate pair.
-  // The minecart keys are optional as a pair; both must then be bounded opaque
-  // facts, and the warp postcondition below is still required.
+  // An ordinary warp/enter_exit emits exactly {expected, actual}: the ride's own
+  // objective identity belongs to `ride_minecart`, whose terminal is separate.
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
-  const keys = Object.keys(evidence);
-  const baseKeys = ["expected", "actual"];
-  const minecartKeys = ["network", "destination"];
-  const keysMatch =
-    (keys.length === baseKeys.length && baseKeys.every((key) => key in evidence)) ||
-    (keys.length === baseKeys.length + minecartKeys.length &&
-      [...baseKeys, ...minecartKeys].every((key) => key in evidence));
-  if (!keysMatch) return false;
-  if ("network" in evidence || "destination" in evidence) {
-    if (!hasBoundedNonemptyEvidenceValue(evidence.network)) return false;
-    if (!hasBoundedNonemptyEvidenceValue(evidence.destination)) return false;
-  }
+  const expectedKeys = ["expected", "actual"];
+  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+    return false;
+  return warpPostconditionHolds(evidence);
+}
+
+function hasMinecartRideCompletionEvidence(detail: string): boolean {
+  // A minecart ride ends in the same Warped postcondition, but the ride has to
+  // name which published objective it actually rode: the coordinate pair alone
+  // cannot distinguish two destinations on one station tile.
+  const evidence = parseSemicolonEvidence(detail);
+  if (evidence === null) return false;
+  const expectedKeys = ["expected", "actual", "network", "destination"];
+  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+    return false;
+  if (!hasBoundedNonemptyEvidenceValue(evidence.network)) return false;
+  if (!hasBoundedNonemptyEvidenceValue(evidence.destination)) return false;
+  return warpPostconditionHolds(evidence);
+}
+
+/** The Warped postcondition both `travel` and `ride_minecart` share. */
+function warpPostconditionHolds(evidence: Readonly<Record<string, string>>): boolean {
   const expected = parseWarpDestination(evidence.expected);
   const actual = parseWarpDestination(evidence.actual);
   return (
@@ -1525,10 +1537,24 @@ function parseStardewReceipt(
       reasonCode: value.reasonCode,
       revision: typeof value.revision === "number" ? value.revision : null,
       evidence: isRecord(value.evidence) ? value.evidence : null,
+      // A recovered receipt carries the same notices the live one did, validated
+      // with the wire's bound so a malformed journal entry is dropped rather than
+      // forwarded to the Agent.
+      ...(isNativeNoticeList(value.nativeNotices) ? { nativeNotices: value.nativeNotices } : {}),
     };
   } catch {
     return null;
   }
+}
+
+/** The wire bound for notice lists, mirrored so a recovered receipt is validated too. */
+function isNativeNoticeList(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.length >= 1 &&
+    value.length <= 8 &&
+    value.every((item) => typeof item === "string" && item.length >= 1 && item.length <= 512)
+  );
 }
 
 function toIntegrationReceipt(
@@ -1542,6 +1568,9 @@ function toIntegrationReceipt(
     reasonCode: receipt.reasonCode,
     revision: receipt.revision,
     evidence: receipt.evidence,
+    // Forwarded only when present: an absent field means the window captured no
+    // notice, which is a different fact from an empty one.
+    ...(receipt.nativeNotices == null ? {} : { nativeNotices: receipt.nativeNotices }),
   };
 }
 
