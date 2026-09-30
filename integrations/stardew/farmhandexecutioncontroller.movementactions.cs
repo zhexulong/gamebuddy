@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.Menus;
 using StardewValley.GameData.Minecarts;
 using StardewValley.Tools;
 using StardewValley.Characters;
@@ -207,6 +208,59 @@ internal sealed partial class ExecutionManager
             warp.TargetY,
             this.revision,
             requestedDeadlineMs);
+
+        // enter_exit runs the game's own door entry instead of a bare warpFarmer.
+        // `getWarpFromDoor` only RESOLVES a door into a Warp; every door gate
+        // lives one level up, in the entry GameLocation.checkAction (:7888)
+        // dispatches for a real player: GameLocation.performAction's Warp family
+        // (LockedDoorWarp's festival / SeedShop-Wednesday / open-hours /
+        // friendship tests at :10319, WarpCommunityCenter's ccDoorUnlock at
+        // :9462, Warp_Sunroom_Door's Caroline hearts at :9113,
+        // WarpGreenhouse's ccPantry test at :9416) and Building.doAction's
+        // construction / demolish-lock / dismount rules (Building.cs:937-959).
+        if (isDoor)
+        {
+            NativeDoorOutcome outcome = DispatchNativeDoor(location, sourcePoint, out string refusal);
+            switch (outcome)
+            {
+                case NativeDoorOutcome.Refused:
+                    return this.RememberTerminal(
+                        requestId,
+                        executionId,
+                        ExecutionState.Rejected,
+                        "door_gate_refused",
+                        $"source={sourceX},{sourceY};gate=refused;dialogue={refusal}");
+
+                case NativeDoorOutcome.NoEffect:
+                    return this.RememberTerminal(
+                        requestId,
+                        executionId,
+                        ExecutionState.Rejected,
+                        "door_transition_not_started",
+                        $"source={sourceX},{sourceY};gate=passed;transition=not_started");
+
+                case NativeDoorOutcome.TransitionStarted:
+                    break;
+
+                case NativeDoorOutcome.NotNative:
+                default:
+                    // No native click entry owns this tile, so the resolved warp
+                    // remains the authority (FarmHouse/Cabin exits).
+                    this.activeTravel = specification;
+                    LocalExecutionReceipt plainDoorAccepted = new(
+                        executionId,
+                        requestId,
+                        ExecutionState.Accepted,
+                        "accepted",
+                        this.revision,
+                        $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY}");
+                    this.Remember(plainDoorAccepted);
+                    this.AddTrace(plainDoorAccepted);
+                    Game1.player.warpFarmer(warp);
+                    return plainDoorAccepted;
+            }
+        }
+
         this.activeTravel = specification;
         LocalExecutionReceipt accepted = new(
             executionId,
@@ -217,8 +271,86 @@ internal sealed partial class ExecutionManager
             $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY}");
         this.Remember(accepted);
         this.AddTrace(accepted);
-        Game1.player.warpFarmer(warp);
+        // A native door entry already ran Game1.warpFarmer; only a plain record
+        // (travel, or a door the click path does not own) warps here.
+        if (!isDoor)
+            Game1.player.warpFarmer(warp);
         return accepted;
+    }
+
+    /// <summary>What the game's own door entry did for one door tile.</summary>
+    private enum NativeDoorOutcome
+    {
+        /// <summary>No native click entry owns this tile; the resolved warp stays authoritative.</summary>
+        NotNative,
+
+        /// <summary>The native gate refused: the game drew its locked-door DialogueBox and did not warp.</summary>
+        Refused,
+
+        /// <summary>The native entry started a warp.</summary>
+        TransitionStarted,
+
+        /// <summary>The native entry handled the tile but neither warped nor refused.</summary>
+        NoEffect,
+    }
+
+    /// <summary>
+    /// Runs the native player door entry for a door tile and reports what the
+    /// game did, so enter_exit cannot bypass a native door gate.
+    ///
+    /// The dispatch order mirrors GameLocation.checkAction exactly: building
+    /// human doors are tried first (:7647-7653) and only then the Buildings-layer
+    /// Action of a tile the game itself registered as a door (:7868-7888).
+    /// Each branch uses the game's own return value as the "the click path owns
+    /// this tile" signal, which is what keeps a door the click path does not own
+    /// (WarpBoatTunnel has no performAction case) on the resolver's warp instead
+    /// of being misread as a locked gate.
+    ///
+    /// A refusal leaves the game's own DialogueBox mounted; it is closed with the
+    /// public step the native input paths use
+    /// (<see cref="DialogueBox.closeDialogue"/>), which also restores
+    /// <c>Farmer.CanMove</c>. Leaving it mounted would make every later action
+    /// reject as <c>player_not_actionable</c>, so the refusal is reported in the
+    /// receipt instead of being handed to the player.
+    /// </summary>
+    private static NativeDoorOutcome DispatchNativeDoor(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point source, out string refusal)
+    {
+        refusal = string.Empty;
+        bool handled = false;
+
+        foreach (StardewValley.Buildings.Building building in location.buildings)
+        {
+            if (building.HasIndoors() && building.getPointForHumanDoor() == source)
+            {
+                handled = building.doAction(new Vector2(source.X, source.Y), Game1.player);
+                break;
+            }
+        }
+
+        if (!handled && location.doors.ContainsKey(source))
+        {
+            // location.doors holds exactly the warp-family Buildings-layer Actions
+            // (updateDoors, GameLocation.cs:17586-17638). Reading the Action
+            // property directly would also admit non-warp actions such as
+            // "Kitchen", so the door table is the gate.
+            string? action = location.doesTileHaveProperty(source.X, source.Y, "Action", "Buildings");
+            if (!string.IsNullOrWhiteSpace(action))
+                handled = location.performAction(action, Game1.player, new xTile.Dimensions.Location(source.X, source.Y));
+        }
+
+        if (Game1.isWarping)
+            return NativeDoorOutcome.TransitionStarted;
+
+        if (Game1.activeClickableMenu is DialogueBox dialogueBox)
+        {
+            refusal = string.Join(" | ", dialogueBox.dialogues);
+            dialogueBox.closeDialogue();
+            return NativeDoorOutcome.Refused;
+        }
+
+        // Nothing native owned this tile, so the resolver's warp stays
+        // authoritative (FarmHouse/Cabin exits have no click entry).
+        return handled ? NativeDoorOutcome.NoEffect : NativeDoorOutcome.NotNative;
     }
 
     public void CompleteTravelAfterWarp()

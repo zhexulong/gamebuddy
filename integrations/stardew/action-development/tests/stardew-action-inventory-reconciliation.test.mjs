@@ -157,6 +157,12 @@ test("归并行标注门禁：LockedDoorWarp 有门禁、Warp 无门禁", async 
   assert.equal(byKey.get("GameLocation.LockedDoorWarp")?.gating, "gated");
   assert.equal(byKey.get("GameLocation.Warp")?.gating, "ungated");
   assert.deepEqual(byKey.get("GameLocation.LockedDoorWarp")?.actionIds, ["travel", "enter_exit"]);
+  // 门禁是否由 action 真的执行，单独标注，不由 `gating` 隐含推断。
+  assert.equal(
+    byKey.get("GameLocation.LockedDoorWarp")?.gateEnforcement,
+    "enter_exit_runs_the_native_entry",
+  );
+  assert.equal(byKey.get("GameLocation.Warp")?.gateEnforcement, "not_applicable_no_gate");
   // 归并只表达同一意图，不保证门禁等价
   assert.ok(a.nonGuarantees.some((g) => g.startsWith("merge_into_existing_expresses_the_same_warp_intent_only")));
   assert.match(a.rules.mergeSemantics, /not 'equivalent gate'/);
