@@ -81,6 +81,10 @@ export async function runEnterExitSmoke(
       reasonCode: passed ? "enter_exit_completed" : "enter_exit_postcondition_mismatch",
       source: doorSummary(snapshot.location, freshDoor),
       receipt: summarizeReceipt(terminal),
+    // The receipt summary carries no identity by design (4a52188), so the
+    // exact request/execution pair this runner proves is exposed here.
+    executionId: terminal.executionId,
+    requestId: terminal.requestId,
       before: enterExitSummary(snapshot),
       after: enterExitSummary(after),
       trace,
@@ -192,8 +196,12 @@ function validateNativeLocalFixtureConfig(value) {
 }
 
 function enterExitSummary(snapshot) {
+  // `summarizeSnapshot` stopped carrying location/tile in 4a52188, so the
+  // location this runner asserts is exposed here explicitly.
   return {
     ...summarizeSnapshot(snapshot),
+    location: snapshot.location,
+    tile: snapshot.tile,
     doorTargets: Array.isArray(snapshot.doorTargets)
       ? snapshot.doorTargets.map((door) => doorSummary(snapshot.location, door))
       : [],

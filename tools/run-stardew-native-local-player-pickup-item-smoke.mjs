@@ -318,8 +318,11 @@ function targetSummary(target) {
   };
 }
 function pickupSnapshotSummary(snapshot) {
+  // `summarizeSnapshot` stopped carrying location in 4a52188, so the location
+  // this runner asserts is exposed here explicitly.
   return {
     ...summarizeSnapshot(snapshot),
+    location: snapshot.location,
     itemTargets: snapshot.itemTargets?.map(targetSummary) ?? [],
   };
 }

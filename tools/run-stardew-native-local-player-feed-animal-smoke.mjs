@@ -13,6 +13,7 @@ import {
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
+  validateNativeLocalFixturePolicy,
   waitForTerminal as waitForTerminalShared,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
@@ -152,9 +153,7 @@ function validateConfig(value) {
   if (
     value?.NativeLocalPlayerFixture?.Enable !== true ||
     value.NativeLocalPlayerFixture.Bootstrap?.Enable === true ||
-    value.NativeLocalPlayerFixture.FixtureScenario !== SCENARIO ||
-    value.ActionPolicyVersion !== 0 ||
-    !same(value.EnabledActions, ["move_to_tile", "travel", "enter_exit", "feed_animal"])
+    value.NativeLocalPlayerFixture.FixtureScenario !== SCENARIO
   )
     throw new Error("native_local_feed_animal_fixture_config_invalid");
   if (
@@ -164,6 +163,9 @@ function validateConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_feed_animal_topology_invalid");
+  validateNativeLocalFixturePolicy(value, {
+    requiredActions: ["move_to_tile", "travel", "enter_exit", "feed_animal"],
+  });
 }
 async function observeActionable(client) {
   const snapshot = await observeFresh(client, { actionable: true });
@@ -401,8 +403,11 @@ function same(left, right) {
   return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
 function summary(snapshot) {
+  // `summarizeSnapshot` stopped carrying location/tile in 4a52188, so the
+  // location this runner asserts is exposed here explicitly.
   return {
     ...summarizeSnapshot(snapshot),
+    location: snapshot.location,
     feedTroughTargets: snapshot.feedTroughTargets?.length ?? 0,
   };
 }

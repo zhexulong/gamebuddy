@@ -9,8 +9,9 @@ const CONFIG = {
   CompanionId: "companion_01",
   PipeName: "pipe",
   BridgeToken: "secret-token",
-  ActionPolicyVersion: 0,
-  EnabledActions: ["move_to_tile", "equip_tool", "refill_watering_can"],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },
@@ -117,8 +118,8 @@ test("refill-watering-can runner uses shared dispatch, exact terminal correlatio
   assert.deepEqual(calls[1].args, { slot: 0, x: 2, y: 2, expectedTargetId: "refill-1" });
   assert.equal(calls[1].expectedRevision, 2);
   // Exact terminal correlation and evidence validation.
-  assert.equal(result.receipt.executionId, "refill-execution");
-  assert.equal(result.receipt.requestId, calls[1].requestId);
+  assert.equal(result.executionId, "refill-execution");
+  assert.equal(result.requestId, calls[1].requestId);
   assert.equal(result.receipt.reasonCode, "watering_can_refilled");
   assert.equal(result.evidence.water_before, "0");
   assert.equal(result.evidence.water_after, "40");

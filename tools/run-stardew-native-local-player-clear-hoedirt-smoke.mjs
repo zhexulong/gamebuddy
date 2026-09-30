@@ -6,6 +6,7 @@ import {
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
+  validateNativeLocalFixturePolicy,
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
@@ -75,6 +76,10 @@ export async function runClearHoeDirtSmoke(
       reasonCode: passed ? "hoedirt_cleared" : "clear_hoedirt_postcondition_mismatch",
       target: freshTarget,
       receipt: summarizeReceipt(accepted),
+    // `summarizeReceipt` deliberately carries no identity (4a52188), so the
+    // execution correlation is proven here against the raw receipt: the terminal
+    // the runner accepted is the exact execution it later reads back.
+    executionId: accepted.executionId,
       evidence,
       trace,
       before: summary(snapshot),
@@ -159,9 +164,7 @@ function validateConfig(value) {
   if (
     fixture?.Enable !== true ||
     fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO ||
-    value.ActionPolicyVersion !== 0 ||
-    !same(value.EnabledActions, EXPECTED_ACTIONS)
+    fixture.FixtureScenario !== SCENARIO
   )
     throw new Error("native_local_clear_hoedirt_fixture_config_invalid");
   if (
@@ -171,6 +174,7 @@ function validateConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_clear_hoedirt_topology_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 function hoeDirtCandidates(snapshot) {
   return (snapshot.clearHoeDirtTargets ?? []).filter(validHoeDirt);

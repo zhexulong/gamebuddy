@@ -192,8 +192,12 @@ function validateNativeLocalFixtureConfig(value) {
 }
 
 function travelSummary(snapshot) {
+  // `summarizeSnapshot` stopped carrying location/tile in 4a52188, so the
+  // location and tile this runner asserts are exposed here explicitly.
   return {
     ...summarizeSnapshot(snapshot),
+    location: snapshot.location,
+    tile: snapshot.tile,
     warps: Array.isArray(snapshot.warps) ? snapshot.warps.map((warp) => warpSummary(snapshot.location, warp)) : [],
   };
 }
