@@ -1,0 +1,47 @@
+{
+  "schema": "memory_live_loop/v1",
+  "identity": {
+    "continuityId": "memory_loop_continuity_f55894fecfdc"
+  },
+  "seed": {
+    "durable": true,
+    "rowCount": 1,
+    "projectionChanged": true
+  },
+  "chat": {
+    "attempted": true,
+    "committed": true,
+    "verdict": "needle.miss"
+  },
+  "funnel": {
+    "stages": [
+      {
+        "stage": "L1_write",
+        "component": "persistence",
+        "status": "passed",
+        "detail": "seed present in the management durable readback"
+      },
+      {
+        "stage": "L2_assembly",
+        "component": "context_materialization",
+        "status": "observability_gap",
+        "reason": "rendered_memory_ids_unobserved"
+      },
+      {
+        "stage": "L4_expression",
+        "component": "presentation_admission",
+        "status": "broken",
+        "detail": "needle.miss"
+      }
+    ],
+    "findings": [
+      {
+        "id": "memory_funnel_l4_expression",
+        "component": "presentation_admission",
+        "count": 1,
+        "detail": "L4_expression broke: needle.miss",
+        "recommendation": "presentation admission: the fact was in the context but did not reach the reply - inspect the system prompt's attention and the model settings"
+      }
+    ]
+  }
+}
