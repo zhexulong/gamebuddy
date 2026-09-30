@@ -426,7 +426,14 @@ function collectChildMessages(child) {
   };
 }
 
-function waitForCompositionReady(child, timeoutMs) {
+/**
+ * In the spawnImpl, the caller may observe the child's own outputs. A gate that
+ * reports only `dialogue_exited_before_ready:<code>` cannot name why, so every
+ * spawn carries a bounded stderr tail the readiness waiter appends to its
+ * rejection. The child writes at most one bounded token (see
+ * host/src/bootstrap/entry/desktop-host-entry.internal.ts) and never a stack.
+ */
+function waitForCompositionReady(child, timeoutMs, stderrTail = () => "") {
   return new Promise((resolveReady, rejectReady) => {
     let settled = false;
     const settle = (fn, value) => {
@@ -443,7 +450,19 @@ function waitForCompositionReady(child, timeoutMs) {
       if (validateCompositionReadyMessage(value)) settle(resolveReady, value.launchUrl);
     };
     const onError = () => settle(rejectReady, new Error("dialogue_spawn_failed"));
-    const onExit = (code) => settle(rejectReady, new Error(`dialogue_exited_before_ready:${code ?? "unknown"}`));
+    const onExit = (code) => {
+      // Preserve the child's bounded diagnostic so a pre-ready exit is
+      // attributable rather than an opaque exit code.
+      const diagnostic = typeof stderrTail === "function" ? stderrTail() : "";
+      settle(
+        rejectReady,
+        new Error(
+          diagnostic.length > 0
+            ? `dialogue_exited_before_ready:${code ?? "unknown"}:${diagnostic}`
+            : `dialogue_exited_before_ready:${code ?? "unknown"}`,
+        ),
+      );
+    };
     const timer = setTimeout(() => settle(rejectReady, new Error("dialogue_start_timeout")), timeoutMs);
     child.on("message", onMessage);
     child.once("error", onError);
@@ -506,7 +525,15 @@ export async function launchDesktopCompositionGateChild({
   // acknowledgement is still awaited; every message is buffered from spawn so
   // late subscribers (the gate collectors, the ready waiter) never miss one.
   const messages = collectChildMessages(child);
-  const readyPromise = waitForCompositionReady(child, readyTimeoutMs);
+  // Capture a bounded stderr tail so a pre-ready exit names its cause. The
+  // child writes at most one bounded token and never a stack; the printf-style
+  // cap keeps a misbehaving child from growing this buffer without bound.
+  let childStderr = "";
+  child.stderr?.setEncoding?.("utf8");
+  child.stderr?.on?.("data", (chunk) => {
+    if (childStderr.length < 2_048) childStderr = `${childStderr}${chunk}`;
+  });
+  const readyPromise = waitForCompositionReady(child, readyTimeoutMs, () => childStderr.trim());
   // The ack waiter attaches before the frame write so an early wire failure is
   // never missed; the frame is the one bootstrap input, written once and
   // followed by EOF, exactly like the production launcher's private bootstrap pipe.

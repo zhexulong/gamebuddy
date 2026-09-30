@@ -9,6 +9,7 @@ import {
   type ControlRequest,
   ControlRequestFramer,
 } from "./companion-control-protocol.js";
+import { resolveWindowsPowerShell } from "./windows-powershell-executable.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REMEMBERED_REQUESTS = 256;
@@ -74,7 +75,9 @@ export function startCompanionControlServer(
   const child =
     testDependencies?.spawnHelper() ??
     spawn(
-      "powershell.exe",
+      // Absolute path: a reduced or over-long PATH must not read as a failed
+      // control-helper launch.
+      resolveWindowsPowerShell() ?? "powershell.exe",
       [
         "-NoLogo",
         "-NoProfile",
