@@ -217,10 +217,13 @@ internal sealed partial class ExecutionManager
         // friendship tests at :10319, WarpCommunityCenter's ccDoorUnlock at
         // :9462, Warp_Sunroom_Door's Caroline hearts at :9113,
         // WarpGreenhouse's ccPantry test at :9416) and Building.doAction's
-        // construction / demolish-lock / dismount rules (Building.cs:937-959).
+        // construction / demolish-lock / dismount rules (Building.cs:937-959). The
+        // chosen entry is echoed into the receipt so an observer can tell a gated
+        // door apart from the resolver fallback.
+        string entry = "none";
         if (isDoor)
         {
-            NativeDoorOutcome outcome = DispatchNativeDoor(location, sourcePoint, out string refusal);
+            NativeDoorOutcome outcome = DispatchNativeDoor(location, sourcePoint, out string refusal, out entry);
             switch (outcome)
             {
                 case NativeDoorOutcome.Refused:
@@ -229,7 +232,7 @@ internal sealed partial class ExecutionManager
                         executionId,
                         ExecutionState.Rejected,
                         "door_gate_refused",
-                        $"source={sourceX},{sourceY};gate=refused;dialogue={refusal}");
+                        $"source={sourceX},{sourceY};gate=refused;entry={entry};dialogue={refusal}");
 
                 case NativeDoorOutcome.NoEffect:
                     return this.RememberTerminal(
@@ -237,7 +240,7 @@ internal sealed partial class ExecutionManager
                         executionId,
                         ExecutionState.Rejected,
                         "door_transition_not_started",
-                        $"source={sourceX},{sourceY};gate=passed;transition=not_started");
+                        $"source={sourceX},{sourceY};gate=passed;entry={entry};transition=not_started");
 
                 case NativeDoorOutcome.TransitionStarted:
                     break;
@@ -253,7 +256,7 @@ internal sealed partial class ExecutionManager
                         ExecutionState.Accepted,
                         "accepted",
                         this.revision,
-                        $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY}");
+                        $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};entry={entry}");
                     this.Remember(plainDoorAccepted);
                     this.AddTrace(plainDoorAccepted);
                     Game1.player.warpFarmer(warp);
@@ -268,7 +271,9 @@ internal sealed partial class ExecutionManager
             ExecutionState.Accepted,
             "accepted",
             this.revision,
-            $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY}");
+            isDoor
+                ? $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};entry={entry}"
+                : $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY}");
         this.Remember(accepted);
         this.AddTrace(accepted);
         // A native door entry already ran Game1.warpFarmer; only a plain record
@@ -313,15 +318,26 @@ internal sealed partial class ExecutionManager
     /// reject as <c>player_not_actionable</c>, so the refusal is reported in the
     /// receipt instead of being handed to the player.
     /// </summary>
-    private static NativeDoorOutcome DispatchNativeDoor(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point source, out string refusal)
+    /// <param name="entry">
+    /// Which native entry was used, so an observer can tell a gated door apart
+    /// from the resolver fallback. Without it the terminal reason code alone
+    /// cannot say whether any gate actually ran.
+    /// </param>
+    private static NativeDoorOutcome DispatchNativeDoor(
+        StardewValley.GameLocation location,
+        Microsoft.Xna.Framework.Point source,
+        out string refusal,
+        out string entry)
     {
         refusal = string.Empty;
+        entry = "none";
         bool handled = false;
 
         foreach (StardewValley.Buildings.Building building in location.buildings)
         {
             if (building.HasIndoors() && building.getPointForHumanDoor() == source)
             {
+                entry = "building_do_action";
                 handled = building.doAction(new Vector2(source.X, source.Y), Game1.player);
                 break;
             }
@@ -335,7 +351,10 @@ internal sealed partial class ExecutionManager
             // "Kitchen", so the door table is the gate.
             string? action = location.doesTileHaveProperty(source.X, source.Y, "Action", "Buildings");
             if (!string.IsNullOrWhiteSpace(action))
+            {
+                entry = "perform_action";
                 handled = location.performAction(action, Game1.player, new xTile.Dimensions.Location(source.X, source.Y));
+            }
         }
 
         if (Game1.isWarping)
@@ -350,6 +369,8 @@ internal sealed partial class ExecutionManager
 
         // Nothing native owned this tile, so the resolver's warp stays
         // authoritative (FarmHouse/Cabin exits have no click entry).
+        if (!handled)
+            entry = "resolved_warp_fallback";
         return handled ? NativeDoorOutcome.NoEffect : NativeDoorOutcome.NotNative;
     }
 
