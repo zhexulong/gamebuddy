@@ -1825,14 +1825,14 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)2" }, "health": { "const": 1 } } },
+        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "health": { "const": 1 } } },
     "clearHoeDirtTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "crop", "ground"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "crop": { "const": false }, "ground": { "const": true } } },
     "artifactSpotTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "qualifiedItemId","displayName"], "properties": {
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)590" } } },
+        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
     "artifactSpotResultTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "crop", "ground"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "crop": { "const": false }, "ground": { "const": true } } },
     "woodFenceTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId","displayName"], "properties": {
         "displayName": {
