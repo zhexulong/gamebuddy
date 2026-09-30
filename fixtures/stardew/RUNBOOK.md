@@ -733,6 +733,29 @@ reached the fresh opaque seed target at `(62,18)`, and received same-execution
 the following production snapshot. `enter_exit` independently moved to its fresh
 published FarmHouse door `(3,12)` then received
 `succeeded/enter_exit_completed` with fresh `Farm (64,15)` postcondition.
+
+`enter_exit` also proves the **native door gate** on the same run. Since
+gate fix, the action dispatches the same native entry a real player click uses
+(`GameLocation.performAction` for Buildings-layer Action doors, `Building.doAction`
+for building human doors) instead of resolving the door with `getWarpFromDoor`
+and calling `warpFarmer` itself. The fixture Farm advertises a Greenhouse human
+door at `(28,15)` whose `GreenhouseBuilding.OnUseHumanDoor` refuses while
+`ccPantry` is absent (the fixture grants none of `ccPantry`/`ccDoorUnlock`/
+`JojaMember`). The second phase moved to the adjacent standing tile `(28,16)` and
+then received the honest refusal:
+
+```
+phase=enter_exit_gated  args=(28,15)  request=...enter_exit_gated..._3
+  receipt = { state: "rejected", reasonCode: "door_gate_refused", revision: 66, hasEvidence: true }
+after   = Farm (28,16)  actionable=true  activeExecution=null
+```
+
+The actor stayed on the near side (`Farm (28,16)`, not `Greenhouse (10,23)`), the
+Game's own locked-door `DialogueBox` was closed by the Mod (the following
+`observeFresh({actionable:true})` succeeded, which a mounted modal would have
+failed closed), and `doorGate.state=passed` records the whole phase. Before this
+change the same request warped straight into the Greenhouse. This is
+`native_local_player_fixture` shared-mechanics evidence only.
 `equip_tool` ran on the event-free
 `GameBuddyFixtureStable_445936768` disposable copy: a fresh snapshot selected
 `(T)Hoe` in slot `1`; its same-execution receipt was

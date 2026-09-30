@@ -75,10 +75,23 @@ export async function runEnterExitSmoke(
       after.location === freshDoor.targetLocation &&
       after.tile?.x === freshDoor.targetX &&
       after.tile?.y === freshDoor.targetY;
+
+    // Second phase: prove the native door GATE runs. The fixture Farm has a
+    // Greenhouse human door whose OnUseHumanDoor refuses while ccPantry is
+    // absent, so the same enter_exit action must come back rejected with
+    // door_gate_refused instead of walking through. This is the branch the
+    // plain FarmHouse exit cannot exercise: that exit is a Warp record, not a
+    // gated door.
+    const gate = passed ? await runDoorGatePhase(client, receipts, trace, { moveTimeoutMs, enterExitTimeoutMs }) : null;
+
     return {
-      state: passed ? "passed" : "blocked",
+      state: passed && gate?.state === "passed" ? "passed" : "blocked",
       topology: "native_local_player_fixture",
-      reasonCode: passed ? "enter_exit_completed" : "enter_exit_postcondition_mismatch",
+      reasonCode: !passed
+        ? "enter_exit_postcondition_mismatch"
+        : gate.state === "passed"
+          ? "enter_exit_completed"
+          : gate.reasonCode,
       source: doorSummary(snapshot.location, freshDoor),
       receipt: summarizeReceipt(terminal),
     // The receipt summary carries no identity by design (4a52188), so the
@@ -87,6 +100,7 @@ export async function runEnterExitSmoke(
     requestId: terminal.requestId,
       before: enterExitSummary(snapshot),
       after: enterExitSummary(after),
+      doorGate: gate,
       trace,
       durationMs: Date.now() - startedAt,
     };
@@ -135,6 +149,106 @@ async function observeEnterExitActionable(client) {
   if (!Array.isArray(snapshot.doorTargets) || snapshot.doorTargets.length === 0)
     throw new Error("native_local_enter_exit_door_targets_missing");
   return snapshot;
+}
+
+/**
+ * Prove the native door gate actually runs. The fixture Farm advertises a
+ * Greenhouse human door whose `OnUseHumanDoor` refuses while `ccPantry` is
+ * absent (`GreenhouseBuilding.OnUseHumanDoor` draws
+ * `Strings\\Locations:Farm_GreenhouseRuins` and returns false). The action must
+ * therefore end `rejected/door_gate_refused`, the actor must NOT have moved
+ * into the Greenhouse, and no modal may be left mounted (the actor stays
+ * actionable, which is what `observeFresh({actionable:true})` re-asserts).
+ */
+async function runDoorGatePhase(client, receipts, trace, { moveTimeoutMs, enterExitTimeoutMs }) {
+  let snapshot = await observeFresh(client, { actionable: true });
+  const gated = chooseGatedDoor(snapshot);
+  if (!gated) return { state: "blocked", reasonCode: "no_gated_door_target_advertised" };
+
+  if (!adjacent(snapshot.tile, { x: gated.sourceX, y: gated.sourceY })) {
+    // A door tile is the doorway itself, not a standing tile, so move to an
+    // adjacent tile instead. A rejected `move_to_tile` has no side effect, so
+    // trying a bounded candidate list is safe; each attempt is its own receipt.
+    const approached = await approachGatedDoor(client, receipts, trace, gated, moveTimeoutMs);
+    if (approached.state !== "passed") return approached;
+    snapshot = approached.snapshot;
+  }
+
+  const fresh = findDeclaredDoor(snapshot, gated);
+  if (!fresh || !adjacent(snapshot.tile, { x: fresh.sourceX, y: fresh.sourceY }))
+    return { state: "blocked", reasonCode: "fresh_gated_door_target_unavailable" };
+
+  const accepted = await execute(client, trace, "enter_exit_gated", "enter_exit", { x: fresh.sourceX, y: fresh.sourceY }, snapshot);
+  const terminal = await waitForTerminal(receipts, accepted, enterExitTimeoutMs);
+  const after = await observeFresh(client, { actionable: true });
+
+  // The refusal is only honest if BOTH the terminal state and the reason code
+  // say refused, the receipt binds to this exact request/execution pair, and the
+  // actor really stayed on the near side. `observeFresh` already fails closed
+  // when the actor is not actionable (a mounted modal makes it non-actionable),
+  // so reaching this line is itself the settle proof.
+  const stayed =
+    after.location === snapshot.location && after.tile?.x === snapshot.tile.x && after.tile?.y === snapshot.tile.y;
+  const reasons = [];
+  if (terminal.executionId !== accepted.executionId) reasons.push("execution_id");
+  if (terminal.requestId !== accepted.requestId) reasons.push("request_id");
+  if (terminal.state !== "rejected") reasons.push(`state=${terminal.state}`);
+  if (terminal.reasonCode !== "door_gate_refused") reasons.push(`reason=${terminal.reasonCode}`);
+  if (!stayed) reasons.push("moved");
+  const ok = reasons.length === 0;
+  return {
+    state: ok ? "passed" : "blocked",
+    reasonCode: ok ? "door_gate_refused" : `door_gate_unexpected:${reasons.join("+")}`,
+    target: doorSummary(snapshot.location, fresh),
+    receipt: summarizeReceipt(terminal),
+    after: enterExitSummary(after),
+    actorActionableAfterRefusal: true,
+  };
+}
+
+function chooseGatedDoor(snapshot) {
+  // The Farm's Greenhouse human door is the gated target this fixture can
+  // reach: `GreenhouseBuilding.OnUseHumanDoor` refuses without ccPantry, which
+  // the fixture does not grant.
+  return (
+    snapshot.doorTargets?.find(
+      (door) => validDoor(door) && typeof door.targetLocation === "string" && door.targetLocation.startsWith("Greenhouse"),
+    ) ?? null
+  );
+}
+
+/**
+ * Walk to a tile from which the gated door can be used. The door tile itself is
+ * the doorway, not a standing tile, so the four cardinal neighbours are tried in
+ * order and the first accepted-and-reached one wins. Every attempt is a real
+ * revision-bound receipt; a rejected move has no side effect.
+ */
+async function approachGatedDoor(client, receipts, trace, gated, moveTimeoutMs) {
+  const attempts = [];
+  for (const candidate of [
+    { x: gated.sourceX, y: gated.sourceY + 1 },
+    { x: gated.sourceX, y: gated.sourceY - 1 },
+    { x: gated.sourceX - 1, y: gated.sourceY },
+    { x: gated.sourceX + 1, y: gated.sourceY },
+  ]) {
+    const snapshot = await observeFresh(client, { actionable: true });
+    if (adjacent(snapshot.tile, { x: gated.sourceX, y: gated.sourceY })) {
+      return { state: "passed", snapshot, attempts };
+    }
+    const move = await execute(client, trace, `move_to_gated_door_${candidate.x}_${candidate.y}`, "move_to_tile", candidate, snapshot);
+    if (move.state !== "accepted") {
+      attempts.push({ candidate, outcome: `not_accepted:${move.reasonCode}` });
+      continue;
+    }
+    const terminal = await waitForTerminal(receipts, move, moveTimeoutMs);
+    attempts.push({ candidate, outcome: `${terminal.state}/${terminal.reasonCode}` });
+    if (terminal.state === "succeeded" && terminal.reasonCode === "target_reached") {
+      const settled = await observeFresh(client, { actionable: true });
+      if (adjacent(settled.tile, { x: gated.sourceX, y: gated.sourceY }))
+        return { state: "passed", snapshot: settled, attempts };
+    }
+  }
+  return { state: "blocked", reasonCode: `no_gated_door_approach_tile:${JSON.stringify(attempts)}`, attempts };
 }
 
 function chooseSafeDoor(snapshot) {
