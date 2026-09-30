@@ -14,6 +14,18 @@ const probe = {
     { kind: "filler", role: "player", text: "Do you prefer chowder or grilled fish on anchor nights?", persistVia: "conversation" },
     { kind: "filler", role: "player", text: "The village market is lively on festival mornings, is it not?", persistVia: "conversation" },
     { kind: "filler", role: "player", text: "Keeping the lantern in trim through fog takes patience.", persistVia: "conversation" },
+    // The distractor is carried by the PLAYER, as second-hand village rumour. This
+    // is deliberate (owner decision 2026-09-30, design 3.2): an EXTERNAL
+    // distractor is what tests discrimination. If the companion had said it
+    // itself, restating it in the probe turn would be ordinary topic continuity
+    // rather than a discrimination signal.
+    //
+    // Note the consequence for scoring: a correct probe reply that DENIES the
+    // rumour ("you were the postman, not the mine-road driver") still contains
+    // the forbidden words, so bare substring matching reports
+    // `distractor.confused` with `reason=needle_only`. That reason - not the code
+    // alone - is what distinguishes recall from failure; see
+    // design/architecture/chat-long-horizon-memory-probe-design.md 3.2.
     { kind: "seed", role: "player", text: "They say the old-timers around here tell tales about a driver who spent many years hauling on the mine road — not you, surely?", persistVia: "conversation" },
     { kind: "filler", role: "player", text: "Autumn storms make the cove a quiet place to think.", persistVia: "conversation" },
     { kind: "probe", role: "player", text: "By the way — do you remember what I did before I retired?", requiredKeywords: ["postman", "mail"], forbiddenKeywords: ["mine", "haul"], minHitRate: 0.5 },
