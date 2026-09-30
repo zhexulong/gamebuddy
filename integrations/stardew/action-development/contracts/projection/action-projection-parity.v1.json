@@ -84,6 +84,36 @@
         }
       },
       {
+        "actionId": "ride_minecart",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "minecart_ride_completed"
+        }
+      },
+      {
         "actionId": "enter_exit",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -1463,6 +1493,7 @@
       "move_to_tile",
       "equip_tool",
       "travel",
+      "ride_minecart",
       "enter_exit",
       "till_soil",
       "pickup_forage",
@@ -1535,6 +1566,7 @@
     "nativeActionIds": [
       "move_to_tile",
       "travel",
+      "ride_minecart",
       "enter_exit",
       "till_soil",
       "pickup_item",

@@ -18,14 +18,22 @@ public sealed class ActionPolicyEngineTests
         enabled.Should().Contain("plant_seed");
         enabled.Should().NotContain("sop_composite_pipeline"); // Retired generic composition runtime
         // live_verified actions are default-consent (design/10 3.1.1: the live run
-        // on the required topology IS the visibility gate). Every action in the
-        // catalog has now reached at least live_verified, so the whole catalog is
-        // present by default and no action is withheld here.
+        // on the required topology IS the visibility gate).
         enabled.Should().Contain("pet_animal");
         enabled.Should().Contain("clear_debris");
         enabled.Should().Contain("advance_day");
+        // ride_minecart was promoted to live_verified with its native-local live
+        // gate, so it is default-consent too.
+        enabled.Should().Contain("ride_minecart");
+        // The default surface is every published/live_verified action and nothing
+        // else: experimental registrations need their own explicit opt-in.
         foreach (var registration in FarmhandActionCatalog.Registrations)
-            enabled.Should().Contain(registration.ActionId);
+        {
+            if (registration.Lifecycle == FarmhandActionLifecycle.Experimental)
+                enabled.Should().NotContain(registration.ActionId);
+            else
+                enabled.Should().Contain(registration.ActionId);
+        }
     }
 
     [Fact]
@@ -70,15 +78,20 @@ public sealed class ActionPolicyEngineTests
     public void ComputeEnabledActions_WithExperimentalActions_IncludesOptedInExperimentalActions()
     {
         // Opting a name in is only meaningful for an action that is NOT already
-        // default-consent, so this exercises the opt-in path against a name the
-        // catalog withholds rather than against a live_verified action (which the
-        // default policy already enables).
+        // default-consent. All registrations are published/live_verified now that
+        // ride_minecart cleared its live gate, so there is no experimental subject
+        // left: the opt-in set is empty and an unknown name stays inert.
+        FarmhandActionCatalog.Registrations
+            .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Experimental)
+            .Should().BeEmpty();
         var options = new ActionPolicyOptions(
-            ExperimentalActions: new[] { "clear_debris", "non_existent_action" }
+            ExperimentalActions: new[] { "ride_minecart", "non_existent_action" }
         );
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
 
-        enabled.Should().Contain("clear_debris");
+        // A former experimental action that is now live_verified is already
+        // default-consent; naming it changes nothing.
+        enabled.Should().Contain("ride_minecart");
         // An unknown name is inert: opting in cannot invent a capability.
         enabled.Should().NotContain("non_existent_action");
         enabled.Should().NotContain("sop_composite_pipeline");
@@ -89,13 +102,24 @@ public sealed class ActionPolicyEngineTests
     {
         var enabled = ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions());
 
-        // The live_verified rung is player-visible without an explicit opt-in; only
-        // experimental actions would need one, and the catalog currently has none.
+        // The live_verified rung is player-visible without an explicit opt-in; an
+        // experimental action needs one. Every registration is currently
+        // published or live_verified, so the partition is asserted rather than
+        // assumed: no action may be silently invisible.
         foreach (var registration in FarmhandActionCatalog.Registrations)
         {
-            registration.Lifecycle.Should().NotBe(FarmhandActionLifecycle.Experimental);
-            enabled.Should().Contain(registration.ActionId);
+            if (registration.Lifecycle == FarmhandActionLifecycle.Experimental)
+                enabled.Should().NotContain(registration.ActionId);
+            else
+                enabled.Should().Contain(registration.ActionId);
         }
+
+        // ride_minecart is now live_verified: its native-local live gate passed
+        // (RUNBOOK: station Farm (2,9), network Default, destination Town), so it
+        // is enabled without any opt-in.
+        enabled.Should().Contain("ride_minecart");
+        ActionPolicyEngine.ValidateActionPolicy(new ActionPolicyOptions())
+            .Should().BeTrue();
     }
 
     [Fact]
@@ -114,7 +138,9 @@ public sealed class ActionPolicyEngineTests
         // The opt-in list is a closed set of actions that are actually on the
         // experimental rung. Naming anything else -- including a live_verified
         // action that is already default-consent -- must fail closed, otherwise a
-        // typo would silently look accepted.
+        // typo would silently look accepted. There are no experimental
+        // registrations right now (ride_minecart cleared its live gate), but the
+        // contract is tested against whatever the catalog holds.
         FarmhandActionCatalog.Registrations
             .Where(registration => registration.Lifecycle != FarmhandActionLifecycle.Experimental)
             .Should().NotBeEmpty();

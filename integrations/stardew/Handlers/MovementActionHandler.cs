@@ -27,8 +27,17 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
                 request.RequestId,
                 (int)(request.Args.X ?? 0),
                 (int)(request.Args.Y ?? 0),
+                request.DeadlineMs),
+
+            // ride_minecart is its own action: x,y is the minecart STATION tile
+            // and the declared expectedTargetId names one advertised ride. `travel`
+            // keeps its two-argument wire and never rides a minecart.
+            "ride_minecart" => this.executions.RequestLocalMinecartRide(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
                 request.DeadlineMs,
-                request.Args.ExpectedTargetId),
+                request.Args.ExpectedTargetId ?? string.Empty),
 
             "enter_exit" => this.executions.RequestLocalEnterExit(
                 request.RequestId,

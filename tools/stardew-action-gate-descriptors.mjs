@@ -204,6 +204,12 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "native_crab_pot_collect_v1",
   ),
   gate("ship_item", 1, "run-stardew-native-local-player-ship-item-smoke.mjs", "item_shipped", "native_ship_item_v1"),
+  // Promoted to live_verified: a real target-version native-local run produced
+  // `succeeded/minecart_ride_completed` on the recorded fixture scenario
+  // (station Farm (2,9), network Default, destination Town). The run settles
+  // the 700ms freezePause window rather than sampling once; publication review
+  // is still owed (design/10 3.1.1).
+  gate("ride_minecart", 1, "run-stardew-native-local-player-ride-minecart-smoke.mjs", "minecart_ride_completed", "native_ride_minecart_v1"),
 ]);
 
 /**
@@ -261,10 +267,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // remainder, then re-crafts the SAME recipe to a full success. Not a new action;
   // it grants no capability.
   craft_partial_recovery_chain: "run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs",
-  // ride_minecart is its own registered action with its own shared-harness runner
-  // and native-local fixture scenario; it grants no capability the Mod catalog
-  // does not already define.
-  ride_minecart: "run-stardew-native-local-player-ride-minecart-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

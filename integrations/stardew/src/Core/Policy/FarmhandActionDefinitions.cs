@@ -84,6 +84,18 @@ public static class FarmhandActionCatalog
         E("move_to_tile", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("equip_tool", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("tool", "string", ToolEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition", "Game1.player.CurrentToolIndex")),
         E("travel", "transport_warps", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
+        // Native 1.6 minecart travel is a distinct action, not a `travel`
+        // objective family. Both the Mod's execution parser and
+        // FarmhandExecutionAcceptance are exact-shape allow-lists with no
+        // optional-argument concept, so a second argument shape means a second
+        // action: `travel` stays {x,y} (one native warp at the source tile) and
+        // `ride_minecart` declares {x,y,expectedTargetId} where x,y is the
+        // minecart STATION tile and expectedTargetId selects one advertised
+        // (station, destination) ride. LiveVerified: the target-version
+        // native-local gate passed (fixtures/stardew/RUNBOOK.md) on the repaired
+        // fixture (scenario name + real UnlockCondition); publication review is
+        // still owed for the final `published` rung.
+        E("ride_minecart", "transport_warps", FarmhandActionHandlerGroup.Movement, MinecartRide(), FarmhandActionLifecycle.LiveVerified),
         E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage()), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem()),
@@ -164,6 +176,17 @@ public static class FarmhandActionCatalog
         null,
         new FarmhandActionObservationBindingDescriptor("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
     private static FarmhandActionDescriptor SlotTarget() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedTargetId","string"));
+
+    /// <summary>
+    /// ride_minecart carries the station tile plus the opaque published ride
+    /// selector, and names the ride's own terminal so the Host can map exactly
+    /// this action's postcondition instead of a bare coordinate pair.
+    /// </summary>
+    private static FarmhandActionDescriptor MinecartRide() => A(
+        null,
+        null,
+        "minecart_ride_completed",
+        ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string"));
 
     /// <summary>advance_day carries no arguments: its target is the actor's own bed and its
     /// readiness is native state, so no client coordinate, slot, or target identity is trusted.</summary>

@@ -225,17 +225,21 @@ test("rejects envelope, registration, and lifecycle drift with exact codes", asy
   fails("readonly_subset_invalid", () => validateActionProjectionParity(readonlyViolation));
 
   const experimentalViolation = clone(snapshot);
-  // Every action has passed its live run, so the experimental list is empty and
-  // there is no experimental action left to mislabel. Exercise the same guard by
-  // MOVING one visible action onto the experimental rung: removing it from the
-  // executable list keeps the partition complete (no overlap, no size change),
+  // The experimental list now legitimately holds `ride_minecart`, so the mutation
+  // must ADD one visible action to it rather than REPLACE it: replacing would drop
+  // the real entry, shrink the partition, and fail the partition guard before the
+  // experimental subset guard this case is about. Removing the moved action from
+  // the executable list keeps the partition complete (no overlap, no size change),
   // so the failure can only come from the experimental subset check itself.
   const movedId = experimentalViolation.lifecycle.executableActionIds[0];
   experimentalViolation.lifecycle.executableActionIds =
     experimentalViolation.lifecycle.executableActionIds.filter(
       (actionId) => actionId !== movedId,
     );
-  experimentalViolation.lifecycle.experimentalActionIds = [movedId];
+  experimentalViolation.lifecycle.experimentalActionIds = [
+    ...experimentalViolation.lifecycle.experimentalActionIds,
+    movedId,
+  ].sort();
   fails("experimental_subset_invalid", () => validateActionProjectionParity(experimentalViolation));
 });
 

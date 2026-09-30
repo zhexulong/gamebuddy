@@ -113,6 +113,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("pickup_item", "world_not_ready")]
     [InlineData("ship_item", "farm_required")]
     [InlineData("travel", "world_not_ready")]
+    [InlineData("ride_minecart", "world_not_ready")]
     public void MatchingActorIdentity_ClearsTheGuard_AndIsRefusedByReadiness(string action, string expectedReasonCode)
         => Run(action, actorId: long.Parse(ScopePlayerId))
             .Should().Be(expectedReasonCode,
@@ -158,6 +159,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("pickup_item")]
     [InlineData("ship_item")]
     [InlineData("travel")]
+    [InlineData("ride_minecart")]
     public void MismatchedActorIdentity_FailsClosed(string action)
         => Run(action, actorId: 2002L)
             .Should().Be("execution_scope_mismatch",
@@ -203,6 +205,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("pickup_item")]
     [InlineData("ship_item")]
     [InlineData("travel")]
+    [InlineData("ride_minecart")]
     public void AbsentActor_FailsClosed(string action)
         => Run(action, actorId: null)
             .Should().Be("world_not_ready",
@@ -385,6 +388,9 @@ public sealed class ScopeBoundActorAdmissionTests
         "move_to_tile" => new BridgeExecutionArgs { X = 5, Y = 5 },
         "enter_exit" => new BridgeExecutionArgs { X = 5, Y = 5 },
         "travel" => new BridgeExecutionArgs { X = 5, Y = 5 },
+        // ride_minecart names the STATION tile plus one advertised ride; the raw
+        // shape is what matters here, not the published identity.
+        "ride_minecart" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedTargetId = "minecart_0123456789abcdef" },
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "no dispatch argument shape is recorded for this action"),
     };
 
@@ -412,8 +418,8 @@ public sealed class ScopeBoundActorAdmissionTests
             }
 
             // A one-line wrapper delegates to a shared admission site instead of
-            // repeating the proof: enter_exit and travel both front
-            // RequestLocalDoorTransition. Resolving that delegation is what keeps this
+            // repeating the proof: enter_exit, travel and ride_minecart all front
+            // a shared guarded body. Resolving that delegation is what keeps this
             // derivation honest — reading only the wrapper's own body would report an
             // inherited proof as absent and silently shrink the guarded set.
             foreach ((string method, string body) in declared)

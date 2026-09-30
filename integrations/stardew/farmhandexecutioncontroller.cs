@@ -1416,7 +1416,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("craft_item", StringComparer.Ordinal) ? DiscoverCraftingRecipeTargets(player) : null,
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingRecipeTargets(player) : null,
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingStationTargets(player) : null,
-            advertisedCapabilities.Contains("travel", StringComparer.Ordinal) ? DiscoverMinecartTargets(player) : null,
+            advertisedCapabilities.Contains("ride_minecart", StringComparer.Ordinal) ? DiscoverMinecartTargets(player) : null,
             // Macro time context. Game1.Date/Game1.timeOfDay are the same values the
             // native behaviour code reads, so publishing them lets the companion
             // reason about time without the Mod interpreting it for them.

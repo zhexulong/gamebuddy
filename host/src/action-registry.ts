@@ -44,6 +44,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["warp"],
   ),
   actionAdapter(
+    "ride_minecart",
+    "Ride a native minecart",
+    "Ride one advertised native minecart objective from a live station tile; the Mod re-resolves the network, destination and price on the game thread.",
+    ["minecart_station"],
+  ),
+  actionAdapter(
     "enter_exit",
     "Enter or exit through a discovered door",
     "Use a live native door transition from the current Stardew location.",
@@ -323,6 +329,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   equip_tool: "stardew_equip_tool",
   navigate_to_destination: "stardew_navigate_to_destination",
   travel: "stardew_travel",
+  ride_minecart: "stardew_ride_minecart",
   enter_exit: "stardew_enter_exit",
   till_soil: "stardew_till_soil",
   pickup_forage: "stardew_pickup_forage",
@@ -489,6 +496,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "interact_npc_with_item",
   "pet_animal",
   "advance_day",
+  "ride_minecart",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
@@ -573,6 +581,16 @@ export function isModDescriptorComplete(
     if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
     if (descriptor.effect !== "write") return false;
     if (!descriptor.postcondition) return false;
+    return true;
+  }
+  if (actionId === "ride_minecart") {
+    // The station tile plus one opaque advertised ride selector, both mandatory:
+    // `ride_minecart` has no "plain warp" form, unlike `travel`.
+    const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
+    const expected = ["x", "y", "expectedTargetId"];
+    if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
+    if (descriptor.effect !== "write") return false;
+    if (descriptor.postcondition !== "minecart_ride_completed") return false;
     return true;
   }
   if (actionId === "advance_day") {

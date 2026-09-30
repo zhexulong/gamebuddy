@@ -43,7 +43,7 @@ public sealed class RideMinecartActionTests
         ride!.FamilyId.Should().Be("transport_warps");
         ride.Kind.Should().Be(FarmhandOperationKind.Execution);
         ride.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Movement);
-        ride.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        ride.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         ride.Descriptor.Should().NotBeNull();
         // Every declared argument is mandatory: there is no "plain" minecart form,
         // and the selector names one published ride from the station tile.

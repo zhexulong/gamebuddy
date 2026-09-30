@@ -147,7 +147,7 @@
     },
     {
       "actionId": "ride_minecart",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
