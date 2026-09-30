@@ -4,6 +4,7 @@ import {
   connectNativeLocalClient,
   observeFresh,
   readNativeClientConfig,
+  validateNativeLocalFixturePolicy,
   summarizeSnapshot,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostProductionModule } from "./lib/host-production-module.mjs";
@@ -180,13 +181,11 @@ function validateFixtureConfig(config) {
   if (
     fixture?.Enable !== true ||
     fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== "navigation_read_only_v1" ||
-    config.ActionPolicyVersion !== 0 ||
-    !Array.isArray(config.EnabledActions) ||
-    JSON.stringify(config.EnabledActions) !== JSON.stringify(["inspect_world_map", "find_destination"])
+    fixture.FixtureScenario !== "navigation_read_only_v1"
   )
     throw new Error("navigation_read_only_fixture_config_invalid");
 }
+  validateNativeLocalFixturePolicy(value, { requiredActions: ["inspect_world_map", "find_destination"] });
 
 function assertCapabilities(snapshot, expectedCapabilities) {
   const actual = [...(snapshot?.capabilities ?? [])].sort();
@@ -286,8 +285,7 @@ async function withdrawReadOnlyCapabilities(configPath) {
   } catch {
     throw new Error("navigation_read_only_fixture_config_invalid");
   }
-  if (!Array.isArray(config.EnabledActions) || config.ActionPolicyVersion !== 0)
-    throw new Error("navigation_read_only_fixture_config_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: ["inspect_world_map", "find_destination"] });
   await writeFile(configPath, `${JSON.stringify({ ...config, EnabledActions: [] }, null, 2)}\n`);
 }
 
