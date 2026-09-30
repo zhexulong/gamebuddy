@@ -11,6 +11,7 @@ import {
 } from "./check-tavern-release-prerequisites.mjs";
 
 import { prepareReportTarget, writeReport } from "./run-tavern-narrative-gate.mjs";
+import { MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS } from "./lib/tavern-mounted-operation-vocabulary.mjs";
 
 export { CHAT_TAVERN_LIVE_PROFILE, DEFAULT_TAVERN_RELEASE_PROFILE };
 
@@ -48,6 +49,11 @@ const RUN_EVIDENCE_ASSERTIONS = Object.freeze([
   "providerPreSendSerialized",
   "realTurnOutcomeObserved",
 ]);
+// The runner also reports an honest negative; it is NOT a pass-gating assertion, but
+// dropping it presented a perfect 5/5 and hid the runner's own statement that
+// provider acceptance / a semantic answer was not proven. `false` is carried, not
+// filtered.
+const RUN_DISCLOSURE_ASSERTIONS = Object.freeze(["providerAcceptedOrSemanticAnswer"]);
 
 const COMPOSED_TAVERN_PROFILE_KEYS = Object.freeze([
   "profileId",
@@ -65,11 +71,17 @@ const OPERATION_ROUTE_IDS = Object.freeze({
   "chat.submission_status": "chat.submission_status",
   "memory.mutate": "memory.mutate",
   "world-info.bind": "world-info.bind",
-  // Declared by the mounted tavern management profile
-  // (host/src/composition/desktop-presentation-admission-owner.ts).
+  // Every settings surface the mounted tavern management profile declares is
+  // served through the route of the same id. The connection surface and its
+  // siblings are listed explicitly so a profile that declares a settings
+  // operation the gate does not know still fails membership rather than
+  // passing unnoticed.
   "settings.voice.read": "settings.voice.read",
   "settings.voice.consent": "settings.voice.consent",
   "settings.voice.devices": "settings.voice.devices",
+  ...Object.fromEntries(
+    MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => id.startsWith("settings.")).map((id) => [id, id]),
+  ),
 });
 const CONTRACT_ROUTE_IDS = new Set([
   "bootstrap",
@@ -86,12 +98,13 @@ const CONTRACT_ROUTE_IDS = new Set([
   "memory.mutate",
   "world-info.read",
   "world-info.bind",
-  // The voice settings surface is part of the mounted tavern management
-  // profile (host/src/tavern/browser-contract/index.ts). Without them here the
-  // gate rejected the real production profile it is meant to validate.
+  // The settings surfaces are part of the mounted tavern management profile
+  // (host/src/tavern/browser-contract/index.ts). Without them here the gate
+  // rejected the real production profile it is meant to validate.
   "settings.voice.read",
   "settings.voice.consent",
   "settings.voice.devices",
+  ...MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => id.startsWith("settings.")),
   "events",
 ]);
 const CONTRACT_NAVIGATION_ITEM_IDS = new Set(["chat", "memory"]);
@@ -369,6 +382,15 @@ function contentFreeNarrativeSummary(role, value) {
         value.assertions[key],
       ]),
     );
+    // The runner's non-passing disclosures ride along so a reader sees them. They
+    // never gate the verdict - only RUN_EVIDENCE_ASSERTIONS do that - but a report
+    // that showed only the passing half was misrepresenting its own evidence.
+    summary.disclosures = Object.fromEntries(
+      RUN_DISCLOSURE_ASSERTIONS.filter((key) => typeof value.assertions[key] === "boolean").map((key) => [
+        key,
+        value.assertions[key],
+      ]),
+    );
   }
   if (value.statuses && typeof value.statuses === "object" && !Array.isArray(value.statuses)) {
     if (typeof value.statuses.turn === "string") summary.turn = safeCode(value.statuses.turn, "unavailable");
@@ -532,6 +554,30 @@ export async function runTavernReleaseLiveOrchestrator({
   runNarrative = runNarrativeProcess,
   temporaryReportPath,
 } = {}) {
+  // Verdict-critical INPUTS are validated before any live run. The mapping check is a
+  // pure function over two caller-supplied files with zero product interaction, and
+  // with `mapping.valid === false` a `passed` verdict is unreachable at :496 - so
+  // launching three production-grade live sessions to discover a missing input file
+  // burns real turns for a fact that was knowable at invocation time. Measured on the
+  // audited artifacts: 9 of 12 live turns belonged to attempts whose verdict was
+  // already impossible when they started.
+  const inputChecks = validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping });
+  if (inputChecks.checks.length > 0) {
+    return {
+      gate: ORCHESTRATOR_SCHEMA,
+      profile,
+      plannedRunKinds: [...NARRATIVE_RUN_PLAN],
+      runKindSemantics: "attempt_labels_not_exercised_distinctions",
+      prerequisite: { verdict: "not_attempted", checks: [{ id: "verdict_inputs", status: "blocked" }] },
+      runs: [],
+      mappedOperationIds: [],
+      verdict: "blocked",
+      reasonCode: "verdict_inputs_incomplete",
+      blockerIds: inputChecks.checks.map((check) => check.id),
+      claims: RELEASE_SCOPE_CLAIMS,
+    };
+  }
+
   let prerequisiteReport;
   try {
     prerequisiteReport = await prerequisites({ profile });
@@ -574,10 +620,18 @@ export async function runTavernReleaseLiveOrchestrator({
     prerequisites: async () => prerequisiteReport,
   });
 
+  // A narrative run never receives its role: `runNarrativeProcess` spawns
+  // [script, "--report", path] and the child accepts only `--report`. So `main`,
+  // `failure` and `recovery` are three repetitions of the SAME happy path, and the
+  // artifact must not imply otherwise. The planned kinds are recorded as unexercised
+  // distinctions rather than as evidence that failure/recovery behaviour occurred.
   return {
     gate: ORCHESTRATOR_SCHEMA,
     profile,
     plannedRunKinds: [...NARRATIVE_RUN_PLAN],
+    // Stated in the artifact, not only in a code comment, because the artifact is
+    // what a reader has.
+    runKindSemantics: "attempt_labels_not_exercised_distinctions",
     prerequisite,
     runs,
     mappedOperationIds: gate.mappedOperationIds,
