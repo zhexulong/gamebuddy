@@ -6,7 +6,7 @@ using StardewValley.TokenizableStrings;
 
 namespace GameBuddy.Stardew;
 
-// Minecart travel as `travel`'s objective family extension.
+// Native minecart ride for the `ride_minecart` action.
 //
 // Native 1.6 minecart travel is data-driven, not a Warp object:
 //
@@ -19,22 +19,22 @@ namespace GameBuddy.Stardew;
 //         -> Game1.warpFarmer(location, tileX, tileY, facing)
 //
 // The player path opens a menu; the ride itself is the public, UI-free
-// `MinecartWarp`. That is the same seam shape as the fridge extension of
-// chest_store: no parallel transaction, only native resolution plus the
-// game's own condition queries.
+// `MinecartWarp`. The Mod performs only that ride plus the game's own condition
+// queries, so no menu, ticket dialogue or second warp path is introduced.
 //
-// Why this is a `travel` objective family and not a new action: `travel` already
-// means "use one discovered structured travel objective at this source tile",
-// its receipt contract is the Warped postcondition (`travel_completed` with
-// expected/actual), and MinecartWarp ends in exactly that warp. Adding a new
-// action would duplicate the same lifecycle and receipt for no new player
-// intent. `travel`'s wire stays `{x, y}`; the optional `expectedTargetId`
-// carries the destination choice, exactly as chest_store carries its container
-// choice.
+// Why this is its own action: both the Mod's execution parser
+// (BridgeProtocol.TryDeserializeExecutionRequest) and FarmhandExecutionAcceptance
+// are exact-shape allow-lists, and FarmhandActionArgument has no
+// optional-argument concept. A minecart ride therefore cannot be expressed as an
+// extra optional key on `travel` ({x,y}); it is `ride_minecart`
+// ({x,y,expectedTargetId}) where x,y is the minecart STATION tile. Verified live
+// on the target version: the optional-key form was rejected at the parser as
+// navigation_execution_parse_rejected and at acceptance as
+// bridge_rejected:invalid_execution_request.
 //
 // Destination choice stays with the companion: one station tile can offer many
 // destinations, so discovery publishes one entry per (station, destination) and
-// the accepted travel must match the exact published TargetId. The Mod never
+// the accepted ride must match the exact published TargetId. The Mod never
 // picks a destination for the player.
 internal sealed partial class ExecutionManager
 {
