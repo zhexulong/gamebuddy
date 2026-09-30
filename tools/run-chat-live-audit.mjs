@@ -374,7 +374,17 @@ export function probeVerdict({ gate, keywords }) {
   if (keywords === undefined) return Object.freeze({ event: "observability_gap", reason: "probe_keywords_missing" });
   if (keywords.hit && keywords.forbiddenCount === 0) return Object.freeze({ event: "needle.hit" });
   if (!keywords.hit && keywords.forbiddenCount === 0) return Object.freeze({ event: "needle.miss" });
-  return Object.freeze({ event: "distractor.confused" });
+  // `distractor.confused` has two distinct causes and they must stay
+  // distinguishable in the report, because only one of them is a memory
+  // failure: `needle_only` means the needle WAS recalled and a forbidden word
+  // merely co-occurred (which a correct reply that denies the distractor also
+  // does), while `recall_failed` means the needle was not recalled at all.
+  // The code is unchanged and the frozen vocabulary is untouched; the cause
+  // rides on the already-permitted scalar `reason` meta key.
+  return Object.freeze({
+    event: "distractor.confused",
+    reason: keywords.hit ? "needle_only" : "recall_failed",
+  });
 }
 
 /** Substring keyword normalization mirroring the conversational quality gate. */
