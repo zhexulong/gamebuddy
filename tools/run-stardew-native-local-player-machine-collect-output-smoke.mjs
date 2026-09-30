@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   delay,
   executeFresh,
@@ -15,7 +15,7 @@ const ACTION_LOAD = "machine_load";
 const ACTION_COLLECT = "machine_collect_output";
 const SCENARIO = "native_machine_coffee_load_v1";
 const EXPECTED_ACTIONS = [ACTION_LOAD, ACTION_COLLECT];
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION_LOAD, ACTION_COLLECT];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION_LOAD, ACTION_COLLECT];
 
 /** Execute the machine-collect contract against an already-connected bridge session. */
 export async function runMachineCollectOutputSmoke(
@@ -29,7 +29,7 @@ export async function runMachineCollectOutputSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     const before = await requireActionableMachineSnapshot(client);
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const loadTarget = chooseOnlyLoadableKeg(before);
     const loadAccepted = await execute(
       client,
@@ -64,7 +64,7 @@ export async function runMachineCollectOutputSmoke(
       throw new Error(`machine_collect_failed:${collectTerminal.reasonCode}`);
     const evidence = parseEvidence(collectTerminal.evidence);
     const after = await requireActionableMachineSnapshot(client);
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const reread = (after.machineTargets ?? []).find((entry) => entry?.targetId === loadTarget.targetId);
     const inventoryBefore = parseNonNegativeSafeInteger(evidence.inventory_coffee_before);
     const inventoryAfter = parseNonNegativeSafeInteger(evidence.inventory_coffee_after);

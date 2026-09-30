@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -14,7 +14,7 @@ import {
 
 const SCENARIO = "native_plant_seed_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "plant_seed"];
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "plant_seed", "travel"];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "plant_seed", "travel"];
 const EXPECTED_EVIDENCE_KEYS = ["crop", "inventory_after", "inventory_before", "item", "location", "target", "tile"];
 
 /** Execute the plant-seed contract against an already-connected bridge session. */
@@ -36,7 +36,7 @@ export async function runPlantSeedSmoke(
   try {
     requireExactCapabilities(client.state?.capabilities, "hello");
     let snapshot = await observeFresh(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     snapshot = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
@@ -264,7 +264,7 @@ function chooseReachableSeedTarget(snapshot) {
 function requireExactCapabilities(actual, source) {
   if (
     JSON.stringify([...(Array.isArray(actual) ? actual : [])].sort()) !==
-    JSON.stringify([...EXPECTED_CAPABILITIES].sort())
+    JSON.stringify([...REQUIRED_CAPABILITIES].sort())
   )
     throw new Error(`native_local_plant_seed_${source}_capability_not_isolated`);
 }

@@ -17,7 +17,7 @@
  * mirrors the Host side of the body_node_admission_challenge/result contract.
  */
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   observeFresh,
   readNativeClientConfig,
@@ -30,7 +30,7 @@ import {
 
 const SCENARIO = "native_machine_coffee_load_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "machine_inspect", "machine_load"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "inspect_self",
   "machine_inspect",
@@ -135,7 +135,7 @@ export async function runMachineABSmoke(
     validateNativeLocalFixtureConfig(config);
     if (typeof bindAdmission !== "function") throw new Error("admission_binder_required");
     const before = await requireActionableMachineSnapshot(client);
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const target = chooseOnlyLoadableKeg(before);
     // Nodes carry no clock field: the Mod derives each action's execution budget
     // from its descriptor-owned static watchdog at admission time (watchdog

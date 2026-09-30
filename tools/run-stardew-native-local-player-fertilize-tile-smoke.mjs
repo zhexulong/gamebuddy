@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -13,7 +13,7 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_fertilize_tile_v1";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "fertilize_tile", "inspect_self", "move_to_tile", "travel"];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "fertilize_tile", "inspect_self", "move_to_tile", "travel"];
 
 /** Execute the fertilize contract against an already-connected bridge session. */
 export async function runFertilizeTileSmoke(
@@ -33,7 +33,7 @@ export async function runFertilizeTileSmoke(
   assertNativeLocalFixtureConfig(config, SCENARIO);
   try {
     let snapshot = await observeFresh(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     snapshot = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);

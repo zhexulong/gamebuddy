@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -12,7 +12,7 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 const ACTION = "cook_recipe";
 const SCENARIO = "native_cook_recipe_v1";
 const RECIPE_ALIAS = "Fried_Egg";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Execute the cook_recipe contract against an already-connected bridge session. */
 export async function runCookRecipeSmoke(
@@ -25,7 +25,7 @@ export async function runCookRecipeSmoke(
   const startedAt = Date.now();
   try {
     const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const requestId = `native_local_cook_recipe_${Date.now()}`;
     const accepted = await executeFresh(client, {
       requestId,
@@ -44,7 +44,7 @@ export async function runCookRecipeSmoke(
       throw new Error(`cook_recipe_failed:${terminal.state}:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
     const after = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const passed =
       after.revision >= terminal.revision &&
       evidence.station?.startsWith("cookout_kit@") === true &&

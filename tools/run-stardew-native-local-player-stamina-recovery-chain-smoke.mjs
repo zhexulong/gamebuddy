@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -40,7 +40,7 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
  */
 const SCENARIO = "native_stamina_recovery_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "till_soil", "use_item"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "equip_tool",
   "inspect_self",
@@ -77,7 +77,7 @@ export async function runStaminaRecoveryChainSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeStaminaActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
 
     // The fixture's declared Given is low stamina. A chain whose breakpoint never
     // happened proves nothing, so refuse before submitting anything.
@@ -497,7 +497,7 @@ function resolveFarmWarp(snapshot) {
 
 async function observeStaminaActionable(client) {
   const snapshot = await observeFresh(client, { actionable: true });
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   if (
     !Number.isInteger(snapshot.revision) ||
     typeof snapshot.location !== "string" ||

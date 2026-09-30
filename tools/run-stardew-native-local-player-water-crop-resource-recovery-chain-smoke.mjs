@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -39,7 +39,7 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
  */
 const SCENARIO = "native_water_crop_empty_can_recovery_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "water_crop", "refill_watering_can"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "equip_tool",
   "inspect_self",
@@ -78,7 +78,7 @@ export async function runWaterCropResourceRecoveryChainSmoke(
       check: (latest) =>
         typeof latest.location === "string" && latest.location === "Farm" && latest.activeExecution == null,
     });
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
 
     // The fixture's documented precondition is exactly one EMPTY can. Fail closed
     // on template drift rather than producing a chain with no rejection: a

@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -15,7 +15,7 @@ import {
 
 const SCENARIO = "native_water_crop_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "water_crop"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "equip_tool",
   "inspect_self",
@@ -42,7 +42,7 @@ export async function runWaterCropSmoke(
   validateNativeLocalConfig(config);
   try {
     let snapshot = await observeActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
 
@@ -335,7 +335,7 @@ function isWateringCanLabel(label) {
 
 async function observeActionable(client) {
   const snapshot = await observeFresh(client, { actionable: true });
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   if (
     !Number.isInteger(snapshot.revision) ||
     typeof snapshot.location !== "string" ||

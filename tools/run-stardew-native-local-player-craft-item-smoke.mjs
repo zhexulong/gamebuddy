@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -12,7 +12,7 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 const ACTION = "craft_item";
 const SCENARIO = "native_craft_item_v1";
 const RECIPE_ALIAS = "Wood_Fence";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Execute the craft_item contract against an already-connected bridge session. */
 export async function runCraftItemSmoke(
@@ -25,7 +25,7 @@ export async function runCraftItemSmoke(
   const startedAt = Date.now();
   try {
     const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const requestId = `native_local_craft_item_${Date.now()}`;
     const accepted = await executeFresh(client, {
       requestId,
@@ -44,7 +44,7 @@ export async function runCraftItemSmoke(
       throw new Error(`craft_item_failed:${terminal.state}:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
     const after = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const passed =
       after.revision >= terminal.revision &&
       evidence.disposition === "added_to_inventory" &&

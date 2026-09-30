@@ -4,7 +4,7 @@ import {
   readNativeClientConfig,
   summarizeSnapshot,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "find_destination", "inspect_self", "inspect_world_map"];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "find_destination", "inspect_self", "inspect_world_map"];
 
 /**
  * Exercise the published Navigation read-only contract against one ordinary,
@@ -18,16 +18,16 @@ export async function runNavigationReadOnlySmoke(
 ) {
   validateFixtureConfig(config);
   const before = await observeFresh(client, { actionable: true });
-  assertExactCapabilities(before);
+  assertRequiredCapabilities(before);
   const firstMap = await client.navigationRead({ operation: "inspect_world_map", args: {} });
   assertWorldMapResult(firstMap);
   const afterInspect = await observeFresh(client, { actionable: true });
-  assertExactCapabilities(afterInspect);
+  assertRequiredCapabilities(afterInspect);
   const query = chooseQuery(firstMap);
   const find = await client.navigationRead({ operation: "find_destination", args: { query } });
   assertFindResult(find);
   const afterFind = await observeFresh(client, { actionable: true });
-  assertExactCapabilities(afterFind);
+  assertRequiredCapabilities(afterFind);
   if (afterInspect.revision !== before.revision || afterFind.revision !== before.revision)
     throw new Error("navigation_read_only_revision_changed");
   if (receipts.length !== 0 || client.state.latestReceipt !== null)
@@ -91,9 +91,9 @@ function validateFixtureConfig(config) {
     throw new Error("native_local_fixture_topology_not_isolated");
 }
 
-function assertExactCapabilities(snapshot) {
+function assertRequiredCapabilities(snapshot) {
   const actual = [...(snapshot.capabilities ?? [])].sort();
-  const expected = [...EXPECTED_CAPABILITIES].sort();
+  const expected = [...REQUIRED_CAPABILITIES].sort();
   if (JSON.stringify(actual) !== JSON.stringify(expected))
     throw new Error("navigation_read_only_capability_surface_mismatch");
 }

@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -14,7 +14,7 @@ import {
 const ACTION = "machine_load";
 const SCENARIO = "native_machine_coffee_load_v1";
 const EXPECTED_ACTIONS = [ACTION];
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Execute the machine-load contract against an already-connected bridge session. */
 export async function runMachineLoadSmoke(
@@ -28,7 +28,7 @@ export async function runMachineLoadSmoke(
   try {
     validateConfig(config);
     const before = await actionableSnapshot(client);
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const target = chooseOnlyLoadableKeg(before);
     const requestId = `native_local_machine_load_${Date.now()}`;
     const accepted = await executeFresh(client, {
@@ -57,7 +57,7 @@ export async function runMachineLoadSmoke(
       requireActionable: true,
       check: (snapshot) => Array.isArray(snapshot.machineTargets),
     });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const reread = (after.machineTargets ?? []).find((entry) => entry?.targetId === target.targetId);
     const passed =
       terminal.executionId === accepted.executionId &&
