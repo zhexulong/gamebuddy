@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import {
   STARDEW_EXECUTION_MANAGER_FILES,
+  STARDEW_NATIVE_TOOL_USE_SEAM,
   STARDEW_TOOL_FAMILY,
   validateToolFamilyStaminaEvidence,
 } from "./check-stardew-tool-family-stamina-evidence.mjs";
@@ -10,24 +11,39 @@ import {
 const STAMINA = "stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2";
 
 /**
+ * The shared seam exactly as the checker requires it: the three `Farmer.useTool`
+ * steps, in native order. Cases below corrupt one step at a time, so a checker
+ * that only looked for a bare `checkForExhaustion` would pass them all.
+ */
+const SEAM_SOURCE = `private static void ${STARDEW_NATIVE_TOOL_USE_SEAM}(Tool tool, GameLocation location, int tileX, int tileY, Farmer who, float staminaBefore)
+{
+    tool.DoFunction(location, tileX * 64 + 32, tileY * 64 + 32, 1, who);
+    who.lastClick = Vector2.Zero;
+    who.checkForExhaustion(staminaBefore);
+}`;
+
+/**
  * One synthetic source per handler. Each file carries exactly one member, so a
  * corruption in one receipt can never be masked by a neighbor's evidence.
+ *
+ * `seamCall` is the handler's native swing: a compliant handler routes it through
+ * the shared seam, and the bypass case below replaces it with a bare `DoFunction`.
  */
-function handlerSource(handler, entry, { stamina = STAMINA, includeTerminal = true, exhaustion = true } = {}) {
+function handlerSource(handler, entry, { stamina = STAMINA, includeTerminal = true, seamCall = `UseNativeToolOnTile(tool, location, 1, 2, Game1.player, staminaBefore);` } = {}) {
   const receipt = includeTerminal
     ? `string evidence = $"a=1;${stamina}";
       return this.RememberTerminal(requestId, "x", ExecutionState.Succeeded, "${entry.terminal}", evidence);`
     : `return this.RememberTerminal(requestId, "x", ExecutionState.Accepted, "accepted", null);`;
-  const fatigue = exhaustion ? "\n    Game1.player.checkForExhaustion(staminaBefore);" : "";
   return `public LocalExecutionReceipt ${handler}(string requestId)
 {
-    // ${entry.tool} ${entry.dispatch}${fatigue}
+    // ${entry.tool} ${entry.dispatch}
+    ${seamCall}
     ${receipt}
 }`;
 }
 
 function completeSources(handlers = STARDEW_TOOL_FAMILY) {
-  const sources = {};
+  const sources = { "fake/ExecutionManager.cs": SEAM_SOURCE };
   for (const [handler, entry] of Object.entries(handlers)) {
     sources[`fake/${handler}.cs`] = handlerSource(handler, entry);
   }
@@ -56,14 +72,48 @@ test("a missing handler is reported rather than silently skipped", () => {
   assert.ok(failures.some((f) => /RequestLocalTillSoil/.test(f) && /not found/.test(f)));
 });
 
-test("a direct-dispatch tool that never calls checkForExhaustion is reported", () => {
+test("a direct-dispatch tool that hand-rolls DoFunction without the seam is reported", () => {
   const sources = completeSources();
-  // A direct-dispatch tool (axe) must set the persistent exhaustion consequence.
+  // A direct-dispatch tool (axe) that bypasses the shared seam never inherits
+  // Farmer.useTool's lastClick/checkForExhaustion steps.
   sources["fake/RequestLocalChopTreeSource.cs"] = handlerSource("RequestLocalChopTreeSource", STARDEW_TOOL_FAMILY.RequestLocalChopTreeSource, {
-    exhaustion: false,
+    seamCall: "axe.DoFunction(location, 1, 2, 1, Game1.player);",
   });
   const failures = validateToolFamilyStaminaEvidence(sources);
-  assert.ok(failures.some((f) => /RequestLocalChopTreeSource/.test(f) && /checkForExhaustion/.test(f)));
+  assert.ok(
+    failures.some((f) => /RequestLocalChopTreeSource/.test(f) && /UseNativeToolOnTile/.test(f)),
+    `expected a bypass failure, got ${JSON.stringify(failures)}`,
+  );
+});
+
+test("a seam that drops the lastClick reset is reported", () => {
+  const sources = completeSources();
+  sources["fake/ExecutionManager.cs"] = SEAM_SOURCE.replace("    who.lastClick = Vector2.Zero;\n", "");
+  const failures = validateToolFamilyStaminaEvidence(sources);
+  assert.ok(
+    failures.some((f) => /UseNativeToolOnTile/.test(f) && /lastClick = Vector2\.Zero/.test(f)),
+    `expected a lastClick failure, got ${JSON.stringify(failures)}`,
+  );
+});
+
+test("a seam that drops the exhaustion consequence is reported", () => {
+  const sources = completeSources();
+  sources["fake/ExecutionManager.cs"] = SEAM_SOURCE.replace("    who.checkForExhaustion(staminaBefore);\n", "");
+  const failures = validateToolFamilyStaminaEvidence(sources);
+  assert.ok(
+    failures.some((f) => /UseNativeToolOnTile/.test(f) && /checkForExhaustion/.test(f)),
+    `expected a checkForExhaustion failure, got ${JSON.stringify(failures)}`,
+  );
+});
+
+test("a missing seam is reported even when every handler calls it", () => {
+  const sources = completeSources();
+  delete sources["fake/ExecutionManager.cs"];
+  const failures = validateToolFamilyStaminaEvidence(sources);
+  assert.ok(
+    failures.some((f) => /UseNativeToolOnTile/.test(f) && /declared in no execution-manager file/.test(f)),
+    `expected a missing-seam failure, got ${JSON.stringify(failures)}`,
+  );
 });
 
 test("an animation-driven tool is exempt from the manual exhaustion call", () => {

@@ -36,9 +36,7 @@ internal sealed partial class ExecutionManager
         float before = tree.health.Value;
         bool stumpBefore = tree.stump.Value;
         float staminaBefore = Game1.player.Stamina;
-        axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
-        Game1.player.lastClick = Vector2.Zero;
-        Game1.player.checkForExhaustion(staminaBefore);
+        UseNativeToolOnTile(axe, location, targetX, targetY, Game1.player, staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         float expectedStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
@@ -69,9 +67,7 @@ internal sealed partial class ExecutionManager
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || !NativeItemPredicates.IsOneHitBreakableStone(rock) || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
         int before = rock.MinutesUntilReady;
         float staminaBefore = Game1.player.Stamina;
-        pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
-        Game1.player.lastClick = Vector2.Zero;
-        Game1.player.checkForExhaustion(staminaBefore);
+        UseNativeToolOnTile(pickaxe, location, targetX, targetY, Game1.player, staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         // Pickaxe covers power with who.toolPower.Value before deducting; a plain
@@ -114,9 +110,7 @@ internal sealed partial class ExecutionManager
         if (hoeDirtPresentBefore)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_hoedirt_present_before", $"target={targetX},{targetY};hoedirt_present_before=true");
         float staminaBefore = Game1.player.Stamina;
-        hoe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
-        Game1.player.lastClick = Vector2.Zero;
-        Game1.player.checkForExhaustion(staminaBefore);
+        UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
@@ -157,9 +151,7 @@ internal sealed partial class ExecutionManager
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
         float staminaBefore = Game1.player.Stamina;
-        pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
-        Game1.player.lastClick = Vector2.Zero;
-        Game1.player.checkForExhaustion(staminaBefore);
+        UseNativeToolOnTile(pickaxe, location, targetX, targetY, Game1.player, staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         // Pickaxe covers power with toolPower.Value (tap => 0), so a basic
@@ -227,9 +219,7 @@ internal sealed partial class ExecutionManager
         LocalSoilTillingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, this.revision, requestedDeadlineMs);
         string before = "none";
         float staminaBefore = Game1.player.Stamina;
-        hoe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
-        Game1.player.lastClick = Vector2.Zero;
-        Game1.player.checkForExhaustion(staminaBefore);
+        UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
@@ -384,8 +374,7 @@ internal sealed partial class ExecutionManager
         float staminaBefore = Game1.player.Stamina;
         while (tree.health.Value > 0f && swingCount < maximumSwingCount)
         {
-            axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
-            Game1.player.checkForExhaustion(staminaBefore);
+            UseNativeToolOnTile(axe, location, targetX, targetY, Game1.player, staminaBefore);
             swingCount++;
         }
         float staminaAfter = Game1.player.Stamina;

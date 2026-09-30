@@ -81,6 +81,19 @@ export const STARDEW_EXHAUSTION_FAMILY = Object.freeze([
 ]);
 
 /**
+ * The one shared native tool-use seam. Every direct-dispatch tool-family handler
+ * routes its single `DoFunction` swing through this helper instead of hand-copying
+ * vanilla `Farmer.useTool`'s closing steps. Naming the seam here is what lets the
+ * exhaustion invariant be checked in two places at once: each handler must reach
+ * the seam (below), and the seam itself must still run both native steps (further
+ * below). Either half drifting is a failure.
+ */
+export const STARDEW_NATIVE_TOOL_USE_SEAM = "UseNativeToolOnTile";
+
+/** `Farmer.useTool`'s three native steps, in their native order. */
+const SEAM_REQUIRED_STEPS = Object.freeze(["DoFunction(", "lastClick = Vector2.Zero", "checkForExhaustion("]);
+
+/**
  * Handlers that drive their tool through native `BeginUsingTool` and let the
  * game run the swing animation. The native frame ends in `Farmer.useTool`, which
  * calls `checkForExhaustion` for them -- so, unlike the direct-dispatch family,
@@ -108,6 +121,46 @@ function handlerBody(source, signature) {
     }
   }
   return null;
+}
+
+/** The shared seam body, or null when no execution-manager file declares it. */
+function toolUseSeamBody(sources) {
+  const signature = `private static void ${STARDEW_NATIVE_TOOL_USE_SEAM}(`;
+  for (const text of Object.values(sources)) {
+    const body = handlerBody(text, signature);
+    if (body !== null) return body;
+  }
+  return null;
+}
+
+/**
+ * The seam half of the exhaustion invariant. A handler reaching the seam only
+ * helps if the seam still performs vanilla `Farmer.useTool`'s steps, in that
+ * order: dispatch the swing, clear the click anchor, then apply the exhaustion
+ * consequence. Weakening or reordering the seam is reported here.
+ */
+function seamStepFailures(sources) {
+  const body = toolUseSeamBody(sources);
+  if (body === null)
+    return [
+      `${STARDEW_NATIVE_TOOL_USE_SEAM}: the shared native tool-use seam is declared in no execution-manager file, so no direct-dispatch handler can inherit Farmer.useTool's lastClick/checkForExhaustion steps`,
+    ];
+
+  const failures = [];
+  let cursor = 0;
+  for (let step = 0; step < SEAM_REQUIRED_STEPS.length; step += 1) {
+    const required = SEAM_REQUIRED_STEPS[step];
+    const index = body.indexOf(required, cursor);
+    if (index < 0) {
+      const after = step === 0 ? "the swing dispatch that must come first" : `\`${SEAM_REQUIRED_STEPS[step - 1]}\``;
+      failures.push(
+        `${STARDEW_NATIVE_TOOL_USE_SEAM}: the seam body must run Farmer.useTool's \`${required}\` step in native order, after ${after}`,
+      );
+      continue;
+    }
+    cursor = index + required.length;
+  }
+  return failures;
 }
 
 export function validateToolFamilyStaminaEvidence(sources) {
@@ -155,13 +208,17 @@ export function validateToolFamilyStaminaEvidence(sources) {
       );
     }
     // Second invariant: a directly dispatched stamina-deducting tool must set the
-    // persistent exhaustion consequence the way Farmer.useTool does.
-    if (STARDEW_EXHAUSTION_FAMILY.includes(handler) && !body.includes("checkForExhaustion")) {
+    // persistent exhaustion consequence the way Farmer.useTool does. Checked in two
+    // halves, because the shared seam is where the consequence now lives: a handler
+    // that hand-rolls a bare `DoFunction` bypasses it, and a seam that drops or
+    // reorders a native step stops providing it for every caller at once.
+    if (STARDEW_EXHAUSTION_FAMILY.includes(handler) && !body.includes(`${STARDEW_NATIVE_TOOL_USE_SEAM}(`)) {
       failures.push(
-        `${handler}: direct tool dispatch never calls checkForExhaustion, so the vanilla cross-day exhaustion penalty (exhausted.Value -> half stamina next morning) is bypassed`,
+        `${handler}: direct tool dispatch does not route through ${STARDEW_NATIVE_TOOL_USE_SEAM}(), so it bypasses Farmer.useTool's lastClick/checkForExhaustion steps and the companion escapes the vanilla cross-day exhaustion penalty`,
       );
     }
   }
+  failures.push(...seamStepFailures(sources));
   return failures;
 }
 
