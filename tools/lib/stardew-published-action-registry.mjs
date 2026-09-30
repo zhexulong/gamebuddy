@@ -155,6 +155,10 @@ export async function readExperimentalStardewActionIds({
     if (!entry.includes("FarmhandActionLifecycle.Experimental")) continue;
     ids.push(match[1]);
   }
-  if (ids.length === 0 || new Set(ids).size !== ids.length) fail("invalid_experimental_set");
+  // An empty experimental set is legal: it means the last experimental
+  // registration moved up the ladder (e.g. ride_minecart -> live_verified) and
+  // nothing currently sits on the experimental rung. This is a stable,
+  // push-only policy: every promoted action removes itself here.
+  if (new Set(ids).size !== ids.length) fail("invalid_experimental_set");
   return Object.freeze(ids);
 }

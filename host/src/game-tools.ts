@@ -508,6 +508,19 @@ export function buildCandidateToolSchema(
     return Type.Object({}, { additionalProperties: false });
   }
 
+  if (actionId === "ride_minecart") {
+    // Station tile plus the opaque ride selector: both are copied verbatim from
+    // the minecartTargets entries of the most recent observation.
+    return Type.Object(
+      {
+        x: Type.Integer({ minimum: 0, maximum: 1000 }),
+        y: Type.Integer({ minimum: 0, maximum: 1000 }),
+        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+      },
+      { additionalProperties: false },
+    );
+  }
+
   throw new Error(`Unsupported candidate action: ${actionId}`);
 }
 
@@ -1442,6 +1455,32 @@ export function createStardewActionTools(
           parameters: schema,
           action: "advance_day",
           toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  if (isVisible("ride_minecart")) {
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "ride_minecart",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("ride_minecart", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("ride_minecart", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.ride_minecart,
+          label: "Ride a Native Minecart",
+          description:
+            "Ride one advertised native minecart objective from a live station tile. x, y and expectedTargetId must be copied exactly from the minecartTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates); x,y is the STATION tile, not the destination. The Mod re-derives the network, its unlock, the destination condition and the ticket price on the game thread from the live map tile and Data/Minecarts, then performs the native ride. Only the minecart_ride_completed receipt, which names the ridden objective and the exact arrival tile, reports success.",
+          parameters: schema,
+          action: "ride_minecart",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
