@@ -28,6 +28,37 @@ owned deterministic portfolio. The release-bundle command publishes only
 the exact bundle requested by its explicit source and destination arguments;
 it does not publish an action capability.
 
+### Runner contract gates (run these when you add or touch a live gate)
+
+A native-local runner is the entry point of one action's live gate. Two gates
+keep it honest, and both are cheap and offline:
+
+```bash
+pnpm audit:stardew-native-local-runner-contract
+pnpm test:stardew-native-local-runner-fixture-contract
+```
+
+The first is a **static ratchet** over runner source: it forbids the retired
+`ActionPolicyVersion` / `EnabledActions` shape and `assertExactCapabilities`, and
+it fails if a runner that conformed at baseline regresses or a new runner arrives
+on the retired contract. Its baselines only grow; fixing a runner is never a
+finding.
+
+The second is a **behavioural** check the static one structurally cannot do: it
+feeds each runner the policy block the fixture actually writes (derived from
+`fixtureActions`, `fixtureScenario`, and the Mod catalog's experimental set) and
+fails if the runner refuses it. This is what catches a runner whose check mentions
+neither retired field but still contradicts the fixture -- as happened when
+`npc_relationship` was promoted to `live_verified` and its runner kept demanding
+an experimental opt-in. It also asserts every runner on disk is covered by the
+gate table or the declared driver map, so a new runner cannot skip the check by
+being absent from both.
+
+Adding a gate runner therefore means: add it to `STARDEW_PUBLISHED_ACTION_GATES`
+(or to the driver map if it is not a per-action gate), then run both commands.
+Neither gate launches a game or proves a live run passed; they only prove the gate
+can open.
+
 ## Current control-live status
 
 `equip_tool` remains published, but its legacy Action Development Platform control route is
