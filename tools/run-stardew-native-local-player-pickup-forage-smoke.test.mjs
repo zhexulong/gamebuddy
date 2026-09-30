@@ -11,6 +11,19 @@ const CAPABILITIES = [
   "travel",
 ];
 
+/**
+ * A well-formed uniform ground summary: 13 scanned tiles, all grass, so the
+ * dominant kind is the whole scan and there are no exceptions. Ground assertions
+ * in these tests fail on shape or arithmetic, never on map contents.
+ */
+const UNIFORM_GRASS = {
+  dominantKind: "grass",
+  dominantTileCount: 13,
+  scannedTileCount: 13,
+  exceptions: [],
+  omittedExceptionTileCount: 0,
+};
+
 function fixtureConfig(overrides = {}) {
   return {
     NativeLocalPlayerFixture: { Enable: true },
@@ -30,6 +43,7 @@ function createFake({
   warps = [],
   includeStaleReceipt = false,
   evidenceDetail,
+  ground = UNIFORM_GRASS,
 } = {}) {
   const listeners = new Set();
   let revision = 3;
@@ -79,6 +93,7 @@ function createFake({
       summary: "A forage is nearby.",
       partial: false,
       truncatedReason: null,
+      ground: ground === null ? null : { ...ground },
     };
     return latestScene;
   };
@@ -156,6 +171,16 @@ function createFake({
 }
 
 const OPTIONS = { moveTimeoutMs: 2_000, travelTimeoutMs: 2_000, forageTimeoutMs: 2_000, postconditionTimeoutMs: 2_000 };
+
+/** A fake client plus the receipt sink the runner needs, wired as the other tests do. */
+function fakeSession(options) {
+  const client = createFake(options);
+  const receipts = [];
+  client.onFact((fact) => {
+    if (fact.type === "execution_receipt") receipts.push(fact.payload);
+  });
+  return { client, receipts };
+}
 
 test("pickup-forage runner passes with exact terminal correlation and fresh reread", async () => {
   const target = { targetId: "forage_target_1", x: 3, y: 4, qualifiedItemId: "(O)16", stack: 1 };
@@ -269,6 +294,146 @@ test("pickup-forage runner travels to Farm before picking up forage", async () =
   );
   assert.equal(result.before.hasLocation, true);
   assert.equal(result.after.hasLocation, true);
+});
+
+test("pickup-forage runner rejects an observation without ground", async () => {
+  const { client, receipts } = fakeSession({
+    location: "Farm",
+    tile: { x: 8, y: 8 },
+    forageTargets: [{ x: 9, y: 8, qualifiedItemId: "(O)18", targetId: "forage_b1c2", stack: 1 }],
+    ground: null,
+  });
+  const result = await runPickupForageSmoke(client, receipts, fixtureConfig(), OPTIONS);
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /scene_ground_missing/);
+});
+
+test("pickup-forage runner rejects ground whose counts do not reconcile", async () => {
+  const { client, receipts } = fakeSession({
+    location: "Farm",
+    tile: { x: 8, y: 8 },
+    forageTargets: [{ x: 9, y: 8, qualifiedItemId: "(O)18", targetId: "forage_b1c2", stack: 1 }],
+    // 6 dominant + 1 exception + 0 omitted != 13 scanned.
+    ground: {
+      dominantKind: "grass",
+      dominantTileCount: 6,
+      scannedTileCount: 13,
+      exceptions: [{ tileX: 8, tileY: 7, kind: "stone" }],
+      omittedExceptionTileCount: 0,
+    },
+  });
+  const result = await runPickupForageSmoke(client, receipts, fixtureConfig(), OPTIONS);
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /scene_ground_counts_do_not_reconcile/);
+});
+
+test("pickup-forage runner rejects a dominant kind that is not the most frequent", async () => {
+  const { client, receipts } = fakeSession({
+    location: "Farm",
+    tile: { x: 8, y: 8 },
+    forageTargets: [{ x: 9, y: 8, qualifiedItemId: "(O)18", targetId: "forage_b1c2", stack: 1 }],
+    // Nothing omitted, so the full multiset is on the wire: grass claims 3 but
+    // stone is listed 4 times, so "dominant = grass" would be a lie.
+    ground: {
+      dominantKind: "grass",
+      dominantTileCount: 3,
+      scannedTileCount: 13,
+      exceptions: [
+        { tileX: 1, tileY: 1, kind: "stone" },
+        { tileX: 2, tileY: 1, kind: "stone" },
+        { tileX: 3, tileY: 1, kind: "stone" },
+        { tileX: 4, tileY: 1, kind: "stone" },
+        { tileX: 5, tileY: 1, kind: "dirt" },
+        { tileX: 6, tileY: 1, kind: "dirt" },
+        { tileX: 7, tileY: 1, kind: "dirt" },
+        { tileX: 8, tileY: 1, kind: "wood" },
+        { tileX: 9, tileY: 1, kind: "wood" },
+        { tileX: 1, tileY: 2, kind: "other" },
+      ],
+      omittedExceptionTileCount: 0,
+    },
+  });
+  const result = await runPickupForageSmoke(client, receipts, fixtureConfig(), OPTIONS);
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /scene_ground_dominant_not_most_frequent/);
+});
+
+// Regression: "dominant" is the most frequent kind OTHER THAN `other`, not a
+// strict majority of the scan. A ground that is mostly unrecognised but has a
+// clear named surface must still be reported, not rejected.
+test("pickup-forage runner accepts a dominant kind that is not a majority", async () => {
+  const { client, receipts } = fakeSession({
+    location: "Farm",
+    tile: { x: 8, y: 8 },
+    forageTargets: [{ x: 9, y: 8, qualifiedItemId: "(O)18", targetId: "forage_b1c2", stack: 1 }],
+    // 4 grass + 3 stone + 6 other: grass is dominant with 4 of 13.
+    ground: {
+      dominantKind: "grass",
+      dominantTileCount: 4,
+      scannedTileCount: 13,
+      exceptions: [
+        { tileX: 1, tileY: 1, kind: "stone" },
+        { tileX: 2, tileY: 1, kind: "stone" },
+        { tileX: 3, tileY: 1, kind: "stone" },
+        { tileX: 1, tileY: 2, kind: "other" },
+        { tileX: 2, tileY: 2, kind: "other" },
+        { tileX: 3, tileY: 2, kind: "other" },
+        { tileX: 4, tileY: 2, kind: "other" },
+        { tileX: 5, tileY: 2, kind: "other" },
+        { tileX: 6, tileY: 2, kind: "other" },
+      ],
+      omittedExceptionTileCount: 0,
+    },
+  });
+  const result = await runPickupForageSmoke(client, receipts, fixtureConfig(), OPTIONS);
+  assert.equal(result.state, "passed");
+});
+
+test("pickup-forage runner rejects ground with an unknown kind", async () => {
+  const { client, receipts } = fakeSession({
+    location: "Farm",
+    tile: { x: 8, y: 8 },
+    forageTargets: [{ x: 9, y: 8, qualifiedItemId: "(O)18", targetId: "forage_b1c2", stack: 1 }],
+    ground: { ...UNIFORM_GRASS, dominantKind: "sand" },
+  });
+  const result = await runPickupForageSmoke(client, receipts, fixtureConfig(), OPTIONS);
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /scene_ground_kind_unknown/);
+});
+
+test("pickup-forage runner rejects an exception that repeats the dominant kind", async () => {
+  const { client, receipts } = fakeSession({
+    location: "Farm",
+    tile: { x: 8, y: 8 },
+    forageTargets: [{ x: 9, y: 8, qualifiedItemId: "(O)18", targetId: "forage_b1c2", stack: 1 }],
+    ground: {
+      dominantKind: "grass",
+      dominantTileCount: 12,
+      scannedTileCount: 13,
+      exceptions: [{ tileX: 8, tileY: 7, kind: "grass" }],
+      omittedExceptionTileCount: 0,
+    },
+  });
+  const result = await runPickupForageSmoke(client, receipts, fixtureConfig(), OPTIONS);
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /scene_ground_exception_repeats_dominant/);
+});
+
+test("pickup-forage runner accepts a mixed ground summary with exceptions", async () => {
+  const { client, receipts } = fakeSession({
+    location: "Farm",
+    tile: { x: 8, y: 8 },
+    forageTargets: [{ x: 9, y: 8, qualifiedItemId: "(O)18", targetId: "forage_b1c2", stack: 1 }],
+    ground: {
+      dominantKind: "dirt",
+      dominantTileCount: 10,
+      scannedTileCount: 13,
+      exceptions: [{ tileX: 8, tileY: 7, kind: "stone" }, { tileX: 9, tileY: 9, kind: "grass" }],
+      omittedExceptionTileCount: 1,
+    },
+  });
+  const result = await runPickupForageSmoke(client, receipts, fixtureConfig(), OPTIONS);
+  assert.equal(result.state, "passed");
 });
 
 test("pickup-forage runner rejects a non-isolated topology", async () => {

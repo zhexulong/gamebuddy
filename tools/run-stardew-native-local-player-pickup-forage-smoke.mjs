@@ -33,6 +33,14 @@ const REQUIRED_CAPABILITIES = [
   "travel",
 ];
 
+/**
+ * Every truncation reason an `observe_scene` result may carry when `partial` is
+ * true. Keep this in step with `OBSERVE_SCENE_TRUNCATION_REASONS` in
+ * `host/src/protocol.ts` and the Mod's own producer; a runner that lists only
+ * some of them rejects valid observations.
+ */
+const PARTIAL_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit", "ground_limit"]);
+
 /** Execute the pickup-forage contract against an already-connected bridge session. */
 export async function runPickupForageSmoke(
   client,
@@ -315,7 +323,7 @@ async function chooseExactSceneForageTarget(client, snapshot, target) {
   if (typeof client?.observeScene !== "function") throw new Error("observe_scene_unavailable");
   const scene = await client.observeScene({});
   const validPartial = scene?.partial === true
-    && (scene.truncatedReason === "maximum_affordances" || scene.truncatedReason === "payload_limit");
+    && PARTIAL_TRUNCATION_REASONS.has(scene.truncatedReason);
   if (
     !scene ||
     typeof scene.observationId !== "string" ||
@@ -326,6 +334,13 @@ async function chooseExactSceneForageTarget(client, snapshot, target) {
     throw new Error("invalid_observe_scene_result");
   if (typeof scene.currentLocation !== "string" || scene.currentLocation !== snapshot.location)
     throw new Error("observe_scene_location_mismatch");
+
+  // Ground travels its own chain (Mod enum -> wire -> Host union -> schema) and is
+  // read from the map's Back-layer `Type`, the same property the engine uses for
+  // footstep sounds and pathfinding weights. Assert the real observation carries
+  // it, so a field that silently stops being produced fails here rather than
+  // reaching the Agent as a missing fact.
+  validateSceneGround(scene.ground);
 
   const position = scenePosition(snapshot.tile, target);
   const matches = scene.affordances.filter(
@@ -341,6 +356,47 @@ async function chooseExactSceneForageTarget(client, snapshot, target) {
     throw new Error(matches.length === 0 ? "scene_forage_affordance_missing" : "ambiguous_scene_forage_affordances");
   return { observationId: scene.observationId, ref: matches[0].ref };
 }
+/**
+ * Require the facts the Agent needs to reason about the surface underfoot. The
+ * counts must be internally consistent: the dominant kind is the majority of the
+ * scanned tiles, and the listed exceptions plus the omitted count are the rest.
+ */
+function validateSceneGround(ground) {
+  if (ground === null || ground === undefined) throw new Error("scene_ground_missing");
+  const KINDS = new Set(["grass", "dirt", "stone", "wood", "other"]);
+  if (!KINDS.has(ground.dominantKind)) throw new Error("scene_ground_kind_unknown");
+  for (const key of ["dominantTileCount", "scannedTileCount", "omittedExceptionTileCount"]) {
+    if (!Number.isInteger(ground[key]) || ground[key] < 0) throw new Error(`scene_ground_count_invalid:${key}`);
+  }
+  if (!Array.isArray(ground.exceptions)) throw new Error("scene_ground_exceptions_missing");
+  if (ground.scannedTileCount < 1) throw new Error("scene_ground_scanned_zero");
+  if (ground.dominantTileCount < 1) throw new Error("scene_ground_dominant_zero");
+  if (ground.dominantTileCount > ground.scannedTileCount) throw new Error("scene_ground_dominant_exceeds_scanned");
+  for (const entry of ground.exceptions) {
+    if (!Number.isInteger(entry?.tileX) || !Number.isInteger(entry?.tileY)) throw new Error("scene_ground_exception_tile_invalid");
+    if (!KINDS.has(entry?.kind)) throw new Error("scene_ground_exception_kind_unknown");
+    // The producer builds exceptions from tiles whose kind is not the dominant
+    // one, so a repeat would mean the summary contradicts itself.
+    if (entry.kind === ground.dominantKind) throw new Error("scene_ground_exception_repeats_dominant");
+  }
+  // Arithmetic sanity: the parts must add up to the whole.
+  const accounted = ground.dominantTileCount + ground.exceptions.length + ground.omittedExceptionTileCount;
+  if (accounted !== ground.scannedTileCount) throw new Error("scene_ground_counts_do_not_reconcile");
+  // "Dominant" is the most frequent kind OTHER THAN `other`, not a majority:
+  // 6 unknown, 4 grass and 3 stone legitimately reports grass with a count of 4.
+  // So only claim the majority invariant when nothing was omitted and the full
+  // multiset is on the wire.
+  if (ground.omittedExceptionTileCount === 0) {
+    const counts = new Map();
+    for (const entry of ground.exceptions) counts.set(entry.kind, (counts.get(entry.kind) ?? 0) + 1);
+    for (const [kind, count] of counts) {
+      if (kind === "other") continue;
+      if (count > ground.dominantTileCount) throw new Error("scene_ground_dominant_not_most_frequent");
+    }
+  }
+  return true;
+}
+
 function scenePosition(actorTile, target) {
   const dx = target.x - actorTile.x;
   const dy = target.y - actorTile.y;

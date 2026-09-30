@@ -196,3 +196,30 @@ test("a ground kind admitted by a layer but absent from the Mod enum is reported
   const named = box.audit().findings.filter((f) => f.kind === "lava");
   assert.ok(named.length > 0, "a layer-only ground kind must be rejected");
 });
+
+test("the audit reports how many runners it checked", () => {
+  const report = auditSceneKindProjection();
+  assert.ok(report.runnerCount >= 50, `expected the native-local runners to be audited, saw ${report.runnerCount}`);
+});
+
+// Regression: two runners enumerated only "maximum_affordances" and
+// "payload_limit", so a valid mixed-ground observation (partial with
+// truncatedReason `ground_limit`) was rejected by the runner even though every
+// wire layer accepted it. The consumer layer must stay a closed set too.
+test("a runner that enumerates a subset of the truncation reasons is reported", () => {
+  const box = sandbox();
+  const dir = path.join(box.dir, "tools");
+  mkdirSync(dir, { recursive: true });
+  const runner = "run-stardew-native-local-player-probe-smoke.mjs";
+  writeFileSync(
+    path.join(dir, runner),
+    'const PARTIAL = new Set(["maximum_affordances", "payload_limit"]);\n',
+  );
+  const named = box.audit().findings.filter((f) => f.hop === `runner ${runner}`);
+  assert.deepEqual(
+    named.map((f) => f.detail.includes("ground_limit")),
+    [true],
+    "audit must name the omitted reason",
+  );
+});
+

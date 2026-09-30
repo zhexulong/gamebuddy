@@ -22,6 +22,14 @@ const REQUIRED_CAPABILITIES = [
   ACTION,
 ];
 
+/**
+ * Every truncation reason an `observe_scene` result may carry when `partial` is
+ * true. Keep this in step with `OBSERVE_SCENE_TRUNCATION_REASONS` in
+ * `host/src/protocol.ts` and the Mod's own producer; a runner that lists only
+ * some of them rejects valid observations.
+ */
+const PARTIAL_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit", "ground_limit"]);
+
 /** Load the emitted Host client from the local dist-test artifact. */
 async function loadDistTestClient(entry) {
   const { LocalStardewBridgeClient } = await import(`../host/dist-test/${entry}`);
@@ -111,7 +119,7 @@ export async function runNavigationMutationSmoke(
       && Array.isArray(piggybackedScene.affordances)
       && typeof piggybackedScene.partial === "boolean"
       && (piggybackedScene.partial
-        ? piggybackedScene.truncatedReason === "maximum_affordances" || piggybackedScene.truncatedReason === "payload_limit"
+        ? PARTIAL_TRUNCATION_REASONS.has(piggybackedScene.truncatedReason)
         : piggybackedScene.truncatedReason === null);
 
     // Re-resolve from the game after completion. This verifier uses the
