@@ -42,7 +42,15 @@ function nativeFixtureConfig(scenario, enabledActions = undefined) {
       LogicalSaveName: "GameBuddyFixtureCrop",
       ObservedSaveSlot: "GameBuddyFixtureCrop_1",
     },
-    ...(enabledActions === undefined ? {} : { ActionPolicyVersion: 0, EnabledActions: enabledActions }),
+    // The fixture writes the derived deny-by-exception policy: nothing denied,
+    // and an opt-in naming only the actions the Mod catalog still calls
+    // experimental. A runner cannot narrow the surface this way any more -- the
+    // published base is legitimately advertised -- so the `enabledActions`
+    // argument no longer selects a policy; it is kept only because callers still
+    // pass it to describe the surface they exercise.
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
   };
 }
 

@@ -16,8 +16,9 @@ function fixtureConfig(overrides = {}) {
     HostAutomation: { Enable: false },
     HostFarmhandProvisioning: { Enable: false },
     FarmhandProvisioner: { Enable: false },
-    ActionPolicyVersion: 0,
-    EnabledActions: ["move_to_tile", "travel", "equip_tool", "till_soil"],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
     ...overrides,
   };
 }
@@ -134,7 +135,7 @@ test("recovery-chain runner fails when the breakpoint does not reject (Hoe alrea
 test("recovery-chain runner rejects a non-isolated action policy", async () => {
   const client = createFake();
   await assert.rejects(
-    runToolRecoveryChainSmoke(client, [], fixtureConfig({ EnabledActions: ["till_soil"] })),
-    (error) => error?.message === "native_local_till_soil_action_policy_invalid",
+    runToolRecoveryChainSmoke(client, [], fixtureConfig({ DeniedActions: ["till_soil"] })),
+    (error) => error?.message?.startsWith("native_fixture_policy_denies_required"),
   );
 });

@@ -174,9 +174,7 @@ function validateConfig(config) {
       fixture.FixtureScenario !== SCENARIO ||
       typeof fixture.NavigationMutationTargetLabel !== "string" ||
       fixture.NavigationMutationTargetLabel.length < 1 ||
-      fixture.NavigationMutationTargetLabel.length > 128 ||
-    config.ActionPolicyVersion !== 0 ||
-    !same(config.EnabledActions, EXPECTED_ACTIONS)
+      fixture.NavigationMutationTargetLabel.length > 128
   )
     throw new Error("navigation_mutation_fixture_config_invalid");
   if (
