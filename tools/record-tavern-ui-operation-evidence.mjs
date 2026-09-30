@@ -1,15 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 
+import {
+  MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS,
+} from "./lib/tavern-mounted-operation-vocabulary.mjs";
+
 const OPAQUE_ID = /^[a-f0-9]{16,128}$/;
 const HASH = /^[a-f0-9]{64}$/;
-const OPERATIONS = new Set([
-  "draft.save",
-  "draft.discard",
-  "chat.rename",
-  "memory.mutate",
-  "world-info.bind",
-]);
+const OPERATIONS = new Set(MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS);
 
 function opaque() {
   return randomBytes(24).toString("hex");
