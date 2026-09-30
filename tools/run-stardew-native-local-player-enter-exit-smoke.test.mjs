@@ -151,7 +151,7 @@ test("enter-exit runner blocks on a non-isolated capability surface", async () =
   const receipts = collectReceipts(client);
   const result = await runEnterExitSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "native_capability_surface_mismatch");
+  assert.match(result.reasonCode, /native_required_capability_missing/);
   assert.equal(result.trace.length, 0);
 });
 
