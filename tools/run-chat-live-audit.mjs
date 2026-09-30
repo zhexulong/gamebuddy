@@ -369,9 +369,23 @@ export function probeTurnCommittedGate(outcome) {
  * not against this turn, and not against older transcript text. Tested directly
  * so that reordering this decision (scoring first, gating later) fails.
  */
-export function probeVerdict({ gate, keywords }) {
+export function probeVerdict({ gate, keywords, dimension }) {
   if (!gate.ok) return Object.freeze({ event: "observability_gap", reason: gate.reason });
   if (keywords === undefined) return Object.freeze({ event: "observability_gap", reason: "probe_keywords_missing" });
+  // The supersession dimension answers a different question from retention: not "is
+  // the fact present" but "did the overwrite take effect in BOTH directions". It has
+  // its own frozen codes and its own `reason` vocabulary (design 3.5,
+  // `old_retained` / `new_missing`), and it was specified but never produced - the
+  // codes sat in the frozen table while no branch emitted them.
+  if (dimension === "supersession") {
+    // The old fact surviving is the more specific failure: it means the supersede
+    // chain did not take effect in the assembled prompt. A reply that names both (the
+    // "you like parsnips and amethyst" fudge) therefore lands here rather than on
+    // `new_missing`, which is what makes the both-answers case detectable at all.
+    if (keywords.forbiddenCount > 0) return Object.freeze({ event: "supersede.fail", reason: "old_retained" });
+    if (keywords.hit) return Object.freeze({ event: "supersede.pass" });
+    return Object.freeze({ event: "supersede.fail", reason: "new_missing" });
+  }
   if (keywords.hit && keywords.forbiddenCount === 0) return Object.freeze({ event: "needle.hit" });
   if (!keywords.hit && keywords.forbiddenCount === 0) return Object.freeze({ event: "needle.miss" });
   // `distractor.confused` has two distinct causes and they must stay
@@ -1321,7 +1335,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
         // A failed gate must short-circuit BEFORE any keyword read, so a turn
         // with no durable commit is never scored against older text.
         const keywords = probeGate.ok ? await readCompanionKeywordMatches(step) : undefined;
-        const verdict = probeVerdict({ gate: probeGate, keywords });
+        const verdict = probeVerdict({ gate: probeGate, keywords, dimension: probe.dimension });
         emitProbe(probe, verdict.event, verdict.reason);
         continue;
       }

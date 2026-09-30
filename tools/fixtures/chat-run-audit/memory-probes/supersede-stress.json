@@ -1,0 +1,64 @@
+{
+  "schema": "chat_memory_probe_manifest/v1",
+  "manifestId": "man-supersede-stress-01",
+  "manifestDigest": "37cba1c1d00ebd8c41654eb53a5747419611640ba0810da2d7fb0b804a2eac32",
+  "continuityTopology": "single",
+  "probes": [
+    {
+      "probeId": "p-supersede-stress",
+      "distance": "turn",
+      "dimension": "supersession",
+      "seedClass": "explicit",
+      "steps": [
+        {
+          "kind": "seed",
+          "role": "player",
+          "text": "For the record, my favourite thing to grow is parsnips - I never get tired of them.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The first harvest always feels like a small victory.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I keep meaning to expand the eastern field.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "seed",
+          "role": "player",
+          "text": "Actually, scratch that - I am tired of parsnips. These days amethyst is my favourite thing, hands down.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The creek runs high after a storm like that one.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I moved the scarecrow closer to the fence line.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "probe",
+          "role": "player",
+          "text": "Remind me - what is my favourite thing these days?",
+          "requiredKeywords": [
+            "amethyst"
+          ],
+          "forbiddenKeywords": [
+            "parsnip"
+          ],
+          "minHitRate": 1
+        }
+      ]
+    }
+  ]
+}
