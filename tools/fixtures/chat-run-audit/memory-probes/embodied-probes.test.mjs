@@ -117,6 +117,51 @@ test("a forbidden keyword is never a word the CORRECT reply must contain", async
   }
 });
 
+test("the probe question never echoes a required keyword (the audit's zero-memory-hit finding)", async () => {
+  // Found by the memory-loop audit: the embodied-preference question ended with
+  // "...the greenhouse strawberries" while "strawberr" is a required keyword, so a
+  // reply that merely mentioned the thing being asked about scored a hit WITHOUT
+  // remembering anything. A question must not supply the tokens that a correct
+  // answer is supposed to contribute from memory.
+  for (const [probeId, replies] of Object.entries(EXPECTED_REPLIES)) {
+    const manifest = await loadFixture(`${probeId.replace("p-", "")}.json`);
+    const step = manifest.probes[0].steps.find((candidate) => candidate.kind === "probe");
+    const questionLower = step.text.toLowerCase();
+    if (probeId === "p-turn-short") continue; // historical fixture, keyword match is against the reply only
+    for (const required of step.requiredKeywords ?? []) {
+      assert.equal(
+        questionLower.includes(required.toLowerCase()),
+        false,
+        `${probeId}: required keyword ${JSON.stringify(required)} appears in the probe question - a zero-memory reply can hit`,
+      );
+    }
+  }
+});
+
+test("the required keywords are recallable from the seeds at the declared threshold", async () => {
+  // The complement of the question-echo rule: the tokens a correct reply must emit
+  // have to come from SOMEWHERE the memory system would carry. The precise rule is
+  // the fixture being PASSABLE through memory AT ITS OWN THRESHOLD - the number of
+  // required keywords present in the seeds must be >= the number needed to pass
+  // (ceil(len * minHitRate)). p-turn-short is the instructive case: "mail" is a
+  // synonym, not a seed token, but "postman" alone clears ceil(2*0.5)=1, so the
+  // fixture is honest at its declared threshold.
+  for (const [probeId, replies] of Object.entries(EXPECTED_REPLIES)) {
+    const manifest = await loadFixture(`${probeId.replace("p-", "")}.json`);
+    const probe = manifest.probes[0];
+    const step = probe.steps.find((candidate) => candidate.kind === "probe");
+    const seeds = probe.steps.filter((candidate) => candidate.kind === "seed").map((candidate) => candidate.text.toLowerCase());
+    const allSeedText = seeds.join(" ");
+    const required = step.requiredKeywords ?? [];
+    const threshold = Math.ceil(required.length * (step.minHitRate ?? 0.5));
+    const presentInSeeds = required.filter((keyword) => allSeedText.includes(keyword.toLowerCase())).length;
+    assert.ok(
+      presentInSeeds >= threshold,
+      `${probeId}: only ${presentInSeeds}/${required.length} required keywords appear in seeds, need ${threshold} at minHitRate ${step.minHitRate} - the fixture cannot pass through memory`,
+    );
+  }
+});
+
 test("the supersede fixture keeps a full hit threshold so a partial answer cannot pass", async () => {
   const manifest = await loadFixture("supersede-stress.json");
   const probe = manifest.probes[0];

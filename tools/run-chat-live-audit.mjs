@@ -907,7 +907,7 @@ async function cancelTurn({ origin, client, projection, turnHandle }) {
  * the window rolls — a gap the reader itself created, which then looked like a
  * host stream defect in the audit. The cursor is therefore carried forward.
  */
-async function openEventStream({ origin, client, recorder, cursor = undefined }) {
+export async function openEventStream({ origin, client, recorder, cursor = undefined }) {
   const controller = new AbortController();
   const connectDeadline = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const query = cursor === undefined ? "" : `&cursor=${encodeURIComponent(cursor)}`;

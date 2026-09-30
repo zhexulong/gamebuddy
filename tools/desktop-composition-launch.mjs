@@ -141,13 +141,14 @@ export function validateCompositionReadyMessage(value) {
   );
 }
 
-export function composeDesktopChildEnvironment({ base, localAppDataRoot, manifestPath, surface = undefined, nonceSha256 = undefined }) {
+export function composeDesktopChildEnvironment({ base, localAppDataRoot, manifestPath, surface = undefined, nonceSha256 = undefined, gameSessionMode = "fresh" }) {
   if (typeof manifestPath !== "string" || manifestPath.length === 0) throw new Error("desktop_compose_manifest_invalid");
+  if (gameSessionMode !== "fresh" && gameSessionMode !== "known") throw new Error("desktop_compose_session_mode_invalid");
   return Object.freeze({
     ...base,
     LOCALAPPDATA: localAppDataRoot,
     GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath,
-    GAMEBUDDY_HOST_GAME_SESSION_MODE: "fresh",
+    GAMEBUDDY_HOST_GAME_SESSION_MODE: gameSessionMode,
     ...(surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: surface }),
     ...(nonceSha256 === undefined ? {} : { GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: nonceSha256 }),
   });
@@ -368,7 +369,7 @@ function serveGuardianHello({ bootstrapId, generation, inventoryDigest, runtimeA
   });
 }
 
-function waitForBootstrapAck(child, timeoutMs) {
+function waitForBootstrapAck(child, timeoutMs, stderrTail = () => "") {
   return new Promise((resolveAck, rejectAck) => {
     let data = "";
     let settled = false;
@@ -388,7 +389,19 @@ function waitForBootstrapAck(child, timeoutMs) {
       settle(resolveAck, data.slice(0, newline));
     };
     const onError = () => settle(rejectAck, new Error("desktop_compose_child_spawn_failed"));
-    const onExit = (code) => settle(rejectAck, new Error(`dialogue_exited_before_ready:${code ?? "unknown"}`));
+    // The caller also captures a bounded stderr tail; use it so a pre-ack exit names
+    // its product code here too, not just on the readiness waiter.
+    const onExit = (code) => {
+      const diagnostic = typeof stderrTail === "function" ? stderrTail() : "";
+      settle(
+        rejectAck,
+        new Error(
+          diagnostic.length > 0
+            ? `dialogue_exited_before_ready:${code ?? "unknown"}:${diagnostic}`
+            : `dialogue_exited_before_ready:${code ?? "unknown"}`,
+        ),
+      );
+    };
     const timer = setTimeout(() => settle(rejectAck, new Error("dialogue_start_timeout")), timeoutMs);
     child.stdout.on("data", onData);
     child.once("error", onError);
@@ -483,6 +496,7 @@ export async function launchDesktopCompositionGateChild({
   manifestPath,
   readyTimeoutMs = 60_000,
   spawnImpl = spawn,
+  gameSessionMode = "fresh",
 }) {
   if (typeof outputRoot !== "string" || !isAbsolute(outputRoot)) throw new Error("desktop_compose_output_root_invalid");
   if (typeof root !== "string" || !isAbsolute(root)) throw new Error("desktop_compose_root_invalid");
@@ -519,6 +533,7 @@ export async function launchDesktopCompositionGateChild({
       manifestPath,
       surface,
       nonceSha256,
+      gameSessionMode,
     }),
   });
   // The child may publish the IPC-ready fact and the gate markers while the
@@ -534,10 +549,17 @@ export async function launchDesktopCompositionGateChild({
     if (childStderr.length < 2_048) childStderr = `${childStderr}${chunk}`;
   });
   const readyPromise = waitForCompositionReady(child, readyTimeoutMs, () => childStderr.trim());
+  // The callers await this only AFTER the bootstrap ack and the guardian hello. A
+  // child that exits in that window would reject an unobserved promise and kill the
+  // process with an unhandled rejection, discarding the bounded diagnostic it
+  // carries and making every early failure look like a crash with no handler.
+  // Attaching a no-op handler here does not consume the rejection: a later
+  // `waitForReady()` still observes it.
+  readyPromise.catch(() => undefined);
   // The ack waiter attaches before the frame write so an early wire failure is
   // never missed; the frame is the one bootstrap input, written once and
   // followed by EOF, exactly like the production launcher's private bootstrap pipe.
-  const ackPromise = waitForBootstrapAck(child, readyTimeoutMs);
+  const ackPromise = waitForBootstrapAck(child, readyTimeoutMs, () => childStderr.trim());
   child.stdin.write(`${JSON.stringify(frame)}\n`, (error) => {
     if (error != null && child.listenerCount("error") > 0) child.emit("error", error);
   });

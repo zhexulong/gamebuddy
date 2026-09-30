@@ -39,13 +39,13 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
-import { evaluateProbeReply, loadProbeManifest, probeVerdict } from "./run-chat-live-audit.mjs";
+import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "./run-chat-live-audit.mjs";
 import { attributeMemoryFunnel } from "./lib/memory-funnel.mjs";
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
@@ -117,9 +117,12 @@ async function resolveScenario({ manifestPath, seed, question }) {
       dimension: "retention",
       requiredKeywords: ["postman", "mail", "delivering"],
       forbiddenKeywords: ["mine", "haul"],
+      minHitRate: 0.5,
     });
   }
   const manifest = loadProbeManifest(await readFile(resolve(manifestPath), "utf8"));
+  if (manifest.probes.length !== 1)
+    throw new Error("probe_fixture_multi_probe_unsupported");
   const probe = manifest.probes[0];
   const seedStep = probe.steps.find((step) => step.kind === "seed");
   const probeStep = probe.steps.find((step) => step.kind === "probe");
@@ -132,6 +135,9 @@ async function resolveScenario({ manifestPath, seed, question }) {
     dimension: probe.dimension,
     requiredKeywords: probeStep.requiredKeywords,
     forbiddenKeywords: probeStep.forbiddenKeywords ?? [],
+    // The fixture's own threshold must survive into scoring (audit finding: the
+    // loop hardcoded 0.5, silently over-ruling a manifest that declares 1.0).
+    minHitRate: Number.isFinite(probeStep.minHitRate) ? probeStep.minHitRate : 0.5,
   });
 }
 
@@ -241,51 +247,50 @@ async function runChatTurn(origin, client, text) {
   });
   if (response.status !== 202) throw new Error(`message_failed:${response.status}`);
 
-  const deadline = Date.now() + 180_000;
-  for (;;) {
-    if (Date.now() > deadline) throw new Error("chat_turn_timeout");
-    const snapshot = await (
-      await deadlineFetch(`${origin}/api/tavern/v1/state`, { headers: { Cookie: client.cookie, Origin: origin } })
-    ).json();
-    const turn = snapshot?.chat?.turn ?? null;
-    const turnState = typeof turn?.state === "string" ? turn.state : undefined;
-    const terminal =
-      turn === null || turn === undefined || turnState === "completed" || turnState === "failed" || turnState === "cancelled";
-    if (terminal) {
-      const transcript = Array.isArray(snapshot?.chat?.transcript) ? snapshot.chat.transcript : [];
-      const companion = transcript.filter((message) => message?.role === "companion");
-      const last = companion.at(-1);
-      return Object.freeze({
-        turnState,
-        committedCompanionMessages: companion.length,
-        committedText: typeof last?.text === "string" ? last.text : undefined,
-      });
-    }
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
-  }
+  // The terminal wait is SSE-driven with a bounded state cross-check, mirroring
+  // the Chat harness (audit finding: the loop used to poll /state every 250 ms for
+  // up to 180 s = ~720 authenticated reads for ONE turn; the harness waits on its
+  // SSE observation stream and does a bounded state read-back). The stream records
+  // nothing here - it exists only as the terminal authority.
+  const stream = await openEventStream({ origin, client, recorder: noopRecorder });
+  const streamTerminal = stream.ok ? await stream.waitForTerminal(180_000) : "unavailable";
+  await stream.close?.().catch(() => undefined);
+  // The durable /state read-back stays authoritative either way: when the stream
+  // settled it confirms the terminal; when the stream was closed early (a resync
+  // the observer itself forced, or a timeout) it is the only authority we have.
+  return readTurnOutcome(origin, client, streamTerminal);
 }
 
-async function withSurface({ surface, identity, run }) {
-  const root = await mkdtemp(join(tmpdir(), `gamebuddy-memory-loop-${surface}-`));
+/**
+ * Read the durable /state read-back exactly once and project the outcome. The
+ * transcript for a fresh chat-only surface session starts empty, so the companion
+ * count IS this turn's delta - there are no earlier turns to leak in.
+ */
+async function readTurnOutcome(origin, client, streamTerminal) {
+  const snapshot = await (
+    await deadlineFetch(`${origin}/api/tavern/v1/state`, { headers: { Cookie: client.cookie, Origin: origin } })
+  ).json();
+  const turnState = snapshot?.chat?.turn?.state ?? null;
+  const transcript = Array.isArray(snapshot?.chat?.transcript) ? snapshot.chat.transcript : [];
+  const companion = transcript.filter((message) => message?.role === "companion");
+  const last = companion.at(-1);
+  return Object.freeze({
+    turnState,
+    streamTerminal: streamTerminal ?? null,
+    committedCompanionMessages: companion.length,
+    committedCompanionDelta: companion.length,
+    committedText: typeof last?.text === "string" ? last.text : undefined,
+  });
+}
+
+const noopRecorder = Object.freeze({ record() {} });
+
+async function withSurface({ surface, run, root, deploymentManifestPath, gameSessionMode = "fresh" }) {
+  if (typeof root !== "string" || root.length === 0) throw new Error("runtime_root_required");
+  if (typeof deploymentManifestPath !== "string" || deploymentManifestPath.length === 0)
+    throw new Error("deployment_manifest_path_required");
   await mkdir(root, { recursive: true });
   const nonceSha256 = createHash("sha256").update(randomBytes(32)).digest("hex");
-  const manifestPath = join(root, "memory-loop.json");
-  await writeFile(
-    manifestPath,
-    JSON.stringify(
-      {
-        schemaVersion: 2,
-        topology: "independent_chat_and_game_surfaces",
-        runtimeRoot: root,
-        principal: { ...identity },
-        bootstrapOperationId: `memory_loop_${surface}_${randomBytes(12).toString("hex")}`,
-        authorityGeneration: 1,
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
 
   let stderr = "";
   const launch = await launchDesktopCompositionGateChild({
@@ -293,8 +298,9 @@ async function withSurface({ surface, identity, run }) {
     root,
     surface,
     nonceSha256,
-    manifestPath,
+    manifestPath: deploymentManifestPath,
     readyTimeoutMs: START_TIMEOUT_MS,
+    gameSessionMode,
     spawnImpl: (command, args, options) => {
       const child = spawn(command, args, options);
       child.stderr?.setEncoding?.("utf8");
@@ -315,11 +321,67 @@ async function withSurface({ surface, identity, run }) {
   } catch (error) {
     const diagnostic = stderr.trim();
     throw new Error(
-      diagnostic.length > 0 ? `${error?.message ?? "surface_failed"}:${diagnostic}` : (error?.message ?? "surface_failed"),
+      diagnostic.length > 0
+        ? `${surface}:${error?.message ?? "surface_failed"}:${diagnostic}`
+        : `${surface}:${error?.message ?? "surface_failed"}`,
     );
   } finally {
     launch.dispose?.();
-    launch.child?.kill?.();
+    await stopChildGracefully(launch.child);
+  }
+}
+
+/**
+ * Stop the child the way the product intends: SIGTERM first, and WAIT for the
+ * process to exit.
+ *
+ * The audit's successor path proved this is not a nicety. `known` mount writes a
+ * `select_chat` successor bridge that the store admits ONLY after the exact
+ * predecessor achat-runtime teardown has committed - and teardown commits on the
+ * child's own termination path. The first version of this runner killed the child
+ * outright, so nothing committed, and phase 2 died with
+ * `chat_runtime_reentry_selection_invalid`. The Chat narrative gate already stops
+ * children exactly this way (`run-tavern-narrative-gate.mjs:237`).
+ */
+async function stopChildGracefully(child, timeoutMs = 30_000) {
+  if (child === undefined || child === null || child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  const exited = await Promise.race([
+    new Promise((resolveExit) => child.once("exit", () => resolveExit(true))),
+    new Promise((resolveExit) => setTimeout(() => resolveExit(false), timeoutMs)),
+  ]);
+  if (exited) return;
+  child.kill("SIGKILL");
+  await Promise.race([
+    new Promise((resolveExit) => child.once("exit", () => resolveExit(undefined))),
+    new Promise((resolveExit) => setTimeout(resolveExit, 1_000)),
+  ]);
+}
+
+/**
+ * One disposable root for the WHOLE memory loop, shared across both phases.
+ *
+ * A reviewer of the first memory-loop runs proved this was the fatal design flaw:
+ * `withSurface` used to `mkdtemp` per phase, so the management phase and the
+ * chat-only phase resolved DIFFERENT `runtimeCwd`s (resolveRuntimePaths keys the
+ * cwd by identity, but under the phase's OWN root). The seed row was written to one
+ * SQLite file and the chat turn read another - the loop could not have measured
+ * cross-phase memory even in principle. One root for both phases is what makes
+ * "seed on management, ask on chat-only" a real storage-identity claim.
+ *
+ * The root is also removed here, not leaked: the old code never cleaned it, so
+ * every run left two generation copies rotting in %TEMP%.
+ */
+async function withMemoryLoopRoot(run) {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-memory-loop-"));
+  // Diagnosis escape hatch: keep the root so the authority DB can be inspected after
+  // a failure (which is how the storage-identity claims get checked). Unset means the
+  // normal path, where the root is removed.
+  const keepRoot = process.env.GAMEBUDDY_MEMORY_LOOP_KEEP_ROOT === "1";
+  try {
+    return await run(root);
+  } finally {
+    if (!keepRoot) await rm(root, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -332,16 +394,31 @@ async function withSurface({ surface, identity, run }) {
  * loops disagree about the same reply, which is exactly the drift the frozen
  * vocabulary exists to prevent.
  */
-function scoreReply({ committedText, scenario }) {
+function scoreReply({ committedText, scenario, chat }) {
+  // A keyword verdict may ONLY be scored against a turn that durably committed a
+  // companion reply for THIS turn (the same gate the Chat harness uses). A turn that
+  // failed, was cancelled, or committed no new companion text is an observability
+  // gap, NEVER a scored miss - the audit's finding: the loop used to hardcode
+  // `gate: { ok: true }`, so a failed turn was scored as needle.miss and (once L2
+  // gets a producer) mis-attributed to presentation admission.
+  const gate = probeTurnCommittedGate({
+    terminal: chat.turnState !== null && chat.turnState !== undefined,
+    committedCompanionDelta: chat.committedCompanionDelta ?? 0,
+  });
+  if (!gate.ok) return verdict_gap(gate.reason);
   const keywords = evaluateProbeReply({
     transcriptText: committedText,
     step: {
       requiredKeywords: scenario.requiredKeywords,
       forbiddenKeywords: scenario.forbiddenKeywords,
-      minHitRate: 0.5,
+      minHitRate: scenario.minHitRate ?? 0.5,
     },
   });
   return probeVerdict({ gate: { ok: true }, keywords, dimension: scenario.dimension });
+}
+
+function verdict_gap(reason) {
+  return Object.freeze({ event: "observability_gap", reason });
 }
 
 export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, question } = {}) {
@@ -349,70 +426,154 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
   const scenario = await resolveScenario({ manifestPath, seed, question });
   const identity = createIdentity();
 
-  // Phase 1 - management surface: seed and confirm durability.
-  const seeded = await withSurface({
-    surface: "management",
-    identity,
-    run: async (origin, client) => seedMemory(origin, client, scenario.seed),
-  });
+  // One root for BOTH phases. A reviewer of the first runs proved this is the fatal
+  // invariant: with a fresh root per phase, the management write and the chat read
+  // lived in different SQLite files (runtimeCwd is identity-keyed UNDER the phase's
+  // own root), so the loop could not measure cross-phase memory even in principle.
+  return withMemoryLoopRoot(async (root) => {
+    // ONE deployment manifest and ONE bootstrap operation for the whole loop. The
+    // authority marker records the bootstrap operation, and `known` open validates it
+    // exactly - so writing a second manifest with a fresh bootstrapOperationId made
+    // phase 2 fail with `production_authority_artifact_present`. One loop is one
+    // deployment identity.
+    const deploymentManifestPath = join(root, "memory-loop.json");
+    await writeFile(
+      deploymentManifestPath,
+      JSON.stringify(
+        {
+          schemaVersion: 2,
+          topology: "independent_chat_and_game_surfaces",
+          runtimeRoot: root,
+          principal: { ...identity },
+          bootstrapOperationId: `memory_loop_${randomBytes(12).toString("hex")}`,
+          authorityGeneration: 1,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    // Phase 1 - management surface: seed and confirm durability.
+    process.stderr.write(`[memory-loop] phase1 management launching (root=${root})\n`);
+    const seeded = await withSurface({
+      surface: "management",
+      root,
+      deploymentManifestPath,
+      run: async (origin, client) => seedMemory(origin, client, scenario.seed),
+    });
+    process.stderr.write(`[memory-loop] phase1 durable=${seeded.durable}\n`);
 
-  const observation = {
-    distance: "turn",
-    seedRequired: true,
-    seedPresentInReadback: seeded.durable,
-  };
+    const observation = {
+      distance: "turn",
+      seedRequired: true,
+      seedPresentInReadback: seeded.durable,
+    };
 
-  // Causal gate: a seed we could not confirm durable means L1 is unproven, so the
-  // run reports that and stops. Proceeding would let a later miss be blamed on
-  // recall when the fact may never have been stored.
-  if (!seeded.durable) {
-    const attributed = attributeMemoryFunnel(observation);
+    // Causal gate: a seed we could not confirm durable means L1 is unproven, so the
+    // run reports that and stops. Proceeding would let a later miss be blamed on
+    // recall when the fact may never have been stored.
+    if (!seeded.durable) {
+      const attributed = attributeMemoryFunnel(observation);
+      const report = Object.freeze({
+        schema: "memory_live_loop/v1",
+        identity: Object.freeze({ continuityId: identity.continuityId }),
+        seed: Object.freeze({ durable: false, rowCount: seeded.rowCount }),
+        chat: Object.freeze({ attempted: false, reason: "seed_not_durable" }),
+        funnel: attributed,
+      });
+      await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      return report;
+    }
+
+    // Phase 2 - chat-only surface, SAME root, SAME continuity: ask the question.
+    // Session mode `known` OPENS the authority that phase 1's management surface
+    // provisioned, instead of provisioning a fresh one. This is the storage-identity
+    // core of the whole loop: a fresh second phase would create an EMPTY second
+    // SQLite and the seeded row could never be seen (the audit's finding).
+    //
+    // KNOWN BOUNDARY (measured, not assumed): the product admits a `known` mount as a
+    // terminal SUCCESSOR, which requires the predecessor chat-runtime teardown to have
+    // COMMITTED, and that commit happens only inside the child's own close path
+    // (desktop-runtime-bootstrap finally -> composition.close()). This launcher has no
+    // way to ask a composed child to close: child.kill("SIGTERM") forcibly terminates
+    // and the handler never runs (proved by probe: exit signal SIGTERM, handler not
+    // invoked), and disposing the guardian peer alone does not make the child exit
+    // (probe: no_exit_after_dispose, teardown_intent stays empty). The memory loop
+    // therefore reports this as a bounded, attributable BLOCKED state rather than
+    // crashing with a raw child-exit error or pretending the phase ran.
+    process.stderr.write(`[memory-loop] phase2 chat-only launching known\n`);
+    let chat;
+    try {
+      chat = await withSurface({
+        surface: "chat-only",
+        root,
+        deploymentManifestPath,
+        gameSessionMode: "known",
+        run: async (origin, client) => runChatTurn(origin, client, scenario.question),
+      });
+    } catch (error) {
+      const message = String(error?.message ?? error);
+      const reentryBlocked = message.includes("chat_runtime_reentry_selection_invalid");
+      if (!reentryBlocked) throw error;
+      const attributed = attributeMemoryFunnel({
+        distance: "turn",
+        seedRequired: true,
+        seedPresentInReadback: true,
+      });
+      const report = Object.freeze({
+        schema: "memory_live_loop/v1",
+        identity: Object.freeze({ continuityId: identity.continuityId }),
+        runtimeRootKey: createHash("sha256").update(identity.continuityId).digest("hex").slice(0, 16),
+        scenario: Object.freeze({
+          ...(scenario.probeId === undefined ? {} : { probeId: scenario.probeId }),
+          ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
+          dimension: scenario.dimension,
+        }),
+        seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
+        chat: Object.freeze({
+          attempted: true,
+          launched: false,
+          reason: "phase2_reentry_requires_predecessor_teardown",
+        }),
+        funnel: attributed,
+      });
+      await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      return report;
+    }
+
+    const verdict = scoreReply({ committedText: chat.committedText, scenario, chat });
+
+    const attributed = attributeMemoryFunnel({
+      ...observation,
+      probeEvent: verdict.event,
+      ...(verdict.reason === undefined ? {} : { probeReason: verdict.reason }),
+    });
+
     const report = Object.freeze({
       schema: "memory_live_loop/v1",
       identity: Object.freeze({ continuityId: identity.continuityId }),
-      seed: Object.freeze({ durable: false, rowCount: seeded.rowCount }),
-      chat: Object.freeze({ attempted: false, reason: "seed_not_durable" }),
+      // The one storage fact that lets a reader SEE that both phases shared a root.
+      runtimeRootKey: createHash("sha256").update(identity.continuityId).digest("hex").slice(0, 16),
+      scenario: Object.freeze({
+        ...(scenario.probeId === undefined ? {} : { probeId: scenario.probeId }),
+        ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
+        dimension: scenario.dimension,
+      }),
+      seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
+      chat: Object.freeze({
+        attempted: true,
+        turnState: chat.turnState ?? null,
+        committedCompanionDelta: chat.committedCompanionDelta ?? 0,
+        committed: typeof chat.committedText === "string" && chat.committedText.length > 0,
+        // Content-free: the reply text is scored here and never persisted.
+        verdict: verdict.event,
+        ...(verdict.reason === undefined ? {} : { verdictReason: verdict.reason }),
+      }),
       funnel: attributed,
     });
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
     return report;
-  }
-
-  // Phase 2 - chat-only surface, SAME continuity: ask the question for real.
-  const chat = await withSurface({
-    surface: "chat-only",
-    identity,
-    run: async (origin, client) => runChatTurn(origin, client, scenario.question),
   });
-
-  const verdict = scoreReply({ committedText: chat.committedText, scenario });
-
-  const attributed = attributeMemoryFunnel({
-    ...observation,
-    probeEvent: verdict.event,
-    ...(verdict.reason === undefined ? {} : { probeReason: verdict.reason }),
-  });
-
-  const report = Object.freeze({
-    schema: "memory_live_loop/v1",
-    identity: Object.freeze({ continuityId: identity.continuityId }),
-    scenario: Object.freeze({
-      ...(scenario.probeId === undefined ? {} : { probeId: scenario.probeId }),
-      ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
-      dimension: scenario.dimension,
-    }),
-    seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
-    chat: Object.freeze({
-      attempted: true,
-      committed: typeof chat.committedText === "string" && chat.committedText.length > 0,
-      // Content-free: the reply text is scored here and never persisted.
-      verdict: verdict.event,
-      ...(verdict.reason === undefined ? {} : { verdictReason: verdict.reason }),
-    }),
-    funnel: attributed,
-  });
-  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  return report;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

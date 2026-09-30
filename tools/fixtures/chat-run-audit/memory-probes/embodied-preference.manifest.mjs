@@ -42,11 +42,13 @@ const probe = {
     {
       kind: "probe",
       role: "player",
-      text: "It is going to rain tomorrow. What should happen with the greenhouse strawberries?",
-      // A correct reply says to leave them for wine; "strawberry"/"wine" carry it.
+      // The question must NOT echo a required token, or any reply that merely
+      // mentions the thing asked about scores a hit (audit 2026-10: the original
+      // ended with "...the greenhouse strawberries", and "strawberr" is required,
+      // so a zero-memory reply could still hit). The directive itself is the only
+      // place the tokens exist; a reply that recalls the rule must supply them.
+      text: "It is going to rain tomorrow. What should happen with the crop in the greenhouse?",
       requiredKeywords: ["strawberr", "wine"],
-      // Naming the bin means the covenant was not applied. A reply that correctly
-      // remembers has no reason to mention it.
       forbiddenKeywords: ["bin", "sell"],
       minHitRate: 0.5,
     },
