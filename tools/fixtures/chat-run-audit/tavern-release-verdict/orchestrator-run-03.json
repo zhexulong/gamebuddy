@@ -1,0 +1,95 @@
+{
+  "gate": "tavern_release_live_orchestrator/v1",
+  "profile": "chat-tavern-live",
+  "plannedRunKinds": [
+    "main",
+    "failure",
+    "recovery"
+  ],
+  "prerequisite": {
+    "verdict": "passed",
+    "checks": [
+      {
+        "id": "windows_arbitrary_reparse_enforcement",
+        "status": "not_applicable"
+      },
+      {
+        "id": "tavern_filesystem_threat_model",
+        "status": "not_applicable"
+      },
+      {
+        "id": "tavern_ordinary_link_reparse_containment",
+        "status": "not_applicable"
+      },
+      {
+        "id": "magic_context_stable_source",
+        "status": "passed"
+      },
+      {
+        "id": "semantic_reference_attestation",
+        "status": "passed"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "role": "main",
+      "state": "passed",
+      "runnerRunId": "c6b6547da21c9f6fa7c51e89",
+      "artifact": {
+        "generation": "g-muo2q1oh-41008-62e5b50d18ce484db3b92ab7c6edad8b",
+        "inventoryDigest": "aeac90df4bfd3460048a6574c8d0a10c4860f330b9dc1bee706691ad3eac2a47"
+      },
+      "assertions": {
+        "authenticatedReferenceChatApi": true,
+        "realDialogueTurnAttempted": true,
+        "providerRuntimeSessionBound": true,
+        "providerPreSendSerialized": true,
+        "realTurnOutcomeObserved": true
+      }
+    },
+    {
+      "role": "failure",
+      "state": "passed",
+      "runnerRunId": "ba3e741c93c9017c68f21d92",
+      "artifact": {
+        "generation": "g-muo2q1oh-41008-62e5b50d18ce484db3b92ab7c6edad8b",
+        "inventoryDigest": "aeac90df4bfd3460048a6574c8d0a10c4860f330b9dc1bee706691ad3eac2a47"
+      },
+      "assertions": {
+        "authenticatedReferenceChatApi": true,
+        "realDialogueTurnAttempted": true,
+        "providerRuntimeSessionBound": true,
+        "providerPreSendSerialized": true,
+        "realTurnOutcomeObserved": true
+      }
+    },
+    {
+      "role": "recovery",
+      "state": "passed",
+      "runnerRunId": "cefe5233eccd61c8394fddb7",
+      "artifact": {
+        "generation": "g-muo2q1oh-41008-62e5b50d18ce484db3b92ab7c6edad8b",
+        "inventoryDigest": "aeac90df4bfd3460048a6574c8d0a10c4860f330b9dc1bee706691ad3eac2a47"
+      },
+      "assertions": {
+        "authenticatedReferenceChatApi": true,
+        "realDialogueTurnAttempted": true,
+        "providerRuntimeSessionBound": true,
+        "providerPreSendSerialized": true,
+        "realTurnOutcomeObserved": true
+      }
+    }
+  ],
+  "mappedOperationIds": [],
+  "verdict": "inconclusive",
+  "blockerIds": [
+    "mounted_profile_operation_evidence_shape",
+    "mounted_profile_operation_evidence"
+  ],
+  "reasonCode": "mounted_profile_operation_evidence_unavailable",
+  "claims": {
+    "requiredMustFlowsExecuted": false,
+    "fullReleaseClaim": false
+  }
+}

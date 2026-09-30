@@ -1,0 +1,51 @@
+(node:21976) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+{
+  "gate": "tavern_release_live_orchestrator/v1",
+  "profile": "chat-tavern-live",
+  "plannedRunKinds": [
+    "main",
+    "failure",
+    "recovery"
+  ],
+  "prerequisite": {
+    "verdict": "blocked",
+    "checks": [
+      {
+        "id": "windows_arbitrary_reparse_enforcement",
+        "status": "not_applicable"
+      },
+      {
+        "id": "tavern_filesystem_threat_model",
+        "status": "not_applicable"
+      },
+      {
+        "id": "tavern_ordinary_link_reparse_containment",
+        "status": "not_applicable"
+      },
+      {
+        "id": "magic_context_stable_source",
+        "status": "blocked"
+      },
+      {
+        "id": "semantic_reference_attestation",
+        "status": "passed"
+      }
+    ]
+  },
+  "runs": [],
+  "mappedOperationIds": [],
+  "verdict": "blocked",
+  "blockerIds": [
+    "mounted_profile_routeIds_members",
+    "mounted_profile_operationIds_members",
+    "mounted_profile_operation_evidence_shape",
+    "mounted_profile_operation_evidence",
+    "prerequisite_verdict"
+  ],
+  "reasonCode": "automated_prerequisite_not_passed",
+  "claims": {
+    "requiredMustFlowsExecuted": false,
+    "fullReleaseClaim": false
+  }
+}
