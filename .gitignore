@@ -118,6 +118,12 @@ tmp_*
 *.stackdump
 /tools/.tmp-*
 
+# Disposable Host generation built for local iteration by
+# host/scripts/build-desktop-launcher-test-generation.mjs (test-only runtime
+# acquisition; never the repository's host/dist pointer). Rebuild instead of
+# committing; see GAMEBUDDY_CHAT_AUDIT_OUTPUT_ROOT in tools/run-chat-live-audit.mjs.
+/_devdist/
+
 # Root-level one-off investigation/diagnostic scripts left by past agent sessions.
 # All 76 existing root *.mjs were verified untracked and unreferenced debug
 # remnants (git ls-files --others + rg across tools/host/integrations/desktop).
