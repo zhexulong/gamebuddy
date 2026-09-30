@@ -198,6 +198,9 @@ test("pickup-forage runner passes with exact terminal correlation and fresh rere
     observationId: "so1_observation_1",
     ref: "sr1_AAAAAAAAAAAAAAAA",
   });
+  // The binding travels as action args and must stay exactly {observationId, ref};
+  // the Agent's ground facts ride alongside it, not inside it.
+  assert.deepEqual(result.observedGround, UNIFORM_GRASS, "the live result must record the observed ground");
   assert.equal(result.evidence.item, "(O)16");
   assert.equal(result.evidence.removed, "True");
   assert.equal(result.targetGone, true);

@@ -50,6 +50,8 @@ export async function runPickupForageSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
+  /** The ground summary the Agent received, kept for the live evidence record. */
+  let observedGround = null;
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeForageActionable(client);
@@ -74,6 +76,7 @@ export async function runPickupForageSmoke(
     // the target's live tile geometry to one and only one forage affordance;
     // never manufacture a ref from snapshot facts or fixture coordinates.
     const sceneTarget = await chooseExactSceneForageTarget(client, snapshot, target);
+    observedGround = sceneTarget.ground;
     const request = await execute(
       client,
       trace,
@@ -84,7 +87,7 @@ export async function runPickupForageSmoke(
         y: target.y,
         expectedQualifiedItemId: target.qualifiedItemId,
         expectedTargetId: target.targetId,
-        sceneTarget,
+        sceneTarget: sceneTarget.binding,
       },
       snapshot,
     );
@@ -130,6 +133,7 @@ export async function runPickupForageSmoke(
       target: targetSummary(target),
       receipt: summarizeReceipt(terminal),
       evidence,
+      observedGround,
       targetGone,
       inventoryDeltaProven,
       trace,
@@ -142,6 +146,7 @@ export async function runPickupForageSmoke(
       state: "blocked",
       topology: "native_local_player_fixture",
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
+      observedGround,
       latestReceipt: summarizeReceipt(client.state?.latestReceipt),
       trace,
       durationMs: Date.now() - startedAt,
@@ -354,7 +359,10 @@ async function chooseExactSceneForageTarget(client, snapshot, target) {
   );
   if (matches.length !== 1)
     throw new Error(matches.length === 0 ? "scene_forage_affordance_missing" : "ambiguous_scene_forage_affordances");
-  return { observationId: scene.observationId, ref: matches[0].ref };
+  // Return the binding and the ground the Agent received separately: the binding
+  // travels as action args and the Mod admits it as exactly {observationId, ref},
+  // so folding the summary into it would make a valid observation unroutable.
+  return { binding: { observationId: scene.observationId, ref: matches[0].ref }, ground: scene.ground };
 }
 /**
  * Require the facts the Agent needs to reason about the surface underfoot. The

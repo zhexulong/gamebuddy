@@ -165,7 +165,17 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
             return null;
 
         this.sceneObservationId = projection.ObservationId;
-        return new ObserveSceneResultPayload(
+        return BuildObserveScenePayload(projection);
+    }
+
+    /// <summary>
+    /// Map a projection onto the wire payload. Both the parsed-request path and the
+    /// Navigation piggyback path go through here: they used to build the record
+    /// separately and both silently dropped <c>Ground</c>, so the Agent could see an
+    /// affordance but never the surface underfoot.
+    /// </summary>
+    internal static ObserveSceneResultPayload BuildObserveScenePayload(SceneObservationProjectionResult projection) =>
+        new(
             projection.ObservationId,
             projection.CurrentLocation,
             projection.CurrentRegion,
@@ -178,8 +188,18 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
                 affordance.ActionHint)).ToArray(),
             projection.Summary,
             projection.IsPartial,
-            projection.TruncatedReason);
-    }
+            projection.TruncatedReason,
+            projection.Ground is null
+                ? null
+                : new ObserveSceneGroundPayload(
+                    projection.Ground.DominantKind,
+                    projection.Ground.DominantTileCount,
+                    projection.Ground.ScannedTileCount,
+                    projection.Ground.Exceptions.Select(exception => new ObserveSceneGroundTilePayload(
+                        exception.TileX,
+                        exception.TileY,
+                        exception.Kind)).ToArray(),
+                    projection.Ground.OmittedExceptionTileCount));
 
     internal bool TryAuthenticate(long generation, BridgeEnvelope<BridgeHello>? envelope, out BridgeEnvelope<BridgeHelloAck>? acknowledgement, out string reasonCode)
     {
@@ -308,20 +328,7 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
          // never derive it from the transport envelope/message identity.
           this.sceneObservationId = projection.ObservationId;
           this.sceneObservationGeneration = generation;
-          ObserveSceneResultPayload payload = new(
-             projection.ObservationId,
-             projection.CurrentLocation,
-            projection.CurrentRegion,
-            projection.Affordances.Select(affordance => new ObserveSceneAffordancePayload(
-                affordance.Ref,
-                affordance.Kind,
-                affordance.Name,
-                affordance.Distance,
-                affordance.Direction,
-                affordance.ActionHint)).ToArray(),
-            projection.Summary,
-            projection.IsPartial,
-            projection.TruncatedReason);
+          ObserveSceneResultPayload payload = BuildObserveScenePayload(projection);
          response = Reply("observe_scene_result", envelope.CorrelationId, payload);
          reasonCode = "accepted";
         return true;
