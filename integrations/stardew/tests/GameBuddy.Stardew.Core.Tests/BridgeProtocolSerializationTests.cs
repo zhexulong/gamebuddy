@@ -464,6 +464,7 @@ public sealed class BridgeProtocolSerializationTests
             Location: "unknown",
             Tile: new BridgeTile(0f, 0f),
             Stamina: 0f,
+            Exhausted: false,
             Health: 0,
             CurrentTool: null,
             InventorySlots: 0,

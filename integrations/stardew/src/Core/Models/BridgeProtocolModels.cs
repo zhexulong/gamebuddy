@@ -338,6 +338,10 @@ public sealed record BridgeSnapshot(
     string Location,
     BridgeTile Tile,
     float Stamina,
+    // The persistent native exhaustion flag (Farmer.exhausted). Plain native state,
+    // not an interpretation: while it is set, the next day's stamina restore is
+    // halved, so the companion must be able to see the cost it just incurred.
+    bool Exhausted,
     int Health,
     string? CurrentTool,
     int InventorySlots,

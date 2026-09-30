@@ -106,7 +106,9 @@ export function projectFarmingContext(snapshot: Snapshot): FarmingContextProject
     revision: snapshot.revision,
     location: snapshot.location,
     stamina: snapshot.stamina,
-    exhausted: snapshot.exhausted === true,
+    // Read the validated field through. Never `=== true`: absence is a
+    // protocol error now, and a default would quietly reintroduce the false report.
+    exhausted: snapshot.exhausted,
     soilTilesCount: snapshot.soilTiles?.length ?? 0,
     canTill: capabilities.has("till_soil"),
     canWater: capabilities.has("water_crop"),
@@ -285,7 +287,7 @@ function isSnapshotInput(value: Snapshot): boolean {
     Number.isFinite(value.tile.x) &&
     Number.isFinite(value.tile.y) &&
     Number.isFinite(value.stamina) &&
-    (value.exhausted === undefined || typeof value.exhausted === "boolean") &&
+    typeof value.exhausted === "boolean" &&
     Number.isFinite(value.health) &&
     (value.timeOfDay === undefined || (Number.isSafeInteger(value.timeOfDay) && value.timeOfDay >= 0 && value.timeOfDay <= 2600)) &&
     (value.dayOfMonth === undefined || (Number.isSafeInteger(value.dayOfMonth) && value.dayOfMonth >= 1 && value.dayOfMonth <= 28)) &&

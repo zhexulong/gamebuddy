@@ -57,6 +57,7 @@ function sendSnapshot(
         location: "Farm",
         tile: { x: 10, y: 11 },
         stamina: 270,
+        exhausted: false,
         health: 100,
         actionable: true,
         capabilities: enabled ? ["inspect_self", "move_to_tile"] : ["inspect_self"],
