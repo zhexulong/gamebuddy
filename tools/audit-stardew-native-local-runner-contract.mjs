@@ -15,15 +15,21 @@
 //
 // Neither is caught by the runner's own unit test, because that test builds its
 // own config in the same retired shape — the two agree with each other and
-// disagree with the live fixture. That is exactly why this audit compares the
-// runners against the fixture's CURRENT output contract instead of against
-// themselves.
+// disagree with the live fixture. That is why this audit compares the runners
+// against the fixture's CURRENT output contract instead of against themselves.
 //
-// The repo has 50+ runners and the migration is in flight, so the audit does not
-// simply fail on every non-conforming runner: it fails on any runner that is not
-// either conforming or explicitly listed below. A listed runner makes the debt
-// visible and countable, and a runner that is fixed while still listed fails
-// stale-pin detection, so the list can only shrink.
+// The migration is in flight in another lane, so this audit is deliberately
+// asymmetric: improving a runner can never fail it, and neither can adding a
+// conforming one. Two baseline sets express that:
+//
+//   * BASELINE_CONFORMING — runners that already conform. Regressing one is a
+//     finding, which is what catches "migrated, then reverted".
+//   * BASELINE_RUNNERS    — the whole set at baseline. Any runner outside it is
+//     new, so it must conform; that is what stops the retired shape from being
+//     copied into the next runner someone writes.
+//
+// Debt runners that are still debt are simply not findings, so this gate never
+// asks the migrating lane to update it. The baselines only ever grow.
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,15 +37,26 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TOOLS = path.join(ROOT, "tools");
 
-/**
- * Runners not yet migrated off the retired policy shape or the equality
- * capability assertion. Each entry is debt, not an allowance: it names a runner
- * whose live gate currently cannot pass, so the count below is the honest size of
- * that debt.
- *
- * Remove an entry in the same change that migrates its runner.
- */
-const RETIRED_CONTRACT_RUNNERS = Object.freeze([
+/** Runners that conformed at baseline. A regression is a finding. */
+const BASELINE_CONFORMING = new Set([
+  "bait-crab-pot",
+  "break-rock-source",
+  "chop-tree-source",
+  "clear-debris",
+  "dig-artifact-spot",
+  "equip-tool",
+  "expression",
+  "machine-inspect",
+  "place-crab-pot",
+  "place-wood-fence",
+  "ride-minecart",
+  "water-pet-bowl",
+  "water-slime-hutch-trough",
+]);
+
+/** Every runner that existed at baseline. Anything newer must conform. */
+const BASELINE_RUNNERS = new Set([
+  ...BASELINE_CONFORMING,
   "advance-day",
   "chest-retrieve",
   "chest-store",
@@ -92,12 +109,27 @@ const stripComments = (source) =>
     })
     .join("\n");
 
-export function auditRunnerContracts() {
-  const fixture = readFileSync(path.join(ROOT, "tools/lib/stardew-native-local-player-fixture.mjs"), "utf8");
+const classify = (code) => {
+  const readsRetiredPolicy = /ActionPolicyVersion|EnabledActions/.test(code);
+  const assertsExactCapabilities = /assertExactCapabilities/.test(code);
+  return {
+    readsRetiredPolicy,
+    assertsExactCapabilities,
+    conforming: !readsRetiredPolicy && !assertsExactCapabilities,
+    reasons: [
+      readsRetiredPolicy ? "retired-policy-shape" : "",
+      assertsExactCapabilities ? "exact-capability-set" : "",
+    ].filter(Boolean),
+  };
+};
+
+export function auditRunnerContracts({ toolsRoot = TOOLS, fixturePath } = {}) {
+  const fixture = readFileSync(fixturePath ?? path.join(ROOT, "tools/lib/stardew-native-local-player-fixture.mjs"), "utf8");
 
   // The fixture's own output shape is the authority for what a runner may expect.
   const fixtureWritesRetiredShape = /^result\.(ActionPolicyVersion|EnabledActions)\s*=/m.test(fixture);
-  const fixtureWritesDenyByException = /result\.DeniedActions\s*=/.test(fixture) && /result\.ExperimentalActions\s*=/.test(fixture);
+  const fixtureWritesDenyByException =
+    /result\.DeniedActions\s*=/.test(fixture) && /result\.ExperimentalActions\s*=/.test(fixture);
 
   const findings = [];
   if (!fixtureWritesDenyByException)
@@ -105,51 +137,37 @@ export function auditRunnerContracts() {
   if (fixtureWritesRetiredShape)
     findings.push({ kind: "contract", detail: "fixture writes the retired ActionPolicyVersion/EnabledActions shape again" });
 
-  const names = readdirSync(TOOLS)
+  const names = readdirSync(toolsRoot)
     .filter((name) => /^run-stardew-native-local-player-.*-smoke\.mjs$/.test(name))
     .sort();
 
-  const pinned = new Set(RETIRED_CONTRACT_RUNNERS);
   const runners = [];
   for (const name of names) {
     const id = name.replace("run-stardew-native-local-player-", "").replace("-smoke.mjs", "");
-    const code = stripComments(readFileSync(path.join(TOOLS, name), "utf8"));
-    runners.push({
-      id,
-      readsRetiredPolicy: /ActionPolicyVersion|EnabledActions/.test(code),
-      validatesFixturePolicy: /validateNativeLocalFixturePolicy/.test(code),
-      assertsExactCapabilities: /assertExactCapabilities/.test(code),
-      assertsRequiredCapabilities: /assertRequiredCapabilities/.test(code),
-      pinned: pinned.has(id),
-    });
-  }
+    const verdict = classify(stripComments(readFileSync(path.join(toolsRoot, name), "utf8")));
+    runners.push({ id, ...verdict, inBaseline: BASELINE_RUNNERS.has(id) });
 
-  const conforming = (r) => !r.readsRetiredPolicy && !r.assertsExactCapabilities;
-  const knownDebt = (r) => r.pinned && !conforming(r);
-
-  for (const runner of runners) {
-    if (conforming(runner)) {
-      if (runner.pinned)
-        findings.push({ kind: "stale_pin", runner: runner.id, detail: "runner already conforms; remove its entry from RETIRED_CONTRACT_RUNNERS" });
-      continue;
+    if (!verdict.conforming && !BASELINE_RUNNERS.has(id)) {
+      findings.push({
+        kind: "new_runner_on_retired_contract",
+        runner: id,
+        detail: `${verdict.reasons.join("; ")} — a new runner must use the current contract`,
+      });
     }
-    if (knownDebt(runner)) continue;
-    const reasons = [
-      runner.readsRetiredPolicy ? "reads the retired ActionPolicyVersion/EnabledActions shape, which rejects every real fixture config" : "",
-      runner.assertsExactCapabilities ? "asserts an equal capability set, which the derived surface can never satisfy" : "",
-    ].filter(Boolean);
-    findings.push({ kind: "unregistered_debt", runner: runner.id, detail: reasons.join("; ") });
-  }
-
-  for (const id of pinned) {
-    if (!runners.some((r) => r.id === id))
-      findings.push({ kind: "stale_pin", runner: id, detail: "no such runner exists" });
+    if (!verdict.conforming && BASELINE_CONFORMING.has(id)) {
+      findings.push({
+        kind: "conforming_regression",
+        runner: id,
+        detail: `${verdict.reasons.join("; ")} — this runner conformed at baseline`,
+      });
+    }
   }
 
   return {
     runnerCount: runners.length,
-    conformingCount: runners.filter(conforming).length,
-    debtCount: runners.filter((r) => !conforming(r)).length,
+    conformingCount: runners.filter((r) => r.conforming).length,
+    debt: runners.filter((r) => !r.conforming).map((r) => ({ id: r.id, reasons: r.reasons })),
+    newRunnerCount: runners.filter((r) => !r.inBaseline).length,
     runners,
     findings,
   };
@@ -162,11 +180,14 @@ function main() {
     return report.findings.length === 0 ? 0 : 1;
   }
 
-  console.log(`native-local runners: ${report.runnerCount}`);
+  console.log(`native-local runners: ${report.runnerCount} (new since baseline: ${report.newRunnerCount})`);
   console.log(`  conforming to the current fixture contract: ${report.conformingCount}`);
-  console.log(`  known debt (pinned):                        ${report.debtCount - report.findings.filter((f) => f.kind === "unregistered_debt").length}`);
+  console.log(`  still on the retired contract:              ${report.debt.length}`);
+  if (process.argv.includes("--list-debt")) {
+    for (const row of report.debt) console.log(`    ${row.id.padEnd(46)} ${row.reasons.join("+")}`);
+  }
   if (report.findings.length === 0) {
-    console.log("contract: ok (every runner conforms or is explicitly pinned as debt)");
+    console.log("contract: ok (no regression, no new runner on the retired shape)");
     return 0;
   }
   console.log(`contract: ${report.findings.length} finding(s)`);
