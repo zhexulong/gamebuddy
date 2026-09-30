@@ -94,11 +94,19 @@ public sealed class SlimeHutchTroughActionTests
         // The tool-family gate requires the agent half of every tool mutation, and a
         // direct DoFunction bypasses Farmer.useTool, so the persistent cross-day
         // exhaustion consequence must be set here or the companion escapes it.
+        // The handler no longer inlines that step: it routes its one native swing
+        // through the shared seam, which is where both vanilla closing steps live.
+        // So the invariant is two-part -- this handler must reach the seam, and the
+        // seam must still run dispatch, click-anchor clear and exhaustion.
         body.Should().Contain("stamina_before");
         body.Should().Contain("stamina_after");
         body.Should().Contain("stamina_delta");
         body.Should().Contain("expected_stamina_cost");
-        body.Should().Contain("checkForExhaustion");
+        body.Should().Contain("UseNativeToolOnTile(");
+        body.Should().NotContain("checkForExhaustion");
+        SharedToolUseSeam().Should().Contain("DoFunction(");
+        SharedToolUseSeam().Should().Contain("lastClick = Vector2.Zero");
+        SharedToolUseSeam().Should().Contain("checkForExhaustion(");
         body.Should().Contain("native_menu_opened");
         body.Should().Contain("before_watered=");
         body.Should().Contain("after_watered=");
@@ -199,6 +207,44 @@ public sealed class SlimeHutchTroughActionTests
 
     private static string NativeActionSourcePath() => RepositorySourcePath(Path.Combine(
         "integrations", "stardew", "farmhandexecutioncontroller.slimehutchtroughactions.cs"));
+
+    /// <summary>
+    /// The body of the one shared native tool-use seam, read from the main
+    /// execution-manager partial where it is declared.
+    ///
+    /// The tool-family invariant has two halves. A handler must route its single
+    /// native swing through this seam, and the seam itself must keep performing
+    /// vanilla <c>Farmer.useTool</c>'s closing steps. Pinning only the handler would
+    /// let the seam be hollowed out, so both halves are read here.
+    /// </summary>
+    private static string SharedToolUseSeam()
+    {
+        string source = File.ReadAllText(RepositorySourcePath(Path.Combine(
+            "integrations", "stardew", "farmhandexecutioncontroller.cs")));
+        string signature = "private static void UseNativeToolOnTile(";
+        int start = source.IndexOf(signature, StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, "the shared native tool-use seam must be declared in the main partial");
+
+        int depth = 0;
+        bool started = false;
+        for (int index = start; index < source.Length; index++)
+        {
+            char character = source[index];
+            if (character == '{')
+            {
+                depth++;
+                started = true;
+            }
+            else if (character == '}' && started)
+            {
+                depth--;
+                if (depth == 0)
+                    return source.Substring(start, index - start + 1);
+            }
+        }
+
+        return source.Substring(start);
+    }
 
     private static string RepositorySourcePath(string relative)
     {
