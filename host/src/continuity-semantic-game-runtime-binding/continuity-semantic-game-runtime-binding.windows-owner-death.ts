@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { resolveWindowsPowerShell } from "../windows-powershell-executable.js";
 import type { ProductionGameOwner } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import {
   mintWindowsOwnerDeathVerification,
@@ -41,12 +42,14 @@ async function queryOwner(owner: ProductionGameOwner): Promise<WindowsOwnerDeath
     "$creationTicks = ([datetime]$processRecord.CreationDate).ToUniversalTime().Ticks",
     "[Console]::Out.WriteLine(([string]$processRecord.ProcessId + '|' + [string]$creationTicks))",
   ].join("; ");
-  try {
-    const result = await execFileAsync(
-      "powershell.exe",
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-      { windowsHide: true, timeout: QUERY_TIMEOUT_MS, maxBuffer: MAX_QUERY_OUTPUT_BYTES, encoding: "utf8" },
-    );
+    try {
+      const result = await execFileAsync(
+        // Absolute path: a reduced or over-long PATH must not read as an
+        // ambiguous owner-death verdict.
+        resolveWindowsPowerShell() ?? "powershell.exe",
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+        { windowsHide: true, timeout: QUERY_TIMEOUT_MS, maxBuffer: MAX_QUERY_OUTPUT_BYTES, encoding: "utf8" },
+      );
     if (result.stderr.length !== 0) return "ambiguous";
     const match = OWNER_LINE.exec(result.stdout);
     if (!match) return "ambiguous";

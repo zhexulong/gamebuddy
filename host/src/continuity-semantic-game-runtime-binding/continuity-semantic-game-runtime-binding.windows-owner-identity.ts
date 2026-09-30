@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { resolveWindowsPowerShell } from "../windows-powershell-executable.js";
 import {
   brandRuntimeOwnerIdentity,
   type OpaqueRuntimeOwnerIdentity,
@@ -51,7 +52,9 @@ async function queryCurrentProcessCreationIdentity(
   ].join("; ");
   try {
     const result = await execFileAsync(
-      "powershell.exe",
+      // Absolute path: a reduced or over-long PATH must not read as a failed
+      // owner-identity query.
+      resolveWindowsPowerShell() ?? "powershell.exe",
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
       {
         windowsHide: true,

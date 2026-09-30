@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { resolveWindowsPowerShell } from "../windows-powershell-executable.js";
 
 /**
  * Host-only Chat construction binding. It owns immutable deployment identity,
@@ -307,7 +308,9 @@ async function queryCurrentOwnerProof(): Promise<OwnerProofRecord> {
   ].join("; ");
   try {
     const result = await run(
-      "powershell.exe",
+      // Absolute path: a reduced or over-long PATH must not read as a failed
+      // owner-identity query.
+      resolveWindowsPowerShell() ?? "powershell.exe",
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
       { windowsHide: true, timeout: OWNER_IDENTITY_QUERY_TIMEOUT_MS, maxBuffer: 256, encoding: "utf8" },
     );

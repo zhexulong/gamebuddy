@@ -2,11 +2,41 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { resolveWindowsPowerShell } from "./windows-powershell-executable.js";
 
 const MAX_TIMEOUT_MS = 30_000;
 const CLOSE_TIMEOUT_MS = 1_000;
 const NAME_PREFIX = "Local\\GameBuddy.Host.";
 const NAME_SUFFIX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
+// A sidecar diagnostic is reduced to one bare bounded token before it reaches
+// the caller: the message may carry a path and a stack never belongs here. The
+// same shape host/src/bootstrap/entry/desktop-host-entry.internal.ts uses.
+const BOUNDED_DIAGNOSTIC = /^[a-z][a-z0-9_.:-]{2,159}$/i;
+const SIDECAR_DIAGNOSTIC_FALLBACK = "windows_named_mutex_sidecar_failed";
+const MAX_SIDECAR_STDERR_BYTES = 8_192;
+
+/**
+ * The Windows PowerShell sidecar is started by absolute path so a reduced or
+ * over-long `PATH` cannot make the broker look like a child that merely exited.
+ */
+export function resolvePowershellExecutable(environment: NodeJS.ProcessEnv = process.env): string | undefined {
+  return resolveWindowsPowerShell(environment);
+}
+
+/**
+ * Reduce captured sidecar stderr to one bare bounded token, so the broker's
+ * terminal error names *why* the sidecar died without ever leaking a path,
+ * message prose or a stack to the caller.
+ */
+export function boundedSidecarDiagnostic(stderr: string, fallback = SIDECAR_DIAGNOSTIC_FALLBACK): string {
+  if (typeof stderr === "string" && stderr.length > 0) {
+    for (const line of stderr.split(/\r?\n/)) {
+      const code = line.trim().replace(/^Error:\s*/i, "");
+      if (BOUNDED_DIAGNOSTIC.test(code)) return code.toLowerCase();
+    }
+  }
+  return fallback;
+}
 type TerminalOwnership = "held" | "cancelled" | "timeout" | "failed";
 type BrokerReply = Readonly<{
   id: string;
@@ -364,21 +394,42 @@ export class WindowsNamedMutexBroker {
         this.safetySealed ? "windows_named_mutex_broker_safety_sealed" : "windows_named_mutex_broker_closed",
       );
     const asset = fileURLToPath(new URL("./windows-named-mutex-broker.ps1", import.meta.url));
+    // Resolve the sidecar by absolute path. A reduced or over-long PATH (Windows
+    // caps the variable at ~8191 chars, and this environment's PATH already
+    // exceeds it) would otherwise fail the launch and surface as an
+    // unattributable `windows_named_mutex_broker_exit`.
+    const powershell = resolvePowershellExecutable();
+    if (powershell === undefined)
+      throw new WindowsNamedMutexBrokerError("windows_named_mutex_powershell_unavailable");
+    let sidecarDiagnostic = "";
     const child = spawn(
-      "powershell.exe",
+      powershell,
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", asset],
-      { stdio: "pipe", windowsHide: true },
+      { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     );
     this.child = child;
+    // Surface the sidecar's own bounded failure token. Without this a parse
+    // error, a missing asset or an OS refusal is invisible to the caller, which
+    // only ever observed the generic exit code.
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      if (sidecarDiagnostic.length < MAX_SIDECAR_STDERR_BYTES)
+        sidecarDiagnostic = `${sidecarDiagnostic}${chunk}`;
+    });
     createInterface({ input: child.stdout, crlfDelay: Infinity, terminal: false }).on("line", (line) =>
       this.handleLine(line),
     );
-    this.attachChildTerminalListeners(child);
+    this.attachChildTerminalListeners(child, () =>
+      boundedSidecarDiagnostic(sidecarDiagnostic, "windows_named_mutex_broker_exit"),
+    );
   }
   /** Only an actual process exit can acknowledge the normal close/reap path. */
-  private attachChildTerminalListeners(child: ChildProcessWithoutNullStreams): void {
-    child.once("error", () => this.fail(new WindowsNamedMutexBrokerError("windows_named_mutex_broker_exit")));
-    child.once("exit", () => this.fail(new WindowsNamedMutexBrokerError("windows_named_mutex_broker_exit"), true));
+  private attachChildTerminalListeners(
+    child: ChildProcessWithoutNullStreams,
+    diagnostic: () => string = () => "windows_named_mutex_broker_exit",
+  ): void {
+    child.once("error", () => this.fail(new WindowsNamedMutexBrokerError(diagnostic())));
+    child.once("exit", () => this.fail(new WindowsNamedMutexBrokerError(diagnostic()), true));
   }
   private handleLine(line: string): void {
     try {
