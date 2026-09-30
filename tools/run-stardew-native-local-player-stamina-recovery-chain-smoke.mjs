@@ -5,6 +5,7 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
+  validateNativeLocalFixturePolicy,
   summarizeSnapshot,
   waitForFreshSnapshot,
   waitForTerminal,
@@ -580,11 +581,9 @@ function validateNativeLocalFixtureConfig(value) {
         hostAutomation: value.HostAutomation?.Enable,
         hostFarmhand: value.HostFarmhandProvisioning?.Enable,
         farmhandProvisioner: value.FarmhandProvisioner?.Enable,
-        apiVersion: value.ActionPolicyVersion,
       })}`,
     );
-  if (value.ActionPolicyVersion !== 0 || JSON.stringify(value.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS))
-    throw new Error("native_local_stamina_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 
 function validFixtureSlotRelationship(logicalName, observedSaveSlot) {
