@@ -18,9 +18,11 @@ const config = {
   CompanionId: "companion",
   PipeName: "pipe",
   BridgeToken: "token",
-  ActionPolicyVersion: 0,
-  EnabledActions: ["pet_animal"],
-  ExperimentalActions: ["pet_animal"],
+  // The fixture writes the derived deny-by-exception block. `pet_animal` is
+  // live-verified, so it needs no opt-in.
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },
@@ -107,9 +109,10 @@ test("pet-animal runner rejects an incomplete native-local capability surface", 
 test("pet-animal runner accepts the shared-world surface as a required subset", async () => {
   const sharedConfig = {
     ...config,
-    ActionPolicyVersion: 1,
-    EnabledActions: null,
-    ExperimentalActions: ["pet_animal"],
+    // Shared-world profile: same derived block, no opt-in needed.
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
     NativeLocalPlayerFixture: { Enable: false },
     FarmhandProvisioner: { Enable: true },
   };

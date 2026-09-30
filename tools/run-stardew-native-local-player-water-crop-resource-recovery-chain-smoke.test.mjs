@@ -14,8 +14,9 @@ const config = {
   CompanionId: "companion",
   PipeName: "pipe",
   BridgeToken: "token",
-  ActionPolicyVersion: 0,
-  EnabledActions: ["move_to_tile", "travel", "equip_tool", "water_crop", "refill_watering_can"],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },
@@ -317,9 +318,9 @@ test("resource-depletion chain rejects a scenario it is not authorized for", asy
     /native_local_fixture_config_invalid/,
   );
 
-  const wrongActions = { ...config, EnabledActions: ["move_to_tile", "travel", "equip_tool", "water_crop"] };
+  const wrongActions = { ...config, DeniedActions: ["refill_watering_can"] };
   await assert.rejects(
     () => runWaterCropResourceRecoveryChainSmoke(client, [], wrongActions),
-    /native_local_water_crop_empty_can_action_policy_invalid/,
+    /native_fixture_policy_denies_required/,
   );
 });

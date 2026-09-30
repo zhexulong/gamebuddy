@@ -5,6 +5,7 @@ import {
   executeFresh,
   observeTopologySnapshot,
   readNativeClientConfig,
+  validateNativeLocalFixturePolicy,
   summarizeReceipt,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
@@ -94,8 +95,9 @@ export async function runChestRetrieveSmoke(
  */
 function validateTopologyConfig(value) {
   const topology = classifyTopology(value);
-  if (topology === "shared_world_farmhand" && value.ActionPolicyVersion !== 1)
-    throw new Error("shared_world_action_policy_invalid");
+  // The retired `ActionPolicyVersion` selector is gone; policy is the derived
+  // deny-by-exception block, so the shape check is what still applies.
+  validateNativeLocalFixturePolicy(value, {});
   return topology;
 }
 

@@ -3,6 +3,7 @@ import {
   executeFresh,
   observeFresh,
   readNativeClientConfig,
+  validateNativeLocalFixturePolicy,
   summarizeReceipt,
   summarizeSnapshot,
   waitForFreshSnapshot,
@@ -164,8 +165,7 @@ function validateNativeLocalUseItemConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (value.ActionPolicyVersion !== 0 || !sameStrings(value.EnabledActions, [ACTION]))
-    throw new Error("native_local_use_item_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: [ACTION] });
 }
 
 function requireActionableUseItemSnapshot(snapshot) {

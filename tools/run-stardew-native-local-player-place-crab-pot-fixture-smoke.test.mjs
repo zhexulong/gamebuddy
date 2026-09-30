@@ -15,7 +15,9 @@ const target = {
 };
 
 const config = {
-  EnabledActions: ["move_to_tile", "travel", "place_crab_pot"],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   SaveId: "save",
   WorldId: "world",
   PlayerId: "player",
@@ -67,10 +69,12 @@ test("fixture runner fails closed on capability profile and capability surface",
       throw new Error("must not dispatch");
     },
   };
-  await assert.rejects(
-    runPlaceCrabPotFixtureSmoke(client, { ...config, EnabledActions: ["move_to_tile"] }),
-    /fixture_capability_profile_invalid/,
-  );
+await assert.rejects(
+  // Denying an action the run needs is the deny-by-exception equivalent of the
+  // retired allowlist narrowing, and the shared validator refuses it.
+  runPlaceCrabPotFixtureSmoke(client, { ...config, DeniedActions: ["place_crab_pot"] }),
+  /native_fixture_policy_denies_required/,
+);
   const missingCapability = { ...snapshot, capabilities: ["cancel_active_execution", "move_to_tile", "travel"] };
   const client2 = {
     state: { snapshot: missingCapability },

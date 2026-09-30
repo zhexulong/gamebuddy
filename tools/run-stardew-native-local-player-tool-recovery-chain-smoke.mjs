@@ -4,6 +4,7 @@ import {
   executeFresh,
   observeFresh,
   readNativeClientConfig,
+  validateNativeLocalFixturePolicy,
   summarizeReceipt,
   summarizeSnapshot,
   waitForActionable,
@@ -419,15 +420,9 @@ function validateNativeLocalFixtureConfig(value) {
         hostAutomation: value.HostAutomation?.Enable,
         hostFarmhand: value.HostFarmhandProvisioning?.Enable,
         farmhandProvisioner: value.FarmhandProvisioner?.Enable,
-        apiVersion: value.ActionPolicyVersion,
       })}`,
     );
-  if (
-    value.ActionPolicyVersion !== 0 ||
-    JSON.stringify(value.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS) ||
-    JSON.stringify(value.ExperimentalActions ?? []) !== JSON.stringify([])
-  )
-    throw new Error("native_local_till_soil_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 function validFixtureSlotRelationship(logicalName, observedSaveSlot) {
   return (

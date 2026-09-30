@@ -77,9 +77,7 @@ function validateFixtureConfig(config) {
   if (
     fixture?.Enable !== true ||
     fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== "navigation_read_only_v1" ||
-    !Array.isArray(config.EnabledActions) ||
-    JSON.stringify(config.EnabledActions) !== JSON.stringify(["inspect_world_map", "find_destination"])
+    fixture.FixtureScenario !== "navigation_read_only_v1"
   )
     throw new Error("navigation_read_only_fixture_config_invalid");
   if (
