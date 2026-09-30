@@ -52,6 +52,7 @@
     "move_to_tile",
     "equip_tool",
     "travel",
+    "ride_minecart",
     "enter_exit",
     "till_soil",
     "pickup_forage",
@@ -137,6 +138,23 @@
           "kind": "mod_owned",
           "authority": "StardewBodyController",
           "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "ride_minecart",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public void MinecartWarp(MinecartDestinationData destination)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "MinecartWarp only calls Game1.player.Halt(), sets freezePause, and calls Game1.warpFarmer(name, x, y, direction); the destination and its target tile come from the game's own Data/Minecarts and the warp machinery is the one enter_exit already classifies as mode-neutral"
         }
       ],
       "admission": {
