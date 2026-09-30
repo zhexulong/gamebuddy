@@ -26,6 +26,7 @@ import {
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
+  waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 // The native-local lane loads the compiled test artifact, exactly like the other
@@ -93,7 +94,19 @@ export async function runRideMinecartSmoke(
     // The ride's terminal is the Warped postcondition plus the objective it
     // actually rode: `expected/actual` must agree, and the receipt must echo the
     // published network/destination pair this run selected.
-    const after = await observeMinecartActionable(client);
+    //
+    // This read must SETTLE, not sample. `GameLocation.MinecartWarp` sets
+    // `Game1.player.freezePause = 700` (GameLocation.cs:10311) and `Farmer.Update`
+    // forces `CanMove = false` for that window (Farmer.cs:7595-7603), so the
+    // snapshot is legitimately `actionable=false` for ~700ms after a successful
+    // ride. A single-shot strict read would fail on correct product behaviour with
+    // the ride receipt already `succeeded` (measured live). Every other native-local
+    // runner settles its post-terminal reads the same way.
+    const after = await waitForFreshSnapshot(client, {
+      minRevision: terminal.revision,
+      requireActionable: true,
+      timeoutMs: 5_000,
+    });
     const evidence = terminal.evidence?.detail ?? "";
     const objectiveNamed =
       evidence.includes(`network=${freshRide.networkId}`) &&

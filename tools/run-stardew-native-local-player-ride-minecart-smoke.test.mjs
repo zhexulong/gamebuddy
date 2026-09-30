@@ -42,12 +42,26 @@ function createFake({
   rideEvidence = "expected=BusStop:20,12;actual=BusStop:20,12;network=Default;destination=BusStop",
   rideTarget = { location: "BusStop", tile: { x: 20, y: 12 } },
   reuseStationCheck = false,
+  /**
+   * How many observes after a successful ride report `actionable=false`.
+   *
+   * This models a real product fact, not test convenience: `GameLocation.MinecartWarp`
+   * sets `Game1.player.freezePause = 700` (GameLocation.cs:10311) and `Farmer.Update`
+   * then forces `CanMove = false` for that window (Farmer.cs:7595-7603). Snapshot
+   * `actionable` includes `!player.CanMove`, so a correct ride is followed by
+   * ~700ms of legitimate non-actionability that the runner must settle through.
+   */
+  frozenObservesAfterRide = 0,
 } = {}) {
   const listeners = new Set();
   let revision = 7;
   let tile = initialTile;
   let location = initialLocation;
-  const current = () => snapshotOf(location, tile, revision, minecartTargets, capabilities);
+  let frozenRemaining = 0;
+  const current = () => ({
+    ...snapshotOf(location, tile, revision, minecartTargets, capabilities),
+    actionable: frozenRemaining <= 0,
+  });
   const publish = (payload) => {
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
@@ -55,6 +69,7 @@ function createFake({
     state: { snapshot: current() },
     observe: async () => {
       const snapshot = current();
+      if (frozenRemaining > 0) frozenRemaining -= 1;
       client.state.snapshot = snapshot;
       return snapshot;
     },
@@ -75,13 +90,15 @@ function createFake({
         if (rideState === "succeeded") {
           location = rideTarget.location;
           tile = { ...rideTarget.tile };
+          frozenRemaining = frozenObservesAfterRide;
         }
         if (reuseStationCheck) {
           // The Mod re-derives everything from the live world, so a forged or
           // stale targetId must be refused rather than falling back to a warp.
           publish({ ...receipt, state: "rejected", reasonCode: "minecart_target_changed", revision });
           return receipt;
-        }        publish({
+        }
+        publish({
           ...receipt,
           state: rideState,
           reasonCode: rideReason,
@@ -186,6 +203,18 @@ test("minecart runner accepts a larger advertised surface than the fixture needs
   const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "minecart_ride_completed");
+});
+
+test("minecart runner settles through the post-ride freeze window", async () => {
+  // MinecartWarp sets freezePause = 700, so the first ~N post-terminal observes are
+  // legitimately actionable=false with the receipt ALREADY succeeded. A single-shot
+  // strict read fails here on correct product behaviour. This test is load-bearing:
+  // reverting the post-terminal read to observeMinecartActionable makes it fail.
+  const client = createFake({ frozenObservesAfterRide: 3 });
+  const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
+  assert.equal(result.state, "passed");
+  assert.equal(result.reasonCode, "minecart_ride_completed");
+  assert.equal(result.after?.actionable, true, "the settled read must report the freeze lifted");
 });
 
 test("minecart runner rejects a non-isolated topology", async () => {
