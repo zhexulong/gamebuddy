@@ -10,6 +10,7 @@ generation — not fixtures. Kept as evidence and as a comparison baseline.
 | `run-03-fixed-clean.json` + `run-03-audit-report.txt` | After the cursor/resync fix. 2 turns, `exit 0`, **no finding**. |
 | `run-04-probe-complete.json` + `run-04-audit-report.txt` | Probe-manifest run AFTER the cursor fix: **completed for the first time** (81 s, 7 turns, `distractor.confused`, `no finding`). |
 | `run-05-probe-durable-gate.json` + `run-05-audit-report.txt` | Probe-manifest run AFTER the durable-commit gate fix: 7 turns, `distractor.confused`, `no finding`. Same generation and manifest digest as run-04. |
+| `run-06-probe-reproduced.json` | Probe-manifest run on a **later** generation (2026-09-30), reproducing `distractor.confused` on the same manifest: the verdict is stable across generations, not an artifact of one build. |
 | `run-01-vs-03-comparison.json` | `compare-chat-live-runs` output: 2 improvements, 0 regressions. |
 | `run-04-vs-05-comparison.json` | The first apples-to-apples probe pair (same 7-turn topology, generation and manifest digest): 0 improvements, **0 regressions**, 17 neutral. |
 
