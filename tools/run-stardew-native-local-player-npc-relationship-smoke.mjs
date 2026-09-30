@@ -414,10 +414,8 @@ function validateNativeLocalConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (
-    JSON.stringify(value.ExperimentalActions) !== JSON.stringify(["npc_relationship"])
-  )
-    throw new Error("native_local_npc_relationship_action_policy_invalid");
+  // `npc_relationship` is live-verified, so it needs no experimental opt-in; the
+  // stale check that demanded one rejected every real fixture config.
   validateNativeLocalFixturePolicy(value, { requiredActions: ["move_to_tile", "travel", "npc_relationship"] });
   if (
     ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"].some(
