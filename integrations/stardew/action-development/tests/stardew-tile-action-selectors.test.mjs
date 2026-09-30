@@ -4,61 +4,98 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { analyzeTileActionSelectors, createSelectorParser } from "../src/analysis/stardew-tile-action-selectors.mjs";
+import {
+  analyzeTileActionSelectorTree,
+  analyzeTileActionSelectors,
+  createSelectorParser,
+} from "../src/analysis/stardew-tile-action-selectors.mjs";
 
 /**
  * 地图瓦片 Action 选择器分析的校准测试。
  *
- * 保护的核心事实：per-method 九谓词对 `performAction` 的 selector 层失效
- * （`MinecartTransport` 只调 `ShowMineCartMenu`，无字段写入、无 DELEGATE 匹配，
- * P4 会拒绝它）。本分析器以 selector 为单位做信号驱动的分类，并对 helper
- * 做同文件有界追踪来读取 Data/* 表。
+ * 保护的核心事实有三条：
+ *   ① per-method 九谓词对 `performAction` 的 selector 层失效
+ *      （`MinecartTransport` 只调 `ShowMineCartMenu`，无字段写入、无 DELEGATE 匹配，
+ *      P4 会拒绝它）；
+ *   ② dispatcher 族是 `performAction`，它有 18 个实现（含 `DesertFestival` 的
+ *      `string` 重载），子类各自带 selector 且多数用 `if` 而不是 `switch`；
+ *   ③ 嵌套 switch 的词不是地图 Action 词（`OpenShop` 内的方向、`NPCMessage` 内的
+ *      对话键），跨对象委托也不能按名字当成同文件 helper。
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE_ROOT = path.join(HERE, "..", "..", "..", "..", "ref", "external", "StardewValleyDecompiled", "Stardew Valley");
+const GAMELOCATION = "StardewValley/GameLocation.cs";
 
 const parser = await createSelectorParser();
 
 const runOn = async (relPath, member, className) =>
   analyzeTileActionSelectors({ sourceRoot: SOURCE_ROOT, relPath, member, className, parser });
 
-// ---- 真实树校准：GameLocation.performAction（127 个 selector）---------------
+// ---- 真实树校准：GameLocation.performAction ---------------------------------
 
-test("GameLocation.performAction：127 个 selector 且分类完整", async () => {
-  const a = await runOn("StardewValley/GameLocation.cs", "performAction", "GameLocation");
+test("GameLocation.performAction：119 个地图 Action 词且分类完整", async () => {
+  const a = await runOn(GAMELOCATION, "performAction", "GameLocation");
   assert.equal(a.artifactKind, "stardew_tile_action_selector_analysis");
-  assert.equal(a.counts.selectors, 127, "selector 数应等于地图 Action 词表的实测规模");
+  assert.equal(a.schemaVersion, 2);
+  // 旧版算出 127：多出的 8 个是嵌套 switch 里的非 Action 词
+  // （OpenShop 的 down/up/left/right 与 NPCMessage 的 4 个对话键）。
+  assert.equal(a.counts.selectors, 119, "selector 数应等于地图 Action 词表的实测规模");
   const { menuBound, dialogueOrEventBound, warpTransition, plainWorldEffect, unknown } = a.counts;
-  assert.equal(menuBound + dialogueOrEventBound + warpTransition + plainWorldEffect + unknown, 127);
-  // 每行都有表达力的列
+  assert.equal(menuBound, 34);
+  assert.equal(dialogueOrEventBound, 52);
+  assert.equal(warpTransition, 1);
+  assert.equal(plainWorldEffect, 31);
+  assert.equal(unknown, 1);
+  assert.equal(menuBound + dialogueOrEventBound + warpTransition + plainWorldEffect + unknown, 119);
   for (const s of a.selectors) {
     assert.ok(s.selector.length > 0 && s.sectionLines.length > 0, `${s.selector} 必须有源码锚点`);
     assert.ok(typeof s.category === "string");
     assert.ok(Array.isArray(s.aliases), `${s.selector} 必须有 aliases 列表`);
+    assert.ok(Array.isArray(s.helpers), `${s.selector} 必须有 helper 解析链`);
   }
 });
 
-test("MinecartTransport：menu-bound，且同文件 helper 追踪读到 DataLoader.Minecarts", async () => {
-  const a = await runOn("StardewValley/GameLocation.cs", "performAction", "GameLocation");
+test("嵌套 switch 的词不是地图 Action 词", async () => {
+  const a = await runOn(GAMELOCATION, "performAction", "GameLocation");
+  const names = new Set(a.selectors.map((s) => s.selector));
+  for (const leaked of ["down", "up", "left", "right", "AnimalShop.20", "JoshHouse_Alex_Trash", "SeedShop_Abigail_Drawers"]) {
+    assert.ok(!names.has(leaked), `${leaked} 是嵌套 switch 的词，不得被当成 selector`);
+  }
+});
+
+test("MinecartTransport：menu-bound，且 helper 链读到 DataLoader.Minecarts 与 MinecartWarp", async () => {
+  const a = await runOn(GAMELOCATION, "performAction", "GameLocation");
   const s = a.selectors.find((x) => x.selector === "MinecartTransport");
   assert.ok(s, "MinecartTransport 应在 selector 列表里");
   assert.equal(s.category, "menu-bound");
   assert.ok(s.signals.includes("menu"));
   assert.ok(s.helperEffects.some((h) => h.helper === "ShowMineCartMenu"), "应追踪到 ShowMineCartMenu");
   assert.ok(s.dataTables.includes("DataLoader.Minecarts"), "helper 链应解析出 DataLoader.Minecarts");
+  assert.ok(s.helpers.includes("MinecartWarp"), "MinecartWarp 是 payload，必须在解析链里（ride_minecart 的 seam）");
   assert.deepEqual(s.guardChain, ["who.IsLocalPlayer"], "selector 挂在外层 `if (who.IsLocalPlayer)` 下");
 });
 
 test("BuildingToggleAnimalDoor：plain-world-effect，跨类委托只记录不解析", async () => {
-  const a = await runOn("StardewValley/GameLocation.cs", "performAction", "GameLocation");
+  const a = await runOn(GAMELOCATION, "performAction", "GameLocation");
   const s = a.selectors.find((x) => x.selector === "BuildingToggleAnimalDoor");
   assert.equal(s.category, "plain-world-effect");
   assert.ok(s.delegatedCalls.includes("buildingAt.ToggleAnimalDoor"), "应记录跨类委托调用");
 });
 
+test("跨对象委托不按名字当成同文件 helper", async () => {
+  const a = await runOn(GAMELOCATION, "performAction", "GameLocation");
+  // `character.checkAction(...)` / `npc.checkAction(...)` 名字碰巧与同文件方法同名，
+  // 但接收者不是 this/base，不得解析进 helper 链（否则会伪造 seam 命中）。
+  for (const name of ["Crib", "PlayEvent"]) {
+    const s = a.selectors.find((x) => x.selector === name);
+    assert.ok(s, `${name} 应在列表里`);
+    assert.ok(!s.helpers.includes("checkAction"), `${name} 不得把 character.checkAction 解析成同文件 GameLocation.checkAction`);
+  }
+});
+
 test("连续 case 标签是别名：kitchen/Kitchen 共享同一 body", async () => {
-  const a = await runOn("StardewValley/GameLocation.cs", "performAction", "GameLocation");
+  const a = await runOn(GAMELOCATION, "performAction", "GameLocation");
   const kitchen = a.selectors.find((x) => x.selector === "kitchen");
   const upper = a.selectors.find((x) => x.selector === "Kitchen");
   assert.ok(kitchen && upper, "kitchen/Kitchen 都应是独立 selector 行");
@@ -67,22 +104,65 @@ test("连续 case 标签是别名：kitchen/Kitchen 共享同一 body", async ()
 });
 
 test("Mine/NextMineLevel：plain，终态在 Game1.enterMine", async () => {
-  const a = await runOn("StardewValley/GameLocation.cs", "performAction", "GameLocation");
+  const a = await runOn(GAMELOCATION, "performAction", "GameLocation");
   const s = a.selectors.find((x) => x.selector === "Mine");
   assert.equal(s.category, "plain-world-effect");
   assert.ok(s.directCalls.includes("Game1.enterMine"), "应看到 enterMine 调用");
+  assert.deepEqual(s.aliases, ["NextMineLevel"], "`Mine` 与 `NextMineLevel` 是同一 case bucket 的连续标签");
 });
 
 test("warp / plain / unknown 三类都有代表性行", async () => {
-  const a = await runOn("StardewValley/GameLocation.cs", "performAction", "GameLocation");
+  const a = await runOn(GAMELOCATION, "performAction", "GameLocation");
   const warp = a.selectors.find((x) => x.selector === "Warp");
   assert.equal(warp?.category, "warp-transition");
   const none = a.selectors.find((x) => x.selector === "None");
-  assert.equal(none?.category, "unknown", "`case \"None\": return true;` 是空壳");
+  assert.equal(none?.category, "unknown", '`case "None": return true;` 是空壳');
+});
+
+// ---- 整树模式：dispatcher 族的每个实现 ---------------------------------------
+
+test("整树模式机械枚举 performAction 的每个实现（含 if 形态的子类 selector）", async () => {
+  const a = await analyzeTileActionSelectorTree({ sourceRoot: SOURCE_ROOT, parser });
+  assert.equal(a.implementations, 18, "performAction 有 18 个实现（含 DesertFestival 的 string 重载）");
+  const byClass = new Map(a.selectors.map((s) => [`${s.className}.${s.selector}`, s]));
+  // 子类用 if 而不是 switch 分派自己的 selector：只认 switch 会漏掉整族。
+  for (const key of [
+    "Woods.LostItemsShop",
+    "IslandEast.BananaShrine",
+    "FishShop.WarpBoatTunnel",
+    "LibraryMuseum.Gunther",
+    "IslandSouth.ResortSign",
+    "IslandHut.Parrot",
+    "IslandWest.FarmObelisk",
+    "CommunityCenter.MissedRewards",
+    "DesertFestival.DesertVendor",
+    "ManorHouse.LostAndFound",
+    "MovieTheater.Theater_Doors",
+    "Forest.FixRaccoonStump",
+  ])
+    assert.ok(byClass.has(key), `${key} 必须被机械枚举到`);
+  assert.equal(byClass.get("IslandWest.FarmObelisk").category, "warp-transition", "FarmObelisk 的终态是 warpFarmer");
+  assert.equal(byClass.get("Woods.LostItemsShop").category, "menu-bound");
+  // 否定式 if：`if (!(text == "X")) { A } else { B }` —— X 的 body 是 else 分支。
+  assert.equal(byClass.get("IslandFieldOffice.FieldOfficeDesk").category, "plain-world-effect");
+  assert.equal(byClass.get("IslandFieldOffice.FieldOfficeSurvey").category, "dialogue-or-event-bound");
+});
+
+test("整树模式的计数与单实现模式一致", async () => {
+  const tree = await analyzeTileActionSelectorTree({ sourceRoot: SOURCE_ROOT, parser });
+  const single = await runOn(GAMELOCATION, "performAction", "GameLocation");
+  const inTree = tree.selectors.filter((s) => s.className === "GameLocation");
+  assert.equal(inTree.length, single.counts.selectors);
+  const g = tree.selectors.filter((s) => s.className === "GameLocation");
+  const count = (c) => g.filter((s) => s.category === c).length;
+  assert.equal(count("menu-bound"), single.counts.menuBound);
+  assert.equal(count("dialogue-or-event-bound"), single.counts.dialogueOrEventBound);
+  assert.equal(count("plain-world-effect"), single.counts.plainWorldEffect);
+  assert.equal(count("unknown"), single.counts.unknown);
 });
 
 test("产物声明它不做什么", async () => {
-  const a = await runOn("StardewValley/GameLocation.cs", "performAction", "GameLocation");
+  const a = await runOn(GAMELOCATION, "performAction", "GameLocation");
   for (const g of [
     "classification_is_signal_based_not_a_semantic_proof",
     "helper_following_is_same_file_and_bounded_depth",
@@ -91,6 +171,8 @@ test("产物声明它不做什么", async () => {
     "virtual_dispatch_targets_are_not_resolved",
     "no_action_identity_inferred",
     "plain_world_effect_is_a_review_class_not_an_action_authorization",
+    "selector_equality_is_matched_syntactically_against_the_action_argument_so_indirect_or_computed_selectors_are_missed",
+    "the_TouchAction_family_is_a_separate_dispatcher_and_is_not_enumerated_here",
   ])
     assert.ok(a.nonGuarantees.includes(g), `产物必须声明 ${g}`);
 });
@@ -122,6 +204,13 @@ namespace StardewValley
                     case "AliasA":
                     case "AliasB":
                         return DoShared();
+                    case "NestedSwitch":
+                        switch (Something)
+                        {
+                            case "NotAnActionWord":
+                                break;
+                        }
+                        break;
                     case "EmptyThing":
                         return true;
                 }
@@ -141,21 +230,53 @@ namespace StardewValley
             return true;
         }
     }
+
+    public class SubLocation : GameLocation
+    {
+        public override bool performAction(string[] action, Farmer who, Location tileLocation)
+        {
+            string text = ArgUtility.Get(action, 0);
+            if (text == "IfForm")
+            {
+                OpenIfFormDialogue();
+                return true;
+            }
+            if (!(text == "Negated"))
+            {
+                OpenNegatedDialogue();
+            }
+            else
+            {
+                OpenNegatedElseDialogue();
+            }
+            return base.performAction(action, who, tileLocation);
+        }
+
+        private void OpenIfFormDialogue() { Game1.drawObjectDialogue("a"); }
+        private void OpenNegatedDialogue() { Game1.drawObjectDialogue("b"); }
+        private void OpenNegatedElseDialogue() { Game1.drawObjectDialogue("c"); }
+    }
 }
 `;
 
-test("合成 fixture：分类器五类 + 别名共享 + helper 数据表回填", async () => {
+test("合成 fixture：分类器五类 + 别名共享 + helper 数据表回填 + if 形态", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "tile-selector-"));
   try {
     const rel = "StardewValley/GameLocation.cs";
     await mkdir(path.join(dir, "StardewValley"), { recursive: true });
     await writeFile(path.join(dir, rel), FIXTURE);
-    const a = await analyzeTileActionSelectors({ sourceRoot: dir, relPath: rel, member: "performAction", parser });
-    assert.equal(a.counts.selectors, 7);
+    const a = await analyzeTileActionSelectors({
+      sourceRoot: dir,
+      relPath: rel,
+      member: "performAction",
+      className: "GameLocation",
+      parser,
+    });
+    assert.equal(a.counts.selectors, 8);
     assert.equal(a.counts.menuBound, 1);
     assert.equal(a.counts.dialogueOrEventBound, 1);
     assert.equal(a.counts.warpTransition, 1);
-    assert.equal(a.counts.plainWorldEffect, 3);
+    assert.equal(a.counts.plainWorldEffect, 4);
     assert.equal(a.counts.unknown, 1);
     const byName = new Map(a.selectors.map((s) => [s.selector, s]));
     assert.equal(byName.get("MenuThing").category, "menu-bound");
@@ -168,7 +289,15 @@ test("合成 fixture：分类器五类 + 别名共享 + helper 数据表回填",
     assert.equal(byName.get("AliasA").category, "plain-world-effect");
     assert.ok(byName.get("AliasA").delegatedCalls.includes("building.ToggleAnimalDoor"));
     assert.equal(byName.get("EmptyThing").category, "unknown");
+    assert.ok(!byName.has("NotAnActionWord"), "嵌套 switch 的词不得成为 selector");
     assert.deepEqual(byName.get("MenuThing").guardChain, ["who.IsLocalPlayer"]);
+
+    const tree = await analyzeTileActionSelectorTree({ sourceRoot: dir, parser });
+    const sub = new Map(tree.selectors.filter((s) => s.className === "SubLocation").map((s) => [s.selector, s]));
+    assert.deepEqual([...sub.keys()].sort(), ["IfForm", "Negated"], "if 形态 selector 必须被枚举");
+    // `if (!(text == "Negated")) { A } else { B }` —— body 是 else 分支 B。
+    assert.match(sub.get("Negated").directCalls.join(" "), /OpenNegatedElseDialogue/);
+    assert.ok(!sub.get("Negated").directCalls.includes("OpenNegatedDialogue"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -180,10 +309,16 @@ test("helper 追踪深度有界：--helper-depth 参数不爆炸", async () => {
     const rel = "StardewValley/GameLocation.cs";
     await mkdir(path.join(dir, "StardewValley"), { recursive: true });
     await writeFile(path.join(dir, rel), FIXTURE);
-    const a = await analyzeTileActionSelectors({ sourceRoot: dir, relPath: rel, member: "performAction", parser, helperDepth: 1 });
+    const a = await analyzeTileActionSelectors({
+      sourceRoot: dir,
+      relPath: rel,
+      member: "performAction",
+      className: "GameLocation",
+      parser,
+      helperDepth: 1,
+    });
     assert.equal(a.helperDepth, 1);
-    assert.equal(a.counts.selectors, 7);
-    // DataThing 的直接 helper DoDataThing 在 depth 1 内仍应回填数据表
+    assert.equal(a.counts.selectors, 8);
     const data = a.selectors.find((s) => s.selector === "DataThing");
     assert.ok(data.dataTables.includes("DataLoader.Minecarts"));
   } finally {
