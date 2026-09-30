@@ -14,7 +14,7 @@ test("the funnel reports four stages in order, with no aggregate score", () => {
   const attributed = attributeMemoryFunnel({
     distance: "fold",
     seedRequired: true,
-    mutationObserved: true,
+    seedPresentInReadback: true,
     renderedMemoryIdsObserved: true,
     seedIdRendered: true,
     foldObserved: true,
@@ -37,7 +37,7 @@ test("an unobserved upstream stage yields a gap and never a downstream failure",
   // reported as a memory failure just because the needle came back empty.
   const attributed = attributeMemoryFunnel({
     seedRequired: true,
-    mutationObserved: false,
+    seedPresentInReadback: false,
     probeEvent: "needle.miss",
   });
   assert.equal(statusOf(attributed, "L1_write"), "observability_gap");
@@ -57,7 +57,7 @@ test("a broken stage makes every downstream stage not_reached rather than wrong"
   const attributed = attributeMemoryFunnel({
     distance: "fold",
     seedRequired: true,
-    mutationObserved: true,
+    seedPresentInReadback: true,
     renderedMemoryIdsObserved: true,
     seedIdRendered: true,
     foldObserved: true,
@@ -76,7 +76,7 @@ test("a broken stage makes every downstream stage not_reached rather than wrong"
 test("a write that did not survive budget trimming is attributed to assembly, not to recall", () => {
   const attributed = attributeMemoryFunnel({
     seedRequired: true,
-    mutationObserved: true,
+    seedPresentInReadback: true,
     renderedMemoryIdsObserved: true,
     seedIdRendered: false,
     probeEvent: "needle.miss",
@@ -103,7 +103,7 @@ test("the two causes of distractor.confused are NOT equivalent at L4", () => {
 test("a conflict during the seed window is attributed to persistence", () => {
   const attributed = attributeMemoryFunnel({
     seedRequired: true,
-    mutationObserved: false,
+    seedPresentInReadback: false,
     conflictObserved: true,
     probeEvent: "needle.miss",
   });
@@ -118,7 +118,7 @@ test("a turn-distance probe does not report a gap for a fold it never crossed", 
   const attributed = attributeMemoryFunnel({
     distance: "turn",
     seedRequired: true,
-    mutationObserved: true,
+    seedPresentInReadback: true,
     renderedMemoryIdsObserved: true,
     seedIdRendered: true,
     probeEvent: "needle.hit",
@@ -131,16 +131,16 @@ test("a turn-distance probe does not report a gap for a fold it never crossed", 
 test("a fold-distance probe that never saw a marker does report a gap", () => {
   // The converse of the test above: at fold distance the marker IS required, so its
   // absence is a real gap rather than "not applicable".
-  const attributed = attributeMemoryFunnel({ distance: "fold", seedRequired: true, mutationObserved: true });
+  const attributed = attributeMemoryFunnel({ distance: "fold", seedRequired: true, seedPresentInReadback: true });
   assert.equal(statusOf(attributed, "L3_decay"), "observability_gap");
   assert.equal(attributed.stages.find((row) => row.stage === "L3_decay").reason, "fold_not_observed");
 });
 
 test("summarize counts per stage independently and carries no overall verdict", () => {
   const summary = summarizeMemoryFunnel([
-    { seedRequired: true, mutationObserved: true, renderedMemoryIdsObserved: true, seedIdRendered: false },
-    { seedRequired: true, mutationObserved: true, renderedMemoryIdsObserved: true, seedIdRendered: true },
-    { seedRequired: true, mutationObserved: false },
+    { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: false },
+    { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true },
+    { seedRequired: true, seedPresentInReadback: false },
   ]);
   assert.deepEqual(Object.keys(summary.counts), [...MEMORY_FUNNEL_STAGES]);
   assert.equal(summary.counts.L1_write.passed, 2);
@@ -157,9 +157,9 @@ test("summarize counts per stage independently and carries no overall verdict", 
 test("every broken stage ships an actionable recommendation", () => {
   for (const observation of [
     { seedRequired: true, conflictObserved: true },
-    { seedRequired: true, mutationObserved: true, renderedMemoryIdsObserved: true, seedIdRendered: false },
-    { distance: "fold", seedRequired: true, mutationObserved: true, renderedMemoryIdsObserved: true, seedIdRendered: true, foldObserved: true, postFoldAssembly: "absent" },
-    { seedRequired: true, mutationObserved: true, renderedMemoryIdsObserved: true, seedIdRendered: true, probeEvent: "needle.miss" },
+    { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: false },
+    { distance: "fold", seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true, foldObserved: true, postFoldAssembly: "absent" },
+    { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true, probeEvent: "needle.miss" },
   ]) {
     const attributed = attributeMemoryFunnel(observation);
     assert.equal(attributed.findings.length, 1);
