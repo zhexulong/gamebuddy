@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { recordTavernUiOperationEvidence } from "./record-tavern-ui-operation-evidence.mjs";
+import { MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS } from "./lib/tavern-mounted-operation-vocabulary.mjs";
 
 const profile = {
   profileId: "gamebuddy.tavern-management.chat-list-title",
@@ -45,5 +47,55 @@ test("rejects undeclared and duplicate UI operation outcomes", async () => {
       { operationId: "chat.rename", outcome: "passed" },
     ]}));
     await assert.rejects(recordTavernUiOperationEvidence({ inputPath, outputPath }), /ui_operation_outcome_invalid/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+// The test above builds its own three-operation profile, so it accepts whatever
+// vocabulary the recorder happens to carry. That is how the recorder came to
+// reject the profile the Host actually mounts: `ac5baeb` added the voice
+// settings surface to the profile and to the release gate, the recorder kept its
+// older five-entry list, and every real config failed with
+// `mounted_profile_operations_invalid`. These tests compare against the
+// production declaration instead of a stub.
+
+/** The operationIds the Host declares in composeTavernManagementProfile(). */
+function hostMountedOperationIds() {
+  const source = readFileSync(
+    new URL("../host/src/composition/desktop-presentation-admission-owner.ts", import.meta.url),
+    "utf8",
+  );
+  const at = source.indexOf("function composeTavernManagementProfile");
+  assert.notEqual(at, -1, "composeTavernManagementProfile must exist in the Host composition owner");
+  const body = source.slice(at, source.indexOf("\n}", at));
+  const block = /operationIds:\s*\[([\s\S]*?)\]/.exec(body);
+  assert.notEqual(block, null, "the mounted profile must declare operationIds");
+  return [...block[1].matchAll(/"([a-z][a-z.\-]+)"/g)].map((m) => m[1]);
+}
+
+test("accepts the operation ids the Host actually mounts", async () => {
+  const mounted = hostMountedOperationIds();
+  assert.ok(mounted.length >= 8, `expected the mounted profile to declare its operations, got ${mounted.length}`);
+  assert.deepEqual(
+    [...MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS].sort(),
+    [...mounted].sort(),
+    "the shared vocabulary must equal the Host's mounted operationIds; a mismatch means the recorder or the gate will reject real evidence",
+  );
+
+  const root = await mkdtemp(join(tmpdir(), "tavern-ui-evidence-"));
+  try {
+    const inputPath = join(root, "input.json");
+    const outputPath = join(root, "mapping.json");
+    await writeFile(inputPath, JSON.stringify({
+      profile: {
+        profileId: "gamebuddy.tavern-management.chat-list-title",
+        releaseTier: "tavern_management",
+        routeIds: mounted,
+        operationIds: mounted,
+        navigationItemIds: ["chat", "memory"],
+      },
+      operations: mounted.map((operationId) => ({ operationId, outcome: "passed" })),
+    }));
+    const result = await recordTavernUiOperationEvidence({ inputPath, outputPath });
+    assert.deepEqual(Object.keys(result.operations).sort(), [...mounted].sort());
   } finally { await rm(root, { recursive: true, force: true }); }
 });
