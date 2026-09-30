@@ -170,10 +170,32 @@ function branchRegions(fn, src) {
 /**
  * 极大区域：被其它区域真包含的区域属于更外层 action 的内部实现。
  * 这是「不可分割」在语法上的直接表达。
+ *
+ * **例外：case 自成一个作用域。** 真包含规则对 if/then/else 嵌套成立，对 switch
+ * 不成立 —— 一个 `case` 是**兄弟作用域**，不是外层 `if` 的实现细节：
+ *
+ *     if (who.IsLocalPlayer)          // 外层 if
+ *     {
+ *         switch (action) {
+ *             case "MinecartTransport": ...   // 与其它 case 互斥的独立动作
+ *         }
+ *     }
+ *
+ * 旧实现按「任意真包含即丢弃」处理，于是外层 if 吞掉了整段 switch。实测后果：
+ * `GameLocation.performAction`（127 个 selector）保留 0 个 case，
+ * `Object.placementAction` 34→0、`Object.performToolAction` 29→0、
+ * `Event.checkAction` 33→0、`Town.checkAction` 14→0。
+ *
+ * 正确的吞并关系：
+ *   case ⊂ if/else      → **不吞**（case 自己划作用域）
+ *   case ⊂ case         → 吞（case 内部的嵌套 switch 是该 case 的实现细节）
+ *   then/else ⊂ 任意     → 吞（原有行为不变）
  */
 const maximalRegions = (regions) => {
   const uniq = regions.filter((r, i) => !regions.some((o, j) => j < i && o.s === r.s && o.e === r.e));
-  return uniq.filter((r) => !uniq.some((o) => o !== r && o.s <= r.s && r.e <= o.e));
+  return uniq.filter(
+    (r) => !uniq.some((o) => o !== r && o.s <= r.s && r.e <= o.e && (o.kind === "case" || r.kind !== "case")),
+  );
 };
 
 const innermost = (regions, item) => {
