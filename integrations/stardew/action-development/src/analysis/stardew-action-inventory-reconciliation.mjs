@@ -147,7 +147,8 @@ export const SELECTOR_VERDICTS = Object.freeze({
 
   // ---- 归并进现有 action ------------------------------------------------
   // 归并只表达「同一 warp 意图」，**不保证与原生门禁等价**（见 nonGuarantees）。
-  // `gating` 如实标出该 selector 属于无门禁还是门禁分支，精确化留给后续裁定。
+  // `gating` 如实标出该 selector 属于无门禁还是门禁分支。门禁由 action 执行与否
+  // 单独用 `gateEnforcement` 标注；不再用 `gating` 隐含推断。
   LockedDoorWarp: {
     at: "GameLocation",
     group: "merge_into_existing",
@@ -156,6 +157,10 @@ export const SELECTOR_VERDICTS = Object.freeze({
     gatingAnchor: "GameLocation.cs:9537 -> lockedDoorWarp 10319-10379",
     gatingNote:
       "lockedDoorWarp checks AreStoresClosedForFestival, the SeedShop Wednesday lock, the open/close time window and minFriendship; when the combined predicate is false it draws a locked-door dialogue and returns WITHOUT warping",
+    gateEnforcement: "enter_exit_runs_the_native_entry",
+    gateEnforcementAnchor: "integrations/stardew/farmhandexecutioncontroller.movementactions.cs DispatchNativeDoor",
+    gateEnforcementNote:
+      "enter_exit no longer resolves the door into a Warp and calls warpFarmer; it dispatches the same native entry a real player click uses (GameLocation.performAction for Buildings-layer Action doors, Building.doAction for building human doors), so every listed gate actually runs and a refusal becomes the terminal Rejected reasonCode door_gate_refused with the game's own dialogue text. `travel` is unaffected because it only serves location.warps records, never a Buildings-layer door tile.",
     reason: "lockedDoorWarp() terminal is Game1.warpFarmer; friendship/opening-hours checks are preconditions of the same warp intent",
     anchor: "GameLocation.cs:10319",
   },
@@ -166,6 +171,7 @@ export const SELECTOR_VERDICTS = Object.freeze({
     gating: "ungated",
     gatingAnchor: "GameLocation.cs:9475-9489",
     gatingNote: "case \"Warp\" calls Game1.warpFarmer unconditionally; only the optional doorClose sound depends on the argument count",
+    gateEnforcement: "not_applicable_no_gate",
     reason: "terminal is Game1.warpFarmer, the same native transition `enter_exit` registers; a warp is not a new intent",
     anchor: "GameLocation.cs:9475",
   },
@@ -394,6 +400,9 @@ function selectorRow(selector, verdict, exit) {
     gating: verdict.gating ?? null,
     gatingAnchor: verdict.gatingAnchor ?? null,
     gatingNote: verdict.gatingNote ?? null,
+    gateEnforcement: verdict.gateEnforcement ?? null,
+    gateEnforcementAnchor: verdict.gateEnforcementAnchor ?? null,
+    gateEnforcementNote: verdict.gateEnforcementNote ?? null,
     reason: verdict.reason ?? verdict.question ?? null,
     anchor: verdict.anchor ?? null,
     exit,
@@ -550,7 +559,16 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
   /** 归并行的门禁标注：`merge_into_existing` 只说意图相同，不说门禁等价。 */
   const gatingAnnotations = [...selectorGroups.merge_into_existing, ...methodGroups.merge_into_existing]
     .filter((r) => r.gating)
-    .map((r) => ({ key: r.key, actionIds: r.actionIds, gating: r.gating, gatingAnchor: r.gatingAnchor, gatingNote: r.gatingNote }));
+    .map((r) => ({
+      key: r.key,
+      actionIds: r.actionIds,
+      gating: r.gating,
+      gatingAnchor: r.gatingAnchor,
+      gatingNote: r.gatingNote,
+      gateEnforcement: r.gateEnforcement ?? null,
+      gateEnforcementAnchor: r.gateEnforcementAnchor ?? null,
+      gateEnforcementNote: r.gateEnforcementNote ?? null,
+    }));
 
   const result = {
     artifactKind: "stardew_action_inventory_reconciliation",
