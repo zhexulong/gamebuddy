@@ -105,4 +105,13 @@ jobs:
       - run: dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests --no-restore
       - run: dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests --no-restore
       - run: pnpm --dir integrations/stardew/action-development test
+      # Runner contract gates. A native-local runner is one action's live gate
+      # entry point, and it can be structurally incapable of passing while its
+      # own unit test stays green (the test builds a config in the same shape the
+      # runner expects). Both gates are offline and together run in a few seconds.
+      #   audit:*  static ratchet over runner source
+      #   test:*   feeds each runner the config the fixture actually writes
+      - run: pnpm audit:stardew-native-local-runner-contract
+      - run: pnpm test:stardew-native-local-runner-contract
+      - run: pnpm test:stardew-native-local-runner-fixture-contract
 

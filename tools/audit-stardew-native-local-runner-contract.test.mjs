@@ -46,7 +46,18 @@ function sandbox() {
 // neither direction so "the audit works" is distinguishable from "the change was
 // exempt".
 const CONFORMING_RUNNER = "dig-artifact-spot";
-const DEBT_RUNNER = "till-soil";
+
+// The retired shape, written out here rather than borrowed from a live runner:
+// the migration is retiring every such runner, so a real one would disappear and
+// silently turn the assertions below into no-ops.
+const RETIRED_SHAPE_SOURCE = [
+  "export async function runSyntheticSmoke(client, receipts, config) {",
+  "  if (config.ActionPolicyVersion !== 0) throw new Error(\"native_local_action_policy_invalid\");",
+  "  if (JSON.stringify(config.EnabledActions) !== JSON.stringify([])) throw new Error(\"invalid\");",
+  "  return { state: \"blocked\" };",
+  "}",
+  "",
+].join("\n");
 
 test("the current runner set has no regression and no new retired-shape runner", () => {
   const report = auditRunnerContracts();
@@ -88,10 +99,9 @@ test("regressing a baseline-conforming runner to an equality capability set is a
 
 test("a NEW runner written in the retired shape is a finding even though it is not in the baseline", () => {
   const box = sandbox();
-  // Copy a debt runner's content into a name the baseline has never seen.
-  const source = readFileSync(box.runnerPath(DEBT_RUNNER), "utf8");
+  // Write the retired shape into a name the baseline has never seen.
   const newId = "brand-new-action";
-  writeFileSync(box.runnerPath(newId), source);
+  writeFileSync(box.runnerPath(newId), RETIRED_SHAPE_SOURCE);
 
   const named = box.audit().findings.filter((f) => f.kind === "new_runner_on_retired_contract" && f.runner === newId);
   assert.equal(named.length, 1, "a new runner must conform; the baseline cannot excuse it");
@@ -108,15 +118,31 @@ test("a NEW runner that conforms is accepted", () => {
   assert.deepEqual(report.findings, [], "a conforming new runner is not a finding");
 });
 
-test("migrating a debt runner can never be a finding", () => {
+test("improving a runner is never a finding, and the retired shape is fully migrated out", () => {
   const box = sandbox();
-  // Replace a debt runner's body with a conforming one's, which is what the
-  // migration does. This must stay green, otherwise the gate fights the lane that
-  // is improving things.
-  const conforming = readFileSync(box.runnerPath(CONFORMING_RUNNER), "utf8");
-  writeFileSync(box.runnerPath(DEBT_RUNNER), conforming);
 
-  assert.deepEqual(box.audit().findings, [], "migration must never be reported as a finding");
+  // The two baseline sets have collapsed onto each other: every runner conforms,
+  // so the exemption set and the runner set are equal. Assert that explicitly, so
+  // a future reader can tell "no debt left" apart from "the audit silently
+  // stopped classifying".
+  const report = box.audit();
+  assert.equal(report.debt.length, 0, "the retired shape is fully migrated out");
+  assert.equal(
+    report.conformingCount,
+    report.runnerCount,
+    "at zero debt every runner must conform; a gap means the baselines drifted",
+  );
+
+  // Replacing a baseline runner's body with another runner's conforming body is
+  // what the migration did, and must stay green -- otherwise the gate fights the
+  // lane improving things instead of the debt.
+  const conforming = readFileSync(box.runnerPath(CONFORMING_RUNNER), "utf8");
+  const otherConforming = report.runners.find((r) => r.conforming && r.id !== CONFORMING_RUNNER).id;
+  const otherBody = readFileSync(box.runnerPath(otherConforming), "utf8");
+  assert.notEqual(otherBody, conforming, "the two bodies must differ for this to test a rewrite");
+  writeFileSync(box.runnerPath(CONFORMING_RUNNER), otherBody);
+
+  assert.deepEqual(box.audit().findings, [], "rewriting a runner to conform must never be a finding");
 });
 
 test("a fixture that stops writing the deny-by-exception policy is a finding", () => {
