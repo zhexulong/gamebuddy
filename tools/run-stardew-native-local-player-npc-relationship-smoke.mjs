@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -12,7 +12,7 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_npc_relationship_v1";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "npc_relationship"];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "npc_relationship"];
 
 /** Execute the npc_relationship contract against an already-connected bridge session. */
 export async function runNpcRelationshipSmoke(
@@ -32,7 +32,7 @@ export async function runNpcRelationshipSmoke(
   validateNativeLocalConfig(config);
   try {
     let snapshot = await freshActionableSnapshot(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     if (snapshot.location !== "FarmHouse") throw new Error("npc_relationship_route_must_start_at_farmhouse");
     // The fixture establishes a bounded native villager target near the live
     // FarmHouse→Farm warp. Typed travel remains production-owned; no Town
@@ -85,7 +85,7 @@ export async function runNpcRelationshipSmoke(
       timeoutMs: postconditionTimeoutMs,
       requireActionable: true,
     });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     if (after.location !== "Farm") throw new Error("npc_relationship_postcondition_location_changed");
     const reread = chooseSameFreshTarget(after, target.targetId);
     const evidence = parseEvidence(terminal.evidence);

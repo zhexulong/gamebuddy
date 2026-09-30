@@ -137,9 +137,13 @@ test("refill-watering-can runner fails closed when the fresh postcondition did n
 
 test("refill-watering-can runner rejects a capability surface superset", async () => {
   const { client, receipts } = scriptedBridge({
-    capabilities: [...EXPECTED_CAPABILITIES, "travel"],
+    // A superset is legitimate now (the fixture denies nothing, so a live run
+    // advertises the whole derived base). What must still fail closed is losing
+    // a capability this run needs. `EXPECTED_CAPABILITIES` here is this test's
+    // own local copy of the surface.
+    capabilities: EXPECTED_CAPABILITIES.filter((capability) => capability !== "refill_watering_can"),
   });
   const result = await runRefillWateringCanSmoke(client, receipts, CONFIG);
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "native_capability_surface_mismatch");
+  assert.match(result.reasonCode, /native_required_capability_missing/);
 });

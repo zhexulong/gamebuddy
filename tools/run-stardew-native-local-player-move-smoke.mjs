@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   assertPostTerminalRevision,
   connectNativeLocalClient,
   executeFresh,
@@ -10,7 +10,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const EXPECTED_CAPABILITIES = ["inspect_self", "cancel_active_execution", "move_to_tile"];
+const REQUIRED_CAPABILITIES = ["inspect_self", "cancel_active_execution", "move_to_tile"];
 
 /** Execute the move contract against an already-connected bridge client. */
 export async function runMoveSmoke(client, receipts, config) {
@@ -23,7 +23,7 @@ export async function runMoveSmoke(client, receipts, config) {
   )
     throw new Error("native_local_fixture_topology_not_isolated");
   const before = await observeFresh(client, { actionable: true });
-  assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
   const attempts = [];
   let success = null;
   for (const target of adjacentCandidates(before.tile)) {
