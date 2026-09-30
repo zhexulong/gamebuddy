@@ -63,16 +63,20 @@ function stage(stageId, status, detail) {
 /**
  * L1: did the explicit write become durable?
  *
- * Evidence is the harness-observed `memory.mutated`/`memory.conflict` pair for the
- * seed window. `memory.mutated` currently has NO producer (design §10.2), so a
- * caller that never saw one must report a gap - this function does that by only
- * marking the stage when the mutation fact itself is present.
+ * Evidence is the management route's own durable readback: `mutate()` ends with
+ * `projectRows(await readRows())`, so the response to `PUT /api/tavern/v1/memory`
+ * IS a re-read of the vendor store, not a bare acknowledgement (design 10.4, which
+ * corrected an earlier assumption that a new `memory.mutated` producer was needed).
+ * The caller passes in what that readback showed.
+ *
+ * `seedRequired !== true` means this run injected no explicit seed, so L1 was not
+ * exercised and the stage is omitted rather than reported as a gap.
  */
-function stageWrite({ mutationObserved, conflictObserved, seedRequired }) {
+function stageWrite({ seedRequired, seedPresentInReadback, conflictObserved }) {
   if (seedRequired !== true) return undefined;
   if (conflictObserved === true) return stage("L1_write", "broken", "memory.conflict during the seed window");
-  if (mutationObserved !== true) return gap("L1_write", "memory_mutation_unobserved");
-  return stage("L1_write", "passed", "memory.mutated observed in the seed window");
+  if (seedPresentInReadback !== true) return gap("L1_write", "seed_readback_unobserved");
+  return stage("L1_write", "passed", "seed present in the management durable readback");
 }
 
 /**
