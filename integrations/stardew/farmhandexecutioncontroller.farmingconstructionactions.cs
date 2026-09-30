@@ -35,8 +35,7 @@ internal sealed partial class ExecutionManager
         int before = wateringCan.WaterLeft;
         int max = wateringCan.waterCanMax;
         float staminaBefore = Game1.player.Stamina;
-        wateringCan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
-        Game1.player.checkForExhaustion(staminaBefore);
+        UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         float expectedStaminaCost = 0f; // refill branch never deducts stamina (WateringCan.DoFunction refill path)
@@ -90,8 +89,7 @@ internal sealed partial class ExecutionManager
         bool beforeWatered = dirt.isWatered();
         int beforeWater = wateringCan.WaterLeft;
         float staminaBefore = Game1.player.Stamina;
-        wateringCan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
-        Game1.player.checkForExhaustion(staminaBefore);
+        UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         // WateringCan covers power with toolPower.Value (tap => 0), so a basic
@@ -658,8 +656,7 @@ internal sealed partial class ExecutionManager
                 _ => "tool",
             };
             Vector2 hitTile = clump.Tile;
-            activeTool.DoFunction(location, (int)hitTile.X * 64 + 32, (int)hitTile.Y * 64 + 32, 1, Game1.player);
-            Game1.player.checkForExhaustion(staminaBefore);
+            UseNativeToolOnTile(activeTool, location, (int)hitTile.X, (int)hitTile.Y, Game1.player, staminaBefore);
             // Tool.endUsing normally advances this native swing identity after
             // the animation. This direct game-thread adapter advances it after
             // the one bounded native hit so a retry is a distinct swing.

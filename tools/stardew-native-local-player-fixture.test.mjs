@@ -53,6 +53,28 @@ async function readExecutionManagerSources() {
   ).join("\n");
 }
 
+/**
+ * Extract one member body by brace balance, so a source pin is scoped to the
+ * member it names and a neighboring member can never satisfy or defeat it.
+ */
+function memberBody(source, declaration) {
+  const start = source.indexOf(declaration);
+  if (start < 0) return null;
+  let depth = 0;
+  let started = false;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "{") {
+      depth += 1;
+      started = true;
+    } else if (character === "}") {
+      depth -= 1;
+      if (started && depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  return null;
+}
+
 async function removeFixtureTree(root) {
   const pending = [{ path: root, visited: false }];
   while (pending.length > 0) {
@@ -849,10 +871,24 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
     execution,
     /if \(hoeDirtPresentBefore\)\s+return this\.RememberTerminal\(requestId, executionId, ExecutionState\.Rejected, "artifact_spot_hoedirt_present_before"/,
   );
+  // The artifact-spot dig is a tool-family direct dispatch: it captures the
+  // pre-swing stamina, routes its ONE native swing through the shared seam, and
+  // reads the post-swing stamina. Pinning the seam CALL keeps the handler from
+  // hand-rolling Farmer.useTool again; the seam's own body is pinned below, so
+  // neither half can drift alone. The handler must not reach DoFunction directly.
+  const artifactHandler = memberBody(execution, "public LocalExecutionReceipt RequestLocalDigArtifactSpot(");
+  assert.ok(artifactHandler, "the artifact-spot handler must live in an owned execution-manager partial");
   assert.match(
-    execution,
-    /float staminaBefore = Game1\.player\.Stamina;[\s\S]*hoe\.DoFunction\(location, targetX \* 64 \+ 32, targetY \* 64 \+ 32, 1, Game1\.player\);[\s\S]*Game1\.player\.lastClick = Vector2\.Zero;[\s\S]*Game1\.player\.checkForExhaustion\(staminaBefore\);[\s\S]*float staminaAfter = Game1\.player\.Stamina;/,
+    artifactHandler,
+    /float staminaBefore = Game1\.player\.Stamina;[\s\S]*UseNativeToolOnTile\(hoe, location, targetX, targetY, Game1\.player, staminaBefore\);[\s\S]*float staminaAfter = Game1\.player\.Stamina;/,
   );
+  assert.doesNotMatch(artifactHandler, /hoe\.DoFunction\(/);
+
+  // The shared seam is the single owner of Farmer.useTool's closing steps: clear
+  // the click anchor, THEN apply the exhaustion consequence, after the swing.
+  const toolUseSeam = memberBody(execution, "private static void UseNativeToolOnTile(");
+  assert.ok(toolUseSeam, "the shared native tool-use seam must live in an owned execution-manager partial");
+  assert.match(toolUseSeam, /DoFunction\([\s\S]*who\.lastClick = Vector2\.Zero;[\s\S]*who\.checkForExhaustion\(staminaBefore\);/);
   assert.doesNotMatch(execution, /Stamina\s*[<>]=?\s*2|stamina_insufficient|insufficient_stamina/);
   assert.match(execution, /stamina_before=.*stamina_after=.*stamina_delta=.*expected_stamina_cost=/);
   assert.match(execution, /bool succeeded = !hoeDirtPresentBefore && !sourcePresentAfter && hoeDirtPresentAfter/);

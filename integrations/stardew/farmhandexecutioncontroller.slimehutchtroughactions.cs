@@ -86,8 +86,7 @@ internal sealed partial class ExecutionManager
         // Observed, not asserted: the native watering path must not mount a menu.
         bool menuBefore = Game1.activeClickableMenu is not null;
         float staminaBefore = Game1.player.Stamina;
-        wateringCan.DoFunction(hutch, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
-        Game1.player.checkForExhaustion(staminaBefore);
+        UseNativeToolOnTile(wateringCan, hutch, targetX, targetY, Game1.player, staminaBefore);
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
         // WateringCan covers power with toolPower.Value (tap => 0), so a basic can

@@ -2702,6 +2702,30 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             && source.placementAction(farm, targetX * 64 + 32, targetY * 64 + 32, player);
     }
 
+    /// <summary>
+    /// The one direct native tool swing every tool-family handler shares.
+    /// Vanilla settles a swing in <c>Farmer.useTool</c>: it calls
+    /// <c>CurrentTool.DoFunction</c> with power 1, then clears the click anchor
+    /// (<c>who.lastClick = Vector2.Zero</c>), then applies the exhaustion
+    /// consequence (<c>checkForExhaustion(oldStamina)</c>). A game-thread handler
+    /// that dispatches <c>DoFunction</c> itself never enters that method, so it
+    /// must run the same two closing steps in the same order; this is the one
+    /// place they live. It deliberately stops there: admission, target identity,
+    /// postcondition and receipt stay action-owned.
+    ///
+    /// <paramref name="staminaBefore"/> is the pre-swing stamina the caller
+    /// observed, passed rather than re-read so the exhaustion transition test sees
+    /// exactly the value the caller reports as <c>stamina_before</c> (a repeated
+    /// swing loop keeps the value it captured once, as vanilla's single-swing
+    /// caller does).
+    /// </summary>
+    private static void UseNativeToolOnTile(Tool tool, GameLocation location, int tileX, int tileY, Farmer who, float staminaBefore)
+    {
+        tool.DoFunction(location, tileX * 64 + 32, tileY * 64 + 32, 1, who);
+        who.lastClick = Vector2.Zero;
+        who.checkForExhaustion(staminaBefore);
+    }
+
     private static IReadOnlyList<BridgeBaitCrabPotTarget> DiscoverBaitCrabPotTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
