@@ -76,33 +76,15 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Requests a native warp from a structured source warp in the current
-    /// location, or a native minecart ride when <paramref name="expectedTargetId"/>
-    /// names a published minecart objective. The request is accepted before the
-    /// Warped event; only that event can produce the authoritative travel
-    /// postcondition.
-    /// </summary>
-    public LocalExecutionReceipt RequestLocalTravel(string requestId, int sourceX, int sourceY, long requestedDeadlineMs, string? expectedTargetId = null)
-    {
-        if (!string.IsNullOrWhiteSpace(expectedTargetId))
-            return this.RequestLocalMinecartTravel(requestId, sourceX, sourceY, requestedDeadlineMs, expectedTargetId!);
-        return this.RequestLocalDoorTransition(requestId, sourceX, sourceY, requestedDeadlineMs, false);
-    }
-
-    public LocalExecutionReceipt RequestLocalEnterExit(string requestId, int sourceX, int sourceY, long requestedDeadlineMs)
-    {
-        return this.RequestLocalDoorTransition(requestId, sourceX, sourceY, requestedDeadlineMs, true);
-    }
-
-    /// <summary>
     /// Requests one native minecart ride named by an exact published objective.
     /// Every fact is re-derived on the game thread from the live station tile and
     /// the game's own `Data/Minecarts`; the client-supplied ID is only a selector.
     /// The native ride is `GameLocation.MinecartWarp`, which ends in the same
-    /// `Warped` event the ordinary warp path uses, so the authoritative
-    /// postcondition stays the single travel lifecycle.
+    /// `Warped` event the ordinary warp path uses, so the ride keeps the single
+    /// `activeTravel` ownership and the same one-shot release; only the terminal
+    /// reason code is the ride's own (`minecart_ride_completed`).
     /// </summary>
-    private LocalExecutionReceipt RequestLocalMinecartTravel(
+    public LocalExecutionReceipt RequestLocalMinecartRide(
         string requestId, int sourceX, int sourceY, long requestedDeadlineMs, string expectedTargetId)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -139,7 +121,7 @@ internal sealed partial class ExecutionManager
         LocalTravelSpec specification = new(
             executionId,
             requestId,
-            "travel",
+            "ride_minecart",
             location.NameOrUniqueName,
             sourceX,
             sourceY,
@@ -161,6 +143,21 @@ internal sealed partial class ExecutionManager
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
+    }
+
+    /// <summary>
+    /// Requests a native warp from a structured source warp in the current
+    /// location. Only the Warped event can produce the authoritative travel
+    /// postcondition.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalTravel(string requestId, int sourceX, int sourceY, long requestedDeadlineMs)
+    {
+        return this.RequestLocalDoorTransition(requestId, sourceX, sourceY, requestedDeadlineMs, false);
+    }
+
+    public LocalExecutionReceipt RequestLocalEnterExit(string requestId, int sourceX, int sourceY, long requestedDeadlineMs)
+    {
+        return this.RequestLocalDoorTransition(requestId, sourceX, sourceY, requestedDeadlineMs, true);
     }
 
     private LocalExecutionReceipt RequestLocalDoorTransition(string requestId, int sourceX, int sourceY, long requestedDeadlineMs, bool isDoor)
@@ -217,9 +214,15 @@ internal sealed partial class ExecutionManager
         // friendship tests at :10319, WarpCommunityCenter's ccDoorUnlock at
         // :9462, Warp_Sunroom_Door's Caroline hearts at :9113,
         // WarpGreenhouse's ccPantry test at :9416) and Building.doAction's
-        // construction / demolish-lock / dismount rules (Building.cs:937-959). The
-        // chosen entry is echoed into the receipt so an observer can tell a gated
-        // door apart from the resolver fallback.
+        // construction / demolish-lock / dismount rules (Building.cs:937-959).
+        //
+        // The game's own return value decides whether the entry handled this
+        // tile: performAction returns true for every Warp-family case it owns and
+        // false from its `default:` branch. That is what keeps a door the click
+        // path does not own (WarpBoatTunnel has no performAction case) on the
+        // resolver's warp instead of being misread as a locked gate. The chosen
+        // entry is echoed into the receipt so an observer can tell a gated door
+        // apart from the resolver fallback.
         string entry = "none";
         if (isDoor)
         {
@@ -305,24 +308,17 @@ internal sealed partial class ExecutionManager
     ///
     /// The dispatch order mirrors GameLocation.checkAction exactly: building
     /// human doors are tried first (:7647-7653) and only then the Buildings-layer
-    /// Action of a tile the game itself registered as a door (:7868-7888).
-    /// Each branch uses the game's own return value as the "the click path owns
-    /// this tile" signal, which is what keeps a door the click path does not own
-    /// (WarpBoatTunnel has no performAction case) on the resolver's warp instead
-    /// of being misread as a locked gate.
+    /// Action property (:7868-7888). Each branch uses the game's own return value
+    /// as the "the click path owns this tile" signal, which is what keeps a door
+    /// the click path does not own (WarpBoatTunnel has no performAction case) on
+    /// the resolver's warp instead of being misread as a locked gate.
     ///
     /// A refusal leaves the game's own DialogueBox mounted; it is closed with the
-    /// public step the native input paths use
-    /// (<see cref="DialogueBox.closeDialogue"/>), which also restores
-    /// <c>Farmer.CanMove</c>. Leaving it mounted would make every later action
-    /// reject as <c>player_not_actionable</c>, so the refusal is reported in the
-    /// receipt instead of being handed to the player.
+    /// public step the native input paths use (<see cref="DialogueBox.closeDialogue"/>),
+    /// which also restores <c>Farmer.CanMove</c>. Leaving it mounted would make
+    /// every later action reject as <c>player_not_actionable</c>, so the refusal
+    /// is reported in the receipt instead of being handed to the player.
     /// </summary>
-    /// <param name="entry">
-    /// Which native entry was used, so an observer can tell a gated door apart
-    /// from the resolver fallback. Without it the terminal reason code alone
-    /// cannot say whether any gate actually ran.
-    /// </param>
     private static NativeDoorOutcome DispatchNativeDoor(
         StardewValley.GameLocation location,
         Microsoft.Xna.Framework.Point source,
@@ -385,8 +381,16 @@ internal sealed partial class ExecutionManager
         bool tileMatches = Game1.player.TilePoint.X == specification.TargetX && Game1.player.TilePoint.Y == specification.TargetY;
         ExecutionState state = locationMatches && tileMatches ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = locationMatches && tileMatches
-            ? specification.Action == "enter_exit" ? "enter_exit_completed" : "travel_completed"
-            : specification.Action == "enter_exit" ? "enter_exit_postcondition_mismatch" : "travel_postcondition_mismatch";
+            ? specification.Action == "enter_exit"
+                ? "enter_exit_completed"
+                : specification.Action == "ride_minecart"
+                    ? "minecart_ride_completed"
+                    : "travel_completed"
+            : specification.Action == "enter_exit"
+                ? "enter_exit_postcondition_mismatch"
+                : specification.Action == "ride_minecart"
+                    ? "minecart_ride_postcondition_mismatch"
+                    : "travel_postcondition_mismatch";
         // A minecart ride's native terminal is the same Warped postcondition, but
         // the expected/actual pair alone cannot say which objective was ridden.
         // The published identity is echoed so the receipt names the ride.

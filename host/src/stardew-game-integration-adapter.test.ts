@@ -702,41 +702,59 @@ test("travel and enter_exit completion evidence require the exact warped destina
   );
 });
 
-test("a minecart travel receipt additionally names the ridden objective", () => {
-  // A minecart ride ends in the same Warped postcondition, but its evidence
-  // carries the published network/destination identity as well. Both optional
-  // keys must be present as a pair and bounded; the warp postcondition above
-  // still has to hold.
+test("a ride_minecart receipt names the ridden objective as well as the arrival tile", () => {
+  // A minecart ride ends in the same Warped postcondition as `travel`, but it is a
+  // separate action with its own terminal: the receipt must carry the published
+  // network/destination pair, so the coordinate pair alone can never satisfy it.
   const valid =
     "expected=BusStop:20,12;actual=BusStop:20,12;network=Default;destination=BusStop";
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("travel", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("ride_minecart", {
       state: "succeeded",
-      reasonCode: "travel_completed",
+      reasonCode: "minecart_ride_completed",
       evidence: { detail: valid },
     }),
     true,
   );
   for (const malformed of [
+    // an ordinary warp terminal is not a ride terminal
+    "expected=BusStop:20,12;actual=BusStop:20,12",
     // network without destination
     "expected=BusStop:20,12;actual=BusStop:20,12;network=Default",
     // destination without network
     "expected=BusStop:20,12;actual=BusStop:20,12;destination=BusStop",
     // empty network
     "expected=BusStop:20,12;actual=BusStop:20,12;network=;destination=BusStop",
-    // a minecart ride still has to arrive at its declared destination
+    // a ride still has to arrive at its declared destination
     "expected=BusStop:20,12;actual=Town:20,12;network=Default;destination=BusStop",
   ]) {
     assert.equal(
-      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("travel", {
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("ride_minecart", {
         state: "succeeded",
-        reasonCode: "travel_completed",
+        reasonCode: "minecart_ride_completed",
         evidence: { detail: malformed },
       }),
       false,
       malformed,
     );
   }
+  // The ride's own reason code is required, and travel's must not satisfy it.
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("ride_minecart", {
+      state: "succeeded",
+      reasonCode: "travel_completed",
+      evidence: { detail: valid },
+    }),
+    false,
+  );
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("travel", {
+      state: "succeeded",
+      reasonCode: "minecart_ride_completed",
+      evidence: { detail: valid },
+    }),
+    false,
+  );
 });
 
 test("pickup_forage completion evidence requires the contract tile, item, removal, and exact inventory delta", () => {
