@@ -17,7 +17,14 @@
  *    headline number - `summarizeMemoryFunnel` returns a per-stage row set and
  *    findings, never a single verdict (design §8 anti-target).
  * 2. An unobserved upstream stage YIELDS `observability_gap`, never a downstream
- *    failure. If we did not see the write land, we cannot call the recall a miss.
+ *    failure. If we did not see the write land or the fact rendered, we cannot call
+ *    the recall a miss. This holds asymmetrically:
+ *      - a downstream PASS always stands (a reply that contains the fact is positive
+ *        evidence the fact reached the model, gaps upstream notwithstanding);
+ *      - a downstream FAIL is only attributable when every upstream stage was
+ *        observed AND passed. Otherwise it is reported as a gap whose reason names
+ *        the unobserved upstream stage, because "the model ignored it" and "it never
+ *        arrived" are not distinguishable from here.
  * 3. Every stage's evidence is a product-owned fact the caller passes in. A stage
  *    is only `passed`/`broken` when its own evidence is present.
  *
@@ -158,9 +165,21 @@ export function attributeMemoryFunnel(observation = {}) {
     stageExpression(observation),
   ];
 
+  // Rule 2, applied asymmetrically. A downstream PASS stands on its own: a reply
+  // that contains the fact is positive evidence it reached the model, regardless of
+  // a gap upstream. A downstream FAIL does not: if any upstream stage was never
+  // observed, "the model ignored it" and "it never arrived" are indistinguishable
+  // from here, so the break is reported as a gap naming the unobserved stage rather
+  // than attributed to a component that may be innocent.
+  const firstGap = rows.findIndex((row) => row?.status === "observability_gap");
   const firstBroken = rows.findIndex((row) => row?.status === "broken");
+  const unattributable = firstGap !== -1 && (firstBroken === -1 || firstGap < firstBroken);
+
   const resolved = rows.map((row, index) => {
     if (row === undefined) return undefined;
+    if (unattributable && row.status === "broken" && index > firstGap) {
+      return gap(row.stage, `${rows[firstGap].stage}_unobserved`);
+    }
     if (firstBroken === -1 || index <= firstBroken) return row;
     return Object.freeze({
       stage: row.stage,

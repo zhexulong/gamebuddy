@@ -33,8 +33,8 @@ test("the funnel reports four stages in order, with no aggregate score", () => {
 });
 
 test("an unobserved upstream stage yields a gap and never a downstream failure", () => {
-  // L1 was never observed (memory.mutated has no producer). The recall must NOT be
-  // reported as a memory failure just because the needle came back empty.
+  // L1 was never observed (the seed's durability was not confirmed). The recall must
+  // NOT be reported as a memory failure just because the needle came back empty.
   const attributed = attributeMemoryFunnel({
     seedRequired: true,
     seedPresentInReadback: false,
@@ -42,13 +42,57 @@ test("an unobserved upstream stage yields a gap and never a downstream failure",
   });
   assert.equal(statusOf(attributed, "L1_write"), "observability_gap");
   assert.equal(statusOf(attributed, "L2_assembly"), "observability_gap");
-  // The miss is reported at its own layer, but the funnel does not claim the write
-  // or the assembly failed - that is the whole point of the gap discipline.
-  assert.deepEqual(
-    attributed.findings.map((finding) => finding.id),
-    ["memory_funnel_l4_expression"],
-  );
+  // The miss is NOT attributed to presentation admission: the fact may never have
+  // been stored, so blaming the model would be unfounded.
+  assert.equal(statusOf(attributed, "L4_expression"), "observability_gap");
+  assert.equal(attributed.findings.length, 0);
+});
+
+test("a downstream failure is NOT attributed while an upstream stage is unobserved", () => {
+  // Found by the first real memory-loop run: L1 passed and the chat reply missed the
+  // fact, but L2 was never observed. Reporting L4 "broken" with a
+  // presentation-admission recommendation would blame the model for a fact that may
+  // never have reached it - exactly the mis-attribution the funnel exists to stop.
+  const attributed = attributeMemoryFunnel({
+    distance: "turn",
+    seedRequired: true,
+    seedPresentInReadback: true,
+    probeEvent: "needle.miss",
+  });
+  assert.equal(statusOf(attributed, "L1_write"), "passed");
+  assert.equal(statusOf(attributed, "L2_assembly"), "observability_gap");
+  assert.equal(statusOf(attributed, "L4_expression"), "observability_gap");
+  assert.equal(attributed.stages.find((row) => row.stage === "L4_expression").reason, "L2_assembly_unobserved");
+  assert.equal(attributed.findings.length, 0);
+});
+
+test("the same failure IS attributed once every upstream stage is observed and passed", () => {
+  // The converse, so the rule above cannot silently swallow real defects: with L1
+  // and L2 both observed and green, the miss is genuinely the model's.
+  const attributed = attributeMemoryFunnel({
+    distance: "turn",
+    seedRequired: true,
+    seedPresentInReadback: true,
+    renderedMemoryIdsObserved: true,
+    seedIdRendered: true,
+    probeEvent: "needle.miss",
+  });
+  assert.equal(statusOf(attributed, "L4_expression"), "broken");
+  assert.equal(attributed.findings.length, 1);
   assert.equal(attributed.findings[0].component, "presentation_admission");
+});
+
+test("a downstream PASS still stands even with an upstream gap", () => {
+  // The rule is asymmetric on purpose: a reply containing the fact is positive
+  // evidence it reached the model, so it must not be downgraded by a missing producer.
+  const attributed = attributeMemoryFunnel({
+    distance: "turn",
+    seedRequired: true,
+    seedPresentInReadback: false,
+    probeEvent: "needle.hit",
+  });
+  assert.equal(statusOf(attributed, "L1_write"), "observability_gap");
+  assert.equal(statusOf(attributed, "L4_expression"), "passed");
 });
 
 test("a broken stage makes every downstream stage not_reached rather than wrong", () => {
@@ -90,12 +134,15 @@ test("a write that did not survive budget trimming is attributed to assembly, no
 });
 
 test("the two causes of distractor.confused are NOT equivalent at L4", () => {
-  const recalled = attributeMemoryFunnel({ probeEvent: "distractor.confused", probeReason: "needle_only" });
-  const failed = attributeMemoryFunnel({ probeEvent: "distractor.confused", probeReason: "recall_failed" });
+  // Upstream observed green, so a recall failure is genuinely attributable to L4
+  // and the cause discriminates: `needle_only` means the fact WAS recalled.
+  const upstreamGreen = { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true };
+  const recalled = attributeMemoryFunnel({ ...upstreamGreen, probeEvent: "distractor.confused", probeReason: "needle_only" });
+  const failed = attributeMemoryFunnel({ ...upstreamGreen, probeEvent: "distractor.confused", probeReason: "recall_failed" });
   assert.equal(statusOf(recalled, "L4_expression"), "passed");
   assert.equal(statusOf(failed, "L4_expression"), "broken");
   // Without the cause we must not guess either way.
-  const unknown = attributeMemoryFunnel({ probeEvent: "distractor.confused" });
+  const unknown = attributeMemoryFunnel({ ...upstreamGreen, probeEvent: "distractor.confused" });
   assert.equal(statusOf(unknown, "L4_expression"), "observability_gap");
   assert.equal(unknown.findings.length, 0);
 });
