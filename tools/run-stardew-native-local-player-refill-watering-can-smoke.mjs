@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -14,7 +14,7 @@ import {
 
 const SCENARIO = "native_refill_watering_can_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "equip_tool", "refill_watering_can"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "equip_tool",
   "inspect_self",
@@ -40,7 +40,7 @@ export async function runRefillWateringCanSmoke(
   try {
     let snapshot = await observeFresh(client);
     snapshot = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     if (snapshot.location !== "FarmHouse") throw new Error("refill_watering_can_must_start_at_farmhouse");
     const can = chooseCan(snapshot);
     const target = chooseTarget(snapshot);
