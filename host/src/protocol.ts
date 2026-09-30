@@ -98,10 +98,12 @@ inventorySlots?: number;
 /**
  * The persistent native exhaustion flag. While set, Farmer's day-update
  * restores only half of MaxStamina the next morning, so this is the agent's
- * own accrued consequence, not a transient read. Optional for older Mod
- * snapshots; false when the world is not ready.
+ * own accrued consequence, not a transient read. Required on every Mod snapshot:
+ * while it was optional an absent field was indistinguishable from a real false,
+ * so the projection reported "not exhausted" to the Agent for a Mod that simply
+ * did not send it. The world-not-ready snapshot sends false.
  */
-exhausted?: boolean;
+exhausted: boolean;
 activeExecution?: ActiveExecution | null;
   /** Exact current Mod BCP-47 presentation locale; required on every Mod snapshot. */
   presentationLocale: string;
@@ -2034,8 +2036,7 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   if (!isRecord(value.tile) || !isFiniteNumber(value.tile.x) || !isFiniteNumber(value.tile.y))
     return "invalid_snapshot:tile";
   if (!isFiniteNumber(value.stamina)) return "invalid_snapshot:stamina";
-  if (value.exhausted !== undefined && typeof value.exhausted !== "boolean")
-    return "invalid_snapshot:exhausted";
+  if (typeof value.exhausted !== "boolean") return "invalid_snapshot:exhausted";
   if (!isFiniteNumber(value.health)) return "invalid_snapshot:health";
   if (typeof value.actionable !== "boolean") return "invalid_snapshot:actionable";
   if (!isBcp47Locale(value.presentationLocale)) return "invalid_snapshot:presentationLocale";
@@ -2341,7 +2342,7 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
     isFiniteNumber(value.tile.x) &&
     isFiniteNumber(value.tile.y) &&
     isFiniteNumber(value.stamina) &&
-    (value.exhausted === undefined || typeof value.exhausted === "boolean") &&
+    typeof value.exhausted === "boolean" &&
     isFiniteNumber(value.health) &&
     typeof value.actionable === "boolean" &&
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&

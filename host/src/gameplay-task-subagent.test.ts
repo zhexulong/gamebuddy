@@ -473,6 +473,7 @@ function liveSnapshot(capabilities: string[]) {
     location: "Farm",
     tile: { x: 1, y: 2 },
     stamina: 100,
+    exhausted: false,
     health: 100,
     actionable: true,
     capabilities,
