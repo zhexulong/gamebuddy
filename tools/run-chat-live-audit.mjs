@@ -66,6 +66,14 @@ import { fileURLToPath } from "node:url";
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
+// The audited generation root. Production consumes the canonical `host/dist`
+// pointer; local iteration may point this at a disposable generation built by
+// host/scripts/build-desktop-launcher-test-generation.mjs, so a source change can
+// be exercised before the protected Windows release CI republishes. The default
+// is unchanged, and this only ever *reads* the pointer it is given.
+const AUDIT_OUTPUT_ROOT = process.env.GAMEBUDDY_CHAT_AUDIT_OUTPUT_ROOT
+  ? resolve(process.env.GAMEBUDDY_CHAT_AUDIT_OUTPUT_ROOT)
+  : join(HOST_ROOT, "dist");
 const AUDIT_SCHEMA = "chat_run_audit/v1";
 const HARNESS_OUTCOME_SCHEMA = "chat_run_audit/harness-outcome/v1";
 const AUDIT_SURFACE = "chat-only";
@@ -1059,7 +1067,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   // yields the child's bounded startup diagnostic and its process is stopped.
   let stderr = "";
   const launch = await launchDesktopCompositionGateChild({
-    outputRoot: join(HOST_ROOT, "dist"),
+    outputRoot: AUDIT_OUTPUT_ROOT,
     root,
     surface: AUDIT_SURFACE,
     nonceSha256,
@@ -1386,7 +1394,7 @@ function finishRun({ recorder, environment }) {
 
 async function productionArtifactIdentity() {
   try {
-    const pointer = JSON.parse(await readFile(join(HOST_ROOT, "dist", "current.json"), "utf8"));
+    const pointer = JSON.parse(await readFile(join(AUDIT_OUTPUT_ROOT, "current.json"), "utf8"));
     if (typeof pointer.generation !== "string" || !GENERATION.test(pointer.generation)) throw new Error("invalid");
     if (typeof pointer.inventoryDigest !== "string" || !SHA256_HEX.test(pointer.inventoryDigest)) throw new Error("invalid");
     return Object.freeze({ generation: pointer.generation, inventoryDigest: pointer.inventoryDigest });

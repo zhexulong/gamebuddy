@@ -1424,6 +1424,23 @@ test("dig_artifact_spot completion evidence is strict and source-only", () => {
     ),
     true,
   );
+  // The diggable category is native, not one id: `(O)590` and `(O)SeedSpot` reach
+  // the identical `t is Hoe` branch (Object.cs:1310) and every spawn site picks
+  // between them (GameLocation.cs:15233 at 1/6), so a real SeedSpot dig must satisfy
+  // the completion boundary. Pinning `(O)590` here rejected it after the Mod had
+  // already performed the correct native interaction.
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
+      "dig_artifact_spot",
+      {
+        ...receipt,
+        evidence: {
+          detail: valid.replace("qualified_item_id=(O)590", "qualified_item_id=(O)SeedSpot"),
+        },
+      },
+    ),
+    true,
+  );
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
       "dig_artifact_spot",
