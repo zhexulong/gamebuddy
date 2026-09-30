@@ -1038,6 +1038,60 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
   }
 });
 
+test("the native litter-category targets accept any bounded item id, not one pinned id", () => {
+  // Both categories are native predicates, not one item id each:
+  //   - breakable stone is `Category == -999 && Name == "Stone"` (Object.cs:6082),
+  //     and Object.cs:920-943 gives 8/10/12/14/25 their own durability while every
+  //     other stone id lands on the `default` arm at durability 1;
+  //   - a diggable artifact spot is `(O)590` OR `(O)SeedSpot` (Object.cs:1310),
+  //     and both ids spawn at every site (GameLocation.cs:15233, Mountain.cs:272).
+  // Pinning one id in this layer rejected the Mod's own correct discovery, which
+  // failed the whole snapshot and blocked every action on the Farm.
+  const cases: ReadonlyArray<readonly [string, Record<string, unknown>, Record<string, unknown>]> = [
+    [
+      "rockSourceTargets",
+      { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)343", displayName: "Stone", health: 1 },
+      { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", displayName: "Stone", health: 1 },
+    ],
+    [
+      "artifactSpotTargets",
+      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)SeedSpot", displayName: "Artifact Spot" },
+      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590", displayName: "Artifact Spot" },
+    ],
+  ];
+  for (const [field, nativeVariant, pinnedVariant] of cases) {
+    for (const accepted of [nativeVariant, pinnedVariant]) {
+      assert.equal(
+        validateBridgeMessage(
+          newEnvelope("snapshot", scope, { ...snapshot, [field]: [accepted] }, `snapshot_${field}_variant`, now),
+          scope,
+          now,
+        ),
+        null,
+        `${field} must accept ${JSON.stringify(accepted.qualifiedItemId)}`,
+      );
+    }
+    // The id stays typed and bounded: an empty or oversized token is still invalid.
+    for (const rejected of ["", "x".repeat(129), 2, null]) {
+      assert.equal(
+        validateBridgeMessage(
+          newEnvelope(
+            "snapshot",
+            scope,
+            { ...snapshot, [field]: [{ ...nativeVariant, qualifiedItemId: rejected }] },
+            `snapshot_${field}_bad`,
+            now,
+          ),
+          scope,
+          now,
+        ),
+        "invalid_snapshot",
+        `${field} must reject ${JSON.stringify(rejected)}`,
+      );
+    }
+  }
+});
+
 test("execution validation fails closed for stale, unknown, malformed, and unactionable requests", () => {
   const valid = {
     requestId: "request_01",
@@ -1404,8 +1458,13 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
         ...artifactSnapshot,
         payload: {
           ...artifactSnapshot.payload,
+          // The Host validates the SHAPE of this id, not the native category: the
+          // Mod's own predicate owns which ids a diggable artifact spot may have
+          // (`(O)590` or `(O)SeedSpot`, Object.cs:1310), and a second hard-coded id
+          // list here rejected the Mod's correct discovery. An empty token is still
+          // refused, so the field stays a bounded typed identifier.
           artifactSpotTargets: [
-            { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Artifact Spot" },
+            { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "", displayName: "Artifact Spot" },
           ],
         },
       },

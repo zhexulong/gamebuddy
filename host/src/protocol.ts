@@ -3322,7 +3322,11 @@ function isArtifactSpotTargetFact(value: unknown): boolean {
     value.location.length <= 128 &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
-    value.qualifiedItemId === "(O)590" &&
+    // Both diggable ids are legal: `(O)590` and `(O)SeedSpot` reach the identical
+    // `t is Hoe` branch (Object.cs:1310) and every spawn site picks between them
+    // (GameLocation.cs:15233, Mountain.cs:272). Pinning only `(O)590` hid roughly a
+    // sixth of the artifact spots from the Agent.
+    isBoundedNonEmptyString(value.qualifiedItemId, 128) &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
     value.displayName.length <= 128
@@ -3369,7 +3373,13 @@ function isRockSourceTargetFact(value: unknown): boolean {
     value.location.length <= 256 &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
-    value.qualifiedItemId === "(O)2" &&
+    // The native breakable-stone category is `Category == -999 && Name == "Stone"`
+    // (Object.cs:6082), not one item id: the engine gives 8/10/12/14/25 their own
+    // durability and routes every other stone id through the `default` arm at
+    // durability 1 (Object.cs:920-943). Pinning `(O)2` here rejected the Mod's own
+    // correct discovery on any other one-hit stone id. The id stays an opaque
+    // bounded token; the native predicate is the authority.
+    isBoundedNonEmptyString(value.qualifiedItemId, 128) &&
     typeof value.health === "number" &&
     Number.isSafeInteger(value.health) &&
     value.health === 1 &&

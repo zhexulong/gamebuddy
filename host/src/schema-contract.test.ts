@@ -396,6 +396,35 @@ test("language-neutral schema and Host share closed shapes for every published s
   }
 });
 
+test("the schema leaves native litter-category item ids open instead of pinning one id", async () => {
+  // The Mod owns the native category, and both of these are predicates rather than
+  // single ids:
+  //   - breakable stone is `Category == -999 && Name == "Stone"` (Object.cs:6082),
+  //     with 8/10/12/14/25 durabilities special-cased and every other stone id on
+  //     the durability-1 default arm (Object.cs:920-943);
+  //   - a diggable artifact spot is `(O)590` OR `(O)SeedSpot` (Object.cs:1310).
+  // A `const` in either layer rejected the Mod's own correct discovery, which
+  // failed the whole snapshot and blocked every action. This pin is what makes a
+  // re-introduced `const` fail here instead of silently at runtime.
+  const schema = JSON.parse(
+    await readFile(fileURLToPath(new URL("../../protocol/bridge-v1.schema.json", import.meta.url)), "utf8"),
+  ) as { $defs: Record<string, { properties: Record<string, unknown> }> };
+  for (const definition of ["rockSourceTarget", "artifactSpotTarget"]) {
+    const property = schema.$defs[definition]!.properties.qualifiedItemId as Record<string, unknown>;
+    assert.equal(property.const, undefined, `${definition}.qualifiedItemId must not pin one item id`);
+    assert.equal(property.enum, undefined, `${definition}.qualifiedItemId must not pin an id list`);
+    assert.equal(property.type, "string", `${definition}.qualifiedItemId stays a bounded token`);
+    assert.ok(
+      typeof property.minLength === "number" && property.minLength >= 1,
+      `${definition}.qualifiedItemId must reject an empty token`,
+    );
+    assert.ok(
+      typeof property.maxLength === "number" && property.maxLength <= 128,
+      `${definition}.qualifiedItemId must stay bounded`,
+    );
+  }
+});
+
 test("language-neutral schema requires positive ResourceClump health in debris snapshots", async () => {
   const validate = await schemaValidator();
   const [message] = (await fixture("golden-sequence.json")).messages;
@@ -640,18 +669,40 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
     },
   };
   assert.equal(validate(snapshot), true, JSON.stringify(validate.errors));
+  // The other legal diggable id is admitted too: `(O)SeedSpot` reaches the same
+  // native `t is Hoe` branch as `(O)590` (Object.cs:1310) and both spawn at every
+  // artifact-spot site. Pinning `(O)590` rejected a real artifact spot the Mod had
+  // correctly discovered, which failed the whole snapshot.
   assert.equal(
     validate({
       ...snapshot,
       payload: {
         ...(snapshot.payload as Record<string, unknown>),
         artifactSpotTargets: [
-          { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)388" },
+          { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)SeedSpot" },
         ],
       },
     }),
-    false,
+    true,
+    JSON.stringify(validate.errors),
   );
+  // The id stays a bounded non-empty token: hollow values are still rejected, and
+  // the native-category authority is the Mod's predicate, not a Host id list.
+  for (const invalidId of ["", "x".repeat(129), 590, null]) {
+    assert.equal(
+      validate({
+        ...snapshot,
+        payload: {
+          ...(snapshot.payload as Record<string, unknown>),
+          artifactSpotTargets: [
+            { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: invalidId },
+          ],
+        },
+      }),
+      false,
+      JSON.stringify(invalidId),
+    );
+  }
   assert.equal(
     validate({
       ...snapshot,
@@ -975,6 +1026,39 @@ test("language-neutral schema validates exact navigate_to_destination execution 
   );
 });
 
+
+test("language-neutral schema validates exact ride_minecart request arguments", async () => {
+  const validate = await schemaValidator();
+  const [message] = (await fixture("golden-sequence.json")).messages;
+  const request = {
+    ...(message as Record<string, unknown>),
+    type: "execution_request",
+    payload: {
+      requestId: "request_01",
+      idempotencyKey: "idempotency_01",
+      action: "ride_minecart",
+      args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef" },
+      expectedRevision: 1,
+      deadlineMs: 1,
+    },
+  };
+  assert.equal(validate(request), true, JSON.stringify(validate.errors));
+
+  // The station tile and the opaque selector are both mandatory: `ride_minecart`
+  // has no plain-warp form, unlike `travel`.
+  for (const args of [
+    { x: 10, y: 10 },
+    { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef", extra: true },
+    { x: 10, y: 10, expectedTargetId: "not_a_minecart_id" },
+    { x: 10, y: 10, expectedTargetId: 7 },
+    { x: -1, y: 10, expectedTargetId: "minecart_0123456789abcdef" },
+  ])
+    assert.equal(
+      validate({ ...request, payload: { ...request.payload, args } }),
+      false,
+      `schema must reject ${JSON.stringify(args)}`,
+    );
+});
 
 test("language-neutral schema closes body-node admission challenge and grant frames", async () => {
   const validate = await schemaValidator();
