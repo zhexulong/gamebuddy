@@ -9,6 +9,7 @@ import {
   summarizeReceipt,
   waitForFreshSnapshot,
   waitForTerminal,
+  validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
@@ -248,7 +249,9 @@ function validateTopologyConfig(value) {
   if (topology === "shared_world_farmhand") {
     if (value.HostAutomation?.Enable === true || value.NativeLocalPlayerFixture?.Enable === true)
       throw new Error("native_local_fixture_topology_not_isolated");
-    if (value.ActionPolicyVersion !== 1) throw new Error("shared_world_action_policy_invalid");
+    // The retired `ActionPolicyVersion` selector is gone; policy is the derived
+    // deny-by-exception block, so the shape check is what still applies.
+    validateNativeLocalFixturePolicy(value, {});
     return topology;
   }
   validateNativeLocalConfig(value);
@@ -301,12 +304,7 @@ function validateNativeLocalConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (
-    value.ActionPolicyVersion !== 0 ||
-    JSON.stringify(value.EnabledActions) !== JSON.stringify(["pet_animal"]) ||
-    JSON.stringify(value.ExperimentalActions) !== JSON.stringify(["pet_animal"])
-  )
-    throw new Error("native_local_pet_animal_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: ["pet_animal"] });
   if (
     ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"].some(
       (key) => typeof value[key] !== "string" || value[key].length === 0,

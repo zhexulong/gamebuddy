@@ -6,6 +6,7 @@ import {
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
+  validateNativeLocalFixturePolicy,
   waitForActionable,
   waitForFreshSnapshot,
   waitForStableRevision,
@@ -285,8 +286,7 @@ function validateNativeLocalFixtureConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (value.ActionPolicyVersion !== 0 || JSON.stringify(value.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS))
-    throw new Error("native_local_plant_seed_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 
 function validFixtureSlotRelationship(logicalName, observedSlot) {
