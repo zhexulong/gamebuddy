@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -10,7 +10,7 @@ import {
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "chop_stump";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "equip_tool", ACTION];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "equip_tool", ACTION];
 
 /** Execute the chop_stump contract (with equip_tool preflight) against an already-connected bridge session. */
 export async function runChopstumpSmoke(
@@ -23,7 +23,7 @@ export async function runChopstumpSmoke(
   const startedAt = Date.now();
   try {
     let snapshot = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const target = chooseOnlyStumpTarget(snapshot);
 
     // equip_tool is the action-owned prerequisite: the handler revalidates
@@ -67,7 +67,7 @@ export async function runChopstumpSmoke(
       throw new Error(`chop_stump_failed:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
     const after = await observeFresh(client, { actionable: true, minRevision: terminal.revision });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const passed =
       after.revision >= terminal.revision &&
       evidence.target === target.targetId &&

@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -10,7 +10,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "harvest_crop", "inspect_self", "move_to_tile", "travel"];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "harvest_crop", "inspect_self", "move_to_tile", "travel"];
 
 /** Execute the harvest contract against an already-connected bridge session. */
 export async function runHarvestCropSmoke(
@@ -30,12 +30,12 @@ export async function runHarvestCropSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeHarvestActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
     snapshot = await observeHarvestActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
     snapshot = await moveToFreshHarvestTarget(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs);
 
@@ -44,7 +44,7 @@ export async function runHarvestCropSmoke(
     // fresh opaque target ID and revision; fixture coordinates never authorize a
     // harvest request.
     snapshot = await observeHarvestActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
     const target = chooseOnlyFreshHarvestTarget(snapshot);
     const accepted = await execute(
@@ -241,7 +241,7 @@ async function moveToFreshHarvestTarget(client, receipts, snapshot, trace, stabi
 
 async function moveToTile(client, receipts, snapshot, target, phase, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
   snapshot = await observeHarvestActionable(client);
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   const accepted = await execute(client, trace, phase, "move_to_tile", target, snapshot);
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);

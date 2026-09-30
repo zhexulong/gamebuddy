@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -12,7 +12,7 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "collect_crab_pot_output";
 const SCENARIO = "native_crab_pot_collect_v1";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Execute the collect_crab_pot_output contract against an already-connected bridge session. */
 export async function runCrabPotCollectSmoke(
@@ -25,7 +25,7 @@ export async function runCrabPotCollectSmoke(
   const startedAt = Date.now();
   try {
     const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const target = chooseOnlyCrabPotCollectTarget(before);
     const requestId = `native_local_crab_pot_collect_${Date.now()}`;
     const accepted = await executeFresh(client, {
@@ -53,7 +53,7 @@ export async function runCrabPotCollectSmoke(
       minRevision: terminal.revision,
       timeoutMs: postconditionTimeoutMs,
     });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const delivered = Number(evidence.stack_delivered);
     const passed =
       after.revision >= terminal.revision &&

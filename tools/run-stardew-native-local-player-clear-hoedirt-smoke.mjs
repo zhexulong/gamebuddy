@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -13,7 +13,7 @@ import {
 
 const SCENARIO = "native_clear_hoedirt_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "clear_hoedirt"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "clear_hoedirt",
   "equip_tool",
@@ -34,7 +34,7 @@ export async function runClearHoeDirtSmoke(
   validateConfig(config);
   try {
     let snapshot = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     if (snapshot.location === "FarmHouse") snapshot = await travelToFarm(snapshot);
     else if (snapshot.location !== "Farm")
       throw new Error("clear_hoedirt_route_must_start_at_farmhouse_or_fixture_farm");

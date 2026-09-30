@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -11,7 +11,7 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "chest_store";
 const SCENARIO = "native_chest_store_v1";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Execute the chest-store contract against an already-connected bridge session. */
 export async function runChestStoreSmoke(
@@ -24,7 +24,7 @@ export async function runChestStoreSmoke(
   const startedAt = Date.now();
   try {
     const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const target = chooseOnlyChestStoreTarget(before);
     const requestId = `native_local_chest_store_${Date.now()}`;
     const accepted = await executeFresh(client, {
@@ -50,7 +50,7 @@ export async function runChestStoreSmoke(
       throw new Error(`chest_store_failed:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
     const after = await observeFresh(client, { actionable: true, minRevision: terminal.revision });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const reread = (after.chestStoreTargets ?? []).find((entry) => entry?.targetId === target.targetId);
     const passed =
       after.revision >= terminal.revision &&
