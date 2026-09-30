@@ -77,6 +77,29 @@ test("compiled entry rejects malformed bootstrap wire without acknowledgement", 
   }
 });
 
+// A pre-ready child exit is classified by its callers (the Desktop launcher and
+// the gate runners) from one bare code token on stderr. Before this assertion the
+// entry swallowed the error entirely, so every startup failure surfaced as an
+// unattributable `exited_before_ready` with empty stderr.
+test("a rejected bootstrap frame reports one bounded failure code on stderr", async () => {
+  const result = await runEntry(Buffer.from(`${validFrame.slice(0, -1)},"unknown":true}\n`, "utf8"));
+
+  assert.notEqual(result.code, 0);
+  assert.deepEqual(result.stdout, Buffer.alloc(0));
+  const lines = result.stderr
+    .toString("utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    // Node 24 prints an ExperimentalWarning from the entry's node:sqlite import;
+    // it is runtime noise rather than a bootstrap diagnostic.
+    .filter((line) => !line.includes("ExperimentalWarning") && !line.includes("--trace-warnings"));
+  assert.equal(lines.length, 1, `expected exactly one diagnostic line, got ${JSON.stringify(lines)}`);
+  assert.match(lines[0]!, /^[a-z][a-z0-9_.:-]{2,159}$/i);
+  // The diagnostic must never carry a path, message prose, or a stack frame.
+  assert.doesNotMatch(lines[0]!, /[\\/]|\.js:|\s/);
+});
+
 test("Host bootstrap rejects a valid root until private Guardian session admission is available", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only bootstrap root, reparse, and current-user ownership admission");
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-desktop-bootstrap-"));
