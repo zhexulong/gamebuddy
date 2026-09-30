@@ -644,7 +644,7 @@
       "allOf": [
         {
           "if": { "properties": { "partial": { "const": true } } },
-          "then": { "properties": { "truncatedReason": { "enum": ["maximum_affordances", "payload_limit"] } } }
+          "then": { "properties": { "truncatedReason": { "enum": ["maximum_affordances", "payload_limit", "ground_limit"] } } }
         },
         {
           "if": { "properties": { "partial": { "const": false } } },

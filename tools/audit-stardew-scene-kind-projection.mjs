@@ -35,11 +35,15 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const CONTRACTS = "integrations/stardew/navigation/scenecontracts.cs";
+// The ground wire helper, the exception ceiling and the truncation reason set all
+// live here, not in scenecontracts.cs, so the ground chain needs both files.
+const PROJECTION = "integrations/stardew/navigation/sceneobservationprojection.cs";
 const BRIDGE_PROTOCOL = "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs";
 const HOST_PROTOCOL = "host/src/protocol.ts";
 const SCHEMA = "protocol/bridge-v1.schema.json";
 
-const read = (relative) => readFileSync(path.join(ROOT, relative), "utf8");
+const DEFAULT_ROOT = ROOT;
+const read = (relative, root = ROOT) => readFileSync(path.join(root, relative), "utf8");
 
 /** PascalCase enum member -> lower snake wire value, applied to the C# wire rows. */
 function enumMembers(contractsSource) {
@@ -73,6 +77,53 @@ function kindIsSet(contractsSource, helperName) {
   return new Set([...block[1].matchAll(/SceneAffordanceKind\.(\w+)/g)].map((m) => m[1]));
 }
 
+/**
+ * Parse `SceneGroundKind` members from the C# enum.
+ *
+ * Ground is a second projection axis, not a scene kind: affordances say what a
+ * tile can DO, ground says what it IS. It travels its own chain and can go stale
+ * on its own, which is exactly what a kind-only audit cannot see.
+ */
+function groundEnumMembers(contractsSource) {
+  const block = contractsSource.match(/internal enum SceneGroundKind\s*\{([\s\S]*?)\}/);
+  if (!block) throw new Error("scene_ground_audit_enum_not_found");
+  return block[1]
+    .split(",")
+    .map((row) => row.replace(/\/\/.*$/gm, "").trim())
+    .filter((row) => /^[A-Za-z][A-Za-z0-9]*$/.test(row));
+}
+
+/** Parse `SceneGroundKind.X => "wire"` rows from the ground wire helper. */
+function groundWireMap(contractsSource) {
+  const block = contractsSource.match(
+    /internal static string ToWireValue\(SceneGroundKind kind\)\s*=>\s*kind switch\s*\{([\s\S]*?)\n\s*\};/,
+  );
+  if (!block) throw new Error("scene_ground_audit_wire_switch_not_found");
+  const map = {};
+  for (const match of block[1].matchAll(/SceneGroundKind\.(\w+)\s*=>\s*"([^"]*)"/g)) map[match[1]] = match[2];
+  return map;
+}
+
+/** Parse the `"Grass" => SceneGroundKind.Grass` table that maps the engine's own Back-layer Type. */
+function groundFromBackTypeMap(contractsSource) {
+  const block = contractsSource.match(
+    /internal static SceneGroundKind FromBackType\(string\? backType\)\s*=>\s*backType switch\s*\{([\s\S]*?)\n\s*\};/,
+  );
+  if (!block) throw new Error("scene_ground_audit_from_back_type_not_found");
+  const map = {};
+  for (const match of block[1].matchAll(/"([^"]+)"\s*=>\s*SceneGroundKind\.(\w+)/g)) map[match[1]] = match[2];
+  return map;
+}
+
+/** Parse `SceneGroundKind is A or B or C` membership for the ground helper. */
+function groundKindIsSet(contractsSource, helperName) {
+  const block = contractsSource.match(
+    new RegExp(`internal static bool ${helperName}\\(SceneGroundKind kind\\)\\s*=>\\s*kind is([\\s\\S]*?);`),
+  );
+  if (!block) throw new Error(`scene_ground_audit_predicate_not_found:${helperName}`);
+  return new Set([...block[1].matchAll(/SceneGroundKind\.(\w+)/g)].map((m) => m[1]));
+}
+
 /** Parse the integer bodies of an `int` return switch (dense-kind priority). */
 function intSwitchMap(contractsSource, helperName) {
   const block = contractsSource.match(
@@ -95,8 +146,8 @@ function csharpStringPattern(source, marker) {
   return new Set([...line.matchAll(/"([^"]+)"/g)].map((m) => m[1]));
 }
 
-export function auditSceneKindProjection() {
-  const contracts = read(CONTRACTS);
+export function auditSceneKindProjection({ root = DEFAULT_ROOT } = {}) {
+  const contracts = read(CONTRACTS, root);
   const members = enumMembers(contracts);
 
   const wireByMember = switchMap(contracts, "ToWireValue");
@@ -147,7 +198,7 @@ export function auditSceneKindProjection() {
     }
   }
 
-  const bridge = read(BRIDGE_PROTOCOL);
+  const bridge = read(BRIDGE_PROTOCOL, root);
   // Take only the `kind` comparison row. A greedy window would also swallow the
   // following `direction` row and report its values as unknown kinds.
   const csharpKindComparisons = (source, marker) => {
@@ -161,7 +212,7 @@ export function auditSceneKindProjection() {
   const outbound = csharpKindComparisons(bridge, 'value.GetProperty("kind").GetString() is not');
   const inbound = csharpKindComparisons(bridge, "&& affordance.Kind is ");
 
-  const host = read(HOST_PROTOCOL);
+  const host = read(HOST_PROTOCOL, root);
   // Anchor on the ObserveSceneAffordance declaration: other `kind:` unions in
   // this file (destination "label"|"ref", body event kinds) are unrelated, and
   // the affordance union wraps across lines in current formatting.
@@ -172,7 +223,7 @@ export function auditSceneKindProjection() {
   const hostSetMatch = host.match(/const OBSERVE_SCENE_KINDS = new Set\(\[([^\]]*)\]\)/);
   const hostSet = new Set(hostSetMatch ? [...hostSetMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
 
-  const schema = JSON.parse(read(SCHEMA));
+  const schema = JSON.parse(read(SCHEMA, root));
   const schemaEnum = new Set(schema?.$defs?.observeSceneAffordance?.properties?.kind?.enum ?? []);
 
   const layers = [
@@ -192,11 +243,117 @@ export function auditSceneKindProjection() {
     }
   }
 
+  const ground = auditGroundProjection({ contracts, projection: read(PROJECTION, root), bridge, host, schema });
+  findings.push(...ground.findings);
+
   return {
     kindCount: members.length,
     perKind: perKind.sort((a, b) => a.member.localeCompare(b.member)),
+    groundKinds: ground.perKind,
     findings: findings.sort((a, b) => `${a.kind}${a.hop}`.localeCompare(`${b.kind}${b.hop}`)),
   };
+}
+
+// Audit the ground projection chain, a second axis parallel to the scene kinds.
+//
+// Ground travels its own hops and each one is silent when wrong: the C# enum, its
+// wire helper, the engine Back-layer Type table, the BridgeProtocol outbound path,
+// the Host union and the envelope schema. A kind-only audit reports "ok" while any
+// of these disagree, and the failure then appears only when a real observation is
+// serialized -- the same shape as the water_source defect this file documents.
+function auditGroundProjection({ contracts, projection, bridge, host, schema }) {
+  const findings = [];
+  const perKind = [];
+
+  const members = groundEnumMembers(contracts);
+  const wireByMember = groundWireMap(contracts);
+  const fromBackType = groundFromBackTypeMap(contracts);
+  const isDefined = groundKindIsSet(contracts, "IsDefined");
+
+  const declaredWire = new Set();
+  for (const member of members) {
+    const wire = wireByMember[member];
+    if (wire === undefined) findings.push({ kind: member, hop: "ground ToWireValue", detail: "ground kind has no wire value" });
+    else if (declaredWire.has(wire)) findings.push({ kind: member, hop: "ground ToWireValue", detail: `duplicate ground wire value ${wire}` });
+    else declaredWire.add(wire);
+    if (!isDefined.has(member)) findings.push({ kind: member, hop: "ground IsDefined", detail: "ground kind is not accepted by IsDefined" });
+    perKind.push({ member, wire: wire ?? null });
+  }
+
+  // The engine's own Back-layer Type strings are the input side; Other is the
+  // default arm and so is not expected as a named key.
+  for (const [backType, member] of Object.entries(fromBackType)) {
+    if (!members.includes(member))
+      findings.push({ kind: backType, hop: "ground FromBackType", detail: `maps to SceneGroundKind.${member}, which the enum does not declare` });
+  }
+
+  // The outbound path must derive its wire value from the enum, not from a literal.
+  if (!/SceneGroundKindWire\.ToWireValue/.test(projection))
+    findings.push({ kind: "ground", hop: "BridgeProtocol", detail: "outbound path does not go through SceneGroundKindWire.ToWireValue" });
+
+  // truncatedReason is a closed three-value set wherever it is declared.
+  const REASONS = ["maximum_affordances", "payload_limit", "ground_limit"];
+  const csharpReasons = new Set([...projection.matchAll(/"(maximum_affordances|payload_limit|ground_limit)"/g)].map((m) => m[1]));
+  for (const reason of REASONS) {
+    if (!csharpReasons.has(reason)) findings.push({ kind: "ground", hop: "truncatedReason", detail: `C# does not accept ${reason}` });
+  }
+  if (!/ground_limit/.test(bridge))
+    findings.push({ kind: "ground", hop: "BridgeProtocol truncatedReason", detail: "bridge validator does not accept ground_limit" });
+
+  // The Host declares the value set once as the SceneGroundKind alias and reuses
+  // it, so the literals live there rather than in the ground object itself.
+  const hostKindAlias = host.match(/export type SceneGroundKind =([^;]+);/);
+  const hostGroundUnion = new Set(hostKindAlias ? [...hostKindAlias[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
+  const hostGroundDecl = host.match(/export type ObserveSceneGround = Readonly<\{([\s\S]*?)\}>;/);
+  if (!hostGroundDecl)
+    findings.push({ kind: "ground", hop: "host protocol ground declaration", detail: "ObserveSceneGround type not found" });
+  else if (!/dominantKind:\s*SceneGroundKind/.test(hostGroundDecl[1]))
+    findings.push({ kind: "ground", hop: "host protocol ground declaration", detail: "ObserveSceneGround.dominantKind does not reference SceneGroundKind" });
+  const hostReason = host.match(/truncatedReason:\s*([^;]+);/);
+  const hostReasons = new Set(hostReason ? [...hostReason[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
+
+  const schemaGroundSet = new Set(schema?.$defs?.observeSceneGround?.properties?.dominantKind?.enum ?? []);
+  const schemaReasons = new Set(
+    (schema?.$defs?.observeSceneResult?.properties?.truncatedReason?.anyOf ?? []).flatMap((branch) => branch?.enum ?? []),
+  );
+
+  // Reasons also appear in a conditional branch narrowing by `partial`, and that is
+  // where a producer value goes missing: `ground_limit` was absent from the
+  // partial=true branch, so a mixed-ground observation was unschema-valid even
+  // though the Mod, the bridge validator and the Host runtime set all accepted it.
+  for (const [index, branch] of (schema?.$defs?.observeSceneResult?.allOf ?? []).entries()) {
+    const narrowed = branch?.then?.properties?.truncatedReason;
+    if (narrowed === undefined || narrowed.type === "null") continue;
+    for (const reason of narrowed.enum ?? []) {
+      if (!REASONS.includes(reason))
+        findings.push({ kind: "ground", hop: `envelope schema allOf[${index}]`, detail: `branch admits ${reason}, which the producer never emits` });
+    }
+    for (const reason of REASONS) {
+      if (!(narrowed.enum ?? []).includes(reason))
+        findings.push({ kind: "ground", hop: `envelope schema allOf[${index}]`, detail: `branch omits ${reason}, which the producer can emit with partial=true` });
+    }
+  }
+
+  for (const [layerName, layerValues] of [
+    ["host protocol ground union", hostGroundUnion],
+    ["envelope schema ground enum", schemaGroundSet],
+  ]) {
+    for (const wire of declaredWire) {
+      if (!layerValues.has(wire)) findings.push({ kind: wire, hop: layerName, detail: "ground kind missing from this layer" });
+    }
+    for (const value of layerValues) {
+      if (!declaredWire.has(value)) findings.push({ kind: value, hop: layerName, detail: "layer admits a ground kind the Mod enum does not declare" });
+    }
+  }
+
+  if (!hostReasons.has("ground_limit"))
+    findings.push({ kind: "ground", hop: "host protocol truncatedReason", detail: "host union does not accept ground_limit" });
+  for (const reason of REASONS) {
+    if (!schemaReasons.has(reason))
+      findings.push({ kind: "ground", hop: "envelope schema truncatedReason", detail: `schema does not accept ${reason}` });
+  }
+
+  return { perKind: perKind.sort((a, b) => a.member.localeCompare(b.member)), findings };
 }
 
 function main() {
