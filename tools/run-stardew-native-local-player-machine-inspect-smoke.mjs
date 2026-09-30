@@ -6,6 +6,7 @@ import {
   observeTopologySnapshot,
   readNativeClientConfig,
   summarizeReceipt,
+  validateNativeLocalFixturePolicy,
   summarizeSnapshot,
   waitForFreshSnapshot,
   waitForTerminal,
@@ -58,8 +59,10 @@ export async function runMachineInspectSmoke(
       state: passed ? "passed" : "blocked",
       topology,
       reasonCode: passed ? "machine_inspected" : "machine_inspect_postcondition_mismatch",
-      target: summarizeTarget(target),
-      receipt: summarizeReceipt(terminal),
+    target: summarizeTarget(target),
+    receipt: summarizeReceipt(terminal),
+    // The receipt summary carries no identity by design (4a52188).
+    executionId: terminal.executionId,
       evidence,
       reread: summarizeTarget(reread),
       unchangedTarget: unchanged,
@@ -100,10 +103,13 @@ function validateNativeLocalFixtureConfig(value) {
     // consented surface. The scenario precondition belongs to the Host-side
     // fixture, so it is not asserted from the client config here.
     if (value.HostAutomation?.Enable === true || value.NativeLocalPlayerFixture?.Enable === true)
-      throw new Error("native_local_fixture_topology_not_isolated");
-    if (value.ActionPolicyVersion !== 1) throw new Error("shared_world_action_policy_invalid");
-    return topology;
-  }
+    throw new Error("native_local_fixture_topology_not_isolated");
+  // The retired `ActionPolicyVersion` selector is gone: policy is the derived
+  // deny-by-exception block, so the check is that it is present and denies
+  // nothing this run requires.
+  validateNativeLocalFixturePolicy(value, { requiredActions: [] });
+  return topology;
+}
   const fixture = value?.NativeLocalPlayerFixture;
   if (
     fixture?.Enable !== true ||
@@ -122,8 +128,7 @@ function validateNativeLocalFixtureConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (value.ActionPolicyVersion !== 0 || !same(value.EnabledActions, EXPECTED_ACTIONS))
-    throw new Error("native_local_machine_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
   return topology;
 }
 async function requireActionableMachineSnapshot(client, topology) {
@@ -252,5 +257,11 @@ function summarizeTarget(target) {
     : null;
 }
 function summarizeWithMachines(snapshot) {
-  return { ...summarizeSnapshot(snapshot), machineTargets: snapshot.machineTargets?.map(summarizeTarget) ?? [] };
+  // `summarizeSnapshot` stopped carrying location/tile in 4a52188, so the tile
+  // this runner compares before/after is exposed here explicitly.
+  return {
+    ...summarizeSnapshot(snapshot),
+    tile: snapshot.tile,
+    machineTargets: snapshot.machineTargets?.map(summarizeTarget) ?? [],
+  };
 }

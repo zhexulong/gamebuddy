@@ -104,10 +104,13 @@ export async function runPlaceWoodFenceSmoke(
       state: passed ? "passed" : "blocked",
       reasonCode: passed ? "wood_fence_placed" : terminal.reasonCode,
       target,
-      receipt: summarizeReceipt(terminal),
-      evidence,
-      resultFence,
-      evidenceMatches,
+    receipt: summarizeReceipt(terminal),
+    // The receipt summary carries no identity by design (4a52188), so the
+    // exact execution this runner proves is exposed here.
+    executionId: terminal.executionId,
+    evidence,
+    resultFence,
+    evidenceMatches,
       resultMatches,
       stackDeltaProven,
       trace,

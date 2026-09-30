@@ -6,6 +6,7 @@ import {
   readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
+  validateNativeLocalFixturePolicy,
   waitForActionable,
   waitForFreshSnapshot,
   waitForTerminal,
@@ -103,9 +104,13 @@ export async function runRefillWateringCanSmoke(
       topology: "native_local_player_fixture",
       reasonCode: passed ? "watering_can_refilled" : "refill_watering_can_postcondition_mismatch",
       target: freshTarget,
-      can: freshCan,
-      receipt: summarizeReceipt(terminal),
-      evidence,
+    can: freshCan,
+    receipt: summarizeReceipt(terminal),
+    // The receipt summary carries no identity by design (4a52188), so the
+    // exact-execution correlation this runner proves is exposed here.
+    executionId: terminal.executionId,
+    requestId: terminal.requestId,
+    evidence,
       trace,
       after: { ...summarizeSnapshot(after), wateringCanFacts: after.wateringCanFacts ?? [] },
       durationMs: Date.now() - startedAt,
@@ -138,9 +143,7 @@ function validateConfig(value) {
   if (
     value?.NativeLocalPlayerFixture?.Enable !== true ||
     value.NativeLocalPlayerFixture.Bootstrap?.Enable === true ||
-    value.NativeLocalPlayerFixture.FixtureScenario !== SCENARIO ||
-    value.ActionPolicyVersion !== 0 ||
-    !same(value.EnabledActions, EXPECTED_ACTIONS)
+    value.NativeLocalPlayerFixture.FixtureScenario !== SCENARIO
   )
     throw new Error("native_local_refill_watering_can_fixture_config_invalid");
   if (
@@ -150,6 +153,7 @@ function validateConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_refill_watering_can_topology_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 
 function chooseCan(snapshot) {
