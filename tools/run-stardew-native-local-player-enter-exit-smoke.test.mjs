@@ -6,6 +6,10 @@ import { runEnterExitSmoke } from "./run-stardew-native-local-player-enter-exit-
 
 const CAPABILITIES = ["cancel_active_execution", "enter_exit", "inspect_self", "move_to_tile"];
 const FARM_DOOR = { sourceX: 1, sourceY: 2, targetLocation: "Farm", targetX: 3, targetY: 4 };
+// The gated door the second phase proves: the fixture Farm's Greenhouse human
+// door refuses without ccPantry (GreenhouseBuilding.OnUseHumanDoor), so
+// enter_exit must come back rejected/door_gate_refused instead of entering.
+const GATED_DOOR = { sourceX: 7, sourceY: 8, targetLocation: "Greenhouse", targetX: 10, targetY: 23 };
 
 function fixtureConfig(overrides = {}) {
   return {
@@ -32,11 +36,13 @@ function doorSnapshot(location, tile, revision, capabilities = CAPABILITIES) {
     actionable: true,
     activeExecution: null,
     capabilities,
-    doorTargets: [FARM_DOOR],
+    // The Greenhouse door only exists on the Farm, exactly like production
+    // discovery: a FarmHouse snapshot advertises the Farm exit only.
+    doorTargets: location === "Farm" ? [GATED_DOOR] : [FARM_DOOR],
   };
 }
 
-function createFake({ tile: initialTile = { x: 2, y: 2 }, capabilities = CAPABILITIES } = {}) {
+function createFake({ tile: initialTile = { x: 2, y: 2 }, capabilities = CAPABILITIES, gateBypassed = false, gateTeleports = false, gateState = "rejected" } = {}) {
   const listeners = new Set();
   let revision = 7;
   let location = "FarmHouse";
@@ -63,6 +69,23 @@ function createFake({ tile: initialTile = { x: 2, y: 2 }, capabilities = CAPABIL
       }
       if (action === "enter_exit") {
         revision += 1;
+        // The gated Greenhouse door refuses without ccPantry: the actor stays on
+        // the Farm and the game draws its own locked-door dialogue, which the
+        // Mod closes before reporting.
+        if (args.x === GATED_DOOR.sourceX && args.y === GATED_DOOR.sourceY) {
+          // `gateBypassed` models the defect this phase exists to catch: an
+          // enter_exit that walks a locked door through anyway and reports
+          // success. The runner must refuse to call that a pass.
+          if (gateBypassed)
+            publish({ ...accepted, state: "succeeded", reasonCode: "enter_exit_completed", revision });
+          else publish({ ...accepted, state: gateState, reasonCode: "door_gate_refused", revision });
+          // `gateTeleports` models a refusal that moved the actor anyway.
+          if (gateTeleports) {
+            location = GATED_DOOR.targetLocation;
+            tile = { x: GATED_DOOR.targetX, y: GATED_DOOR.targetY };
+          }
+          return accepted;
+        }
         // Stale facts that share only one identity field must never satisfy
         // the terminal wait; the runner may only accept the exact pair, so any
         // single-field correlation would fail on these non-completing decoys.
@@ -114,8 +137,16 @@ test("enter-exit runner passes when already adjacent to the door source", async 
   assert.equal(result.before.location, "FarmHouse");
   assert.equal(result.after.location, "Farm");
   assert.deepEqual(result.after.tile, { x: 3, y: 4 });
-  assert.equal(result.trace.length, 1);
-  assert.equal(result.trace[0].action, "enter_exit");
+  // Two phases: the FarmHouse exit completes, then the gated Greenhouse door
+  // on the Farm must refuse. The trace therefore carries both legs.
+  assert.deepEqual(
+    result.trace.map((entry) => entry.action),
+    ["enter_exit", "move_to_tile", "enter_exit"],
+  );
+  assert.equal(result.doorGate.state, "passed");
+  assert.equal(result.doorGate.reasonCode, "door_gate_refused");
+  assert.equal(result.doorGate.receipt.state, "rejected");
+  assert.equal(result.doorGate.after.location, "Farm");
 });
 
 test("enter-exit runner moves to the door source before entering", async () => {
@@ -126,8 +157,9 @@ test("enter-exit runner moves to the door source before entering", async () => {
   assert.equal(result.reasonCode, "enter_exit_completed");
   assert.deepEqual(
     result.trace.map((entry) => entry.action),
-    ["move_to_tile", "enter_exit"],
+    ["move_to_tile", "enter_exit", "move_to_tile", "enter_exit"],
   );
+  assert.equal(result.doorGate.reasonCode, "door_gate_refused");
   assert.equal(result.after.location, "Farm");
   assert.deepEqual(result.after.tile, { x: 3, y: 4 });
 });
@@ -153,6 +185,7 @@ test("enter-exit runner blocks on a non-isolated capability surface", async () =
   assert.equal(result.state, "blocked");
   assert.match(result.reasonCode, /native_required_capability_missing/);
   assert.equal(result.trace.length, 0);
+  assert.equal(result.doorGate, undefined);
 });
 
 test("enter-exit runner rejects a non-isolated topology", async () => {
@@ -203,4 +236,42 @@ test("enter-exit runner CLI entry owns exactly one shared-session teardown", asy
   assert.match(source, /runEnterExitSmoke\(session\.client, session\.receipts, config\)/);
   assert.match(source, /finally \{[\s\S]*?session\.close\(\);/);
   assert.equal((source.match(/session\.close\(\)/g) ?? []).length, 1);
+});
+
+test("enter-exit runner refuses to call a walk-through-locked-door a pass", async () => {
+  // Negative case for the gate phase. If enter_exit reports success on the
+  // gated Greenhouse door -- the defect this whole change prevents -- the run
+  // must be blocked, not passed.
+  const client = createFake({ gateBypassed: true });
+  const receipts = collectReceipts(client);
+  const result = await runEnterExitSmoke(client, receipts, fixtureConfig());
+  assert.equal(result.doorGate.state, "blocked");
+  assert.match(result.doorGate.reasonCode, /^door_gate_unexpected:/);
+  assert.match(result.doorGate.reasonCode, /reason=enter_exit_completed/);
+  assert.equal(result.state, "blocked");
+});
+
+test("enter-exit runner blocks when the gate reports the refusal code without a rejected state", async () => {
+  // Third negative case: `door_gate_refused` is only a settled refusal when the
+  // terminal state is `rejected`. An `uncertain` receipt carrying the refusal
+  // code -- the shape a refusal whose settle could not be confirmed would take --
+  // must not be read as a proven gate.
+  const client = createFake({ gateState: "uncertain" });
+  const receipts = collectReceipts(client);
+  const result = await runEnterExitSmoke(client, receipts, fixtureConfig());
+  assert.equal(result.doorGate.state, "blocked");
+  assert.match(result.doorGate.reasonCode, /state=uncertain/);
+  assert.equal(result.state, "blocked");
+});
+
+test("enter-exit runner blocks when the gated door moves the actor instead of refusing", async () => {
+  // Second negative case: a refusal that still teleported the actor is not a
+  // refusal. The gate phase asserts the actor stayed put, so a fake whose gated
+  // attempt relocates the actor must be reported blocked.
+  const client = createFake({ gateTeleports: true });
+  const receipts = collectReceipts(client);
+  const result = await runEnterExitSmoke(client, receipts, fixtureConfig());
+  assert.equal(result.doorGate.state, "blocked");
+  assert.match(result.doorGate.reasonCode, /moved/);
+  assert.equal(result.state, "blocked");
 });
