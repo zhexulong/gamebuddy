@@ -85,6 +85,7 @@ public sealed partial class ModEntry : Mod
     private FarmhandProvisioningProbe? provisioningProbe;
     private SleepModalProbe? sleepModalProbe;
     private bool sleepModalProbeRejected;
+    private PathPredicateProbe? pathPredicateProbe;
     private SleepAndAdvanceDayLifecycle? sleepLifecycle;
     private bool sleepLifecycleRejected;
     private bool embodimentInitialized;
@@ -281,6 +282,12 @@ public sealed partial class ModEntry : Mod
                 if (!this.TryArmSleepLifecycle())
                     return;
             }
+            // Env-gated evidence probe, never a config surface. It measures the
+            // native path finder's goal predicate and is kept for future
+            // pathing-behaviour work, so it is activated the same way the xUnit
+            // seam probes are (a GAMEBUDDY_STARDEW_* variable set by the external
+            // harness) rather than by a field in a user profile.
+            this.pathPredicateProbe = PathPredicateProbe.TryStart(this.Monitor);
             return;
         }
         bool hostConfigured = this.config.HostFarmhandProvisioning?.Enable == true;
@@ -3845,6 +3852,15 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 return;
             if (!this.nativeLocalPlayerFixtureInitialized)
                 return;
+            // The path-predicate probe is a one-tick read-only measurement that
+            // needs only an idle actor and the post-scenario collision field, so
+            // it is consulted before any body owner and never claims the actor.
+            if (this.pathPredicateProbe is not null)
+            {
+                if (this.pathPredicateProbe.Update())
+                    this.pathPredicateProbe = null;
+                return;
+            }
             // The M2 sleep-modal probe owns the actor's route and the (P2)
             // answer; once the fixture scope is established it must be the only
             // body owner, so it is consulted before any bridge work.

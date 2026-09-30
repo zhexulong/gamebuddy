@@ -1050,3 +1050,71 @@ The target-version native-local gate passed for `minecart_fe403a3191f92427` (sta
 The arrival observation settles rather than sampling once: the native ride sets `Game1.player.freezePause = 700` (`GameLocation.cs:10311`) and `Farmer.Update` forces `CanMove = false` for that window (`Farmer.cs:7595-7603`), so the Mod's snapshot `Actionable` is legitimately false for ~700 ms after a successful ride. A single-shot read reports that window as a harness artefact, not a product failure. Pre-ride reads stay strict: the actor must be actionable before a request is submitted.
 
 This is shared native-local mechanics evidence for one single-player ride only — never Farmhand, Portfolio, publication, release, cancellation, replay, or save/reopen closure. `ride_minecart` remains `experimental` in the Mod catalog until its own publication review, and its ticket-price branch is unexercised here because the vanilla `Default` network's destinations are free.
+
+### Native-local path-goal-predicate measurement (read-only, no mutation)
+
+This entry records a measurement, not an Action closure. It answers whether
+replacing the native pathing target's exact coordinate with an `isAtEnd`
+predicate actually stops A* at a neighbouring tile, and where that path ends.
+
+Run it with `tools/run-stardew-native-local-path-predicate-probe.mjs`, which
+wraps the ordinary native-local fixture transaction around the Mod-side
+`PathPredicateProbe` (`integrations/stardew/PathPredicateProbe.cs`). The probe
+never assigns a controller, never moves the actor, and never sends a bridge
+request; it calls `PathFindController.findPath` directly on the game thread,
+once per goal, from a fixed start tile. Three goals are measured against the
+same target tile in one tick: the exact coordinate, "target or cardinal
+neighbour" (Manhattan <= 1), and "target or any neighbour" (Chebyshev <= 1).
+Targets are scanned in two families so the diagonal case is reachable at all:
+`cardinal_approach` (a walkable cardinal neighbour exists) and
+`diagonal_only_approach` (all four cardinal neighbours blocked, a walkable
+diagonal exists). Every measured target is at least two tiles from the actor,
+so the start node never satisfies a goal and each returned path is a real A*
+result. Obstacle classification calls the planner's own
+`isCollidingPosition(...)` with findPath's arguments except
+`skipCollisionEffects: true`, which removes the one side effect findPath itself
+has (`FarmAnimal.farmerPushing`, `GameLocation.cs:2572-2575`) without changing
+any return value.
+
+The target-version run passed on `GameBuddyFixtureStable_445936768` (Stardew
+`1.6.15`, actor at FarmHouse `(9,9)`, 6 candidate targets: 3 cardinal-approach
+and 3 diagonal-only-approach). Start-node control: exact goal on the start tile
+returned one node, `9,9`. Results:
+
+| Target | Family | exact goal | cardinal goal | Chebyshev goal |
+| --- | --- | --- | --- | --- |
+| `7,11` | cardinal | `NULL` | 4 nodes -> `7,10` (cardinal) | 3 nodes -> `8,10` (**diagonal**) |
+| `8,11` | cardinal | `NULL` | 3 nodes -> `8,10` (cardinal) | 3 nodes -> `8,10` (cardinal) |
+| `11,7` | cardinal | `NULL` | 6 nodes -> `10,7` (cardinal) | 6 nodes -> `10,7` (cardinal) |
+| `9,11` | diagonal-only | `NULL` | `NULL` | 3 nodes -> `8,10` (**diagonal**) |
+| `11,8` | diagonal-only | `NULL` | `NULL` | 2 nodes -> `10,9` (**diagonal**) |
+| `11,10` | diagonal-only | `NULL` | `NULL` | 2 nodes -> `10,9` (**diagonal**) |
+
+Two conclusions, both direct readings of that table:
+
+- **The predicate premise holds.** All 6 targets are unwalkable by the
+  planner's own test, and the exact-coordinate goal returns `NULL` for all 6.
+  The adjacent-tile goal returns a non-null path for all 6, ending on a real
+  neighbour. The A* obstacle field did not change across the calls
+  (`targetWalkableBeforeCalls=false` and `targetWalkableAfterCalls=false` for
+  every target).
+- **The arrival test is a real bug, not a theoretical one.** The Chebyshev goal
+  ends **diagonally** on 4 of the 6 targets, including `7,11` where a cardinal
+  neighbour (`7,10`) was already walkable and available - A* simply dequeued
+  the diagonal `8,10` first. The Mod's Manhattan-1 `IsCardinalAdjacent`
+  (`StardewBodyController.cs:218-223`) would therefore read a finished diagonal
+  route as **not arrived**, while the `DistanceSquared <= 0.04f` exact test also
+  fails, and the action would end `failed/native_path_ended` on a path that had
+  in fact reached the target's vicinity. A Chebyshev-1 (`max(|dx|,|dy|) == 1`)
+  test matches every ending this run observed.
+
+The actor did not move: `actorTileBefore == actorTileAfter == "9,9"`,
+`actorMoved=false`, `temporaryPassableTilesChanged=false`, and the location had
+0 animals. The transaction restored its profile (the runner-added
+`PathPredicateProbe` block is gone from the restored config), removed its
+backup and lock and the working save, and left no Stardew/SMAPI process.
+
+This is a `native_local_player_fixture` single-player read-only measurement of
+one target-version collision field at one actor tile. It is not Farmhand,
+Publication, Portfolio, release, or save/reopen evidence, and it does not itself
+change the arrival test or the pathing target - it only measures them.
