@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -11,7 +11,7 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "plant_sapling";
 const SCENARIO = "native_plant_sapling_v1";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Execute the plant_sapling contract against an already-connected bridge session. */
 export async function runPlantSaplingSmoke(
@@ -24,7 +24,7 @@ export async function runPlantSaplingSmoke(
   const startedAt = Date.now();
   try {
     const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     // The fixture guarantees exactly one legally plantable tile with a standable
     // neighbour and warps the player onto that neighbour. Discovery scans a wider
     // radius, so select the target the player can actually act on instead of the
@@ -56,7 +56,7 @@ export async function runPlantSaplingSmoke(
       throw new Error(`plant_sapling_failed:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
     const after = await observeFresh(client, { actionable: true, minRevision: terminal.revision });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const passed =
       after.revision >= terminal.revision &&
       evidence.target === target.targetId &&

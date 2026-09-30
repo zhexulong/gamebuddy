@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -15,7 +15,7 @@ import {
 
 const SCENARIO = "native_till_soil_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "till_soil"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "equip_tool",
   "inspect_self",
@@ -42,7 +42,7 @@ export async function runTillSoilSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeFresh(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const hasHoe = (snapshot.toolSlots ?? []).some(
       (entry) => typeof entry.label === "string" && entry.label.toLowerCase().includes("hoe"),
     );

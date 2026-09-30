@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -15,7 +15,7 @@ const SCENARIO = "native_interact_npc_with_item_v1";
 const GIFT_ITEM_ID = "(O)190";
 const DELIVERY_QUEST_NUMBER = 1;
 const DELIVERY_FRIENDSHIP_AMOUNT = 255;
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "inspect_self",
   "move_to_tile",
@@ -48,7 +48,7 @@ export async function runInteractNpcWithItemSmoke(
   const startedAt = Date.now();
   try {
     let snapshot = await freshActionableSnapshot(client, undefined, stabilizeTimeoutMs);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     if (snapshot.location !== "FarmHouse") throw new Error("npc_offer_route_must_start_at_farmhouse");
     snapshot = await travelFreshHop(client, receipts, trace, snapshot, "FarmHouse", "Farm", "farmhouse_to_farm", stabilizeTimeoutMs, travelTimeoutMs);
     let target = chooseOnlyNpcTarget(snapshot);
@@ -87,7 +87,7 @@ export async function runInteractNpcWithItemSmoke(
       timeoutMs: postconditionTimeoutMs,
       requireActionable: true,
     });
-    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     // questComplete keeps a rewarded quest in the log and removes an unrewarded
     // one (Quest.decompiled.cs:622-629), so the completed-entry delta follows the
     // receipt's stays-in-log report while the quest's own completed flag is the

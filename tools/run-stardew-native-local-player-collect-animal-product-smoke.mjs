@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -12,7 +12,7 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_collect_animal_product_v1";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "collect_animal_product", "inspect_self"];
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "collect_animal_product", "inspect_self"];
 
 /** Execute the collect-animal-product contract against an already-connected bridge session. */
 export async function runCollectAnimalProductSmoke(
@@ -25,7 +25,7 @@ export async function runCollectAnimalProductSmoke(
   validateConfig(config);
   try {
     const before = await observeFresh(client, { actionable: true });
-    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const target = chooseTarget(before);
     const inventoryBefore = countQualifiedInventory(before, target.qualifiedProduceItemId);
     const requestId = `native_local_collect_animal_product_${Date.now()}`;

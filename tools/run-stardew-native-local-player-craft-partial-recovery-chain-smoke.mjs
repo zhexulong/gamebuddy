@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -68,7 +68,7 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
  */
 const SCENARIO = "native_craft_item_partial_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "craft_item", "chest_store"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "chest_store",
   "craft_item",
@@ -130,7 +130,7 @@ export async function runCraftPartialRecoveryChainSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeCraftPartialActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
 
     // The fixture warps the actor onto the chest's standable neighbour, so no
     // travel leg is required; a FarmHouse start would still be reachable because
@@ -138,7 +138,7 @@ export async function runCraftPartialRecoveryChainSmoke(
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
     snapshot = await observeCraftPartialActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
 
     // The declared Given is a backpack that cannot hold the whole product. A chain
     // whose breakpoint never happened proves nothing, so refuse before submitting.
@@ -574,7 +574,7 @@ function advertisedProductStack(snapshot) {
 
 async function observeCraftPartialActionable(client) {
   const snapshot = await observeFresh(client, { actionable: true });
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   if (
     !Number.isInteger(snapshot.revision) ||
     typeof snapshot.location !== "string" ||

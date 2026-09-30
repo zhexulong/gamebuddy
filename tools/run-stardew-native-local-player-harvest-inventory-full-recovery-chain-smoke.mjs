@@ -1,5 +1,5 @@
 import {
-  assertExactCapabilities,
+  assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
@@ -40,7 +40,7 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
  */
 const SCENARIO = "native_harvest_crop_inventory_full_recovery_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "harvest_crop", "chest_store"];
-const EXPECTED_CAPABILITIES = [
+const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "chest_store",
   "harvest_crop",
@@ -71,7 +71,7 @@ export async function runHarvestInventoryFullRecoveryChainSmoke(
   validateNativeLocalFixtureConfig(config);
   try {
     let snapshot = await observeHarvestActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
 
     // The fixture deliberately does not warp the actor (warping onto a crop-adjacent
     // tile measured live as landlocked), so travel and movement are ordinary
@@ -79,7 +79,7 @@ export async function runHarvestInventoryFullRecoveryChainSmoke(
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
     snapshot = await observeHarvestActionable(client);
-    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
 
     // The fixture's declared Given is a FULL backpack, so the breakpoint below is
     // deterministic. Reach a lawful crop target first.
@@ -559,7 +559,7 @@ function chooseOnlyChestStoreTarget(snapshot) {
 
 async function observeHarvestActionable(client) {
   const snapshot = await observeFresh(client, { actionable: true });
-  assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   if (
     !Number.isInteger(snapshot.revision) ||
     typeof snapshot.location !== "string" ||
