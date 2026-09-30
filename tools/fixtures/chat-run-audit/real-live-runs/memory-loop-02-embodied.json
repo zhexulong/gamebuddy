@@ -1,0 +1,44 @@
+{
+  "schema": "memory_live_loop/v1",
+  "identity": {
+    "continuityId": "memory_loop_continuity_4deefa46b4f4"
+  },
+  "scenario": {
+    "probeId": "p-embodied-preference",
+    "manifestDigest": "16c80ee86e39611f48d01f0125a28c0a4e50478bc797d8b981577a7652414885",
+    "dimension": "retention"
+  },
+  "seed": {
+    "durable": true,
+    "rowCount": 1,
+    "projectionChanged": true
+  },
+  "chat": {
+    "attempted": true,
+    "committed": true,
+    "verdict": "needle.hit"
+  },
+  "funnel": {
+    "stages": [
+      {
+        "stage": "L1_write",
+        "component": "persistence",
+        "status": "passed",
+        "detail": "seed present in the management durable readback"
+      },
+      {
+        "stage": "L2_assembly",
+        "component": "context_materialization",
+        "status": "observability_gap",
+        "reason": "rendered_memory_ids_unobserved"
+      },
+      {
+        "stage": "L4_expression",
+        "component": "presentation_admission",
+        "status": "passed",
+        "detail": "needle.hit"
+      }
+    ],
+    "findings": []
+  }
+}

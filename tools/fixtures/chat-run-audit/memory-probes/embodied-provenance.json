@@ -1,0 +1,61 @@
+{
+  "schema": "chat_memory_probe_manifest/v1",
+  "manifestId": "man-embodied-provenance-01",
+  "manifestDigest": "0a95cdb26c39a8f7e288a0c2ccf7dbc10d8986a1dcc23638981e4b48f084925d",
+  "continuityTopology": "single",
+  "probes": [
+    {
+      "probeId": "p-embodied-provenance",
+      "distance": "turn",
+      "dimension": "retention",
+      "seedClass": "explicit",
+      "steps": [
+        {
+          "kind": "seed",
+          "role": "player",
+          "text": "I put the obsidian blade I found on the deep mine levels into the blue chest upstairs in the farmhouse, on the left side. That is where it lives now.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The deep levels get cold enough to see your breath.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I sharpened the axe before the storm came in.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The slimes down there leave a strange residue on the floor.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I should sort the chest by the door one of these days.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "probe",
+          "role": "player",
+          "text": "I need that obsidian blade. Where should I look for it?",
+          "requiredKeywords": [
+            "blue",
+            "farmhouse"
+          ],
+          "forbiddenKeywords": [
+            "barn",
+            "shed",
+            "cellar"
+          ],
+          "minHitRate": 0.5
+        }
+      ]
+    }
+  ]
+}

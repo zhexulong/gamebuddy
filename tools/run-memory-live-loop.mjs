@@ -41,10 +41,11 @@ import { spawn } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
+import { evaluateProbeReply, loadProbeManifest, probeVerdict } from "./run-chat-live-audit.mjs";
 import { attributeMemoryFunnel } from "./lib/memory-funnel.mjs";
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
@@ -65,26 +66,72 @@ function createIdentity() {
 }
 
 function usage() {
-  return "usage: node tools/run-memory-live-loop.mjs --report <path> [--seed <text>] [--question <text>]";
+  return "usage: node tools/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>]";
 }
 
 function parseArguments(argv) {
-  const flags = new Map([["--report", undefined], ["--seed", undefined], ["--question", undefined]]);
-  for (let index = 0; index < argv.length; index += 2) {
+  const flags = new Map([
+    ["--report", undefined],
+    ["--seed", undefined],
+    ["--question", undefined],
+    ["--manifest", undefined],
+  ]);
+  for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help") return Object.freeze({ help: true });
     if (!flags.has(flag)) throw new Error(`${usage()} (unknown flag: ${flag})`);
     const value = argv[index + 1];
-    if (value === undefined || value.startsWith("--")) throw new Error(usage());
+    // A value that is itself a known flag means the caller forgot it; refusing is
+    // better than silently consuming the next flag as text.
+    if (value === undefined || flags.has(value)) throw new Error(usage());
     flags.set(flag, value);
+    index += 1;
   }
   const reportPath = flags.get("--report");
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error(usage());
   return Object.freeze({
     help: false,
     reportPath: resolve(reportPath),
-    seed: flags.get("--seed") ?? "Remember this for later: I retired after many years delivering the post.",
-    question: flags.get("--question") ?? "What did I do before I retired?",
+    manifestPath: flags.get("--manifest"),
+    seed: flags.get("--seed"),
+    question: flags.get("--question"),
+  });
+}
+
+/**
+ * Resolve the seeded fact and the probe question.
+ *
+ * The preferred source is a `chat_memory_probe_manifest/v1` fixture: probe text is
+ * fixture-owned by design and must never be invented by the runner, and consuming the
+ * same fixtures the Chat loop uses keeps the two loops' scenarios comparable. Inline
+ * text stays available for a one-off decision and is used only when no manifest is
+ * given.
+ */
+async function resolveScenario({ manifestPath, seed, question }) {
+  if (manifestPath === undefined) {
+    return Object.freeze({
+      seed: seed ?? "Remember this for later: I retired after many years delivering the post.",
+      question: question ?? "What did I do before I retired?",
+      probeId: undefined,
+      manifestDigest: undefined,
+      dimension: "retention",
+      requiredKeywords: ["postman", "mail", "delivering"],
+      forbiddenKeywords: ["mine", "haul"],
+    });
+  }
+  const manifest = loadProbeManifest(await readFile(resolve(manifestPath), "utf8"));
+  const probe = manifest.probes[0];
+  const seedStep = probe.steps.find((step) => step.kind === "seed");
+  const probeStep = probe.steps.find((step) => step.kind === "probe");
+  if (seedStep === undefined || probeStep === undefined) throw new Error("probe_fixture_incomplete");
+  return Object.freeze({
+    seed: seedStep.text,
+    question: probeStep.text,
+    probeId: probe.probeId,
+    manifestDigest: manifest.manifestDigest,
+    dimension: probe.dimension,
+    requiredKeywords: probeStep.requiredKeywords,
+    forbiddenKeywords: probeStep.forbiddenKeywords ?? [],
   });
 }
 
@@ -276,25 +323,37 @@ async function withSurface({ surface, identity, run }) {
   }
 }
 
-/** Word-level containment so "postman" matches "the postman" but "mail" does not match "email". */
-export function scoreRecalled(text, required, forbidden) {
-  const normalized = typeof text === "string" ? text.toLowerCase() : "";
-  const hit = (word) => new RegExp(`(^|[^a-z0-9])${word}([^a-z0-9]|$)`, "i").test(normalized);
-  return Object.freeze({
-    requiredHit: required.some(hit),
-    forbiddenHit: forbidden.some(hit),
+/**
+ * Score the reply with the FROZEN kernel rule, not a second implementation.
+ *
+ * The Chat loop already owns probe scoring (`evaluateProbeReply` + `probeVerdict`: the
+ * threshold, the dimension routing, and the two causes of `distractor.confused`).
+ * Re-implementing it here - even "better", with word boundaries - would let the two
+ * loops disagree about the same reply, which is exactly the drift the frozen
+ * vocabulary exists to prevent.
+ */
+function scoreReply({ committedText, scenario }) {
+  const keywords = evaluateProbeReply({
+    transcriptText: committedText,
+    step: {
+      requiredKeywords: scenario.requiredKeywords,
+      forbiddenKeywords: scenario.forbiddenKeywords,
+      minHitRate: 0.5,
+    },
   });
+  return probeVerdict({ gate: { ok: true }, keywords, dimension: scenario.dimension });
 }
 
-export async function runMemoryLiveLoop({ reportPath, seed, question } = {}) {
+export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, question } = {}) {
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error("report_path_required");
+  const scenario = await resolveScenario({ manifestPath, seed, question });
   const identity = createIdentity();
 
   // Phase 1 - management surface: seed and confirm durability.
   const seeded = await withSurface({
     surface: "management",
     identity,
-    run: async (origin, client) => seedMemory(origin, client, seed),
+    run: async (origin, client) => seedMemory(origin, client, scenario.seed),
   });
 
   const observation = {
@@ -323,28 +382,32 @@ export async function runMemoryLiveLoop({ reportPath, seed, question } = {}) {
   const chat = await withSurface({
     surface: "chat-only",
     identity,
-    run: async (origin, client) => runChatTurn(origin, client, question),
+    run: async (origin, client) => runChatTurn(origin, client, scenario.question),
   });
 
-  const scored = scoreRecalled(chat.committedText, ["postman", "mail", "delivering"], ["mine", "haul"]);
-  const probeEvent = scored.requiredHit ? "needle.hit" : scored.forbiddenHit ? "distractor.confused" : "needle.miss";
-  const probeReason = probeEvent === "distractor.confused" ? "needle_only" : undefined;
+  const verdict = scoreReply({ committedText: chat.committedText, scenario });
 
   const attributed = attributeMemoryFunnel({
     ...observation,
-    probeEvent,
-    ...(probeReason === undefined ? {} : { probeReason }),
+    probeEvent: verdict.event,
+    ...(verdict.reason === undefined ? {} : { probeReason: verdict.reason }),
   });
 
   const report = Object.freeze({
     schema: "memory_live_loop/v1",
     identity: Object.freeze({ continuityId: identity.continuityId }),
+    scenario: Object.freeze({
+      ...(scenario.probeId === undefined ? {} : { probeId: scenario.probeId }),
+      ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
+      dimension: scenario.dimension,
+    }),
     seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
     chat: Object.freeze({
       attempted: true,
       committed: typeof chat.committedText === "string" && chat.committedText.length > 0,
       // Content-free: the reply text is scored here and never persisted.
-      verdict: probeEvent,
+      verdict: verdict.event,
+      ...(verdict.reason === undefined ? {} : { verdictReason: verdict.reason }),
     }),
     funnel: attributed,
   });
@@ -359,6 +422,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   } else {
     const report = await runMemoryLiveLoop({
       reportPath: parsed.reportPath,
+      manifestPath: parsed.manifestPath,
       seed: parsed.seed,
       question: parsed.question,
     });
