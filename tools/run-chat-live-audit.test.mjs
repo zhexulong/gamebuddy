@@ -382,6 +382,37 @@ test("a failed probe gate short-circuits to a gap and never scores keywords", ()
   assert.deepEqual(probeVerdict({ gate: { ok: true } }), { event: "observability_gap", reason: "probe_keywords_missing" });
 });
 
+test("the supersession dimension routes to its own frozen codes", () => {
+  // These two codes are in the frozen vocabulary and are consumed by the compare and
+  // report layers (design 3.5 requires meta.reason to separate old_retained from
+  // new_missing), but nothing ever produced them until the supersede fixture was
+  // authored and immediately scored `distractor.confused` instead. A dimension that
+  // owns its own codes must own its own routing.
+  const dimension = "supersession";
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: true, forbiddenCount: 0 }, dimension }), {
+    event: "supersede.pass",
+  });
+  // The old fact surviving is the more specific failure, so the both-answers fudge
+  // lands here rather than on new_missing - that is what makes it detectable.
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: true, forbiddenCount: 1 }, dimension }), {
+    event: "supersede.fail",
+    reason: "old_retained",
+  });
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: false, forbiddenCount: 0 }, dimension }), {
+    event: "supersede.fail",
+    reason: "new_missing",
+  });
+  // A retention probe on the same keyword outcome must NOT take this branch.
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: true, forbiddenCount: 0 }, dimension: "retention" }), {
+    event: "needle.hit",
+  });
+  // The gate still short-circuits before the dimension is consulted.
+  assert.deepEqual(probeVerdict({ gate: { ok: false, reason: "probe_turn_not_terminal" }, keywords: { hit: true, forbiddenCount: 0 }, dimension }), {
+    event: "observability_gap",
+    reason: "probe_turn_not_terminal",
+  });
+});
+
 test("audit harness writes the exact frozen schema-v2 deployment manifest for a chat-only run", () => {
   const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
   assert.deepEqual(createAuditDeploymentManifest("C:/fresh-runtime", principal, "bootstrap_01"), {
