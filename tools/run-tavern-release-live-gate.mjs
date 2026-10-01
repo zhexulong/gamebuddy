@@ -355,6 +355,20 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
       checks,
     );
   }
+  // Completeness: every operation the mounted profile declares must carry its
+  // own evidence entry. The mapping is the proof that the whole mounted surface
+  // was exercised for real, so a mapping that covers a subset of the profile is
+  // not a weaker verdict - it is a false one. run-01..run-05 all passed this
+  // gate against a mapping of five operations while the profile declared more;
+  // the unreported operations could have been anything, including nothing.
+  for (const operationId of declaredOperations) {
+    check(
+      Object.hasOwn(operations, operationId),
+      "mounted_profile_operation_evidence_completeness",
+      "mounted_composed_tavern_profile_operation_to_evidence_mapping_incomplete",
+      checks,
+    );
+  }
 
   return {
     valid: profileValid && checks.length === 0,

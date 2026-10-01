@@ -229,6 +229,118 @@ async function exerciseOperations(origin, client) {
     });
   });
 
+  // settings.voice.read / .consent / .devices: the voice preference is a
+  // revisioned document read through its own route and mutated with a consent
+  // command that CASes that revision. The read is the proof the surface is
+  // mounted; the consent write is a real round-trip; the device enumeration is
+  // a separate read-only route.
+  await attempt("settings.voice.read", async () => {
+    const voice = await readJson(origin, client, "/api/tavern/v1/settings/voice-preference");
+    if (voice === null || typeof voice !== "object") throw new Error("voice_preference_unavailable");
+  });
+
+  await attempt("settings.voice.consent", async () => {
+    const voice = await readJson(origin, client, "/api/tavern/v1/settings/voice-preference");
+    const revision = voice?.revision;
+    if (!Number.isInteger(revision) || revision < 0) throw new Error("voice_revision_unavailable");
+    const consent = voice?.consent;
+    // Accept once (a fresh root starts undecided); each run is its own root so
+    // the accept path is what gets exercised. A record already accepted would
+    // need a revoke, but this gate always boots a fresh root.
+    if (consent !== "undecided" && consent !== "revoked") throw new Error("voice_consent_state_unexpected");
+    await sendJson(origin, client, "PUT", "/api/tavern/v1/settings/voice-preference", {
+      expectedRevision: revision,
+      action: "accept",
+      disclosureVersion: "mimo-cloud-tts-v1",
+    });
+  });
+
+  await attempt("settings.voice.devices", async () => {
+    const devices = await readJson(origin, client, "/api/tavern/v1/settings/voice-devices");
+    // An empty list is legal (gateway absent / headless); an unparseable reply is not.
+    if (devices === null || typeof devices !== "object") throw new Error("voice_devices_unavailable");
+  });
+
+  // settings.connection.*: the connection document is revisioned. The sequence
+  // is read (surface mounted) -> create the environment connection (no key
+  // accepted; it is the zero-configuration default) -> test it (the probe runs
+  // against the operator-provided default endpoint; it may report failed, which
+  // is a real outcome, not a harness failure) -> activate it (only a ready
+  // record activates) -> pick a model (revised) -> delete it (needs the exact
+  // revision and cannot be the active one). A fresh root has no active
+  // connection, so create -> test -> activate -> model -> remove is linear and
+  // every step is a real CAS round-trip.
+  await attempt("settings.connection.read", async () => {
+    const state = await readJson(origin, client, "/api/tavern/v1/settings/connection");
+    if (state === null || typeof state !== "object") throw new Error("connection_state_unavailable");
+  });
+
+  await attempt("settings.connection.create", async () => {
+    const state = await sendJson(origin, client, "POST", "/api/tavern/v1/settings/connections", {
+      apiVersion: 1,
+      providerId: "cpa-oai",
+    });
+    if (typeof state?.active !== "object" && state?.active !== null) throw new Error("connection_create_state_invalid");
+  });
+
+  // After create, the connection list carries the new record; we must find its
+  // id and revision to drive test/activate/model/remove. The environment
+  // connection is the zero-configuration default, so it will usually be ready
+  // and activatable without any probe on the real loopback endpoint.
+  const connectionList = async () => {
+    const state = await readJson(origin, client, "/api/tavern/v1/settings/connection");
+    const connection = Array.isArray(state?.connections) ? state.connections.find((entry) => entry?.connectionId) : undefined;
+    if (connection === undefined) throw new Error("connection_entry_unavailable");
+    return { connectionId: connection.connectionId, revision: state?.revision };
+  };
+
+  await attempt("settings.connection.test", async () => {
+    const { connectionId, revision } = await connectionList();
+    if (!Number.isInteger(revision) || revision < 0) throw new Error("connection_revision_unavailable");
+    const probe = await sendJson(origin, client, "POST", `/api/tavern/v1/settings/connections/${connectionId}/test`, {
+      apiVersion: 1,
+      expectedRevision: revision,
+    });
+    if (probe?.outcome !== "ready" && probe?.outcome !== "failed") throw new Error("connection_probe_outcome_invalid");
+  });
+
+  await attempt("settings.connection.activate", async () => {
+    const { connectionId, revision } = await connectionList();
+    const state = await sendJson(origin, client, "POST", `/api/tavern/v1/settings/connections/${connectionId}/activate`, {
+      apiVersion: 1,
+      expectedRevision: revision,
+    });
+    if (state?.active?.connectionId !== connectionId) throw new Error("connection_activation_state_invalid");
+  });
+
+  await attempt("settings.connection.model", async () => {
+    const { connectionId, revision } = await connectionList();
+    await sendJson(origin, client, "POST", `/api/tavern/v1/settings/connections/${connectionId}/model`, {
+      apiVersion: 1,
+      expectedRevision: revision,
+      modelId: "deepseek-v4-flash",
+      thinkingLevel: "high",
+    });
+  });
+
+  await attempt("settings.connection.remove", async () => {
+    // The active connection cannot be removed. Use a second record: create it,
+    // then delete it. The first (activated) record stays.
+    const created = await sendJson(origin, client, "POST", "/api/tavern/v1/settings/connections", {
+      apiVersion: 1,
+      providerId: "cpa-oai",
+    });
+    const entry = Array.isArray(created?.connections) ? created.connections.at(-1) : undefined;
+    const freshId = entry?.connectionId;
+    const revision = created?.revision;
+    if (typeof freshId !== "string" || !Number.isInteger(revision) || revision < 0)
+      throw new Error("connection_remove_setup_invalid");
+    await sendJson(origin, client, "DELETE", `/api/tavern/v1/settings/connections/${freshId}`, {
+      apiVersion: 1,
+      expectedRevision: revision,
+    });
+  });
+
   return results;
 }
 
