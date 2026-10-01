@@ -136,6 +136,49 @@ test("the shipped execution manager sources satisfy the family contract", async 
   assert.deepEqual(failures, []);
 });
 
+test("a thin wrapper delegating to a shared execution body still satisfies the contract", () => {
+  // Design 5.2 gives each tool action ONE execution body shared by the in-range
+  // path and the post-approach path, which makes the handler a wrapper. That is
+  // only acceptable because the reachable body carries the whole contract, so
+  // this case pins the delegation form the shipped sources use.
+  const sources = completeSources();
+  sources["fake/RequestLocalChopTreeSource.cs"] = `public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId)
+{
+    return this.ExecuteChopTreeSource(requestId);
+}`;
+  sources["fake/ExecutionManager.cs"] = `${SEAM_SOURCE}
+private LocalExecutionReceipt ExecuteChopTreeSource(string requestId)
+{
+    UseNativeToolOnTile(tool, location, 1, 2, Game1.player, staminaBefore);
+    string evidence = $"a=1;${STAMINA}";
+    return this.RememberTerminal(requestId, "x", ExecutionState.Succeeded, "${STARDEW_TOOL_FAMILY.RequestLocalChopTreeSource.terminal}", evidence);
+}`;
+  assert.deepEqual(validateToolFamilyStaminaEvidence(sources), []);
+});
+
+test("delegation cannot hide a violation: a body missing the stamina half is reported", () => {
+  // The delegation allowance must not become an escape hatch. Here the wrapper
+  // looks identical to the passing case above and the delegated body is the part
+  // that is wrong, so only a checker that actually inspects the reachable body
+  // reports it.
+  const sources = completeSources();
+  sources["fake/RequestLocalChopTreeSource.cs"] = `public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId)
+{
+    return this.ExecuteChopTreeSource(requestId);
+}`;
+  sources["fake/ExecutionManager.cs"] = `${SEAM_SOURCE}
+private LocalExecutionReceipt ExecuteChopTreeSource(string requestId)
+{
+    UseNativeToolOnTile(tool, location, 1, 2, Game1.player, staminaBefore);
+    return this.RememberTerminal(requestId, "x", ExecutionState.Succeeded, "${STARDEW_TOOL_FAMILY.RequestLocalChopTreeSource.terminal}", "no stamina here");
+}`;
+  const failures = validateToolFamilyStaminaEvidence(sources);
+  assert.ok(
+    failures.some((f) => /RequestLocalChopTreeSource/.test(f) && /stamina_before/.test(f)),
+    `expected a stamina failure for the delegated body, got ${JSON.stringify(failures)}`,
+  );
+});
+
 test("the family covers every DoFunction-driving handler the sources declare", () => {
   // Regression guard: the family list must not silently lose an entry. Each
   // entry names a real handler signature, and the count matches the known set.

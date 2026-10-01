@@ -23,9 +23,35 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || axe.UpgradeLevel != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
+            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value != 1f
+            || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
+        // 5.2: outside the native interaction radius (Chebyshev-1), the action
+        // begins an approach leg instead of rejecting. The native click path
+        // requires the same radius (Game1.cs:11509 checkAction gate; GetToolLocation
+        // hits the tile in front when the click is farther), so walking is the
+        // player-equivalent behaviour, not a Mod convenience. The tool and target
+        // are validated above (position-independent), the world is re-validated
+        // after the approach settles, and the walk uses the arrival predicate.
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.TryBeginToolApproach(requestId, executionId, PendingToolApproachKind.ChopTreeSource, location, targetX, targetY, expectedTargetId, slot, nowMs, requestedDeadlineMs);
+        return this.ExecuteChopTreeSource(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes chop_tree_source against the current world, re-validating the tool
+    /// and the target first because an approach leg may have taken several ticks and
+    /// either can have changed while walking. Terminal receipts are minted here so
+    /// the in-range path and the post-approach path share one execution body.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteChopTreeSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    {
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || axe.UpgradeLevel != 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -479,11 +505,161 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "weed_cut_postcondition_unavailable", evidence);
     }
 
+    /// <summary>
+    /// The wire action id an in-flight tool approach belongs to. The snapshot
+    /// publishes the real action so an observer does not see the internal
+    /// approach as a separate operation.
+    /// </summary>
+    private static string ToolApproachActionId(PendingToolApproachKind kind) => kind switch
+    {
+        PendingToolApproachKind.ChopTreeSource => "chop_tree_source",
+        PendingToolApproachKind.BreakRockSource => "break_rock_source",
+        PendingToolApproachKind.DigArtifactSpot => "dig_artifact_spot",
+        PendingToolApproachKind.ClearHoeDirt => "clear_hoedirt",
+        PendingToolApproachKind.TillSoil => "till_soil",
+        PendingToolApproachKind.ChopStump => "chop_stump",
+        PendingToolApproachKind.CutWeeds => "cut_weeds",
+        _ => "tool_approach",
+    };
+
     private static int ItemRankForWeapon(Tool item)
     {
         if (item is MeleeWeapon melee)
             return melee.getItemLevel();
         return item is Slingshot ? 1 : 0;
+    }
+
+    /// <summary>
+    /// Begins the shared approach leg for a tool-family action whose target is
+    /// outside the native interaction radius.
+    ///
+    /// Why walking is the player-equivalent behaviour and not a Mod convenience:
+    /// the native click path gates interaction on the same Chebyshev-1 radius
+    /// (<c>Game1.cs:11509</c> requires <c>tileWithinRadiusOfPlayer(grabTile, 1)</c>
+    /// before <c>checkAction</c>; <c>GameLocation.cs:14233</c> dims the cursor for a
+    /// reachable-but-out-of-range target; <c>Character.GetToolLocation</c>
+    /// (<c>:1218-1228</c>) only returns the clicked tile when it is within that
+    /// radius, otherwise it swings at the tile in front). A real player therefore
+    /// must walk into range; this leg does exactly that.
+    ///
+    /// The walk uses the arrival predicate with <c>AllowAdjacentArrival: true</c>,
+    /// so it stops on any Chebyshev-1 tile and the subsequent tool call re-enters
+    /// the same native path a standing player would use. The completion pass in
+    /// <see cref="Update"/> re-validates the world (the target may be gone or the
+    /// tool may have changed while walking) before executing anything, and reports
+    /// the unchanged <c>target_out_of_reach</c> refusal when the walk cannot be
+    /// planned at all.
+    /// </summary>
+    private LocalExecutionReceipt TryBeginToolApproach(
+        string requestId,
+        string executionId,
+        PendingToolApproachKind kind,
+        GameLocation location,
+        int targetX,
+        int targetY,
+        string expectedTargetId,
+        int slot,
+        long nowMs,
+        long requestedDeadlineMs)
+    {
+        int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
+        LocalMoveSpec approach = new(
+            executionId,
+            requestId,
+            new Vector2(targetX, targetY),
+            true,
+            this.revision,
+            this.tick + deadlineTicks,
+            requestedDeadlineMs);
+        this.activeToolApproach = new LocalToolApproachSpec(
+            executionId,
+            requestId,
+            kind,
+            location.NameOrUniqueName,
+            targetX,
+            targetY,
+            expectedTargetId,
+            slot,
+            this.revision,
+            requestedDeadlineMs);
+        this.active = approach;
+        if (!this.controller.TryStart(approach, Game1.player, this.tick, out string reasonCode, out string? approachEvidence))
+        {
+            this.active = null;
+            this.activeToolApproach = null;
+            // A target the native planner cannot even approach keeps the same
+            // honest refusal the in-range path would produce: the tile exists but
+            // the actor cannot get to it. `target_out_of_reach` is already the
+            // vocabulary the tool family uses for "reachable in principle, too far
+            // right now", and a failed route is exactly that fact.
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                reasonCode == "no_native_path" ? "target_out_of_reach" : reasonCode,
+                approachEvidence ?? $"target={targetX},{targetY};reach=1");
+        }
+
+        string distance = ChebyshevDistance(Game1.player, targetX, targetY).ToString(CultureInfo.InvariantCulture);
+        LocalExecutionReceipt accepted = new(
+            executionId,
+            requestId,
+            ExecutionState.Accepted,
+            "accepted",
+            this.revision,
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent");
+        this.Remember(accepted);
+        this.AddTrace(accepted);
+        return accepted;
+    }
+
+    /// <summary>
+    /// Completes a tool-family approach: re-validates the world and then runs the
+    /// kind-specific native call.
+    ///
+    /// Called from the Update pass only once the body is free
+    /// (<c>this.active is null &amp;&amp; !controller.HasActiveExecution</c>). Every
+    /// kind performs the same three steps: re-check that the actor is actually in
+    /// range (the walk may have been interrupted), re-validate the target identity
+    /// (it may have been removed or replaced), then execute. A target that no
+    /// longer matches settles as the kind's own `*_target_changed` refusal rather
+    /// than silently doing nothing.
+    /// </summary>
+    private void CompleteToolApproach(LocalToolApproachSpec specification)
+    {
+        this.activeToolApproach = null;
+
+        GameLocation? location = Game1.player.currentLocation;
+        bool sameLocation = location is not null
+            && string.Equals(location.NameOrUniqueName, specification.Location, StringComparison.Ordinal);
+        if (!sameLocation)
+        {
+            this.revision++;
+            LocalExecutionReceipt moved = new(specification.ExecutionId, specification.RequestId, ExecutionState.Rejected, "tool_approach_location_changed", this.revision,
+                $"target={specification.ExpectedTargetId};expected={specification.Location};actual={location?.NameOrUniqueName ?? "none"}");
+            this.Remember(moved);
+            this.AddTrace(moved);
+            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            return;
+        }
+
+        if (!IsTileWithinChebyshevRadius(Game1.player, specification.TargetX, specification.TargetY, 1))
+        {
+            this.revision++;
+            LocalExecutionReceipt short_ = new(specification.ExecutionId, specification.RequestId, ExecutionState.Rejected, "target_out_of_reach", this.revision,
+                $"target={specification.TargetX},{specification.TargetY};distance={ChebyshevDistance(Game1.player, specification.TargetX, specification.TargetY).ToString(CultureInfo.InvariantCulture)};reach=1;approach=did_not_arrive");
+            this.Remember(short_);
+            this.AddTrace(short_);
+            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            return;
+        }
+
+        LocalExecutionReceipt terminal = specification.Kind switch
+        {
+            PendingToolApproachKind.ChopTreeSource => this.ExecuteChopTreeSource(specification.ExecutionId, specification.RequestId, specification.Slot, specification.TargetX, specification.TargetY, specification.ExpectedTargetId),
+            _ => this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "tool_approach_kind_unavailable", $"kind={specification.Kind}"),
+        };
+        _ = terminal;
     }
 
 }
