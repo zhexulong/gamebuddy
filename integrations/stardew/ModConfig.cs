@@ -143,7 +143,7 @@ public sealed class NativeLocalPlayerFixtureConfig
     /// </summary>
     private static readonly string[] KnownFixtureScenarios = new[]
     {
-        "", "navigation_mutation_v1", "native_till_soil_v1", "native_water_crop_v1",
+        "", "navigation_mutation_v1", "navigation_read_only_v1", "native_till_soil_v1", "native_water_crop_v1",
         "native_crop_research_v1", "native_plant_seed_v1", "native_fertilize_tile_v1",
         "native_harvest_crop_v1", "native_pickup_forage_v1", "native_pickup_item_v1",
         "native_machine_inspect_v1", "native_machine_coffee_load_v1",
@@ -151,7 +151,7 @@ public sealed class NativeLocalPlayerFixtureConfig
         "native_npc_relationship_v1", "native_interact_npc_with_item_v1",
         "native_pet_animal_v1", "native_water_pet_bowl_v1",
         "native_water_slime_hutch_trough_v1", "native_use_item_v1",
-        "native_place_wood_fence_v1", "native_tree_first_hit_v1",
+        "native_place_wood_fence_v1",
         "native_chop_tree_source_v1", "native_break_rock_source_v1",
         "native_clear_hoedirt_v1", "native_clear_debris_resource_clump_v1",
         "native_water_crop_empty_can_recovery_v1",
