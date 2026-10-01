@@ -165,19 +165,26 @@ test("New Companion maps the reviewed persona and renders card macros determinis
       reviewedFields: ["persona_core", "persona_interaction_style", "persona_expression_style"],
       approvedAtMs: 9,
     });
-    const created = await provisionNewCompanion(
-      root,
-      "player",
-      personaCandidate,
-      review,
-      createChatThreadStore(root, "b".repeat(64)),
-    );
-    assert.deepEqual(created.profile.persona, {
-      core: "GameBuddy Companion is calm when player needs help.",
-      interactionStyle: "Listen to player before answering.",
-      expressionStyle: "GameBuddy Companion speaks clearly to player.",
-    });
-    assert.equal(identityProfileHash(created.profile), identityProfileHash({ ...created.profile, persona: { ...created.profile.persona! } }));
+    // `provisionNewCompanion` writes through the store it is handed and does not
+    // own it, so the test closes it before the root is removed.
+    const threadStore = createChatThreadStore(root, "b".repeat(64));
+    try {
+      const created = await provisionNewCompanion(
+        root,
+        "player",
+        personaCandidate,
+        review,
+        threadStore,
+      );
+      assert.deepEqual(created.profile.persona, {
+        core: "GameBuddy Companion is calm when player needs help.",
+        interactionStyle: "Listen to player before answering.",
+        expressionStyle: "GameBuddy Companion speaks clearly to player.",
+      });
+      assert.equal(identityProfileHash(created.profile), identityProfileHash({ ...created.profile, persona: { ...created.profile.persona! } }));
+    } finally {
+      threadStore.close?.();
+    }
   } finally {
     await cleanupTestRoot(root);
   }
@@ -192,25 +199,30 @@ test("New Companion provisions a fresh opaque identity and Host-owned profile bi
         throw new Error("not_used");
       },
     }).review(pending, { reviewedFields: ["persona_core"], approvedAtMs: 9 });
-    const created = await provisionNewCompanion(
-      root,
-      "player",
-      pending,
-      review,
-      createChatThreadStore(root, "b".repeat(64)),
-    );
-    assert.notEqual(created.identity.companionId, "companion");
-    assert.notEqual(created.identity.continuityId, "continuity");
-    assert.equal(created.profile.persona?.core, "calm");
-    const runtimeRoot = join(root, "contexts", identityKey(created.identity));
-    assert.match(
-      await readFile(join(runtimeRoot, "identity-profile.json"), "utf8"),
-      new RegExp(created.profile.profileId),
-    );
-    assert.match(
-      await readFile(join(runtimeRoot, "identity-profile-binding.json"), "utf8"),
-      new RegExp(identityKey(created.identity)),
-    );
+    const threadStore = createChatThreadStore(root, "b".repeat(64));
+    try {
+      const created = await provisionNewCompanion(
+        root,
+        "player",
+        pending,
+        review,
+        threadStore,
+      );
+      assert.notEqual(created.identity.companionId, "companion");
+      assert.notEqual(created.identity.continuityId, "continuity");
+      assert.equal(created.profile.persona?.core, "calm");
+      const runtimeRoot = join(root, "contexts", identityKey(created.identity));
+      assert.match(
+        await readFile(join(runtimeRoot, "identity-profile.json"), "utf8"),
+        new RegExp(created.profile.profileId),
+      );
+      assert.match(
+        await readFile(join(runtimeRoot, "identity-profile-binding.json"), "utf8"),
+        new RegExp(identityKey(created.identity)),
+      );
+    } finally {
+      threadStore.close?.();
+    }
   } finally {
     await cleanupTestRoot(root);
   }
@@ -218,6 +230,7 @@ test("New Companion provisions a fresh opaque identity and Host-owned profile bi
 
 test("New Companion provisions reviewed scenario and first greeting for library new chat", async () => {
   const root = await canonicalTestRoot("tavern-new-companion-narrative-");
+  let threadStore: ReturnType<typeof createChatThreadStore> | undefined;
   const narrativeCandidate = {
     ...candidate,
     fields: [
@@ -248,7 +261,7 @@ test("New Companion provisions reviewed scenario and first greeting for library 
       reviewedFields: ["persona_core", "scenario", "first_greeting"],
       approvedAtMs: 100,
     });
-    const threadStore = createChatThreadStore(root, "c".repeat(64));
+    threadStore = createChatThreadStore(root, "c".repeat(64));
     const created = await provisionNewCompanion(
       root,
       "player",
@@ -312,6 +325,9 @@ test("New Companion provisions reviewed scenario and first greeting for library 
     assert.equal(scenarioBinding.revision, 1);
     assert.match(scenarioBinding.canonicalHash, /^[a-f0-9]{64}$/);
   } finally {
+    // The test owns this store and the library service reads through it, so it
+    // is released here; an unclosed store keeps the root locked on Windows.
+    threadStore?.close?.();
     await cleanupTestRoot(root);
   }
 });
