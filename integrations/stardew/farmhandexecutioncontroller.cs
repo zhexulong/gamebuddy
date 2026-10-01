@@ -61,6 +61,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private LocalAnimalProductCollectionSpec? activeAnimalProduct;
     private LocalItemUseSpec? activeItemUse;
     private LocalItemPickupSpec? activeItemPickup;
+    private LocalToolApproachSpec? activeToolApproach;
     private BridgeWoodFenceResultTarget? woodFenceResultTarget;
     private string? woodFenceResultExecutionId;
     private string? woodFenceResultRequestId;
@@ -295,6 +296,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         && this.activeAnimalProduct is null
         && this.activeItemUse is null
         && this.activeItemPickup is null
+        && this.activeToolApproach is null
         && this.activeNavigate is null
         && !this.controller.HasActiveExecution;
 
@@ -503,7 +505,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
 
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activeToolApproach is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
 
         return null;
@@ -622,6 +624,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.activeAnimalProduct = null;
         this.activeItemUse = null;
         this.activeItemPickup = null;
+        this.activeToolApproach = null;
     }
 
     void IExecutionLedger.BindAction(string requestId, string actionId) => this.BindAction(requestId, actionId);
@@ -716,6 +719,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             || (this.activeAnimalProduct is not null && (this.activeAnimalProduct.RequestId != requestId || this.activeAnimalProduct.ExecutionId != executionId))
             || (this.activeItemUse is not null && (this.activeItemUse.RequestId != requestId || this.activeItemUse.ExecutionId != executionId))
             || (this.activeItemPickup is not null && (this.activeItemPickup.RequestId != requestId || this.activeItemPickup.ExecutionId != executionId))
+            || (this.activeToolApproach is not null && (this.activeToolApproach.RequestId != requestId || this.activeToolApproach.ExecutionId != executionId))
             || (this.activeNavigate is not null && (this.activeNavigate.RequestId != requestId || this.activeNavigate.ExecutionId != executionId)))
             return new(executionId, requestId, ExecutionState.Rejected, "execution_mismatch", this.revision, null);
 
@@ -789,6 +793,25 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return petReceipt;
         }
 
+        if (this.activeToolApproach is not null)
+        {
+            // A tool-family approach that has not yet executed anything native: the
+            // walk is abandoned and the action reports the cancellation with the
+            // target it was walking toward, so the caller knows nothing changed in
+            // the world.
+            LocalToolApproachSpec toolApproachSpec = this.activeToolApproach;
+            this.activeToolApproach = null;
+            if (this.active is not null)
+                this.active = null;
+            this.revision++;
+            LocalExecutionReceipt toolApproachCancelled = new(toolApproachSpec.ExecutionId, toolApproachSpec.RequestId, ExecutionState.Cancelled, reasonCode, this.revision,
+                $"location={toolApproachSpec.Location};target={toolApproachSpec.ExpectedTargetId};tile={toolApproachSpec.TargetX},{toolApproachSpec.TargetY};reach=1;approach=cancelled");
+            this.Remember(toolApproachCancelled);
+            this.AddTrace(toolApproachCancelled);
+            this.PublishIdleAfterRelease(toolApproachSpec.ExecutionId, toolApproachSpec.RequestId);
+            return toolApproachCancelled;
+        }
+
         if (this.activeItemPickup is not null)
         {
             LocalItemPickupSpec itemPickupSpec = this.activeItemPickup;
@@ -852,6 +875,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return this.Cancel(this.activeAnimalProduct.RequestId, this.activeAnimalProduct.ExecutionId, reasonCode);
         if (this.activeItemUse is not null)
             return this.Cancel(this.activeItemUse.RequestId, this.activeItemUse.ExecutionId, reasonCode);
+        if (this.activeToolApproach is not null)
+            return this.Cancel(this.activeToolApproach.RequestId, this.activeToolApproach.ExecutionId, reasonCode);
         if (this.activeItemPickup is not null)
             return this.Cancel(this.activeItemPickup.RequestId, this.activeItemPickup.ExecutionId, reasonCode);
         if (this.active is null)
@@ -951,6 +976,32 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.Remember(receipt);
             this.AddTrace(receipt);
             this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+        }
+        if (this.activeToolApproach is { } settledToolApproach)
+        {
+            // Phase two of a tool-family action. The body controller has released
+            // ownership (checked here, not in the transition callback, so the native
+            // tool call never runs while the body is still owned). The world may have
+            // changed during the walk, which is why CompleteToolApproach re-validates
+            // the location, the range and the target identity before executing.
+            if (this.active is null && !this.controller.HasActiveExecution)
+            {
+                long approachNowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                if (approachNowMs > settledToolApproach.DeadlineMs)
+                {
+                    this.activeToolApproach = null;
+                    this.revision++;
+                    LocalExecutionReceipt approachExpiredReceipt = new(settledToolApproach.ExecutionId, settledToolApproach.RequestId, ExecutionState.Expired, "tool_approach_deadline_expired", this.revision,
+                        $"target={settledToolApproach.ExpectedTargetId};tile={settledToolApproach.TargetX},{settledToolApproach.TargetY};approach=adjacent");
+                    this.Remember(approachExpiredReceipt);
+                    this.AddTrace(approachExpiredReceipt);
+                    this.PublishIdleAfterRelease(settledToolApproach.ExecutionId, settledToolApproach.RequestId);
+                }
+                else
+                {
+                    this.CompleteToolApproach(settledToolApproach);
+                }
+            }
         }
         if (this.activeItemPickup is not null)
         {
@@ -1182,6 +1233,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.AddTrace(receipt);
             this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
         }
+        if (this.activeToolApproach is not null)
+        {
+            // A tool-family approach invalidated before executing anything native:
+            // no world mutation happened, so this is an honest Invalidated terminal.
+            LocalToolApproachSpec specification = this.activeToolApproach;
+            this.activeToolApproach = null;
+            if (this.active is not null)
+                this.active = null;
+            this.revision++;
+            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision,
+                $"target={specification.ExpectedTargetId};tile={specification.TargetX},{specification.TargetY};reach=1;approach=invalidated");
+            this.Remember(receipt);
+            this.AddTrace(receipt);
+            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+        }
         if (this.activeItemPickup is not null)
         {
             LocalItemPickupSpec specification = this.activeItemPickup;
@@ -1340,15 +1406,23 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                             (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                             activeReceipt?.ReasonCode ?? "accepted",
                             new Dictionary<string, string> { ["slot"] = this.activeItemUse.Slot.ToString(), ["item"] = this.activeItemUse.QualifiedItemId })
-                        : this.activeItemPickup is not null
+                        : this.activeToolApproach is not null
                             ? new(
-                                this.activeItemPickup.ExecutionId,
-                                this.activeItemPickup.RequestId,
-                                "pickup_item",
+                                this.activeToolApproach.ExecutionId,
+                                this.activeToolApproach.RequestId,
+                                ToolApproachActionId(this.activeToolApproach.Kind),
                                 (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                                 activeReceipt?.ReasonCode ?? "accepted",
-                                new Dictionary<string, string> { ["target"] = this.activeItemPickup.TargetId, ["tile"] = $"{this.activeItemPickup.TargetX},{this.activeItemPickup.TargetY}" })
-                            : null;
+                                new Dictionary<string, string> { ["target"] = this.activeToolApproach.ExpectedTargetId, ["tile"] = $"{this.activeToolApproach.TargetX},{this.activeToolApproach.TargetY}", ["approach"] = "adjacent" })
+                            : this.activeItemPickup is not null
+                                ? new(
+                                    this.activeItemPickup.ExecutionId,
+                                    this.activeItemPickup.RequestId,
+                                    "pickup_item",
+                                    (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                                    activeReceipt?.ReasonCode ?? "accepted",
+                                    new Dictionary<string, string> { ["target"] = this.activeItemPickup.TargetId, ["tile"] = $"{this.activeItemPickup.TargetX},{this.activeItemPickup.TargetY}" })
+                                : null;
         return new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
@@ -3037,6 +3111,44 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.Remember(pickupReceipt);
             this.AddTrace(pickupReceipt);
             this.PublishIdleAfterRelease(pickup.ExecutionId, pickup.RequestId);
+            return;
+        }
+
+        if (this.activeToolApproach is { } toolApproach && toolApproach.ExecutionId == specification.ExecutionId)
+        {
+            // The approach leg is phase one of a tool-family action; its arrival in
+            // range is not the action terminal. Progress stays observable, and a
+            // successful arrival hands off to the completion pass, which re-validates
+            // the world and then runs the native tool call.
+            if (state is ExecutionState.Running or ExecutionState.MeaningfulProgress)
+            {
+                this.revision++;
+                LocalExecutionReceipt toolProgress = new(toolApproach.ExecutionId, toolApproach.RequestId, state, reasonCode, this.revision, evidence);
+                this.Remember(toolProgress);
+                this.AddTrace(toolProgress);
+                return;
+            }
+
+            this.active = null;
+            if (state == ExecutionState.Succeeded)
+            {
+                this.revision++;
+                LocalExecutionReceipt approachCompleted = new(toolApproach.ExecutionId, toolApproach.RequestId, ExecutionState.Running, "tool_approach_completed", this.revision, evidence);
+                this.Remember(approachCompleted);
+                this.AddTrace(approachCompleted);
+                return;
+            }
+
+            // The walk itself failed or was cancelled. Nothing native ran, so this is
+            // the action's terminal, and it reports the actor's real position so the
+            // caller can tell "could not get there" from "target changed".
+            this.activeToolApproach = null;
+            this.revision++;
+            LocalExecutionReceipt approachFailed = new(toolApproach.ExecutionId, toolApproach.RequestId, state, reasonCode, this.revision,
+                $"location={toolApproach.Location};target={toolApproach.ExpectedTargetId};tile={toolApproach.TargetX},{toolApproach.TargetY};reach=1;approach=failed;body_evidence={evidence ?? "none"}");
+            this.Remember(approachFailed);
+            this.AddTrace(approachFailed);
+            this.PublishIdleAfterRelease(toolApproach.ExecutionId, toolApproach.RequestId);
             return;
         }
 

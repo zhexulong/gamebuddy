@@ -75,6 +75,37 @@ internal sealed record LocalItemPickupSpec(
     long RouteRevision,
     long DeadlineMs);
 
+/// <summary>
+/// A tool-family action that was accepted while the actor stood outside the
+/// native interaction radius (Chebyshev-1) and is therefore waiting for an
+/// approach leg to finish before its native call runs. The approach is a
+/// regular <see cref="LocalMoveSpec"/> with <c>AllowAdjacentArrival: true</c>;
+/// once it settles, the completion pass re-validates the world (the target may
+/// have changed while walking) and then executes the kind-specific native call.
+/// </summary>
+internal enum PendingToolApproachKind
+{
+    ChopTreeSource,
+    BreakRockSource,
+    DigArtifactSpot,
+    ClearHoeDirt,
+    TillSoil,
+    ChopStump,
+    CutWeeds,
+}
+
+internal sealed record LocalToolApproachSpec(
+    string ExecutionId,
+    string RequestId,
+    PendingToolApproachKind Kind,
+    string Location,
+    int TargetX,
+    int TargetY,
+    string ExpectedTargetId,
+    int Slot,
+    long RouteRevision,
+    long DeadlineMs);
+
 internal sealed record LocalCropWateringSpec(
     string ExecutionId,
     string RequestId,
