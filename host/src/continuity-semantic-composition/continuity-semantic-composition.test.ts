@@ -45,20 +45,21 @@ test(
   async () => {
     for (const phase of ["claimed_empty", "chat_registered", "content_verified"] as const) {
       const root = canonicalTestRootSync(`initial-chat-${phase}-`);
+      let baseContent: ReturnType<typeof createManifestDerivedInitialChatExactContentPort> | undefined;
       try {
         const manifestPath = chatManifest(root);
         const manifest = await loadHostDeploymentManifest(manifestPath);
-        const baseContent = createManifestDerivedInitialChatExactContentPort(manifest);
+        baseContent = createManifestDerivedInitialChatExactContentPort(manifest);
         let createCalls = 0;
         let resumeCalls = 0;
         const content: InitialChatExactContentPort = Object.freeze({
           async createExplicit(request) {
             createCalls++;
-            return baseContent.port.createExplicit(request);
+            return baseContent!.port.createExplicit(request);
           },
           async resumeExact(threadId, companionId, continuityId, surfaceId) {
             resumeCalls++;
-            return baseContent.port.resumeExact(threadId, companionId, continuityId, surfaceId);
+            return baseContent!.port.resumeExact(threadId, companionId, continuityId, surfaceId);
           },
         });
         const fresh = await createFreshSemanticProductionAuthorityFromDeploymentManifest(manifest);
@@ -107,6 +108,10 @@ test(
           await reopened.close();
         }
       } finally {
+        // The manifest-derived port owns its store; the caller that keeps the
+        // port releases it. An unclosed store keeps the runtime root locked on
+        // Windows and the removal below would fail with EPERM.
+        baseContent?.close();
         rmSync(root, { recursive: true, force: true });
       }
     }
@@ -118,10 +123,12 @@ test(
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
     const root = canonicalTestRootSync("initial-chat-content-tamper-");
+    let content: ReturnType<typeof createManifestDerivedInitialChatExactContentPort> | undefined;
+    let tavern: ReturnType<typeof createChatThreadStore> | undefined;
     try {
       const manifestPath = chatManifest(root);
       const manifest = await loadHostDeploymentManifest(manifestPath);
-      const content = createManifestDerivedInitialChatExactContentPort(manifest);
+      content = createManifestDerivedInitialChatExactContentPort(manifest);
       const fresh = await createFreshSemanticProductionAuthorityFromDeploymentManifest(manifest);
       let registered: Awaited<ReturnType<typeof fresh.registerInitialChat>> | undefined;
       try {
@@ -140,7 +147,7 @@ test(
         await fresh.close();
       }
 
-      const tavern = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
+      tavern = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
       await tavern.renameThreadTitle!({
         chatThreadId: registered!.chatThreadId!,
         chatSurfaceSessionId: registered!.chatSurfaceSessionId!,
@@ -156,6 +163,10 @@ test(
         await reopened.close();
       }
     } finally {
+      // Both manifest-derived ports own their stores, and the raw store opened
+      // for the title mutation owns itself; none of them may outlive the root.
+      tavern?.close?.();
+      content?.close();
       rmSync(root, { recursive: true, force: true });
     }
   },
