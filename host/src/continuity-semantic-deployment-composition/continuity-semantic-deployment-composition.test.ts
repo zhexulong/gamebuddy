@@ -509,7 +509,10 @@ test("P7 Task 5 characterization: initial-chat resume facade is saga/content-onl
     );
     const compositionSource = readFileSync(join(folder, "continuity-semantic-deployment-composition.ts"), "utf8");
     assert.equal(compositionSource.includes("resumeInitialChat(): Promise<ProductionSagaReadback | null>;"), true);
-    assert.equal(compositionSource.includes("resumeInitialChatWithContent(content)"), true);
+    // The facade threads the manifest-derived content port through the saga lane.
+    // The factory hands back `{ port, close }` so the store's release travels
+    // beside the pinned port surface, so the call site reads `content.port`.
+    assert.equal(compositionSource.includes("resumeInitialChatWithContent(content.port)"), true);
     assert.equal(compositionSource.includes("startMountedChatRuntime"), false);
     assert.equal(compositionSource.includes("createFreshUnmountedChatSemanticFacade"), false);
     // The runtime-mounting Chat constructor is not reachable from the public
