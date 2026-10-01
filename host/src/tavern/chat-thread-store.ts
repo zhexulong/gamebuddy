@@ -686,6 +686,25 @@ type MountedAttemptClaimInput = Readonly<{
 }>;
 const attemptClaimByRoute = new Map<string, (input: MountedAttemptClaimInput) => Promise<AttemptStartingTurn>>();
 
+/**
+ * Read-only route-registration probe: how many of the five mounted-route maps
+ * currently hold a registration for this (root, continuity key) pair.
+ *
+ * Test-visible only; it neither grants nor revokes any authority. It lets a
+ * test prove that `store.close()` unregistered exactly this store's closures,
+ * without exposing the module-level maps themselves.
+ */
+export function countMountedRouteRegistrations(root: string, continuityKey: string): number {
+  const route = storeRouteKey(root, continuityKey);
+  let count = 0;
+  if (acceptanceByRoute.has(route)) count += 1;
+  if (attemptClaimByRoute.has(route)) count += 1;
+  if (providerStartByRoute.has(route)) count += 1;
+  if (presentationByRoute.has(route)) count += 1;
+  if (worldInfoApplyByRoute.has(route)) count += 1;
+  return count;
+}
+
 /** P4c's three frozen store transitions: arm, local pre-invocation not_started, running. */
 export type ProviderStartTransition =
   | Readonly<{ operation: "arm"; observedAtMs: number }>
@@ -1437,6 +1456,15 @@ export function createChatThreadStore(
   function closeConnection(): void {
     if (closed) return;
     closed = true;
+    // Release this store's five module-level route registrations. Each delete
+    // is guarded by an identity check, so a store reopened on the same
+    // root/continuity key is never detached by its predecessor's close.
+    const route = storeRouteKey(root, continuityKey);
+    if (acceptanceByRoute.get(route) === acceptMounted) acceptanceByRoute.delete(route);
+    if (attemptClaimByRoute.get(route) === claimMountedAttempt) attemptClaimByRoute.delete(route);
+    if (providerStartByRoute.get(route) === transitionMountedProviderStart) providerStartByRoute.delete(route);
+    if (presentationByRoute.get(route) === transitionMountedPresentation) presentationByRoute.delete(route);
+    if (worldInfoApplyByRoute.get(route) === acknowledgeWorldInfoBinding) worldInfoApplyByRoute.delete(route);
     const db = connection;
     connection = undefined;
     if (db === undefined) return;

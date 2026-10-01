@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
+  countMountedRouteRegistrations,
   createChatThreadStore,
   createProfileAwareChatThreadCreationCapability,
 } from "./chat-thread-store.js";
@@ -105,6 +106,27 @@ test("a second store on the same root owns its own connection", async () => {
     assert.equal(secondOpener.opened.length, 1);
   } finally {
     second.close?.();
+    await disposeRoot(root);
+  }
+});
+
+test("close() unregisters exactly this store's five mounted routes", async () => {
+  const root = await canonicalTestRoot("gamebuddy-connection-lifetime-routes-");
+  const opener = countingOpener();
+  const first = createChatThreadStore(root, continuityKey, () => 100, opener.open);
+  try {
+    assert.equal(countMountedRouteRegistrations(root, continuityKey), 5, "a live store registers all five routes");
+    first.close?.();
+    assert.equal(countMountedRouteRegistrations(root, continuityKey), 0, "close() must unregister its own routes");
+
+    // A store reopened on the same root/continuity key registers afresh, and
+    // closing it again leaves nothing behind (the identity-guarded delete must
+    // not detach a successor's closures).
+    const second = createChatThreadStore(root, continuityKey, () => 100, opener.open);
+    assert.equal(countMountedRouteRegistrations(root, continuityKey), 5);
+    second.close?.();
+    assert.equal(countMountedRouteRegistrations(root, continuityKey), 0);
+  } finally {
     await disposeRoot(root);
   }
 });
