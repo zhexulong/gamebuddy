@@ -23,8 +23,48 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        if (expectedQualifiedItemId != "(O)433" || slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object input || input.QualifiedItemId != "(O)433" || input.Stack != 5)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "coffee_beans_not_owned_in_exact_slot", $"slot={slot}");
+
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
+            || machine.QualifiedItemId != "(BC)12"
+            || machine.GetMachineData() is null
+            || machine.heldObject.Value is not null
+            || machine.readyForHarvest.Value
+            || machine.MinutesUntilReady > 0
+            || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_target_changed", $"target={targetX},{targetY}");
+        // 5.2: out of the native radius, walk in rather than refuse. The bean stack and
+        // the machine are validated above; both are re-checked after the walk inside the
+        // closure, because `location.checkAction` is a real player input path whose
+        // outcome depends on the world at the moment it runs.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "machine_load",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteLoadCoffeeIntoKeg(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteLoadCoffeeIntoKeg(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes machine_load against the current world, re-validating the bean stack and
+    /// the machine because an approach leg may have taken several ticks. Shared by the
+    /// in-range path and the post-approach path.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteLoadCoffeeIntoKeg(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
+    {
         if (expectedQualifiedItemId != "(O)433" || slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object input || input.QualifiedItemId != "(O)433" || input.Stack != 5)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "coffee_beans_not_owned_in_exact_slot", $"slot={slot}");
 
@@ -78,9 +118,46 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
 
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
+            || machine.QualifiedItemId != "(BC)12"
+            || machine.GetMachineData() is null
+            || !machine.readyForHarvest.Value
+            || machine.MinutesUntilReady != 0
+            || machine.heldObject.Value?.QualifiedItemId != "(O)395"
+            || machine.lastInputItem.Value?.QualifiedItemId != "(O)433"
+            || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_collect_target_not_ready", $"target={targetX},{targetY}");
+        // 5.2: out of the native radius, walk in rather than refuse. The ready machine is
+        // validated above; it is re-checked after the walk inside the closure, because a
+        // harvest can be claimed by the world while the actor is still walking.
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "machine_collect_output",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCollectCoffeeFromKeg(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteCollectCoffeeFromKeg(executionId, requestId, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes machine_collect_output against the current world, re-validating the ready
+    /// machine because an approach leg may have taken several ticks. Shared by the
+    /// in-range path and the post-approach path.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteCollectCoffeeFromKeg(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
+    {
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
