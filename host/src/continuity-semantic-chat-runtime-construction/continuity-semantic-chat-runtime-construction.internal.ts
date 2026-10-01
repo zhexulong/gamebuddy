@@ -14,7 +14,7 @@ import {
 } from "../tavern/catalog-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
-import { createChatThreadStore } from "../tavern/chat-thread-store.js";
+import { createChatThreadStore, type ChatThreadStore } from "../tavern/chat-thread-store.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 
 /**
@@ -64,6 +64,28 @@ export async function prepareExactChatRuntimeConstruction(
   const identity = Object.freeze({ ...execution.principal });
   const paths = resolveRuntimePaths(identity, execution.runtimeRoot, permit.chatSurfaceSessionId);
   const threads = createChatThreadStore(execution.runtimeRoot, identityKey(identity));
+  // Everything past this line can refuse -- an absent thread, identity drift, a
+  // missing model configuration -- and every refusal abandons this store. The
+  // store now owns a live SQLite connection, so an abandoned one holds the
+  // runtime root against removal on Windows for the life of the process, and the
+  // caller never receives the object to release it. The release therefore belongs
+  // on the throwing path.
+  try {
+    return await buildExactChatRuntimeConstruction(threads, execution, permit, identity, paths, options);
+  } catch (error) {
+    threads.close?.();
+    throw error;
+  }
+}
+
+async function buildExactChatRuntimeConstruction(
+  threads: ChatThreadStore,
+  execution: ChatRuntimeBindingExecution,
+  permit: ProductionChatRuntimePermit,
+  identity: CompanionIdentity,
+  paths: ReturnType<typeof resolveRuntimePaths>,
+  options: ChatRuntimeConstructionOptions,
+): Promise<ExactChatRuntimeConstruction> {
   let state;
   try {
     state = await threads.resumeThread(permit.chatThreadId, permit.chatSurfaceSessionId);

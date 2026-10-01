@@ -100,10 +100,28 @@ async function fixture(options: FixtureOptions = {}) {
   return Object.freeze({ root, runtimeRoot, binding, threads });
 }
 
+/**
+ * Releases both stores a fixture owns before its runtime root is removed.
+ *
+ * The fixture opens its own store, and `prepareExactChatRuntimeConstruction`
+ * opens a second one on the same root. Production releases the construction's
+ * store through `closeChatThreadStore()`; the fixture's belongs to the test. Both
+ * hold a live SQLite connection, and an unclosed one keeps the runtime root from
+ * being removed on Windows.
+ */
+async function releaseConstructionAndFixture(
+  prepared: { readonly closeChatThreadStore?: () => void } | undefined,
+  value: { readonly threads: { close?: () => void }; readonly root: string },
+): Promise<void> {
+  prepared?.closeChatThreadStore?.();
+  value.threads.close?.();
+  await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
 test("Chat construction exposes only the exact catalog materialization handoff", async () => {
   const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
-    const prepared = await value.binding.executeWithBinding((token) =>
+    prepared = await value.binding.executeWithBinding((token) =>
       withConsumedChatRuntimeBinding(token, (execution) =>
         prepareExactChatRuntimeConstruction(execution, permit(execution)),
       ),
@@ -113,7 +131,7 @@ test("Chat construction exposes only the exact catalog materialization handoff",
     assert.equal("publishStableContextForPiSession" in prepared, false);
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await releaseConstructionAndFixture(prepared, value);
   }
 });
 
@@ -125,8 +143,9 @@ test("Chat construction publishes an exact managed World Info revision into the 
       entries: [{ scope: "setting", publicTitle: "Square", summary: "Original square." }],
     },
   });
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
-    const prepared = await value.binding.executeWithBinding((token) =>
+    prepared = await value.binding.executeWithBinding((token) =>
       withConsumedChatRuntimeBinding(token, (execution) =>
         prepareExactChatRuntimeConstruction(execution, permit(execution)),
       ),
@@ -138,14 +157,15 @@ test("Chat construction publishes an exact managed World Info revision into the 
     assert.equal(catalog.stableSources[0]?.content.includes("Original town facts."), true);
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await releaseConstructionAndFixture(prepared, value);
   }
 });
 
 test("Chat construction derives model and exact stable Tavern snapshot from the binding-owned root", async () => {
   const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
-    const prepared = await value.binding.executeWithBinding((token) =>
+    prepared = await value.binding.executeWithBinding((token) =>
       withConsumedChatRuntimeBinding(token, (execution) =>
         prepareExactChatRuntimeConstruction(execution, permit(execution)),
       ),
@@ -168,14 +188,15 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.match(stableContext.canonicalHash, /^[a-f0-9]{64}$/);
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await releaseConstructionAndFixture(prepared, value);
   }
 });
 
 test("Chat construction regenerates the canonical hash for each actual Pi session", async () => {
   const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
-    const prepared = await value.binding.executeWithBinding((token) =>
+    prepared = await value.binding.executeWithBinding((token) =>
       withConsumedChatRuntimeBinding(token, (execution) =>
         prepareExactChatRuntimeConstruction(execution, permit(execution)),
       ),
@@ -187,12 +208,13 @@ test("Chat construction regenerates the canonical hash for each actual Pi sessio
     assert.equal(second.scope.sessionId, "pi_session_two");
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await releaseConstructionAndFixture(prepared, value);
   }
 });
 
 test("Chat construction rejects profile metadata drift before publication", async () => {
   const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
     const paths = resolveRuntimePaths(principal, value.runtimeRoot, "chat_session_01");
     const drifted = Object.freeze({ ...DEFAULT_IDENTITY_PROFILE, profileId: "profile_drift", identity: Object.freeze({ ...DEFAULT_IDENTITY_PROFILE.identity }) });
@@ -207,12 +229,13 @@ test("Chat construction rejects profile metadata drift before publication", asyn
     );
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await releaseConstructionAndFixture(prepared, value);
   }
 });
 
 test("Chat construction rejects a missing exact Tavern thread rather than creating or selecting one", async () => {
   const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
     await assert.rejects(
       value.binding.executeWithBinding((token) =>
@@ -227,6 +250,6 @@ test("Chat construction rejects a missing exact Tavern thread rather than creati
     );
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await releaseConstructionAndFixture(prepared, value);
   }
 });
