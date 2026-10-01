@@ -178,9 +178,14 @@ function validateConfig(value) {
 }
 
 function requireCapabilities(snapshot) {
-  const expected = ["cancel_active_execution", "clear_debris", "equip_tool", "inspect_self", "move_to_tile", "travel"];
-  if (!same([...(snapshot.capabilities ?? [])].sort(), expected.sort()))
-    throw new Error("native_local_clear_debris_capability_not_isolated");
+  // Required subset, not exact equality: the fixture publishes the full
+  // live-verified surface, so the actions this runner needs must be present while
+  // the rest of the surface is allowed to exist.
+  const required = ["clear_debris", "equip_tool", "move_to_tile", "travel"];
+  const present = new Set(snapshot.capabilities ?? []);
+  const missing = required.filter((action) => !present.has(action));
+  if (missing.length > 0)
+    throw new Error(`native_local_clear_debris_capability_not_isolated:${missing.join(",")}`);
 }
 
 async function actionableSnapshot(client) {
@@ -371,9 +376,6 @@ function adjacent(left, right) {
 }
 function sameTile(left, right) {
   return left.x === right.x && left.y === right.y;
-}
-function same(left, right) {
-  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
 function summarize(snapshot) {
   return {
