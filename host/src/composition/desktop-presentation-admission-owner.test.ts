@@ -92,9 +92,11 @@ type ManagementPresentationAdmissionObservations = Readonly<{
   memoryCreated: number;
   worldInfoCreated: number;
   repositoryCreated: number;
+  connectionCreated: number;
   managementClosed: number;
   memoryClosed: number;
   worldInfoClosed: number;
+  connectionClosed: number;
   observedProfileIds: Readonly<{
     facade: string | null;
     management: string | null;
@@ -102,6 +104,8 @@ type ManagementPresentationAdmissionObservations = Readonly<{
     worldInfo: string | null;
   }>;
   facadeSawWorldInfoService: boolean;
+  connectionAgentDir: string | null;
+  connectionSawTurnState: boolean;
   repositoryRuntimeRoot: string | null;
   runtimeRoot?: string;
   propagatedOriginalFailure?: boolean;
@@ -283,6 +287,15 @@ test("management presentation admission variant serves the tavern_management she
   assert.equal(observed.observedProfileIds.worldInfo, "gamebuddy.tavern-management.chat-list-title");
   assert.equal(observed.facadeSawWorldInfoService, true);
   assert.equal(observed.repositoryRuntimeRoot, observed.runtimeRoot);
+  // The connection service receives the exact agent directory of the mounted
+  // Chat runtime — the identity's own context root, not a shared one — and a
+  // turn-state reader, so activation can refuse a running turn.
+  assert.equal(observed.connectionCreated, 1);
+  const agentDir = (observed.connectionAgentDir ?? "").replaceAll("\\", "/");
+  const runtimeRoot = (observed.runtimeRoot ?? "").replaceAll("\\", "/");
+  assert.match(agentDir, /\/contexts\/[a-f0-9]{64}\/pi-agent$/);
+  assert.ok(agentDir.startsWith(`${runtimeRoot}/`), `expected ${agentDir} under ${runtimeRoot}`);
+  assert.equal(observed.connectionSawTurnState, true);
   // The verified browser artifact is served by the real listener under the
   // management profile marker, and the waiter carries the one-time token.
   assert.equal(observed.launchUrlMatchesToken, true);
@@ -297,6 +310,7 @@ test("management presentation admission variant serves the tavern_management she
   assert.equal(observed.managementClosed, 1);
   assert.equal(observed.memoryClosed, 1);
   assert.equal(observed.worldInfoClosed, 1);
+  assert.equal(observed.connectionClosed, 1);
 });
 
 test("management presentation admission variant drains every created service and propagates an unverified artifact failure", async () => {
@@ -304,11 +318,12 @@ test("management presentation admission variant drains every created service and
 
   assert.equal(observed.outcome, "rejected");
   // Every Chat-owned service was created before the listener verification
-  // failed; the variant drains them (management, Memory, World Info) and
-  // propagates the original artifact failure unchanged.
+  // failed; the variant drains them (management, Memory, World Info,
+  // connection) and propagates the original artifact failure unchanged.
   assert.equal(observed.managementClosed, 1);
   assert.equal(observed.memoryClosed, 1);
   assert.equal(observed.worldInfoClosed, 1);
+  assert.equal(observed.connectionClosed, 1);
   assert.equal(observed.propagatedOriginalFailure, false);
   assert.ok((observed.errorMessage ?? "").length > 0);
 });

@@ -56,6 +56,7 @@ import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
 import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
+import { modelProviderEntry, mergeModelProviderEntry } from "./tavern/pi-provider-store.js";
 
 import {
   identityKey,
@@ -183,7 +184,12 @@ export type GameCompanionIdentity = CompanionIdentity &
     worldId: string;
   }>;
 
-/** The player-facing Dialogue Director uses DeepSeek V4 Flash; gameplay children never inherit it. */
+/**
+ * The player-facing Dialogue Director's zero-configuration model: the
+ * environment-provided `cpa-oai` connection. It stays the runtime's model
+ * whenever no player connection is active, which keeps a root without player
+ * connections byte-for-byte on the previous behaviour and provider store shape.
+ */
 export const DEFAULT_COMPANION_MODEL_CONFIG: CompanionModelConfig =
   Object.freeze({
     provider: "cpa-oai",
@@ -1300,78 +1306,32 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
     .sort();
 }
 
+/**
+ * Writes the runtime's provider entry into Pi's own `models.json` without
+ * discarding the entries of other writers.
+ *
+ * `models.json` belongs to the embedded Pi runtime, and more than one runtime
+ * identity, provider and player connection writes to it over a Host lifetime.
+ * Replacing the whole document would delete a sibling entry every time a
+ * runtime starts. Merging keeps every other provider entry intact, and on a
+ * root with no other entry the merged document is the previous single-provider
+ * document, byte for byte.
+ */
+
+
 async function createCompanionModelRuntime(
   paths: RuntimePaths,
   config: CompanionModelConfig | undefined,
 ): Promise<ModelRuntime> {
   const modelsPath = join(paths.agentDir, "models.json");
-  const deepSeekCompat = config?.modelId === "deepseek-v4-flash";
-  const providers =
-    config === undefined
-      ? {}
-      : {
-          "cpa-oai": {
-            name: "CPA OpenAI-compatible Agent",
-            baseUrl: "http://127.0.0.1:8317/v1",
-            api: "openai-completions",
-            apiKey: "$CPA_OAI_API_KEY",
-            authHeader: true,
-            compat: {
-              supportsDeveloperRole: false,
-              supportsReasoningEffort: true,
-            },
-            models: [
-              {
-                id: config.modelId,
-                name: config.modelId,
-                reasoning: true,
-                // The configured CPA route is used with ordinary native `tools`; Pi
-                // does not emit forced OpenAI `tool_choice` for this surface.
-                thinkingLevelMap: deepSeekCompat
-                  ? {
-                      off: "none",
-                      minimal: "low",
-                      low: "low",
-                      medium: "high",
-                      high: "high",
-                      xhigh: "high",
-                      max: "max",
-                    }
-                  : {
-                      off: "none",
-                      minimal: "low",
-                      low: "low",
-                      medium: "medium",
-                      high: "high",
-                      xhigh: "xhigh",
-                      max: "max",
-                    },
-                input: ["text"],
-                contextWindow: 1_000_000,
-                maxTokens: 384_000,
-                cost: {
-                  input: 0.14,
-                  output: 0.28,
-                  cacheRead: 0.0028,
-                  cacheWrite: 0.14,
-                },
-                compat: {
-                  supportsDeveloperRole: false,
-                  supportsReasoningEffort: true,
-                  maxTokensField: "max_tokens",
-                  supportsStrictMode: true,
-                  ...(deepSeekCompat
-                    ? {
-                        thinkingFormat: "deepseek",
-                        requiresReasoningContentOnAssistantMessages: true,
-                      }
-                    : {}),
-                },
-              },
-            ],
-          },
-        };
-  await writeFile(modelsPath, JSON.stringify({ providers }, null, 2), "utf8");
+  // The selection decides the provider entry. An operator/environment model
+  // writes the frozen `cpa-oai` block this Host has always written; a player
+  // connection writes its own catalog endpoint, and the escape hatch writes the
+  // endpoint the player supplied.
+  const selection = config === undefined ? null : await modelProviderEntry(paths.agentDir, config);
+  if (config !== undefined && selection === null) throw new Error("companion_model_endpoint_unavailable");
+  if (selection !== null)
+    await mergeModelProviderEntry(join(paths.agentDir, "models.json"), selection.providerId, selection.entry);
   // Offline by default. Selecting the explicitly configured Agent model is the
   // operator's opt-in to provider networking; no request occurs merely while
   // creating or resuming the session.

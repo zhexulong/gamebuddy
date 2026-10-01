@@ -211,6 +211,96 @@ export type TavernProblemV1 = Readonly<{
   retryable: boolean;
 }>;
 
+/**
+ * Connection and model management (design/28 §1, §5.1).
+ *
+ * `connectionId` is an opaque write handle; each row also carries the labels a
+ * player reads. `baseUrl` is present only for the connection whose endpoint the
+ * player typed (the OpenAI-compatible escape hatch) — it is the one endpoint
+ * fact a player may read back. No credential, credential source or raw provider
+ * error exists anywhere in these shapes.
+ */
+export type TavernConnectionSetupFieldV1 = "apiKey" | "baseUrl" | "modelId";
+export type TavernConnectionThinkingLevelV1 = "low" | "medium" | "high" | "xhigh" | "max";
+export type TavernConnectionReadinessV1 = "unconfigured" | "configured" | "ready" | "failed";
+export type TavernConnectionFailureV1 =
+  | "invalid_endpoint"
+  | "not_configured"
+  | "unauthorized"
+  | "not_found"
+  | "unreachable"
+  | "timeout"
+  | "invalid_response";
+
+export type TavernConnectionModelV1 = Readonly<{
+  modelId: string;
+  modelLabel: string;
+  allowedThinkingLevels: readonly TavernConnectionThinkingLevelV1[];
+  defaultThinkingLevel: TavernConnectionThinkingLevelV1;
+}>;
+
+export type TavernConnectionProviderV1 = Readonly<{
+  providerId: string;
+  label: string;
+  setupFields: readonly TavernConnectionSetupFieldV1[];
+  allowedPlayerModels: readonly TavernConnectionModelV1[];
+  escapeHatch: boolean;
+  environmentManaged: boolean;
+}>;
+
+export type TavernConnectionV1 = Readonly<{
+  connectionId: string;
+  label: string;
+  providerId: string;
+  providerLabel: string;
+  configured: boolean;
+  readiness: TavernConnectionReadinessV1;
+  active: boolean;
+  modelId: string;
+  modelLabel: string;
+  thinkingLevel: TavernConnectionThinkingLevelV1;
+  baseUrl: string | null;
+  failure: TavernConnectionFailureV1 | null;
+  lastCheckedAtMs: number | null;
+}>;
+
+export type TavernConnectionActiveV1 = Readonly<{
+  connectionId: string;
+  label: string;
+  providerLabel: string;
+  modelId: string;
+  modelLabel: string;
+  thinkingLevel: TavernConnectionThinkingLevelV1;
+  readiness: TavernConnectionReadinessV1;
+  baseUrl: string | null;
+  failure: TavernConnectionFailureV1 | null;
+  lastCheckedAtMs: number | null;
+}>;
+
+export type TavernConnectionStateV1 = Readonly<{
+  apiVersion: 1;
+  revision: number;
+  active: TavernConnectionActiveV1 | null;
+  connections: readonly TavernConnectionV1[];
+  providers: readonly TavernConnectionProviderV1[];
+}>;
+
+export type TavernConnectionCreateCommandV1 = Readonly<{
+  apiVersion: 1;
+  providerId: string;
+  apiKey?: string;
+  baseUrl?: string;
+  modelId?: string;
+}>;
+
+export type TavernConnectionProbeV1 = Readonly<{
+  apiVersion: 1;
+  connectionId: string;
+  outcome: "ready" | "failed";
+  failure: TavernConnectionFailureV1 | null;
+  state: TavernConnectionStateV1;
+}>;
+
 // --- Errors. ---
 
 /** A validated RFC-9457-style server problem; carries the frozen problem fields. */
@@ -270,6 +360,12 @@ const OPERATION_IDS = [
   "world-info.bind",
   "settings.voice.read",
   "settings.voice.consent",
+  "settings.connection.read",
+  "settings.connection.create",
+  "settings.connection.test",
+  "settings.connection.activate",
+  "settings.connection.model",
+  "settings.connection.remove",
 ] as const;
 const LABEL_KEYS = [
   "tavern.nav.chat",
@@ -283,6 +379,12 @@ const LABEL_KEYS = [
   "tavern.operation.world-info.bind",
   "tavern.operation.settings.voice.read",
   "tavern.operation.settings.voice.consent",
+  "tavern.operation.settings.connection.read",
+  "tavern.operation.settings.connection.create",
+  "tavern.operation.settings.connection.test",
+  "tavern.operation.settings.connection.activate",
+  "tavern.operation.settings.connection.model",
+  "tavern.operation.settings.connection.remove",
 ] as const;
 const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const NAVIGATION_ITEM_IDS = ["chat", "memory"] as const;
@@ -311,6 +413,13 @@ const PROBLEM_CODES = [
   "storage_unavailable",
   "state_reconciliation_required",
   "settings_revision_conflict",
+  // design/28 §5.3: activation may not switch a running turn, and the
+  // connection routes carry their own closed problem codes.
+  "dialogue_busy",
+  "connection_not_found",
+  "connection_not_ready",
+  "connection_conflict",
+  "connection_limit_reached",
 ] as const;
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;
@@ -380,6 +489,61 @@ const VOICE_PREFERENCE_REVOKE_KEYS = ["expectedRevision", "action"] as const;
 const VOICE_PREFERENCE_DEVICE_KEYS = ["expectedRevision", "action", "outputDevice"] as const;
 const VOICE_DEVICES_KEYS = ["devices", "defaultSelectable"] as const;
 const VOICE_DEVICE_KEYS = ["id", "name"] as const;
+const CONNECTION_STATE_KEYS = ["apiVersion", "revision", "active", "connections", "providers"] as const;
+const CONNECTION_ROW_KEYS = [
+  "connectionId",
+  "label",
+  "providerId",
+  "providerLabel",
+  "configured",
+  "readiness",
+  "active",
+  "modelId",
+  "modelLabel",
+  "thinkingLevel",
+  "baseUrl",
+  "failure",
+  "lastCheckedAtMs",
+] as const;
+const CONNECTION_ACTIVE_KEYS = [
+  "connectionId",
+  "label",
+  "providerLabel",
+  "modelId",
+  "modelLabel",
+  "thinkingLevel",
+  "readiness",
+  "baseUrl",
+  "failure",
+  "lastCheckedAtMs",
+] as const;
+const CONNECTION_PROVIDER_KEYS = [
+  "providerId",
+  "label",
+  "setupFields",
+  "allowedPlayerModels",
+  "escapeHatch",
+  "environmentManaged",
+] as const;
+const CONNECTION_MODEL_KEYS = [
+  "modelId",
+  "modelLabel",
+  "allowedThinkingLevels",
+  "defaultThinkingLevel",
+] as const;
+const CONNECTION_PROBE_KEYS = ["apiVersion", "connectionId", "outcome", "failure", "state"] as const;
+const CONNECTION_SETUP_FIELDS = ["apiKey", "baseUrl", "modelId"] as const;
+const CONNECTION_THINKING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+const CONNECTION_READINESS = ["unconfigured", "configured", "ready", "failed"] as const;
+const CONNECTION_FAILURES = [
+  "invalid_endpoint",
+  "not_configured",
+  "unauthorized",
+  "not_found",
+  "unreachable",
+  "timeout",
+  "invalid_response",
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -809,6 +973,127 @@ export function validateVoicePreferenceConsentCommand(value: unknown): TavernVoi
   return value;
 }
 
+function isConnectionFailure(value: unknown): value is TavernConnectionFailureV1 | null {
+  return value === null || isOneOf(value, CONNECTION_FAILURES);
+}
+
+function isConnectionModel(value: unknown): value is TavernConnectionModelV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, CONNECTION_MODEL_KEYS) &&
+    isLengthBoundedString(value.modelId, 1, 128) &&
+    isLengthBoundedString(value.modelLabel, 1, 128) &&
+    Array.isArray(value.allowedThinkingLevels) &&
+    value.allowedThinkingLevels.length > 0 &&
+    value.allowedThinkingLevels.length <= 5 &&
+    value.allowedThinkingLevels.every((level) => isOneOf(level, CONNECTION_THINKING_LEVELS)) &&
+    isOneOf(value.defaultThinkingLevel, CONNECTION_THINKING_LEVELS) &&
+    value.allowedThinkingLevels.includes(value.defaultThinkingLevel as string)
+  );
+}
+
+function isConnectionProvider(value: unknown): value is TavernConnectionProviderV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, CONNECTION_PROVIDER_KEYS) &&
+    isLengthBoundedString(value.providerId, 1, 64) &&
+    isLengthBoundedString(value.label, 1, 128) &&
+    Array.isArray(value.setupFields) &&
+    value.setupFields.length <= 3 &&
+    value.setupFields.every((field) => isOneOf(field, CONNECTION_SETUP_FIELDS)) &&
+    new Set(value.setupFields).size === value.setupFields.length &&
+    Array.isArray(value.allowedPlayerModels) &&
+    value.allowedPlayerModels.length <= 32 &&
+    value.allowedPlayerModels.every(isConnectionModel) &&
+    typeof value.escapeHatch === "boolean" &&
+    typeof value.environmentManaged === "boolean"
+  );
+}
+
+function isConnectionRow(value: unknown): value is TavernConnectionV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, CONNECTION_ROW_KEYS) &&
+    isOpaqueHandle(value.connectionId) &&
+    isLengthBoundedString(value.label, 1, 256) &&
+    isLengthBoundedString(value.providerId, 1, 64) &&
+    isLengthBoundedString(value.providerLabel, 1, 128) &&
+    typeof value.configured === "boolean" &&
+    isOneOf(value.readiness, CONNECTION_READINESS) &&
+    typeof value.active === "boolean" &&
+    isLengthBoundedString(value.modelId, 1, 128) &&
+    isLengthBoundedString(value.modelLabel, 1, 128) &&
+    isOneOf(value.thinkingLevel, CONNECTION_THINKING_LEVELS) &&
+    // The player's own endpoint — the one endpoint fact they read back.
+    (value.baseUrl === null || isLengthBoundedString(value.baseUrl, 1, 512)) &&
+    isConnectionFailure(value.failure) &&
+    (value.lastCheckedAtMs === null || isNonNegativeSafeInteger(value.lastCheckedAtMs)) &&
+    (value.readiness !== "ready" || value.failure === null) &&
+    (value.readiness !== "failed" || value.failure !== null)
+  );
+}
+
+function isConnectionActive(value: unknown): value is TavernConnectionActiveV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, CONNECTION_ACTIVE_KEYS) &&
+    isOpaqueHandle(value.connectionId) &&
+    isLengthBoundedString(value.label, 1, 256) &&
+    isLengthBoundedString(value.providerLabel, 1, 128) &&
+    isLengthBoundedString(value.modelId, 1, 128) &&
+    isLengthBoundedString(value.modelLabel, 1, 128) &&
+    isOneOf(value.thinkingLevel, CONNECTION_THINKING_LEVELS) &&
+    isOneOf(value.readiness, CONNECTION_READINESS) &&
+    (value.baseUrl === null || isLengthBoundedString(value.baseUrl, 1, 512)) &&
+    isConnectionFailure(value.failure) &&
+    (value.lastCheckedAtMs === null || isNonNegativeSafeInteger(value.lastCheckedAtMs)) &&
+    (value.readiness !== "ready" || value.failure === null) &&
+    (value.readiness !== "failed" || value.failure !== null)
+  );
+}
+
+function isConnectionState(value: unknown): value is TavernConnectionStateV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, CONNECTION_STATE_KEYS) ||
+    value.apiVersion !== TAVERN_BROWSER_API_VERSION ||
+    !isNonNegativeSafeInteger(value.revision) ||
+    (value.active !== null && !isConnectionActive(value.active)) ||
+    !Array.isArray(value.connections) ||
+    value.connections.length > 16 ||
+    !value.connections.every(isConnectionRow) ||
+    !Array.isArray(value.providers) ||
+    value.providers.length > 16 ||
+    !value.providers.every(isConnectionProvider)
+  )
+    return false;
+  // The projection must be internally consistent: exactly one row may carry the
+  // active flag, and it must be the row the active selection names.
+  const activeRows = value.connections.filter((row) => row.active);
+  if (value.active === null) return activeRows.length === 0;
+  return activeRows.length === 1 && activeRows[0]!.connectionId === (value.active as TavernConnectionActiveV1).connectionId;
+}
+
+export function validateConnectionState(value: unknown): TavernConnectionStateV1 {
+  if (!isConnectionState(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateConnectionProbe(value: unknown): TavernConnectionProbeV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, CONNECTION_PROBE_KEYS) ||
+    value.apiVersion !== TAVERN_BROWSER_API_VERSION ||
+    !isOpaqueHandle(value.connectionId) ||
+    (value.outcome !== "ready" && value.outcome !== "failed") ||
+    !isConnectionFailure(value.failure) ||
+    (value.outcome === "ready" ? value.failure !== null : value.failure === null) ||
+    !isConnectionState(value.state)
+  )
+    throw new TavernProtocolError();
+  return value as TavernConnectionProbeV1;
+}
+
 function isMemoryMutationCommand(value: unknown): value is MemoryMutationCommandV1 {
   if (
     !isRecord(value) ||
@@ -927,6 +1212,33 @@ export type ManagementPipelineApi = Readonly<{
     command: TavernVoicePreferenceConsentCommandV1,
     csrfToken: string,
   ): Promise<TavernVoicePreferenceV1>;
+  /** GET /api/tavern/v1/settings/connection (browser session; no CSRF header). */
+  readConnection(): Promise<TavernConnectionStateV1>;
+  /** POST /api/tavern/v1/settings/connections: creates a draft record whose credential is write-only. */
+  createConnection(
+    command: TavernConnectionCreateCommandV1,
+    csrfToken: string,
+  ): Promise<TavernConnectionStateV1>;
+  /** POST /api/tavern/v1/settings/connections/:id/test against the Host-owned probe. */
+  testConnection(connectionId: string, expectedRevision: number, csrfToken: string): Promise<TavernConnectionProbeV1>;
+  /** POST /api/tavern/v1/settings/connections/:id/activate: selects only a ready record. */
+  activateConnection(
+    connectionId: string,
+    expectedRevision: number,
+    csrfToken: string,
+  ): Promise<TavernConnectionStateV1>;
+  /** POST /api/tavern/v1/settings/connections/:id/model with the record revision. */
+  selectConnectionModel(
+    connectionId: string,
+    command: Readonly<{ expectedRevision: number; modelId: string; thinkingLevel: TavernConnectionThinkingLevelV1 }>,
+    csrfToken: string,
+  ): Promise<TavernConnectionStateV1>;
+  /** DELETE /api/tavern/v1/settings/connections/:id: removes an inactive record and its credential. */
+  removeConnection(
+    connectionId: string,
+    expectedRevision: number,
+    csrfToken: string,
+  ): Promise<TavernConnectionStateV1>;
 }>;
 
 export type ManagementOperationObservation = Readonly<{
@@ -1075,6 +1387,109 @@ export function createManagementPipelineApi(
       );
       observe("settings.voice.consent", "passed", String(result.revision));
       return result;
+    },
+    async readConnection(): Promise<TavernConnectionStateV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/connection", 200, validateConnectionState);
+    },
+    async createConnection(
+      command: TavernConnectionCreateCommandV1,
+      csrfToken: string,
+    ): Promise<TavernConnectionStateV1> {
+      if (!isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      // The browser sends only the fields the selected catalog entry declares.
+      // The credential is a write-only request field and is never retained here.
+      const body: Record<string, unknown> = { apiVersion: TAVERN_BROWSER_API_VERSION, providerId: command.providerId };
+      if (command.apiKey !== undefined) body.apiKey = command.apiKey;
+      if (command.baseUrl !== undefined) body.baseUrl = command.baseUrl;
+      if (command.modelId !== undefined) body.modelId = command.modelId;
+      return exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        200,
+        validateConnectionState,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        body,
+      );
+    },
+    async testConnection(
+      connectionId: string,
+      expectedRevision: number,
+      csrfToken: string,
+    ): Promise<TavernConnectionProbeV1> {
+      if (!isOpaqueHandle(connectionId) || !isOpaqueHandle(csrfToken) || !isNonNegativeSafeInteger(expectedRevision))
+        throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        `/api/tavern/v1/settings/connections/${connectionId}/test`,
+        200,
+        validateConnectionProbe,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION, expectedRevision },
+      );
+    },
+    async activateConnection(
+      connectionId: string,
+      expectedRevision: number,
+      csrfToken: string,
+    ): Promise<TavernConnectionStateV1> {
+      if (!isOpaqueHandle(connectionId) || !isOpaqueHandle(csrfToken) || !isNonNegativeSafeInteger(expectedRevision))
+        throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        `/api/tavern/v1/settings/connections/${connectionId}/activate`,
+        200,
+        validateConnectionState,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION, expectedRevision },
+      );
+    },
+    async selectConnectionModel(
+      connectionId: string,
+      command: Readonly<{ expectedRevision: number; modelId: string; thinkingLevel: TavernConnectionThinkingLevelV1 }>,
+      csrfToken: string,
+    ): Promise<TavernConnectionStateV1> {
+      if (
+        !isOpaqueHandle(connectionId) ||
+        !isOpaqueHandle(csrfToken) ||
+        !isNonNegativeSafeInteger(command.expectedRevision) ||
+        !isLengthBoundedString(command.modelId, 1, 128) ||
+        !isOneOf(command.thinkingLevel, CONNECTION_THINKING_LEVELS)
+      )
+        throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        `/api/tavern/v1/settings/connections/${connectionId}/model`,
+        200,
+        validateConnectionState,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        {
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          expectedRevision: command.expectedRevision,
+          modelId: command.modelId,
+          thinkingLevel: command.thinkingLevel,
+        },
+      );
+    },
+    async removeConnection(
+      connectionId: string,
+      expectedRevision: number,
+      csrfToken: string,
+    ): Promise<TavernConnectionStateV1> {
+      if (!isOpaqueHandle(connectionId) || !isOpaqueHandle(csrfToken) || !isNonNegativeSafeInteger(expectedRevision))
+        throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "DELETE",
+        `/api/tavern/v1/settings/connections/${connectionId}`,
+        200,
+        validateConnectionState,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION, expectedRevision },
+      );
     },
   });
 }

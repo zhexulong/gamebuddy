@@ -31,12 +31,19 @@ export type RuntimePaths = Readonly<{
   surfaceSessionId?: string;
 }>;
 
-export type CompanionThinkingLevel = "low" | "medium" | "high";
+export type CompanionThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
+/**
+ * The exact provider/model/thinking selection one runtime is constructed with.
+ * `provider` and `modelId` are open strings because the player's own connection
+ * selection decides them (
+ * design/28 §5.3); the runtime still fails closed when the selected model is not
+ * resolvable from the provider store, and every writer that does not come from a
+ * player connection keeps using the frozen constants below.
+ */
 export type CompanionModelConfig = Readonly<{
-  /** CPA is the configured local provider boundary for approved Agent models. */
-  provider: "cpa-oai";
-  modelId: "deepseek-v4-flash" | "gpt-5.6-luna";
+  provider: string;
+  modelId: string;
   thinkingLevel: CompanionThinkingLevel;
 }>;
 

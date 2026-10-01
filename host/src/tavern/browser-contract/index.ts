@@ -84,6 +84,12 @@ const ProblemCode = Type.Union([
   Type.Literal("storage_unavailable"),
   Type.Literal("state_reconciliation_required"),
   Type.Literal("settings_revision_conflict"),
+  // design/28 §5.3: an activation may not switch a running turn.
+  Type.Literal("dialogue_busy"),
+  Type.Literal("connection_not_found"),
+  Type.Literal("connection_not_ready"),
+  Type.Literal("connection_conflict"),
+  Type.Literal("connection_limit_reached"),
 ]);
 
 export const BrowserSwipeInfoV1Schema = strictObject({
@@ -184,6 +190,143 @@ export const MemoryMutationCommandV1Schema = Type.Union([
 ]);
 /** Every successful mutation returns the same safe fresh read model. */
 export const MemoryMutationResultV1Schema = MemoryReadV1Schema;
+
+/**
+ * Player-facing connection and model catalog (design/28 §1, §5.1).
+ *
+ * `setupFields` is the Host-defined allowlist of player-fillable fields; it is
+ * a closed union with no free-form script, header, arbitrary URL or provider
+ * payload field. Every model the browser may select appears in
+ * `allowedPlayerModels`; the single escape-hatch entry declares
+ * `setupFields: ["baseUrl", "apiKey", "modelId"]` instead, so it is a catalog
+ * entry like any other that additionally lets the player supply the one
+ * endpoint it points at.
+ */
+export const TavernConnectionSetupFieldV1Schema = Type.Union([
+  Type.Literal("apiKey"),
+  Type.Literal("baseUrl"),
+  Type.Literal("modelId"),
+]);
+export const TavernConnectionThinkingLevelV1Schema = Type.Union([
+  Type.Literal("low"),
+  Type.Literal("medium"),
+  Type.Literal("high"),
+  Type.Literal("xhigh"),
+  Type.Literal("max"),
+]);
+export const TavernConnectionModelV1Schema = strictObject({
+  modelId: Type.String({ minLength: 1, maxLength: 128 }),
+  modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
+  allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 5 }),
+  defaultThinkingLevel: TavernConnectionThinkingLevelV1Schema,
+});
+export const TavernConnectionProviderV1Schema = strictObject({
+  providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
+  label: Type.String({ minLength: 1, maxLength: 128 }),
+  setupFields: Type.Array(TavernConnectionSetupFieldV1Schema, { maxItems: 3 }),
+  allowedPlayerModels: Type.Array(TavernConnectionModelV1Schema, { maxItems: 32 }),
+  /** True only for the one OpenAI-compatible escape hatch (design/28 §1). */
+  escapeHatch: Type.Boolean(),
+  /** True when this provider is served by an operator environment credential. */
+  environmentManaged: Type.Boolean(),
+});
+/** Closed, audit-safe probe category. Never raw provider status, header or body. */
+const ConnectionFailure = Type.Union([
+  Type.Literal("invalid_endpoint"),
+  Type.Literal("not_configured"),
+  Type.Literal("unauthorized"),
+  Type.Literal("not_found"),
+  Type.Literal("unreachable"),
+  Type.Literal("timeout"),
+  Type.Literal("invalid_response"),
+  Type.Null(),
+]);
+/**
+ * One player-readable connection row (design/28 §5.1). `connectionId` is an
+ * opaque write handle and is never the player's result, so the row also
+ * carries the labels a player actually reads. `baseUrl` is the player's own
+ * submitted endpoint — the one endpoint fact they may read back (§1) — and is
+ * null for every catalog endpoint they did not type.
+ */
+export const TavernConnectionV1Schema = strictObject({
+  connectionId: OpaqueHandle,
+  label: Type.String({ minLength: 1, maxLength: 256 }),
+  providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
+  providerLabel: Type.String({ minLength: 1, maxLength: 128 }),
+  configured: Type.Boolean(),
+  readiness: Type.Union([
+    Type.Literal("unconfigured"),
+    Type.Literal("configured"),
+    Type.Literal("ready"),
+    Type.Literal("failed"),
+  ]),
+  active: Type.Boolean(),
+  modelId: Type.String({ minLength: 1, maxLength: 128 }),
+  modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
+  thinkingLevel: TavernConnectionThinkingLevelV1Schema,
+  baseUrl: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
+  failure: ConnectionFailure,
+  lastCheckedAtMs: Type.Union([Revision, Type.Null()]),
+});
+/** The one active selection (design/28 §5.1), or null while none is active. */
+export const TavernConnectionActiveV1Schema = strictObject({
+  connectionId: OpaqueHandle,
+  label: Type.String({ minLength: 1, maxLength: 256 }),
+  providerLabel: Type.String({ minLength: 1, maxLength: 128 }),
+  modelId: Type.String({ minLength: 1, maxLength: 128 }),
+  modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
+  thinkingLevel: TavernConnectionThinkingLevelV1Schema,
+  readiness: Type.Union([
+    Type.Literal("unconfigured"),
+    Type.Literal("configured"),
+    Type.Literal("ready"),
+    Type.Literal("failed"),
+  ]),
+  baseUrl: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
+  failure: ConnectionFailure,
+  lastCheckedAtMs: Type.Union([Revision, Type.Null()]),
+});
+/**
+ * `GET /settings/connection` (design/28 §5.1). `revision` is the durable
+ * document revision every mutation carries as its compare-and-swap, because a
+ * stale tab must get a conflict instead of silently overwriting a newer
+ * selection.
+ */
+export const TavernConnectionStateV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  revision: Revision,
+  active: Type.Union([TavernConnectionActiveV1Schema, Type.Null()]),
+  connections: Type.Array(TavernConnectionV1Schema, { maxItems: 16 }),
+  providers: Type.Array(TavernConnectionProviderV1Schema, { maxItems: 16 }),
+});
+export const TavernConnectionReadV1Schema = TavernConnectionStateV1Schema;
+export const TavernConnectionCreateCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
+  /** Write-only. Never echoed, projected, logged or read back by any route. */
+  apiKey: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+  /** The escape hatch's player-supplied endpoint. */
+  baseUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+  modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+});
+export const TavernConnectionRevisionCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  expectedRevision: Revision,
+});
+export const TavernConnectionModelCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  expectedRevision: Revision,
+  modelId: Type.String({ minLength: 1, maxLength: 128 }),
+  thinkingLevel: TavernConnectionThinkingLevelV1Schema,
+});
+/** The probe read-back: one closed outcome plus the resulting projection. */
+export const TavernConnectionProbeV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  connectionId: OpaqueHandle,
+  outcome: Type.Union([Type.Literal("ready"), Type.Literal("failed")]),
+  failure: ConnectionFailure,
+  state: TavernConnectionStateV1Schema,
+});
 const OperationId = Type.Union([
   Type.Literal("chat.submit"),
   Type.Literal("chat.cancel"),
@@ -197,6 +340,12 @@ const OperationId = Type.Union([
   Type.Literal("settings.voice.devices"),
   Type.Literal("settings.language.read"),
   Type.Literal("settings.language.update"),
+  Type.Literal("settings.connection.read"),
+  Type.Literal("settings.connection.create"),
+  Type.Literal("settings.connection.test"),
+  Type.Literal("settings.connection.activate"),
+  Type.Literal("settings.connection.model"),
+  Type.Literal("settings.connection.remove"),
 ]);
 const LabelKey = Type.Union([
   Type.Literal("tavern.nav.chat"),
@@ -213,6 +362,12 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.settings.voice.devices"),
   Type.Literal("tavern.operation.settings.language.read"),
   Type.Literal("tavern.operation.settings.language.update"),
+  Type.Literal("tavern.operation.settings.connection.read"),
+  Type.Literal("tavern.operation.settings.connection.create"),
+  Type.Literal("tavern.operation.settings.connection.test"),
+  Type.Literal("tavern.operation.settings.connection.activate"),
+  Type.Literal("tavern.operation.settings.connection.model"),
+  Type.Literal("tavern.operation.settings.connection.remove"),
 ]);
 export const TavernBrowserOperationV1Schema = strictObject({
   operationId: OperationId,
@@ -539,6 +694,11 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "storage_unavailable",
   "state_reconciliation_required",
   "settings_revision_conflict",
+  "dialogue_busy",
+  "connection_not_found",
+  "connection_not_ready",
+  "connection_conflict",
+  "connection_limit_reached",
 ] as const);
 
 const EmptyHeaders = strictObject({});
@@ -546,6 +706,7 @@ const CsrfHeaders = strictObject({ "x-csrf-token": OpaqueHandle });
 const IdempotentCsrfHeaders = strictObject({ "x-csrf-token": OpaqueHandle, "idempotency-key": IdempotencyKey });
 const BootstrapRequest = strictObject({ apiVersion: ApiVersion, bootstrapToken: OpaqueHandle });
 const TurnPath = strictObject({ turnHandle: OpaqueHandle });
+const ConnectionPath = strictObject({ connectionId: OpaqueHandle });
 const EventsQuery = strictObject({ apiVersion: ApiVersion, cursor: Type.Optional(OpaqueHandle) });
 const noQuery = strictObject({});
 const noPath = strictObject({});
@@ -837,6 +998,95 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: TavernLanguagePreferenceV1Schema },
   }),
   route({
+    routeId: "settings.connection.read",
+    method: "GET",
+    path: "/api/tavern/v1/settings/connection",
+    operationId: "settings.connection.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernConnectionStateV1Schema },
+  }),
+  route({
+    routeId: "settings.connection.create",
+    method: "POST",
+    path: "/api/tavern/v1/settings/connections",
+    operationId: "settings.connection.create",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: TavernConnectionCreateCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernConnectionStateV1Schema },
+  }),
+  route({
+    routeId: "settings.connection.test",
+    method: "POST",
+    path: "/api/tavern/v1/settings/connections/:connectionId/test",
+    operationId: "settings.connection.test",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: ConnectionPath,
+    query: noQuery,
+    request: TavernConnectionRevisionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernConnectionProbeV1Schema },
+  }),
+  route({
+    routeId: "settings.connection.activate",
+    method: "POST",
+    path: "/api/tavern/v1/settings/connections/:connectionId/activate",
+    operationId: "settings.connection.activate",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: ConnectionPath,
+    query: noQuery,
+    request: TavernConnectionRevisionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernConnectionStateV1Schema },
+  }),
+  route({
+    routeId: "settings.connection.model",
+    method: "POST",
+    path: "/api/tavern/v1/settings/connections/:connectionId/model",
+    operationId: "settings.connection.model",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: ConnectionPath,
+    query: noQuery,
+    request: TavernConnectionModelCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernConnectionStateV1Schema },
+  }),
+  route({
+    routeId: "settings.connection.remove",
+    method: "DELETE",
+    path: "/api/tavern/v1/settings/connections/:connectionId",
+    operationId: "settings.connection.remove",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: ConnectionPath,
+    query: noQuery,
+    request: TavernConnectionRevisionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernConnectionStateV1Schema },
+  }),
+  route({
     routeId: "events",
     method: "GET",
     path: "/api/tavern/v1/events",
@@ -891,6 +1141,17 @@ export const TavernBrowserContractV1 = Object.freeze({
     MemoryReadV1Schema,
     MemoryMutationCommandV1Schema,
     MemoryMutationResultV1Schema,
+    TavernConnectionSetupFieldV1Schema,
+    TavernConnectionThinkingLevelV1Schema,
+    TavernConnectionModelV1Schema,
+    TavernConnectionProviderV1Schema,
+    TavernConnectionV1Schema,
+    TavernConnectionStateV1Schema,
+    TavernConnectionReadV1Schema,
+    TavernConnectionCreateCommandV1Schema,
+    TavernConnectionRevisionCommandV1Schema,
+    TavernConnectionModelCommandV1Schema,
+    TavernConnectionProbeV1Schema,
     WorldInfoStateV1Schema,
     SetWorldInfoBindingCommandV1Schema,
     SubmitResultV1Schema,
@@ -943,6 +1204,18 @@ export type MemoryReadV1 = Readonly<{
   projectionRevision: string;
   memories: readonly MemoryItemV1[];
 }>;
+export type TavernConnectionSetupFieldV1 = Static<typeof TavernConnectionSetupFieldV1Schema>;
+export type TavernConnectionThinkingLevelV1 = Static<typeof TavernConnectionThinkingLevelV1Schema>;
+export type TavernConnectionModelV1 = Static<typeof TavernConnectionModelV1Schema>;
+export type TavernConnectionProviderV1 = Static<typeof TavernConnectionProviderV1Schema>;
+export type TavernConnectionV1 = Static<typeof TavernConnectionV1Schema>;
+export type TavernConnectionActiveV1 = Static<typeof TavernConnectionActiveV1Schema>;
+export type TavernConnectionStateV1 = Static<typeof TavernConnectionStateV1Schema>;
+export type TavernConnectionReadV1 = Static<typeof TavernConnectionReadV1Schema>;
+export type TavernConnectionCreateCommandV1 = Static<typeof TavernConnectionCreateCommandV1Schema>;
+export type TavernConnectionRevisionCommandV1 = Static<typeof TavernConnectionRevisionCommandV1Schema>;
+export type TavernConnectionModelCommandV1 = Static<typeof TavernConnectionModelCommandV1Schema>;
+export type TavernConnectionProbeV1 = Static<typeof TavernConnectionProbeV1Schema>;
 export type TavernProblemV1 = Static<typeof TavernProblemV1Schema>;
 export type BrowserEventV1 = Static<typeof BrowserEventV1Schema>;
 export type TavernBrowserOperationIdV1 = Static<typeof OperationId>;

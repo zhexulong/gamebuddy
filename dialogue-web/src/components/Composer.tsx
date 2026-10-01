@@ -1,5 +1,5 @@
 import { Mic, MicOff, SendHorizontal, Square } from "lucide-react";
-import { type ChangeEvent, type KeyboardEvent, useEffect, useRef } from "react";
+import { type ChangeEvent, type KeyboardEvent, useLayoutEffect, useRef } from "react";
 import type { Messages } from "../i18n";
 
 /** Voice surface narrow state from the additive optional snapshot field. */
@@ -27,15 +27,20 @@ export function Composer({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
+  // Height is recomputed before paint on every value change so the textarea
+  // grows and shrinks with the drafted text without a visible jump.
+  useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
     const nextHeight = Math.min(Math.max(el.scrollHeight, 48), 176);
     el.style.height = `${nextHeight}px`;
-  }, []);
+  }, [value]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // An Enter that confirms an IME candidate is not a send: the composed text
+    // is still being edited, so the existing Enter/Shift+Enter paths are skipped.
+    if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (!isGenerating && value.trim() && !disabled) {

@@ -27,6 +27,50 @@
 const TAVERN_BROWSER_API_VERSION = 1 as const;
 const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
 
+/** Frozen structural mirror of the `tavern_browser_api/v1` management operation DTO. */
+type TavernBrowserOperationV1 = Readonly<{
+  operationId:
+    | "chat.submit"
+    | "chat.cancel"
+    | "draft.save"
+    | "draft.discard"
+    | "chat.rename"
+    | "memory.mutate"
+    | "world-info.bind"
+    | "settings.voice.read"
+    | "settings.voice.consent";
+  labelKey:
+    | "tavern.nav.chat"
+    | "tavern.nav.memory"
+    | "tavern.operation.submit"
+    | "tavern.operation.cancel"
+    | "tavern.operation.draft.save"
+    | "tavern.operation.draft.discard"
+    | "tavern.operation.rename"
+    | "tavern.operation.memory.mutate"
+    | "tavern.operation.world-info.bind"
+    | "tavern.operation.settings.voice.read"
+    | "tavern.operation.settings.voice.consent";
+  availability: "available" | "busy" | "unavailable";
+  routeId: string;
+}>;
+
+/** Frozen structural mirror of the `tavern_browser_api/v1` dual-attributed turn DTO. */
+type BrowserTurnV1 = Readonly<{
+  handle: string;
+  state: "queued" | "running" | "response_visible" | "stopping" | "completed" | "cancelled" | "failed";
+  projectionRevision: number;
+  canCancel: boolean;
+  problemCode?: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
+}>;
+
+/** Frozen structural mirror of the `tavern_browser_api/v1` Memory capability projection. */
+type MemoryStateV1 = Readonly<{
+  readAvailable: boolean;
+  mutationAvailable: boolean;
+  projectionRevision: string | null;
+}>;
+
 type WorldInfoItemV1 = Readonly<{
   handle: string;
   title: string;
@@ -54,7 +98,7 @@ export type TavernStateSnapshotV1 = Readonly<{
   build: Readonly<{ browserContract: "tavern_browser_api/v1"; profileId: string }>;
   csrfToken: string;
   browserSession: Readonly<{ expiresAtMs: number }>;
-  operations: readonly unknown[];
+  operations: readonly TavernBrowserOperationV1[];
   navigation: readonly unknown[];
   selection: Readonly<{ chatHandle: string; generation: number; stateRevision: string }> | null;
   chat: Readonly<{
@@ -62,10 +106,10 @@ export type TavernStateSnapshotV1 = Readonly<{
     title: string | null;
     transcript: readonly BrowserMessageV1[];
     draft: Readonly<{ revision: number; present: boolean }>;
-    turn: Readonly<Record<string, unknown>> | null;
+    turn: BrowserTurnV1 | null;
     worldInfo: WorldInfoStateV1 | null;
   }> | null;
-  memory: Readonly<Record<string, unknown>>;
+  memory: MemoryStateV1;
   eventStream: null;
 }>;
 
