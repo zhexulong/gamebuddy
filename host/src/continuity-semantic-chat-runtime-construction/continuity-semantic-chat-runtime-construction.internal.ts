@@ -5,6 +5,7 @@ import type { PresentationRuntime } from "../presentation.js";
 import type { CompanionIdentity, CompanionModelConfig } from "../runtime-identity.js";
 import { identityKey, resolveRuntimePaths } from "../runtime-identity.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
+import { TavernConnectionStore } from "../tavern/connection-store.js";
 import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import {
@@ -26,6 +27,7 @@ export type ExactChatRuntimeConstruction = Readonly<{
   runtimeRoot: string;
   surfaceSessionId: string;
   modelConfig: CompanionModelConfig;
+  /** Durable revision of the model selection this construction used. */
   modelProfileRevision: number;
   presentation: PresentationRuntime;
   /** Construction-owned materialization for the currently applied Chat catalog. */
@@ -156,7 +158,12 @@ export async function prepareExactChatRuntimeConstruction(
     materializeContextForPiSession(piSessionId, "desired");
 
   const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
-  const modelConfig = resolveModelProfileConfig(modelProfile);
+  // The player's connection selection is the authority for the chat surface's
+  // provider/model/thinking level. With no active connection the frozen chat
+  // model profile is used unchanged, so a root without player connections keeps
+  // exactly the previous runtime configuration.
+  const activeConnection = await readActiveConnectionModelConfig(paths.agentDir);
+  const modelConfig = activeConnection ?? resolveModelProfileConfig(modelProfile);
   if (modelConfig === null) throw new Error("chat_runtime_model_configuration_unavailable");
   return Object.freeze({
     identity,
@@ -175,6 +182,31 @@ export async function prepareExactChatRuntimeConstruction(
       ? {}
       : { tavernNarrativeGateNonceSha256: options.tavernNarrativeGateNonceSha256 }),
   });
+}
+
+/**
+ * Reads the one active player connection as the exact runtime model
+ * configuration, or null while no player connection is selected.
+ *
+ * The record's own endpoint is not returned here: `runtime-core` merges the
+ * selected provider entry into Pi's `models.json` from the same stored record,
+ * so the endpoint keeps one owner. An unreadable store reads as "no active
+ * connection" so the frozen chat profile still applies; the runtime's own
+ * fail-closed check on the resolved model prevents a silent downgrade once a
+ * selection exists.
+ */
+async function readActiveConnectionModelConfig(agentDir: string): Promise<CompanionModelConfig | null> {
+  try {
+    const active = await new TavernConnectionStore(agentDir).active();
+    if (active === null) return null;
+    return Object.freeze({
+      provider: active.providerId,
+      modelId: active.modelId,
+      thinkingLevel: active.thinkingLevel,
+    });
+  } catch {
+    return null;
+  }
 }
 
 function sameWorldInfoBinding(

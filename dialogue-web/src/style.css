@@ -1332,6 +1332,61 @@ body {
   gap: 8px;
 }
 
+/* Connection and model management (design/28 §1). The form stays one narrow
+   column with the panel's own controls, so a narrow viewport wraps instead of
+   overflowing the app shell. */
+[data-profile="management"] .connection-form,
+[data-profile="management"] [data-connection-list] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+[data-profile="management"] .connection-form label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+[data-profile="management"] .connection-form .field-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+[data-profile="management"] .connection-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-profile="management"] .connection-row {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+[data-profile="management"] .connection-row .composer-actions {
+  flex-wrap: wrap;
+}
+
+[data-profile="management"] .connection-row [data-connection-failure] {
+  color: var(--text-secondary);
+}
+
+@media (max-width: 560px) {
+  [data-profile="management"] .connection-row .composer-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 [data-profile="management"] .management-settings-section h2 {
   margin: 0;
   font-size: 16px;
@@ -1362,6 +1417,12 @@ body {
 [data-profile="management"] .management-settings-details dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+[data-profile="management"] .voice-device-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 [data-profile="management"] .reference-draft-section {
