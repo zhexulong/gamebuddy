@@ -199,6 +199,91 @@ test("Tavern live gate passes when prerequisites, real runs, and operation evide
   ]);
 });
 
+test("a passed verdict names the exact operation evidence it was decided on", async () => {
+  // The audit of run-01..run-04 found the recorded `passed` verdict could not be
+  // re-derived from the artifact set: the mapping is a caller-supplied file and was not
+  // among the recorded data, so `mappedOperationIds` could only be taken on trust. The
+  // report must therefore carry the profile identity and the mapping's fingerprint.
+  const report = await runTavernReleaseLiveGate({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    runs: passedRuns(),
+    prerequisites: passingPrerequisites,
+  });
+  const identity = report.operationEvidence;
+  assert.equal(identity.profileId, mountedProfile.profileId);
+  assert.equal(identity.releaseTier, mountedProfile.releaseTier);
+  assert.match(identity.profileHash, /^[a-f0-9]{64}$/);
+  assert.match(identity.mappingDigest, /^[a-f0-9]{64}$/);
+  assert.equal(identity.mappingSchemaVersion, 1);
+
+  // The digest must be re-derivable from the input alone, and independent of JSON key
+  // order (a mapping that differs only in key order is the same mapping).
+  const reordered = {
+    operations: { "chat.submit": [token(11)] },
+    profile: mountedProfile,
+    schema_version: 1,
+  };
+  const second = await runTavernReleaseLiveGate({
+    mountedProfile,
+    operationEvidenceMapping: reordered,
+    runs: passedRuns(),
+    prerequisites: passingPrerequisites,
+  });
+  assert.equal(second.operationEvidence.mappingDigest, identity.mappingDigest);
+
+  // A DIFFERENT mapping must NOT collide, or the binding proves nothing.
+  const third = await runTavernReleaseLiveGate({
+    mountedProfile,
+    operationEvidenceMapping: validMapping({ operations: { "chat.submit": [token(12)] } }),
+    runs: passedRuns(),
+    prerequisites: passingPrerequisites,
+  });
+  assert.notEqual(third.operationEvidence.mappingDigest, identity.mappingDigest);
+});
+
+test("a non-passed verdict carries no evidence identity to misread as one", async () => {
+  // When the mapping never reaches a valid state there is no evidence to name, and
+  // recording a digest would invite a reader to treat an unusable input as verified.
+  const report = await runTavernReleaseLiveGate({
+    mountedProfile,
+    operationEvidenceMapping: { schema_version: 1, operations: {} },
+    runs: passedRuns(),
+    prerequisites: passingPrerequisites,
+  });
+  assert.equal(report.verdict, "inconclusive");
+  assert.equal("operationEvidence" in report, false);
+  assert.deepEqual(report.mappedOperationIds, []);
+});
+
+test("Tavern live gate refuses to burn live runs on verdict inputs it can already reject", async () => {
+  // Found by auditing the real artifacts: 9 of 12 live embedded-provider turns
+  // belonged to attempts whose verdict was already impossible at invocation time,
+  // because the mapping validator is a pure function over caller-supplied files and it
+  // ran AFTER three production-grade live sessions. `mapping.valid === false` makes
+  // `passed` unreachable, so there is nothing the live runs could have taught us.
+  for (const missing of [
+    { mountedProfile: undefined, operationEvidenceMapping: undefined },
+    { mountedProfile, operationEvidenceMapping: undefined },
+  ]) {
+    let calls = 0;
+    const report = await runTavernReleaseLiveOrchestrator({
+      ...missing,
+      prerequisites: passingPrerequisites,
+      runNarrative: async () => {
+        calls += 1;
+        return passedRun("main");
+      },
+    });
+    assert.equal(calls, 0, "a live narrative run was launched for an unmintable verdict");
+    assert.equal(report.verdict, "blocked");
+    assert.equal(report.reasonCode, "verdict_inputs_incomplete");
+    assert.deepEqual(report.runs, []);
+    assert.equal(report.prerequisite.verdict, "not_attempted");
+    assert.ok(report.blockerIds.length > 0);
+  }
+});
+
 test("Tavern live gate blocks and skips every narrative run when an automated prerequisite fails", async () => {
   let calls = 0;
   const report = await runTavernReleaseLiveOrchestrator({

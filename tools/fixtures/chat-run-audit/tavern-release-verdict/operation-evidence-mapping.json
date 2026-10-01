@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "automation_evidence",
+  "profile_id": "gamebuddy.tavern-management.chat-list-title",
+  "profile_hash": "df3a9720fefc7a0baf598f72f76a704f0fc0ac71077c74c3f1e87f770990c29d",
+  "release_tier": "tavern_management",
+  "operations": {
+    "draft.save": [
+      "944733edfbd3cd7f9433541b8f8b1ea911f99ac26f461e36"
+    ],
+    "draft.discard": [
+      "973c7eec1b986bd6701d92d79db068adda124d7b70ea1d1e"
+    ],
+    "chat.rename": [
+      "04683d9cdd66338fb2837296de3de2267060ee51be7a64eb"
+    ],
+    "memory.mutate": [
+      "22f2033a45d4b9c8fa0e53242dc23bc429ada3968ee36bca"
+    ],
+    "world-info.bind": [
+      "e0544a656b794dd899525564ffd7a4e2f2a50eb4b97fffa0"
+    ]
+  }
+}
