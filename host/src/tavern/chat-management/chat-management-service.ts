@@ -212,6 +212,7 @@ export function createChatManagementService(options: ChatManagementServiceOption
     discardDraft,
     async close(): Promise<void> {
       closed = true;
+      store.close?.();
     },
   });
 

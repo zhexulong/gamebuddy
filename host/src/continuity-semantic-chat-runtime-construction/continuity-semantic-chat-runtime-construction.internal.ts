@@ -34,6 +34,12 @@ export type ExactChatRuntimeConstruction = Readonly<{
   materializeStableContextForPiSession(piSessionId: string): Promise<TavernAuthoredContextCatalog>;
   /** Construction-private desired-state rebuild used only after terminal settlement. */
   materializeDesiredStableContextForPiSession(piSessionId: string): Promise<TavernAuthoredContextCatalog>;
+  /**
+   * Releases the construction's own store. The construction keeps one store for
+   * its whole lifetime, so the consumer that owns the mounted runtime owns this
+   * release; the materializer's reverse-disposal calls it.
+   */
+  closeChatThreadStore(): void;
   tavernNarrativeGateNonceSha256?: string;
 }>;
 
@@ -178,6 +184,7 @@ export async function prepareExactChatRuntimeConstruction(
     }),
     materializeStableContextForPiSession,
     materializeDesiredStableContextForPiSession,
+    closeChatThreadStore: () => threads.close?.(),
     ...(options.tavernNarrativeGateNonceSha256 === undefined
       ? {}
       : { tavernNarrativeGateNonceSha256: options.tavernNarrativeGateNonceSha256 }),

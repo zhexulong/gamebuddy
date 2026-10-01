@@ -52,6 +52,19 @@ export type InitialChatExactContentPort = Readonly<{
   createExplicit(request: CreateChatThreadRequest): Promise<TavernExactContentReceipt>;
 }>;
 
+/**
+ * A manifest-derived port plus the release for the store the factory opened.
+ *
+ * The port itself never carries a lifecycle operation (its surface is pinned to
+ * exact resume plus explicit creation), so the release travels beside it. The
+ * caller that keeps the port must call `close()`; an unclosed store keeps its
+ * SQLite handle and holds the continuity root against removal on Windows.
+ */
+export type ManifestDerivedInitialChatExactContent = Readonly<{
+  port: InitialChatExactContentPort;
+  close(): void;
+}>;
+
 const trustedReceipts = new WeakSet<object>();
 
 /** Matching data, cloning, serialization, and proxies never become trusted receipts. */
@@ -66,7 +79,7 @@ export function isTrustedTavernExactContentReceipt(value: unknown): value is Tav
  */
 export function createManifestDerivedInitialChatExactContentPort(
   manifest: HostDeploymentManifest,
-): InitialChatExactContentPort {
+): ManifestDerivedInitialChatExactContent {
   const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
   const profileMetadataReader: IdentityProfileMetadataReader = Object.freeze({
     async readExact() {
@@ -74,7 +87,15 @@ export function createManifestDerivedInitialChatExactContentPort(
       return identityProfileMetadata(profile);
     },
   });
-  return createInitialChatExactContentPort(createInitialChatExactContentCapability(store, profileMetadataReader));
+  let closed = false;
+  return Object.freeze({
+    port: createInitialChatExactContentPort(createInitialChatExactContentCapability(store, profileMetadataReader)),
+    close: () => {
+      if (closed) return;
+      closed = true;
+      store.close?.();
+    },
+  });
 }
 
 export function createInitialChatExactContentPort(

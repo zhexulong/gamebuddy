@@ -27,9 +27,17 @@ export async function createUnmountedDialogueSemanticFacade(
   const content = createManifestDerivedInitialChatExactContentPort(manifest);
   return Object.freeze({
     authority: "SEMANTIC" as const,
-    initializeInitialChat: () => semantic.initializeInitialChat(content),
-    resumeInitialChat: () => semantic.resumeInitialChatWithContent(content),
-    close: once(() => semantic.close()),
+    initializeInitialChat: () => semantic.initializeInitialChat(content.port),
+    resumeInitialChat: () => semantic.resumeInitialChatWithContent(content.port),
+    close: once(async () => {
+      // The facade owns this content port for its whole lifetime, so the store
+      // is released only when the facade itself closes.
+      try {
+        await semantic.close();
+      } finally {
+        content.close();
+      }
+    }),
   });
 }
 
@@ -45,8 +53,16 @@ export async function createUnmountedDialogueInitialChatResumeFacade(
   const content = createManifestDerivedInitialChatExactContentPort(manifest);
   return Object.freeze({
     authority: "SEMANTIC" as const,
-    resumeInitialChat: () => semantic.resumeInitialChatWithContent(content),
-    close: once(() => semantic.close()),
+    resumeInitialChat: () => semantic.resumeInitialChatWithContent(content.port),
+    close: once(async () => {
+      // The facade owns this content port for its whole lifetime, so the store
+      // is released only when the facade itself closes.
+      try {
+        await semantic.close();
+      } finally {
+        content.close();
+      }
+    }),
   });
 }
 function once(work: () => Promise<void>) {

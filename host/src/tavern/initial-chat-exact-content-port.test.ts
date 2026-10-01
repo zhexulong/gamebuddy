@@ -77,6 +77,7 @@ test("exact resume of missing content fails closed; explicit creation reads back
     assert.deepEqual(receipt, { ...binding, digest: stateDigest(durableState) });
     assert.ok(isTrustedTavernExactContentReceipt(receipt));
   } finally {
+    fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
@@ -93,6 +94,7 @@ test("genuine exact capability resumes an existing thread", async () => {
     );
     assert.ok(isTrustedTavernExactContentReceipt(receipt));
   } finally {
+    fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
@@ -143,6 +145,7 @@ test("receipt digest covers complete durable state and changes for binding-prese
       stateDigest(await fixture.store.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId)),
     );
   } finally {
+    fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
@@ -175,6 +178,7 @@ test("collision does not fall back and broad not-found Error text cannot create"
       /(?:sqlite|database|malformed|not_found)/i,
     );
   } finally {
+    fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
@@ -196,6 +200,7 @@ test("malformed durable state fails closed without a receipt", async () => {
       /(?:sqlite|database|malformed)/i,
     );
   } finally {
+    fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
@@ -211,6 +216,7 @@ test("genuine stores reject proxy and spread clones without durable artifacts or
       await assertNoDurableThreadArtifacts(fixture.root, rejectedResult);
     }
   } finally {
+    fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
@@ -240,6 +246,7 @@ test("genuine capabilities reject proxy, clones, promises, and thenables without
       await assertNoDurableThreadArtifacts(fixture.root, rejectedResult);
     }
   } finally {
+    fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
@@ -263,6 +270,7 @@ test("fake stores, capabilities, and receipts are rejected", async () => {
     assert.equal(isTrustedTavernExactContentReceipt(new Proxy(receipt, {})), false);
     assert.equal(isTrustedTavernExactContentReceipt({ ...receipt, digest: "0".repeat(64) }), false);
   } finally {
+    fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
@@ -274,6 +282,7 @@ test("public initial content port exposes distinct explicit creation and exact r
     assert.deepEqual(Object.keys(port).sort(), ["createExplicit", "resumeExact"]);
     assert.equal("ensureExactContent" in port, false);
   } finally {
+    fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });

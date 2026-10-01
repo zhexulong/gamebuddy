@@ -37,13 +37,13 @@ async function run(mode: Mode, manifestPath: string): Promise<void> {
     return;
   }
   const authority = await createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest(manifest);
+  const content = createManifestDerivedInitialChatExactContentPort(manifest);
   try {
-    const selected = await authority.resumeInitialChatWithContent(
-      createManifestDerivedInitialChatExactContentPort(manifest),
-    );
+    const selected = await authority.resumeInitialChatWithContent(content.port);
     if (selected?.phase !== "selected") throw new Error("semantic_initial_worker_resume_unselected");
     await reply(Object.freeze({ type: "selected" }));
   } finally {
+    content.close();
     await authority.close();
   }
 }

@@ -135,6 +135,7 @@ function facade(turnActive: boolean): TavernManagementStateFacade {
           }
         : state;
     },
+    async close() {},
   });
 }
 

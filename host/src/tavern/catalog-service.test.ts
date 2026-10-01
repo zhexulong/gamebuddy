@@ -26,6 +26,7 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
   const paths = resolveTavernPaths({ root } as never, identity);
   const repository = createWorldInfoManagementRepository(root);
+  let closeStore: (() => void) | undefined;
   try {
     const created = await repository.create({
       publicTitle: "Pelican Town",
@@ -51,6 +52,7 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
       }),
     });
     const threads = createChatThreadStore(root, "continuity-key");
+    closeStore = () => threads.close?.();
     const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
     const thread = await creation.createExplicit({
       chatThreadId: "thread",
@@ -98,6 +100,7 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
       /tavern_stable_context_worldbook_binding_mismatch/,
     );
   } finally {
+    closeStore?.();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -107,6 +110,7 @@ test("stable World Info excludes constants from volatile sources and matches vol
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
   const paths = resolveTavernPaths({ root } as never, identity);
   const repository = createWorldInfoManagementRepository(root);
+  let closeStore: (() => void) | undefined;
   try {
     const created = await repository.create({
       publicTitle: "Large Lore",
@@ -125,6 +129,7 @@ test("stable World Info excludes constants from volatile sources and matches vol
     const resolver = createManagedWorldInfoBindingResolver(repository);
     const exact = await resolver.resolve(await resolver.bindExact(created.publicTitle, 1));
     const threads = createChatThreadStore(root, "continuity-key");
+    closeStore = () => threads.close?.();
     const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
     const thread = await creation.createExplicit({ chatThreadId: "thread", chatSurfaceSessionId: "surface", companionId: "companion", continuityId: "continuity", worldBookBinding: exact.binding, opening: "blank" });
     const catalog = await materializeTavernAuthoredStableCatalog(paths, new TavernArtifactStore(root), thread.thread, { continuityId: "continuity", sessionId: "pi-session", surface: "tavern", threadId: "thread", profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) } }, exact);
@@ -136,6 +141,7 @@ test("stable World Info excludes constants from volatile sources and matches vol
     assert.deepEqual(catalog.volatileSources[0]?.selectionKeys, ["trigger-1", "alias-1"]);
     assert.deepEqual(catalog.volatileSources[149]?.selectionKeys, ["trigger-150", "alias-150"]);
   } finally {
+    closeStore?.();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -145,6 +151,7 @@ test("stable World Info falls back to Overview when constant content exceeds the
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
   const paths = resolveTavernPaths({ root } as never, identity);
   const repository = createWorldInfoManagementRepository(root);
+  let closeStore: (() => void) | undefined;
   try {
     const created = await repository.create({
       publicTitle: "Large Lore",
@@ -158,6 +165,7 @@ test("stable World Info falls back to Overview when constant content exceeds the
     const resolver = createManagedWorldInfoBindingResolver(repository);
     const exact = await resolver.resolve(await resolver.bindExact(created.publicTitle, 1));
     const threads = createChatThreadStore(root, "continuity-key");
+    closeStore = () => threads.close?.();
     const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
     const thread = await creation.createExplicit({ chatThreadId: "thread", chatSurfaceSessionId: "surface", companionId: "companion", continuityId: "continuity", worldBookBinding: exact.binding, opening: "blank" });
     const catalog = await materializeTavernAuthoredStableCatalog(paths, new TavernArtifactStore(root), thread.thread, { continuityId: "continuity", sessionId: "pi-session", surface: "tavern", threadId: "thread", profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) } }, exact);
@@ -165,6 +173,7 @@ test("stable World Info falls back to Overview when constant content exceeds the
     assert.match(catalog.stableSources[0]!.content, /Large Lore/);
     assert.doesNotMatch(catalog.stableSources[0]!.content, /Large constant 1/);
   } finally {
+    closeStore?.();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -189,4 +198,5 @@ test("compiles exact v2 Chat catalog with reference-free scope and deterministic
   assert.equal(catalog.scope.threadId, "thread");
   assert.match(catalog.canonicalHash, /^[a-f0-9]{64}$/);
   await assert.rejects(() => materializeTavernAuthoredContextCatalog(paths, artifacts, thread.thread, { ...scope, threadId: "foreign" }), /binding_mismatch/);
+  threads.close?.();
 });
