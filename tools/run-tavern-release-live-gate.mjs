@@ -11,7 +11,10 @@ import {
 } from "./check-tavern-release-prerequisites.mjs";
 
 import { prepareReportTarget, writeReport } from "./run-tavern-narrative-gate.mjs";
-import { MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS } from "./lib/tavern-mounted-operation-vocabulary.mjs";
+import {
+  MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS,
+  readMountedTavernManagementProfile,
+} from "./lib/tavern-mounted-operation-vocabulary.mjs";
 
 export { CHAT_TAVERN_LIVE_PROFILE, DEFAULT_TAVERN_RELEASE_PROFILE };
 
@@ -372,6 +375,38 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
       checks,
     );
   }
+  // The other half of the same constraint, and deliberately an EQUALITY rather
+  // than another local property check.
+  //
+  // Completeness above proves the mapping covers the profile it was handed, but
+  // the caller supplies both sides of that comparison. Two shapes therefore
+  // passed with `verdict: passed`:
+  //   - a tavern_management profile declaring one operation with a one-operation
+  //     mapping (the run-05 false green, by shrinking the profile);
+  //   - a profile with the right tier and the right operation COUNT but a forged
+  //     identity - a profileId the Host never declares, no bootstrap/state.read/
+  //     draft.read routes, no memory navigation item (round-2 audit).
+  // Charging the tier, the count or the route set would just move the forgery to
+  // whichever property was not yet checked. The authority is the profile the
+  // composition owner actually mounts, which
+  // `readMountedTavernManagementProfile()` derives from that source, so the
+  // supplied profile must EQUAL it. A chat_core profile legitimately describes a
+  // different (smaller) surface and is exempt.
+  if (MOUNTED_TIER_RELEASE_TIERS.has(mountedProfile?.releaseTier)) {
+    const mounted = readMountedTavernManagementProfile();
+    for (const field of ["profileId", "releaseTier", "routeIds", "operationIds", "navigationItemIds"]) {
+      const supplied = mountedProfile?.[field];
+      const authority = mounted[field];
+      check(
+        Array.isArray(authority)
+          ? Array.isArray(supplied) && supplied.length === authority.length && authority.every((id, i) => supplied[i] === id)
+          : supplied === authority,
+        "mounted_profile_operation_evidence_mounted_surface",
+        "mounted_composed_tavern_profile_operation_to_evidence_mapping_profile_not_the_mounted_profile",
+        checks,
+      );
+    }
+  }
 
   return {
     valid: profileValid && checks.length === 0,
@@ -643,29 +678,6 @@ export async function runTavernReleaseLiveOrchestrator({
   // audited artifacts: 9 of 12 live turns belonged to attempts whose verdict was
   // already impossible when they started.
   const inputChecks = validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping });
-  // A caller-supplied profile may not shrink its way past the completeness check.
-  // That check proves the mapping covers the profile it was handed; it cannot see
-  // whether the profile itself still describes the surface the Host actually
-  // mounts. A profile that declares five operations - or one - validates cleanly
-  // against a five-operation mapping and yields `passed`, which is exactly the
-  // run-01..run-05 false green the completeness check was added to remove.
-  // Only the tier that claims the management surface is held to it: a chat-core
-  // profile legitimately declares a smaller surface, and the live plan is the
-  // authority on which tier this run is releasing.
-  const profileCoversMountedSurface =
-    typeof mountedProfile?.releaseTier === "string" &&
-    MOUNTED_TIER_RELEASE_TIERS.has(mountedProfile.releaseTier)
-      ? MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.every((operationId) =>
-          Array.isArray(mountedProfile.operationIds) && mountedProfile.operationIds.includes(operationId),
-        )
-      : true;
-  if (!profileCoversMountedSurface) {
-    inputChecks.checks.push({
-      id: "mounted_profile_operation_evidence_mounted_surface",
-      status: "blocked",
-      detail: "mounted_composed_tavern_profile_operation_to_evidence_mapping_profile_under_declared",
-    });
-  }
   if (inputChecks.checks.length > 0) {
     return {
       gate: ORCHESTRATOR_SCHEMA,

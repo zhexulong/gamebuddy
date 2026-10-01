@@ -144,13 +144,12 @@ test("mounted profile mapping accepts the recorder's automation evidence kind an
 
 test("the live UI evidence recorder's own export validates as mounted operation evidence", async () => {
   const { recordTavernUiOperationEvidence } = await import("./record-tavern-ui-operation-evidence.mjs");
-  const recorderProfile = {
-    profileId: "gamebuddy.tavern-management.chat-list-title",
-    releaseTier: "tavern_management",
-    routeIds: ["chat.rename", "draft.save", "draft.discard"],
-    operationIds: ["chat.rename", "draft.save", "draft.discard"],
-    navigationItemIds: ["chat"],
-  };
+  const { readMountedTavernManagementProfile } = await import("./lib/tavern-mounted-operation-vocabulary.mjs");
+  // The recorder only accepts a `tavern_management` profile, and that tier is now
+  // bound to the exact profile the composition owner mounts, so this uses the
+  // real one. That is also the stronger test: the recorder-to-gate seam is only
+  // proven when it is exercised with the profile production actually passes.
+  const recorderProfile = { ...readMountedTavernManagementProfile() };
   const root = await mkdtemp(join(tmpdir(), "tavern-release-live-gate-recorder-"));
   try {
     const inputPath = join(root, "input.json");
@@ -159,11 +158,7 @@ test("the live UI evidence recorder's own export validates as mounted operation 
       inputPath,
       JSON.stringify({
         profile: recorderProfile,
-        operations: [
-        { operationId: "chat.rename", outcome: "passed" },
-        { operationId: "draft.save", outcome: "passed" },
-        { operationId: "draft.discard", outcome: "passed" },
-      ],
+        operations: recorderProfile.operationIds.map((operationId) => ({ operationId, outcome: "passed" })),
       }),
     );
     await recordTavernUiOperationEvidence({ inputPath, outputPath });
@@ -173,7 +168,7 @@ test("the live UI evidence recorder's own export validates as mounted operation 
       operationEvidenceMapping,
     });
     assert.equal(validation.valid, true, JSON.stringify(validation.checks));
-    assert.deepEqual(validation.mappedOperationIds, ["chat.rename", "draft.save", "draft.discard"]);
+    assert.deepEqual(validation.mappedOperationIds, [...recorderProfile.operationIds]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -182,9 +177,14 @@ test("the live UI evidence recorder's own export validates as mounted operation 
 test("the completeness check refuses a mapping that skips a declared operation", () => {
   // run-01..run-05 all passed with a mapping of five operations against a profile
   // that declared more, because membership was checked in only one direction.
+  //
+  // This profile is deliberately not `tavern_management`: that tier is bound to
+  // the exact profile the Host mounts, so a plausible-looking four-operation
+  // stand-in would be rejected for the wrong reason and this test would stop
+  // measuring completeness (see the mounted-surface tests below).
   const wideProfile = Object.freeze({
-    profileId: "gamebuddy.tavern-management.chat-list-title",
-    releaseTier: "tavern_management",
+    profileId: "chat-core-v1",
+    releaseTier: "chat_core",
     routeIds: Object.freeze(["chat.rename", "draft.save", "draft.discard", "chat.submit"]),
     operationIds: Object.freeze(["chat.rename", "draft.save", "draft.discard", "chat.submit"]),
     navigationItemIds: Object.freeze(["chat"]),
@@ -352,6 +352,102 @@ test("a raw runner report survives the whole normalization chain", async () => {
   assert.equal(twice.verdict, "passed");
   assert.deepEqual(twice.runs[0].disclosures, { providerAcceptedOrSemanticAnswer: false });
   assert.equal(twice.runs[0].turn, "completed");
+});
+
+test("the exported gate refuses a shrunken management profile too, not only the orchestrator", async () => {
+  // The mounted-surface check first lived in runTavernReleaseLiveOrchestrator,
+  // which left the other exported entry point accepting a one-operation
+  // tavern_management profile and minting `passed`. The round-2 audit found it by
+  // calling the gate directly. Both entries now share one validation, and this
+  // test pins the gate's own behaviour so the split cannot come back.
+  const shrunken = Object.freeze({
+    profileId: "gamebuddy.tavern-management.chat-list-title",
+    releaseTier: "tavern_management",
+    routeIds: Object.freeze(["chat.rename"]),
+    operationIds: Object.freeze(["chat.rename"]),
+    navigationItemIds: Object.freeze(["chat"]),
+  });
+  const mapping = Object.freeze({
+    schema_version: 1,
+    profile: shrunken,
+    operations: { "chat.rename": [token(11)] },
+  });
+
+  const validation = validateMountedProfileOperationEvidence({
+    mountedProfile: shrunken,
+    operationEvidenceMapping: mapping,
+  });
+  assert.equal(validation.valid, false);
+  assert.ok(
+    validation.checks.some((check) => check.id === "mounted_profile_operation_evidence_mounted_surface"),
+    "the shared validator must name the under-declared profile",
+  );
+
+  const gate = await runTavernReleaseLiveGate({
+    mountedProfile: shrunken,
+    operationEvidenceMapping: mapping,
+    runs: passedRuns(),
+    prerequisites: passingPrerequisites,
+  });
+  assert.notEqual(gate.verdict, "passed");
+  assert.deepEqual(gate.mappedOperationIds, []);
+});
+
+test("a profile with the right tier and operation count but a forged identity is refused", async () => {
+  // Shrinking was only half the hole. A profile that declares all fourteen
+  // operations still passed when its identity was forged: a profileId the Host
+  // never mounts, no bootstrap/state.read/draft.read routes, and no memory
+  // navigation item. Charging the tier, the count or the route set individually
+  // just moves the forgery to whichever property is not yet checked, so the
+  // validator compares the supplied profile against the one the composition
+  // owner derives. This test pins the identity half.
+  const { readMountedTavernManagementProfile } = await import("./lib/tavern-mounted-operation-vocabulary.mjs");
+  const real = readMountedTavernManagementProfile();
+  const forged = Object.freeze({
+    profileId: "fake.management",
+    releaseTier: "tavern_management",
+    routeIds: Object.freeze([...real.operationIds]),
+    operationIds: Object.freeze([...real.operationIds]),
+    navigationItemIds: Object.freeze(["chat"]),
+  });
+  const mapping = Object.freeze({
+    schema_version: 1,
+    profile: forged,
+    operations: Object.fromEntries(real.operationIds.map((id) => [id, [token(11)]])),
+  });
+
+  const validation = validateMountedProfileOperationEvidence({
+    mountedProfile: forged,
+    operationEvidenceMapping: mapping,
+  });
+  assert.equal(validation.valid, false);
+  assert.ok(
+    validation.checks.some((check) => check.id === "mounted_profile_operation_evidence_mounted_surface"),
+    "a forged identity must be refused even when every operation is declared",
+  );
+
+  const report = await runTavernReleaseLiveOrchestrator({
+    mountedProfile: forged,
+    operationEvidenceMapping: mapping,
+    prerequisites: passingPrerequisites,
+    runNarrative: async ({ role }) => passedRun(role),
+    temporaryReportPath: (role) => `/tmp/${role}.json`,
+  });
+  assert.equal(report.verdict, "blocked");
+
+  // The real mounted profile still validates, so the equality is not a
+  // always-fail dressed up as a check.
+  assert.equal(
+    validateMountedProfileOperationEvidence({
+      mountedProfile: real,
+      operationEvidenceMapping: {
+        schema_version: 1,
+        profile: real,
+        operations: Object.fromEntries(real.operationIds.map((id) => [id, [token(11)]])),
+      },
+    }).valid,
+    true,
+  );
 });
 
 test("Tavern live gate passes when prerequisites, real runs, and operation evidence all genuinely pass", async () => {
