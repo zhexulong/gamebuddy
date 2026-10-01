@@ -71,7 +71,11 @@ export type { CompanionModelConfig, CompanionThinkingLevel, RuntimePaths };
 
 export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
   pi: "0.84.4",
-  magicContext: "0.41.0-gamebuddy.1",
+  // The artifact identity the Host actually loads: `@cortexkit/pi-magic-context`
+  // resolved from `vendor/magic-context/packages/pi-plugin`. Keep this equal to
+  // that package's `version`; a run manifest must never record an identity no
+  // artifact carries.
+  magicContext: "0.42.3-airp.1",
 });
 
 /** The selected fork domain; activation gates remain independently fail-closed. */
@@ -785,6 +789,31 @@ export async function createRuntimeWithFixedToolsCore(
     );
 
   const settings = SettingsManager.inMemory({ compaction: { enabled: false } });
+
+  // Render/management partition agreement. Magic Context resolves a project
+  // identity by walking up from the session cwd looking for a git root; for a
+  // host-owned runtime root that walk escapes the root and lands on the user's
+  // home repository (a single identity shared by every tenant) or, when the home
+  // project is disallowed, on `undefined` (memory injection silently off). The
+  // management CRUD facade writes under `gamebuddy:<identity>:continuity:<id>`
+  // via resolveGameBuddyMemoryProjectPath, so the render side must be told to
+  // read that same partition. This is boot-time and locked, matching setHarness;
+  // a second runtime with a DIFFERENT continuity in one process throws instead of
+  // silently reading the wrong tenant's memories.
+  if (loadMagicContextExtension && magicContextMemoryEnabled) {
+    const memoryHooks = await import("@cortexkit/pi-magic-context/memory");
+    const renderPartition =
+      identity.continuityId === undefined
+        ? undefined
+        : memoryHooks.resolveGameBuddyMemoryProjectPath(
+            paths.runtimeCwd,
+            identity.continuityId,
+          );
+    if (renderPartition !== undefined) {
+      memoryHooks.setDeclaredProjectIdentity(renderPartition);
+    }
+  }
+
   // Resolve the declared runtime dependency rather than a source-relative
   // vendor path. Production artifacts are immutable generations outside the
   // repository, while the package manager binds this file dependency to the
