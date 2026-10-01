@@ -57,6 +57,28 @@ async function capability() {
 function expectCode(code: TavernInitialChatExactContentPortError["code"]): (error: unknown) => boolean {
   return (error): boolean => error instanceof TavernInitialChatExactContentPortError && error.code === code;
 }
+
+/**
+ * The one path the store owns for a continuity key, once the schema exists.
+ * Keeping this in one place means a schema version bump cannot leave the
+ * durability tests writing into a directory no reader looks at.
+ */
+function durableDatabasePath(root: string): string {
+  return join(root, "tavern", "v3", "continuities", "a".repeat(64), "tavern.sqlite");
+}
+
+/**
+ * A second reader over an already-provisioned root.
+ *
+ * The durability tests close the first store to force a WAL checkpoint, then
+ * damage the database file; reopening is what makes the damage observable,
+ * because the store that made the writes still holds its pages in memory.
+ */
+function reopen(root: string) {
+  const store = createChatThreadStore(root, "a".repeat(64), () => 10);
+  const reader = { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } };
+  return { store, port: createInitialChatExactContentPort(createInitialChatExactContentCapability(store, reader)) };
+}
 async function assertNoDurableThreadArtifacts(root: string, rejectedResult: unknown): Promise<void> {
   assert.deepEqual(await readdir(root, { recursive: true }), []);
   assert.equal(isTrustedTavernExactContentReceipt(rejectedResult), false);
@@ -166,17 +188,30 @@ test("collision does not fall back and broad not-found Error text cannot create"
       ),
     );
     const missing = { ...binding, chatThreadId: "missing_01" };
-    const dbPath = join(fixture.root, "tavern", "v2", "continuities", "a".repeat(64), "tavern.sqlite");
-    await writeFile(dbPath, "{ broken", "utf8");
-    await assert.rejects(
-      () =>
-        port.resumeExact(missing.chatThreadId, missing.companionId, missing.continuityId, missing.chatSurfaceSessionId),
-      /(?:sqlite|database|malformed|not_found)/i,
-    );
-    await assert.rejects(
-      () => fixture.store.resumeThread("missing_01", binding.chatSurfaceSessionId),
-      /(?:sqlite|database|malformed|not_found)/i,
-    );
+    // Make the damage durable before presenting it. The store writes WAL, so the
+    // committed pages sit in `-wal` until a checkpoint; closing first checkpoints
+    // them back and removes the WAL, and only then does overwriting the main file
+    // produce a genuinely malformed durable state.
+    fixture.store.close?.();
+    await writeFile(durableDatabasePath(fixture.root), "{ broken", "utf8");
+    const reopened = reopen(fixture.root);
+    try {
+      // A damaged store must fail closed as a database fault. It must never be
+      // reported as an absent thread, because `chat_thread_not_found` is the
+      // answer that lets a caller create new content over the damage.
+      await assert.rejects(
+        () =>
+          reopened.port.resumeExact(missing.chatThreadId, missing.companionId, missing.continuityId, missing.chatSurfaceSessionId),
+        (error: unknown) =>
+          !expectCode("chat_thread_not_found")(error) && /(?:sqlite|database|malformed)/i.test(String(error)),
+      );
+      await assert.rejects(
+        () => reopened.store.resumeThread("missing_01", binding.chatSurfaceSessionId),
+        /(?:sqlite|database|malformed)/i,
+      );
+    } finally {
+      reopened.store.close?.();
+    }
   } finally {
     fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
@@ -187,18 +222,28 @@ test("malformed durable state fails closed without a receipt", async () => {
   const fixture = await capability();
   try {
     await fixture.creation.createExplicit(request);
-    const dbPath = join(fixture.root, "tavern", "v2", "continuities", "a".repeat(64), "tavern.sqlite");
-    await writeFile(dbPath, "{ malformed", "utf8");
-    await assert.rejects(
-      () =>
-        createInitialChatExactContentPort(fixture.capability).resumeExact(
-          binding.chatThreadId,
-          binding.companionId,
-          binding.continuityId,
-          binding.chatSurfaceSessionId,
-        ),
-      /(?:sqlite|database|malformed)/i,
-    );
+    // Close first so the WAL is checkpointed into the database file; otherwise
+    // the committed pages survive in `-wal` and overwriting the main file
+    // cannot produce the malformed durable state this test means to present.
+    fixture.store.close?.();
+    await writeFile(durableDatabasePath(fixture.root), "{ malformed", "utf8");
+    // Reopen: the store that made the writes still holds its pages in memory,
+    // so only a fresh reader can observe the damaged file.
+    const reopened = reopen(fixture.root);
+    try {
+      await assert.rejects(
+        () =>
+          reopened.port.resumeExact(
+            binding.chatThreadId,
+            binding.companionId,
+            binding.continuityId,
+            binding.chatSurfaceSessionId,
+          ),
+        /(?:sqlite|database|malformed)/i,
+      );
+    } finally {
+      reopened.store.close?.();
+    }
   } finally {
     fixture.store.close?.();
     await rm(fixture.root, { recursive: true, force: true });
