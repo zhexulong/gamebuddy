@@ -160,10 +160,10 @@ test("the live UI evidence recorder's own export validates as mounted operation 
       JSON.stringify({
         profile: recorderProfile,
         operations: [
-          { operationId: "chat.rename", outcome: "passed" },
-          { operationId: "draft.save", outcome: "passed" },
-          { operationId: "draft.discard", outcome: "not_applicable" },
-        ],
+        { operationId: "chat.rename", outcome: "passed" },
+        { operationId: "draft.save", outcome: "passed" },
+        { operationId: "draft.discard", outcome: "passed" },
+      ],
       }),
     );
     await recordTavernUiOperationEvidence({ inputPath, outputPath });
@@ -173,7 +173,7 @@ test("the live UI evidence recorder's own export validates as mounted operation 
       operationEvidenceMapping,
     });
     assert.equal(validation.valid, true, JSON.stringify(validation.checks));
-    assert.deepEqual(validation.mappedOperationIds, ["chat.rename", "draft.save"]);
+    assert.deepEqual(validation.mappedOperationIds, ["chat.rename", "draft.save", "draft.discard"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 import {
   MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS,
@@ -63,14 +64,30 @@ export async function recordTavernUiOperationEvidence({ inputPath, outputPath })
   if (!Array.isArray(input.operations) || input.operations.length === 0) throw new Error("ui_operation_outcomes_missing");
   const mapped = {};
   const seen = new Set();
+  const declared = new Set(input.profile.operationIds);
   for (const outcome of input.operations) {
     if (!outcome || typeof outcome !== "object" || !OPERATIONS.has(outcome.operationId) || seen.has(outcome.operationId))
       throw new Error("ui_operation_outcome_invalid");
     seen.add(outcome.operationId);
-      if (outcome.outcome !== "passed" && outcome.outcome !== "not_applicable" && outcome.outcome !== "blocked") throw new Error("ui_operation_outcome_invalid");
-    if (!input.profile.operationIds.includes(outcome.operationId)) throw new Error("ui_operation_not_declared");
-    if (outcome.outcome !== "passed") continue;
+    if (
+      outcome.outcome !== "passed" &&
+      outcome.outcome !== "not_applicable" &&
+      outcome.outcome !== "blocked"
+    )
+      throw new Error("ui_operation_outcome_invalid");
+    if (!declared.has(outcome.operationId)) throw new Error("ui_operation_not_declared");
+    if (outcome.outcome !== "passed") throw new Error("ui_operation_not_passed");
     mapped[outcome.operationId] = [opaque()];
+  }
+  // The mapping is the proof the WHOLE mounted surface was exercised and
+  // every declared operation passed (design/28 §7: each lifecycle needs an
+  // observable durable postcondition before its control enters the UI). A
+  // blocked or skipped operation is a finding, not evidence to omit: dropping
+  // it would make the gate approve a surface whose profile lists an operation
+  // that was never shown to work. Fail closed instead of producing a mapping
+  // that hides the gap.
+  for (const operationId of declared) {
+    if (!seen.has(operationId)) throw new Error("ui_operation_incomplete");
   }
   if (Object.keys(mapped).length === 0) throw new Error("ui_operation_no_passed_outcomes");
   const result = {
@@ -105,7 +122,7 @@ export async function recordTavernUiOperationEvidence({ inputPath, outputPath })
   return result;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url) || process.argv[1] === new URL(import.meta.url).pathname) {
   const [, , inputPath, outputPath] = process.argv;
   if (!inputPath || !outputPath) throw new Error("usage: node tools/record-tavern-ui-operation-evidence.mjs <ui-outcomes.json> <mapping.json>");
   await recordTavernUiOperationEvidence({ inputPath, outputPath });

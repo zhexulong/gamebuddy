@@ -6,19 +6,46 @@
   "release_tier": "tavern_management",
   "operations": {
     "draft.save": [
-      "944733edfbd3cd7f9433541b8f8b1ea911f99ac26f461e36"
+      "6d22484cdfa1a4a032be99ed8a74de703be734e3fc46f929"
     ],
     "draft.discard": [
-      "973c7eec1b986bd6701d92d79db068adda124d7b70ea1d1e"
+      "3cd5667a733416728331f4be62eee0a94073390383df8836"
     ],
     "chat.rename": [
-      "04683d9cdd66338fb2837296de3de2267060ee51be7a64eb"
+      "9af2a19413fe6dfdaca87501e9d756464c07f043d96c43f1"
     ],
     "memory.mutate": [
-      "22f2033a45d4b9c8fa0e53242dc23bc429ada3968ee36bca"
+      "9ad2dfdfb8b405fbee5b00fad4437a0ddb2a5946b48941e3"
     ],
     "world-info.bind": [
-      "e0544a656b794dd899525564ffd7a4e2f2a50eb4b97fffa0"
+      "eb9779cb895797ebc743de979382851087c8bfa65202f2a8"
+    ],
+    "settings.voice.read": [
+      "4006f748bf951da61e77251def4f49d53f96eb1873185e00"
+    ],
+    "settings.voice.consent": [
+      "54377d2fd6c096b06a33f031257e3058159a9558336ba1fd"
+    ],
+    "settings.voice.devices": [
+      "402ea99ed10aded7762c643a1d0373603ce19f40c55228b2"
+    ],
+    "settings.connection.read": [
+      "43babea1a6c9ceeb13ac29eb76ce756670b9de93ccb71545"
+    ],
+    "settings.connection.create": [
+      "94f2d981b305916b05b0e003c039dec6690b5ce68a491c61"
+    ],
+    "settings.connection.test": [
+      "22c887ea405ac633032b1222de1016c383f07d182936944b"
+    ],
+    "settings.connection.activate": [
+      "c59532a2860e247e10aebd05be036a541059b7b3450df556"
+    ],
+    "settings.connection.model": [
+      "e5a083d39db242cbc7d34881f00f4cff581d400f3b450303"
+    ],
+    "settings.connection.remove": [
+      "9bd908679deb76ca4f50a3220b0787357cf1eecf467d79f9"
     ]
   }
 }
