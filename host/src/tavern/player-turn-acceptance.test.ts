@@ -48,6 +48,9 @@ test("player turn acceptance is absent from the ordinary ChatThreadStore surface
   try {
     assert.equal("acceptPlayerMessage" in store, false);
   } finally {
+    // The fixture's store holds a live connection; the root cannot be removed
+    // until the test releases it.
+    store.close?.();
     await cleanupTestRoot(root);
   }
 });
@@ -151,7 +154,10 @@ test("player turn opaque admission is one-shot, rejects reentry and close drains
       releaseMutation();
       const receipt = await durable;
       await closing;
-      const state = await createChatThreadStore(root, identityKey(principal)).resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+      // Bind the inspection store so it can be released before the root goes.
+      const inspectStore = createChatThreadStore(root, identityKey(principal));
+      const state = await inspectStore.resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+      inspectStore.close?.();
       let afterClose = false; try { await acceptMountedDurableTurn(manifest, lease, async () => receipt); } catch (error) { afterClose = /p4_admission_rejected/.test(String(error)); }
       process.stdout.write(JSON.stringify({ firstReceipt, afterFirst, afterOuter, closePendingBeforeMutation, receipt, afterClose, events, state }));
       await authority.close();
