@@ -60,8 +60,6 @@ internal sealed partial class ExecutionManager
         // target identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
         if (Game1.player.CurrentTool is not WateringCan wateringCan)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped", null);
         if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
@@ -78,6 +76,45 @@ internal sealed partial class ExecutionManager
         // The spot is read live after the native call too, so the postcondition is
         // this execution's own before/after observation rather than a Mod-authored
         // claim.
+        if (hutch.waterSpots[targetY - SlimeHutchTroughFirstRow])
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_trough_already_watered", $"target={targetX},{targetY}");
+        // 5.2: out of the native radius, walk in rather than refuse. The can, the hutch
+        // and the spot are validated above; all are re-checked after the walk inside the
+        // closure, because the walk takes several ticks.
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "water_slime_hutch_trough",
+                hutch,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteWaterSlimeHutchTrough(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteWaterSlimeHutchTrough(executionId, requestId, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes water_slime_hutch_trough against the current world, re-validating the
+    /// can, the hutch and the spot because an approach leg may have taken several ticks.
+    /// Shared by the in-range path and the post-approach path.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteWaterSlimeHutchTrough(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
+    {
+        if (Game1.player.CurrentTool is not WateringCan wateringCan)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped", null);
+        if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty", null);
+
+        if (ResolveSlimeHutchTrough(targetX, targetY) is not { } hutch)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_not_current_location", $"location={Game1.player.currentLocation?.NameOrUniqueName};target={targetX},{targetY}");
+        if (!string.Equals(BuildSlimeHutchTroughTargetId(hutch, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_trough_target_changed", $"target={targetX},{targetY};expected={expectedTargetId}");
         if (hutch.waterSpots[targetY - SlimeHutchTroughFirstRow])
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_trough_already_watered", $"target={targetX},{targetY}");
 

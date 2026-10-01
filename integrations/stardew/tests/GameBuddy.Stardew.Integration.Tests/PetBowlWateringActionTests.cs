@@ -98,28 +98,41 @@ public sealed class PetBowlWateringActionTests
         end.Should().BeGreaterThan(start);
         string body = source[start..(end + 1)];
 
+        // Design 5.2 split this handler into a request path (admission, geometry,
+        // then either an approach leg or the execution body) and the shared
+        // execution body `ExecuteWaterPetBowl`. The contract lives on whichever body
+        // the action actually executes through, so follow the delegation instead of
+        // pinning the wrapper -- a wrapper that delegates to a body missing any of
+        // these fields still fails, because the reachable set is what gets checked.
+        string executed = ReachableToolBody(source, body, "ExecuteWaterPetBowl");
+
         // The tool-family gate requires the agent half of the mutation on any
         // tool-driven succeeded receipt (WateringCan deducts stamina in DoFunction).
-        body.Should().Contain("stamina_before");
-        body.Should().Contain("stamina_after");
-        body.Should().Contain("stamina_delta");
-        body.Should().Contain("expected_stamina_cost");
+        executed.Should().Contain("stamina_before");
+        executed.Should().Contain("stamina_after");
+        executed.Should().Contain("stamina_delta");
+        executed.Should().Contain("expected_stamina_cost");
         // A direct DoFunction bypasses Farmer.useTool, so the persistent cross-day
         // exhaustion consequence must be applied or the companion escapes it. The
         // handler reaches it through the shared seam rather than inlining the step,
         // so both halves are pinned: this handler reaches the seam, and the seam
         // still runs dispatch, click-anchor clear and exhaustion, in that order.
-        body.Should().Contain("UseNativeToolOnTile(");
-        body.Should().NotContain("checkForExhaustion");
+        executed.Should().Contain("UseNativeToolOnTile(");
+        executed.Should().NotContain("checkForExhaustion");
         SharedToolUseSeam().Should().Contain("DoFunction(");
         SharedToolUseSeam().Should().Contain("lastClick = Vector2.Zero");
         SharedToolUseSeam().Should().Contain("checkForExhaustion(");
-        body.Should().Contain("\"pet_bowl_watered\"");
-        body.Should().Contain("\"pet_bowl_water_postcondition_unavailable\"");
+        executed.Should().Contain("\"pet_bowl_watered\"");
+        executed.Should().Contain("\"pet_bowl_water_postcondition_unavailable\"");
         // The postcondition is this execution's own before/after observation.
-        body.Should().Contain("before_watered=");
-        body.Should().Contain("after_watered=");
-        body.Should().Contain("native_menu_opened=");
+        executed.Should().Contain("before_watered=");
+        executed.Should().Contain("after_watered=");
+        executed.Should().Contain("native_menu_opened=");
+        // And the request path must hand the mechanism a closure into that body, so
+        // the post-approach execution reuses it rather than a copy.
+        body.Should().Contain("this.ExecuteWaterPetBowl(arrivalExecutionId, arrivalRequestId");
+        body.Should().Contain("return this.ExecuteWaterPetBowl(executionId, requestId");
+        body.Should().Contain("TryBeginToolApproach(");
     }
 
     /// <summary>
@@ -186,6 +199,44 @@ public sealed class PetBowlWateringActionTests
     /// vanilla <c>Farmer.useTool</c>'s closing steps. Pinning only the handler would
     /// let the seam be hollowed out, so both halves are read here.
     /// </summary>
+    /// <summary>
+    /// The body a handler actually executes through: the wrapper plus every
+    /// `private LocalExecutionReceipt Execute*` body it reaches by delegation. Design
+    /// 5.2 made these handlers thin, so a contract pinned only on the wrapper would
+    /// stop meaning anything -- but the invariant is not relaxed either, because a
+    /// wrapper delegating to a body that misses the contract still fails here.
+    /// </summary>
+    private static string ReachableToolBody(string source, string wrapper, string executeName)
+    {
+        int start = source.IndexOf($"private LocalExecutionReceipt {executeName}(", StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, $"{executeName} must exist (design 5.2 shares one body per action)");
+        int depth = 0;
+        bool started = false;
+        int end = -1;
+        for (int index = start; index < source.Length; index++)
+        {
+            char character = source[index];
+            if (character == '{')
+            {
+                depth++;
+                started = true;
+            }
+            else if (character == '}')
+            {
+                depth--;
+                if (started && depth == 0)
+                {
+                    end = index;
+                    break;
+                }
+            }
+        }
+        end.Should().BeGreaterThan(start);
+        // The wrapper must actually reach it, or the delegation claim is decorative.
+        wrapper.Should().Contain($"this.{executeName}(");
+        return source[start..(end + 1)];
+    }
+
     private static string SharedToolUseSeam()
     {
         string source = File.ReadAllText(RepositorySourcePath(Path.Combine(
