@@ -15,7 +15,25 @@ const profile = {
   navigationItemIds: ["chat"],
 };
 
-test("records only passed declared UI operations as content-free mapping", async () => {
+test("records only a fully-passed declared UI operation set as the mapping", async () => {
+  const root = await mkdtemp(join(tmpdir(), "tavern-ui-evidence-"));
+  try {
+    const inputPath = join(root, "input.json");
+    const outputPath = join(root, "mapping.json");
+    // Every declared operation must have passed; `not_applicable` is a finding,
+    // not evidence. The mapping is the proof the whole mounted surface worked,
+    // so a skipped operation must never be silently dropped (design/28 §7).
+    await writeFile(inputPath, JSON.stringify({ profile, operations: [
+      { operationId: "chat.rename", outcome: "passed" },
+      { operationId: "draft.save", outcome: "passed" },
+      { operationId: "draft.discard", outcome: "not_applicable" },
+    ]}));
+    await assert.rejects(recordTavernUiOperationEvidence({ inputPath, outputPath }), /ui_operation_not_passed|ui_operation_incomplete/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+// The all-passed case is the only shape that produces a mapping today.
+test("produces the mapping when every declared operation passed", async () => {
   const root = await mkdtemp(join(tmpdir(), "tavern-ui-evidence-"));
   try {
     const inputPath = join(root, "input.json");
@@ -23,11 +41,11 @@ test("records only passed declared UI operations as content-free mapping", async
     await writeFile(inputPath, JSON.stringify({ profile, operations: [
       { operationId: "chat.rename", outcome: "passed" },
       { operationId: "draft.save", outcome: "passed" },
-      { operationId: "draft.discard", outcome: "not_applicable" },
+      { operationId: "draft.discard", outcome: "passed" },
     ]}));
     const result = await recordTavernUiOperationEvidence({ inputPath, outputPath });
     assert.equal(result.evidence_kind, "automation_evidence");
-    assert.deepEqual(Object.keys(result.operations), ["chat.rename", "draft.save"]);
+    assert.deepEqual(Object.keys(result.operations), ["chat.rename", "draft.save", "draft.discard"]);
     assert.match(result.operations["chat.rename"][0], /^[a-f0-9]{48}$/);
     const written = JSON.parse(await readFile(outputPath, "utf8"));
     assert.deepEqual(written, result);
