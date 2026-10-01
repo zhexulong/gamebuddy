@@ -3899,7 +3899,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 return;
             this.LogNativeLocalPlayerReadinessIfBlocked();
             ScreenEmbodimentState nativeLocalState = this.GetEmbodimentState();
-            this.RefreshFarmhandCapabilityPublication(nativeLocalState);
+            this.RefreshFarmhandCapabilityPublication(nativeLocalState, e.Ticks);
             this.ObserveBridgeGeneration(nativeLocalState);
             this.ObserveNativeChatPipeDeliveries(nativeLocalState);
             this.ObserveNavigationPipeDeliveries(nativeLocalState);
@@ -3944,7 +3944,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             return;
 
         ScreenEmbodimentState state = this.GetEmbodimentState();
-        this.RefreshFarmhandCapabilityPublication(state);
+        this.RefreshFarmhandCapabilityPublication(state, e.Ticks);
         this.ObserveBridgeGeneration(state);
         this.ObserveNativeChatPipeDeliveries(state);
         this.ObserveNavigationPipeDeliveries(state);
@@ -5475,9 +5475,14 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     }
 
     /// <summary>Game-thread only policy reload. It can only re-publish the fixed catalog's enabled subset.</summary>
-    private void RefreshFarmhandCapabilityPublication(ScreenEmbodimentState state)
+    private void RefreshFarmhandCapabilityPublication(ScreenEmbodimentState state, uint currentTick)
     {
         if (state.CapabilityPublication is null || state.BridgeSession is null || state.LocalPipeBridge is null)
+            return;
+        // The reload re-reads config.json, so it is gated to the frozen 120-tick
+        // interval instead of running on every frame; see
+        // FarmhandPolicyRefreshThrottle for the bound and why it counts ticks.
+        if (!state.PolicyRefreshThrottle.ShouldRefresh(currentTick))
             return;
         ModConfig refreshed;
         try { refreshed = this.Helper.ReadConfig<ModConfig>(); }
@@ -6511,6 +6516,12 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         internal long StopObservationEpoch { get; set; }
         internal BridgeStopObservation? PendingStopObservation { get; set; }
         internal long LastBridgeGeneration { get; set; }
+        /// <summary>
+        /// Ticks the per-frame action-policy reload. The owner froze the bound:
+        /// an edit to `config.json` reaches the capability surface within 120
+        /// ticks (2 s at 60 Hz). See FarmhandPolicyRefreshThrottle.
+        /// </summary>
+        internal FarmhandPolicyRefreshThrottle PolicyRefreshThrottle { get; } = new();
         internal Queue<NativeChatPipeDelivery> NativeChatPipeDeliveries { get; } = new();
         internal Queue<NavigationPipeDelivery> NavigationPipeDeliveries { get; } = new();
         internal Queue<ExecutionResponsePipeDelivery> ExecutionResponsePipeDeliveries { get; } = new();
