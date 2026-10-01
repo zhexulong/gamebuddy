@@ -38,8 +38,46 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object storedItem)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
+        if (!string.Equals(storedItem.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
+
+        GameLocation location = Game1.player.currentLocation;
+        (StardewValley.Objects.Chest Chest, bool IsFridge)? resolved = ResolveStorageContainerAt(location, targetX, targetY);
+        if (resolved is not { } container)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_not_owned", $"target={targetX},{targetY}");
+        Chest chest = container.Chest;
+        if (!string.Equals(BuildContainerTargetId(location, targetX, targetY, chest, container.IsFridge), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_target_changed", $"target={targetX},{targetY}");
+        // 5.2: out of the native radius, walk in rather than refuse. The item and the
+        // container are resolved above; both are re-resolved after the walk inside the
+        // closure, because the walk takes several ticks and either can change.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "chest_store",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChestStore(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteChestStore(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes chest_store against the current world, re-resolving the item, the
+    /// container and the target identity because an approach leg may have taken several
+    /// ticks. Shared by the in-range path and the post-approach path.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteChestStore(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object storedItem)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
         if (!string.Equals(storedItem.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
@@ -92,9 +130,43 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
 
+        GameLocation location = Game1.player.currentLocation;
+        (StardewValley.Objects.Chest Chest, bool IsFridge)? resolved = ResolveStorageContainerAt(location, targetX, targetY);
+        if (resolved is not { } container)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_not_owned", $"target={targetX},{targetY}");
+        Chest chest = container.Chest;
+        if (!string.Equals(BuildContainerTargetId(location, targetX, targetY, chest, container.IsFridge), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_target_changed", $"target={targetX},{targetY}");
+        // 5.2: out of the native radius, walk in rather than refuse. The container is
+        // resolved above; it and the stored item are re-resolved after the walk inside
+        // the closure, because the walk takes several ticks and either can change.
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "chest_retrieve",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChestRetrieve(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteChestRetrieve(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes chest_retrieve against the current world, re-resolving the container
+    /// and the stored item because an approach leg may have taken several ticks. Shared
+    /// by the in-range path and the post-approach path.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteChestRetrieve(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
+    {
+        _ = slot;
         GameLocation location = Game1.player.currentLocation;
         (StardewValley.Objects.Chest Chest, bool IsFridge)? resolved = ResolveStorageContainerAt(location, targetX, targetY);
         if (resolved is not { } container)
