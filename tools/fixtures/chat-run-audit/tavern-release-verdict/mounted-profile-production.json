@@ -15,7 +15,13 @@
     "world-info.bind",
     "settings.voice.read",
     "settings.voice.consent",
-    "settings.voice.devices"
+    "settings.voice.devices",
+    "settings.connection.read",
+    "settings.connection.create",
+    "settings.connection.test",
+    "settings.connection.activate",
+    "settings.connection.model",
+    "settings.connection.remove"
   ],
   "operationIds": [
     "draft.save",
@@ -25,7 +31,16 @@
     "world-info.bind",
     "settings.voice.read",
     "settings.voice.consent",
-    "settings.voice.devices"
+    "settings.voice.devices",
+    "settings.connection.read",
+    "settings.connection.create",
+    "settings.connection.test",
+    "settings.connection.activate",
+    "settings.connection.model",
+    "settings.connection.remove"
   ],
-  "navigationItemIds": ["chat", "memory"]
+  "navigationItemIds": [
+    "chat",
+    "memory"
+  ]
 }

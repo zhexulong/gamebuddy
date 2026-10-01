@@ -31,7 +31,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
-import { MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS } from "./lib/tavern-mounted-operation-vocabulary.mjs";
+import { readMountedTavernManagementProfile } from "./lib/tavern-mounted-operation-vocabulary.mjs";
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
 const OUTPUT_ROOT = process.env.GAMEBUDDY_TAVERN_GATE_OUTPUT_ROOT
@@ -294,28 +294,14 @@ export async function runManagementOperationEvidence({ outcomesPath, reportPath 
     if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
     const client = await bootstrap(origin, bootstrapToken);
     const operations = await exerciseOperations(origin, client);
-    const profile = Object.freeze({
-      profileId: "gamebuddy.tavern-management.chat-list-title",
-      releaseTier: "tavern_management",
-      routeIds: Object.freeze([
-        "bootstrap",
-        "state.read",
-        "draft.read",
-        "draft.save",
-        "draft.discard",
-        "chat.list",
-        "chat.rename",
-        "memory.read",
-        "memory.mutate",
-        "world-info.read",
-        "world-info.bind",
-        "settings.voice.read",
-        "settings.voice.consent",
-        "settings.voice.devices",
-      ]),
-      operationIds: Object.freeze([...MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS]),
-      navigationItemIds: Object.freeze(["chat", "memory"]),
-    });
+    // The WHOLE profile is derived from the composition source, never hand-written.
+    // Writing `routeIds` by hand here while deriving `operationIds` from the shared
+    // vocabulary produced a profile that declared six `settings.connection.*`
+    // operations with no corresponding route, and the release gate correctly rejected
+    // it with `mounted_profile_operation_route_membership`. A hand-maintained field is
+    // the same failure mode as the transcription files that drifted three times; the
+    // whole projection must come from one authority.
+    const profile = readMountedTavernManagementProfile();
     const payload = Object.freeze({ profile, operations });
     await writeFile(outcomesPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     if (typeof reportPath === "string" && reportPath.length > 0)
