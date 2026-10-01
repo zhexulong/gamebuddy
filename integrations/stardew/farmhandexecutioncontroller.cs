@@ -61,7 +61,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private LocalAnimalProductCollectionSpec? activeAnimalProduct;
     private LocalItemUseSpec? activeItemUse;
     private LocalItemPickupSpec? activeItemPickup;
-    private LocalToolApproachSpec? activeToolApproach;
+    private LocalApproachSpec? activeToolApproach;
     private BridgeWoodFenceResultTarget? woodFenceResultTarget;
     private string? woodFenceResultExecutionId;
     private string? woodFenceResultRequestId;
@@ -799,7 +799,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // walk is abandoned and the action reports the cancellation with the
             // target it was walking toward, so the caller knows nothing changed in
             // the world.
-            LocalToolApproachSpec toolApproachSpec = this.activeToolApproach;
+            LocalApproachSpec toolApproachSpec = this.activeToolApproach;
             this.activeToolApproach = null;
             if (this.active is not null)
                 this.active = null;
@@ -1237,7 +1237,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             // A tool-family approach invalidated before executing anything native:
             // no world mutation happened, so this is an honest Invalidated terminal.
-            LocalToolApproachSpec specification = this.activeToolApproach;
+            LocalApproachSpec specification = this.activeToolApproach;
             this.activeToolApproach = null;
             if (this.active is not null)
                 this.active = null;
@@ -1410,7 +1410,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                             ? new(
                                 this.activeToolApproach.ExecutionId,
                                 this.activeToolApproach.RequestId,
-                                ToolApproachActionId(this.activeToolApproach.Kind),
+                                this.activeToolApproach.ActionId,
                                 (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                                 activeReceipt?.ReasonCode ?? "accepted",
                                 new Dictionary<string, string> { ["target"] = this.activeToolApproach.ExpectedTargetId, ["tile"] = $"{this.activeToolApproach.TargetX},{this.activeToolApproach.TargetY}", ["approach"] = "adjacent" })

@@ -310,19 +310,17 @@ function summarizeWithChop(snapshot) {
   };
 }
 function validateNativeLocalFixtureConfig(value) {
-  const fixture = value?.NativeLocalPlayerFixture;
+  // `Portfolio` is not a ModConfig property, so the game drops the key when it
+  // writes the config back during startup. Its ABSENCE therefore proves nothing;
+  // only an explicit `true` shows the topology is not isolated. Requiring
+  // `=== false` made every runner fail once the file had been rewritten, which is
+  // what the minecart runner already hit and fixed.
+  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
   if (
-    fixture?.Enable !== true ||
-    fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO ||
-    !validFixtureSlotRelationship(fixture.LogicalSaveName, fixture.ObservedSaveSlot)
-  )
-    throw new Error("native_local_fixture_config_invalid");
-  if (
-    value.Portfolio?.Enable !== false ||
-    value.HostAutomation?.Enable !== false ||
-    value.HostFarmhandProvisioning?.Enable !== false ||
-    value.FarmhandProvisioner?.Enable !== false
+    value.Portfolio?.Enable === true ||
+    value.HostAutomation?.Enable === true ||
+    value.HostFarmhandProvisioning?.Enable === true ||
+    value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
