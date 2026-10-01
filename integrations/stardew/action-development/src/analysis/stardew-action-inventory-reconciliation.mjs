@@ -340,29 +340,108 @@ const GROUP_NAMES = Object.freeze([
   "decomposed_by_selector_layer",
 ]);
 
+/**
+ * 被拒层的分组。
+ *
+ * 输入是 `stardew-method-resolution --rejected` 的产物（每个被九谓词拒掉的单元，
+ * 带上它的委托链解析）。分档完全机械：
+ *
+ *   chain_reaches_gameplay  入口自身无 gameplay 效果，链上有 → 需裁定
+ *   own_terminal_write      入口自身有效果（P4 看到了）→ 无需在这里重提
+ *   no_gameplay_effect      两侧都没有 → 内容/表现，不构成入口
+ *
+ * 只有第一类进 `needs_adjudication`，因为它正是 P4 结构性看不见的那一类。
+ */
+export function groupRejectedUnits({ methodResolution }) {
+  const units = methodResolution?.units ?? [];
+  return units.map((u) => ({
+    key: `${u.className}.${u.member}@${u.line}`,
+    kind: "rejected_unit",
+    className: u.className,
+    member: u.member,
+    file: u.file,
+    line: u.line,
+    rejectedBy: u.rejectedBy ?? [],
+    ownEffects: u.ownEffects ?? [],
+    chainGameplayEffects: u.chainGameplayEffects ?? [],
+    resolveChain: u.resolveChain ?? [],
+    group: u.chainReachesGameplay
+      ? "needs_adjudication"
+      : u.ownTerminalWrite
+        ? "already_implemented"
+        : "explicit_exclusion",
+    actionIds: [],
+    reason: u.chainReachesGameplay
+      ? "entry body writes no gameplay state but its delegation chain does; the nine predicates reject it on the entry alone"
+      : u.ownTerminalWrite
+        ? "entry body itself writes gameplay state"
+        : "neither the entry nor its chain reaches a gameplay effect",
+    anchor: (u.resolveChain ?? []).slice(0, 4).join(" -> ") || null,
+  }));
+}
+
 const memberOf = (signature) => {
   const p = signature.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/g);
   return p ? p[p.length - 1].replace(/\s*\($/, "") : signature.trim().split(/\s+/).pop();
 };
 
+/**
+ * Registered native seams, indexed by **both** keys:
+ *
+ *   - `${member}`            the historical member-only key
+ *   - `${basename}\u0000${member}`  the file-scoped key
+ *
+ * Why both: `checkAction` is shared by six actions on six different classes, so a
+ * member-only lookup marks every `SomeLocation.checkAction` as covered regardless of
+ * what it does. Measured before this change: 32 selector/method units resolved to an
+ * owner they do not actually share. A file-scoped key removes that, but a seam's
+ * declared file and the artifact's file can legitimately differ (`ship_item`'s seam is
+ * declared on `Farm.shipItem`, the mouse path lands on `ShippingBin.shipItem`), so the
+ * member-only key is kept as a fallback and the cross-file cases are still handled by
+ * declaring them explicitly (see STARDEW_SEMANTIC_EQUIVALENT_EXITS).
+ */
 function registeredSeamMembers(register) {
-  const map = new Map();
+  const byMember = new Map();
+  const byFileMember = new Map();
   for (const action of register.actions)
     for (const seam of action.seams ?? []) {
       if (seam.kind !== "native") continue;
       const m = memberOf(seam.signature);
-      if (!map.has(m)) map.set(m, new Set());
-      map.get(m).add(action.actionId);
+      if (!m) continue;
+      if (!byMember.has(m)) byMember.set(m, new Set());
+      byMember.get(m).add(action.actionId);
+      const base = String(seam.file ?? "").split(/[\\/]/).pop().toLowerCase();
+      if (!base) continue;
+      const key = `${base}\u0000${m}`;
+      if (!byFileMember.has(key)) byFileMember.set(key, new Set());
+      byFileMember.get(key).add(action.actionId);
     }
-  return map;
+  return { byMember, byFileMember };
 }
 
+/**
+ * Resolve the actions a selector's resolve chain reaches.
+ *
+ * Walks `resolveChain` (the same-file helper chain the selector analyzer already
+ * builds), plus the leaf helper/delegate names, and matches each against the
+ * file-scoped index first. The file-scoped hit is the precise answer; the
+ * member-only fallback keeps a seam whose declared file differs from the artifact's
+ * (documented cross-file equivalences) from silently disappearing.
+ */
 function seamJoin(selector, seamMembers) {
   const hits = [];
   const consider = (text) => {
     const m = memberOf(text);
-    if (seamMembers.has(m)) hits.push({ via: text, actionIds: [...seamMembers.get(m)].sort() });
+    if (!m) return;
+    const base = String(selector.file ?? "").split(/[\\/]/).pop().toLowerCase();
+    const scoped = seamMembers.byFileMember.get(`${base}\u0000${m}`);
+    const owners = scoped ?? seamMembers.byMember.get(m);
+    if (!owners) return;
+    hits.push({ via: text, actionIds: [...owners].sort(), scoped: Boolean(scoped) });
   };
+  // resolveChain carries the full same-file chain (`Helper@line`), which is what
+  // makes a selector that only routes into a helper discoverable.
+  for (const step of selector.resolveChain ?? []) consider(String(step).split("@")[0]);
   for (const helper of selector.helpers ?? []) consider(helper);
   for (const delegate of selector.delegatedCalls ?? []) consider(delegate);
   return hits;
@@ -521,7 +600,7 @@ export function groupMethodUnits({ remainingReport, methodVerdicts }) {
   return rows;
 }
 
-export function reconcile({ selectorArtifact, remainingReport, register, catalog, rules }) {
+export function reconcile({ selectorArtifact, remainingReport, register, catalog, rules, methodResolution }) {
   assertRemainingReport(remainingReport, "remainingReport");
   const selectorVerdicts = rules?.selectorVerdicts ?? SELECTOR_VERDICTS;
   const methodVerdicts = rules?.methodVerdicts ?? METHOD_VERDICTS;
@@ -543,6 +622,17 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
 
   // ---- 方法层 -------------------------------------------------------------
   const methodRows = groupMethodUnits({ remainingReport, methodVerdicts });
+
+  // ---- 被拒层（第三层）-----------------------------------------------------
+  //
+  // 九谓词把 109 个单元拒掉后，`unmatchedCandidates` 不含它们，"remaining
+  // report" 也就没有行 —— 这一层是**只有方法解析能看到**的入口
+  // （`Grass.performToolAction` 是典型：它拒绝后从所有下游分析里消失）。
+  //
+  // 这层**不产出 action identity**：它只把「入口自身无效果但链上有效果」的
+  // 单元筛出来，交给人裁定。是否算新 action、是否并入现有 action，都不在这里定。
+  const rejectedRows = methodResolution ? groupRejectedUnits({ methodResolution }) : [];
+  const rejectedGroups = groupRows(rejectedRows);
 
   // 参照列：A / C 档不参与计数（A 有 catalog intent，C 只有视觉/计时器写入）
   const referenceTiers = remainingReport.tiers;
@@ -604,6 +694,10 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
       methodAlreadyImplementedUnits: methodGroups.already_implemented.length,
       methodContentOperationUnits: methodGroups.content_operation.length,
       methodPendingUnits: methodGroups.needs_adjudication.length,
+      rejectedLayerUnits: rejectedRows.length,
+      rejectedLayerChainReachesGameplay: rejectedGroups.needs_adjudication.length,
+      rejectedLayerNote:
+        "units the nine predicates rejected; only the method-resolution layer can see the ones whose entry body is pure delegation",
       newPrimitiveIntents: newPrimitiveIntents.length,
       pendingAdjudicationItems: pendingItems.length,
       upperBoundIfAllPendingBecomePrimitives: newPrimitiveIntents.length + pendingItems.length,
@@ -611,7 +705,7 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
     },
     newPrimitiveIntents,
     gatingAnnotations,
-    groups: { selectorLayer: selectorGroups, methodLayer: methodGroups },
+    groups: { selectorLayer: selectorGroups, methodLayer: methodGroups, rejectedLayer: rejectedGroups },
     reference: {
       methodTierA_catalogIntentExists: referenceTiers.A_catalog_intent_exists.length,
       methodTierC_nonGameplayWrites: referenceTiers.C_non_gameplay_writes.length,
@@ -696,7 +790,7 @@ function parseArgs(argv) {
       out.pretty = true;
       continue;
     }
-    if (!["--source-root", "--action-register", "--remaining", "--candidates", "--catalog", "--out"].includes(a))
+    if (!["--source-root", "--action-register", "--remaining", "--candidates", "--catalog", "--method-resolution", "--out"].includes(a))
       fail("arguments_invalid", `Bad argument ${a}.`);
     const v = argv[++i];
     if (!v) fail("arguments_invalid", `Missing value for ${a}.`);
@@ -725,9 +819,12 @@ if (directRun) {
       [options.remaining, options["action-register"], options.catalog].map(async (p) => JSON.parse(await readFile(p, "utf8"))),
     );
     assertRemainingReport(remainingReport, options.remaining);
+    const methodResolution = options["method-resolution"]
+      ? JSON.parse(await readFile(options["method-resolution"], "utf8"))
+      : null;
     const parser = await createSelectorParser();
     const selectorArtifact = await analyzeTileActionSelectorTree({ sourceRoot: options["source-root"], parser });
-    const artifact = reconcile({ selectorArtifact, remainingReport, register, catalog });
+    const artifact = reconcile({ selectorArtifact, remainingReport, register, catalog, methodResolution });
     const serialized = `${JSON.stringify(artifact, null, options.pretty ? 2 : 0)}\n`;
     if (options.out) {
       await writeFile(options.out, serialized);
