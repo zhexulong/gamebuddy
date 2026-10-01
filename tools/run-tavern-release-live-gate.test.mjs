@@ -179,6 +179,131 @@ test("the live UI evidence recorder's own export validates as mounted operation 
   }
 });
 
+test("the completeness check refuses a mapping that skips a declared operation", () => {
+  // run-01..run-05 all passed with a mapping of five operations against a profile
+  // that declared more, because membership was checked in only one direction.
+  const wideProfile = Object.freeze({
+    profileId: "gamebuddy.tavern-management.chat-list-title",
+    releaseTier: "tavern_management",
+    routeIds: Object.freeze(["chat.rename", "draft.save", "draft.discard", "chat.submit"]),
+    operationIds: Object.freeze(["chat.rename", "draft.save", "draft.discard", "chat.submit"]),
+    navigationItemIds: Object.freeze(["chat"]),
+  });
+  const validation = validateMountedProfileOperationEvidence({
+    mountedProfile: wideProfile,
+    operationEvidenceMapping: {
+      schema_version: 1,
+      profile: wideProfile,
+      operations: { "chat.rename": [token(11)], "draft.save": [token(12)] },
+    },
+  });
+  assert.equal(validation.valid, false);
+  const missing = validation.checks.filter(
+    (check) => check.id === "mounted_profile_operation_evidence_completeness",
+  );
+  assert.equal(missing.length, 2, "draft.discard and chat.submit were never exercised");
+
+  // The same profile with every operation mapped is accepted, so the check is
+  // completeness and not an accidental always-fail.
+  assert.equal(
+    validateMountedProfileOperationEvidence({
+      mountedProfile: wideProfile,
+      operationEvidenceMapping: {
+        schema_version: 1,
+        profile: wideProfile,
+        operations: {
+          "chat.rename": [token(11)],
+          "draft.save": [token(12)],
+          "draft.discard": [token(13)],
+          "chat.submit": [token(14)],
+        },
+      },
+    }).valid,
+    true,
+  );
+});
+
+test("a shrunken management profile cannot shrink its way past the mounted surface", async () => {
+  // The completeness check proves the mapping covers the profile it was given. It
+  // cannot see whether that profile still describes what the Host mounts, so a
+  // five-operation profile plus a five-operation mapping validated cleanly - the
+  // run-05 false green, reachable by editing the profile instead of the evidence.
+  const shrunken = Object.freeze({
+    profileId: "gamebuddy.tavern-management.chat-list-title",
+    releaseTier: "tavern_management",
+    routeIds: Object.freeze(["chat.rename"]),
+    operationIds: Object.freeze(["chat.rename"]),
+    navigationItemIds: Object.freeze(["chat"]),
+  });
+  const calls = [];
+  const report = await runTavernReleaseLiveOrchestrator({
+    mountedProfile: shrunken,
+    operationEvidenceMapping: {
+      schema_version: 1,
+      profile: shrunken,
+      operations: { "chat.rename": [token(11)] },
+    },
+    prerequisites: passingPrerequisites,
+    runNarrative: async ({ role }) => {
+      calls.push(role);
+      return passedRun(role);
+    },
+    temporaryReportPath: (role) => `/tmp/${role}.json`,
+  });
+  assert.equal(report.verdict, "blocked");
+  assert.equal(report.reasonCode, "verdict_inputs_incomplete");
+  assert.ok(report.blockerIds.includes("mounted_profile_operation_evidence_mounted_surface"));
+  assert.deepEqual(calls, [], "live runs were launched for a verdict that was already impossible");
+
+  // A chat-core profile legitimately declares a smaller surface and is unaffected.
+  const chatCore = await runTavernReleaseLiveOrchestrator({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    prerequisites: async () => ({ verdict: "blocked", checks: [{ id: "x", status: "blocked" }] }),
+    runNarrative: async () => {
+      throw new Error("a blocked prerequisite must not run narrative work");
+    },
+    temporaryReportPath: (role) => `/tmp/${role}.json`,
+  });
+  assert.deepEqual(
+    chatCore.blockerIds.filter((id) => id === "mounted_profile_operation_evidence_mounted_surface"),
+    [],
+    "chat_core must not be held to the management surface",
+  );
+});
+
+test("the runner's own negative disclosure survives the real two-stage normalization", async () => {
+  // `runNarrativeProcess` already normalizes once, and the orchestrator normalizes
+  // that result again. The second pass read disclosures from `assertions` and the
+  // turn status from `statuses.turn`, both of which the first pass had already
+  // rewritten - so run-03..run-06 showed a clean five-of-five while the runner had
+  // reported `providerAcceptedOrSemanticAnswer: false`.
+  const report = await runTavernReleaseLiveOrchestrator({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    prerequisites: passingPrerequisites,
+    runNarrative: async ({ role }) => ({
+      role,
+      state: "passed",
+      runId: token(20),
+      artifact: { generation: `generation_${role}`, inventoryDigest: sha },
+      assertions: {
+        authenticatedReferenceChatApi: true,
+        realDialogueTurnAttempted: true,
+        providerRuntimeSessionBound: true,
+        providerPreSendSerialized: true,
+        realTurnOutcomeObserved: true,
+      },
+      disclosures: { providerAcceptedOrSemanticAnswer: false },
+      turn: "completed",
+    }),
+    temporaryReportPath: (role) => `/tmp/${role}.json`,
+  });
+  assert.equal(report.verdict, "passed");
+  assert.deepEqual(report.runs[0].disclosures, { providerAcceptedOrSemanticAnswer: false });
+  assert.equal(report.runs[0].turn, "completed");
+});
+
 test("Tavern live gate passes when prerequisites, real runs, and operation evidence all genuinely pass", async () => {
   const report = await runTavernReleaseLiveGate({
     mountedProfile,

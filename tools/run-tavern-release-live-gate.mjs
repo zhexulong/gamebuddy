@@ -39,6 +39,9 @@ export const MOUNTED_PROFILE_OPERATION_EVIDENCE_SCHEMA_VERSION = 1;
  * Chat/Tavern live claim only and must never widen into these claims.
  */
 const RELEASE_SCOPE_CLAIMS = Object.freeze({ requiredMustFlowsExecuted: false, fullReleaseClaim: false });
+// Release tiers that claim the mounted Tavern management surface, and therefore
+// must declare every operation that surface serves.
+const MOUNTED_TIER_RELEASE_TIERS = new Set(["tavern_management"]);
 // A planned run is genuine live evidence only when the runner reported its own
 // pass together with the production artifact identity and every assertion that
 // pass is derived from. A bare `state: "passed"` is not evidence.
@@ -436,19 +439,39 @@ function contentFreeNarrativeSummary(role, value) {
         value.assertions[key],
       ]),
     );
-    // The runner's non-passing disclosures ride along so a reader sees them. They
-    // never gate the verdict - only RUN_EVIDENCE_ASSERTIONS do that - but a report
-    // that showed only the passing half was misrepresenting its own evidence.
+  }
+  // The runner's non-passing disclosures ride along so a reader sees them. They
+  // never gate the verdict - only RUN_EVIDENCE_ASSERTIONS do that - but a report
+  // that showed only the passing half was misrepresenting its own evidence.
+  //
+  // Read them from either spelling. The real orchestrator normalizes twice -
+  // `runNarrativeProcess` returns an already-normalized summary and the
+  // orchestrator normalizes that value again - and the first pass stores these
+  // under `disclosures`, not under `assertions`. Reading only `assertions`
+  // silently emptied `disclosures` on the second pass, which is how run-03..
+  // run-06 came to show a clean five-of-five while the runner had reported
+  // `providerAcceptedOrSemanticAnswer: false` (audit finding on run-06).
+  const disclosureSource =
+    value.disclosures && typeof value.disclosures === "object" && !Array.isArray(value.disclosures)
+      ? value.disclosures
+      : value.assertions;
+  if (disclosureSource && typeof disclosureSource === "object" && !Array.isArray(disclosureSource)) {
     summary.disclosures = Object.fromEntries(
-      RUN_DISCLOSURE_ASSERTIONS.filter((key) => typeof value.assertions[key] === "boolean").map((key) => [
+      RUN_DISCLOSURE_ASSERTIONS.filter((key) => typeof disclosureSource[key] === "boolean").map((key) => [
         key,
-        value.assertions[key],
+        disclosureSource[key],
       ]),
     );
   }
-  if (value.statuses && typeof value.statuses === "object" && !Array.isArray(value.statuses)) {
-    if (typeof value.statuses.turn === "string") summary.turn = safeCode(value.statuses.turn, "unavailable");
-  }
+  // Same idempotence rule for the turn status: the normalized spelling is
+  // `turn`, the runner's raw spelling is `statuses.turn`.
+  const turn =
+    typeof value.turn === "string"
+      ? value.turn
+      : value.statuses && typeof value.statuses === "object" && typeof value.statuses.turn === "string"
+        ? value.statuses.turn
+        : undefined;
+  if (turn !== undefined) summary.turn = safeCode(turn, "unavailable");
   return summary;
 }
 
@@ -620,6 +643,29 @@ export async function runTavernReleaseLiveOrchestrator({
   // audited artifacts: 9 of 12 live turns belonged to attempts whose verdict was
   // already impossible when they started.
   const inputChecks = validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping });
+  // A caller-supplied profile may not shrink its way past the completeness check.
+  // That check proves the mapping covers the profile it was handed; it cannot see
+  // whether the profile itself still describes the surface the Host actually
+  // mounts. A profile that declares five operations - or one - validates cleanly
+  // against a five-operation mapping and yields `passed`, which is exactly the
+  // run-01..run-05 false green the completeness check was added to remove.
+  // Only the tier that claims the management surface is held to it: a chat-core
+  // profile legitimately declares a smaller surface, and the live plan is the
+  // authority on which tier this run is releasing.
+  const profileCoversMountedSurface =
+    typeof mountedProfile?.releaseTier === "string" &&
+    MOUNTED_TIER_RELEASE_TIERS.has(mountedProfile.releaseTier)
+      ? MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.every((operationId) =>
+          Array.isArray(mountedProfile.operationIds) && mountedProfile.operationIds.includes(operationId),
+        )
+      : true;
+  if (!profileCoversMountedSurface) {
+    inputChecks.checks.push({
+      id: "mounted_profile_operation_evidence_mounted_surface",
+      status: "blocked",
+      detail: "mounted_composed_tavern_profile_operation_to_evidence_mapping_profile_under_declared",
+    });
+  }
   if (inputChecks.checks.length > 0) {
     return {
       gate: ORCHESTRATOR_SCHEMA,

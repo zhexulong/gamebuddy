@@ -122,7 +122,7 @@ export async function recordTavernUiOperationEvidence({ inputPath, outputPath })
   return result;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url) || process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [, , inputPath, outputPath] = process.argv;
   if (!inputPath || !outputPath) throw new Error("usage: node tools/record-tavern-ui-operation-evidence.mjs <ui-outcomes.json> <mapping.json>");
   await recordTavernUiOperationEvidence({ inputPath, outputPath });
