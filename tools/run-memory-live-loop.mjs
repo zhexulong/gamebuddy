@@ -40,13 +40,45 @@
 import { spawn } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
 import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "./run-chat-live-audit.mjs";
-import { attributeMemoryFunnel } from "./lib/memory-funnel.mjs";
+import { attributeMemoryFunnel, renderedMemoryIdsFromMarkers } from "./lib/memory-funnel.mjs";
+
+/**
+ * The Class B marker Magic Context emits with the ids it assembled into m[0]
+ * (owner decision D-1: vendor stderr, never an IPC frame). Declared here rather
+ * than imported from `@cortexkit/pi-magic-context/tavern` because these runners
+ * resolve their dependencies from the repository root, where Host's vendored
+ * package is not linked - and a runner that cannot start is worse than one with a
+ * pinned literal. `assertMarkerContract` fails loudly if the vendor ever renames
+ * it, so the duplication cannot rot silently.
+ */
+const PROBE_M0_MEMORY_IDS_PREFIX = "[probe:m0_memory_ids]";
+
+function assertMarkerContract() {
+  const source = resolve(
+    fileURLToPath(new URL(".", import.meta.url)),
+    "..",
+    "vendor",
+    "magic-context",
+    "packages",
+    "pi-plugin",
+    "src",
+    "probe-materialization-marker.ts",
+  );
+  if (!existsSync(source)) return;
+  const declared = readFileSync(source, "utf8");
+  if (!declared.includes(`export const PROBE_M0_MEMORY_IDS_PREFIX = "${PROBE_M0_MEMORY_IDS_PREFIX}"`)) {
+    throw new Error("memory_loop_probe_marker_contract_drift");
+  }
+}
+assertMarkerContract();
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
 const OUTPUT_ROOT = process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT
@@ -109,8 +141,11 @@ function parseArguments(argv) {
  */
 async function resolveScenario({ manifestPath, seed, question }) {
   if (manifestPath === undefined) {
+    const inlineSeed =
+      seed ?? "Remember this for later: I retired after many years delivering the post.";
     return Object.freeze({
-      seed: seed ?? "Remember this for later: I retired after many years delivering the post.",
+      seeds: Object.freeze([inlineSeed]),
+      seed: inlineSeed,
       question: question ?? "What did I do before I retired?",
       probeId: undefined,
       manifestDigest: undefined,
@@ -124,11 +159,48 @@ async function resolveScenario({ manifestPath, seed, question }) {
   if (manifest.probes.length !== 1)
     throw new Error("probe_fixture_multi_probe_unsupported");
   const probe = manifest.probes[0];
-  const seedStep = probe.steps.find((step) => step.kind === "seed");
   const probeStep = probe.steps.find((step) => step.kind === "probe");
-  if (seedStep === undefined || probeStep === undefined) throw new Error("probe_fixture_incomplete");
+  // EVERY seed step, in order - not just the first.
+  //
+  // Taking only `find(kind === "seed")` silently truncated multi-seed fixtures and
+  // then reported the consequence as a product result. It produced a false
+  // supersede.fail/old_retained: the supersede fixture's SECOND seed is the whole
+  // point of that scenario ("scratch that - parsnips are out, amethyst now"), so with
+  // it dropped the overwrite never happened and "old fact retained" was guaranteed.
+  // Same for the retention fixture, whose second seed is the distractor: without it
+  // the probe was being asked about a world where the distractor never existed.
+  const seedSteps = probe.steps.filter((step) => step.kind === "seed");
+  if (seedSteps.length === 0 || probeStep === undefined) throw new Error("probe_fixture_incomplete");
+  // Which seed does L2 compare against? The one that carries the fact the probe asks
+  // about - i.e. a required keyword appears in it. Position alone is wrong in both
+  // directions: the supersede fixture puts the asked-about fact LAST (the overwrite),
+  // while the retention fixture puts it FIRST and uses the later seed as a distractor
+  // that is deliberately NOT the answer.
+  const required = probeStep.requiredKeywords ?? [];
+  const askedSeed =
+    seedSteps.find((step) =>
+      required.some((keyword) => step.text.toLowerCase().includes(String(keyword).toLowerCase())),
+    ) ?? seedSteps.at(-1);
+  // Supersession is modelled as REPLACEMENT, because that is the only overwrite the
+  // authenticated management route can express. The route exposes create/update/archive;
+  // the vendor's supersede link is a Historian-internal promotion step and is not part
+  // of the player API (verified in browser-contract's MemoryMutationCommandV1Schema).
+  //
+  // This distinction is evidence, not cosmetic: seeding a second fact with `create`
+  // leaves BOTH rows active and independently rendered, so a reply naming both is the
+  // correct reading of the store - yet the probe's forbidden set scores it
+  // `supersede.fail/old_retained`, which would be read as a memory regression. The run
+  // that exposed this reported renderedIdCount: 2 with the asked-about fact present.
+  const supersedes =
+    probe.dimension === "supersession" && seedSteps.length > 1 ? askedSeed.text : undefined;
+  const initialSeeds =
+    supersedes === undefined ? seedSteps.map((step) => step.text) : [seedSteps[0].text];
   return Object.freeze({
-    seed: seedStep.text,
+    seeds: Object.freeze(initialSeeds),
+    ...(supersedes === undefined ? {} : { supersedes }),
+    // The seed carrying the asked-about fact; used for L2's id comparison so the
+    // funnel answers "was THIS fact rendered?".
+    seed: askedSeed.text,
     question: probeStep.text,
     probeId: probe.probeId,
     manifestDigest: manifest.manifestDigest,
@@ -178,34 +250,71 @@ async function readMemory(origin, client) {
  * 200 whose body contains the row IS the durability evidence - no second query and
  * no direct SQLite read is needed or wanted.
  */
-async function seedMemory(origin, client, seedText) {
-  const before = await readMemory(origin, client);
-  if (typeof before?.projectionRevision !== "string") throw new Error("projection_revision_unavailable");
-  const response = await deadlineFetch(`${origin}/api/tavern/v1/memory`, {
-    method: "PUT",
-    headers: {
-      Cookie: client.cookie,
-      Origin: origin,
-      "Content-Type": "application/json",
-      "x-csrf-token": client.csrf,
-    },
-    body: JSON.stringify({
-      apiVersion: 1,
-      expectedProjectionRevision: before.projectionRevision,
-      operation: "create",
-      content: seedText,
-    }),
-  });
-  if (!response.ok) throw new Error(`memory_seed_failed:${response.status}`);
-  const after = await response.json();
-  const seeded = Array.isArray(after?.memories) ? after.memories.some((row) => row?.content === seedText) : false;
+async function seedMemory(origin, client, seedTexts, supersedeText) {
+  let projectionRevision;
+  let last;
+  let firstHandle;
+  let supersededHandle;
+  const texts = supersedeText === undefined ? seedTexts : [...seedTexts, supersedeText];
+  for (const [index, seedText] of texts.entries()) {
+    const before = await readMemory(origin, client);
+    if (typeof before?.projectionRevision !== "string") throw new Error("projection_revision_unavailable");
+    projectionRevision = before.projectionRevision;
+    // A supersession is expressed as an `update` of the row it replaces. The route has
+    // no supersede verb (create/update/archive only), and `update` is the operation that
+    // actually overwrites the stored fact, so the store ends with ONE active row for
+    // this topic - which is what the probe's forbidden set assumes. Reaching this with
+    // two independent `create`s instead leaves both rows active and the scenario
+    // unfalsifiable in the direction the probe cares about.
+    const replacing = supersedeText !== undefined && index === texts.length - 1;
+    if (replacing && supersededHandle === undefined) throw new Error("memory_supersede_handle_missing");
+    const response = await deadlineFetch(`${origin}/api/tavern/v1/memory`, {
+      method: "PUT",
+      headers: {
+        Cookie: client.cookie,
+        Origin: origin,
+        "Content-Type": "application/json",
+        "x-csrf-token": client.csrf,
+      },
+      body: JSON.stringify(
+        replacing
+          ? {
+              apiVersion: 1,
+              expectedProjectionRevision: before.projectionRevision,
+              operation: "update",
+              handle: supersededHandle,
+              content: seedText,
+            }
+          : {
+              apiVersion: 1,
+              expectedProjectionRevision: before.projectionRevision,
+              operation: "create",
+              content: seedText,
+            },
+      ),
+    });
+    if (!response.ok) throw new Error(`memory_seed_failed:${response.status}`);
+    const after = await response.json();
+    const rows = Array.isArray(after?.memories) ? after.memories : [];
+    const seeded = rows.some((row) => row?.content === seedText);
+    if (!seeded) {
+      // Stop at the first unproven write: later seeds would otherwise be reported
+      // against a store that never received the earlier ones.
+      return Object.freeze({ durable: false, rowCount: rows.length, projectionChanged: after?.projectionRevision !== before.projectionRevision });
+    }
+    if (!replacing) {
+      firstHandle ??= rows.find((row) => row.content === seedText)?.handle;
+      supersededHandle = rows.find((row) => row.content === seedText)?.handle;
+    }
+    last = after;
+  }
   return Object.freeze({
-    durable: seeded === true,
-    rowCount: Array.isArray(after?.memories) ? after.memories.length : 0,
+    durable: true,
+    rowCount: Array.isArray(last?.memories) ? last.memories.length : 0,
     // The opaque handle is the ONLY stable cross-phase reference we keep: it is the
     // product's own projection of the row and carries no content.
-    seedHandle: seeded ? after.memories.find((row) => row.content === seedText)?.handle : undefined,
-    projectionChanged: after?.projectionRevision !== before.projectionRevision,
+    seedHandle: firstHandle,
+    projectionChanged: projectionRevision !== undefined,
   });
 }
 
@@ -293,6 +402,12 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
   const nonceSha256 = createHash("sha256").update(randomBytes(32)).digest("hex");
 
   let stderr = "";
+  // Marker channel (Class B, owner decision D-1): Magic Context reports its own
+  // materialization facts on stderr, including which memory ids it assembled into
+  // m[0]. We collect the lines here instead of only keeping a bounded diagnostic
+  // tail, because those markers are the ONLY observability the L2 (assembly) stage
+  // has - the Host never sees m[0] bytes and the persistence row is not exposed.
+  const markers = [];
   const launch = await launchDesktopCompositionGateChild({
     outputRoot: OUTPUT_ROOT,
     root,
@@ -306,6 +421,11 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
       child.stderr?.setEncoding?.("utf8");
       child.stderr?.on?.("data", (chunk) => {
         if (stderr.length < 2_048) stderr = `${stderr}${chunk}`;
+        for (const line of String(chunk).split("\n")) {
+          // Strictly prefixed and parsed: an unrelated stderr line can never be
+          // mistaken for a materialization fact.
+          if (line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX)) markers.push(line.trim());
+        }
       });
       return child;
     },
@@ -317,7 +437,8 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
     const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
     if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
     const client = await bootstrap(origin, bootstrapToken);
-    return await run(origin, client);
+    const result = await run(origin, client);
+    return Object.freeze({ result, markers: Object.freeze([...markers]) });
   } catch (error) {
     const diagnostic = stderr.trim();
     throw new Error(
@@ -404,6 +525,52 @@ async function withMemoryLoopRoot(run) {
 }
 
 /**
+ * Resolve the numeric id of the row this run seeded.
+ *
+ * The product deliberately hides it: the management projection returns an HMAC
+ * `handle` (memory-management.ts `projectHandle`), not the vendor's `stateToken`,
+ * so the id cannot be read back through the API. The harness therefore resolves it
+ * from its OWN disposable runtime root - never the player's - and only AFTER
+ * phase 1 has exited, so there is no concurrent writer to contend with.
+ *
+ * This is a lookup key, not evidence: what the run asserts about assembly comes
+ * from the vendor's own marker, never from this read.
+ */
+function resolveSeededMemoryId(root, seedText) {
+  // Locate the store by directory shape rather than by recomputing Host's
+  // `identityKey`: a re-implementation here would silently drift from the
+  // product's partition function and start reading a different (or no) database.
+  // This disposable root holds exactly one context, so the shape is unambiguous.
+  const contextsRoot = join(root, "contexts");
+  if (!existsSync(contextsRoot)) return undefined;
+  const contextKeys = readdirSync(contextsRoot);
+  if (contextKeys.length !== 1) return undefined;
+  const dbPath = join(contextsRoot, contextKeys[0], "data", "cortexkit", "magic-context", "context.db");
+  if (!existsSync(dbPath)) return undefined;
+  let db;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const row = db.prepare("SELECT id FROM memories WHERE content = ? ORDER BY id LIMIT 1").get(seedText);
+    return typeof row?.id === "number" ? row.id : undefined;
+  } catch {
+    // A missing id leaves the comparison key unknown, so L2 stays a gap rather
+    // than claiming the seed was absent. The marker still reports what happened.
+    return undefined;
+  } finally {
+    db?.close?.();
+  }
+}
+
+/**
+ * Parse the vendor's rendered-memory markers using the FROZEN funnel rule, not a
+ * second implementation: the two loops must never disagree about whether L2 was
+ * observed.
+ */
+function renderedIdsForRun(markers) {
+  return renderedMemoryIdsFromMarkers(markers);
+}
+
+/**
  * Score the reply with the FROZEN kernel rule, not a second implementation.
  *
  * The Chat loop already owns probe scoring (`evaluateProbeReply` + `probeVerdict`: the
@@ -473,13 +640,19 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     );
     // Phase 1 - management surface: seed and confirm durability.
     process.stderr.write(`[memory-loop] phase1 management launching (root=${root})\n`);
-    const seeded = await withSurface({
+    const seededResult = await withSurface({
       surface: "management",
       root,
       deploymentManifestPath,
-      run: async (origin, client) => seedMemory(origin, client, scenario.seed),
+      run: async (origin, client) => seedMemory(origin, client, scenario.seeds, scenario.supersedes),
     });
+    const seeded = seededResult.result;
     process.stderr.write(`[memory-loop] phase1 durable=${seeded.durable}\n`);
+
+    // Resolve the seed's vendor id AFTER phase 1 exited: the product hides it behind
+    // an HMAC handle, and reading while the child still runs would contend with its
+    // writer. Phase 1 has committed its teardown by this point, so the DB is quiet.
+    const seededMemoryId = seeded.durable ? resolveSeededMemoryId(root, scenario.seed) : undefined;
 
     const observation = {
       distance: "turn",
@@ -509,20 +682,15 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // core of the whole loop: a fresh second phase would create an EMPTY second
     // SQLite and the seeded row could never be seen (the audit's finding).
     //
-    // KNOWN BOUNDARY (measured, not assumed): the product admits a `known` mount as a
-    // terminal SUCCESSOR, which requires the predecessor chat-runtime teardown to have
-    // COMMITTED, and that commit happens only inside the child's own close path
-    // (desktop-runtime-bootstrap finally -> composition.close()). This launcher has no
-    // way to ask a composed child to close: child.kill("SIGTERM") forcibly terminates
-    // and the handler never runs (proved by probe: exit signal SIGTERM, handler not
-    // invoked), and disposing the guardian peer alone does not make the child exit
-    // (probe: no_exit_after_dispose, teardown_intent stays empty). The memory loop
-    // therefore reports this as a bounded, attributable BLOCKED state rather than
-    // crashing with a raw child-exit error or pretending the phase ran.
+    // The child accepts a cooperative shutdown request over the IPC channel
+    // (desktop-runtime-bootstrap `waitForTermination`), which is what lets that
+    // teardown commit and this phase mount as a successor. Without it the product
+    // rejects the mount with `chat_runtime_reentry_selection_invalid`; see the
+    // blocked branch below for that case.
     process.stderr.write(`[memory-loop] phase2 chat-only launching known\n`);
-    let chat;
+    let chatResult;
     try {
-      chat = await withSurface({
+      chatResult = await withSurface({
         surface: "chat-only",
         root,
         deploymentManifestPath,
@@ -559,10 +727,20 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       return report;
     }
 
+    const chat = chatResult.result;
     const verdict = scoreReply({ committedText: chat.committedText, scenario, chat });
 
+    // L2 (assembly): did the fact reach the context the model was given? The vendor
+    // reports which memory ids it rendered into m[0]; we compare that against the id
+    // of the row we seeded. Absent marker -> the funnel reports a gap, never a miss.
+    //
+    // An unresolved seed id is ALSO a gap, not a break: without the comparison key we
+    // cannot say whether the id was missing or we simply asked the wrong question.
+    const renderedIds = renderedIdsForRun(chatResult.markers);
     const attributed = attributeMemoryFunnel({
       ...observation,
+      renderedMemoryIdsObserved: renderedIds !== undefined && seededMemoryId !== undefined,
+      ...(seededMemoryId === undefined ? {} : { seedIdRendered: renderedIds?.has(seededMemoryId) === true }),
       probeEvent: verdict.event,
       ...(verdict.reason === undefined ? {} : { probeReason: verdict.reason }),
     });
@@ -578,6 +756,16 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         dimension: scenario.dimension,
       }),
       seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
+      // The L2 comparison facts, content-free but auditable: which side of the
+      // comparison was even available. Without these a `broken` L2 is not
+      // distinguishable from an unresolved comparison key, which would be a harness
+      // defect reported as a product defect.
+      assembly: Object.freeze({
+        seededIdResolved: seededMemoryId !== undefined,
+        markerObserved: renderedIds !== undefined,
+        renderedIdCount: renderedIds === undefined ? null : renderedIds.size,
+        seedIdRendered: seededMemoryId !== undefined && renderedIds?.has(seededMemoryId) === true,
+      }),
       chat: Object.freeze({
         attempted: true,
         turnState: chat.turnState ?? null,
