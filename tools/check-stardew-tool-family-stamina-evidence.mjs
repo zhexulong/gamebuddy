@@ -123,6 +123,37 @@ function handlerBody(source, signature) {
   return null;
 }
 
+/**
+ * The bodies an action's execution actually runs through, found by following the
+ * action's own `this.SomeBody(` delegations to private methods in the same sources.
+ *
+ * Why this exists rather than checking only the handler body: the tool family
+ * deliberately has ONE execution body per action, shared by the in-range path and
+ * the post-approach path (design 5.2). That makes the handler a thin wrapper --
+ * admission, position-independent preconditions, then either `TryBeginToolApproach`
+ * or the execution body. A wrapper is only acceptable if some body it reaches still
+ * carries the whole contract, so the invariant is checked on the reachable set
+ * rather than on the wrapper. Delegation cannot hide a violation: if no reachable
+ * body reports the full stamina shape or routes through the seam, the action fails
+ * exactly as it did before.
+ */
+function reachableExecutionBodies(sources, body, depth = 0, seen = new Set()) {
+  if (depth > 3) return [];
+  const found = [];
+  for (const match of body.matchAll(/this\.([A-Z][A-Za-z0-9_]*)\(/g)) {
+    const name = match[1];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    for (const text of Object.values(sources)) {
+      const delegated = handlerBody(text, `private LocalExecutionReceipt ${name}(`);
+      if (delegated === null) continue;
+      found.push(delegated);
+      found.push(...reachableExecutionBodies(sources, delegated, depth + 1, seen));
+    }
+  }
+  return found;
+}
+
 /** The shared seam body, or null when no execution-manager file declares it. */
 function toolUseSeamBody(sources) {
   const signature = `private static void ${STARDEW_NATIVE_TOOL_USE_SEAM}(`;
@@ -192,8 +223,14 @@ export function validateToolFamilyStaminaEvidence(sources) {
     // statement: from the reasonCode forward to the first `);` (the constructor's
     // close). Never a fixed window, so a neighbor handler's evidence in another
     // file/statement can never satisfy this receiver.
+    //
+    // The contract is satisfied when ANY body the action executes through carries
+    // it, so a thin wrapper delegating to a shared execution body is fine while a
+    // body that actually forgets the stamina half still fails.
+    const executionBodies = [body, ...reachableExecutionBodies(sources, body)];
     let scanned = body;
-    if (!STAMINA_EVIDENCE_ALL.test(body)) {
+    const satisfying = executionBodies.find((candidate) => STAMINA_EVIDENCE_FIELDS.every((f) => candidate.includes(f)));
+    if (satisfying === undefined && !STAMINA_EVIDENCE_ALL.test(body)) {
       const idx = allSources.indexOf(terminal);
       if (idx >= 0) {
         const close = allSources.indexOf(");", idx);
@@ -201,7 +238,7 @@ export function validateToolFamilyStaminaEvidence(sources) {
         if (window.includes("ExecutionState.Succeeded")) scanned = window;
       }
     }
-    const missing = STAMINA_EVIDENCE_FIELDS.filter((f) => !scanned.includes(f));
+    const missing = satisfying === undefined ? STAMINA_EVIDENCE_FIELDS.filter((f) => !scanned.includes(f)) : [];
     if (missing.length > 0) {
       failures.push(
         `${handler}: terminal receipt lacks ${missing.join("/")} (tool=${tool}, dispatch=${dispatch}; scanned ${scanned === body ? "handler body" : "terminal receipt"})`,
@@ -212,7 +249,10 @@ export function validateToolFamilyStaminaEvidence(sources) {
     // halves, because the shared seam is where the consequence now lives: a handler
     // that hand-rolls a bare `DoFunction` bypasses it, and a seam that drops or
     // reorders a native step stops providing it for every caller at once.
-    if (STARDEW_EXHAUSTION_FAMILY.includes(handler) && !body.includes(`${STARDEW_NATIVE_TOOL_USE_SEAM}(`)) {
+    if (
+      STARDEW_EXHAUSTION_FAMILY.includes(handler)
+      && !executionBodies.some((candidate) => candidate.includes(`${STARDEW_NATIVE_TOOL_USE_SEAM}(`))
+    ) {
       failures.push(
         `${handler}: direct tool dispatch does not route through ${STARDEW_NATIVE_TOOL_USE_SEAM}(), so it bypasses Farmer.useTool's lastClick/checkForExhaustion steps and the companion escapes the vanilla cross-day exhaustion penalty`,
       );
