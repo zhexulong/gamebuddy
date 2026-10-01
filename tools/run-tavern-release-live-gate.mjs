@@ -619,7 +619,27 @@ export async function runTavernReleaseLiveGate({
       ? { role, state: "blocked", reasonCode: "narrative_run_not_executed" }
       : contentFreeNarrativeSummary(role, supplied);
   });
-  const runsComplete = runEvidence.every(genuineRunEvidence);
+  // One release, one artifact. Each run already has to carry a generation and an
+  // inventory digest, but nothing required them to agree - three runs against
+  // three different generations validated cleanly and the report presented them
+  // as one release (auditing-run finding, round 3). The gate proves the runs
+  // passed; it must also prove they passed the SAME build, or the claim it mints
+  // is not about any single artifact.
+  //
+  // This is folded into `runsComplete` rather than pushed as a bare check,
+  // because the verdict is derived from `runsComplete` - a check that does not
+  // reach the verdict is decoration, not a gate.
+  const runsShareIdentity =
+    runEvidence.length > 0 &&
+    new Set(runEvidence.map((run) => `${run.artifact?.generation}\u0000${run.artifact?.inventoryDigest}`)).size === 1;
+  const runsComplete = runEvidence.every(genuineRunEvidence) && runsShareIdentity;
+  if (runEvidence.every(genuineRunEvidence) && !runsShareIdentity) {
+    checks.push({
+      id: "narrative_run_artifact_identity",
+      status: "blocked",
+      detail: "narrative_run_evidence_spans_multiple_artifacts",
+    });
+  }
   // When the prerequisites already fail, that blocker is the whole reason: no
   // run was supposed to have been attempted, and reporting a run blocker would
   // misattribute the cause.

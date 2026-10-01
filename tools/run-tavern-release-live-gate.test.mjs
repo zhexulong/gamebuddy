@@ -39,12 +39,16 @@ function validMapping(overrides = {}) {
  * A genuine per-run report: the runner state plus the production artifact
  * identity and every assertion the runner derives that state from.
  */
+// One release is one artifact: the gate now requires every run's generation and
+// inventory digest to agree, so the helper gives all three roles the same pair.
+// A test that needs a run to differ passes its own `overrides`.
+const PASSED_ARTIFACT = Object.freeze({ generation: "generation_one_aaaaaaaaaaaa", inventoryDigest: "f".repeat(64) });
 function passedRun(role, overrides = {}) {
   return {
     role,
     state: "passed",
     runId: token(20),
-    artifact: { generation: `generation_${role}`, inventoryDigest: sha },
+    artifact: { ...PASSED_ARTIFACT },
     assertions: {
       authenticatedReferenceChatApi: true,
       realDialogueTurnAttempted: true,
@@ -286,7 +290,7 @@ test("the runner's own negative disclosure survives the real two-stage normaliza
       role,
       state: "passed",
       runId: token(20),
-      artifact: { generation: `generation_${role}`, inventoryDigest: sha },
+      artifact: { ...PASSED_ARTIFACT },
       assertions: {
         authenticatedReferenceChatApi: true,
         realDialogueTurnAttempted: true,
@@ -317,7 +321,7 @@ test("a raw runner report survives the whole normalization chain", async () => {
     role,
     state: "passed",
     runId: token(20),
-    artifact: { generation: `generation_${role}`, inventoryDigest: sha },
+    artifact: { ...PASSED_ARTIFACT },
     // The runner's raw spelling: the non-passing disclosure rides inside
     // `assertions`, and the turn status lives under `statuses`.
     assertions: {
@@ -448,6 +452,57 @@ test("a profile with the right tier and operation count but a forged identity is
     }).valid,
     true,
   );
+});
+
+test("runs against different artifacts cannot pass as one release", async () => {
+  // Each run carried a generation and an inventory digest, but nothing required
+  // them to agree: three runs against three different generations validated
+  // cleanly and the report presented them as one release. The gate proves the
+  // runs passed; it must also prove they passed the same build.
+  const assertions = {
+    authenticatedReferenceChatApi: true,
+    realDialogueTurnAttempted: true,
+    providerRuntimeSessionBound: true,
+    providerPreSendSerialized: true,
+    realTurnOutcomeObserved: true,
+  };
+  const runs = ["main", "failure", "recovery"].map((role, index) => ({
+    role,
+    state: "passed",
+    runnerRunId: String(index + 1).repeat(16),
+    artifact: {
+      generation: `generation_${index}_${"a".repeat(12)}`,
+      inventoryDigest: String(index + 1).repeat(64),
+    },
+    assertions,
+  }));
+
+  const report = await runTavernReleaseLiveGate({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    runs,
+    prerequisites: passingPrerequisites,
+  });
+  assert.notEqual(report.verdict, "passed");
+  assert.ok(
+    report.blockerIds.includes("narrative_run_artifact_identity"),
+    "the multi-artifact evidence must be named",
+  );
+
+  // The same three runs against one artifact still pass, so the rule is
+  // agreement and not an accidental always-fail.
+  const shared = runs.map((run) => ({
+    ...run,
+    artifact: { generation: "generation_one_aaaaaaaaaaaa", inventoryDigest: "f".repeat(64) },
+  }));
+  const ok = await runTavernReleaseLiveGate({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    runs: shared,
+    prerequisites: passingPrerequisites,
+  });
+  assert.equal(ok.verdict, "passed");
+  assert.deepEqual(ok.blockerIds, []);
 });
 
 test("Tavern live gate passes when prerequisites, real runs, and operation evidence all genuinely pass", async () => {
