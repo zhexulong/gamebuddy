@@ -16,6 +16,23 @@ import {
 } from "../../windows-reparse-inspector/index.js";
 
 const MAX_WIRE_BYTES = 32_768;
+
+/**
+ * The parent's cooperative request for this composition to close cleanly.
+ *
+ * The gate launcher spawns this bootstrap with an IPC channel and already
+ * publishes readiness over it (`gamebuddy-desktop-composition-ready/v1`). This is
+ * the symmetric inbound half: a request, not a capability. It grants the sender
+ * nothing it did not already have - the parent can terminate this process at any
+ * moment with TerminateProcess - it merely lets the process run its own
+ * `composition.close()` instead of being killed mid-flight, so the durable chat
+ * runtime teardown commits.
+ *
+ * Required because `child.kill("SIGTERM")` on Windows is TerminateProcess: the
+ * signal handlers below never run, and the teardown never happens. Measured, not
+ * assumed (probe: exit reported `signal SIGTERM` with the handler never invoked).
+ */
+const SHUTDOWN_REQUEST_SCHEMA = "gamebuddy-desktop-shutdown-request/v1";
 const MAX_GUARDIAN_WIRE_BYTES = 16_384;
 const MAX_PRIVATE_FRAME_BYTES = 65_536;
 const MAX_GUARDIAN_DEADLINE_HORIZON_MS = 300_000;
@@ -57,7 +74,12 @@ export async function runDesktopHostBootstrap(moduleDirectory: string): Promise<
   const frame = parseBootstrapFrame(await readBootstrapFrame());
   const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory);
   const voice = await connectOptionalVoiceSurface();
-  const assemblyInput = await loadDesktopHostAssemblyInput(publishCompositionReady, voice?.reader, voice?.speechSink);
+  const assemblyInput = await loadDesktopHostAssemblyInput(
+    publishCompositionReady,
+    voice?.reader,
+    voice?.speechSink,
+    voice?.listOutputDevices,
+  );
   const rootAuthority = mintDesktopRootLayoutCapability(rootLayout);
   const guardianAuthority = mintDesktopGuardianSessionCapability(frame);
   const composition = await createDesktopProductCompositionForBootstrap(rootAuthority, guardianAuthority, assemblyInput);
@@ -262,6 +284,7 @@ async function loadDesktopHostAssemblyInput(
   publishLaunchUrl: (launchUrl: string) => void,
   voiceSurface?: VoiceSurfaceReader,
   speechSink?: import("../../voice.js").ChatVoiceSpeechPublisher,
+  listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>,
 ): Promise<DesktopHostAssemblyInput> {
   const manifestPath = process.env.GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST;
   const gameSessionMode = process.env.GAMEBUDDY_HOST_GAME_SESSION_MODE;
@@ -287,6 +310,7 @@ async function loadDesktopHostAssemblyInput(
     ...(tavernNarrativeGateNonceSha256 === undefined ? {} : { tavernNarrativeGateNonceSha256 }),
     ...(voiceSurface === undefined ? {} : { voiceSurface }),
     ...(speechSink === undefined ? {} : { speechSink }),
+    ...(listVoiceOutputDevices === undefined ? {} : { listVoiceOutputDevices }),
     publishLaunchUrl,
   });
 }
@@ -304,6 +328,8 @@ async function connectOptionalVoiceSurface(): Promise<
     reader: VoiceSurfaceReader;
     /** Host-owned streaming speech sink for the Chat presentation; absent when no voice client. */
     speechSink?: import("../../voice.js").ChatVoiceSpeechPublisher;
+    /** Read-only output endpoint enumeration for the settings surface. */
+    listOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
     close(): Promise<void>;
   }>
   | undefined
@@ -323,6 +349,7 @@ async function connectOptionalVoiceSurface(): Promise<
     return Object.freeze({
       reader: client.createVoiceSurfaceReader(),
       speechSink: client.createChatVoiceStreamingSink(),
+      listOutputDevices: () => client.listOutputDevices(),
       close: async () => {
         client.close();
       },
@@ -518,24 +545,54 @@ function waitForTermination(): Readonly<{
   let dispose: () => void = () => {};
   const promise = new Promise<void>((resolveTermination) => {
     const livenessHandle = setInterval(() => {}, 2_147_483_647);
-    const terminate = () => {
+    let settled = false;
+    const cleanup = () => {
       clearInterval(livenessHandle);
-      process.off("SIGTERM", terminate);
-      process.off("SIGINT", terminate);
+      process.off("SIGTERM", onTerminate);
+      process.off("SIGINT", onTerminate);
+      // Windows console control events (Ctrl+Break, and GenerateConsoleCtrlEvent
+      // from a supervising native process) arrive as SIGBREAK, not SIGTERM. They
+      // are the only signal path that actually reaches a handler here.
+      process.off("SIGBREAK", onTerminate);
+      process.off("message", onMessage);
+    };
+    const onTerminate = () => {
+      // Idempotent: several sources can request termination, and `dispose` runs
+      // unconditionally in the caller's finally.
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolveTermination();
     };
-    dispose = () => {
-      clearInterval(livenessHandle);
-      process.off("SIGTERM", terminate);
-      process.off("SIGINT", terminate);
+    // The IPC channel is the private parent-child pipe created at spawn; only the
+    // parent holds the other end. The shape is validated strictly so a malformed or
+    // unrelated message can never drop the composition.
+    const onMessage = (value: unknown) => {
+      if (isShutdownRequest(value)) onTerminate();
     };
-    process.once("SIGTERM", terminate);
-    process.once("SIGINT", terminate);
+    // Cleanup only - it does not itself terminate, so a caller that abandons the
+    // wait (a failed acknowledgement, say) does not race the close path.
+    dispose = cleanup;
+    process.once("SIGTERM", onTerminate);
+    process.once("SIGINT", onTerminate);
+    process.once("SIGBREAK", onTerminate);
+    process.on("message", onMessage);
   });
   return {
     promise,
     dispose,
   };
+}
+
+function isShutdownRequest(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const keys = Reflect.ownKeys(value);
+  return (
+    keys.length === 2 &&
+    keys.every((key) => key === "schema" || key === "protocolVersion") &&
+    (value as { schema?: unknown }).schema === SHUTDOWN_REQUEST_SCHEMA &&
+    (value as { protocolVersion?: unknown }).protocolVersion === 1
+  );
 }
 
 function validHex(value: unknown): value is string {
