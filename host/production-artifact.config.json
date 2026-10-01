@@ -104,6 +104,12 @@
       },
       {
         "package": "@cortexkit/pi-magic-context",
+        "module": "runtime-core.internal.js",
+        "expression": "\"@cortexkit/pi-magic-context/memory\"",
+        "occurrence": 0
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
         "module": "tavern/memory-management/memory-management.js",
         "expression": "\"@cortexkit/pi-magic-context/memory\"",
         "occurrence": 0
