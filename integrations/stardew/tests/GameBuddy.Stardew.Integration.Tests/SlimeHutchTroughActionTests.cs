@@ -37,7 +37,17 @@ public sealed class SlimeHutchTroughActionTests
         "slime_hutch_trough_already_watered",
         "watering_can_not_equipped",
         "watering_can_empty",
-        "target_out_of_range",
+    };
+
+    /// <summary>
+    /// Codes this action can still produce but no longer owns the text of: the shared
+    /// approach mechanism (design 5.2) mints them on its behalf. They are pinned where
+    /// they are declared, so this action cannot silently lose a reach rejection and the
+    /// mechanism cannot silently stop producing one.
+    /// </summary>
+    private static readonly string[] SharedMechanismReasonCodes =
+    {
+        "target_out_of_reach",
     };
 
     [Fact]
@@ -82,14 +92,29 @@ public sealed class SlimeHutchTroughActionTests
     [Fact]
     public void Handler_ClaimsOnlyTheNativeTroughReasonCodes_AndKeepsTheToolFamilyStaminaEvidence()
     {
-        string body = HandlerBody("public LocalExecutionReceipt RequestLocalWaterSlimeHutchTrough(");
+        string wrapper = HandlerBody("public LocalExecutionReceipt RequestLocalWaterSlimeHutchTrough(");
+        // Design 5.2 split this handler into a request path (admission, geometry, then
+        // either an approach leg or the execution body) and the shared execution body
+        // `ExecuteWaterSlimeHutchTrough`. The contract lives on whichever body the
+        // action executes through, so follow the delegation instead of pinning the
+        // wrapper -- a wrapper delegating to a body missing any of these still fails,
+        // because the reachable body is what gets checked. The wrapper is checked
+        // separately for its own job, which is the closure wiring.
+        wrapper.Should().Contain("TryBeginToolApproach(");
+        wrapper.Should().Contain("this.ExecuteWaterSlimeHutchTrough(arrivalExecutionId, arrivalRequestId");
+        wrapper.Should().Contain("return this.ExecuteWaterSlimeHutchTrough(executionId, requestId");
+        string body = ToolExecuteBody("ExecuteWaterSlimeHutchTrough", wrapper);
 
         // Claimed codes: the success/uncertain pair and this action's own rejections.
-        body.Should().Contain("\"slime_hutch_trough_watered\"");
-        body.Should().Contain("\"slime_hutch_trough_water_postcondition_unavailable\"");
-        body.Should().Contain("\"slime_hutch_not_current_location\"");
-        body.Should().Contain("\"slime_hutch_trough_target_changed\"");
-        body.Should().Contain("\"slime_hutch_trough_already_watered\"");
+        // The rejections are checked on the wrapper when they are position-independent
+        // and on the execution body when they are re-checked after the walk, so the
+        // union is what must hold.
+        string claimed = wrapper + "\n" + body;
+        claimed.Should().Contain("\"slime_hutch_trough_watered\"");
+        claimed.Should().Contain("\"slime_hutch_trough_water_postcondition_unavailable\"");
+        claimed.Should().Contain("\"slime_hutch_not_current_location\"");
+        claimed.Should().Contain("\"slime_hutch_trough_target_changed\"");
+        claimed.Should().Contain("\"slime_hutch_trough_already_watered\"");
 
         // The tool-family gate requires the agent half of every tool mutation, and a
         // direct DoFunction bypasses Farmer.useTool, so the persistent cross-day
@@ -115,6 +140,43 @@ public sealed class SlimeHutchTroughActionTests
         // spot, so both reads must be present around the single native call.
         body.Should().Contain("beforeWatered = hutch.waterSpots[");
         body.Should().Contain("afterWatered = hutch.waterSpots[");
+    }
+
+    /// <summary>
+    /// The `private LocalExecutionReceipt Execute*` body a migrated handler executes
+    /// through. The wrapper must actually reach it, or the delegation claim would be
+    /// decorative.
+    /// </summary>
+    private static string ToolExecuteBody(string executeName, string wrapper)
+    {
+        string source = File.ReadAllText(NativeActionSourcePath());
+        int start = source.IndexOf($"private LocalExecutionReceipt {executeName}(", StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, $"{executeName} must exist (design 5.2 shares one body per action)");
+        wrapper.Should().Contain($"this.{executeName}(");
+
+        int depth = 0;
+        bool started = false;
+        int end = -1;
+        for (int index = start; index < source.Length; index++)
+        {
+            char character = source[index];
+            if (character == '{')
+            {
+                depth++;
+                started = true;
+            }
+            else if (character == '}')
+            {
+                depth--;
+                if (started && depth == 0)
+                {
+                    end = index;
+                    break;
+                }
+            }
+        }
+        end.Should().BeGreaterThan(start);
+        return source[start..(end + 1)];
     }
 
     [Fact]
@@ -159,6 +221,15 @@ public sealed class SlimeHutchTroughActionTests
             source.Should().Contain($"\"{code}\"");
         source.Should().NotContain("\"pet_bowl_watered\"");
         source.Should().NotContain("\"crop_watered\"");
+
+        // Reach refusals now come from the shared approach mechanism rather than this
+        // file. Both halves are pinned: this action must go through the mechanism, and
+        // the mechanism must still refuse by reach -- otherwise a migrated action could
+        // lose its rejection entirely while this test kept passing.
+        source.Should().Contain("TryBeginToolApproach(");
+        string mechanism = HandlerBodyOf("farmhandexecutioncontroller.resourcetoolactions.cs", "private void CompleteToolApproach(");
+        foreach (string code in SharedMechanismReasonCodes)
+            mechanism.Should().Contain($"\"{code}\"");
     }
 
     /// <summary>Drop <c>//</c> line comments so negative pins test code, not prose.</summary>
@@ -174,9 +245,16 @@ public sealed class SlimeHutchTroughActionTests
     }
 
     /// <summary>Extract one handler body by brace balance from its declaration.</summary>
-    private static string HandlerBody(string declaration)
+    private static string HandlerBody(string declaration) =>
+        HandlerBodyOf("farmhandexecutioncontroller.slimehutchtroughactions.cs", declaration);
+
+    /// <summary>
+    /// Extract one body by brace balance from a named partial, so a pin can also read
+    /// the shared mechanism that now mints some of this action's reason codes.
+    /// </summary>
+    private static string HandlerBodyOf(string sourceFile, string declaration)
     {
-        string source = File.ReadAllText(NativeActionSourcePath());
+        string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", sourceFile)));
         int start = source.IndexOf(declaration, StringComparison.Ordinal);
         start.Should().BeGreaterThanOrEqualTo(0, "the handler must live in an owned execution-manager partial");
 
