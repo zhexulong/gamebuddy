@@ -344,6 +344,10 @@ export function summarizeReceipt(receipt) {
     reasonCode: receipt.reasonCode,
     revision: receipt.revision,
     hasEvidence: receipt.evidence != null,
+    // Native HUD notice text the game posted inside the action's synchronous
+    // window ("+1 Leek", "Out of season."). Forwarded verbatim; absent means the
+    // dispatch produced none.
+    ...(receipt.nativeNotices == null ? {} : { nativeNotices: receipt.nativeNotices }),
   };
 }
 
