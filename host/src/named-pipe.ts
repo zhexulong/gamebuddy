@@ -60,6 +60,16 @@ export class NamedPipeTransport {
     return !this.#closed && this.#socket?.destroyed === false;
   }
 
+  /** Read-only probe: remaining listeners on the transport's own event surface. */
+  public eventListenerCount(channel: "data" | "message" | "frameStage" | "close"): number {
+    return this.#events.listenerCount(channel);
+  }
+
+  /** Read-only probe: remaining listeners on the underlying socket. */
+  public socketListenerCount(channel: "data" | "close" | "error"): number {
+    return this.#socket?.listenerCount(channel) ?? 0;
+  }
+
   /** Content-free signal that the underlying socket delivered an inbound chunk. */
   public onData(listener: () => void): () => void {
     this.#events.on("data", listener);
@@ -104,6 +114,12 @@ export class NamedPipeTransport {
     this.#closed = true;
     this.#socket?.destroy();
     this.#events.emit("close", reasonCode);
+    // A bounded close leaves no listener behind: the connect-time socket
+    // subscriptions (data/close/error) and every external subscription are
+    // released after the emit, so onClose subscribers still see the close
+    // exactly once and the cancel functions they already hold become no-ops.
+    this.#socket?.removeAllListeners();
+    this.#events.removeAllListeners();
   }
 
   private receive(chunk: Buffer): void {

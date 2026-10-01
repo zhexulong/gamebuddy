@@ -52,6 +52,50 @@ test("named-pipe transport uses bounded length-prefixed JSON frames", async () =
 });
 
 
+test("named-pipe transport releases socket and event subscriptions on close", async () => {
+  const pipeName = `gamebuddy_cleanup_${process.pid}_${Date.now()}`;
+  const pipePath = `\\\\.\\pipe\\${pipeName}`;
+  let peer: Socket | undefined;
+  const server = createServer((socket) => {
+    peer = socket;
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(pipePath, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const transport = await NamedPipeTransport.connect(pipeName);
+    let closeEvents = 0;
+    const cancelMessage = transport.onMessage(() => {});
+    const cancelClose = transport.onClose(() => {
+      closeEvents += 1;
+    });
+    assert.equal(transport.eventListenerCount("message"), 1);
+    assert.equal(transport.socketListenerCount("data"), 1);
+
+    transport.close("local_close");
+
+    // onClose subscribers saw the emit exactly once, then the surface is
+    // drained so no listener keeps the transport or its closures alive.
+    assert.equal(closeEvents, 1);
+    assert.equal(transport.eventListenerCount("message"), 0);
+    assert.equal(transport.eventListenerCount("close"), 0);
+    assert.equal(transport.eventListenerCount("frameStage"), 0);
+    assert.equal(transport.eventListenerCount("data"), 0);
+    assert.equal(transport.socketListenerCount("data"), 0);
+    assert.equal(transport.socketListenerCount("close"), 0);
+    assert.equal(transport.socketListenerCount("error"), 0);
+
+    // The previously returned cancel functions remain callable no-ops.
+    cancelMessage();
+    cancelClose();
+    transport.close("again");
+    assert.equal(closeEvents, 1);
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
 test("named-pipe transport reports only fixed framing stages across fragmented input", async () => {
   const pipeName = `gamebuddy_frame_stage_${process.pid}_${Date.now()}`;
   const pipePath = `\\\\.\\pipe\\${pipeName}`;

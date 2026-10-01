@@ -16,8 +16,5 @@
     "src/test-fixtures/semantic-known-game-process-worker.ts",
     "src/test-fixtures/semantic-initial-chat-process-worker.ts"
   ],
-  "exclude": [
-    "src/main.ts",
-    "src/windows-legacy-authority-seal/**"
-  ]
+  "exclude": ["src/main.ts"]
 }
