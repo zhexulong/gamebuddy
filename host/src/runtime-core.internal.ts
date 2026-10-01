@@ -416,6 +416,8 @@ export type ChatRuntimeConstructionProduct = Readonly<{
   runtime: RuntimeSession;
   authoredContextCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability;
   refreshAuthoredContext: (currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability) => Promise<import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability>;
+  /** Releases the construction's own store; consumed by the materializer's reverse disposal. */
+  closeChatThreadStore: () => void;
   clearTavernNarrativeGateMarker?: () => void;
 }>;
 
@@ -458,15 +460,22 @@ export async function createChatRuntimeConstructionInternal(
       runtime,
       authoredContextCapability,
       refreshAuthoredContext,
+      closeChatThreadStore: construction.closeChatThreadStore,
       ...(runtime.clearTavernNarrativeGateMarker === undefined
         ? {}
         : { clearTavernNarrativeGateMarker: runtime.clearTavernNarrativeGateMarker }),
     });
   } catch (error) {
+    // The construction's store must not outlive a failed runtime mount; the
+    // materializer only reverse-disposes a product it actually received.
     try {
-      runtime.clearTavernNarrativeGateMarker?.();
+      construction.closeChatThreadStore();
     } finally {
-      runtime.session.dispose();
+      try {
+        runtime.clearTavernNarrativeGateMarker?.();
+      } finally {
+        runtime.session.dispose();
+      }
     }
     throw error;
   }

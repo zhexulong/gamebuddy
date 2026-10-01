@@ -335,7 +335,7 @@ test("production Dialogue exposes close-drained manifest-bound Chat commands wit
         "verifyInitialChat",
         "verifyRegisteredChatContent",
       ]);
-      await authority.initializeInitialChat(createManifestDerivedInitialChatExactContentPort(deployment));
+      await authority.initializeInitialChat(createManifestDerivedInitialChatExactContentPort(deployment).port);
       const registered = await authority.registerChat();
       assert.equal(registered.kind, "register_chat");
       const catalog = await authority.readChatCatalog();
@@ -359,9 +359,9 @@ test("production Dialogue authorizes post-initial Tavern materialization outside
       await internalCoordinator.createFreshSemanticProductionAuthorityFromDeploymentManifest(deployment);
     try {
       const content = createManifestDerivedInitialChatExactContentPort(deployment);
-      await authority.initializeInitialChat(content);
+      await authority.initializeInitialChat(content.port);
       const registered = await authority.registerChat();
-      const receipt = await content.createExplicit(
+      const receipt = await content.port.createExplicit(
         Object.freeze({
           chatThreadId: registered.chatThreadId,
           chatSurfaceSessionId: registered.chatSurfaceSessionId,
@@ -399,7 +399,7 @@ test("production Dialogue Chat operations reject forged Tavern receipt and retai
     const authority =
       await internalCoordinator.createFreshSemanticProductionAuthorityFromDeploymentManifest(deployment);
     try {
-      await authority.initializeInitialChat(createManifestDerivedInitialChatExactContentPort(deployment));
+      await authority.initializeInitialChat(createManifestDerivedInitialChatExactContentPort(deployment).port);
       const registered = await authority.registerChat();
       await assert.rejects(
         authority.verifyRegisteredChatContent(
@@ -451,7 +451,7 @@ test(
       const fresh =
         await internalCoordinator.createFreshSemanticProductionAuthorityFromDeploymentManifest(selectedManifest);
       const content = createManifestDerivedInitialChatExactContentPort(selectedManifest);
-      await fresh.initializeInitialChat(content);
+      await fresh.initializeInitialChat(content.port);
       await fresh.close();
       await assert.rejects(
         createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest(selectedManifest),
@@ -759,7 +759,7 @@ test(
       const reopened = await createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest(deployment);
       try {
         await assert.rejects(
-          reopened.resumeInitialChatWithContent(createManifestDerivedInitialChatExactContentPort(deployment)),
+          reopened.resumeInitialChatWithContent(createManifestDerivedInitialChatExactContentPort(deployment).port),
           /chat_thread_not_found/,
         );
       } finally {

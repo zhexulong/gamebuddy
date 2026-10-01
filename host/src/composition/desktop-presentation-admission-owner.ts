@@ -153,8 +153,16 @@ export async function startChatOnlyPresentationAdmission(
   return Object.freeze({
     launchUrl: server.launchUrl,
     // Closing the listener drains its delegated Chat admission and the Chat
-    // pipeline service behind it; the mounted lease stays its own owner's.
-    close: () => (closePromise ??= server.close()),
+    // pipeline service behind it; the mounted lease stays its own owner's. The
+    // state facade holds its own store, so it is released here too.
+    close: () =>
+      (closePromise ??= (async () => {
+        try {
+          await server.close();
+        } finally {
+          await referenceStateFacade.close();
+        }
+      })()),
   });
 }
 
@@ -192,6 +200,7 @@ export async function startTavernManagementPresentationAdmission(
       tavernProfile,
       worldInfoService,
     );
+    createdServices.push(managementStateFacade);
     const managementService = createChatManagementService({
       manifest: input.manifest,
       lease: input.lease,
@@ -325,8 +334,16 @@ export async function startDesktopPresentationAdmission(
   return Object.freeze({
     launchUrl: server.launchUrl,
     // Closing the listener drains its delegated Chat admission and the Chat
-    // pipeline service behind it; the mounted lease stays its own owner's.
-    close: () => (closePromise ??= server.close()),
+    // pipeline service behind it; the mounted lease stays its own owner's. The
+    // state facade holds its own store, so it is released here too.
+    close: () =>
+      (closePromise ??= (async () => {
+        try {
+          await server.close();
+        } finally {
+          await referenceStateFacade.close();
+        }
+      })()),
   });
 }
 

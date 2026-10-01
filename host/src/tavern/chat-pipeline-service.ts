@@ -217,6 +217,9 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
   });
   const accept = createPlayerTurnAcceptor(manifest, lease);
   const claim = createProviderAttemptClaimer(manifest, lease);
+  // One store per service instance: the store owns exactly one lazily opened
+  // connection, reused by every request and terminated by this service's close.
+  const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
 
   let closing = false;
   let closed = false;
@@ -239,10 +242,9 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
     if (closing || closed) throw closedError();
   };
 
-  /** Method-local read-only exact-binding store read with pre/post lease checks. */
+  /** Exact-binding store read with pre/post lease checks. */
   const resumeState = async (): Promise<ChatThreadState> => {
     if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
-    const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
     try {
       const state = await store.resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
       validateStateBinding(state);
@@ -409,16 +411,10 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
           lease.browserProjection.projectMessageHandle(m.messageId) === command.messageHandle,
       );
       if (!targetMessage) throw unavailable();
-      const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
-      let state: ChatThreadState;
-      try {
-        state = await store.selectSwipe!(lease.chatThreadId, targetMessage.messageId, {
-          ...(command.direction === undefined ? {} : { direction: command.direction }),
-          ...(command.targetIndex === undefined ? {} : { targetIndex: command.targetIndex }),
-        });
-      } finally {
-        store.close?.();
-      }
+      const state = await store.selectSwipe!(lease.chatThreadId, targetMessage.messageId, {
+        ...(command.direction === undefined ? {} : { direction: command.direction }),
+        ...(command.targetIndex === undefined ? {} : { targetIndex: command.targetIndex }),
+      });
       const updatedMessage = state.messages.find(
         (m: ChatThreadState["messages"][number]) => m.messageId === targetMessage.messageId,
       );
@@ -510,6 +506,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       closePromise = (async () => {
         await waitForIdle();
         closed = true;
+        store.close?.();
       })();
       return closePromise;
     },

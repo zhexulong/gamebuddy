@@ -28,7 +28,7 @@ export function createHostChatRuntimeMaterializer(
   return Object.freeze({
     async materialize(reservation, permit): Promise<MaterializedChatRuntime> {
       return materializeExactChatRuntime(reservation, permit, async (execution) => {
-        const { runtime, authoredContextCapability: capability, refreshAuthoredContext } = await createChatRuntimeConstructionInternal(execution, permit, options);
+        const { runtime, authoredContextCapability: capability, refreshAuthoredContext, closeChatThreadStore } = await createChatRuntimeConstructionInternal(execution, permit, options);
         let currentCapability = capability;
         const clearAuthoredContext = async (): Promise<void> => {
           await currentCapability.clear();
@@ -43,6 +43,7 @@ export function createHostChatRuntimeMaterializer(
           session: runtime.session,
           authoredContextCapability: capability,
           clearAuthoredContext,
+          closeChatThreadStore,
           ...(runtime.clearTavernNarrativeGateMarker === undefined
             ? {}
             : { clearTavernNarrativeGateMarker: runtime.clearTavernNarrativeGateMarker }),

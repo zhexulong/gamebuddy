@@ -18,6 +18,8 @@ export type ChatRuntimeDisposal = Readonly<{
   /** Clears the currently installed capability after a private replacement. */
   clearAuthoredContext?: () => Promise<void>;
   clearTavernNarrativeGateMarker?: () => void;
+  /** Releases the construction's store, which lives as long as this runtime. */
+  closeChatThreadStore?: () => void;
 }>;
 
 
@@ -155,6 +157,13 @@ export async function closeMaterializedChatRuntime(runtime: ChatRuntimeDisposal)
   }
   try {
     runtime.session.dispose();
+  } catch (error) {
+    errors.push(error);
+  }
+  // Last, after every consumer of the store has been released: the session and
+  // authored-context teardown still read through it.
+  try {
+    runtime.closeChatThreadStore?.();
   } catch (error) {
     errors.push(error);
   }

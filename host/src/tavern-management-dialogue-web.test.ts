@@ -86,6 +86,7 @@ const state: TavernManagementState = {
 };
 const facade: TavernManagementStateFacade = Object.freeze({
   read: async () => state,
+  close: async () => undefined,
 });
 const list: import("./tavern/browser-contract/index.js").ChatListV1 = {
   apiVersion: 1,

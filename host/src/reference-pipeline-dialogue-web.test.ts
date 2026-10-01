@@ -48,6 +48,7 @@ const state: ReferencePipelineState = Object.freeze({
 const facade: ReferencePipelineStateFacade = Object.freeze({
   read: async () => state,
   readDraft: async () => Object.freeze({ apiVersion: 1, revision: 4, text: "draft" }),
+  close: async () => undefined,
 });
 async function openSse(
   url: string,

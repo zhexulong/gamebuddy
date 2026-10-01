@@ -179,6 +179,13 @@ type MountedChatRuntimeLeaseRecord = {
   /** Retained cancellation state; new browser Stop bypasses it. */
   cancellation?: Promise<CancelResult>;
   readonly begin: <T>(work: () => Promise<T>) => Promise<T>;
+  /**
+   * This lease's own store, opened lazily by the first read that needs it and
+   * closed by `close()`. Every coordinator read under this mounted lease shares
+   * it, so a long-lived mount holds exactly one SQLite connection instead of one
+   * per read. `store()` refuses once the lease has begun closing.
+   */
+  readonly store: () => import("../tavern/chat-thread-store.js").ChatThreadStore;
   close(): Promise<void>;
 };
 const mountedChatRuntimeLeases = new WeakMap<object, MountedChatRuntimeLeaseRecord>();
@@ -340,7 +347,7 @@ async function readCurrentPresentationLedger(record: MountedChatRuntimeLeaseReco
   const binding = record.attemptBinding;
   if (binding === undefined)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
-  const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
+  const store = record.store();
   const ledger = (await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId)).turnLedger;
   if (
     ledger === null ||
@@ -428,7 +435,7 @@ async function ensureCurrentAuthoredContext(
     return;
   }
 
-  const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
+  const store = record.store();
   let refreshPromise!: Promise<void>;
   refreshPromise = (async () => {
     const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
@@ -687,7 +694,7 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
       );
     };
     const readAcceptedMessageText = async (): Promise<string> => {
-      const store = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
+      const store = mounted.store();
       const state = await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId);
       const message = state.messages.find(
         (candidate) =>
@@ -699,14 +706,14 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
     };
     const readAcceptedAuthoredContextPlan = async (): Promise<import("../tavern/chat-thread-store.js").AcceptedTurnAuthoredContextPlan> => {
       assertScopeActive();
-      const store = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
+      const store = mounted.store();
       const state = await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId);
       const plan = state.currentTurnContextPlan;
       if (plan === undefined || plan.turnId !== facts.turnId) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_plan_unavailable");
       return plan;
     };
     const readCurrentTurnLedger = async (): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger> => {
-      const store = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
+      const store = mounted.store();
       const ledger = (await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId)).turnLedger;
       if (
         ledger === null ||
@@ -854,7 +861,7 @@ export async function startMountedAttempt(
     const binding = record.attemptBinding;
     if (binding === undefined)
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
-    const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
+    const store = record.store();
     const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
     const turn = state.turnLedger;
     if (
@@ -939,8 +946,8 @@ export async function consumeMountedDurableAdmission<T>(
   record.consuming.value = true;
   try {
     const mounted = record.lease;
-    const mountedStore = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
-    const mountedThread = (await mountedStore.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId)).thread;
+    const mountedThreadStore = mounted.store();
+    const mountedThread = (await mountedThreadStore.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId)).thread;
     return await callback(
       Object.freeze({
         runtimeRoot: mounted.runtimeRoot,
@@ -1006,7 +1013,7 @@ export async function stopMountedChatPresentationEpoch(
   // cancelled, but an armed prompt may be aborted and terminalized directly
   // without waiting for a provider-response observation.
   const preflight = await readCurrentPresentationLedger(record).catch(async (error) => {
-    const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
+    const store = record.store();
     const ledger = (await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId)).turnLedger;
     if (
       ledger?.status === "attempt_starting" &&
@@ -1067,7 +1074,7 @@ export async function stopMountedChatPresentationEpoch(
     const binding = record.attemptBinding;
     if (binding === undefined)
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
-    const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
+    const store = record.store();
     const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
     const ledger = state.turnLedger;
     if (
@@ -1416,7 +1423,7 @@ export async function createFreshSemanticChatRuntimeProductionAuthorityFromDeplo
       mutex,
     );
     semantic = create(provision, mutex);
-    await semantic.initializeInitialChat(createManifestDerivedInitialChatExactContentPort(manifest));
+    await initializeInitialChatAndCloseContentPort(semantic, manifest);
     binding = await createChatRuntimeBinding(manifest);
     return createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options);
   } catch (error) {
@@ -1590,7 +1597,7 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
     semantic = create(provision, mutex, undefined, true);
     game = createKnownGameAuthority(provision, mutex, undefined, createWindowsOwnerDeathVerifier(), true);
     if (mode === "fresh") {
-      await semantic.initializeInitialChat(createManifestDerivedInitialChatExactContentPort(manifest));
+      await initializeInitialChatAndCloseContentPort(semantic, manifest);
       binding = await createChatRuntimeBinding(manifest);
     } else {
       // Known Chat is mounted as the terminal successor exactly like the
@@ -1723,6 +1730,27 @@ async function createFreshChatRuntimeAuthority(
   let mutexClosed = false;
   let brokerClosed = false;
   let authority!: SemanticChatRuntimeProductionAuthority;
+
+  /**
+   * The one Chat-owned store for this mounted authority. Reads under the mount
+   * share it, so a long-lived mount holds one SQLite connection rather than one
+   * per read. It is opened lazily by the first read and closed with the other
+   * drained resources at the end of `close()`.
+   *
+   * The accessor refuses once close has begun, which is why in-flight reads fail
+   * closed rather than racing a connection that is about to disappear.
+   */
+  let mountedChatThreadStore: import("../tavern/chat-thread-store.js").ChatThreadStore | undefined;
+  let mountedChatThreadStoreClosed = false;
+  const mountedStore = (): import("../tavern/chat-thread-store.js").ChatThreadStore => {
+    if (mountedChatThreadStoreClosed)
+      throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authority_closed");
+    mountedChatThreadStore ??= createChatThreadStore(
+      provision.runtimeCwd,
+      identityKey(Object.freeze({ ...provision.principal })),
+    );
+    return mountedChatThreadStore;
+  };
   const drainWaiters = new Set<() => void>();
   const waitForDrain = (): Promise<void> =>
     pending === 0 ? Promise.resolve() : new Promise((resolve) => drainWaiters.add(resolve));
@@ -1959,6 +1987,7 @@ async function createFreshChatRuntimeAuthority(
           transitionAuthority: createMountedTurnTransitionAuthority(),
           presentationEpoch: createCompanionInterruption(),
           begin,
+          store: mountedStore,
           close: () => authority.close(),
         });
         mountedLease = lease;
@@ -2036,6 +2065,15 @@ async function createFreshChatRuntimeAuthority(
         // In a shared composition the mutex and broker stay open for the owner's
         // retryable close, but the Chat binding and the drain-only store semantic
         // projection are Chat-owned and must be closed by this projection.
+        //
+        // The mounted Chat store closes here rather than when `closing` was set:
+        // every read already in flight when close began has drained above, so
+        // this can never pull the connection out from under one.
+        if (!mountedChatThreadStoreClosed) {
+          mountedChatThreadStoreClosed = true;
+          mountedChatThreadStore?.close?.();
+          mountedChatThreadStore = undefined;
+        }
         if (!bindingClosed) {
           await binding.close();
           bindingClosed = true;
@@ -2069,6 +2107,25 @@ async function createFreshChatRuntimeAuthority(
     },
   });
   return authority;
+}
+
+/**
+ * Runs one initial-chat saga and always releases the content port it built.
+ *
+ * The port holds a long-lived store, so it is scoped to this one saga rather
+ * than left for collection: an unclosed store keeps its SQLite handle and would
+ * hold the continuity root against removal on Windows.
+ */
+async function initializeInitialChatAndCloseContentPort(
+  semantic: SemanticProductionAuthority,
+  manifest: HostDeploymentManifest,
+): Promise<ProductionSagaReadback> {
+  const content = createManifestDerivedInitialChatExactContentPort(manifest);
+  try {
+    return await semantic.initializeInitialChat(content.port);
+  } finally {
+    content.close();
+  }
 }
 
 async function failChatRuntimeAfterError(

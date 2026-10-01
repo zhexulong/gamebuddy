@@ -54,11 +54,11 @@ test(
         const content: InitialChatExactContentPort = Object.freeze({
           async createExplicit(request) {
             createCalls++;
-            return baseContent.createExplicit(request);
+            return baseContent.port.createExplicit(request);
           },
           async resumeExact(threadId, companionId, continuityId, surfaceId) {
             resumeCalls++;
-            return baseContent.resumeExact(threadId, companionId, continuityId, surfaceId);
+            return baseContent.port.resumeExact(threadId, companionId, continuityId, surfaceId);
           },
         });
         const fresh = await createFreshSemanticProductionAuthorityFromDeploymentManifest(manifest);
@@ -128,7 +128,7 @@ test(
         await fresh.startInitialChat();
         registered = await fresh.registerInitialChat();
         assert.ok(registered.chatThreadId && registered.chatSurfaceSessionId);
-        const exact = await content.createExplicit({
+        const exact = await content.port.createExplicit({
           chatThreadId: registered.chatThreadId,
           chatSurfaceSessionId: registered.chatSurfaceSessionId,
           companionId: principal.companionId,
@@ -150,7 +150,7 @@ test(
 
       const reopened = await createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest(manifest);
       try {
-        await assert.rejects(reopened.resumeInitialChatWithContent(content), /tavern_exact_content_receipt_mismatch/);
+        await assert.rejects(reopened.resumeInitialChatWithContent(content.port), /tavern_exact_content_receipt_mismatch/);
         assert.equal((await reopened.resumeInitialChat())?.phase, "content_verified");
       } finally {
         await reopened.close();

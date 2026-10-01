@@ -189,25 +189,31 @@ async function provisionNewCompanionNamespace(
         });
       }
       const threads = suppliedThreads ?? createChatThreadStore(paths.runtimeCwd, identityKey(identity));
-      const library = createTavernLibraryService(
-        tavernPaths,
-        new TavernArtifactStore(paths.root),
-        threads,
-        {
-          async readExact() {
-            return identityProfileMetadata(await readIdentityProfile(paths.identityProfilePath));
+      try {
+        const library = createTavernLibraryService(
+          tavernPaths,
+          new TavernArtifactStore(paths.root),
+          threads,
+          {
+            async readExact() {
+              return identityProfileMetadata(await readIdentityProfile(paths.identityProfilePath));
+            },
           },
-        },
-      );
-      const companion = await library.createNewCompanion({
-        companionId: identity.companionId,
-        continuityId: identity.continuityId!,
-        name: profile.identity.name,
-        profileId: profile.profileId,
-        profileRevision: profile.revision,
-        profileHash: identityProfileHash(profile),
-      });
-      return Object.freeze({ companion, identity, profile });
+        );
+        const companion = await library.createNewCompanion({
+          companionId: identity.companionId,
+          continuityId: identity.continuityId!,
+          name: profile.identity.name,
+          profileId: profile.profileId,
+          profileRevision: profile.revision,
+          profileHash: identityProfileHash(profile),
+        });
+        return Object.freeze({ companion, identity, profile });
+      } finally {
+        // Only the store this call created is disposed here; a caller-supplied
+        // store stays its own owner's for the caller's lifetime.
+        if (suppliedThreads === undefined) threads.close?.();
+      }
     },
     { containmentRoot: paths.root },
   );

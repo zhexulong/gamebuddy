@@ -207,6 +207,7 @@ export function createWorldInfoBindingManagementService(
       if (closed) return;
       closed = true;
       currentProjection = null;
+      store.close?.();
     },
   });
 

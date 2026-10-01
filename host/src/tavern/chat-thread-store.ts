@@ -1400,25 +1400,54 @@ export function createChatThreadStore(
   root: string,
   continuityKey: string,
   now: () => number = Date.now,
+  openConnection: (dbPath: string) => DatabaseSync = (path) => new DatabaseSync(path),
 ): ChatThreadStore {
   assertId("continuityKey", continuityKey);
   const continuityRoot = join(root, "tavern", "v3", "continuities", continuityKey);
   const dbPath = join(continuityRoot, "tavern.sqlite");
 
-  function withDb<T>(fn: (db: DatabaseSync) => T): T {
+  /**
+   * Exactly one lazily opened, store-owned connection. `journal_mode` is
+   * durable in the database file, but `synchronous` and `busy_timeout` are
+   * connection-local and are therefore re-applied on every open.
+   */
+  let connection: DatabaseSync | undefined;
+  let closed = false;
+
+  function connectionOrOpen(): DatabaseSync {
+    if (closed) throw new Error("chat_thread_store_closed");
+    if (connection !== undefined) return connection;
     mkdirSync(continuityRoot, { recursive: true });
-    const db = new DatabaseSync(dbPath);
+    const db = openConnection(dbPath);
     try {
       db.exec(
         "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;",
       );
       initSchema(db);
-      return runInTransaction(db, () => fn(db));
-    } finally {
+    } catch (error) {
       try {
         db.close();
       } catch {}
+      throw error;
     }
+    connection = db;
+    return db;
+  }
+
+  function closeConnection(): void {
+    if (closed) return;
+    closed = true;
+    const db = connection;
+    connection = undefined;
+    if (db === undefined) return;
+    try {
+      db.close();
+    } catch {}
+  }
+
+  function withDb<T>(fn: (db: DatabaseSync) => T): T {
+    const db = connectionOrOpen();
+    return runInTransaction(db, () => fn(db));
   }
 
   const createProfileAware = async (
@@ -1802,7 +1831,7 @@ export function createChatThreadStore(
     },
 
     close(): void {
-      // With per-operation withDb lifecycle, connections are closed after every operation.
+      closeConnection();
     },
   });
 
