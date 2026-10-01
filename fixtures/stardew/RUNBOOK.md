@@ -609,6 +609,44 @@ an alternate action runtime.
    This is native-local shared mechanics AND recovery-chain evidence only — never
    Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen
    evidence.
+27. `chop_tree_approach` has met this lane's target-version live closure for the
+   shared tool-family approach leg (design §5.2), proving the geometry the native
+   click path enforces and the bridge used to refuse. `Game1.cs:11509` requires
+   `tileWithinRadiusOfPlayer(grabTile, 1)` before `checkAction`, and
+   `Character.GetToolLocation` (`:1218-1228`) only returns the clicked tile inside
+   that radius — farther away it swings at the tile in front — so a real player
+   walks into range while the bridge returned `target_out_of_range` and left the
+   walking to the Agent. The harness reuses the UNCHANGED
+   `native_chop_tree_source_v1` fixture and the UNCHANGED published
+   `chop_tree_source` action; only the runner's geometry differs. It deliberately
+   separates the actor from the tree first, then issues the action from outside the
+   interaction radius. Measured: requested from Chebyshev distance `2`
+   (`(62,15)` for the tree at Farm `(64,17)`), one accepted execution, and one
+   journal lineage `accepted → controller_started → tile_advanced →
+   tool_approach_completed → tree_source_chopped` (rev `21`). The terminal carries
+   `health_before=1`, `health_after=5`, `stump_before=false`, `stump_after=true`,
+   `source_transformed=true`, and the full tool-family stamina shape `270→268`
+   (`expected_stamina_cost=2`); the fresh snapshot dropped
+   `treeChopSourceTargets 1→0` and gained `treeChopResultTargets 0→1` with the
+   stump at the same tile and type. The arrangement is the load-bearing part:
+   `tool_approach_completed` is minted as `Running`, not a terminal, so the runner
+   refuses to treat arrival as the action's outcome, and it also refuses to pass a
+   Mod that chops from a distance without walking. The transaction restored its
+   profile, removed backup/lock and working save, and left no Stardew/SMAPI
+   process. Three live iterations were needed and exposed two real defects the
+   offline mock could not catch, both of the same class — the mock encoded the
+   runner's assumption instead of the game's behaviour: (a) the mock reused the
+   SOURCE tree's `targetId` for the stump, but the live projection mints a distinct
+   identity (`tree_chop_source_*` → `tree_chop_result_*`), so a targetId-matching
+   readback passed offline and failed live; (b) the runner's snapshot summary never
+   forwarded `treeChopResultTargets` at all, so the postcondition could never be
+   observed regardless of the world. The mock now mirrors the real identity split
+   and the failure report names which clause failed instead of printing a bare
+   mismatch. This is native-local shared mechanics evidence only — never Farmhand,
+   HostAutomation, Portfolio, publication, release, or save/reopen evidence. The
+   checker's tool-family stamina invariant is unchanged; it now follows the
+   action's own delegations to the shared execution body, and a negative case pins
+   that a wrapper delegating to an incomplete body is still reported.
 Current native-local validation record: `move_to_tile`, `till_soil`,
 `equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
 `harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live

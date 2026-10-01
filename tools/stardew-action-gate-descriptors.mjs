@@ -267,6 +267,14 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // remainder, then re-crafts the SAME recipe to a full success. Not a new action;
   // it grants no capability.
   craft_partial_recovery_chain: "run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs",
+  // Tool-family approach harness (design 5.2). `chop_tree_source` is a published
+  // action whose gate runner proves the in-range chop; this harness proves the
+  // OTHER half of the same contract -- that a request from outside the native
+  // interaction radius is admitted with an approach leg, announces
+  // `tool_approach_completed`, and still reaches the same terminal. The action and
+  // the fixture scenario are both unchanged; the runner drives the published
+  // action from farther away. Not a new action; it grants no capability.
+  chop_tree_approach: "run-stardew-native-local-player-chop-tree-approach-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

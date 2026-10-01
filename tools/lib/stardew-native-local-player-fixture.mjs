@@ -468,6 +468,10 @@ export function fixtureActions(action) {
   // Bait pre-attachment; production alone performs the native interaction.
   if (action === "bait_crab_pot") return ["bait_crab_pot"];
   if (action === "chop_tree_source") return ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
+  // The approach harness (design 5.2) drives the SAME published action and the
+  // same fixture tree; only the runner's geometry differs, so it reuses the
+  // scenario rather than adding a fixture of its own.
+  if (action === "chop_tree_approach") return ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
   if (action === "break_rock_source") return ["move_to_tile", "travel", "equip_tool", "break_rock_source"];
   if (action === "clear_hoedirt") return ["move_to_tile", "travel", "equip_tool", "clear_hoedirt"];
   if (action === "dig_artifact_spot") return ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"];
