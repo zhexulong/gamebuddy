@@ -61,6 +61,9 @@ const fakeStateFacade = Object.freeze({
       worldInfo: Object.freeze({ state: "none", revision: handle, items: [] }),
     });
   },
+  // The real facade owns its store and releases it on close; the composition
+  // owner's close chain calls this, so the fixture must model it.
+  close: async () => undefined,
 });
 const fakeManagementService = Object.freeze({
   listChats: async () => {
