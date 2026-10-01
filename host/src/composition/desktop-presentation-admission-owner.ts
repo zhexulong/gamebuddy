@@ -1,5 +1,7 @@
 import { join, resolve } from "node:path";
 
+import { resolveRuntimePaths } from "../runtime-identity.js";
+
 import { composeReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
@@ -11,6 +13,7 @@ import { createChatManagementService } from "../tavern/chat-management/chat-mana
 import { createChatPipelineService } from "../tavern/chat-pipeline-service.js";
 import { startComposedReferenceGameStaticShellComposition } from "../tavern/composed-reference-game-static-shell-composition.js";
 import { createMemoryManagementService } from "../tavern/memory-management/memory-management.js";
+import { createTavernConnectionService } from "../tavern/connection-service.js";
 import { createReferencePipelineStateFacade, type VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
 import { startReferencePipelineStaticShellComposition } from "../tavern/reference-pipeline-static-shell-composition.js";
 import { createTavernManagementStateFacade } from "../tavern/tavern-management-state.js";
@@ -201,6 +204,27 @@ export async function startTavernManagementPresentationAdmission(
       profile: tavernProfile,
     });
     createdServices.push(memoryService);
+    // The connection service owns the player's provider/model/credential
+    // selection. It reports the durable turn state of the exact mounted Chat so
+    // an activation cannot switch a running turn (design/28 §5.3).
+    const connectionService = createTavernConnectionService({
+      agentDir: resolveRuntimePaths(
+        input.manifest.principal,
+        input.manifest.runtimeRoot,
+        input.lease.chatSurfaceSessionId,
+      ).agentDir,
+      readTurnState: async () => {
+        const state = await managementStateFacade.read();
+        const turn = state.turn;
+        // Only a turn that is still in flight blocks activation; a terminal
+        // ledger entry (completed/cancelled/failed) is a settled turn
+        // (design/28 §5.3: "While a turn is active... returns dialogue_busy").
+        const active =
+          turn !== null && (turn.state === "queued" || turn.state === "running" || turn.state === "response_visible" || turn.state === "stopping");
+        return { turnActive: active };
+      },
+    });
+    createdServices.push(connectionService);
     const voicePreferenceStore = new VoicePreferenceStore(
       join(input.manifest.runtimeRoot, "settings", "voice-preference.json"),
     );
@@ -210,6 +234,7 @@ export async function startTavernManagementPresentationAdmission(
       memoryService,
       worldInfoService,
       voicePreferenceStore,
+      connectionService,
       ...(input.listVoiceOutputDevices === undefined
         ? {}
         : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
@@ -354,6 +379,12 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.voice.read",
       "settings.voice.consent",
       "settings.voice.devices",
+      "settings.connection.read",
+      "settings.connection.create",
+      "settings.connection.test",
+      "settings.connection.activate",
+      "settings.connection.model",
+      "settings.connection.remove",
     ],
     operationIds: [
       "draft.save",
@@ -364,6 +395,12 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.voice.read",
       "settings.voice.consent",
       "settings.voice.devices",
+      "settings.connection.read",
+      "settings.connection.create",
+      "settings.connection.test",
+      "settings.connection.activate",
+      "settings.connection.model",
+      "settings.connection.remove",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds.

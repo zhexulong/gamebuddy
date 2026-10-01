@@ -6,6 +6,10 @@ import {
   createManagementPipelineApi,
   type MemoryItemV1,
   type MemoryReadV1,
+  type TavernConnectionProviderV1,
+  type TavernConnectionStateV1,
+  type TavernConnectionThinkingLevelV1,
+  type TavernConnectionV1,
   type TavernVoicePreferenceV1,
   type TavernVoiceDevicesV1,
   TavernProblemError,
@@ -44,6 +48,16 @@ import { Timeline } from "./Timeline";
  * rejected mutation re-reads the authoritative durable draft before the
  * failure notice is shown, so a stale local textarea (e.g. a 409 from a
  * same-cookie stale tab) can never survive the conflict.
+ *
+ * Voice output ordering (frozen): the panel offers the enumerated Windows
+ * endpoints plus the always-selectable system default; picking one PUTs
+ * `settings.voice-preference` with the current preference `expectedRevision`
+ * and the selection is replaced by the validated mutation read-back, so the
+ * selector shows the persisted endpoint and never the local choice. One
+ * mutation is admitted at a time (a second click would reuse the same
+ * `expectedRevision` and manufacture a durable `settings_revision_conflict`),
+ * and a rejected mutation re-reads the authoritative preference before the
+ * failure is shown.
  */
 
 type ReadyView = Readonly<{
@@ -56,7 +70,17 @@ type ReadyView = Readonly<{
 type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail: string }>;
 type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
 
-type VoiceView = Readonly<{ kind: "loading" }> | Readonly<{ kind: "unavailable" }> | Readonly<{ kind: "error" }> | Readonly<{ kind: "ready"; preference: TavernVoicePreferenceV1; devices: TavernVoiceDevicesV1 | null }>;
+type VoiceView = Readonly<{ kind: "loading" }> | Readonly<{ kind: "unavailable" }> | Readonly<{ kind: "error" }> | Readonly<{ kind: "ready"; preference: TavernVoicePreferenceV1; devices: TavernVoiceDevicesV1 | null; pending: boolean }>;
+
+/**
+ * Connection panel state. `pending` is the one-management-mutation-at-a-time
+ * guard: the durable document revision every mutation carries as its
+ * compare-and-swap would otherwise turn a double click into a conflict.
+ */
+type ConnectionView =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "ready"; state: TavernConnectionStateV1; pending: boolean; notice: "activation" | "busy" | "conflict" | null }>;
 
 type MemoryView =
   | Readonly<{ kind: "idle" }>
@@ -80,6 +104,8 @@ export function ManagementApp() {
   const [memoryView, setMemoryView] = useState<MemoryView>({ kind: "idle" });
   const [voiceView, setVoiceView] = useState<VoiceView>({ kind: "loading" });
   const voiceLoadedRef = useRef(false);
+  const [connectionView, setConnectionView] = useState<ConnectionView>({ kind: "loading" });
+  const connectionLoadedRef = useRef(false);
   const localeRef = useRef<Locale>(resolveLocale());
   const cancelledRef = useRef(false);
 
@@ -142,10 +168,24 @@ export function ManagementApp() {
             } catch {
               devices = null;
             }
-            setVoiceView({ kind: "ready", preference, devices });
+            setVoiceView({ kind: "ready", preference, devices, pending: false });
           } catch {
             // Older management fixtures may not publish the optional voice route.
             setVoiceView({ kind: "unavailable" });
+          }
+        }
+        if (!connectionLoadedRef.current) {
+          connectionLoadedRef.current = true;
+          try {
+            const state = await api.readConnection();
+            if (!active) return;
+            // The projected readiness IS the durable record's readiness; the
+            // panel never derives a ready state from local intent.
+            setConnectionView({ kind: "ready", state, pending: false, notice: null });
+          } catch {
+            // A management profile without the connection extension group does
+            // not publish these routes at all.
+            setConnectionView({ kind: "unavailable" });
           }
         }
       } catch (error) {
@@ -167,19 +207,34 @@ export function ManagementApp() {
   const handleVoiceMutation = async (action: "accept" | "revoke" | "setOutputDevice", outputDevice: string | null = null): Promise<void> => {
     const current = viewRef.current;
     const voice = voiceView;
-    if (current.kind !== "ready" || voice.kind !== "ready") return;
+    if (current.kind !== "ready" || voice.kind !== "ready" || voice.pending) return;
     const command = action === "accept"
       ? { action, expectedRevision: voice.preference.revision, disclosureVersion: "mimo-cloud-tts-v1" as const }
       : action === "setOutputDevice"
         ? { action, expectedRevision: voice.preference.revision, outputDevice }
         : { action, expectedRevision: voice.preference.revision };
+    // One in-flight mutation at a time: a second identical action would reuse
+    // the same expectedRevision and turn an ordinary double click into a
+    // durable revision conflict.
+    setVoiceView({ ...voice, pending: true });
     try {
-      await apiRef.current.updateVoicePreference(command, current.session.snapshot.csrfToken);
-      const preference = await apiRef.current.readVoicePreference();
-      setVoiceView({ kind: "ready", preference, devices: voice.devices });
+      // The validated mutation response IS the durable read-back (the store
+      // re-reads the written file and compares it before projecting), so the
+      // selector always shows the persisted selection, never the local choice.
+      const preference = await apiRef.current.updateVoicePreference(command, current.session.snapshot.csrfToken);
+      setVoiceView({ kind: "ready", preference, devices: voice.devices, pending: false });
       commit({ ...current, notice: { kind: "success", text: labels().success } });
     } catch {
-      setVoiceView({ kind: "error" });
+      // A rejection can still hide a committed change (e.g. a same-cookie
+      // stale tab hitting settings_revision_conflict), so re-read the
+      // authoritative preference before the failure is shown and never keep a
+      // local selection the durable store did not accept.
+      try {
+        const preference = await apiRef.current.readVoicePreference();
+        setVoiceView({ kind: "ready", preference, devices: voice.devices, pending: false });
+      } catch {
+        setVoiceView({ kind: "error" });
+      }
       commit({ ...current, notice: { kind: "failure", text: labels().failure } });
     }
   };
@@ -329,6 +384,114 @@ export function ManagementApp() {
     loadMemory();
   };
 
+  /**
+   * One connection mutation at a time; the durable read-back is what the panel
+   * then shows. `notice` carries only closed UI categories, and the successful
+   * activation notice makes exactly one claim: the selection is durable and
+   * takes effect on the next runtime start. It never claims a running
+   * conversation was switched.
+   */
+  const handleConnectionMutation = async (
+    action: (
+      api: ReturnType<typeof createManagementPipelineApi>,
+      csrfToken: string,
+    ) => Promise<TavernConnectionStateV1>,
+    activation: boolean,
+  ): Promise<void> => {
+    const current = viewRef.current;
+    const connection = connectionView;
+    if (current.kind !== "ready" || connection.kind !== "ready" || connection.pending) return;
+    setConnectionView({ ...connection, pending: true, notice: null });
+    try {
+      const state = await action(apiRef.current, current.session.snapshot.csrfToken);
+      setConnectionView({ kind: "ready", state, pending: false, notice: activation ? "activation" : null });
+      commit({
+        ...current,
+        notice: activation
+          ? { kind: "success", text: labels().connectionActivationNotice }
+          : { kind: "success", text: labels().success },
+      });
+    } catch (error) {
+      // A rejection can still hide a committed change or a busy turn, so re-read
+      // the authoritative projection before showing the failure and never keep a
+      // local selection the durable store did not accept.
+      let notice: "busy" | "conflict" | null = null;
+      if (error instanceof TavernProblemError && error.code === "dialogue_busy") notice = "busy";
+      else if (error instanceof TavernProblemError && error.code === "connection_conflict") notice = "conflict";
+      try {
+        const state = await apiRef.current.readConnection();
+        setConnectionView({ kind: "ready", state, pending: false, notice });
+      } catch {
+        setConnectionView({ kind: "unavailable" });
+      }
+      commit({ ...current, notice: { kind: "failure", text: connectionProblemText(error, labels()) } });
+    }
+  };
+
+  /**
+   * Creates the draft record for one catalog entry. The credential is handed
+   * straight to the request and is never retained in component state, so a
+   * write-only field stays write-only. Creation deliberately does not activate:
+   * activation needs a ready record, which requires the player's own test step.
+   */
+  const handleCreateConnection = async (form: ConnectionForm): Promise<void> => {
+    await handleConnectionMutation(async (api, csrfToken) => {
+      const connection = connectionView.kind === "ready" ? connectionView.state : null;
+      const provider: TavernConnectionProviderV1 | undefined = connection?.providers.find(
+        (entry) => entry.providerId === form.providerId,
+      );
+      if (provider === undefined) throw new TavernProtocolError();
+      return await api.createConnection(
+        {
+          apiVersion: 1,
+          providerId: provider.providerId,
+          ...(provider.setupFields.includes("apiKey") ? { apiKey: form.apiKey } : {}),
+          ...(provider.setupFields.includes("baseUrl") ? { baseUrl: form.baseUrl } : {}),
+          ...(form.catalogModelId === "" ? {} : { modelId: form.catalogModelId }),
+          ...(provider.setupFields.includes("modelId") ? { modelId: form.modelId } : {}),
+        },
+        csrfToken,
+      );
+    }, false);
+  };
+
+  const handleTestConnection = async (connectionId: string): Promise<void> => {
+    await handleConnectionMutation(async (api, csrfToken) => {
+      if (connectionView.kind !== "ready") throw new TavernProtocolError();
+      const probe = await api.testConnection(connectionId, connectionView.state.revision, csrfToken);
+      return probe.state;
+    }, false);
+  };
+
+  const handleActivateConnection = async (connectionId: string): Promise<void> => {
+    await handleConnectionMutation(async (api, csrfToken) => {
+      if (connectionView.kind !== "ready") throw new TavernProtocolError();
+      return await api.activateConnection(connectionId, connectionView.state.revision, csrfToken);
+    }, true);
+  };
+
+  const handleSelectConnectionModel = async (
+    connectionId: string,
+    modelId: string,
+    thinkingLevel: TavernConnectionThinkingLevelV1,
+  ): Promise<void> => {
+    await handleConnectionMutation(async (api, csrfToken) => {
+      if (connectionView.kind !== "ready") throw new TavernProtocolError();
+      return await api.selectConnectionModel(
+        connectionId,
+        { expectedRevision: connectionView.state.revision, modelId, thinkingLevel },
+        csrfToken,
+      );
+    }, false);
+  };
+
+  const handleRemoveConnection = async (connectionId: string): Promise<void> => {
+    await handleConnectionMutation(async (api, csrfToken) => {
+      if (connectionView.kind !== "ready") throw new TavernProtocolError();
+      return await api.removeConnection(connectionId, connectionView.state.revision, csrfToken);
+    }, false);
+  };
+
   const handleWorldInfoBinding = async (sourceHandle: string | null): Promise<void> => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
@@ -372,42 +535,22 @@ export function ManagementApp() {
 
   const draftSaveAvailable =
     view.kind === "ready" &&
-    view.session.snapshot.operations.some(
-      (op) =>
-        typeof op === "object" &&
-        op !== null &&
-        (op as Readonly<Record<string, unknown>>).operationId === "draft.save" &&
-        (op as Readonly<Record<string, unknown>>).availability === "available",
-    );
+    view.session.snapshot.operations.some((op) => op.operationId === "draft.save" && op.availability === "available");
   const draftDiscardAvailable =
     view.kind === "ready" &&
     view.session.snapshot.operations.some(
-      (op) =>
-        typeof op === "object" &&
-        op !== null &&
-        (op as Readonly<Record<string, unknown>>).operationId === "draft.discard" &&
-        (op as Readonly<Record<string, unknown>>).availability === "available",
+      (op) => op.operationId === "draft.discard" && op.availability === "available",
     );
 
   const renameAvailable =
     view.kind === "ready" &&
-    view.session.snapshot.operations.some(
-      (op) =>
-        typeof op === "object" &&
-        op !== null &&
-        (op as Readonly<Record<string, unknown>>).operationId === "chat.rename" &&
-        (op as Readonly<Record<string, unknown>>).availability === "available",
-    );
+    view.session.snapshot.operations.some((op) => op.operationId === "chat.rename" && op.availability === "available");
 
   const worldInfoBindAvailable =
     view.kind === "ready" &&
     view.session.snapshot.chat?.worldInfo !== null &&
     view.session.snapshot.operations.some(
-      (op) =>
-        typeof op === "object" &&
-        op !== null &&
-        (op as Readonly<Record<string, unknown>>).operationId === "world-info.bind" &&
-        (op as Readonly<Record<string, unknown>>).availability === "available",
+      (op) => op.operationId === "world-info.bind" && op.availability === "available",
     );
 
   const chats: ChatSummary[] =
@@ -461,10 +604,26 @@ export function ManagementApp() {
             <VoiceSettingsPanel
               voiceView={voiceView}
               labels={labels()}
-                    onAccept={() => void handleVoiceMutation("accept")}
-                    onRevoke={() => void handleVoiceMutation("revoke")}
-                    onSelectDevice={(deviceId) => void handleVoiceMutation("setOutputDevice", deviceId)}
+              onAccept={() => void handleVoiceMutation("accept")}
+              onRevoke={() => void handleVoiceMutation("revoke")}
+              onSelectDevice={(deviceId) => void handleVoiceMutation("setOutputDevice", deviceId)}
             />
+            {connectionView.kind === "ready" && (
+              // The panel is rendered only when the mounted profile actually
+              // published the connection routes; a profile without them never
+              // shows a control that could not work.
+              <ConnectionSettingsPanel
+                connectionView={connectionView}
+                labels={labels()}
+                onCreate={(form) => void handleCreateConnection(form)}
+                onTest={(connectionId) => void handleTestConnection(connectionId)}
+                onActivate={(connectionId) => void handleActivateConnection(connectionId)}
+                onSelectModel={(connectionId, modelId, thinkingLevel) =>
+                  void handleSelectConnectionModel(connectionId, modelId, thinkingLevel)
+                }
+                onRemove={(connectionId) => void handleRemoveConnection(connectionId)}
+              />
+            )}
             {worldInfoBindAvailable && view.session.snapshot.chat.worldInfo !== null && (
               <WorldInfoBindingPanel
                 worldInfo={view.session.snapshot.chat.worldInfo}
@@ -534,6 +693,350 @@ export function ManagementApp() {
   );
 }
 
+type ConnectionForm = Readonly<{
+  providerId: string;
+  apiKey: string;
+  baseUrl: string;
+  /** Player-supplied model id, used only by the escape hatch. */
+  modelId: string;
+  /** Catalog model selection for every other provider. */
+  catalogModelId: string;
+  thinkingLevel: TavernConnectionThinkingLevelV1;
+}>;
+
+function connectionProblemText(error: unknown, labels: ReturnType<typeof messages>): string {
+  if (error instanceof TavernProblemError) {
+    if (error.code === "dialogue_busy") return labels.connectionBusy;
+    if (error.code === "connection_conflict") return labels.connectionRevisionConflict;
+    if (error.code === "connection_not_ready") return labels.connectionActivateRequiresReady;
+  }
+  return labels.failure;
+}
+
+function connectionReadinessText(
+  readiness: TavernConnectionV1["readiness"],
+  labels: ReturnType<typeof messages>,
+): string {
+  if (readiness === "ready") return labels.connectionReadinessReady;
+  if (readiness === "failed") return labels.connectionReadinessFailed;
+  if (readiness === "unconfigured") return labels.connectionReadinessUnconfigured;
+  return labels.connectionReadinessConfigured;
+}
+
+/**
+ * Maps one closed probe category to its player notice. The category is the
+ * whole vocabulary a failed probe may produce; raw provider text never reaches
+ * the browser in the first place.
+ */
+function connectionFailureText(
+  failure: TavernConnectionV1["failure"],
+  labels: ReturnType<typeof messages>,
+): string | null {
+  if (failure === null) return null;
+  const suffix = failure
+    .split("_")
+    .map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`)
+    .join("");
+  const key = `connectionFailure${suffix}` as
+    | "connectionFailureInvalidEndpoint"
+    | "connectionFailureNotConfigured"
+    | "connectionFailureUnauthorized"
+    | "connectionFailureNotFound"
+    | "connectionFailureUnreachable"
+    | "connectionFailureTimeout"
+    | "connectionFailureInvalidResponse";
+  return labels[key];
+}
+
+function ConnectionSettingsPanel({
+  connectionView,
+  labels,
+  onCreate,
+  onTest,
+  onActivate,
+  onSelectModel,
+  onRemove,
+}: Readonly<{
+  connectionView: Extract<ConnectionView, { kind: "ready" }>;
+  labels: ReturnType<typeof messages>;
+  onCreate: (form: ConnectionForm) => void;
+  onTest: (connectionId: string) => void;
+  onActivate: (connectionId: string) => void;
+  onSelectModel: (connectionId: string, modelId: string, thinkingLevel: TavernConnectionThinkingLevelV1) => void;
+  onRemove: (connectionId: string) => void;
+}>): ReactElement {
+  const [providerId, setProviderId] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [catalogModelId, setCatalogModelId] = useState("");
+
+  const providers = connectionView.state.providers;
+  // The escape hatch is a catalog entry like any other; it is preselected only
+  // because a player reaching this panel usually has no connection at all.
+  const selected =
+    providers.find((entry) => entry.providerId === providerId) ??
+    providers.find((entry) => entry.escapeHatch) ??
+    providers[0];
+  const models = selected?.allowedPlayerModels ?? [];
+  const chosenModel = models.find((model) => model.modelId === catalogModelId) ?? models[0];
+
+  return (
+    <section className="management-settings-section" aria-label={labels.connectionSettings} data-connection-settings>
+      <h2>{labels.connectionSettings}</h2>
+      <>
+          <dl className="management-settings-details" data-connection-active>
+            <div>
+              <dt>{labels.connectionActiveLabel}</dt>
+              <dd data-connection-active-value>
+                {connectionView.state.active === null ? labels.connectionNoneActive : connectionView.state.active.label}
+              </dd>
+            </div>
+          </dl>
+          {connectionView.state.active === null && <p data-connection-no-selection>{labels.connectionNoSelectionNotice}</p>}
+          {connectionView.notice === "activation" && <p data-connection-activated>{labels.connectionActivationNotice}</p>}
+          {connectionView.notice === "busy" && <p data-connection-busy>{labels.connectionBusy}</p>}
+          {connectionView.notice === "conflict" && <p data-connection-conflict>{labels.connectionRevisionConflict}</p>}
+
+          <form
+            className="connection-form"
+            data-connection-form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (selected === undefined) return;
+              onCreate({
+                providerId: selected.providerId,
+                apiKey,
+                baseUrl,
+                modelId,
+                catalogModelId: chosenModel?.modelId ?? catalogModelId,
+                thinkingLevel: chosenModel?.defaultThinkingLevel ?? "high",
+              });
+            }}
+          >
+            <label htmlFor="connection-provider">{labels.connectionProvider}</label>
+            <select
+              id="connection-provider"
+              className="form-select"
+              disabled={connectionView.pending}
+              value={selected?.providerId ?? ""}
+              onChange={(event) => {
+                setProviderId(event.target.value);
+                setCatalogModelId("");
+              }}
+            >
+              {providers.map((provider) => (
+                <option key={provider.providerId} value={provider.providerId}>
+                  {provider.escapeHatch ? labels.connectionEscapeHatch : provider.label}
+                  {provider.environmentManaged ? ` — ${labels.connectionEnvironmentManaged}` : ""}
+                </option>
+              ))}
+            </select>
+            {selected?.escapeHatch === true && <p className="field-hint">{labels.connectionEscapeHatchHint}</p>}
+
+            {selected?.setupFields.includes("baseUrl") === true && (
+              <>
+                <label htmlFor="connection-base-url">{labels.connectionBaseUrl}</label>
+                <input
+                  id="connection-base-url"
+                  className="form-input"
+                  type="url"
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={connectionView.pending}
+                  placeholder={labels.connectionBaseUrlHint}
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                />
+              </>
+            )}
+
+            {selected?.setupFields.includes("apiKey") === true && (
+              <>
+                <label htmlFor="connection-api-key">{labels.connectionApiKey}</label>
+                <input
+                  id="connection-api-key"
+                  className="form-input"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={connectionView.pending}
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                />
+                <p className="field-hint">{labels.connectionApiKeyWriteOnly}</p>
+              </>
+            )}
+
+            {selected?.escapeHatch === true ? (
+              <>
+                <label htmlFor="connection-model-id">{labels.connectionModelId}</label>
+                <input
+                  id="connection-model-id"
+                  className="form-input"
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={connectionView.pending}
+                  placeholder={labels.connectionModelIdHint}
+                  value={modelId}
+                  onChange={(event) => setModelId(event.target.value)}
+                />
+              </>
+            ) : (
+              <>
+                <label htmlFor="connection-model">{labels.connectionModel}</label>
+                <select
+                  id="connection-model"
+                  className="form-select"
+                  disabled={connectionView.pending || models.length === 0}
+                  value={chosenModel?.modelId ?? ""}
+                  onChange={(event) => setCatalogModelId(event.target.value)}
+                >
+                  {models.map((model) => (
+                    <option key={model.modelId} value={model.modelId}>
+                      {model.modelLabel}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            <div className="composer-actions">
+              <button type="submit" className="small-button" disabled={connectionView.pending}>
+                {labels.connectionSave}
+              </button>
+            </div>
+          </form>
+
+          {connectionView.state.connections.length > 0 && (
+            <div data-connection-list>
+              <h3>{labels.connectionListTitle}</h3>
+              <ul className="connection-rows">
+                {connectionView.state.connections.map((connection) => (
+                  <ConnectionRow
+                    key={connection.connectionId}
+                    connection={connection}
+                    pending={connectionView.pending}
+                    labels={labels}
+                    onTest={onTest}
+                    onActivate={onActivate}
+                    onSelectModel={onSelectModel}
+                    onRemove={onRemove}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+    </section>
+  );
+}
+
+/**
+ * One saved connection. `connectionId` is never rendered: every control keys
+ * off it, but the player reads the provider label, the model and their own
+ * base URL (design/28 §1, §5.1).
+ */
+function ConnectionRow({
+  connection,
+  pending,
+  labels,
+  onTest,
+  onActivate,
+  onSelectModel,
+  onRemove,
+}: Readonly<{
+  connection: TavernConnectionV1;
+  pending: boolean;
+  labels: ReturnType<typeof messages>;
+  onTest: (connectionId: string) => void;
+  onActivate: (connectionId: string) => void;
+  onSelectModel: (connectionId: string, modelId: string, thinkingLevel: TavernConnectionThinkingLevelV1) => void;
+  onRemove: (connectionId: string) => void;
+}>): ReactElement {
+  const failure = connectionFailureText(connection.failure, labels);
+  const levels: readonly TavernConnectionThinkingLevelV1[] = [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ];
+  return (
+    <li className="connection-row" data-connection-row data-readiness={connection.readiness}>
+      <dl className="management-settings-details">
+        <div><dt>{labels.connectionProvider}</dt><dd>{connection.providerLabel}</dd></div>
+        <div><dt>{labels.connectionModel}</dt><dd>{connection.modelLabel}</dd></div>
+        {connection.baseUrl !== null && (
+          <div><dt>{labels.connectionBaseUrl}</dt><dd data-connection-base-url>{connection.baseUrl}</dd></div>
+        )}
+        <div><dt>{labels.connectionReadiness}</dt><dd>{connectionReadinessText(connection.readiness, labels)}</dd></div>
+        {failure !== null && <div><dt>—</dt><dd data-connection-failure>{failure}</dd></div>}
+      </dl>
+      <div className="composer-actions">
+        <label className="visually-hidden-input-label" htmlFor={`connection-level-${connection.connectionId}`}>
+          {labels.connectionThinkingLevel}
+        </label>
+        <select
+          id={`connection-level-${connection.connectionId}`}
+          className="form-select"
+          disabled={pending}
+          value={connection.thinkingLevel}
+          onChange={(event) =>
+            onSelectModel(
+              connection.connectionId,
+              connection.modelId,
+              event.target.value as TavernConnectionThinkingLevelV1,
+            )
+          }
+        >
+          {levels.map((level) => (
+            <option key={level} value={level}>
+              {
+                {
+                  low: labels.connectionLevelLow,
+                  medium: labels.connectionLevelMedium,
+                  high: labels.connectionLevelHigh,
+                  xhigh: labels.connectionLevelXHigh,
+                  max: labels.connectionLevelMax,
+                }[level]
+              }
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="small-button"
+          disabled={pending}
+          onClick={() => onTest(connection.connectionId)}
+        >
+          {labels.connectionTest}
+        </button>
+        <button
+          type="button"
+          className="small-button"
+          disabled={pending || connection.readiness !== "ready" || connection.active}
+          title={connection.readiness === "ready" ? undefined : labels.connectionActivateRequiresReady}
+          onClick={() => onActivate(connection.connectionId)}
+        >
+          {labels.connectionActivate}
+        </button>
+        <button
+          type="button"
+          className="small-button"
+          disabled={pending || connection.active}
+          title={connection.active ? labels.connectionRemoveActiveRefused : undefined}
+          onClick={() => onRemove(connection.connectionId)}
+        >
+          {labels.connectionRemove}
+        </button>
+      </div>
+    </li>
+  );
+}
+
 function VoiceSettingsPanel({
   voiceView,
   labels,
@@ -561,26 +1064,38 @@ function VoiceSettingsPanel({
             <div><dt>{labels.voiceDisclosureVersion}</dt><dd>{voiceView.preference.disclosureVersion ?? "—"}</dd></div>
           </dl>
           <div className="composer-actions">
-            <button type="button" className="small-button" onClick={onAccept} disabled={voiceView.preference.consent === "accepted"}>{labels.voiceAccept}</button>
-            <button type="button" className="small-button" onClick={onRevoke} disabled={voiceView.preference.consent === "revoked"}>{labels.voiceRevoke}</button>
+            <button type="button" className="small-button" onClick={onAccept} disabled={voiceView.pending || voiceView.preference.consent === "accepted"}>{labels.voiceAccept}</button>
+            <button type="button" className="small-button" onClick={onRevoke} disabled={voiceView.pending || voiceView.preference.consent === "revoked"}>{labels.voiceRevoke}</button>
           </div>
-          {(voiceView.devices === null || voiceView.devices.devices.length > 0) && (
-            <div className="voice-device-selector">
-              <label htmlFor="voice-output-device">{labels.voiceOutputDevice}</label>
-              <select
-                id="voice-output-device"
-                value={voiceView.preference.outputDevice ?? ""}
-                onChange={(event) => onSelectDevice(event.target.value === "" ? null : event.target.value)}
-              >
-                {/* The Windows default endpoint is always selectable and maps
-                    to `outputDevice: null` (resolve at each open). */}
-                <option value="">{labels.voiceDefaultOutput}</option>
-                {(voiceView.devices?.devices ?? []).map((device) => (
-                  <option key={device.id} value={device.id}>{device.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div className="voice-device-selector">
+            <label htmlFor="voice-output-device">{labels.voiceOutputDevice}</label>
+            <select
+              id="voice-output-device"
+              className="form-select"
+              disabled={voiceView.pending}
+              value={voiceView.preference.outputDevice ?? ""}
+              onChange={(event) => onSelectDevice(event.target.value === "" ? null : event.target.value)}
+            >
+              {/* The Windows default endpoint is always selectable and maps
+                  to `outputDevice: null` (resolve at each open), so a pinned
+                  endpoint can always be released — even when enumeration
+                  currently returns nothing. */}
+              <option value="">{labels.voiceDefaultOutput}</option>
+              {(voiceView.devices?.devices ?? []).map((device) => (
+                <option key={device.id} value={device.id}>{device.name}</option>
+              ))}
+              {voiceView.preference.outputDevice !== null &&
+                !(voiceView.devices?.devices ?? []).some((device) => device.id === voiceView.preference.outputDevice) && (
+                  // The persisted pin outlives one enumeration (endpoint
+                  // unplugged or the gateway is temporarily unavailable). The
+                  // effective selection must stay visible instead of silently
+                  // rendering an empty select; it is shown, not re-offered.
+                  <option key={voiceView.preference.outputDevice} value={voiceView.preference.outputDevice} disabled>
+                    {labels.voicePinnedOutputUnlisted}
+                  </option>
+                )}
+            </select>
+          </div>
         </>
       )}
     </section>

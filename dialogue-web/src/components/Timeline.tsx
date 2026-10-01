@@ -27,11 +27,14 @@ export function Timeline({
   const displayTitle = chatTitle ?? labels.untitledChat;
   const sectionRef = useRef<HTMLElement>(null);
 
+  // Keep the newest message in view: the effect re-runs when the visible
+  // content changes (message count or the streaming preview text) and also on
+  // mount, so an already-populated transcript still starts scrolled to the end.
   useEffect(() => {
     if (sectionRef.current) {
       sectionRef.current.scrollTop = sectionRef.current.scrollHeight;
     }
-  }, []);
+  }, [transcript.length, preview?.text]);
 
   return (
     <section ref={sectionRef} className="timeline" aria-label={labels.chatTranscript}>

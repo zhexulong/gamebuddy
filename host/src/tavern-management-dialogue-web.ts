@@ -18,6 +18,9 @@ import {
   TavernBrowserContractV1,
   type TavernBrowserNavigationItemIdV1,
   TavernBrowserValidatorsV1,
+  type TavernConnectionCreateCommandV1,
+  type TavernConnectionModelCommandV1,
+  type TavernConnectionRevisionCommandV1,
   type TavernLanguagePreferenceCommandV1,
   type TavernLanguagePreferenceV1,
   type TavernProblemV1,
@@ -29,6 +32,7 @@ import {
 } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
+import type { TavernConnectionService } from "./tavern/connection-service.js";
 import type { TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import type {
   WorldInfoStateV1 as ManagedWorldInfoStateV1,
@@ -102,6 +106,17 @@ const MANAGEMENT_VOICE_DEVICES = ["settings.voice.devices"] as const;
 // that declares `memory.read` must also declare the `memory` navigation item,
 // and a profile without the Memory route must not. Both derive from the same
 // production profile (`gamebuddy.tavern-management.chat-list-title`).
+/** Optional connection-management extension: only profiles declaring these
+ * routes mount the read/create/test/activate/model/remove API. A profile that
+ * advertises a route without the exact service fails closed at composition. */
+const MANAGEMENT_CONNECTION_ROUTES = [
+  "settings.connection.read",
+  "settings.connection.create",
+  "settings.connection.test",
+  "settings.connection.activate",
+  "settings.connection.model",
+  "settings.connection.remove",
+] as const;
 const MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY = ["chat"] as const;
 const MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY = ["chat", "memory"] as const;
 const bootstrapRequestValidator = Compile(
@@ -113,6 +128,9 @@ const draftDiscardValidator = Compile(TavernBrowserContractV1.schemas.DiscardDra
 const renameRequestValidator = Compile(TavernBrowserContractV1.schemas.RenameChatTitleCommandV1Schema);
 const worldInfoBindValidator = Compile(TavernBrowserContractV1.schemas.SetWorldInfoBindingCommandV1Schema);
 const memoryMutationValidator = Compile(TavernBrowserContractV1.schemas.MemoryMutationCommandV1Schema);
+const connectionCreateValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionCreateCommandV1Schema);
+const connectionRevisionValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionRevisionCommandV1Schema);
+const connectionModelValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionModelCommandV1Schema);
 const voicePreferenceConsentValidator = Compile(
   TavernBrowserContractV1.schemas.TavernVoicePreferenceConsentCommandV1Schema,
 );
@@ -140,6 +158,12 @@ export type TavernManagementDialogueWebOptions = Readonly<{
     read(): Promise<LanguagePreference>;
     update(expectedRevision: number, update: LanguagePreferenceUpdate): Promise<LanguagePreference>;
   }>;
+  /**
+   * Host-owned connection/model management (design/28 §5.3). Present only when
+   * the mounted profile declares the connection routes; the routes themselves
+   * stay unavailable otherwise.
+   */
+  connectionService?: TavernConnectionService;
   profile?: ComposedTavernProfile;
   bootstrapToken?: string;
   readonly [key: string]: unknown;
@@ -179,6 +203,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const voicePreferenceStore = options.voicePreferenceStore;
   const listVoiceOutputDevices = options.listVoiceOutputDevices;
   const languagePreferenceStore = options.languagePreferenceStore;
+  const connectionService = options.connectionService;
   const profile = options.profile;
   const bootstrapToken = options.bootstrapToken;
   if (managementStateFacade === undefined || managementService === undefined)
@@ -211,6 +236,16 @@ export function createTavernManagementDialogueWebRequestHandler(
   )
     throw new Error("tavern_management_composition_unavailable");
   if (!isOpaqueHandle(bootstrapToken)) throw new Error("tavern_management_bootstrap_token_invalid");
+  // The connection routes are mounted only when the exact service is injected;
+  // a profile that advertises any of them without it fails closed before any
+  // dispatch, so no route can claim a management capability it cannot serve.
+  if (profile.routeIds.some((routeId) => (MANAGEMENT_CONNECTION_ROUTES as readonly string[]).includes(routeId))) {
+    if (connectionService === undefined) throw new Error("tavern_management_composition_unavailable");
+    for (const routeId of MANAGEMENT_CONNECTION_ROUTES) {
+      if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
+        throw new Error("tavern_management_composition_unavailable");
+    }
+  }
 
   let browser: BrowserSession | undefined;
   let bootstrapUsed = false;
@@ -489,6 +524,58 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("memory_read_service_unavailable");
         return sendJson(response, 200, memory);
       }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/connection") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!connectionRouteAvailable(profile, "settings.connection.read", connectionService))
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        return sendJson(response, 200, await connectionService!.read());
+      }
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/settings/connections") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (!connectionRouteAvailable(profile, "settings.connection.create", connectionService))
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!connectionCreateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        return sendJson(response, 200, await connectionService!.create(body as TavernConnectionCreateCommandV1));
+      }
+      const connectionRoute = matchConnectionRoute(request.method, url.pathname);
+      if (connectionRoute !== null) {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (!connectionRouteAvailable(profile, connectionRoute.operationId, connectionService))
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        const connection = connectionService!;
+        if (connectionRoute.operationId === "settings.connection.test") {
+          if (!connectionRevisionValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          const command = body as TavernConnectionRevisionCommandV1;
+          return sendJson(response, 200, await connection.test(connectionRoute.connectionId, command.expectedRevision));
+        }
+        if (connectionRoute.operationId === "settings.connection.activate") {
+          if (!connectionRevisionValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          const command = body as TavernConnectionRevisionCommandV1;
+          return sendJson(response, 200, await connection.activate(connectionRoute.connectionId, command.expectedRevision));
+        }
+        if (connectionRoute.operationId === "settings.connection.model") {
+          if (!connectionModelValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          return sendJson(
+            response,
+            200,
+            await connection.selectModel(connectionRoute.connectionId, body as TavernConnectionModelCommandV1),
+          );
+        }
+        if (!connectionRevisionValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as TavernConnectionRevisionCommandV1;
+        return sendJson(response, 200, await connection.remove(connectionRoute.connectionId, command.expectedRevision));
+      }
       return sendProblem(response, 404, "profile_operation_unavailable");
     } catch (error) {
       const { status, code } = problemFor(error);
@@ -524,6 +611,9 @@ export function createTavernManagementDialogueWebRequestHandler(
         await Promise.allSettled([...activeDispatches]);
         await managementService.close();
         await memoryService?.close();
+        // The connection service drains after the handler has drained, so no
+        // admitted probe or mutation is still holding the credential path.
+        await connectionService?.close();
         // The binding service's close is idempotent; the handler drain above
         // guarantees it runs only after admitted dispatches have settled.
         await worldInfoService?.close();
@@ -649,52 +739,110 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
   // composeTavernProfile, so this HTTP ingress rejects it before any dispatch
   // or injected-service use. The exact shape checks below still apply.
   if (!isComposedTavernProfile(profile)) throw new Error("tavern_management_profile_operation_unavailable");
-  const sameAs = (values: readonly string[], expected: readonly string[], ...extras: readonly (readonly string[])[]) =>
-    sameOrderedValues(values, [...expected, ...extras.flat()]);
-  const mutableMemory =
-    profile.profileId === MANAGEMENT_PROFILE_ID &&
-    profile.releaseTier === MANAGEMENT_RELEASE_TIER &&
-    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS, MANAGEMENT_VOICE_DEVICES) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS)) &&
-    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY, MANAGEMENT_VOICE_DEVICES) ||
-      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITH_MEMORY)) &&
-    sameOrderedValues(profile.navigationItemIds, MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY);
-  const readOnlyMemory =
-    profile.profileId === MANAGEMENT_PROFILE_ID &&
-    profile.releaseTier === MANAGEMENT_RELEASE_TIER &&
-    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"), MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"), MANAGEMENT_VOICE_DEVICES) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"), MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate"))) &&
-    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES) ||
-      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY)) &&
-    sameOrderedValues(profile.navigationItemIds, MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY);
-  const withoutMemory =
-    profile.profileId === MANAGEMENT_PROFILE_ID &&
-    profile.releaseTier === MANAGEMENT_RELEASE_TIER &&
-    (sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.routeIds, MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY)) &&
-    (sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_VOICE_DEVICES) ||
-      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY, MANAGEMENT_LANGUAGE_ROUTES) ||
-      sameAs(profile.operationIds, MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY)) &&
-    sameOrderedValues(profile.navigationItemIds, MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY);
+  if (profile.profileId !== MANAGEMENT_PROFILE_ID || profile.releaseTier !== MANAGEMENT_RELEASE_TIER)
+    throw new Error("tavern_management_profile_operation_unavailable");
   // A memory-capable profile must declare the Memory navigation item and the
   // inverse (Memory route but no Memory navigation) fails closed.
-  if (!mutableMemory && !readOnlyMemory && !withoutMemory)
+  const withMemory = profile.routeIds.includes("memory.read");
+  if (!sameOrderedValues(profile.navigationItemIds, withMemory ? MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY : MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY))
     throw new Error("tavern_management_profile_operation_unavailable");
+  // The core surface and the three extension groups are declared per profile
+  // revision. A profile may declare any subset of the optional groups, and only
+  // them, in the frozen canonical order: core, output devices, language,
+  // connections. A partially applied group, an undeclared route or a reordered
+  // list fails closed, so no route is mounted that this dispatcher cannot serve.
+  const coreRoutes = withMemory
+    ? profile.operationIds.includes("memory.mutate")
+      ? MANAGEMENT_ROUTE_IDS
+      : MANAGEMENT_ROUTE_IDS.filter((routeId) => routeId !== "memory.mutate")
+    : MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY;
+  const coreOperations = profile.operationIds.includes("memory.mutate")
+    ? MANAGEMENT_OPERATION_IDS_WITH_MEMORY
+    : MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY;
+  if (
+    !isCanonicalGroupSelection(
+      profile.routeIds,
+      [coreRoutes, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES, MANAGEMENT_CONNECTION_ROUTES],
+      coreRoutes,
+    ) ||
+    !isCanonicalGroupSelection(
+      profile.operationIds,
+      [coreOperations, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES, MANAGEMENT_CONNECTION_ROUTES],
+      coreOperations,
+    )
+  )
+    throw new Error("tavern_management_profile_operation_unavailable");
+  // Every operation must be backed by its own route: a profile cannot advertise
+  // an operation the mounted dispatcher would refuse to serve.
+  for (const operationId of profile.operationIds) {
+    if (!profile.routeIds.includes(operationId))
+      throw new Error("tavern_management_profile_operation_unavailable");
+  }
+}
+
+/**
+ * True when `values` is exactly the required core group plus any subset of the
+ * optional groups that follow it, always in the declared order. A group is
+ * all-or-nothing: a partially declared group is a capability the profile claims
+ * but the mounted dispatcher cannot serve. Ordering is part of the check, so a
+ * reordered profile is a different capability slice and is rejected.
+ */
+function isCanonicalGroupSelection(
+  values: readonly string[],
+  groups: readonly (readonly string[])[],
+  required: readonly string[],
+): boolean {
+  const expected: string[] = [];
+  for (const group of groups) {
+    const present = group === required || values.some((value) => group.includes(value));
+    if (!present) continue;
+    if (!group.every((entry) => values.includes(entry))) return false;
+    expected.push(...group);
+  }
+  return expected.length === values.length && expected.every((entry, index) => entry === values[index]);
 }
 
 function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
   return values.length === expected.length && values.every((value, index) => value === expected[index]);
+}
+
+/**
+ * One connection sub-route: `/settings/connections/:connectionId/<operation>`.
+ * The handle is matched exactly as one 43-character opaque segment so no path
+ * can address a record the player's session never received.
+ */
+const CONNECTION_SUBROUTES = Object.freeze([
+  Object.freeze({ operationId: "settings.connection.test", suffix: "test" as const, method: "POST" as const }),
+  Object.freeze({ operationId: "settings.connection.activate", suffix: "activate" as const, method: "POST" as const }),
+  Object.freeze({ operationId: "settings.connection.model", suffix: "model" as const, method: "POST" as const }),
+  Object.freeze({ operationId: "settings.connection.remove", suffix: "" as const, method: "DELETE" as const }),
+]);
+
+function matchConnectionRoute(
+  method: string | undefined,
+  pathname: string,
+): Readonly<{ operationId: string; connectionId: string }> | null {
+  const match = /^\/api\/tavern\/v1\/settings\/connections\/([A-Za-z0-9_-]{43})(?:\/([a-z]+))?$/.exec(pathname);
+  if (match === null) return null;
+  const connectionId = match[1]!;
+  const suffix = match[2] ?? "";
+  const route = CONNECTION_SUBROUTES.find((entry) => entry.suffix === suffix && entry.method === method);
+  return route === null || route === undefined ? null : Object.freeze({ operationId: route.operationId, connectionId });
+}
+
+/**
+ * A connection route is mounted only when the mounted profile declares both the
+ * route and its operation and the exact Host service backs it. The inverse
+ * (profile advertises, service absent) already fails closed at composition.
+ */
+function connectionRouteAvailable(
+  profile: ComposedTavernProfile,
+  operationId: string,
+  service: TavernConnectionService | undefined,
+): boolean {
+  const routeIds: readonly string[] = profile.routeIds;
+  const operationIds: readonly string[] = profile.operationIds;
+  return service !== undefined && routeIds.includes(operationId) && operationIds.includes(operationId);
 }
 
 function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCode }> {
@@ -717,6 +865,26 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "voice_preference_revision_conflict") return { status: 409, code: "settings_revision_conflict" };
   if (message === "invalid_voice_preference_update") return { status: 400, code: "invalid_request" };
   if (message === "voice_preference_store_unavailable") return { status: 503, code: "runtime_unavailable" };
+  if (message === "dialogue_busy") return { status: 409, code: "dialogue_busy" };
+  if (message === "connection_limit_reached") return { status: 409, code: "connection_limit_reached" };
+  if (message === "tavern_connection_revision_conflict") return { status: 409, code: "connection_conflict" };
+  if (
+    message === "provider_unknown" ||
+    message === "api_key_required" ||
+    message === "api_key_not_accepted" ||
+    message === "base_url_required" ||
+    message === "base_url_not_accepted" ||
+    message === "invalid_base_url" ||
+    message === "model_not_allowed" ||
+    message === "invalid_model_id" ||
+    message === "thinking_level_not_allowed"
+  )
+    return { status: 400, code: "invalid_request" };
+  if (message === "not_found") return { status: 404, code: "connection_not_found" };
+  if (message === "not_ready") return { status: 409, code: "connection_not_ready" };
+  if (message === "active_connection_cannot_be_removed") return { status: 409, code: "connection_conflict" };
+  if (message === "tavern_connection_storage_unavailable") return { status: 503, code: "storage_unavailable" };
+  if (message === "tavern_connection_service_unavailable") return { status: 503, code: "runtime_unavailable" };
   if (message === "invalid_voice_preference_store" || message === "voice_preference_readback_mismatch")
     return { status: 503, code: "storage_unavailable" };
   if (message === "memory_mutation_conflict" || message === "memory_projection_conflict")
