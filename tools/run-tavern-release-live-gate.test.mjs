@@ -304,6 +304,56 @@ test("the runner's own negative disclosure survives the real two-stage normaliza
   assert.equal(report.runs[0].turn, "completed");
 });
 
+test("a raw runner report survives the whole normalization chain", async () => {
+  // The three tests around this one cover a spelling each. This one drives the
+  // REAL chain end to end: `runNarrativeProcess` normalizes the runner's raw
+  // report once and the orchestrator normalizes that result again, so a field
+  // that only survives one pass is silently lost in production. Feeding a raw
+  // shape directly to the orchestrator would NOT reproduce it - the first pass
+  // was never broken - so this test chains two orchestrator calls and hands the
+  // first call's own run summary to the second, which is exactly what the
+  // production pair does.
+  const rawRun = (role) => ({
+    role,
+    state: "passed",
+    runId: token(20),
+    artifact: { generation: `generation_${role}`, inventoryDigest: sha },
+    // The runner's raw spelling: the non-passing disclosure rides inside
+    // `assertions`, and the turn status lives under `statuses`.
+    assertions: {
+      authenticatedReferenceChatApi: true,
+      realDialogueTurnAttempted: true,
+      providerRuntimeSessionBound: true,
+      providerPreSendSerialized: true,
+      realTurnOutcomeObserved: true,
+      providerAcceptedOrSemanticAnswer: false,
+    },
+    statuses: { turn: "completed", lastState: "idle", p4Stages: [] },
+  });
+
+  const once = await runTavernReleaseLiveOrchestrator({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    prerequisites: passingPrerequisites,
+    runNarrative: async ({ role }) => rawRun(role),
+    temporaryReportPath: (role) => `/tmp/${role}.json`,
+  });
+  assert.equal(once.verdict, "passed");
+
+  // Second pass: hand the first pass's own summary back in, as the orchestrator
+  // does with `runNarrativeProcess`'s return value.
+  const twice = await runTavernReleaseLiveOrchestrator({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    prerequisites: passingPrerequisites,
+    runNarrative: async ({ role }) => once.runs.find((run) => run.role === role),
+    temporaryReportPath: (role) => `/tmp/${role}.json`,
+  });
+  assert.equal(twice.verdict, "passed");
+  assert.deepEqual(twice.runs[0].disclosures, { providerAcceptedOrSemanticAnswer: false });
+  assert.equal(twice.runs[0].turn, "completed");
+});
+
 test("Tavern live gate passes when prerequisites, real runs, and operation evidence all genuinely pass", async () => {
   const report = await runTavernReleaseLiveGate({
     mountedProfile,
