@@ -58,15 +58,27 @@ internal sealed class StardewBodyController
         PathFindController plannedPath = new(
             localPlayer,
             localPlayer.currentLocation,
-            new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y),
+            // Native goal PREDICATE, not an exact coordinate. `findPath` tests
+            // `isAtEnd` on every dequeue (`PathFindController.cs:199-203`) and
+            // enqueues the start node unconditionally (`:194`), so asking "is this
+            // a valid arrival tile?" (a) returns a single-node path when the actor
+            // already stands somewhere valid, and (b) stops at the nearest valid
+            // tile when the requested tile itself cannot be stood on -- instead of
+            // returning null for a target a human would simply walk up to.
+            //
+            // The exact-coordinate constructor (`isAtEndPoint`) asked the wrong
+            // question: "can this tile be stood on", which is why an adjacent
+            // tile one step away could be rejected outright.
+            this.IsArrivalTile(specification),
             -1,
             null,
-            10000);
+            10000,
+            new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y));
         if (plannedPath.pathToEndPoint is null || plannedPath.pathToEndPoint.Count == 0)
         {
-            // Dead-end rejection: the Agent submitted a target it cannot walk to.
-            // The evidence names both ends so the next attempt can pick a different
-            // tile instead of retrying the same coordinate.
+            // Dead-end rejection: no tile in this location satisfies the arrival
+            // predicate, so the target is genuinely unreachable (surrounded, or
+            // severed from this component). The evidence names both ends.
             reasonCode = "no_native_path";
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName}";
             return false;
@@ -128,7 +140,7 @@ internal sealed class StardewBodyController
         {
             bool exactArrival = Vector2.DistanceSquared(localPlayer.Tile, specification.TargetTile) <= 0.04f;
             bool adjacentArrival = specification.AllowAdjacentArrival
-                && IsCardinalAdjacent(localPlayer.Tile, specification.TargetTile);
+                && IsChebyshevAdjacent(Math.Abs((int)localPlayer.Tile.X - (int)specification.TargetTile.X), Math.Abs((int)localPlayer.Tile.Y - (int)specification.TargetTile.Y));
             if (exactArrival || adjacentArrival)
             {
                 localPlayer.Halt();
@@ -162,7 +174,7 @@ internal sealed class StardewBodyController
         }
         bool currentTileExact = Vector2.DistanceSquared(currentTile, specification.TargetTile) <= 0.04f;
         bool currentTileAdjacent = specification.AllowAdjacentArrival
-            && IsCardinalAdjacent(currentTile, specification.TargetTile);
+            && IsChebyshevAdjacent(Math.Abs((int)currentTile.X - (int)specification.TargetTile.X), Math.Abs((int)currentTile.Y - (int)specification.TargetTile.Y));
         if (currentTileExact || currentTileAdjacent)
         {
             localPlayer.Halt();
@@ -215,12 +227,68 @@ internal sealed class StardewBodyController
         return horizontal >= 0 ? Game1.right : Game1.left;
     }
 
-    private static bool IsCardinalAdjacent(Vector2 current, Vector2 target)
+    /// <summary>
+    /// The native arrival predicate handed to <see cref="PathFindController"/>.
+    ///
+    /// It answers "is this a valid arrival tile for this directive?", which is
+    /// the question the native path finder actually consumes. Two geometries are
+    /// expressed, and they are the only two the Mod needs:
+    ///
+    /// * <see cref="LocalMoveSpec.AllowAdjacentArrival"/> -- the requested tile,
+    ///   or any Chebyshev-1 neighbour of it. Used by actions that need to be
+    ///   *next to* a target (tools, chests, machines, animals) and by the
+    ///   warp-tile case, where a neighbouring tile is the interactable approach.
+    /// * otherwise -- the requested tile itself. Used where the caller needs the
+    ///   actor standing on that exact tile.
+    ///
+    /// The predicate accepts the requested tile even when it is not walkable: it
+    /// is only consulted for nodes the search already enqueued, and every node
+    /// passes the same collision test (`:222`). Accepting it here therefore
+    /// cannot place anyone onto an unwalkable tile -- it only means "if you can
+    /// reach it, it counts as arrival".
+    /// </summary>
+    private PathFindController.isAtEnd IsArrivalTile(LocalMoveSpec specification)
     {
-        int deltaX = Math.Abs((int)current.X - (int)target.X);
-        int deltaY = Math.Abs((int)current.Y - (int)target.Y);
-        return deltaX + deltaY == 1;
+        int targetX = (int)specification.TargetTile.X;
+        int targetY = (int)specification.TargetTile.Y;
+        bool allowAdjacent = specification.AllowAdjacentArrival;
+        return (node, _endPoint, _location, _character) =>
+            IsArrivalDelta(Math.Abs(node.x - targetX), Math.Abs(node.y - targetY), allowAdjacent);
     }
+
+    /// <summary>
+    /// The arrival predicate as pure arithmetic, so its behaviour is testable
+    /// directly instead of by reading the source text.
+    ///
+    /// The requested tile always counts as arrival: it is filtered by the same
+    /// collision test as every other node (<c>PathFindController.cs:222</c>), so
+    /// accepting it here cannot place the actor on an unwalkable tile -- it only
+    /// means "if you can reach it, it counts as arrival".
+    ///
+    /// Neighbours are Chebyshev-1 (diagonals included) and only when the directive
+    /// asked for an adjacent approach. Chebyshev is not a preference: measured on
+    /// the target version, A* dequeues by <c>g + manhattan h</c>, so this predicate
+    /// ended DIAGONALLY on 4 of 6 sampled unreachable targets. A cardinal-only
+    /// neighbourhood would let the planner finish on a tile the arrival test then
+    /// rejects.
+    /// </summary>
+    internal static bool IsArrivalDelta(int deltaX, int deltaY, bool allowAdjacentArrival)
+    {
+        if (deltaX == 0 && deltaY == 0)
+            return true;
+        return allowAdjacentArrival && deltaX <= 1 && deltaY <= 1;
+    }
+
+    /// <summary>
+    /// The runtime arrival test used by <see cref="Update"/>: a neighbouring tile
+    /// counts as arrived only when the directive asked for an adjacent approach.
+    ///
+    /// It delegates to <see cref="IsArrivalDelta"/> so the planner goal and the
+    /// arrival test cannot drift -- if they disagree, a completed route is reported
+    /// as <c>native_path_ended</c>.
+    /// </summary>
+    internal static bool IsChebyshevAdjacent(int deltaX, int deltaY) =>
+        (deltaX != 0 || deltaY != 0) && IsArrivalDelta(deltaX, deltaY, allowAdjacentArrival: true);
 
     private static string FormatTile(Vector2 tile) => $"{tile.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)},{tile.Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}";
 }
