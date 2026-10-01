@@ -158,7 +158,24 @@ test("desktop bootstrap helper closes its composition when termination fails", a
   assert.match(result.stderr, /termination_failed/);
 });
 
-async function runWireFixture(scenario: "success" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined }> {
+test("desktop bootstrap helper closes its composition cleanly on a shutdown request", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("shutdown-request");
+  assert.deepEqual(result.requests.map((request) => request.operation), ["hello", "arm_attempt", "launch_role", "contain_role"]);
+  assert.equal(result.guardianClosed, true);
+  assert.equal(result.workerExitCode, 0, "the child must close its own composition and exit 0, not be killed");
+  assert.equal(result.workerExitedNaturally, true);
+});
+
+test("desktop bootstrap helper ignores a malformed IPC message and stays up", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("shutdown-malformed");
+  assert.deepEqual(result.requests.map((request) => request.operation), ["hello", "arm_attempt", "launch_role", "contain_role"]);
+  assert.equal(result.workerExitCode, null, "a malformed message must not drop the composition");
+});
+
+async function runWireFixture(scenario: "success" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined; workerExitCode: number | null; workerExitedNaturally: boolean }> {
+  const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
   const bootstrapId = (scenario === "success" ? "d" : scenario === "missing-arm-executable" ? "5" : scenario === "malformed-arm" ? "c" : scenario === "withheld-arm-ack" ? "b" : scenario === "delayed-arm-ack" ? "7" : scenario === "withheld-contain-ack" ? "a" : scenario === "expired-launch" ? "9" : scenario === "overhorizon-launch" ? "6" : scenario === "invalid-surface" ? "2" : scenario === "invalid-nonce" ? "3" : "8").repeat(64);
   const guardianInstanceId = scenario === "success" ? "11111111-1111-4111-8111-111111111111" : scenario === "malformed-arm" ? "33333333-3333-4333-8333-333333333333" : "55555555-5555-4555-8555-555555555555";
@@ -231,7 +248,7 @@ async function runWireFixture(scenario: "success" | "missing-arm-executable" | "
     await cp(resolve(compiledRoot, "containment", "runtime", "core", "contained-game-runtime.js"), containmentCore);
     const composerCorePath = join(moduleDirectory, "games", "stardew", "lifecycle", "stardew-private-bootstrap-composer.core.js");
     await mkdir(dirname(composerCorePath), { recursive: true });
-    await writeFile(composerCorePath, "// Hermetic wire-fixture stub: the contained runtime platform imports this seam but\n// never invokes it; the fixture keeps the module graph self-contained instead of\n// dragging in the whole composer core closure.\nexport function createStardewBootstrapGuardianOwnerBinding() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function readStardewBootstrapGuardianNativeArmFrame() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\n");
+    await writeFile(composerCorePath, "// Hermetic wire-fixture stub: the contained runtime platform imports these seams but\n// never invokes them; the fixture keeps the module graph self-contained instead of\n// dragging in the whole composer core closure.\nexport function createStardewBootstrapGuardianOwnerBinding() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function readStardewBootstrapGuardianNativeArmFrame() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function consumeStardewBootstrapGuardianOwnerBinding() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function settleOwnedPlayerHostContainedRuntimeAttempt() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\n");
     // Same reasoning for the optional Voice surface the bootstrap entry imports.
     // The fixture never configures GAMEBUDDY_VOICE_PORT/TOKEN, so
     // connectOptionalVoiceSurface() returns before calling into the gateway; a
@@ -255,7 +272,13 @@ async function runWireFixture(scenario: "success" | "missing-arm-executable" | "
     await new Promise<void>((resolveListen, rejectListen) => { server.once("error", rejectListen); server.listen(endpoint, resolveListen); });
     const workerPath = join(fixtureRoot, "wire-fixture-worker.mjs");
     await writeFile(workerPath, workerSource(moduleDirectory, guardianInstanceId, attemptId, scenario));
-    worker = spawn(process.execPath, ["--experimental-test-module-mocks", workerPath], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, LOCALAPPDATA: fixtureRoot, GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath, GAMEBUDDY_HOST_GAME_SESSION_MODE: "known", ...(options.surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: options.surface }), ...(options.nonceSha256 === undefined ? {} : { GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: options.nonceSha256 }) } });
+    // The shutdown-request scenarios exercise the IPC channel: the parent asks
+    // the child via `process.send` to close its own composition. That channel is
+    // the gate launcher's readiness IPC, opened by the spawn's fourth stdio slot.
+    const stdio: "pipe"[] | ["pipe", "pipe", "pipe", "ipc"] = fixturesWithIpc
+      ? ["pipe", "pipe", "pipe", "ipc"]
+      : ["pipe", "pipe", "pipe"];
+    worker = spawn(process.execPath, ["--experimental-test-module-mocks", workerPath], { stdio, env: { ...process.env, LOCALAPPDATA: fixtureRoot, GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath, GAMEBUDDY_HOST_GAME_SESSION_MODE: "known", ...(options.surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: options.surface }), ...(options.nonceSha256 === undefined ? {} : { GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: options.nonceSha256 }) } });
     const workerClose = waitForClose(worker);
     const failureScenario = scenario === "composition-failure" || scenario === "ack-write-failure" || scenario === "termination-failure" || scenario === "invalid-surface" || scenario === "invalid-nonce";
     const output = failureScenario ? undefined : collectFirstLine(worker.stdout!, worker);
@@ -267,6 +290,22 @@ async function runWireFixture(scenario: "success" | "missing-arm-executable" | "
     if (failureScenario) {
       await withTimeout(workerClose, 2_000, `${scenario} rejection`);
       if (connected) await withTimeout(guardianPeerClosed, 2_000, `${scenario} guardian cleanup`);
+    } else if (fixturesWithIpc) {
+      await withTimeout(operationsComplete, 10_000, "guardian operations");
+      if (scenario === "shutdown-request") {
+        // The parent requests a clean close over the SAME IPC channel the child
+        // uses for readiness. The child must exit 0 by its own close path - the
+        // graceful path the memory loop depends on for its phase-2 successor.
+        worker.send({ schema: "gamebuddy-desktop-shutdown-request/v1", protocolVersion: 1 });
+        await withTimeout(workerClose, 10_000, "shutdown request close");
+      } else {
+        // A malformed message must be ignored: the composition stays up, exactly
+        // as it does for any unrelated IPC payload.
+        worker.send({ not: "a-shutdown-request" });
+        await new Promise((resolveKeepalive) => setTimeout(resolveKeepalive, 500));
+        worker.kill("SIGTERM");
+        await withTimeout(workerClose, 10_000, "shutdown-malformed cleanup");
+      }
     } else if (scenario === "success") {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       worker.kill("SIGTERM");
@@ -275,7 +314,7 @@ async function runWireFixture(scenario: "success" | "missing-arm-executable" | "
     }
     const workerClosedAt = scenario === "delayed-arm-ack" ? performance.now() : undefined;
     await withTimeout(workerClose, 10_000, "worker cleanup");
-    return { requests, acknowledgement, stderr: await stderr, guardianClosed, armReceiptAt, workerClosedAt };
+    return { requests, acknowledgement, stderr: await stderr, guardianClosed, armReceiptAt, workerClosedAt, workerExitCode: worker.exitCode, workerExitedNaturally: worker.exitCode === 0 };
   } finally {
     if (worker !== undefined && worker.exitCode === null && !worker.killed) { worker.kill("SIGTERM"); await withTimeout(waitForClose(worker), 10_000, "worker failure cleanup").catch(() => undefined); }
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
@@ -283,14 +322,14 @@ async function runWireFixture(scenario: "success" | "missing-arm-executable" | "
   }
 }
 
-function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce"): string {
+function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce"): string {
   const bootstrapUrl = pathToFileURL(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")).href;
   const compositionUrl = pathToFileURL(join(moduleDirectory, "composition", "desktop-host-composition.js")).href;
   const platformUrl = pathToFileURL(join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js")).href;
   // The fixture drives the real contained runtime platform so the recorded wire
   // arm frame is the usual approvedExecutable-carrying frame and the launch plan
   // is the native ParseLaunch encoder output (executable === approvedExecutable).
-  const operation = scenario === "success"
+  const operation = scenario === "success" || scenario === "shutdown-request" || scenario === "shutdown-malformed"
     ? `const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); const approvedExecutable = "C:\\\\Program Files\\\\GameBuddy\\\\roles\\\\RoleRootFixture.exe"; const launchFacts = { executable: approvedExecutable, cwd: "C:\\\\Program Files\\\\GameBuddy", arguments: ["--signal", "C:\\\\tmp\\\\wire.txt"], environment: { PATH: "C:\\\\Windows\\\\System32", SystemRoot: "C:\\\\Windows", WINDIR: "C:\\\\Windows", TEMP: "C:\\\\Windows\\\\Temp", TMP: "C:\\\\Windows\\\\Temp", USERPROFILE: "C:\\\\Users\\\\tester", GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "wire-generation" } }; await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, authorization: { role: "player_host", revision: "11111111-1111-4111-8111-111111111111", executable: approvedExecutable } }); await platform.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() + 60000, role: "player_host", authorization: launchFacts }); await platform.contain({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, role: "player_host" });`
     : scenario === "missing-arm-executable"
       ? `try { const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, authorization: { role: "player_host", revision: "33333333-3333-4333-8333-333333333333" } }); throw new Error("unexpected_arm_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
