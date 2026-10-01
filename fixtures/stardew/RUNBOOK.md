@@ -647,6 +647,40 @@ an alternate action runtime.
    checker's tool-family stamina invariant is unchanged; it now follows the
    action's own delegations to the shared execution body, and a negative case pins
    that a wrapper delegating to an incomplete body is still reported.
+28. The **5.2 migration regression** re-ran two actions that already had live
+   closure, after the shared mechanism was generalized from a closed
+   `PendingToolApproachKind` enum to a caller-supplied action id plus an
+   on-arrival closure, and after all 18 actions were moved onto it. Both were
+   driven with the UNCHANGED fixture scenarios and the UNCHANGED published
+   actions; the point is that the generalization is behaviour-preserving.
+   `water_pet_bowl` returned same-execution `succeeded/pet_bowl_watered` for
+   opaque `pet_bowl_8b416b60dd7e64e7` at Farm `(4,21)` with
+   `before_watered=false → after_watered=true`, water `39→38`, stamina `270→268`
+   (`expected_stamina_cost=2`), `native_menu_opened=false`, and
+   `petBowlTargets 1→0` in the fresh snapshot. `water_slime_hutch_trough`
+   returned same-execution `succeeded/slime_hutch_trough_watered` for opaque
+   `slime_hutch_trough_9fbb4a363c05d6e4` at `SlimeHutch1dba5809-…` `(16,6)` with
+   the same water/stamina shape, `troughTargetCountBefore=2`,
+   `sourceTargetGone=true`, and `freshPostcondition=true`. Both transactions
+   restored their profile, removed backup/lock and the working save, and left no
+   Stardew/SMAPI process. Native-local shared mechanics evidence only — never
+   Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen
+   evidence.
+29. The `water_pet_bowl` / `water_slime_hutch_trough` live runners load the Host
+   client from `host/dist-test`, so a missing or stale test artifact blocks them
+   before the game is ever driven. The artifact could not be built with the
+   committed `build:test` because 88 type errors in **test files only** (all
+   HEAD-committed, none touched by this lane) fail `tsconfig.test.json`. The two
+   regressions above were therefore run against an artifact emitted with a
+   scratch project that is `tsconfig.test.json` with two deltas: `exclude` adds
+   `src/**/*.test.ts`, and `noUnusedLocals` / `noUnusedParameters` are relaxed to
+   `false`. Only `local-stardew-bridge.js` and its module graph were consumed, and
+   the emitted `protocol.js` / `snapshot-projection.js` / `action-registry.js` were
+   verified to carry `petBowlTargets` and `slimeHutchTroughTargets` before the
+   runs; the two passing live gates are themselves the fidelity evidence for the
+   artifact. This is a local workaround for a broken shared build entry point, not
+   a change to the committed build: `build:test` is still red for its own reasons
+   and that repair belongs to whichever lane owns those test files.
 Current native-local validation record: `move_to_tile`, `till_soil`,
 `equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
 `harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
