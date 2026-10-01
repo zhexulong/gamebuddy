@@ -155,23 +155,35 @@ async function exerciseOperations(origin, client) {
     return { generation, revision };
   };
 
-  await attempt("draft.save", async () => {
+    await attempt("draft.save", async () => {
     const { generation, revision } = await currentDraft();
-    await sendJson(origin, client, "PUT", "/api/tavern/v1/draft", {
+    const draft = await sendJson(origin, client, "PUT", "/api/tavern/v1/draft", {
       apiVersion: 1,
       selectionGeneration: generation,
       expectedRevision: revision,
       text: "please be brief",
     });
+    // The reply IS the draft (BrowserDraftV1Schema: apiVersion, revision, text).
+    // A saved draft means the text came back and the revision advanced;
+    // accepting 2xx would report a pass for a write that stored nothing.
+    if (draft === null || typeof draft !== "object") throw new Error("draft_state_unavailable");
+    if (draft.text !== "please be brief") throw new Error("draft_text_not_applied");
+    if (!Number.isInteger(draft.revision) || draft.revision <= revision)
+      throw new Error("draft_revision_unadvanced");
   });
 
   await attempt("draft.discard", async () => {
     const { generation, revision } = await currentDraft();
-    await sendJson(origin, client, "DELETE", "/api/tavern/v1/draft", {
+    const draft = await sendJson(origin, client, "DELETE", "/api/tavern/v1/draft", {
       apiVersion: 1,
       selectionGeneration: generation,
       expectedRevision: revision,
     });
+    // Discarding must clear the text and advance the revision.
+    if (draft === null || typeof draft !== "object") throw new Error("draft_state_unavailable");
+    if (draft.text !== null && draft.text !== "") throw new Error("draft_text_survived_discard");
+    if (!Number.isInteger(draft.revision) || draft.revision <= revision)
+      throw new Error("draft_revision_unadvanced");
   });
 
   // chat.rename: the CAS revision is the SELECTED CHAT LIST ENTRY's
@@ -196,18 +208,39 @@ async function exerciseOperations(origin, client) {
       expectedManagementRevision: entry.managementRevision,
       title: "Live Run",
     });
+    // The rename must be visible in the list with an advanced management
+    // revision, or a 2xx would be reporting a write that did not land.
+    const after = await readJson(origin, client, "/api/tavern/v1/chats?apiVersion=1");
+    const afterEntries = Array.isArray(after?.chats) ? after.chats : Array.isArray(after) ? after : [];
+    const renamed = afterEntries.find((candidate) => candidate?.handle === chatHandle);
+    if (renamed === undefined) throw new Error("renamed_chat_entry_unavailable");
+    if (renamed.title !== "Live Run") throw new Error("chat_title_not_applied");
+    if (!Number.isInteger(renamed.managementRevision) || renamed.managementRevision <= entry.managementRevision)
+      throw new Error("management_revision_unadvanced");
   });
 
-  await attempt("memory.mutate", async () => {
+    await attempt("memory.mutate", async () => {
     const memory = await readJson(origin, client, "/api/tavern/v1/memory");
     if (typeof memory?.projectionRevision !== "string" || memory.projectionRevision.length === 0)
       throw new Error("projection_revision_unavailable");
-    await sendJson(origin, client, "PUT", "/api/tavern/v1/memory", {
+    if (!Array.isArray(memory.memories)) throw new Error("memory_list_unavailable");
+    const before = memory.memories.length;
+    const result = await sendJson(origin, client, "PUT", "/api/tavern/v1/memory", {
       apiVersion: 1,
       expectedProjectionRevision: memory.projectionRevision,
       operation: "create",
       content: "the player keeps a tidy ledger",
     });
+    // MemoryMutationResultV1Schema === MemoryReadV1Schema: the reply is the new
+    // projection. A create that stored nothing would come back with the same
+    // revision and the same number of rows, so assert both.
+    if (result === null || typeof result !== "object") throw new Error("memory_result_unavailable");
+    if (typeof result.projectionRevision !== "string" || result.projectionRevision.length === 0)
+      throw new Error("projection_revision_missing_after_mutation");
+    if (result.projectionRevision === memory.projectionRevision)
+      throw new Error("projection_revision_unadvanced");
+    if (!Array.isArray(result.memories)) throw new Error("memory_result_list_unavailable");
+    if (result.memories.length !== before + 1) throw new Error("memory_row_not_created");
   });
 
   await attempt("world-info.bind", async () => {
@@ -218,15 +251,30 @@ async function exerciseOperations(origin, client) {
     // The world-info CAS revision comes from its own read route; the snapshot
     // carries `chat.worldInfo` but the binding command CASes a revision string.
     const worldInfo = await readJson(origin, client, "/api/tavern/v1/world-info");
-    const revision = worldInfo?.revision ?? worldInfo?.stateRevision;
+    const revision = worldInfo?.revision;
     if (typeof revision !== "string" || revision.length === 0)
       throw new Error("world_info_revision_unavailable");
-    await sendJson(origin, client, "PUT", "/api/tavern/v1/world-info", {
+    if (!Array.isArray(worldInfo.items)) throw new Error("world_info_items_unavailable");
+    // COVERAGE BOUNDARY, deliberately not papered over. The browser contract
+    // declares no world-info authoring route (25 routeIds, only read + bind), so
+    // a fresh root's managed catalog is empty and no bindable `handle` can be
+    // obtained. `sourceHandle: null` is therefore the ONLY reachable command,
+    // which makes this operation evidence for the unbind path and NOT for
+    // `bindExact` (managed-world-info-binding.ts). Asserting a bound state here
+    // would require a catalog this surface cannot create. The state the command
+    // returns is asserted below so the round-trip is real; the gap itself is
+    // recorded for the release review rather than hidden by a thin assertion.
+    const state = await sendJson(origin, client, "PUT", "/api/tavern/v1/world-info", {
       apiVersion: 1,
       selectionGeneration: generation,
       expectedRevision: revision,
       sourceHandle: null,
     });
+    if (state === null || typeof state !== "object") throw new Error("world_info_state_unavailable");
+    if (typeof state.revision !== "string" || state.revision === revision)
+      throw new Error("world_info_revision_unadvanced");
+    if (typeof state.state !== "string" || state.state.length === 0)
+      throw new Error("world_info_binding_state_unavailable");
   });
 
   // settings.voice.read / .consent / .devices: the voice preference is a
@@ -237,6 +285,11 @@ async function exerciseOperations(origin, client) {
   await attempt("settings.voice.read", async () => {
     const voice = await readJson(origin, client, "/api/tavern/v1/settings/voice-preference");
     if (voice === null || typeof voice !== "object") throw new Error("voice_preference_unavailable");
+    // The declared projection, not just "some object came back": a revision and a
+    // closed consent state are what the consent step below CASes against.
+    if (!Number.isInteger(voice.revision) || voice.revision < 0) throw new Error("voice_revision_unavailable");
+    if (voice.consent !== "undecided" && voice.consent !== "accepted" && voice.consent !== "revoked")
+      throw new Error("voice_consent_state_invalid");
   });
 
   await attempt("settings.voice.consent", async () => {
@@ -259,6 +312,8 @@ async function exerciseOperations(origin, client) {
     const devices = await readJson(origin, client, "/api/tavern/v1/settings/voice-devices");
     // An empty list is legal (gateway absent / headless); an unparseable reply is not.
     if (devices === null || typeof devices !== "object") throw new Error("voice_devices_unavailable");
+    if (!Array.isArray(devices.devices)) throw new Error("voice_device_list_unavailable");
+    if (devices.defaultSelectable !== true) throw new Error("voice_default_not_selectable");
   });
 
   // settings.connection.*: the connection document is revisioned. The sequence
@@ -273,6 +328,12 @@ async function exerciseOperations(origin, client) {
   await attempt("settings.connection.read", async () => {
     const state = await readJson(origin, client, "/api/tavern/v1/settings/connection");
     if (state === null || typeof state !== "object") throw new Error("connection_state_unavailable");
+    // A read that accepted any object proves only that a route answered. The
+    // projection's declared shape is the real postcondition (design/28 5.1):
+    // `connections` is an array of records, and `active` is that record or null.
+    if (!Number.isInteger(state.revision) || state.revision < 0) throw new Error("connection_revision_unavailable");
+    if (!Array.isArray(state.connections)) throw new Error("connection_list_unavailable");
+    if (state.active !== null && typeof state.active !== "object") throw new Error("connection_active_invalid");
   });
 
   await attempt("settings.connection.create", async () => {
@@ -280,7 +341,13 @@ async function exerciseOperations(origin, client) {
       apiVersion: 1,
       providerId: "cpa-oai",
     });
-    if (typeof state?.active !== "object" && state?.active !== null) throw new Error("connection_create_state_invalid");
+    // Creating a record must advance the revision and put the record in the
+    // list. Accepting the reply because it parsed would pass even if nothing
+    // was stored, which is exactly the hollow-success shape this producer has
+    // to rule out for every operation it reports as passed.
+    if (!Number.isInteger(state?.revision) || state.revision < 1) throw new Error("connection_create_revision_unadvanced");
+    if (!Array.isArray(state?.connections) || state.connections.length === 0)
+      throw new Error("connection_create_not_stored");
   });
 
   // After create, the connection list carries the new record; we must find its
@@ -302,6 +369,20 @@ async function exerciseOperations(origin, client) {
       expectedRevision: revision,
     });
     if (probe?.outcome !== "ready" && probe?.outcome !== "failed") throw new Error("connection_probe_outcome_invalid");
+    // `failed` alone is not evidence that a probe happened: a connection with no
+    // key returns `failed/not_configured` without issuing any request
+    // (connection-probe.ts). Reporting that as this operation's pass would make
+    // the operation vacuous, so require a closed failure reason and require the
+    // probe to have been attempted rather than skipped.
+    if (probe.outcome === "failed" && (typeof probe.failure !== "string" || probe.failure.length === 0))
+      throw new Error("connection_probe_failure_reason_missing");
+    if (probe.outcome === "failed" && probe.failure === "not_configured")
+      throw new Error("connection_probe_not_configured");
+    if (probe.state === null || typeof probe.state !== "object") throw new Error("connection_probe_state_missing");
+    // The probe writes its outcome into the record; without this the activate
+    // step below would be the only thing distinguishing a real probe.
+    if (!Number.isInteger(probe.state.revision) || probe.state.revision <= revision)
+      throw new Error("connection_probe_revision_unadvanced");
   });
 
   await attempt("settings.connection.activate", async () => {
@@ -315,12 +396,24 @@ async function exerciseOperations(origin, client) {
 
   await attempt("settings.connection.model", async () => {
     const { connectionId, revision } = await connectionList();
-    await sendJson(origin, client, "POST", `/api/tavern/v1/settings/connections/${connectionId}/model`, {
+    // A chosen model needs a fresh probe (store.selectModel resets readiness),
+    // so this runs after activate. The reply is the whole connection document:
+    // assert the record really carries the requested model and that the write
+    // advanced the revision. A bare 2xx would report a pass for a no-op write.
+    const state = await sendJson(origin, client, "POST", `/api/tavern/v1/settings/connections/${connectionId}/model`, {
       apiVersion: 1,
       expectedRevision: revision,
       modelId: "deepseek-v4-flash",
       thinkingLevel: "high",
     });
+    const record = Array.isArray(state?.connections)
+      ? state.connections.find((entry) => entry?.connectionId === connectionId)
+      : undefined;
+    if (record === undefined) throw new Error("connection_model_record_missing");
+    if (record.modelId !== "deepseek-v4-flash" || record.thinkingLevel !== "high")
+      throw new Error("connection_model_not_applied");
+    if (!Number.isInteger(state.revision) || state.revision <= revision)
+      throw new Error("connection_model_revision_unadvanced");
   });
 
   await attempt("settings.connection.remove", async () => {
@@ -419,10 +512,17 @@ export async function runManagementOperationEvidence({ outcomesPath, reportPath 
     if (typeof reportPath === "string" && reportPath.length > 0)
       await writeFile(reportPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     const passed = operations.filter((entry) => entry.outcome === "passed").length;
-    process.stdout.write(
-      `${JSON.stringify({ state: passed > 0 ? "collected" : "blocked", passed, total: operations.length, operations })}\n`,
-    );
-    return payload;
+  process.stdout.write(
+    `${JSON.stringify({ state: passed > 0 ? "collected" : "blocked", passed, total: operations.length, operations })}\n`,
+  );
+  // Exit non-zero when nothing passed. The outcomes file is still written - it
+  // records what actually happened - but a caller that shells out must not see
+  // success from a run that produced no evidence at all. Previously this exited
+  // 0 and relied on the downstream recorder to reject the file, which made a
+  // total failure look like a successful collection to anything reading the
+  // exit status.
+  if (passed === 0) process.exitCode = 1;
+  return payload;
   } finally {
     launch.dispose?.();
     launch.child?.kill?.();

@@ -6,46 +6,46 @@
   "release_tier": "tavern_management",
   "operations": {
     "draft.save": [
-      "6d22484cdfa1a4a032be99ed8a74de703be734e3fc46f929"
+      "6840e41f27e8e40abd6e63fed2a537ade50136d7bfa7080a"
     ],
     "draft.discard": [
-      "3cd5667a733416728331f4be62eee0a94073390383df8836"
+      "96eb39d10c485eeb37f73f05aa17cd0fb213d4eb49211735"
     ],
     "chat.rename": [
-      "9af2a19413fe6dfdaca87501e9d756464c07f043d96c43f1"
+      "bbaa8f1339f3e857f2f5d94e6de075c4063e1d2f9d3eb583"
     ],
     "memory.mutate": [
-      "9ad2dfdfb8b405fbee5b00fad4437a0ddb2a5946b48941e3"
+      "9d5ff428a40ad7e00373d330dc5a96989a5f09e034ce14be"
     ],
     "world-info.bind": [
-      "eb9779cb895797ebc743de979382851087c8bfa65202f2a8"
+      "00be0e353e26e1e8c003b0060a69ca7bc0a6d35d0e503df9"
     ],
     "settings.voice.read": [
-      "4006f748bf951da61e77251def4f49d53f96eb1873185e00"
+      "5ea8dc28cc2525635c17e50d268bc001e2d823bbe64909c9"
     ],
     "settings.voice.consent": [
-      "54377d2fd6c096b06a33f031257e3058159a9558336ba1fd"
+      "66b460777fce969bbf036451406f8079910fd62d10cc52d1"
     ],
     "settings.voice.devices": [
-      "402ea99ed10aded7762c643a1d0373603ce19f40c55228b2"
+      "55827aa1009bbf7a004081f2acca671ab42f61181b92231b"
     ],
     "settings.connection.read": [
-      "43babea1a6c9ceeb13ac29eb76ce756670b9de93ccb71545"
+      "954f21d40237f617258572e5a8238828024ba459d4bc3419"
     ],
     "settings.connection.create": [
-      "94f2d981b305916b05b0e003c039dec6690b5ce68a491c61"
+      "f5bc768c54cf3f7e0555004aa6384467b01016a0f2ab6fbe"
     ],
     "settings.connection.test": [
-      "22c887ea405ac633032b1222de1016c383f07d182936944b"
+      "9ada0dbbec976bed4d85c3e7a9600a54951e0fab01d46745"
     ],
     "settings.connection.activate": [
-      "c59532a2860e247e10aebd05be036a541059b7b3450df556"
+      "2423ae2dc6faa540bf4627c3f71e0e911636ecbd98aa0536"
     ],
     "settings.connection.model": [
-      "e5a083d39db242cbc7d34881f00f4cff581d400f3b450303"
+      "78deb9428512e8c8d080e45eeb627847b95569b3353f6fc4"
     ],
     "settings.connection.remove": [
-      "9bd908679deb76ca4f50a3220b0787357cf1eecf467d79f9"
+      "f273602a394ba2d71f02ba63344022b36035907ce52c0601"
     ]
   }
 }
