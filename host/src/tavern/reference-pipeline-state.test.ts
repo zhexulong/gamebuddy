@@ -316,13 +316,23 @@ test(
   const key = identityKey(principal);
   const fs = await import("node:fs/promises");
   // ChatThreadStore's sole durable authority is the per-continuity SQLite
-  // database. Corrupt that actual authority—not an inert legacy path—so the
+  // database. Corrupt that actual authority, not an inert legacy path, so the
   // read must fail closed with no browser projection.
-  await fs.writeFile(fx.root + "/tavern/v2/continuities/" + key + "/tavern.sqlite", "{ corrupted", "utf8");
+  //
+  // Two details make the damage real. The path is the v3 layout the store owns;
+  // writing to v2 (as this line once did) targets a directory nothing creates,
+  // so the file is never read. And the store writes WAL, so its committed pages
+  // sit in the write-ahead log until a checkpoint: close the facade first so the
+  // checkpoint lands, then reopen, because a fresh reader is what observes the
+  // damage while the writer still holds its own pages in memory.
+  await reopenedFacade.close();
+  await fs.writeFile(fx.root + "/tavern/v3/continuities/" + key + "/tavern.sqlite", "{ corrupted", "utf8");
+  const damagedFacade = await createReferencePipelineStateFacade(fx.manifest, fx.lease, profile);
   let corruptRejection = "none";
-  try { await reopenedFacade.read(); } catch (error) { corruptRejection = String(error); }
+  try { await damagedFacade.read(); } catch (error) { corruptRejection = String(error); }
   let corruptDraftRejection = "none";
-  try { await reopenedFacade.readDraft(); } catch (error) { corruptDraftRejection = String(error); }
+  try { await damagedFacade.readDraft(); } catch (error) { corruptDraftRejection = String(error); }
+  await damagedFacade.close();
   await fx.lease.close();
   let closedRejection = "none";
   try { await fx.facade.read(); } catch (error) { closedRejection = String(error); }
